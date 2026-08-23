@@ -5,6 +5,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   build,
   init,
+  orderSimulators,
   renderBackgroundModes,
   renderEntitlements,
   renderOrientations,
@@ -186,5 +187,59 @@ describe('Craft iOS builder', () => {
     expect(watchInfo).not.toContain('<key>WKWatchKitApp</key>')
     expect(existsSync(join(output, 'WatchApp', 'Info.plist'))).toBe(true)
     expect(existsSync(join(output, 'WatchApp', 'Watch.entitlements'))).toBe(true)
+  })
+})
+
+/**
+ * Which simulator `run --simulator` picks.
+ *
+ * It used to pick none. The destination was the literal string `iPhone 15`, so
+ * on a machine whose Xcode ships iPhone 17 and no iPhone 15 the command is
+ * `xcodebuild: error: Unable to find a device named 'iPhone 15'` - a failure
+ * with nothing to do with the app being built, and no hint in it about the fix.
+ */
+describe('choosing a simulator', () => {
+  const device = (name: string, runtime: string, state = 'Shutdown') =>
+    ({ name, udid: `${name}-${runtime}`, state, runtime })
+
+  it('prefers one that is already booted', () => {
+    // If a simulator is open, that is the one the developer is looking at.
+    const chosen = orderSimulators([
+      device('iPhone 17 Pro', 'iOS-27-0'),
+      device('iPad Air', 'iOS-26-0', 'Booted'),
+    ])[0]
+
+    expect(chosen?.name).toBe('iPad Air')
+  })
+
+  it('then an iPhone over an iPad', () => {
+    const chosen = orderSimulators([
+      device('iPad Pro 13-inch', 'iOS-27-0'),
+      device('iPhone 17', 'iOS-27-0'),
+    ])[0]
+
+    expect(chosen?.name).toBe('iPhone 17')
+  })
+
+  it('then the newest runtime', () => {
+    const chosen = orderSimulators([
+      device('iPhone 16', 'iOS-18-0'),
+      device('iPhone 17 Pro', 'iOS-27-0'),
+    ])[0]
+
+    expect(chosen?.name).toBe('iPhone 17 Pro')
+  })
+
+  it('and never invents one that is not installed', () => {
+    // The regression in one line: no devices means no device, rather than a
+    // hard-coded name xcodebuild will refuse.
+    expect(orderSimulators([])[0]).toBeUndefined()
+  })
+
+  it('leaves the array it was given alone', () => {
+    const devices = [device('iPad Air', 'iOS-26-0'), device('iPhone 17', 'iOS-27-0')]
+    orderSimulators(devices)
+
+    expect(devices[0]?.name).toBe('iPad Air')
   })
 })

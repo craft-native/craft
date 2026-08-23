@@ -589,6 +589,86 @@ export async function open(options: OpenOptions): Promise<void> {
 /**
  * Build and run on simulator or device
  */
+/** One bootable simulator, as `simctl list` describes it. */
+export interface SimulatorDevice {
+  name: string
+  udid: string
+  state: string
+  runtime: string
+}
+
+/**
+ * Every available simulator, newest runtime first, iPhones before iPads.
+ *
+ * Exported because the choice is worth testing without a simulator present -
+ * `pickSimulator` is the policy and this is the data it reads.
+ */
+export function orderSimulators(devices: SimulatorDevice[]): SimulatorDevice[] {
+  return [...devices].sort((left, right) => {
+    const booted = Number(right.state === 'Booted') - Number(left.state === 'Booted')
+    if (booted !== 0)
+      return booted
+
+    const phone = Number(right.name.startsWith('iPhone')) - Number(left.name.startsWith('iPhone'))
+    if (phone !== 0)
+      return phone
+
+    return right.runtime.localeCompare(left.runtime)
+  })
+}
+
+/**
+ * The device to run on.
+ *
+ * A booted one first - if the developer already has a simulator open, that is
+ * the one they are looking at - then the newest iPhone.
+ *
+ * This used to be the string `iPhone 15`, hard-coded into the `-destination`
+ * argument. On a machine whose Xcode ships iPhone 17 and no iPhone 15, that is
+ * not a fallback, it is `xcodebuild: error: Unable to find a device named
+ * 'iPhone 15'` - the command fails for a reason that has nothing to do with the
+ * app being built, and the fix is invisible from the error.
+ */
+export async function pickSimulator(): Promise<SimulatorDevice | null> {
+  const listed = await $`xcrun simctl list devices available --json`.quiet().nothrow()
+
+  if (listed.exitCode !== 0)
+    return null
+
+  let parsed: { devices?: Record<string, Array<{ name: string, udid: string, state: string }>> }
+
+  try {
+    parsed = JSON.parse(listed.stdout.toString())
+  }
+catch {
+    return null
+  }
+
+  const devices: SimulatorDevice[] = []
+
+  for (const [runtime, list] of Object.entries(parsed.devices ?? {})) {
+    for (const device of list)
+      devices.push({ ...device, runtime: runtime.split('.').pop() ?? runtime })
+  }
+
+  return orderSimulators(devices)[0] ?? null
+}
+
+/**
+ * Boot it, and wait until it can actually do something.
+ *
+ * `simctl boot` returns as soon as the device starts booting, and a device
+ * that reports `Booted` is minutes away from being able to install anything on
+ * a cold runtime. `bootstatus` is the wait, and skipping it is why a first run
+ * on a fresh machine fails where the second succeeds.
+ */
+export async function bootSimulator(device: SimulatorDevice): Promise<void> {
+  if (device.state !== 'Booted')
+    await $`xcrun simctl boot ${device.udid}`.quiet().nothrow()
+
+  await $`xcrun simctl bootstatus ${device.udid}`.quiet().nothrow()
+}
+
 export async function run(options: RunOptions): Promise<void> {
   const { simulator, output } = options
 
@@ -606,22 +686,66 @@ export async function run(options: RunOptions): Promise<void> {
   const projectPath = join(output, xcodeproj)
   const appName = xcodeproj.replace('.xcodeproj', '')
 
+  const configPath = join(output, 'craft.config.json')
+
+  if (!existsSync(configPath))
+    throw new Error(`No craft.config.json found in ${output}. Run 'craft-ios init' first.`)
+
+  const config: CraftConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+
   if (simulator) {
     console.log('📱 Building and running on simulator...')
+
+    const device = await pickSimulator()
+
+    if (!device) {
+      throw new Error(
+        'No iOS simulator is available. Install a runtime with '
+        + '`xcodebuild -downloadPlatform iOS`, then try again.',
+      )
+    }
+
+    console.log(`   Device: ${device.name} (${device.runtime})`)
+
     try {
-      // Build for simulator
-      await $`xcodebuild -project ${projectPath} -scheme ${appName} -destination 'platform=iOS Simulator,name=iPhone 15' build`
+      await bootSimulator(device)
 
-      // Boot simulator if needed
-      await $`xcrun simctl boot "iPhone 15"`.quiet().nothrow()
+      /*
+       * A derived-data path we choose, so the built `.app` is at a known
+       * location.
+       *
+       * The alternative is parsing `xcodebuild -showBuildSettings` for
+       * `BUILT_PRODUCTS_DIR`, which is a second invocation of the slowest tool
+       * in the chain to learn something we can simply decide.
+       */
+      const derivedData = join(output, 'build')
+      const product = join(derivedData, 'Build', 'Products', 'Debug-iphonesimulator', `${appName}.app`)
 
-      // Open simulator
+      await $`xcodebuild -project ${projectPath} -scheme ${appName} -configuration Debug -destination ${`id=${device.udid}`} -derivedDataPath ${derivedData} build`
+
+      if (!existsSync(product)) {
+        throw new Error(
+          `xcodebuild reported success but ${product} does not exist. `
+          + 'The scheme may build a different product name than the project.',
+        )
+      }
+
+      /*
+       * Installed and launched, rather than merely built.
+       *
+       * This used to run `xcodebuild build`, boot a device, open Simulator.app
+       * and print "App deployed to simulator" - having installed nothing and
+       * launched nothing. What the user saw was a home screen and a success
+       * message, which is the worst pair of those two things to see together.
+       */
+      await $`xcrun simctl install ${device.udid} ${product}`
       await $`open -a Simulator`
+      await $`xcrun simctl launch ${device.udid} ${config.bundleId}`
 
-      console.log('✅ App deployed to simulator')
+      console.log(`✅ ${config.appName} is running on ${device.name}`)
     }
 catch (error) {
-      throw new Error(`iOS simulator build failed for ${projectPath}`, { cause: error })
+      throw new Error(`iOS simulator run failed for ${projectPath}`, { cause: error })
     }
   }
 else {
