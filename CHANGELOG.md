@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.72...v0.0.73)
+
+## 🚀 Features
+
+- **packages**: publish the android, react, vue and svelte adapters ([cd6aa37](https://github.com/craft-native/craft/commit/cd6aa37)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **release**: keep the signing credentials encrypted in the repository ([b20e759](https://github.com/craft-native/craft/commit/b20e759)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.73 ([583404a](https://github.com/craft-native/craft/commit/583404a)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.71...v0.0.72)
 
 ## 🐛 Bug Fixes
