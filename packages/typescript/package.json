@@ -5,14 +5,14 @@
   "description": "Build desktop apps with web languages - TypeScript SDK for Craft",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
-  "homepage": "https://github.com/home-lang/craft#readme",
+  "homepage": "https://github.com/craft-native/craft#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/home-lang/craft.git",
+    "url": "git+https://github.com/craft-native/craft.git",
     "directory": "packages/typescript"
   },
   "bugs": {
-    "url": "https://github.com/home-lang/craft/issues"
+    "url": "https://github.com/craft-native/craft/issues"
   },
   "keywords": [
     "desktop",

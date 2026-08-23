@@ -6,10 +6,10 @@
   "description": "Craft SDK bindings for the ts-maps interactive map runtime. Provides a cross-platform MapView component backed by the MapProvider.ts_maps variant in the Zig core.",
   "author": "Chris Breuer <chris@stacksjs.org>",
   "license": "MIT",
-  "homepage": "https://github.com/home-lang/craft#readme",
+  "homepage": "https://github.com/craft-native/craft#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/home-lang/craft.git",
+    "url": "git+https://github.com/craft-native/craft.git",
     "directory": "packages/ts-maps"
   },
   "keywords": [
