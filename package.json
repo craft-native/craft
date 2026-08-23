@@ -55,6 +55,7 @@
     "release:patch": "bun x --bun bumpx patch --recursive --yes"
   },
   "devDependencies": {
+    "@stacksjs/buddy": "0.72.56",
     "@stacksjs/bumpx": "^0.2.10",
     "@stacksjs/bunpress": "^0.2.13",
     "@stacksjs/env": "^0.72.50",

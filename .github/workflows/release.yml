@@ -111,8 +111,8 @@ jobs:
       #
       # One key instead of seven values: the ciphertext is committed and
       # reviewable, rotating a certificate is a commit rather than seven trips
-      # through a settings page, and the same file works locally — `bun
-      # scripts/env.ts get` reads a value on a laptop with no GitHub involved.
+      # through a settings page, and the same file works locally — `buddy
+      # env:get` reads a value on a laptop with no GitHub involved.
       # What that trades away
       # is that the ciphertext is public, so the whole of the secrecy is
       # `DOTENV_PRIVATE_KEY_PRODUCTION`, which is the one thing that stays a
@@ -136,11 +136,11 @@ jobs:
           fi
 
           for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD APPLE_ID APPLE_APP_PASSWORD APPLE_TEAM_ID; do
-            value="$(bun scripts/env.ts get "$name" 2>/dev/null || true)"
+            value="$(bunx --bun buddy env:get "$name" --file .env.production 2>/dev/null || true)"
 
             if [ -z "$value" ]; then
               echo "::error::$name is empty in .env.production."
-              echo "::error::Set it with: bun scripts/env.ts set $name '<value>'"
+              echo "::error::Set it with: bunx buddy env:set $name '<value>' --file .env.production"
               exit 1
             fi
 
