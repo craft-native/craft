@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.75...v0.0.76)
+
+## ♻️ Code Refactoring
+
+- **release**: read the credentials with `buddy env`, and drop the wrapper ([2a93ede](https://github.com/craft-native/craft/commit/2a93ede)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- **env**: say why the credentials script is not `buddy env` yet ([2f5fb96](https://github.com/craft-native/craft/commit/2f5fb96)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.76 ([1684add](https://github.com/craft-native/craft/commit/1684add)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.74...v0.0.75)
 
 ## ♻️ Code Refactoring
