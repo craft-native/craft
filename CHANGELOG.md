@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.71...v0.0.72)
+
+## 🐛 Bug Fixes
+
+- **packages**: point every published package at the repository that builds it ([26ed5c4](https://github.com/craft-native/craft/commit/26ed5c4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.72 ([4645615](https://github.com/craft-native/craft/commit/4645615)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.70...v0.0.71)
 
 ## 🐛 Bug Fixes
