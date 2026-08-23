@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.73...v0.0.74)
+
+## 🐛 Bug Fixes
+
+- **release**: restore the env key the credential move took with it ([30912b7](https://github.com/craft-native/craft/commit/30912b7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.74 ([1b2514f](https://github.com/craft-native/craft/commit/1b2514f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.72...v0.0.73)
 
 ## 🚀 Features
