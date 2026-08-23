@@ -669,6 +669,35 @@ export async function bootSimulator(device: SimulatorDevice): Promise<void> {
   await $`xcrun simctl bootstatus ${device.udid}`.quiet().nothrow()
 }
 
+/**
+ * Bring the Simulator window to the front, if it can be found.
+ *
+ * `open -a Simulator` resolves through LaunchServices, and LaunchServices only
+ * knows the name if a Simulator.app has been registered under it - which is not
+ * true on a machine running Xcode-beta, where the answer is `Unable to find
+ * application named 'Simulator'`. The app is always at a known path under the
+ * *selected* developer directory, so that is tried first.
+ *
+ * Never throws. The window is a convenience: the app is installed and launched
+ * either way, and failing the whole run because a window did not come to the
+ * front would be reporting a cosmetic problem as a build failure.
+ */
+export async function showSimulator(): Promise<void> {
+  const selected = await $`xcode-select -p`.quiet().nothrow()
+  const developer = selected.exitCode === 0 ? selected.stdout.toString().trim() : ''
+
+  if (developer) {
+    const app = join(developer, 'Applications', 'Simulator.app')
+
+    if (existsSync(app)) {
+      await $`open ${app}`.quiet().nothrow()
+      return
+    }
+  }
+
+  await $`open -a Simulator`.quiet().nothrow()
+}
+
 export async function run(options: RunOptions): Promise<void> {
   const { simulator, output } = options
 
@@ -739,7 +768,7 @@ export async function run(options: RunOptions): Promise<void> {
        * message, which is the worst pair of those two things to see together.
        */
       await $`xcrun simctl install ${device.udid} ${product}`
-      await $`open -a Simulator`
+      await showSimulator()
       await $`xcrun simctl launch ${device.udid} ${config.bundleId}`
 
       console.log(`✅ ${config.appName} is running on ${device.name}`)
