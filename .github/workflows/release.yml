@@ -220,7 +220,20 @@ jobs:
 
   npm:
     name: npm
+    # Ordered after the binaries, not gated on them.
+    #
+    # `needs:` alone waits for every matrix leg to *succeed*, and the
+    # darwin-arm64 leg exits early when the Apple signing secrets are absent —
+    # so a missing certificate has been silently blocking every npm publish
+    # since v0.0.55. Fifteen releases where the tag, the changelog and the
+    # GitHub release all landed and not one package reached the registry.
+    #
+    # Nothing here consumes the binary job's artifacts: this checks out, runs
+    # `bun install`, and publishes packages built from TypeScript. Signing a Zig
+    # binary and publishing an SDK are independent, and the workflow now says
+    # so. `!cancelled()` rather than `always()` so a cancelled run still stops.
     needs: [pantry]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
