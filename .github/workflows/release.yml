@@ -106,31 +106,49 @@ jobs:
           eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
 
       # ── macOS Code Signing & Notarization ──────────────────────────
-      - name: Require macOS release credentials
+      # The signing credentials live encrypted in `.env.production`, not as
+      # seven repository secrets.
+      #
+      # One key instead of seven values: the ciphertext is committed and
+      # reviewable, rotating a certificate is a commit rather than seven trips
+      # through a settings page, and the same file works locally — `dotenvx run`
+      # signs a build on a laptop with no GitHub involved. What that trades away
+      # is that the ciphertext is public, so the whole of the secrecy is
+      # `DOTENV_PRIVATE_KEY_PRODUCTION`, which is the one thing that stays a
+      # repository secret.
+      #
+      # Decrypted into `$GITHUB_ENV` so every step below reads `$APPLE_ID` the
+      # way it always did. Each value is masked first: `$GITHUB_ENV` does *not*
+      # mask on its own, and an unmasked notarization password is one `set -x`
+      # away from the log.
+      - name: Load macOS release credentials
         if: runner.os == 'macOS'
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          DOTENV_PRIVATE_KEY_PRODUCTION: ${{ secrets.DOTENV_PRIVATE_KEY_PRODUCTION }}
         run: |
           set -euo pipefail
+
+          if [ -z "${DOTENV_PRIVATE_KEY_PRODUCTION:-}" ]; then
+            echo "::error::DOTENV_PRIVATE_KEY_PRODUCTION is not set. It is the only"
+            echo "::error::secret this release needs; see .env.production for what it opens."
+            exit 1
+          fi
+
           for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD APPLE_ID APPLE_APP_PASSWORD APPLE_TEAM_ID; do
-            if [ -z "${!name:-}" ]; then
-              echo "::error::Missing required macOS release secret: $name"
+            value="$(bunx --bun @dotenvx/dotenvx get "$name" -f .env.production 2>/dev/null || true)"
+
+            if [ -z "$value" ]; then
+              echo "::error::$name is empty in .env.production."
+              echo "::error::Set it with: bunx @dotenvx/dotenvx set $name '<value>' -f .env.production"
               exit 1
             fi
+
+            echo "::add-mask::$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
           done
 
       - name: Import signing certificate
         if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -142,8 +160,6 @@ jobs:
 
       - name: Sign macOS binary
         if: runner.os == 'macOS'
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           # Default to the strict distribution entitlements; CI can opt in to
           # the dev plist (sandbox off, library validation off) by setting
           # CRAFT_ENTITLEMENTS=dev for local debugging — never for release.
@@ -167,10 +183,6 @@ jobs:
 
       - name: Notarize macOS binaries
         if: runner.os == 'macOS'
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           for tuple in \

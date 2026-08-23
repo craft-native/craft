@@ -36,5 +36,9 @@ artifacts/native-lifecycle/
 *.log
 docs/.bunpress/
 .env
+# The dotenvx private keys. `.env.production` is committed *because* it is
+# ciphertext; this is the thing that opens it, and an exact-match `.env` rule
+# does not cover it.
+.env.keys
 /pantry
 pantry
