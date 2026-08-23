@@ -1,6 +1,6 @@
 {
   "name": "@craft-native/ts-maps",
-  "version": "0.0.69",
+  "version": "0.0.70",
   "private": false,
   "type": "module",
   "description": "Craft SDK bindings for the ts-maps interactive map runtime. Provides a cross-platform MapView component backed by the MapProvider.ts_maps variant in the Zig core.",

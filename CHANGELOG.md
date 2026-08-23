@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.69...v0.0.70)
+
+## 🐛 Bug Fixes
+
+- **ios**: find Simulator.app under the selected Xcode, not through its name ([d7b0038](https://github.com/craft-native/craft/commit/d7b0038)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ios**: make `run --simulator` actually install and launch the app ([a819e06](https://github.com/craft-native/craft/commit/a819e06)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.70 ([faab917](https://github.com/craft-native/craft/commit/faab917)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.68...v0.0.69)
 
 ## 🐛 Bug Fixes
