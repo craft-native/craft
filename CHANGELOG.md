@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.74...v0.0.75)
+
+## ♻️ Code Refactoring
+
+- **release**: encrypt the credentials with Stacks env, not dotenvx ([909fac7](https://github.com/craft-native/craft/commit/909fac7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.75 ([7a4da47](https://github.com/craft-native/craft/commit/7a4da47)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.73...v0.0.74)
 
 ## 🐛 Bug Fixes

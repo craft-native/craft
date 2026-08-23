@@ -15,7 +15,7 @@
     },
     "benchmarks": {
       "name": "craft-benchmarks",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "dependencies": {
         "mitata": "^1.0.10"
       },
@@ -25,11 +25,11 @@
     },
     "packages/android": {
       "name": "@craft-native/android",
-      "version": "0.0.74"
+      "version": "0.0.75"
     },
     "packages/create-craft": {
       "name": "create-craft",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "dependencies": {
         "@stacksjs/clapp": "^0.2.0"
       },
@@ -39,7 +39,7 @@
     },
     "packages/examples-ts": {
       "name": "craft-examples",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "dependencies": {
         "craft-native": "workspace:*"
       },
@@ -49,11 +49,11 @@
     },
     "packages/ios": {
       "name": "@craft-native/ios",
-      "version": "0.0.74"
+      "version": "0.0.75"
     },
     "packages/react": {
       "name": "@craft-native/react",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "devDependencies": {
         "@types/react": "^18.2.0",
         "react": "^18.2.0",
@@ -64,7 +64,7 @@
     },
     "packages/svelte": {
       "name": "@craft-native/svelte",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "devDependencies": {
         "svelte": "^4.0.0",
         "tsup": "^8.0.0",
@@ -74,7 +74,7 @@
     },
     "packages/ts-maps": {
       "name": "@craft-native/ts-maps",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "ts-maps": "^0.2.7",
@@ -83,7 +83,7 @@
     },
     "packages/typescript": {
       "name": "craft-native",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "devDependencies": {
         "@stacksjs/clapp": "^0.2.0",
         "@types/bun": "^1.2.0",
@@ -93,7 +93,7 @@
     },
     "packages/vue": {
       "name": "@craft-native/vue",
-      "version": "0.0.74",
+      "version": "0.0.75",
       "devDependencies": {
         "tsup": "^8.0.0",
         "typescript": "^5.3.0",
