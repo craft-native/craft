@@ -1,6 +1,6 @@
 {
   "name": "@craft-native/react",
-  "version": "0.0.70",
+  "version": "0.0.71",
   "private": true,
   "description": "React bindings for Craft framework",
   "main": "dist/index.js",

@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.70...v0.0.71)
+
+## 🐛 Bug Fixes
+
+- **release**: stop a missing Apple certificate from blocking every npm publish ([f6ce289](https://github.com/craft-native/craft/commit/f6ce289)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.71 ([0b54496](https://github.com/craft-native/craft/commit/0b54496)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ios**: publish the package, and spell its bin path the way npm wants ([11f4131](https://github.com/craft-native/craft/commit/11f4131)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.69...v0.0.70)
 
 ## 🐛 Bug Fixes
