@@ -1,11 +1,10 @@
 {
   "name": "@craft-native/ios",
   "version": "0.0.70",
-  "private": true,
   "description": "iOS native app builder for Craft",
   "type": "module",
   "bin": {
-    "craft-ios": "./dist/cli.js"
+    "craft-ios": "dist/cli.js"
   },
   "exports": {
     ".": {
