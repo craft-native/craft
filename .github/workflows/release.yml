@@ -160,6 +160,7 @@ jobs:
 
       - name: Sign macOS binary
         if: runner.os == 'macOS'
+        env:
           # Default to the strict distribution entitlements; CI can opt in to
           # the dev plist (sandbox off, library validation off) by setting
           # CRAFT_ENTITLEMENTS=dev for local debugging — never for release.
