@@ -1,7 +1,15 @@
 {
   "name": "@craft-native/android",
   "version": "0.0.72",
-  "private": true,
+  "homepage": "https://github.com/craft-native/craft/tree/main/packages/android#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/craft-native/craft.git",
+    "directory": "packages/android"
+  },
+  "bugs": {
+    "url": "https://github.com/craft-native/craft/issues"
+  },
   "description": "Android native app builder for Craft",
   "type": "module",
   "exports": {
