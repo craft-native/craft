@@ -14,6 +14,18 @@
  *
  * `--file` defaults to `.env.production`, which is the only encrypted file this
  * repository has.
+ *
+ * ## Why this is not `buddy env:get`
+ *
+ * It should be, and `buddy env:get` is a five-line wrapper around the two calls
+ * below — same functions, same crypto, same `DOTENV_PRIVATE_KEY_*` lookup. What
+ * stops it is installation rather than design: `@stacksjs/buddy` pulls the
+ * framework's whole tree, and a few of those packages are not published at the
+ * version buddy asks for, so `bunx @stacksjs/buddy env:get` cannot resolve
+ * outside a scaffolded application. See stacksjs/stacks — buddy's own
+ * undeclared dependencies are fixed as of 0.72.51; the publishing is not.
+ *
+ * When it installs cleanly, delete this file and call the command.
  */
 import process from 'node:process'
 import { getEnv, setEnv } from '@stacksjs/env'
