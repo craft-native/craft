@@ -844,6 +844,74 @@ async function createDMG(opts: {
  * - a signed `productbuild` submission package for the Mac App Store, which is
  *   the only form App Store Connect accepts.
  */
+/**
+ * The component property list `pkgbuild` is given for the app bundle.
+ *
+ * Written out rather than left to `pkgbuild`'s inference, because its default
+ * for a bundle is `BundleIsRelocatable = true`, which puts this in the package:
+ *
+ *     <relocate><bundle id="dev.example.app"/></relocate>
+ *
+ * That directive tells `installer` the payload path is only a suggestion: it
+ * looks the bundle identifier up on the target volume and, if the system has a
+ * copy of that bundle registered anywhere, writes the payload over *that* copy
+ * instead — and exits 0. The user sees "The install was successful" and finds
+ * nothing at /Applications.
+ *
+ * It is intermittent by nature, since it turns on whether the system has
+ * indexed some other copy yet, which is exactly how it behaved: the native
+ * lifecycle workflow's macOS legs failed only on slow runs, on both
+ * architectures, with `installer` reporting success and the app absent.
+ *
+ * `BundleIsVersionChecked` is off for a related reason — with it on, installing
+ * an *older* version over a newer one is skipped, which silently turns a
+ * rollback into a no-op.
+ *
+ * The `pkg-info` attribute `relocatable="false"` that appears either way is not
+ * this setting and does not govern it; only the `<relocate>` element does.
+ */
+export function pkgbuildComponentPlist(rootRelativeBundlePath: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>BundleIsRelocatable</key>
+        <false/>
+        <key>BundleIsVersionChecked</key>
+        <false/>
+        <key>BundleOverwriteAction</key>
+        <string>upgrade</string>
+        <key>RootRelativeBundlePath</key>
+        <string>${xml(rootRelativeBundlePath)}</string>
+    </dict>
+</array>
+</plist>
+`
+}
+
+/** Build the `pkgbuild` argument list for a non-App-Store package. */
+export function pkgbuildArguments(opts: {
+  root: string
+  componentPlistPath: string
+  identifier: string
+  version: string
+  outputPath: string
+  installerIdentity?: string
+}): string[] {
+  return [
+    '--root', opts.root,
+    '--component-plist', opts.componentPlistPath,
+    '--identifier', opts.identifier,
+    '--version', opts.version,
+    '--install-location', '/',
+    ...(opts.installerIdentity ? ['--sign', opts.installerIdentity] : []),
+    opts.outputPath,
+  ]
+}
+
 async function createPKG(opts: {
   appBundlePath: string
   outputPath: string
@@ -879,18 +947,29 @@ async function createPKG(opts: {
   // path it should land in.
   const tempDir = mkdtempSync(join(tmpdir(), 'craft-pkg-'))
   try {
-    const appsDir = join(tempDir, 'Applications')
-    mkdirSync(appsDir, { recursive: true })
-    cpSync(opts.appBundlePath, join(appsDir, basename(opts.appBundlePath)), { recursive: true })
+    // A `root` child rather than tempDir itself, created 0755. mkdtemp makes
+    // its directory 0700, pkgbuild records the --root directory's own mode as
+    // the mode of `.`, and `.` under `--install-location /` is the target
+    // volume's root. Shipping a package that asks for `/` to be 0700 is not
+    // something to leave to the installer's discretion.
+    const root = join(tempDir, 'root')
+    const appsDir = join(root, 'Applications')
+    mkdirSync(appsDir, { recursive: true, mode: 0o755 })
+    chmodSync(root, 0o755)
+    const bundleName = basename(opts.appBundlePath)
+    cpSync(opts.appBundlePath, join(appsDir, bundleName), { recursive: true })
 
-    const built = await runTool('pkgbuild', [
-      '--root', tempDir,
-      '--identifier', opts.identifier,
-      '--version', opts.version,
-      '--install-location', '/',
-      ...(opts.installerIdentity ? ['--sign', opts.installerIdentity] : []),
-      opts.outputPath,
-    ])
+    const componentPlistPath = join(tempDir, 'component.plist')
+    writeFileSync(componentPlistPath, pkgbuildComponentPlist(`Applications/${bundleName}`))
+
+    const built = await runTool('pkgbuild', pkgbuildArguments({
+      root,
+      componentPlistPath,
+      identifier: opts.identifier,
+      version: opts.version,
+      outputPath: opts.outputPath,
+      installerIdentity: opts.installerIdentity,
+    }))
     return built.success
       ? { success: true, outputPath: opts.outputPath }
       : { success: false, error: built.error }

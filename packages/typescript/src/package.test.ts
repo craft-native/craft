@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, productbuildArguments, renderWixSource, shouldRetryHdiutil, windowsArchitecture, windowsExecutableName } from './package.js'
+import { candleArguments, codesignArguments, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, windowsArchitecture, windowsExecutableName } from './package.js'
 
 describe('Windows MSI packaging', () => {
   it('renders a deterministic major-upgrade installer without shell interpolation', () => {
@@ -48,6 +48,61 @@ describe('Windows MSI packaging', () => {
     expect(windowsArchitecture('x64')).toBe('x64')
     expect(windowsArchitecture('arm64')).toBe('arm64')
     expect(() => windowsArchitecture('mips')).toThrow('Unsupported Windows package architecture')
+  })
+})
+
+describe('macOS pkg relocation', () => {
+  it('pins the install path instead of letting the bundle be relocated', () => {
+    const plist = pkgbuildComponentPlist('Applications/Craft App.app')
+
+    // The one that matters. Left to pkgbuild, this is true, and the package
+    // then carries <relocate><bundle id="..."/></relocate> — which lets
+    // `installer` write the payload over any copy of that bundle the system
+    // has registered elsewhere and still exit 0. "The install was successful"
+    // with nothing at /Applications is that, and it is intermittent because it
+    // depends on what the system has indexed.
+    expect(plist).toContain('<key>BundleIsRelocatable</key>\n        <false/>')
+
+    // Off so that installing an older version over a newer one is not skipped;
+    // with it on, a rollback silently becomes a no-op.
+    expect(plist).toContain('<key>BundleIsVersionChecked</key>\n        <false/>')
+
+    expect(plist).toContain('<string>Applications/Craft App.app</string>')
+    expect(plist).toContain('<?xml version="1.0" encoding="UTF-8"?>')
+  })
+
+  it('escapes the bundle path rather than emitting broken XML', () => {
+    expect(pkgbuildComponentPlist('Applications/Ben & Co.app')).toContain('Applications/Ben &amp; Co.app')
+  })
+
+  it('always passes the component plist to pkgbuild', () => {
+    const args = pkgbuildArguments({
+      root: '/tmp/stage/root',
+      componentPlistPath: '/tmp/stage/component.plist',
+      identifier: 'dev.craft.lifecycle',
+      version: '1.0.0',
+      outputPath: '/tmp/out.pkg',
+    })
+    expect(args).toEqual([
+      '--root', '/tmp/stage/root',
+      '--component-plist', '/tmp/stage/component.plist',
+      '--identifier', 'dev.craft.lifecycle',
+      '--version', '1.0.0',
+      '--install-location', '/',
+      '/tmp/out.pkg',
+    ])
+
+    // Signing is additive and must not displace the component plist.
+    const signed = pkgbuildArguments({
+      root: '/tmp/stage/root',
+      componentPlistPath: '/tmp/stage/component.plist',
+      identifier: 'dev.craft.lifecycle',
+      version: '1.0.0',
+      outputPath: '/tmp/out.pkg',
+      installerIdentity: '3rd Party Mac Developer Installer: Example',
+    })
+    expect(signed).toContain('--component-plist')
+    expect(signed.slice(-3, -1)).toEqual(['--sign', '3rd Party Mac Developer Installer: Example'])
   })
 })
 

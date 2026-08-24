@@ -155,10 +155,21 @@ async function exerciseMacOS(v1: PackageResult[], v2: PackageResult[]): Promise<
   const second = requireArtifact(v2, 'pkg')
   const app = '/Applications/craft-lifecycle.app'
   const executable = join(app, 'Contents', 'MacOS', 'craft-lifecycle')
+  // `installer` can report success and put the payload somewhere else entirely:
+  // a package built with bundle relocation enabled is redirected to wherever the
+  // system already has that bundle identifier registered. When that happened
+  // here the only symptom was `launch` throwing ENOENT, which says nothing about
+  // where the app went. The receipt does — `location:` is the path the payload
+  // actually landed at — so record it as its own step, into report.json and the
+  // uploaded evidence, every time.
+  const receipt = (label: string) => command(`receipt after ${label}`, ['pkgutil', '--pkg-info', 'dev.craft.lifecycle'])
+
   if (existsSync(app)) await command('remove pre-existing fixture', ['sudo', 'rm', '-rf', app])
   await command('install v1', ['sudo', 'installer', '-pkg', first, '-target', '/'])
+  await receipt('install v1')
   await command('launch v1', [executable], 'craft-lifecycle 1.0.0')
   await command('update to v2', ['sudo', 'installer', '-pkg', second, '-target', '/'])
+  await receipt('update to v2')
   await command('launch v2', [executable], 'craft-lifecycle 1.0.1')
   for (const step of macOSRollbackPlan(app, 'dev.craft.lifecycle', first))
     await command(step.name, step.argv)

@@ -96,8 +96,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-lifecycle-${{ matrix.name }}
-          path: |
-            artifacts/native-lifecycle/${{ matrix.name }}/report.json
-            artifacts/native-lifecycle/${{ matrix.name }}/work/packages-*/**
+          # Everything, not just report.json and the packages directory. The
+          # macOS relocation bug took a workflow dispatch to diagnose because
+          # the compiled fixtures at work/craft-lifecycle-* were outside the
+          # uploaded subtree, so the artifact alone could not answer what the
+          # runner had actually built.
+          path: artifacts/native-lifecycle/${{ matrix.name }}/**
           if-no-files-found: error
           retention-days: 90
