@@ -215,6 +215,21 @@ export interface PackageConfig {
      * the helper lands next to `process.execPath`.
      */
     additionalExecutables?: string[]
+
+    /**
+     * URL schemes the app registers as a handler for — `['myapp']` makes
+     * `myapp://…` open it.
+     *
+     * Emitted as `CFBundleURLTypes`. Without this key macOS never dispatches
+     * a URL to the app at all, so Craft's receive path (the `kAEGetURL`
+     * AppleEvent handler behind `craft.deepLink`) can be fully working and
+     * still never hear anything.
+     *
+     * Schemes are matched case-insensitively by LaunchServices and are
+     * global to the machine: pick something specific to the app, not `app`
+     * or `open`.
+     */
+    urlSchemes?: string[]
   }
 
   /** Windows-specific options */
@@ -341,6 +356,7 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
     category: opts.category,
     minimumSystemVersion: opts.minimumSystemVersion,
     menuBarOnly: opts.menuBarOnly,
+    urlSchemes: opts.urlSchemes,
     binaryPath: config.binaryPath,
     iconPath: config.iconPath,
     provisioningProfile: opts.provisioningProfile,
@@ -594,6 +610,60 @@ export interface MacOSBundleMetadata {
   minimumSystemVersion?: string
   /** Sets `LSUIElement` — no Dock icon, no app switcher entry */
   menuBarOnly?: boolean
+  /** URL schemes the app handles, emitted as `CFBundleURLTypes` */
+  urlSchemes?: string[]
+}
+
+/**
+ * A URL scheme, as RFC 3986 defines one: a letter, then letters, digits, `+`,
+ * `-` and `.`.
+ *
+ * Worth rejecting at package time rather than passing through, because the
+ * failure is otherwise invisible: LaunchServices ignores a malformed scheme,
+ * the app installs and runs, and links simply never arrive — which is the
+ * exact shape of bug this key exists to fix.
+ */
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*$/i
+
+/**
+ * `CFBundleURLTypes` for the schemes an app handles, or `null` if it handles
+ * none.
+ *
+ * All the schemes go in one URL type. They are alternatives for reaching the
+ * same app, not different kinds of document, so splitting them across several
+ * dicts would only invent distinctions LaunchServices does not care about.
+ */
+export function urlTypesEntry(bundleId: string, schemes: readonly string[]): string | null {
+  const seen = new Set<string>()
+  const unique: string[] = []
+
+  for (const scheme of schemes) {
+    if (!URL_SCHEME.test(scheme))
+      throw new Error(`Invalid URL scheme ${JSON.stringify(scheme)}: must start with a letter and contain only letters, digits, "+", "-" or "."`)
+    // LaunchServices matches case-insensitively, so `MyApp` and `myapp` are
+    // one scheme declared twice.
+    const key = scheme.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(scheme)
+  }
+
+  if (unique.length === 0) return null
+
+  const list = unique.map(scheme => `          <string>${xml(scheme)}</string>`).join('\n')
+  return `    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>${xml(bundleId)}</string>
+        <key>CFBundleTypeRole</key>
+        <string>Viewer</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+${list}
+        </array>
+      </dict>
+    </array>`
 }
 
 /**
@@ -618,9 +688,15 @@ export function macOSInfoPlist(metadata: MacOSBundleMetadata): string {
   if (metadata.minimumSystemVersion) entries.push(['LSMinimumSystemVersion', metadata.minimumSystemVersion])
   if (metadata.menuBarOnly) entries.push(['LSUIElement', true])
 
-  const body = entries
+  const scalars = entries
     .map(([key, value]) => `    <key>${xml(key)}</key>\n${value === true ? '    <true/>' : `    <string>${xml(value)}</string>`}`)
     .join('\n')
+
+  // Appended after the scalars rather than mixed in: it is the one entry whose
+  // value is not a string or a boolean, and keeping the simple mapping above
+  // simple is worth the extra line here.
+  const urlTypes = urlTypesEntry(metadata.bundleId, metadata.urlSchemes || [])
+  const body = urlTypes ? `${scalars}\n${urlTypes}` : scalars
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
