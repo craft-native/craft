@@ -58,6 +58,22 @@ export interface WindowOptions {
   title?: string
 
   /**
+   * Remember this window's size and position across launches, under this name
+   * (macOS).
+   *
+   * `width`/`height`/`x`/`y` become **first-launch defaults**: they are what
+   * the window opens at until there is a saved frame to restore, and the saved
+   * frame wins from then on. Without this the window forgets its geometry
+   * every launch, and an app that wants the standard behaviour has to wire
+   * `onResize`/`onMove` to its own storage and reimplement what AppKit does in
+   * one call.
+   *
+   * The name is the key AppKit stores under, so it must be stable across
+   * launches and distinct per window.
+   */
+  frameAutosave?: string
+
+  /**
    * Window width in pixels
    * @default 800
    */

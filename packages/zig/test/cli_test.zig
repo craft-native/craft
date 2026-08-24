@@ -278,3 +278,37 @@ test "parseArgs - a name with spaces survives as one argument" {
     defer freeOptions(&options);
     try testing.expectEqualStrings("My Great App", options.app_name.?);
 }
+
+test "parseArgs - --frame-autosave is read and owned" {
+    var options = try parse(&.{ "craft", "--frame-autosave", "main" });
+    defer freeOptions(&options);
+    try testing.expectEqualStrings("main", options.frame_autosave.?);
+}
+
+test "parseArgs - --frame-autosave defaults to absent" {
+    // Absent means the window forgets its geometry, which is what craft did
+    // before this flag existed and must keep doing for apps that never ask.
+    var options = try parse(&.{ "craft", "http://localhost:3000" });
+    defer freeOptions(&options);
+    try testing.expect(options.frame_autosave == null);
+}
+
+test "parseArgs - --frame-autosave leaves the explicit geometry alone" {
+    // The two are not alternatives: the geometry flags are what the window
+    // opens at the first time, before anything has been saved to restore.
+    var options = try parse(&.{
+        "craft",           "--frame-autosave", "main", "--width", "900",
+        "--height",        "700",              "--x",  "40",      "--y",
+        "60",
+    });
+    defer freeOptions(&options);
+    try testing.expectEqualStrings("main", options.frame_autosave.?);
+    try testing.expectEqual(@as(u32, 900), options.width);
+    try testing.expectEqual(@as(u32, 700), options.height);
+    try testing.expectEqual(@as(i32, 40), options.x.?);
+    try testing.expectEqual(@as(i32, 60), options.y.?);
+}
+
+test "parseArgs - --frame-autosave without a value is an error, not a silent skip" {
+    try testing.expectError(cli.CliError.MissingValue, parse(&.{ "craft", "--frame-autosave" }));
+}

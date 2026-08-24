@@ -46,6 +46,9 @@ pub const WindowOptions = struct {
     // — so every app launched through the shared `craft` binary called itself
     // "craft". macOS only.
     app_name: ?[]const u8 = null,
+    // Name AppKit remembers this window's size and position under, so the app
+    // opens where the user last left it. Null means it forgets every launch.
+    frame_autosave: ?[]const u8 = null,
 };
 
 pub const CliError = error{
@@ -73,6 +76,7 @@ pub fn freeOptionStrings(allocator: std.mem.Allocator, options: *WindowOptions) 
     if (options.sidebar_config) |s| allocator.free(s);
     if (options.icon) |s| allocator.free(s);
     if (options.app_name) |s| allocator.free(s);
+    if (options.frame_autosave) |s| allocator.free(s);
     if (options.eval_source) |s| allocator.free(s);
     if (options.eval_file) |s| allocator.free(s);
     options.* = WindowOptions{};
@@ -141,6 +145,7 @@ const BundleConfig = struct {
     url: ?[]const u8 = null,
     title: ?[]const u8 = null,
     appName: ?[]const u8 = null,
+    frameAutosave: ?[]const u8 = null,
     width: ?u32 = null,
     height: ?u32 = null,
     icon: ?[]const u8 = null,
@@ -228,6 +233,7 @@ fn loadBundleConfig(allocator: std.mem.Allocator) ?WindowOptions {
     if (cfg.url) |v| options.url = allocator.dupe(u8, v) catch null;
     if (cfg.title) |v| options.title = allocator.dupe(u8, v) catch options.title;
     if (cfg.appName) |v| options.app_name = allocator.dupe(u8, v) catch null;
+    if (cfg.frameAutosave) |v| options.frame_autosave = allocator.dupe(u8, v) catch null;
     if (cfg.icon) |v| options.icon = allocator.dupe(u8, v) catch null;
     applyScalarConfig(cfg, &options);
 
@@ -323,6 +329,19 @@ test "a manifest can name the app without naming the window" {
 
     try std.testing.expectEqualStrings("Untitled — Hush", parsed.value.title.?);
     try std.testing.expectEqualStrings("Hush", parsed.value.appName.?);
+}
+
+test "a manifest can ask for its window frame to be remembered" {
+    const source =
+        \\{"title":"Hush","frameAutosave":"main"}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualStrings("main", parsed.value.frameAutosave.?);
 }
 
 test "unknown manifest keys are ignored rather than failing the launch" {
@@ -485,6 +504,10 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
             options.app_name = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--frame-autosave")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            options.frame_autosave = try allocator.dupe(u8, args[i]);
         } else if (!std.mem.startsWith(u8, arg, "--")) {
             // Treat as positional URL argument
             if (options.url == null) {
@@ -551,6 +574,10 @@ fn printHelp() void {
         \\      --icon <PATH>        Path to dock icon image (PNG/JPG/ICNS)
         \\      --app-name <NAME>    Name in the menu bar and in About/Hide/Quit
         \\                           (macOS; defaults to the executable name)
+        \\      --frame-autosave <NAME>
+        \\                           Remember window size and position across
+        \\                           launches under NAME (macOS). --width/--height/
+        \\                           --x/--y become first-launch defaults.
         \\
         \\Debugging:
         \\      --debug              Enable debug output
@@ -575,6 +602,7 @@ fn printHelp() void {
         \\  craft http://localhost:3000 --system-tray --light
         \\  craft http://localhost:3000 --native-sidebar --sidebar-width 250
         \\  craft http://localhost:3000 --app-name "My App"
+        \\  craft http://localhost:3000 --frame-autosave main
         \\
         \\For more information, visit: https://github.com/home-lang/craft
         \\
