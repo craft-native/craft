@@ -1142,7 +1142,115 @@ export interface CraftBridgeAPI {
    * shortcut that can never fire is worse than one that was never accepted.
    */
   shortcuts?: CraftGlobalShortcutsAPI
+
+  /**
+   * A small scalar preference store (macOS: CFPreferences).
+   */
+  prefs?: CraftPreferencesAPI
+
+  /**
+   * The Cmd+, convention: where the App menu's Settings… item arrives.
+   */
+  settings?: CraftSettingsAPI
 }
+
+/**
+ * The only value types `craft.prefs` stores.
+ *
+ * Anything else is refused in the page, before it can reach native. That is
+ * deliberate rather than a limitation dodged: the preferences API raises an
+ * Objective-C exception for a value that is not a property-list type, and Zig
+ * cannot catch one — so refusing containers here is what makes that crash
+ * unreachable. Serialise structure yourself:
+ * `prefs.set(k, JSON.stringify(v))`.
+ */
+export type PreferenceValue = string | number | boolean
+
+export interface CraftPreferencesInfo {
+  /**
+   * The preferences domain in use — the bundle identifier inside a packaged
+   * `.app`, the executable's name otherwise.
+   */
+  domain: string
+  /** The key prefix craft namespaces its own preferences under. */
+  prefix: string
+  /** How many keys the app currently has stored. */
+  count: number
+  /** A copy-pasteable command that prints the domain. */
+  readCommand: string
+}
+
+/**
+ * A small preference store over the platform's own mechanism, so `defaults
+ * read` and a native settings pane both see what the app wrote.
+ *
+ * macOS only. Values are stored as native property-list types under a reserved
+ * key prefix, so clearing craft's preferences cannot disturb the AppKit and
+ * WebKit keys that share the same domain.
+ */
+export interface CraftPreferencesAPI {
+  /**
+   * Read a preference.
+   *
+   * `fallback` is returned when the key is absent — and also when what is
+   * stored is of a different type from the fallback, which is how a value left
+   * behind by an older build of the app degrades to the default rather than to
+   * a surprise. Call `get(key)` with no fallback to read whatever is stored.
+   *
+   * Rejects with `code: 'PREFS_FOREIGN_VALUE'` if something outside craft
+   * wrote a value craft cannot represent, rather than coercing it away.
+   */
+  get: <T extends PreferenceValue>(key: string, fallback?: T) => Promise<T | undefined>
+  /**
+   * Write a preference. Resolves once the value is on disk, not merely once
+   * the message was posted.
+   *
+   * Rejects with `code: 'PREFS_UNSUPPORTED_VALUE'` for anything that is not a
+   * string, number or boolean; `'PREFS_NON_FINITE'` for NaN or Infinity;
+   * `'PREFS_VALUE_TOO_LARGE'` past 8 KiB; `'PREFS_BAD_KEY'` for a key outside
+   * `/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/`.
+   */
+  set: (key: string, value: PreferenceValue) => Promise<void>
+  /** Remove a preference. Resolves to whether it was there to begin with. */
+  delete: (key: string) => Promise<boolean>
+  /**
+   * Remove every preference this app has set, and nothing else. Resolves to
+   * how many were removed.
+   */
+  clear: () => Promise<number>
+  /** Every key this app has set, sorted. */
+  keys: () => Promise<string[]>
+  /**
+   * Which domain the preferences are actually landing in.
+   *
+   * Worth having: an unbundled dev-mode binary writes to a domain named after
+   * the executable while a packaged `.app` writes to its bundle identifier, so
+   * preferences set during development can appear to vanish once the app is
+   * packaged.
+   */
+  info: () => Promise<CraftPreferencesInfo>
+}
+
+/**
+ * The Cmd+, convention.
+ *
+ * craft's default App menu ships a `Settings…` item, and this is where its
+ * click arrives. An app that replaces the whole menu bar with
+ * `craft.menu.set()` loses the default item, and can declare
+ * `{ id: 'settings', role: 'settings', label: 'Settings…', shortcut: 'cmd+,' }`
+ * to get it back — the same handler answers either way.
+ */
+export interface CraftSettingsAPI {
+  /** Subscribe to Settings being opened. Returns an unsubscribe function. */
+  onOpen: (handler: (event: { source: string }) => void) => () => void
+  /**
+   * Open settings from the app's own UI — a gear button, say — so it lands in
+   * the same handler as Cmd+, rather than needing a second code path. Purely
+   * page-local; nothing crosses the bridge.
+   */
+  open: (source?: string) => Promise<void>
+}
+
 
 /** A global hotkey, as `craft.shortcuts.list()` reports it. */
 export interface GlobalShortcut {

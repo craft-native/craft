@@ -360,6 +360,22 @@
     }
   }
 
+  // The default App-menu Settings… item — and any `role: 'settings'` item an
+  // app declares — fires this. Its own event, not `craft:menu:action`: an app
+  // that never calls craft.menu.set() should not have to subscribe to a menu
+  // API it does not use, and a "reserved" menu id would be indistinguishable
+  // from an app-declared item that happened to pick the same string.
+  window.__craftSettingsListeners = window.__craftSettingsListeners || 0
+  window.__craftSettingsOpen = function () {
+    // The one genuinely silent case: an enabled Cmd+, in a page with no
+    // handler. Saying so once beats leaving it a mystery, and it is why the
+    // item can ship always-present rather than opt-in.
+    if (window.__craftSettingsListeners === 0 && typeof console !== 'undefined' && console.info) {
+      console.info('[craft] Settings… was chosen but nothing is listening. Subscribe with craft.settings.onOpen(() => { … }).')
+    }
+    window.dispatchEvent(new CustomEvent('craft:settings:open', { detail: { source: 'menu' } }))
+  }
+
   // -------------------------------------------------------------------------
   // window — full surface from bridge_window.zig
   // -------------------------------------------------------------------------
@@ -560,6 +576,165 @@
     list:           function ()   { return _req('shortcuts', 'list').then(function (r) { return (r && r.shortcuts) || [] }) },
     on:             _evt('craft:shortcut'),
     onError:        _evt('craft:shortcut:error'),
+  }
+
+  // -------------------------------------------------------------------------
+  // settings — the Cmd+, convention
+  // -------------------------------------------------------------------------
+  // craft's default App menu ships a Settings… item; this is where its click
+  // arrives. `open()` is page-local, so a gear button in your own toolbar
+  // reaches the same handler without duplicating it.
+  window.craft.settings = {
+    onOpen: function (cb) {
+      window.__craftSettingsListeners++
+      const off = _evt('craft:settings:open')(cb)
+      let released = false
+      return function () {
+        if (released) return
+        released = true
+        window.__craftSettingsListeners--
+        off()
+      }
+    },
+    open: function (source) {
+      window.dispatchEvent(new CustomEvent('craft:settings:open',
+        { detail: { source: String(source || 'app') } }))
+      return Promise.resolve()
+    },
+  }
+
+  // -------------------------------------------------------------------------
+  // prefs — a small scalar preference store (macOS: CFPreferences)
+  // -------------------------------------------------------------------------
+  // Stores string, number and boolean, and nothing else on purpose. The
+  // preferences API raises an Objective-C exception for a non-property-list
+  // value, and Zig cannot catch one — so refusing containers here is what makes
+  // that crash unreachable rather than merely unlikely. Serialise structure
+  // yourself: prefs.set(k, JSON.stringify(v)).
+  //
+  // Wire actions are namespace-qualified (`prefs:get`, never a bare `get`)
+  // because the pending-reply queue is keyed by action name alone. A bare
+  // `get` would be drained by keychain.get and tags.get; a bare
+  // `set`/`delete`/`clear` would be *resolved* by other bridges that emit a
+  // result under those names without their own facades ever waiting for one.
+  const PREFS_KEY_RE = /^[a-z0-9][\w.-]{0,63}$/i
+  const PREFS_MAX_VALUE_BYTES = 8192
+  // A local plist read that has not answered in two seconds is not going to;
+  // the 30-second default is for things like modal dialogs.
+  const PREFS_TIMEOUT_MS = 2000
+
+  function _prefsErr(Ctor, code, message) {
+    const e = new Ctor(message)
+    e.code = code
+    return e
+  }
+
+  function _prefsKey(fn, key) {
+    if (typeof key === 'string' && PREFS_KEY_RE.test(key)) return null
+    return _prefsErr(TypeError, 'PREFS_BAD_KEY', `craft.prefs.${fn}: invalid key ${_stringify(key)} — keys must match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/`)
+  }
+
+  function _prefsUtf8Len(s) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(s).length
+    return unescape(encodeURIComponent(s)).length
+  }
+
+  function _prefsEncode(key, value) {
+    const q = JSON.stringify(key)
+    const t = typeof value
+
+    if (t === 'string') {
+      const bytes = _prefsUtf8Len(value)
+      if (bytes > PREFS_MAX_VALUE_BYTES) {
+        return { err: _prefsErr(RangeError, 'PREFS_VALUE_TOO_LARGE', `craft.prefs.set(${q}): value is ${bytes} bytes, limit is ${PREFS_MAX_VALUE_BYTES} — write data this size with craft.fs, not prefs.`) }
+      }
+      return { d: { k: key, t: 's', s: value } }
+    }
+
+    if (t === 'boolean') return { d: { k: key, t: 'b', b: value } }
+
+    if (t === 'number') {
+      if (!isFinite(value)) {
+        return { err: _prefsErr(TypeError, 'PREFS_NON_FINITE', `craft.prefs.set(${q}): ${String(value)} cannot be stored — prefs holds finite numbers only.`) }
+      }
+      if (Number.isInteger(value) && Math.abs(value) <= Number.MAX_SAFE_INTEGER)
+        return { d: { k: key, t: 'i', i: value } }
+      return { d: { k: key, t: 'd', n: value } }
+    }
+
+    const kind = value === null
+      ? 'null'
+      : Array.isArray(value)
+        ? 'array'
+        : t === 'object' ? ((value.constructor && value.constructor.name) || 'object') : t
+
+    let msg = `craft.prefs.set(${q}): prefs stores string, number and boolean only — got ${kind}. `
+      + `Serialise it yourself: craft.prefs.set(${q}, JSON.stringify(value)) and JSON.parse(await craft.prefs.get(${q}, "null")).`
+    if (value === null || t === 'undefined')
+      msg += ` To remove a key, call craft.prefs.delete(${q}).`
+    return { err: _prefsErr(TypeError, 'PREFS_UNSUPPORTED_VALUE', msg) }
+  }
+
+  window.craft.prefs = {
+    get: function (key, fallback) {
+      const bad = _prefsKey('get', key)
+      if (bad) return Promise.reject(bad)
+      return _req('prefs', 'prefs:get', _stringify({ k: key }), PREFS_TIMEOUT_MS).then(function (r) {
+        const tag = r && r.t
+        if (tag === 'none') return fallback
+        if (tag === 'other') {
+          throw _prefsErr(TypeError, 'PREFS_FOREIGN_VALUE', `craft.prefs.get(${JSON.stringify(key)}): the stored value is a ${r.cf || 'non-scalar'}, `
+            + `which craft.prefs cannot represent. Something outside craft wrote it (e.g. \`defaults write\`). `
+            + `craft.prefs.delete(${JSON.stringify(key)}) removes it.`)
+        }
+        let v
+        if (tag === 's') v = r.s
+        else if (tag === 'i') v = r.i
+        else if (tag === 'd') v = r.n
+        else if (tag === 'b') v = !!r.b
+        else return fallback
+        // A fallback also declares the expected type, so a value left behind by
+        // an older build of the app hands back the default rather than a
+        // surprise. Call get(key) with no fallback to read whatever is stored.
+        if (fallback !== undefined && typeof v !== typeof fallback) return fallback
+        return v
+      })
+    },
+
+    set: function (key, value) {
+      const bad = _prefsKey('set', key)
+      if (bad) return Promise.reject(bad)
+      const enc = _prefsEncode(key, value)
+      if (enc.err) return Promise.reject(enc.err)
+      // A request, not fire-and-forget: a resolved set() has to mean the bytes
+      // are on disk, and fire-and-forget has no rejection channel at all.
+      return _req('prefs', 'prefs:set', _stringify(enc.d), PREFS_TIMEOUT_MS)
+        .then(function () { return undefined })
+    },
+
+    delete: function (key) {
+      const bad = _prefsKey('delete', key)
+      if (bad) return Promise.reject(bad)
+      return _req('prefs', 'prefs:delete', _stringify({ k: key }), PREFS_TIMEOUT_MS)
+        .then(function (r) { return !!(r && r.existed) })
+    },
+
+    clear: function () {
+      return _req('prefs', 'prefs:clear', '{}', PREFS_TIMEOUT_MS)
+        .then(function (r) { return (r && r.removed) || 0 })
+    },
+
+    keys: function () {
+      return _req('prefs', 'prefs:keys', '{}', PREFS_TIMEOUT_MS)
+        .then(function (r) { return (r && r.keys) || [] })
+    },
+
+    // Which preferences domain is actually in use, and the command to read it.
+    // An unbundled dev binary writes to a domain named after the executable and
+    // a packaged .app writes to its bundle id, so preferences set in
+    // development can appear to vanish once the app is packaged. This makes
+    // that a question with an answer.
+    info: function () { return _req('prefs', 'prefs:info', '{}', PREFS_TIMEOUT_MS) },
   }
 
   // -------------------------------------------------------------------------

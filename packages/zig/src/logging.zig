@@ -291,6 +291,7 @@ pub const system = scoped("System");
 pub const webview = scoped("WebView");
 pub const marketplace = scoped("Marketplace");
 pub const shortcuts = scoped("Shortcuts");
+pub const prefs = scoped("Prefs");
 
 // ============================================
 // Tests
