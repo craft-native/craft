@@ -104,6 +104,10 @@ pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else str
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false,
+    /// Accepted so `minimal.zig` can pass one `WindowStyle` on every platform,
+    /// and ignored: remembering a window frame is `setFrameAutosaveName:`, an
+    /// AppKit facility with no counterpart wired up on GTK or Win32 yet.
+    frame_autosave: ?[]const u8 = null,
 };
 
 pub const Window = struct {
