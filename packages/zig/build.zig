@@ -165,10 +165,6 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/menubar.zig"),
     });
 
-    const bridge_menu_module = b.createModule(.{
-        .root_source_file = b.path("src/bridge_menu.zig"),
-    });
-
     const components_module = b.createModule(.{
         .root_source_file = b.path("src/components.zig"),
     });
@@ -561,6 +557,54 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Accelerator strings ("Cmd+Shift+H") and the Carbon hotkey binding they
+    // are registered through. Both are pure enough to test without a window.
+    const accelerator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/accelerator.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const macos_hotkey_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/macos_hotkey.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    if (target_os == .macos) {
+        // These tests put a real `EventRef` through Carbon's own dispatcher —
+        // the only way to find out whether the handler signature and the
+        // `EventHotKeyID` layout are what Carbon expects, short of pressing
+        // the key on a Mac.
+        macos_hotkey_tests.root_module.linkFramework("Carbon", .{});
+        macos_hotkey_tests.root_module.link_libc = true;
+    }
+
+    // The global-shortcut registry: register / replace / disable / unregister,
+    // driven against a fake platform so the whole lifecycle is covered without
+    // an app, a window or a key press.
+    const shortcut_registry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/shortcut_registry.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // The name <-> macOS virtual key code table that global shortcuts are
+    // registered from. Pure data, so it is tested here rather than by pressing
+    // keys at a running app.
+    const key_codes_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/key_codes.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     const config_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/config_test.zig"),
@@ -897,6 +941,10 @@ pub fn build(b: *std.Build) void {
     const run_space_list_tests = b.addRunArtifact(space_list_tests);
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
+    const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
+    const run_accelerator_tests = b.addRunArtifact(accelerator_tests);
+    const run_macos_hotkey_tests = b.addRunArtifact(macos_hotkey_tests);
+    const run_shortcut_registry_tests = b.addRunArtifact(shortcut_registry_tests);
     const run_config_tests = b.addRunArtifact(config_tests);
     const run_ipc_tests = b.addRunArtifact(ipc_tests);
     const run_performance_tests = b.addRunArtifact(performance_tests);
@@ -945,12 +993,17 @@ pub fn build(b: *std.Build) void {
                     .optimize = optimize,
                     .imports = &.{
                         .{ .name = "js", .module = js_dep.module("js") },
-                        // The native half of the menu contract. The test drives
-                        // the real craft-bridge.js and then decodes what it
-                        // posted with the very parser `setAppMenu` uses, so a
-                        // rename on either side fails the build rather than
-                        // silently producing a menu nobody can click (#27, #31).
-                        .{ .name = "../src/bridge_menu.zig", .module = bridge_menu_module },
+                        // The native halves of the contracts under test. The
+                        // test drives the real craft-bridge.js and then decodes
+                        // what it posted with the very code the bridge
+                        // dispatches to, so a rename on either side fails the
+                        // build rather than silently producing a menu nobody
+                        // can click (#27, #31) or a hotkey that never fires
+                        // (#47). One module, because both reach
+                        // `bridge_error.zig` — see the file's own comment.
+                        .{ .name = "bridge_contracts", .module = b.createModule(.{
+                            .root_source_file = b.path("src/bridge_contracts.zig"),
+                        }) },
                     },
                 }),
             });
@@ -998,6 +1051,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
+    test_step.dependOn(&run_key_codes_tests.step);
+    test_step.dependOn(&run_accelerator_tests.step);
+    test_step.dependOn(&run_macos_hotkey_tests.step);
+    test_step.dependOn(&run_shortcut_registry_tests.step);
     test_step.dependOn(&run_config_tests.step);
     test_step.dependOn(&run_ipc_tests.step);
     test_step.dependOn(&run_performance_tests.step);
@@ -1096,6 +1153,16 @@ pub fn build(b: *std.Build) void {
 
     const test_menu_roles_step = b.step("test:menu-roles", "Run menu role table tests");
     test_menu_roles_step.dependOn(&run_menu_roles_tests.step);
+
+    const test_key_codes_step = b.step("test:key-codes", "Run key code table tests");
+    test_key_codes_step.dependOn(&run_key_codes_tests.step);
+
+    const test_accelerator_step = b.step("test:accelerator", "Run accelerator parsing tests");
+    test_accelerator_step.dependOn(&run_accelerator_tests.step);
+    test_accelerator_step.dependOn(&run_macos_hotkey_tests.step);
+
+    const test_shortcut_registry_step = b.step("test:shortcut-registry", "Run global shortcut registry tests");
+    test_shortcut_registry_step.dependOn(&run_shortcut_registry_tests.step);
 
     const test_config_step = b.step("test:config", "Run Config tests");
     test_config_step.dependOn(&run_config_tests.step);
@@ -1599,6 +1666,11 @@ fn linkPlatformLibraries(b: *std.Build, module: *std.Build.Module, target_os: st
             // when the app dynamically loads them.
             module.linkFramework("CoreMIDI", .{});
             module.linkFramework("CoreSpotlight", .{});
+            // Carbon for `macos_hotkey.zig`: `RegisterEventHotKey` is the only
+            // route to a global hotkey that neither needs an Objective-C block
+            // (which Zig cannot write) nor Accessibility permission (which a
+            // CGEventTap would).
+            module.linkFramework("Carbon", .{});
             applySdkPaths(b, module, sdk_path);
         },
         .linux => {

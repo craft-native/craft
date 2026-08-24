@@ -539,6 +539,13 @@
   // -------------------------------------------------------------------------
   // shortcuts — global hotkeys
   // -------------------------------------------------------------------------
+  // `register` is fire-and-forget by necessity, not by choice: `_req` keys its
+  // pending queue by action name alone, and `register`/`enable`/`disable` are
+  // action names other bridges use too, so making these requests would mix
+  // replies between namespaces. `onError` is how a refused registration —
+  // the key already belongs to another app, or to the system — still reaches
+  // the caller. Registering a hotkey and never hearing that you did not get it
+  // is the bug this whole namespace was rewritten to fix (#47).
   window.craft.shortcuts = {
     register:       function (id, accelerator, opts) {
       return _send('shortcuts', 'register', _stringify(Object.assign({
@@ -552,6 +559,7 @@
     isRegistered:   function (id) { return _req('shortcuts', 'isRegistered', _stringify({ id: String(id) })).then(function (r) { return !!(r && r.value) }) },
     list:           function ()   { return _req('shortcuts', 'list').then(function (r) { return (r && r.shortcuts) || [] }) },
     on:             _evt('craft:shortcut'),
+    onError:        _evt('craft:shortcut:error'),
   }
 
   // -------------------------------------------------------------------------
