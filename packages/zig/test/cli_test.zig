@@ -230,3 +230,51 @@ test "WindowOptions - all boolean flags true" {
     try testing.expect(options.hot_reload);
     try testing.expect(options.system_tray);
 }
+
+// =============================================================================
+// parseArgs
+// =============================================================================
+//
+// These drive the real parser rather than constructing a `WindowOptions` by
+// hand, which is what the tests above do. A flag that is declared but never
+// wired into the argument loop passes every struct-shaped test in this file
+// and does nothing at all on the command line.
+
+fn parse(args: []const [:0]const u8) !cli.WindowOptions {
+    return cli.parseArgs(testing.allocator, args);
+}
+
+fn freeOptions(options: *cli.WindowOptions) void {
+    cli.freeOptionStrings(testing.allocator, options);
+}
+
+test "parseArgs - --app-name is read and owned" {
+    var options = try parse(&.{ "craft", "--app-name", "Harness" });
+    defer freeOptions(&options);
+    try testing.expectEqualStrings("Harness", options.app_name.?);
+    // The window title is a separate thing and must not be touched by it.
+    try testing.expectEqualStrings("Craft App", options.title);
+}
+
+test "parseArgs - --app-name and --title are independent" {
+    var options = try parse(&.{ "craft", "--app-name", "Hush", "--title", "Untitled" });
+    defer freeOptions(&options);
+    try testing.expectEqualStrings("Hush", options.app_name.?);
+    try testing.expectEqualStrings("Untitled", options.title);
+}
+
+test "parseArgs - --app-name defaults to absent" {
+    var options = try parse(&.{ "craft", "http://localhost:3000" });
+    defer freeOptions(&options);
+    try testing.expect(options.app_name == null);
+}
+
+test "parseArgs - --app-name without a value is an error, not a silent skip" {
+    try testing.expectError(cli.CliError.MissingValue, parse(&.{ "craft", "--app-name" }));
+}
+
+test "parseArgs - a name with spaces survives as one argument" {
+    var options = try parse(&.{ "craft", "--app-name", "My Great App" });
+    defer freeOptions(&options);
+    try testing.expectEqualStrings("My Great App", options.app_name.?);
+}

@@ -42,6 +42,12 @@ pub fn main(init: std.process.Init) !void {
         cli.freeOptionStrings(allocator, &owned);
     }
 
+    // Before anything builds a menu bar: `createApplicationMenu` reads the
+    // process name once, and both branches below reach it.
+    if (comptime builtin.os.tag == .macos) {
+        if (options.app_name) |name| craft.macos.setProcessName(name);
+    }
+
     // In benchmark mode, disable dev_tools for lower overhead
     const effective_dev_tools = if (options.benchmark) false else options.dev_tools;
 

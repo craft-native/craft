@@ -6162,8 +6162,35 @@ const default_menus = [_]DefaultMenu{
     .{ .title = "Window", .items = &window_menu_items, .is_windows_menu = true },
 };
 
+/// Set the name AppKit shows for this app.
+///
+/// `-[NSProcessInfo processName]` is what the App menu title and the
+/// "About X" / "Hide X" / "Quit X" items are built from, and for a bare binary
+/// it is the executable's name — so every app launched through the shared
+/// `craft` binary called itself "craft" in the menu bar. Setting it is the
+/// whole of `--app-name`, and it is what makes a dev-mode app look like itself
+/// without a packaging step.
+///
+/// Not the *kernel's* idea of the process name: `ps` and Activity Monitor read
+/// that from the executable, and nothing running inside the process can change
+/// it. Renaming there needs either a real `.app` bundle or an exec under a
+/// different name.
+///
+/// Must run before `createApplicationMenu`, which reads the name once.
+pub fn setProcessName(name: []const u8) void {
+    // An empty name would leave the menu bar with a blank App menu and no way
+    // to tell it apart from a missing one.
+    if (name.len == 0) return;
+
+    const NSProcessInfo = getClass("NSProcessInfo");
+    const info = msgSend0(NSProcessInfo, "processInfo");
+    if (info == null) return;
+    msgSendVoid1(info, "setProcessName:", createNSString(name));
+}
+
 /// The app's display name: `-[NSProcessInfo processName]`, which is the
-/// executable name for a bare binary and CFBundleName inside a `.app`.
+/// executable name for a bare binary, CFBundleName inside a `.app`, and
+/// whatever `--app-name` said if it was given.
 ///
 /// Copied into `buf` because the titles built from it are formatted, and a
 /// name too long to fit is reported as absent rather than truncated — a cut

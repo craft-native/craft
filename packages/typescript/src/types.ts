@@ -539,6 +539,20 @@ export interface AppConfig {
   window?: WindowOptions
 
   /**
+   * The name macOS shows for the app: the App menu title, and the
+   * "About X" / "Hide X" / "Quit X" items.
+   *
+   * Without it those read the executable's name, so every app launched
+   * through the shared `craft` binary calls itself "craft" in the menu bar.
+   * A packaged `.app` gets this from `CFBundleName` instead; this is what
+   * gives a dev-mode app its identity back without a packaging step.
+   *
+   * Not the name `ps` and Activity Monitor show — that comes from the
+   * executable and cannot be changed from inside the process.
+   */
+  appName?: string
+
+  /**
    * Path to Craft binary (auto-detected if not provided)
    */
   craftPath?: string
