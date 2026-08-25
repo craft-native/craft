@@ -1,6 +1,25 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
+const capabilities = @import("capabilities.zig");
+
+/// The action names this bridge dispatches on.
+///
+/// Declared once, here, and referenced by both the dispatch chain below and the
+/// capability table beside it — so the two cannot disagree. That is enforced:
+/// `test/capabilities_test.zig` fails if a declared bridge compares `action`
+/// against a bare string literal anywhere, which makes it impossible to add an
+/// action without also declaring it.
+pub const A = struct {
+    pub const get_displays = "getDisplays";
+    pub const get_primary = "getPrimary";
+};
+
+/// What craft serves on the `screen` namespace.
+pub const capability_actions = [_]capabilities.ActionDecl{
+    .{ .name = A.get_displays, .reply = .result },
+    .{ .name = A.get_primary, .reply = .result },
+};
 
 const BridgeError = bridge_error.BridgeError;
 
@@ -25,9 +44,9 @@ pub const ScreenBridge = struct {
     }
 
     pub fn handleMessage(self: *Self, action: []const u8, _: []const u8) !void {
-        if (std.mem.eql(u8, action, "getDisplays")) {
+        if (std.mem.eql(u8, action, A.get_displays)) {
             try self.getDisplays();
-        } else if (std.mem.eql(u8, action, "getPrimary")) {
+        } else if (std.mem.eql(u8, action, A.get_primary)) {
             try self.getPrimary();
         } else {
             return BridgeError.UnknownAction;
@@ -98,6 +117,16 @@ pub const ScreenBridge = struct {
 var screen_observer_installed = false;
 var screen_observer_instance: @import("macos.zig").objc.id = null;
 
+/// The permit to dispatch `craft:screen:change`, taken out when the observer is
+/// actually installed.
+///
+/// Null until then, and that is the point: `craft.capabilities()` reports this
+/// channel live only because this line ran, not because a table said so. On a
+/// build where the observer never installs — a non-macOS target, or a failed
+/// class registration below — the page is told the channel is dead instead of
+/// subscribing to something that will never fire.
+var screen_change_emitter: ?capabilities.Emitter = null;
+
 fn installScreenChangeObserver() void {
     if (screen_observer_installed) return;
     if (builtin.os.tag != .macos) return;
@@ -126,11 +155,15 @@ fn installScreenChangeObserver() void {
     f(center, macos.sel("addObserver:selector:name:object:"), screen_observer_instance, macos.sel("onScreenChange:"), note_name, @as(objc.id, null));
 
     screen_observer_installed = true;
+    screen_change_emitter = capabilities.registerEmitter(.screen_change);
 }
 
 export fn handleScreenChange(_: @import("macos.zig").objc.id, _: @import("macos.zig").objc.SEL, _: @import("macos.zig").objc.id) callconv(.c) void {
     const macos = @import("macos.zig");
     const webview = macos.getGlobalWebView() orelse return;
+    // Named through the emitter rather than spelled again here, so the string
+    // the page listens for and the string capabilities reports are one string.
+    _ = screen_change_emitter orelse return;
     const script = "if (window.dispatchEvent) window.dispatchEvent(new CustomEvent('craft:screen:change'));";
     const NSString = macos.getClass("NSString");
     const js = macos.msgSend1(NSString, "stringWithUTF8String:", @as([*:0]const u8, script));

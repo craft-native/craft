@@ -4,6 +4,48 @@ const tray_menu = @import("tray_menu.zig");
 const bridge_error = @import("bridge_error.zig");
 const logging = @import("logging.zig");
 const icons = @import("icons.zig");
+const capabilities = @import("capabilities.zig");
+
+/// The action names this bridge dispatches on.
+///
+/// Declared once, here, and referenced by both the dispatch chain below and the
+/// capability table beside it — so the two cannot disagree. That is enforced:
+/// `test/capabilities_test.zig` fails if a declared bridge compares `action`
+/// against a bare string literal anywhere, which makes it impossible to add an
+/// action without also declaring it.
+pub const A = struct {
+    pub const set_title = "setTitle";
+    pub const set_tooltip = "setTooltip";
+    pub const set_menu = "setMenu";
+    pub const poll_actions = "pollActions";
+    pub const hide = "hide";
+    pub const show = "show";
+    pub const set_icon = "setIcon";
+    pub const set_badge = "setBadge";
+};
+
+/// What craft serves on the `tray` namespace.
+pub const capability_actions = [_]capabilities.ActionDecl{
+    .{ .name = A.set_title, .reply = .none },
+    .{ .name = A.set_tooltip, .reply = .none },
+    .{ .name = A.set_menu, .reply = .none },
+    .{ .name = A.poll_actions, .reply = .none },
+    .{ .name = A.hide, .reply = .none },
+    .{ .name = A.show, .reply = .none },
+    .{ .name = A.set_icon, .reply = .none },
+    .{ .name = A.set_badge, .reply = .none },
+    // Reachable from JS, dispatched nowhere. `_send` resolves the moment the
+    // message is posted, so an app calling this gets a resolved promise and a
+    // tray icon that is still there. Declared rather than quietly fixed:
+    // whether "destroy" should remove the status item or is just `hide` under
+    // another name is an API question, not an introspection one.
+    .{
+        .name = "destroy",
+        .reply = .none,
+        .status = .unavailable,
+        .reason = "not implemented; call craft.tray.hide() instead",
+    },
+};
 
 const log = logging.tray;
 
@@ -115,21 +157,21 @@ pub const TrayBridge = struct {
     }
 
     fn handleMessageInternal(self: *Self, action: []const u8, data: []const u8) !void {
-        if (std.mem.eql(u8, action, "setTitle")) {
+        if (std.mem.eql(u8, action, A.set_title)) {
             try self.setTitle(data);
-        } else if (std.mem.eql(u8, action, "setTooltip")) {
+        } else if (std.mem.eql(u8, action, A.set_tooltip)) {
             try self.setTooltip(data);
-        } else if (std.mem.eql(u8, action, "setMenu")) {
+        } else if (std.mem.eql(u8, action, A.set_menu)) {
             try self.setMenu(data);
-        } else if (std.mem.eql(u8, action, "pollActions")) {
+        } else if (std.mem.eql(u8, action, A.poll_actions)) {
             try self.pollActions();
-        } else if (std.mem.eql(u8, action, "hide")) {
+        } else if (std.mem.eql(u8, action, A.hide)) {
             try self.hide();
-        } else if (std.mem.eql(u8, action, "show")) {
+        } else if (std.mem.eql(u8, action, A.show)) {
             try self.showTray();
-        } else if (std.mem.eql(u8, action, "setIcon")) {
+        } else if (std.mem.eql(u8, action, A.set_icon)) {
             try self.setIcon(data);
-        } else if (std.mem.eql(u8, action, "setBadge")) {
+        } else if (std.mem.eql(u8, action, A.set_badge)) {
             try self.setBadge(data);
         } else {
             return BridgeError.UnknownAction;

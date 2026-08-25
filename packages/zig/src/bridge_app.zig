@@ -1,6 +1,35 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
+const capabilities = @import("capabilities.zig");
+
+/// The action names this bridge dispatches on.
+///
+/// Declared once, here, and referenced by both the dispatch chain below and the
+/// capability table beside it — so the two cannot disagree. That is enforced:
+/// `test/capabilities_test.zig` fails if a declared bridge compares `action`
+/// against a bare string literal anywhere, which makes it impossible to add an
+/// action without also declaring it.
+pub const A = struct {
+    pub const hide_dock_icon = "hideDockIcon";
+    pub const show_dock_icon = "showDockIcon";
+    pub const quit = "quit";
+    pub const get_info = "getInfo";
+    pub const notify = "notify";
+    pub const set_badge = "setBadge";
+    pub const bounce = "bounce";
+};
+
+/// What craft serves on the `app` namespace.
+pub const capability_actions = [_]capabilities.ActionDecl{
+    .{ .name = A.hide_dock_icon, .reply = .none },
+    .{ .name = A.show_dock_icon, .reply = .none },
+    .{ .name = A.quit, .reply = .none },
+    .{ .name = A.get_info, .reply = .result },
+    .{ .name = A.notify, .reply = .none },
+    .{ .name = A.set_badge, .reply = .none },
+    .{ .name = A.bounce, .reply = .none },
+};
 
 /// Bridge handler for app-level control messages from JavaScript
 pub const AppBridge = struct {
@@ -22,19 +51,19 @@ pub const AppBridge = struct {
     }
 
     pub fn handleMessageWithData(self: *Self, action: []const u8, data: ?[]const u8) !void {
-        if (std.mem.eql(u8, action, "hideDockIcon")) {
+        if (std.mem.eql(u8, action, A.hide_dock_icon)) {
             try self.hideDockIcon();
-        } else if (std.mem.eql(u8, action, "showDockIcon")) {
+        } else if (std.mem.eql(u8, action, A.show_dock_icon)) {
             try self.showDockIcon();
-        } else if (std.mem.eql(u8, action, "quit")) {
+        } else if (std.mem.eql(u8, action, A.quit)) {
             try self.quit();
-        } else if (std.mem.eql(u8, action, "getInfo")) {
+        } else if (std.mem.eql(u8, action, A.get_info)) {
             try self.getInfo();
-        } else if (std.mem.eql(u8, action, "notify")) {
+        } else if (std.mem.eql(u8, action, A.notify)) {
             try self.notify(data);
-        } else if (std.mem.eql(u8, action, "setBadge")) {
+        } else if (std.mem.eql(u8, action, A.set_badge)) {
             try self.setBadge(data);
-        } else if (std.mem.eql(u8, action, "bounce")) {
+        } else if (std.mem.eql(u8, action, A.bounce)) {
             try self.bounce();
         } else {
             if (comptime builtin.mode == .debug)

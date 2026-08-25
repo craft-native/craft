@@ -18,6 +18,8 @@ const js = @import("js");
 const testing = std.testing;
 const contracts = @import("bridge_contracts");
 const bridge_menu = contracts.menu;
+const bridge_capabilities = contracts.capabilities;
+const capability_registry = contracts.registry;
 const prefs = contracts.prefs;
 const prefs_actions = contracts.prefs_actions;
 const shortcut_registry = contracts.shortcuts;
@@ -814,4 +816,99 @@ test "unsubscribing from settings stops delivery, and does not double-count" {
     // The listener counter drives a console hint when nothing is listening;
     // an unsubscribe called twice must not push it negative and silence it.
     try testing.expectEqualStrings("0", try fx.text("String(window.__craftSettingsListeners)"));
+}
+
+// =============================================================================
+// Capabilities (#49)
+// =============================================================================
+
+test "craft.capabilities posts the action the native bridge dispatches on" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("window.craft.capabilities();");
+
+    try testing.expectEqualStrings("1", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings("capabilities", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings(bridge_capabilities.A.get, try fx.text("posted[0].a"));
+}
+
+test "the manifest native builds is the shape the facade reads" {
+    // The contract carried across the boundary: the real registry rendered by
+    // the real renderer, handed to the real facade.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var caps = null;
+        \\window.craft.capabilities().then(function (c) { caps = c });
+    );
+
+    const manifest = try capability_registry.manifestJson(testing.allocator);
+    defer testing.allocator.free(manifest);
+
+    const script = try std.fmt.allocPrint(
+        testing.allocator,
+        "window.__craftBridgeResult('{s}',{s});",
+        .{ bridge_capabilities.A.get, manifest },
+    );
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("declared", try fx.text("caps.namespaces.clipboard.status"));
+    try testing.expectEqualStrings("unavailable", try fx.text("caps.namespaces.updater.status"));
+    // The reason is the difference between an app hunting a bug in its own code
+    // and an app knowing the answer.
+    try testing.expect(std.mem.indexOf(u8, try fx.text("caps.namespaces.updater.reason"), "Sparkle") != null);
+    try testing.expectEqualStrings("false", try fx.text("String(caps.channels['craft:fs:change'])"));
+}
+
+test "craft.supports answers from the manifest, and fails open without one" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+
+    // Before anything has asked, everything is supported. An older binary with
+    // no capabilities support must not make working code stop calling.
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.supports('updater.checkForUpdates'))"));
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.capabilitiesSync() === null)"));
+
+    _ = try ctx.evaluate("window.craft.capabilities();");
+    const manifest = try capability_registry.manifestJson(testing.allocator);
+    defer testing.allocator.free(manifest);
+    const script = try std.fmt.allocPrint(
+        testing.allocator,
+        "window.__craftBridgeResult('{s}',{s});",
+        .{ bridge_capabilities.A.get, manifest },
+    );
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    // Now it answers from the manifest.
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('updater'))"));
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('tray.destroy'))"));
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.supports('tray.setTitle'))"));
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.supports('clipboard.readText'))"));
+    // An undeclared namespace is not a missing one: craft claims nothing, so
+    // the app should try it rather than skip it.
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.supports('midi'))"));
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.supports('midi.anything'))"));
+    // A declared namespace does know its own action list, so an unknown action
+    // in one really is absent.
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('clipboard.noSuchAction'))"));
+    // `unrouted` is not `unavailable`, and both must answer false. This case is
+    // why the namespace-status check exists separately from the action one: a
+    // control experiment that deleted it left every other assertion here
+    // passing.
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('marketplace'))"));
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('marketplace.list'))"));
 }

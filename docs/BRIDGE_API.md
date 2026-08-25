@@ -11,6 +11,7 @@ The Craft JavaScript Bridge provides a seamless interface for your web applicati
 - [Global Shortcuts (macOS)](#global-shortcuts-macos)
 - [Settings and Preferences (macOS)](#settings-and-preferences-macos)
 - [Headless mode](#headless-mode)
+- [Capabilities](#capabilities)
 - [Window API](#window-api)
 - [App API](#app-api)
 - [TypeScript Support](#typescript-support)
@@ -520,6 +521,58 @@ sockets at all — and `safaridriver` refuses to attach to anything that is not
 Safari. Driving a craft page from another process needs a control channel craft
 owns, which does not exist yet.
 
+## Capabilities
+
+This script is one blob, `@embedFile`d into the binary and injected whole into
+every craft window — the same JavaScript whatever the native side behind it
+implements. So `typeof window.craft.tray.destroy === 'function'` has never been
+evidence that anything is behind it, and three shipped bugs came from assuming
+otherwise. Ask instead.
+
+```javascript
+const caps = await window.craft.capabilities()
+
+caps.namespaces.updater.status   // 'unavailable'
+caps.namespaces.updater.reason   // 'the Sparkle framework is not linked into this build'
+caps.channels['craft:fs:change'] // false — you could subscribe, it would never fire
+```
+
+Or, for one surface:
+
+```javascript
+if (window.craft.supports('tray.destroy')) { /* … */ }
+```
+
+### Namespace status
+
+| status | means |
+|---|---|
+| `declared` | Audited. The action list is complete, and a conformance test fails the build if it stops matching what the dispatcher serves. |
+| `undeclared` | Routed, but craft has not audited it and **will not claim anything either way**. Treat as "try it and handle failure", not as "missing". |
+| `unavailable` | Reachable and known not to work. `reason` says why. |
+| `unrouted` | Implemented natively but absent from the dispatcher, so no message can reach it. |
+
+Most namespaces are `undeclared` today. Declaring one means refactoring its
+dispatch chain so each action name exists in exactly one place — roughly 279
+names across 47 files — so it is being done in batches, and the conformance test
+holds a ceiling on how many may remain that only ever goes down.
+
+### `channels`
+
+Every `craft:*` event, and whether anything native emits on it. This cannot be
+derived from the action tables — an emitter is a separate piece of code that may
+or may not have been written — so a channel is reported live only because the
+code that emits on it took out a permit at startup. Sixteen channels the JS
+surface subscribes to currently have no emitter at all.
+
+### `supports()` fails open
+
+It returns `true` before capabilities have been fetched, and `true` for an
+`undeclared` namespace. A feature-detection mechanism that breaks working code
+when it cannot see itself would be worse than the gaps it describes. Only an
+`unavailable` or `unrouted` surface — or an unknown action inside a `declared`
+namespace — answers `false`.
+
 ## Window API
 
 Control the application window from JavaScript.
@@ -757,6 +810,7 @@ async function onComplete() {
 | Global Shortcuts | ✅ | 🚧 | 🚧 |
 | Settings… item | ✅ | 🚧 | 🚧 |
 | Preferences | ✅ | 🚧 | 🚧 |
+| Capabilities | ✅ | 🚧 | 🚧 |
 
 ✅ Implemented | 🚧 In Progress | ➖ Not Applicable
 

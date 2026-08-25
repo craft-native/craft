@@ -1187,7 +1187,75 @@ export interface CraftBridgeAPI {
    * The Cmd+, convention: where the App menu's Settings… item arrives.
    */
   settings?: CraftSettingsAPI
+
+  /**
+   * What the native side actually serves.
+   *
+   * Always present: it is how you find out whether anything else here is.
+   */
+  capabilities?: () => Promise<CraftCapabilities>
+
+  /** The last capabilities answer, or null if nothing has asked yet. */
+  capabilitiesSync?: () => CraftCapabilities | null
+
+  /**
+   * Whether one surface is known to work — `craft.supports('tray.destroy')`.
+   *
+   * Fails **open**: returns true before capabilities have been fetched, and
+   * true for a namespace craft has not audited. A feature-detection mechanism
+   * that breaks working code when it cannot see itself would be worse than the
+   * gaps it describes.
+   */
+  supports?: (path: string) => boolean
 }
+
+/**
+ * How much craft is willing to claim about a namespace.
+ *
+ * - `declared` — audited: the action list below is complete and enforced by a
+ *   conformance test against the dispatch chain.
+ * - `undeclared` — routed, but not audited. Craft claims nothing either way;
+ *   treat it as "try it and handle failure", not as "missing".
+ * - `unavailable` — reachable and known not to work. `reason` says why.
+ * - `unrouted` — implemented natively but absent from the dispatcher, so no
+ *   message can reach it.
+ */
+export type CapabilityNamespaceStatus = 'declared' | 'undeclared' | 'unavailable' | 'unrouted'
+
+export interface CapabilityAction {
+  status: 'live' | 'unavailable'
+  /** Whether native sends a reply the caller is waiting on. */
+  reply: 'none' | 'result'
+  /** Present when the action is unavailable. */
+  reason?: string
+}
+
+export interface CapabilityNamespace {
+  status: CapabilityNamespaceStatus
+  reason?: string
+  /** Present only for `declared` namespaces. */
+  actions?: Record<string, CapabilityAction>
+}
+
+/**
+ * What the native binary behind this page actually serves.
+ *
+ * The injected bridge script is one blob, the same in every build, so the
+ * presence of `window.craft.x` has never been evidence that anything is behind
+ * it. This is the evidence.
+ */
+export interface CraftCapabilities {
+  namespaces: Record<string, CapabilityNamespace>
+  /**
+   * Every `craft:*` event channel, and whether anything native emits on it.
+   *
+   * A `false` here means subscribing would work and never fire — which cannot
+   * be derived from the action tables, so it is tracked separately by the
+   * emitters themselves.
+   */
+  channels: Record<string, boolean>
+}
+
 
 /**
  * The only value types `craft.prefs` stores.

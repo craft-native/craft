@@ -630,6 +630,48 @@ pub fn build(b: *std.Build) void {
         prefs_macos_tests.root_module.link_libc = true;
     }
 
+    // The capability registry: what native declares it serves, and which event
+    // channels have a live emitter. Pure data plus a JSON renderer.
+    const capabilities_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/capabilities.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // The conformance test: what craft declares, against what it dispatches.
+    const capability_conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/capabilities_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "capability_registry", .module = b.createModule(.{
+                    .root_source_file = b.path("src/capability_registry.zig"),
+                }) },
+            },
+        }),
+    });
+    // The registry imports the declared bridges, which reach the rest of the
+    // native graph, so this needs the same libraries the binary links.
+    linkPlatformLibraries(b, capability_conformance_tests.root_module, target_os, macos_sdk);
+    // The sources it reads, embedded rather than opened at run time: the test
+    // is then hermetic and looking at the same bytes the compiler saw.
+    for ([_][]const u8{
+        "src/macos.zig",
+        "src/bridge_clipboard.zig",
+        "src/bridge_tray.zig",
+        "src/bridge_app.zig",
+        "src/bridge_screen.zig",
+        "src/bridge_capabilities.zig",
+    }) |source_path| {
+        capability_conformance_tests.root_module.addAnonymousImport(source_path, .{
+            .root_source_file = b.path(source_path),
+        });
+    }
+    const run_capability_conformance = b.addRunArtifact(capability_conformance_tests);
+
     const config_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/config_test.zig"),
@@ -966,6 +1008,7 @@ pub fn build(b: *std.Build) void {
     const run_space_list_tests = b.addRunArtifact(space_list_tests);
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
+    const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
     const run_prefs_tests = b.addRunArtifact(prefs_tests);
     const run_prefs_macos_tests = b.addRunArtifact(prefs_macos_tests);
     const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
@@ -1044,6 +1087,13 @@ pub fn build(b: *std.Build) void {
                 .root_source_file = b.path("src/js/craft-bridge.js"),
             });
 
+            // The contracts module reaches the real capability registry, which
+            // reaches the declared bridges and through them the rest of the
+            // native graph — so this needs the same libraries the binary links.
+            // Worth it: the alternative is asserting the manifest shape against
+            // a fixture, which would not catch the registry drifting.
+            linkPlatformLibraries(b, injected_js_tests.root_module, target_os, macos_sdk);
+
             const run_injected_js_tests = b.addRunArtifact(injected_js_tests);
             b.step("test-js", "Run craft's injected JavaScript against zig-js")
                 .dependOn(&run_injected_js_tests.step);
@@ -1078,6 +1128,11 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
+    test_step.dependOn(&run_capabilities_tests.step);
+    // macOS only: the registry describes the dispatch chain in macos.zig, and
+    // compiling it elsewhere drags the whole native graph into a test binary
+    // for a platform it does not describe.
+    if (target_os == .macos) test_step.dependOn(&run_capability_conformance.step);
     test_step.dependOn(&run_prefs_tests.step);
     test_step.dependOn(&run_prefs_macos_tests.step);
     test_step.dependOn(&run_key_codes_tests.step);
@@ -1182,6 +1237,10 @@ pub fn build(b: *std.Build) void {
 
     const test_menu_roles_step = b.step("test:menu-roles", "Run menu role table tests");
     test_menu_roles_step.dependOn(&run_menu_roles_tests.step);
+
+    const test_capabilities_step = b.step("test:capabilities", "Run capability registry tests");
+    test_capabilities_step.dependOn(&run_capabilities_tests.step);
+    test_capabilities_step.dependOn(&run_capability_conformance.step);
 
     const test_prefs_step = b.step("test:prefs", "Run preference store tests");
     test_prefs_step.dependOn(&run_prefs_tests.step);
@@ -1699,6 +1758,11 @@ fn linkPlatformLibraries(b: *std.Build, module: *std.Build.Module, target_os: st
             // when the app dynamically loads them.
             module.linkFramework("CoreMIDI", .{});
             module.linkFramework("CoreSpotlight", .{});
+            // CoreFoundation for `prefs_macos.zig`, which calls the
+            // CFPreferences quad directly. The shipped binary resolves these
+            // through Cocoa, but a test artifact that reaches the same code
+            // does not always, so name it.
+            module.linkFramework("CoreFoundation", .{});
             // Carbon for `macos_hotkey.zig`: `RegisterEventHotKey` is the only
             // route to a global hotkey that neither needs an Objective-C block
             // (which Zig cannot write) nor Accessibility permission (which a
