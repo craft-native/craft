@@ -431,6 +431,10 @@ export class CraftApp {
     }
     if (window?.icon)
       args.push('--icon', window.icon)
+    // After the geometry flags, and independent of them: those are what the
+    // window opens at until there is a saved frame, which then wins.
+    if (window?.frameAutosave)
+      args.push('--frame-autosave', window.frameAutosave)
 
     if (window?.nativeSidebar) {
       args.push('--native-sidebar')

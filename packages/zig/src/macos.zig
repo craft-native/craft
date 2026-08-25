@@ -92,6 +92,10 @@ pub const WindowStyle = struct {
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false, // Benchmark mode: skip bridge setup for fastest window creation
+    /// Name under which AppKit remembers this window's frame across launches.
+    /// Null leaves the window forgetting its geometry every time, which is
+    /// what craft did until now.
+    frame_autosave: ?[]const u8 = null,
 };
 
 // Helper functions for Objective-C runtime
@@ -525,6 +529,29 @@ fn getBorderlessWindowClass() objc.Class {
     return BorderlessWindowClass;
 }
 
+/// Remember this window's size and position across launches, under `name`.
+///
+/// Two calls, in this order, and the order is the whole design:
+///
+///   1. `setFrameUsingName:` restores a saved frame if there is one. It
+///      returns NO and leaves the window alone if there is not — which is
+///      what makes `--width/--height/--x/--y` behave as first-launch defaults
+///      rather than as an override that would defeat the point.
+///   2. `setFrameAutosaveName:` starts saving on every subsequent change.
+///
+/// Measured rather than assumed: `setFrameAutosaveName:` does *not* write the
+/// current frame when it is set, so enabling it after the restore cannot
+/// clobber what was restored.
+///
+/// Called after the centring above, so a remembered frame wins over being
+/// centred — an app the user has placed should come back where they put it.
+fn applyFrameAutosave(window: objc.id, name: []const u8) void {
+    if (name.len == 0) return;
+    const key = createNSString(name);
+    _ = msgSend1(window, "setFrameUsingName:", key);
+    _ = msgSend1(window, "setFrameAutosaveName:", key);
+}
+
 pub fn createWindow(title: []const u8, width: u32, height: u32, html: []const u8) !objc.id {
     return createWindowWithStyle(title, width, height, html, null, .{});
 }
@@ -909,6 +936,8 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         if (style.x == null or style.y == null) {
             msgSendVoid0(window, "center");
         }
+
+        if (style.frame_autosave) |name| applyFrameAutosave(window, name);
 
         // Enter fullscreen if requested
         if (style.fullscreen) {
@@ -2136,6 +2165,8 @@ pub fn createWindowWithSidebar(
         msgSendVoid0(window, "center");
     }
 
+    if (style.frame_autosave) |name| applyFrameAutosave(window, name);
+
     // Store references
     if (webview) |wv| {
         setGlobalWebView(wv);
@@ -3326,6 +3357,8 @@ pub fn createWindowWithSidebarURL(
     if (style.x == null or style.y == null) {
         msgSendVoid0(window, "center");
     }
+
+    if (style.frame_autosave) |name| applyFrameAutosave(window, name);
 
     // Store references
     if (webview) |wv| {

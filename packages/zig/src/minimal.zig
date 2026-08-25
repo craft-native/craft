@@ -112,6 +112,7 @@ pub fn main(init: std.process.Init) !void {
                 .dev_tools = effective_dev_tools,
                 .native_sidebar = true,
                 .benchmark = options.benchmark,
+                .frame_autosave = options.frame_autosave,
             },
         );
     } else if (options.native_sidebar and options.html != null) {
@@ -149,6 +150,7 @@ pub fn main(init: std.process.Init) !void {
                 .dev_tools = effective_dev_tools,
                 .native_sidebar = true,
                 .benchmark = options.benchmark,
+                .frame_autosave = options.frame_autosave,
             },
         );
     } else if (options.url) |url| {
@@ -188,6 +190,7 @@ pub fn main(init: std.process.Init) !void {
                 .system_tray = options.system_tray,
                 .dev_tools = effective_dev_tools,
                 .benchmark = options.benchmark,
+                .frame_autosave = options.frame_autosave,
                 .web_sidebar_material = options.web_sidebar_material,
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
@@ -221,6 +224,7 @@ pub fn main(init: std.process.Init) !void {
                 .system_tray = options.system_tray,
                 .dev_tools = effective_dev_tools,
                 .benchmark = options.benchmark,
+                .frame_autosave = options.frame_autosave,
                 .web_sidebar_material = options.web_sidebar_material,
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
@@ -412,6 +416,7 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                     .titlebar_hidden = options.titlebar_hidden,
                     .system_tray = options.system_tray,
                     .dev_tools = options.dev_tools,
+                    .frame_autosave = options.frame_autosave,
                 },
             );
         } else if (options.html) |html| {
@@ -434,6 +439,7 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                     .titlebar_hidden = options.titlebar_hidden,
                     .system_tray = options.system_tray,
                     .dev_tools = options.dev_tools,
+                    .frame_autosave = options.frame_autosave,
                 },
             );
         }
