@@ -1,5 +1,37 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.76...v0.0.77)
+
+## 🚀 Features
+
+- **bridge**: let the page ask what native actually serves (#60) ([8f14e43](https://github.com/craft-native/craft/commit/8f14e43)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#60](https://github.com/craft-native/craft/issues/60), [#60](https://github.com/craft-native/craft/issues/60))
+- **cli**: --headless, and make DevTools reachable at all (#61) ([f93ad1e](https://github.com/craft-native/craft/commit/f93ad1e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#61](https://github.com/craft-native/craft/issues/61), [#61](https://github.com/craft-native/craft/issues/61))
+- **packaging**: register the URL schemes an app declares (#57) ([bb2d6fd](https://github.com/craft-native/craft/commit/bb2d6fd)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#57](https://github.com/craft-native/craft/issues/57), [#57](https://github.com/craft-native/craft/issues/57))
+- **prefs**: a Settings… item and a preference store that keeps its types (#58) ([a391437](https://github.com/craft-native/craft/commit/a391437)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#58](https://github.com/craft-native/craft/issues/58), [#58](https://github.com/craft-native/craft/issues/58))
+- **window**: --frame-autosave, so windows come back where they were (#56) ([fbbe035](https://github.com/craft-native/craft/commit/fbbe035)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#56](https://github.com/craft-native/craft/issues/56), [#56](https://github.com/craft-native/craft/issues/56))
+- **cli**: --app-name, so an app can be itself without packaging (#55) ([9abf96c](https://github.com/craft-native/craft/commit/9abf96c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#55](https://github.com/craft-native/craft/issues/55), [#55](https://github.com/craft-native/craft/issues/55))
+
+## 🐛 Bug Fixes
+
+- **shortcuts**: make global hotkeys actually fire (#54) ([1263c79](https://github.com/craft-native/craft/commit/1263c79)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#54](https://github.com/craft-native/craft/issues/54), [#54](https://github.com/craft-native/craft/issues/54))
+- **packaging**: stop macOS packages relocating themselves elsewhere (#46) ([ed17bff](https://github.com/craft-native/craft/commit/ed17bff)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#46](https://github.com/craft-native/craft/issues/46), [#46](https://github.com/craft-native/craft/issues/46))
+
+## 🤖 Continuous Integration
+
+- **lifecycle**: run the packaging test as a path, not as a filter (#59) ([ac1f7bb](https://github.com/craft-native/craft/commit/ac1f7bb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#59](https://github.com/craft-native/craft/issues/59), [#59](https://github.com/craft-native/craft/issues/59))
+
+## 🧹 Chores
+
+- release v0.0.77 ([142c04d](https://github.com/craft-native/craft/commit/142c04d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: set what can be set, and generate the signing request ([724fa28](https://github.com/craft-native/craft/commit/724fa28)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **release**: generate the production keypair, and set the one value that is not a credential ([b06a467](https://github.com/craft-native/craft/commit/b06a467)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.75...v0.0.76)
 
 ## ♻️ Code Refactoring
