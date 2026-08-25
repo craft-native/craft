@@ -48,6 +48,14 @@ pub fn main(init: std.process.Init) !void {
         if (options.app_name) |name| craft.macos.setProcessName(name);
     }
 
+    // A menubar-only app has no window by definition, so asking for both is a
+    // contradiction rather than a no-op. Saying so beats silently ignoring one
+    // of them and leaving the operator to work out which.
+    if (options.headless and options.menubar_only) {
+        std.debug.print("Error: --headless and --menubar-only are contradictory — a menubar app has no window to hide\n", .{});
+        std.process.exit(1);
+    }
+
     // In benchmark mode, disable dev_tools for lower overhead
     const effective_dev_tools = if (options.benchmark) false else options.dev_tools;
 
@@ -68,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var app = craft.App.init(allocator);
+    app.headless = options.headless;
     defer app.deinit();
 
     // Initialize platform FIRST (must be called before creating windows or system tray)
@@ -112,6 +121,7 @@ pub fn main(init: std.process.Init) !void {
                 .dev_tools = effective_dev_tools,
                 .native_sidebar = true,
                 .benchmark = options.benchmark,
+                .headless = options.headless,
                 .frame_autosave = options.frame_autosave,
             },
         );
@@ -150,6 +160,7 @@ pub fn main(init: std.process.Init) !void {
                 .dev_tools = effective_dev_tools,
                 .native_sidebar = true,
                 .benchmark = options.benchmark,
+                .headless = options.headless,
                 .frame_autosave = options.frame_autosave,
             },
         );
@@ -190,6 +201,7 @@ pub fn main(init: std.process.Init) !void {
                 .system_tray = options.system_tray,
                 .dev_tools = effective_dev_tools,
                 .benchmark = options.benchmark,
+                .headless = options.headless,
                 .frame_autosave = options.frame_autosave,
                 .web_sidebar_material = options.web_sidebar_material,
                 .web_sidebar_width = options.web_sidebar_width,
@@ -224,6 +236,7 @@ pub fn main(init: std.process.Init) !void {
                 .system_tray = options.system_tray,
                 .dev_tools = effective_dev_tools,
                 .benchmark = options.benchmark,
+                .headless = options.headless,
                 .frame_autosave = options.frame_autosave,
                 .web_sidebar_material = options.web_sidebar_material,
                 .web_sidebar_width = options.web_sidebar_width,
@@ -417,6 +430,7 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                     .system_tray = options.system_tray,
                     .dev_tools = options.dev_tools,
                     .frame_autosave = options.frame_autosave,
+                    .headless = options.headless,
                 },
             );
         } else if (options.html) |html| {
@@ -440,6 +454,7 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                     .system_tray = options.system_tray,
                     .dev_tools = options.dev_tools,
                     .frame_autosave = options.frame_autosave,
+                    .headless = options.headless,
                 },
             );
         }
@@ -461,7 +476,8 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
     // Using orderFront (in showWindows) prevents app activation which would hide the tray
     // IMPORTANT: We must show windows even in menubar-only mode to trigger WebView loading
     // Without this, the WebView won't load its HTML/JavaScript content
-    app.showWindows();
+    // The tray path shows its windows itself, after the status item exists.
+    if (!options.headless) app.showWindows();
 
     // Benchmark mode measures time-to-ready and exits. The windowed paths
     // already honour it; the tray path did not, so `--benchmark` on a menubar

@@ -92,6 +92,13 @@ pub const WindowStyle = struct {
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false, // Benchmark mode: skip bridge setup for fastest window creation
+    /// Build the window and never put it on screen.
+    ///
+    /// Deliberately *not* folded into `benchmark`: that mode strips the user
+    /// content controller, the injected craft script, the message handler and
+    /// both webview globals, so nothing can talk to the page afterwards.
+    /// Headless needs the full construction path and one less call at the end.
+    headless: bool = false,
     /// Name under which AppKit remembers this window's frame across launches.
     /// Null leaves the window forgetting its geometry every time, which is
     /// what craft did until now.
@@ -390,6 +397,13 @@ pub fn msgSendFloat(target: anytype, selector: [*:0]const u8) f64 {
 }
 
 /// Message send that returns bool
+/// `-[NSObject respondsToSelector:]` and friends: a BOOL-returning message
+/// whose one argument is itself a selector.
+pub fn msgSendBool1Sel(target: anytype, selector: [*:0]const u8, arg: objc.SEL) bool {
+    const msg = @as(*const fn (@TypeOf(target), objc.SEL, objc.SEL) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
+    return msg(target, sel(selector), arg);
+}
+
 pub fn msgSendBool(target: anytype, selector: [*:0]const u8) bool {
     const msg = @as(*const fn (@TypeOf(target), objc.SEL) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
     return msg(target, sel(selector));
@@ -550,6 +564,30 @@ fn applyFrameAutosave(window: objc.id, name: []const u8) void {
     const key = createNSString(name);
     _ = msgSend1(window, "setFrameUsingName:", key);
     _ = msgSend1(window, "setFrameAutosaveName:", key);
+}
+
+/// Make a webview inspectable from Safari's Develop menu.
+///
+/// `developerExtrasEnabled` alone stopped being enough at macOS 13.3, which
+/// introduced `isInspectable` defaulting to **NO**. Measured on 26.3.1: a
+/// webview with `developerExtrasEnabled = YES` and nothing else reports
+/// `isInspectable = 0`, so craft's `--dev-tools` has been setting a preference
+/// with no effect for the whole of that range — while a comment in the View
+/// menu asserted the opposite.
+///
+/// Guarded by `respondsToSelector:` rather than a version check: the selector
+/// is absent before 13.3 and sending it unguarded would raise
+/// `doesNotRecognizeSelector`.
+///
+/// Note this is a *debugging affordance*, not automation. It puts the app in
+/// Safari's Develop menu; it opens no port and prints no endpoint. WebKit on
+/// macOS has no socket-based inspector server — verified by observing that an
+/// inspectable webview holds no internet sockets at all — so there is nothing
+/// for a WebDriver-style tool to attach to.
+fn setWebViewInspectable(webview: objc.id) void {
+    const selector = sel("setInspectable:");
+    if (!msgSendBool1Sel(webview, "respondsToSelector:", selector)) return;
+    msgSendVoid1(webview, "setInspectable:", true);
 }
 
 pub fn createWindow(title: []const u8, width: u32, height: u32, html: []const u8) !objc.id {
@@ -778,6 +816,9 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Create WKWebView with configuration
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", frame, config);
+    // `developerExtrasEnabled` above is necessary and, since macOS 13.3, not
+    // sufficient. See `setWebViewInspectable`.
+    if (style.dev_tools) setWebViewInspectable(webview);
     startup_timing.mark(.webview_created);
     // Start the load before any cosmetic setup.
     //
@@ -932,8 +973,10 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             setAppearance(window, is_dark);
         }
 
-        // Center window if no custom position specified
-        if (style.x == null or style.y == null) {
+        // Center window if no custom position specified. Not when headless:
+        // centring is positioning relative to a screen, and there is no screen
+        // in play.
+        if (!style.headless and (style.x == null or style.y == null)) {
             msgSendVoid0(window, "center");
         }
 
@@ -6237,8 +6280,10 @@ const edit_menu_items = [_]DefaultItem{
 
 /// Reload and Force Reload land on the focused WKWebView, which implements
 /// `reload:` and `reloadFromOrigin:` as action selectors. Dev consoles stay
-/// reachable by right-click when `dev_tools` is enabled (the webview sets
-/// `setInspectable:YES`).
+/// reachable by right-click when `dev_tools` is enabled — which needs both
+/// `developerExtrasEnabled` *and* `setInspectable:` since macOS 13.3. This
+/// comment used to claim the webview set the latter; nothing did, and the
+/// string appeared nowhere else in the repository.
 const view_menu_items = [_]DefaultItem{
     .{ .title = "Reload", .selector = menuRole("reload"), .key = "r" },
     .{ .title = "Force Reload", .selector = menuRole("forceReload"), .key = "r", .extra_modifiers = modifier_shift },
@@ -6442,6 +6487,17 @@ pub fn runApp() void {
 /// activation policy when launched outside an .app bundle, so the window
 /// stays behind other apps with no Dock icon and never becomes key.
 /// Tray/menubar apps must NOT call this — see the runApp() comment above.
+/// Run with no Dock icon and no app-switcher entry.
+///
+/// `NSApplicationActivationPolicyAccessory`, the same policy menubar apps use.
+/// For a headless run this is the difference between invisible and "invisible
+/// except for the icon bouncing in the Dock".
+pub fn setAccessoryActivationPolicy() void {
+    const NSApplication = getClass("NSApplication");
+    const app = msgSend0(NSApplication, "sharedApplication");
+    _ = msgSend1(app, "setActivationPolicy:", @as(c_long, 1));
+}
+
 pub fn activateWindowedApp() void {
     const NSApplication = getClass("NSApplication");
     const app = msgSend0(NSApplication, "sharedApplication");

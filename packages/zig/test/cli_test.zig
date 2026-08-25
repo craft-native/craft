@@ -312,3 +312,61 @@ test "parseArgs - --frame-autosave leaves the explicit geometry alone" {
 test "parseArgs - --frame-autosave without a value is an error, not a silent skip" {
     try testing.expectError(cli.CliError.MissingValue, parse(&.{ "craft", "--frame-autosave" }));
 }
+
+test "parseArgs - --headless is off unless asked for" {
+    var options = try parse(&.{ "craft", "http://localhost:3000" });
+    defer freeOptions(&options);
+    try testing.expect(!options.headless);
+}
+
+test "parseArgs - --headless" {
+    var options = try parse(&.{ "craft", "--headless" });
+    defer freeOptions(&options);
+    try testing.expect(options.headless);
+}
+
+test "parseArgs - --headless leaves the window's own options alone" {
+    // Headless is about whether the window is shown, not about what it is.
+    // A headless run has to build the same window a visible one would, or a
+    // screenshot of it is not evidence about the visible case.
+    var options = try parse(&.{ "craft", "--headless", "--width", "900", "--height", "700", "--title", "T" });
+    defer freeOptions(&options);
+    try testing.expect(options.headless);
+    try testing.expectEqual(@as(u32, 900), options.width);
+    try testing.expectEqual(@as(u32, 700), options.height);
+    try testing.expectEqualStrings("T", options.title);
+}
+
+test "parseArgs - DevTools can be turned on" {
+    // The regression this exists for: `dev_tools` defaults to false and the
+    // only flag that existed set it false again, so the inspector was
+    // unreachable from the command line entirely.
+    var options = try parse(&.{ "craft", "--dev-tools" });
+    defer freeOptions(&options);
+    try testing.expect(options.dev_tools);
+
+    var alias = try parse(&.{ "craft", "--devtools" });
+    defer freeOptions(&alias);
+    try testing.expect(alias.dev_tools);
+}
+
+test "parseArgs - DevTools stay off by default, and --no-devtools still wins" {
+    var off = try parse(&.{"craft"});
+    defer freeOptions(&off);
+    try testing.expect(!off.dev_tools);
+
+    // Last flag wins, in both orders.
+    var on_then_off = try parse(&.{ "craft", "--dev-tools", "--no-devtools" });
+    defer freeOptions(&on_then_off);
+    try testing.expect(!on_then_off.dev_tools);
+
+    var off_then_on = try parse(&.{ "craft", "--no-devtools", "--dev-tools" });
+    defer freeOptions(&off_then_on);
+    try testing.expect(off_then_on.dev_tools);
+}
+
+test "parseArgs - a manifest can ask for headless" {
+    var options = try parse(&.{ "craft", "--headless" });
+    defer freeOptions(&options);
+    try testing.expect(options.headless);
+}

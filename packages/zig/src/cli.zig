@@ -40,6 +40,10 @@ pub const WindowOptions = struct {
     // process. NSImage decodes everything Cocoa can render, so any common
     // raster format works; .icns is preferred for crispness across sizes.
     icon: ?[]const u8 = null,
+    // Build the window and never put it on screen. The page still loads, still
+    // runs JavaScript, and can still be captured — what it loses is anything
+    // that advances itself; see `--help`.
+    headless: bool = false,
     // The name AppKit shows for the app: the App menu title and the
     // "About X" / "Hide X" / "Quit X" items. Without it those read
     // `NSProcessInfo.processName`, which for a bare binary is the executable
@@ -160,6 +164,7 @@ const BundleConfig = struct {
     hideDockIcon: ?bool = null,
     menubarOnly: ?bool = null,
     titlebarHidden: ?bool = null,
+    headless: ?bool = null,
 };
 
 /// Absolute path of the running executable's directory.
@@ -258,6 +263,7 @@ fn applyScalarConfig(cfg: BundleConfig, options: *WindowOptions) void {
     if (cfg.systemTray) |v| options.system_tray = v;
     if (cfg.hideDockIcon) |v| options.hide_dock_icon = v;
     if (cfg.titlebarHidden) |v| options.titlebar_hidden = v;
+    if (cfg.headless) |v| options.headless = v;
     // A menubar app with a dock icon and no tray is not a menubar app, so the
     // one flag sets all three rather than making every manifest repeat them.
     if (cfg.menubarOnly) |v| {
@@ -342,6 +348,22 @@ test "a manifest can ask for its window frame to be remembered" {
     defer parsed.deinit();
 
     try std.testing.expectEqualStrings("main", parsed.value.frameAutosave.?);
+}
+
+test "a manifest can ask to run headless" {
+    const source =
+        \\{"title":"Probe","headless":true}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.headless.?);
+
+    var options = WindowOptions{};
+    applyScalarConfig(parsed.value, &options);
+    try std.testing.expect(options.headless);
 }
 
 test "unknown manifest keys are ignored rather than failing the launch" {
@@ -446,6 +468,14 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.titlebar_hidden = true;
         } else if (std.mem.eql(u8, arg, "--debug")) {
             // Already handled in first pass
+        } else if (std.mem.eql(u8, arg, "--dev-tools") or std.mem.eql(u8, arg, "--devtools")) {
+            // Until this existed there was no way to turn DevTools *on*: the
+            // field defaults to false here, `--no-devtools` only sets it false
+            // again, and the only other writer was the bundle manifest. So the
+            // inspector was unreachable from the command line and from the SDK,
+            // which pushes `--no-devtools` when it wants them off and nothing
+            // when it wants them on.
+            options.dev_tools = true;
         } else if (std.mem.eql(u8, arg, "--no-devtools")) {
             options.dev_tools = false;
         } else if (std.mem.eql(u8, arg, "--dark")) {
@@ -458,6 +488,8 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.system_tray = true;
         } else if (std.mem.eql(u8, arg, "--hide-dock-icon")) {
             options.hide_dock_icon = true;
+        } else if (std.mem.eql(u8, arg, "--headless")) {
+            options.headless = true;
         } else if (std.mem.eql(u8, arg, "--menubar-only")) {
             options.menubar_only = true;
             options.system_tray = true; // Menubar-only implies system tray
@@ -560,6 +592,8 @@ fn printHelp() void {
         \\      --system-tray        Show system tray icon
         \\      --hide-dock-icon     Hide dock icon (menubar-only mode, macOS)
         \\      --menubar-only       Menubar-only mode (no window, system tray only)
+        \\      --dev-tools          Enable WebKit DevTools and make the webview
+        \\                           inspectable from Safari's Develop menu
         \\      --no-devtools        Disable WebKit DevTools
         \\      --titlebar-hidden    Hide window titlebar
         \\      --native-sidebar     Use native macOS sidebar (Finder-style)
@@ -572,6 +606,13 @@ fn printHelp() void {
         \\      --sidebar-config <J> Sidebar JSON configuration
         \\      --sidebar-width <W>  Sidebar width in pixels (default: 220)
         \\      --icon <PATH>        Path to dock icon image (PNG/JPG/ICNS)
+        \\      --headless           Build the window without showing it (macOS).
+        \\                           The page loads and runs JavaScript as normal.
+        \\                           It does NOT animate: an unshown window does
+        \\                           not drive the compositor, so requestAnimation-
+        \\                           Frame stops after one frame and page timers
+        \\                           fall to roughly 1Hz. Drive the page with
+        \\                           explicit calls; do not wait for it to settle.
         \\      --app-name <NAME>    Name in the menu bar and in About/Hide/Quit
         \\                           (macOS; defaults to the executable name)
         \\      --frame-autosave <NAME>
