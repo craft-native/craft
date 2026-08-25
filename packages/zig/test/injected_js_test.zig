@@ -18,6 +18,8 @@ const js = @import("js");
 const testing = std.testing;
 const contracts = @import("bridge_contracts");
 const bridge_menu = contracts.menu;
+const prefs = contracts.prefs;
+const prefs_actions = contracts.prefs_actions;
 const shortcut_registry = contracts.shortcuts;
 
 // Supplied by build.zig as named imports — a test module cannot embed
@@ -526,4 +528,290 @@ test "an accelerator the native side cannot bind is refused, not accepted" {
         error.InvalidParameter,
         registry.register(try fx.text("posted[0].d")),
     );
+}
+
+// =============================================================================
+// Settings and preferences (#51)
+// =============================================================================
+
+/// A store over an in-memory backend, so these tests are about the JS/native
+/// contract rather than about the preferences daemon.
+fn memoryStore(mem: *prefs.MemoryBackend) prefs.Store {
+    return .{ .backend = mem.backend() };
+}
+
+test "craft.prefs.set posts what the native decoder reads, for every scalar" {
+    // The contract that matters: the type travels explicitly, so neither side
+    // has to infer it. A boolean must not arrive as the number 1, and an
+    // integer must not arrive as a float.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\window.craft.prefs.set('theme', 'dark');
+        \\window.craft.prefs.set('dark', true);
+        \\window.craft.prefs.set('fontSize', 13);
+        \\window.craft.prefs.set('scale', 1.5);
+    );
+
+    try testing.expectEqualStrings("4", try fx.text("String(posted.length)"));
+
+    const expected = [_]prefs.Value{
+        .{ .string = "dark" },
+        .{ .boolean = true },
+        .{ .int = 13 },
+        .{ .float = 1.5 },
+    };
+    for (expected, 0..) |want, index| {
+        // One buffer per expression: `bufPrint` returns a slice into the
+        // buffer, so reusing it would leave the earlier slice pointing at the
+        // later string.
+        var t_buf: [64]u8 = undefined;
+        var a_buf: [64]u8 = undefined;
+        var d_buf: [64]u8 = undefined;
+        try testing.expectEqualStrings("prefs", try fx.text(try std.fmt.bufPrint(&t_buf, "posted[{d}].t", .{index})));
+        try testing.expectEqualStrings(prefs_actions.set, try fx.text(try std.fmt.bufPrint(&a_buf, "posted[{d}].a", .{index})));
+
+        const payload = try fx.text(try std.fmt.bufPrint(&d_buf, "posted[{d}].d", .{index}));
+        const parsed = try std.json.parseFromSlice(prefs.SetShape, testing.allocator, payload, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        });
+        defer parsed.deinit();
+        const decoded = try prefs.decodeSet(parsed.value);
+        try testing.expect(decoded.value.eql(want));
+    }
+}
+
+test "every wire action the prefs facade posts is namespaced" {
+    // The assertion that stops someone shortening these back to bare names.
+    // A bare `get` would be drained by keychain.get and tags.get; a bare
+    // `set`/`delete`/`clear` would be *resolved* by other bridges that emit a
+    // result under those names without their own facades ever waiting.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\window.craft.prefs.get('a');
+        \\window.craft.prefs.set('a', 1);
+        \\window.craft.prefs.delete('a');
+        \\window.craft.prefs.clear();
+        \\window.craft.prefs.keys();
+        \\window.craft.prefs.info();
+    );
+
+    try testing.expectEqualStrings("6", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings(
+        "true",
+        try fx.text("String(posted.every(function (m) { return m.a.indexOf('prefs:') === 0 }))"),
+    );
+    for ([_][]const u8{
+        prefs_actions.get,  prefs_actions.set,  prefs_actions.delete,
+        prefs_actions.clear, prefs_actions.keys, prefs_actions.info,
+    }, 0..) |want, index| {
+        var buf: [64]u8 = undefined;
+        try testing.expectEqualStrings(want, try fx.text(try std.fmt.bufPrint(&buf, "posted[{d}].a", .{index})));
+    }
+}
+
+test "a value prefs cannot store is refused before anything is posted" {
+    // The refusal has to happen in the page, because the alternative is an
+    // Objective-C exception in a process that cannot catch one.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var codes = [];
+        \\function refuse(p) { p.then(function () { codes.push('RESOLVED') }, function (e) { codes.push(e.code) }) }
+        \\refuse(window.craft.prefs.set('k', {}));
+        \\refuse(window.craft.prefs.set('k', []));
+        \\refuse(window.craft.prefs.set('k', null));
+        \\refuse(window.craft.prefs.set('k', undefined));
+        \\refuse(window.craft.prefs.set('k', NaN));
+        \\refuse(window.craft.prefs.set('k', Infinity));
+        \\refuse(window.craft.prefs.set('k', 'x'.repeat(9000)));
+        \\refuse(window.craft.prefs.set('@bad', 1));
+        \\refuse(window.craft.prefs.get('has space'));
+    );
+
+    try testing.expectEqualStrings("0", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings(
+        "PREFS_UNSUPPORTED_VALUE,PREFS_UNSUPPORTED_VALUE,PREFS_UNSUPPORTED_VALUE," ++
+            "PREFS_UNSUPPORTED_VALUE,PREFS_NON_FINITE,PREFS_NON_FINITE," ++
+            "PREFS_VALUE_TOO_LARGE,PREFS_BAD_KEY,PREFS_BAD_KEY",
+        try fx.text("codes.join(',')"),
+    );
+}
+
+test "the get reply the native side builds is the shape the facade unwraps" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var got = {};
+        \\window.craft.prefs.get('dark').then(function (v) { got.dark = v; got.darkType = typeof v });
+    );
+
+    var mem = prefs.MemoryBackend.init(testing.allocator);
+    defer mem.deinit();
+    const store = memoryStore(&mem);
+    try store.set("dark", .{ .boolean = true });
+
+    const read = try store.get(testing.allocator, "dark");
+    var reply: std.ArrayListUnmanaged(u8) = .empty;
+    defer reply.deinit(testing.allocator);
+    try prefs.appendReadJson(testing.allocator, &reply, read);
+
+    // Exactly what `sendResultToJS` evaluates in the page.
+    const script = try std.fmt.allocPrint(
+        testing.allocator,
+        "window.__craftBridgeResult('{s}',{s});",
+        .{ prefs_actions.get, reply.items },
+    );
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    // A stored boolean must arrive as `true`, not as `1`.
+    try testing.expectEqualStrings("true", try fx.text("String(got.dark)"));
+    try testing.expectEqualStrings("boolean", try fx.text("got.darkType"));
+}
+
+test "an absent key falls back, and a foreign value is an error rather than a shrug" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var out = [];
+        \\window.craft.prefs.get('missing', 'fallback').then(function (v) { out.push(v) });
+    );
+
+    var reply: std.ArrayListUnmanaged(u8) = .empty;
+    defer reply.deinit(testing.allocator);
+    try prefs.appendReadJson(testing.allocator, &reply, .absent);
+    const absent_script = try std.fmt.allocPrint(testing.allocator, "window.__craftBridgeResult('{s}',{s});", .{ prefs_actions.get, reply.items });
+    defer testing.allocator.free(absent_script);
+    _ = try ctx.evaluate(absent_script);
+    try testing.expectEqualStrings("fallback", try fx.text("out.join(',')"));
+
+    // Something outside craft wrote an array into the key. Coercing it to
+    // `undefined` would lose data silently; the app is told instead.
+    _ = try ctx.evaluate(
+        \\var failure = null;
+        \\window.craft.prefs.get('list').then(function () {}, function (e) { failure = e.code });
+    );
+    reply.clearRetainingCapacity();
+    try prefs.appendReadJson(testing.allocator, &reply, .{ .foreign = .{ .cf_type = "CFArray" } });
+    const foreign_script = try std.fmt.allocPrint(testing.allocator, "window.__craftBridgeResult('{s}',{s});", .{ prefs_actions.get, reply.items });
+    defer testing.allocator.free(foreign_script);
+    _ = try ctx.evaluate(foreign_script);
+    try testing.expectEqualStrings("PREFS_FOREIGN_VALUE", try fx.text("String(failure)"));
+}
+
+test "the keys reply is the shape the facade unwraps" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var listed = null;
+        \\window.craft.prefs.keys().then(function (k) { listed = k });
+    );
+
+    var mem = prefs.MemoryBackend.init(testing.allocator);
+    defer mem.deinit();
+    const store = memoryStore(&mem);
+    try store.set("theme", .{ .string = "dark" });
+    try store.set("fontSize", .{ .int = 13 });
+
+    const listed = try store.keys(testing.allocator);
+    defer {
+        for (listed) |k| testing.allocator.free(k);
+        testing.allocator.free(listed);
+    }
+    var reply: std.ArrayListUnmanaged(u8) = .empty;
+    defer reply.deinit(testing.allocator);
+    try prefs.appendKeysJson(testing.allocator, &reply, listed);
+
+    const script = try std.fmt.allocPrint(testing.allocator, "window.__craftBridgeResult('{s}',{s});", .{ prefs_actions.keys, reply.items });
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("fontSize,theme", try fx.text("listed.join(',')"));
+}
+
+test "the Settings menu item reaches craft.settings.onOpen" {
+    // Native evaluates exactly this string when the item is chosen — the same
+    // compile-time constant `craftOpenSettingsCallback` passes to evalJS.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var opened = [];
+        \\window.craft.settings.onOpen(function (d) { opened.push(d.source) });
+    );
+
+    _ = try ctx.evaluate("if(window.__craftSettingsOpen)window.__craftSettingsOpen();");
+    try testing.expectEqualStrings("menu", try fx.text("opened.join(',')"));
+}
+
+test "settings.open reaches the same handler without touching native" {
+    // A gear button in the app's own UI should land in the same place as Cmd+,
+    // rather than needing a second code path.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var opened = [];
+        \\window.craft.settings.onOpen(function (d) { opened.push(d.source) });
+        \\window.craft.settings.open('toolbar');
+    );
+
+    try testing.expectEqualStrings("toolbar", try fx.text("opened.join(',')"));
+    // Page-local: nothing crosses the bridge for it.
+    try testing.expectEqualStrings("0", try fx.text("String(posted.length)"));
+}
+
+test "unsubscribing from settings stops delivery, and does not double-count" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var hits = 0;
+        \\var off = window.craft.settings.onOpen(function () { hits++ });
+        \\window.craft.settings.open();
+        \\off();
+        \\off();
+        \\window.craft.settings.open();
+    );
+
+    try testing.expectEqualStrings("1", try fx.text("String(hits)"));
+    // The listener counter drives a console hint when nothing is listening;
+    // an unsubscribe called twice must not push it negative and silence it.
+    try testing.expectEqualStrings("0", try fx.text("String(window.__craftSettingsListeners)"));
 }

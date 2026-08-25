@@ -9,6 +9,7 @@ The Craft JavaScript Bridge provides a seamless interface for your web applicati
 - [System Tray API](#system-tray-api)
 - [Application Menu (macOS)](#application-menu-macos)
 - [Global Shortcuts (macOS)](#global-shortcuts-macos)
+- [Settings and Preferences (macOS)](#settings-and-preferences-macos)
 - [Window API](#window-api)
 - [App API](#app-api)
 - [TypeScript Support](#typescript-support)
@@ -367,6 +368,102 @@ unsubscribe function.
 | `isRegistered(id): Promise<boolean>` | whether the id is known, enabled or not |
 | `list(): Promise<Shortcut[]>` | `{ id, accelerator, key, enabled }` for each |
 
+## Settings and Preferences (macOS)
+
+### The Settings… item
+
+craft's default App menu ships a **Settings… ⌘,** where every Mac app has it,
+between About and Hide. Choosing it — or pressing ⌘, — fires a `craft:settings:open`
+event into the page. An app only has to listen:
+
+```javascript
+window.craft.settings.onOpen(({ source }) => {
+  showSettingsPanel()
+})
+```
+
+`source` is `'menu'` for the menu item. Your own UI can reach the same handler
+rather than duplicating it:
+
+```javascript
+gearButton.onclick = () => window.craft.settings.open('toolbar')
+```
+
+That call is page-local; nothing crosses the bridge for it.
+
+It is **not** delivered as `craft:menu:action` with a reserved id, deliberately.
+An app that never calls `craft.menu.set()` should not have to subscribe to the
+menu API to catch ⌘,, and a "reserved" menu id would be indistinguishable from
+an app-declared item that happened to pick the same string.
+
+Calling `craft.menu.set()` replaces the whole bar, so the default item goes with
+it — as documented above. Declare it yourself to keep it:
+
+```javascript
+{ id: 'settings', role: 'settings', label: 'Settings…', shortcut: 'cmd+,' }
+```
+
+`role: 'settings'` (or `'preferences'`) resolves to craft's own handler, so the
+same `craft:settings:open` event arrives either way. The `id` is required —
+items without one are skipped.
+
+### `window.craft.prefs`
+
+A small preference store over the platform's own mechanism, so `defaults read`
+and a native settings pane both see what the app wrote.
+
+```javascript
+await window.craft.prefs.set('theme', 'dark')
+await window.craft.prefs.set('fontSize', 13)
+await window.craft.prefs.set('firstRunDone', true)
+
+const theme = await window.craft.prefs.get('theme', 'light')
+```
+
+| Call | What it does |
+|---|---|
+| `set(key, value)` | Write. Resolves once the value is **on disk**, not merely once the message was posted |
+| `get(key, fallback?)` | Read. `fallback` is returned for an absent key |
+| `delete(key)` | Remove. Resolves to whether it was there |
+| `clear()` | Remove every preference this app set. Resolves to how many |
+| `keys()` | Every key this app set, sorted |
+| `info()` | `{ domain, prefix, count, readCommand }` — see below |
+
+**Strings, numbers and booleans only.** Not a corner cut: the preferences API
+raises an Objective-C exception for a value that is not a property-list type,
+and craft cannot catch one, so refusing containers in the page is what makes
+that crash unreachable rather than merely unlikely. Serialise structure
+yourself:
+
+```javascript
+await craft.prefs.set('recents', JSON.stringify(list))
+const list = JSON.parse(await craft.prefs.get('recents', '[]'))
+```
+
+Refusals reject with a `code` you can branch on: `PREFS_UNSUPPORTED_VALUE`,
+`PREFS_NON_FINITE`, `PREFS_VALUE_TOO_LARGE` (8 KiB), `PREFS_BAD_KEY` (keys must
+match `/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/`), and `PREFS_FOREIGN_VALUE` when
+something outside craft wrote a value craft cannot represent.
+
+**Types survive the round trip.** A stored `true` reads back as `true`, not as
+`1`; an integer does not come back as a float. Passing a `fallback` also
+declares the expected type, so a value left behind by an older build of the app
+degrades to the default instead of to a surprise.
+
+**Where it goes.** Preferences land in the app's own domain — the bundle
+identifier inside a packaged `.app`, the executable's name otherwise. That
+means preferences set while developing against the shared `craft` binary are
+in a different domain from the packaged app's, and every dev-mode app shares
+one. `info()` reports which domain is live and how to read it:
+
+```javascript
+const { domain, readCommand } = await craft.prefs.info()
+// readCommand: "defaults read com.example.myapp"
+```
+
+craft namespaces its keys, so `clear()` and `keys()` cannot disturb the window
+positions and inspector state AppKit and WebKit keep in the same domain.
+
 ## Window API
 
 Control the application window from JavaScript.
@@ -601,6 +698,8 @@ async function onComplete() {
 | Window Control | ✅ | ✅ | ✅ |
 | Hide Dock Icon | ✅ | ➖ | ➖ |
 | Global Shortcuts | ✅ | 🚧 | 🚧 |
+| Settings… item | ✅ | 🚧 | 🚧 |
+| Preferences | ✅ | 🚧 | 🚧 |
 
 ✅ Implemented | 🚧 In Progress | ➖ Not Applicable
 

@@ -4057,6 +4057,7 @@ var global_service_menu_bridge: ?*@import("bridge_service_menu.zig").ServiceMenu
 var global_serial_bridge: ?*@import("bridge_serial.zig").SerialBridge = null;
 var global_focus_bridge: ?*@import("bridge_focus.zig").FocusBridge = null;
 var global_screen_sharing_bridge: ?*@import("bridge_screen_sharing.zig").ScreenSharingBridge = null;
+var global_prefs_bridge: ?*@import("bridge_prefs.zig").PrefsBridge = null;
 
 pub fn setGlobalTrayHandle(handle: *anyopaque) void {
     global_tray_handle_for_bridge = handle;
@@ -4344,6 +4345,11 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
         const T = @import("bridge_screen_sharing.zig").ScreenSharingBridge;
         global_screen_sharing_bridge = try allocator.create(T);
         global_screen_sharing_bridge.?.* = T.init(allocator);
+    }
+    if (global_prefs_bridge == null) {
+        const T = @import("bridge_prefs.zig").PrefsBridge;
+        global_prefs_bridge = try allocator.create(T);
+        global_prefs_bridge.?.* = T.init(allocator);
     }
 
     // theme + dragOut + deepLink: native modules with their own state, no
@@ -4708,6 +4714,8 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
         if (global_focus_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
     } else if (std.mem.eql(u8, msg_type, "screenSharing")) {
         if (global_screen_sharing_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
+    } else if (std.mem.eql(u8, msg_type, "prefs")) {
+        if (global_prefs_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
     } else if (std.mem.eql(u8, msg_type, "debug")) {
         // Handle debug messages
         if (comptime builtin.mode == .debug) {
@@ -6113,6 +6121,56 @@ fn menuRole(comptime name: []const u8) [*:0]const u8 {
 /// Declaring the bar as data rather than as ~40 lines of msgSend per menu is
 /// what keeps it readable at this size — and it keeps the default bar and an
 /// app-declared one resolving roles through the same table.
+/// The action craft's own Settings… item performs.
+///
+/// Deliberately not a `menu_roles.zig` role. That table can only hold real
+/// AppKit action selectors, and AppKit publishes none for the Settings item —
+/// a nil-target item naming a selector nobody implements is auto-disabled by
+/// AppKit, which is how craft once shipped a menu bar of grey text.
+pub const settings_action_selector: [*:0]const u8 = "craftOpenSettings:";
+
+var settingsTargetClass: objc.Class = null;
+var settings_target: ?objc.id = null;
+
+fn craftOpenSettingsCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
+    // A compile-time constant with nothing interpolated into it, so no caller
+    // bytes reach the page and there is nothing here to escape.
+    @import("bridge.zig").evalJS(
+        "if(window.__craftSettingsOpen)window.__craftSettingsOpen();",
+    ) catch |err| {
+        if (comptime builtin.mode == .debug)
+            std.debug.print("[Menu] Settings chosen but no webview to notify: {any}\n", .{err});
+    };
+}
+
+/// One retained target for every Settings item in the process.
+///
+/// Cached, because `objc_allocateClassPair` returns nil for a name that is
+/// already registered — a second unguarded call would hand back a null target
+/// and AppKit would grey the item out. Retained, because NSMenuItem does not
+/// retain its target: a local would be released and the item would message
+/// freed memory on the first click.
+pub fn ensureSettingsTarget() ?objc.id {
+    if (comptime builtin.os.tag != .macos) return null;
+    if (settings_target != null) return settings_target;
+
+    if (settingsTargetClass == null) {
+        const NSObject = getClass("NSObject");
+        settingsTargetClass = objc.objc_allocateClassPair(NSObject, "CraftSettingsTarget", 0);
+        if (settingsTargetClass == null) return null;
+        _ = objc.class_addMethod(
+            settingsTargetClass,
+            sel(settings_action_selector),
+            @ptrCast(@constCast(&craftOpenSettingsCallback)),
+            "v@:@",
+        );
+        objc.objc_registerClassPair(settingsTargetClass);
+    }
+
+    settings_target = msgSend0(msgSend0(settingsTargetClass, "alloc"), "init");
+    return settings_target;
+}
+
 const DefaultItem = struct {
     title: []const u8 = "",
     /// What the item performs. Null is a separator.
@@ -6123,6 +6181,9 @@ const DefaultItem = struct {
     extra_modifiers: c_ulong = 0,
     /// Append the app name to the title, as the App menu does: "Quit Craft".
     with_app_name: bool = false,
+    /// Point the item at craft's own target instead of leaving it nil for the
+    /// responder chain. Only meaningful with `settings_action_selector`.
+    craft_target: bool = false,
 };
 
 const DefaultMenu = struct {
@@ -6143,6 +6204,12 @@ const DefaultMenu = struct {
 /// name in bold, and everything here is what a Mac user expects to find there.
 const app_menu_items = [_]DefaultItem{
     .{ .title = "About", .selector = menuRole("about"), .with_app_name = true },
+    .{},
+    // Every Mac app has this, at exactly this position, on exactly this key.
+    // An app that calls `craft.menu.set()` replaces the whole bar and loses it,
+    // which is correct — it can declare `role: "settings"` to get it back, and
+    // the same target answers either way.
+    .{ .title = "Settings\u{2026}", .selector = settings_action_selector, .key = ",", .craft_target = true },
     .{},
     .{ .title = "Hide", .selector = menuRole("hide"), .key = "h", .with_app_name = true },
     .{ .title = "Hide Others", .selector = menuRole("hideOthers"), .key = "h", .extra_modifiers = modifier_option },
@@ -6290,6 +6357,17 @@ pub fn createApplicationMenu() void {
                 sel(selector),
                 createNSString(item.key),
             );
+            if (item.craft_target) {
+                const target = ensureSettingsTarget() orelse {
+                    // Without a target AppKit auto-disables the item, and a
+                    // permanently grey Cmd+, is a worse outcome than no Cmd+,
+                    // at all — so it is omitted rather than added dead.
+                    if (comptime builtin.mode == .debug)
+                        std.debug.print("[Menu] Settings target unavailable; omitting the item\n", .{});
+                    continue;
+                };
+                msgSendVoid1(native_item, "setTarget:", target);
+            }
             if (item.extra_modifiers != 0) {
                 msgSendVoid1Ulong(native_item, "setKeyEquivalentModifierMask:", modifier_command | item.extra_modifiers);
             }

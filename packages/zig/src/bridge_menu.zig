@@ -324,17 +324,37 @@ pub const MenuBridge = struct {
         defer self.allocator.free(key_cstr);
         const ns_key = macos.msgSend1(macos.msgSend0(NSString, "alloc"), "initWithUTF8String:", key_cstr.ptr);
 
+        // "settings" is craft's own role, not an AppKit one. `menu_roles.zig`
+        // can only hold real action selectors and AppKit publishes none for the
+        // Settings item, so this routes to the same target the default menu
+        // bar uses — which is what lets an app that replaces the whole bar with
+        // `craft.menu.set()` keep a working Cmd+, and the same
+        // `craft:settings:open` event.
+        const is_settings = if (role) |r|
+            std.ascii.eqlIgnoreCase(r, "settings") or std.ascii.eqlIgnoreCase(r, "preferences")
+        else
+            false;
+
         // Role items act through the responder chain; id items through the
         // registered target. An unknown role falls back to an id item rather
         // than a dead one, so a newer JS surface degrades to an event the
         // page can still handle.
-        const role_sel = if (role) |r| roleSelector(r) else null;
-        const action_sel = if (role_sel) |s| macos.sel(s) else macos.sel("craftMenuAction:");
+        const role_sel = if (is_settings) null else if (role) |r| roleSelector(r) else null;
+        const action_sel = if (is_settings)
+            macos.sel(macos.settings_action_selector)
+        else if (role_sel) |s|
+            macos.sel(s)
+        else
+            macos.sel("craftMenuAction:");
 
         const NSMenuItem = macos.getClass("NSMenuItem");
         const item = macos.msgSend3(macos.msgSend0(NSMenuItem, "alloc"), "initWithTitle:action:keyEquivalent:", ns_label, action_sel, ns_key);
 
-        if (role_sel == null) {
+        if (is_settings) {
+            if (macos.ensureSettingsTarget()) |target| {
+                _ = macos.msgSend1(item, "setTarget:", target);
+            }
+        } else if (role_sel == null) {
             if (ensureMenuTarget()) |target| {
                 _ = macos.msgSend1(item, "setTarget:", target);
             }

@@ -605,6 +605,31 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // The preference store's pure core: key rules, the value model, the wire
+    // codec and the read/write bookkeeping, driven against an in-memory backend
+    // so all of it is provable on a host with no preferences daemon.
+    const prefs_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/prefs.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // The CoreFoundation backend. These touch the real preferences daemon, so
+    // they run against a throwaway domain and remove every key they create.
+    const prefs_macos_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/prefs_macos.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    if (target_os == .macos) {
+        prefs_macos_tests.root_module.linkFramework("CoreFoundation", .{});
+        prefs_macos_tests.root_module.link_libc = true;
+    }
+
     const config_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/config_test.zig"),
@@ -941,6 +966,8 @@ pub fn build(b: *std.Build) void {
     const run_space_list_tests = b.addRunArtifact(space_list_tests);
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
+    const run_prefs_tests = b.addRunArtifact(prefs_tests);
+    const run_prefs_macos_tests = b.addRunArtifact(prefs_macos_tests);
     const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
     const run_accelerator_tests = b.addRunArtifact(accelerator_tests);
     const run_macos_hotkey_tests = b.addRunArtifact(macos_hotkey_tests);
@@ -1051,6 +1078,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
+    test_step.dependOn(&run_prefs_tests.step);
+    test_step.dependOn(&run_prefs_macos_tests.step);
     test_step.dependOn(&run_key_codes_tests.step);
     test_step.dependOn(&run_accelerator_tests.step);
     test_step.dependOn(&run_macos_hotkey_tests.step);
@@ -1153,6 +1182,10 @@ pub fn build(b: *std.Build) void {
 
     const test_menu_roles_step = b.step("test:menu-roles", "Run menu role table tests");
     test_menu_roles_step.dependOn(&run_menu_roles_tests.step);
+
+    const test_prefs_step = b.step("test:prefs", "Run preference store tests");
+    test_prefs_step.dependOn(&run_prefs_tests.step);
+    test_prefs_step.dependOn(&run_prefs_macos_tests.step);
 
     const test_key_codes_step = b.step("test:key-codes", "Run key code table tests");
     test_key_codes_step.dependOn(&run_key_codes_tests.step);
