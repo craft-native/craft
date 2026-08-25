@@ -650,8 +650,8 @@ pub const FSBridge = struct {
             }
         } else {
             // Cross-platform: use TMPDIR or /tmp
-            const tmp = std.posix.getenv("TMPDIR") orelse
-                if (comptime builtin.os.tag == .windows) std.posix.getenv("TEMP") orelse "C:\\Temp" else "/tmp";
+            const tmp = envOrEmpty("TMPDIR") orelse
+                if (comptime builtin.os.tag == .windows) envOrEmpty("TEMP") orelse "C:\\Temp" else "/tmp";
 
             // Windows default uses a backslash which Zig reads as a JS escape
             // in the string literal — escape before embedding.
@@ -710,12 +710,12 @@ pub const FSBridge = struct {
             }
         } else if (comptime builtin.os.tag == .linux) {
             // XDG Base Directory: ~/.local/share or $XDG_DATA_HOME
-            const app_data = std.posix.getenv("XDG_DATA_HOME") orelse "";
+            const app_data = envOrEmpty("XDG_DATA_HOME") orelse "";
             var path_buf: [512]u8 = undefined;
             const app_data_path = if (app_data.len > 0)
                 app_data
             else blk: {
-                const home = std.posix.getenv("HOME") orelse "";
+                const home = envOrEmpty("HOME") orelse "";
                 if (home.len == 0) break :blk "";
                 break :blk std.fmt.bufPrint(&path_buf, "{s}/.local/share", .{home}) catch "";
             };
@@ -736,7 +736,7 @@ pub const FSBridge = struct {
         } else if (comptime builtin.os.tag == .windows) {
             // Windows: %APPDATA% contains backslashes which are JS escapes —
             // must be escaped before embedding in the string literal.
-            const app_data = std.posix.getenv("APPDATA") orelse "";
+            const app_data = envOrEmpty("APPDATA") orelse "";
 
             if (app_data.len > 0) {
                 var esc_buf: [1024]u8 = undefined;
