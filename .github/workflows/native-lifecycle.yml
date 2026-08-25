@@ -86,7 +86,19 @@ jobs:
           $bin.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Test packaging API
-        run: bun test packages/typescript/src/package.test.ts
+        # The leading `./` is load-bearing. Without it bun reads the argument as
+        # a *filter* and walks the repository looking for test files that match,
+        # and on a hoisted node_modules that walk runs out of file descriptors
+        # before it finds anything:
+        #
+        #   error: Cannot read file ".../packages/typescript/tsconfig.json": EMFILE
+        #
+        # which surfaces as a missing tsconfig rather than as a limit, and whose
+        # only job-level symptom is the artifact upload two steps later
+        # reporting "No files were found". With `./` bun opens the one file it
+        # was given: measured, the filter form needs >512 descriptors and the
+        # path form runs the same 19 tests in 64.
+        run: bun test ./packages/typescript/src/package.test.ts
 
       - name: Exercise native lifecycle
         run: bun scripts/native-lifecycle.ts --install
