@@ -544,6 +544,15 @@ pub const FSBridge = struct {
         }
     }
 
+    /// An environment variable as a slice, or null when it is unset.
+    ///
+    /// libc rather than std: this build links libc everywhere, and `std.posix`
+    /// has no `getenv` in this compiler version.
+    fn envOrEmpty(name: [*:0]const u8) ?[]const u8 {
+        const raw = std.c.getenv(name) orelse return null;
+        return std.mem.span(raw);
+    }
+
     /// Get home directory
     fn getHomeDir(self: *Self) !void {
         _ = self;
@@ -580,9 +589,15 @@ pub const FSBridge = struct {
                 }
             }
         } else {
-            // Cross-platform: use HOME env var (Linux/Windows)
-            const home = std.posix.getenv("HOME") orelse
-                if (comptime builtin.os.tag == .windows) std.posix.getenv("USERPROFILE") orelse "" else "";
+            // Cross-platform: use HOME env var (Linux/Windows).
+            //
+            // `std.c.getenv`, not `std.posix.getenv` — the latter does not
+            // exist in this Zig at all (`@hasDecl(std.posix, "getenv")` is
+            // false even on macOS). It compiled only because this branch is
+            // dead on macOS and Zig never analysed it; the moment anything
+            // compiled the file for another target it failed.
+            const home = envOrEmpty("HOME") orelse
+                (if (comptime builtin.os.tag == .windows) envOrEmpty("USERPROFILE") orelse "" else "");
 
             if (home.len > 0) {
                 // Same escape as above — env vars can contain any bytes.
