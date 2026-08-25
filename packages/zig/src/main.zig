@@ -108,6 +108,9 @@ pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else str
     /// and ignored: remembering a window frame is `setFrameAutosaveName:`, an
     /// AppKit facility with no counterpart wired up on GTK or Win32 yet.
     frame_autosave: ?[]const u8 = null,
+    /// Same: not showing a window is a macOS-side decision about ordering and
+    /// activation, and GTK and Win32 have their own.
+    headless: bool = false,
 };
 
 pub const Window = struct {
@@ -182,6 +185,8 @@ pub const App = struct {
     system_trays: std.ArrayList(*SystemTray),
     bridge: ?*BridgeAPI = null,
     notifications: ?*Notifications = null,
+    /// Run without putting anything on screen. See `runMacOS`.
+    headless: bool = false,
 
     const Self = @This();
 
@@ -370,12 +375,31 @@ pub const App = struct {
             // Show windows if we don't have a system tray
             // If we have a system tray, windows were already shown in the correct order
             // (after tray creation) by the caller
-            if (self.system_tray == null) {
+            // Headless is these two calls not happening, and almost nothing
+            // else: `createWindowWithStyle` has never ordered its window on
+            // screen — that is `showAllWindows`'s job, and activation is what
+            // gives the process a Dock icon. Skip both and the window exists,
+            // loads, runs JavaScript and can be captured, without ever being
+            // drawn anywhere. Measured, including that a snapshot taken after
+            // JavaScript mutates the DOM reflects the mutation.
+            //
+            // What it costs is in `--help` and the docs, because it is not
+            // obvious and it is not recoverable: an unoccluded window is what
+            // drives the compositor, so `requestAnimationFrame` never fires a
+            // second time and page timers fall to about 1Hz. Anything that
+            // advances itself — animations, canvas loops, "wait for the
+            // spinner to stop" — sees frame one forever. Driving the page with
+            // explicit calls works; waiting for it to drive itself does not.
+            if (self.system_tray == null and !self.headless) {
                 macos.showAllWindows();
                 // Windowed app: claim regular activation (Dock icon, key
                 // window, foreground) — launching from a bare binary would
                 // otherwise leave the window buried with no Dock presence.
                 macos.activateWindowedApp();
+            } else if (self.headless) {
+                // No Dock icon and no app-switcher entry either; the point is
+                // to be invisible, and a bouncing Dock icon is not that.
+                macos.setAccessoryActivationPolicy();
             }
 
             // Now run the event loop

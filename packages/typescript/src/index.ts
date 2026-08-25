@@ -412,8 +412,13 @@ export class CraftApp {
       args.push('--dark')
     if (window?.hotReload)
       args.push('--hot-reload')
+    // Both directions. The binary defaults DevTools *off* and used to have no
+    // flag that turned them on, so pushing only the negative meant the SDK's
+    // `devTools: true` — which is what dev mode sets — silently did nothing.
     if (window?.devTools === false)
       args.push('--no-devtools')
+    else if (window?.devTools === true)
+      args.push('--dev-tools')
     if (window?.systemTray)
       args.push('--system-tray')
     if (window?.hideDockIcon)
@@ -422,6 +427,8 @@ export class CraftApp {
       args.push('--menubar-only')
     if (window?.titlebarHidden)
       args.push('--titlebar-hidden')
+    if (window?.headless)
+      args.push('--headless')
     if (window?.webSidebarMaterial) {
       args.push('--web-sidebar-material')
       if (window?.webSidebarWidth)

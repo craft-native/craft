@@ -10,6 +10,7 @@ The Craft JavaScript Bridge provides a seamless interface for your web applicati
 - [Application Menu (macOS)](#application-menu-macos)
 - [Global Shortcuts (macOS)](#global-shortcuts-macos)
 - [Settings and Preferences (macOS)](#settings-and-preferences-macos)
+- [Headless mode](#headless-mode)
 - [Window API](#window-api)
 - [App API](#app-api)
 - [TypeScript Support](#typescript-support)
@@ -464,6 +465,61 @@ const { domain, readCommand } = await craft.prefs.info()
 craft namespaces its keys, so `clear()` and `keys()` cannot disturb the window
 positions and inspector state AppKit and WebKit keep in the same domain.
 
+## Headless mode
+
+`craft --headless` builds the window and never puts it on screen. The page
+loads, JavaScript runs, and the webview stays capturable — a snapshot taken
+after script has mutated the DOM reflects the mutation.
+
+```bash
+craft http://localhost:3000 --headless --timing
+```
+
+Also `headless: true` in `craft.json`, and `window.headless` on `AppConfig`.
+
+The motivating case is measurement: a perf loop that launches craft repeatedly
+no longer flashes a window at the operator each time, which is worth doing on
+its own terms.
+
+### What it cannot do
+
+**It does not animate.** An unshown window does not drive the compositor, so
+`requestAnimationFrame` stops after the first frame and page timers fall to
+roughly 1Hz. That means, silently:
+
+- CSS and JavaScript animations stay on frame one
+- canvas and WebGL render loops never advance
+- charting libraries that redraw on rAF show their initial state
+- "wait until the spinner stops" — implemented with `setInterval` — crawls
+
+Drive the page with explicit calls, and take readiness from load completion
+rather than from a polling loop inside the page. No invisible window
+configuration avoids this: what drives the compositor is the window being
+*unoccluded*, which needs activation, which means stealing focus and showing a
+Dock icon — a worse trade for the operator this mode exists to help.
+
+`--headless` and `--menubar-only` are contradictory (a menubar app has no
+window to hide) and passing both is an error rather than a silent no-op.
+
+### Inspecting a running window
+
+`craft --dev-tools` enables the Web Inspector and makes the webview appear in
+Safari's **Develop** menu.
+
+This flag is new because there was previously no way to turn DevTools *on*:
+the setting defaulted to off and the only flag, `--no-devtools`, set it off
+again. And even when it was enabled through `craft.json`, the inspector did not
+work on macOS 13.3 or later, which introduced `isInspectable` defaulting to
+`NO` — craft set only the older `developerExtrasEnabled`, which stopped being
+sufficient.
+
+It is a **debugging affordance, not automation**. It opens no port and prints
+no endpoint, because there is nothing to print: WebKit on macOS has no
+socket-based inspector server — an inspectable `WKWebView` holds no internet
+sockets at all — and `safaridriver` refuses to attach to anything that is not
+Safari. Driving a craft page from another process needs a control channel craft
+owns, which does not exist yet.
+
 ## Window API
 
 Control the application window from JavaScript.
@@ -697,6 +753,7 @@ async function onComplete() {
 | Tray Menu | 🚧 | 🚧 | 🚧 |
 | Window Control | ✅ | ✅ | ✅ |
 | Hide Dock Icon | ✅ | ➖ | ➖ |
+| Headless | ✅ | 🚧 | 🚧 |
 | Global Shortcuts | ✅ | 🚧 | 🚧 |
 | Settings… item | ✅ | 🚧 | 🚧 |
 | Preferences | ✅ | 🚧 | 🚧 |

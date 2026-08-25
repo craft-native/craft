@@ -58,6 +58,25 @@ export interface WindowOptions {
   title?: string
 
   /**
+   * Build the window without ever putting it on screen (macOS).
+   *
+   * The page loads and runs JavaScript exactly as it would visibly, and it
+   * remains capturable — a snapshot taken after script has mutated the DOM
+   * reflects the mutation.
+   *
+   * **It does not animate.** An unshown window does not drive the compositor,
+   * so `requestAnimationFrame` stops after one frame and page timers fall to
+   * roughly 1Hz. Anything that advances itself — CSS or canvas animation, a
+   * charting library redrawing on rAF, "wait until the spinner stops" — sees
+   * the first frame forever. Drive the page with explicit calls and take
+   * readiness from load completion, not from a polling loop inside the page.
+   *
+   * Contradicts `menubarOnly`, which has no window to hide; passing both is an
+   * error rather than a silent no-op.
+   */
+  headless?: boolean
+
+  /**
    * Remember this window's size and position across launches, under this name
    * (macOS).
    *
