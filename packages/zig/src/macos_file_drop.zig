@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const macos = @import("macos.zig");
+const capabilities = @import("capabilities.zig");
 
 const objc = macos.objc;
 
@@ -32,6 +33,7 @@ const PerformDragFn = *const fn (objc.id, objc.SEL, objc.id) callconv(.c) c_char
 ///
 /// Idempotent — safe to call from every window create. macOS-only.
 pub fn install() void {
+    _ = capabilities.registerEmitter(.filedrop);
     if (swizzled) return;
     if (builtin.target.os.tag != .macos) return;
 

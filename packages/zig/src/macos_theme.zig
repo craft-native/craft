@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const macos = @import("macos.zig");
+const capabilities = @import("capabilities.zig");
 
 const objc = macos.objc;
 
@@ -59,6 +60,7 @@ pub fn install() void {
     }
 
     installed = true;
+    _ = capabilities.registerEmitter(.theme);
 
     if (comptime builtin.mode == .debug) {
         std.debug.print("[Theme] Installed NSAppearance observer\n", .{});

@@ -666,6 +666,7 @@ pub fn build(b: *std.Build) void {
         "src/bridge_screen.zig",
         "src/bridge_capabilities.zig",
         "src/bridge_capabilities_actions.zig",
+        "src/js/craft-bridge.js",
     }) |source_path| {
         capability_conformance_tests.root_module.addAnonymousImport(source_path, .{
             .root_source_file = b.path(source_path),

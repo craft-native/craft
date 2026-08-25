@@ -4,6 +4,7 @@ const bridge_error = @import("bridge_error.zig");
 const icons = @import("icons.zig");
 const menu_roles = @import("menu_roles.zig");
 const logging = @import("logging.zig");
+const capabilities = @import("capabilities.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.menu;
@@ -617,6 +618,7 @@ fn menuActionCallback(_: ?*anyopaque, _: ?*anyopaque, sender: ?*anyopaque) callc
 }
 
 fn ensureMenuTarget() ?*anyopaque {
+    _ = capabilities.registerEmitter(.menu_action);
     if (comptime builtin.os.tag != .macos) return null;
     if (menu_target != null) return menu_target;
 

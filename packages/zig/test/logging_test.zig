@@ -3,12 +3,12 @@ const testing = std.testing;
 const logging = @import("../src/logging.zig");
 
 test "LogLevel ordering" {
-    try testing.expect(@intFromEnum(logging.LogLevel.trace) < @intFromEnum(logging.LogLevel.debug));
-    try testing.expect(@intFromEnum(logging.LogLevel.debug) < @intFromEnum(logging.LogLevel.info));
-    try testing.expect(@intFromEnum(logging.LogLevel.info) < @intFromEnum(logging.LogLevel.warn));
-    try testing.expect(@intFromEnum(logging.LogLevel.warn) < @intFromEnum(logging.LogLevel.err));
-    try testing.expect(@intFromEnum(logging.LogLevel.err) < @intFromEnum(logging.LogLevel.fatal));
-    try testing.expect(@intFromEnum(logging.LogLevel.fatal) < @intFromEnum(logging.LogLevel.off));
+    try testing.expect(@backingInt(logging.LogLevel.trace) < @backingInt(logging.LogLevel.debug));
+    try testing.expect(@backingInt(logging.LogLevel.debug) < @backingInt(logging.LogLevel.info));
+    try testing.expect(@backingInt(logging.LogLevel.info) < @backingInt(logging.LogLevel.warn));
+    try testing.expect(@backingInt(logging.LogLevel.warn) < @backingInt(logging.LogLevel.err));
+    try testing.expect(@backingInt(logging.LogLevel.err) < @backingInt(logging.LogLevel.fatal));
+    try testing.expect(@backingInt(logging.LogLevel.fatal) < @backingInt(logging.LogLevel.off));
 }
 
 test "LogLevel asText" {

@@ -91,54 +91,103 @@ pub const NamespaceDecl = struct {
 /// deriving from: `craft:menu:action` is colon-separated and `craft:powerSleep`
 /// is camel-cased, and both are load-bearing spellings a page already listens
 /// for. Renaming them to be consistent would break every app.
+///
+/// `test/capabilities_test.zig` checks this list against every `_evt('craft:…')`
+/// in `craft-bridge.js`. It shipped with 22 of the 44 and claimed to be
+/// complete, which is the same overclaiming this whole mechanism exists to
+/// stop — so now the claim is enforced.
 pub const Channel = enum {
-    menu_action,
-    theme,
-    settings_open,
-    window_focus,
-    window_blur,
-    window_resize,
-    window_move,
-    screen_change,
-    deep_link,
-    file_drop,
-    shortcut,
+    bluetooth_deviceconnected,
+    bluetooth_devicedisconnected,
+    bluetooth_devicefound,
+    bonjour_found,
+    bonjour_lost,
+    deeplink,
+    filedrop,
     fs_change,
-    power_sleep,
-    power_wake,
-    network_change,
-    bluetooth_device_found,
-    bluetooth_device_connected,
-    bluetooth_device_disconnected,
-    touchbar_action,
+    handoff_incoming,
+    iap_failed,
+    iap_productsloaded,
+    iap_purchased,
+    iap_restored,
+    localserver_request,
+    location_authchanged,
+    location_error,
+    location_update,
+    menu_action,
+    menubar_statechange,
+    midi_message,
+    networkchange,
+    powersleep,
+    powerwake,
+    screen_change,
+    screensharing_change,
     serial_data,
-    speech_partial,
-    speech_final,
+    servicemenu_invoked,
+    settings_open,
+    shortcut,
+    shortcut_error,
+    speechrecognition_final,
+    speechrecognition_partial,
+    theme,
+    touchbar_action,
+    tray_menuaction,
+    updateavailable,
+    updatedownloaded,
+    window_blur,
+    window_close,
+    window_focus,
+    window_minimize,
+    window_move,
+    window_resize,
+    window_restore,
 
     pub fn eventName(self: Channel) []const u8 {
         return switch (self) {
-            .menu_action => "craft:menu:action",
-            .theme => "craft:theme",
-            .settings_open => "craft:settings:open",
-            .window_focus => "craft:window:focus",
-            .window_blur => "craft:window:blur",
-            .window_resize => "craft:window:resize",
-            .window_move => "craft:window:move",
-            .screen_change => "craft:screen:change",
-            .deep_link => "craft:deepLink",
-            .file_drop => "craft:fileDrop",
-            .shortcut => "craft:shortcut",
+            .bluetooth_deviceconnected => "craft:bluetooth:deviceConnected",
+            .bluetooth_devicedisconnected => "craft:bluetooth:deviceDisconnected",
+            .bluetooth_devicefound => "craft:bluetooth:deviceFound",
+            .bonjour_found => "craft:bonjour:found",
+            .bonjour_lost => "craft:bonjour:lost",
+            .deeplink => "craft:deepLink",
+            .filedrop => "craft:fileDrop",
             .fs_change => "craft:fs:change",
-            .power_sleep => "craft:powerSleep",
-            .power_wake => "craft:powerWake",
-            .network_change => "craft:networkChange",
-            .bluetooth_device_found => "craft:bluetooth:deviceFound",
-            .bluetooth_device_connected => "craft:bluetooth:deviceConnected",
-            .bluetooth_device_disconnected => "craft:bluetooth:deviceDisconnected",
-            .touchbar_action => "craft:touchbar:action",
+            .handoff_incoming => "craft:handoff:incoming",
+            .iap_failed => "craft:iap:failed",
+            .iap_productsloaded => "craft:iap:productsLoaded",
+            .iap_purchased => "craft:iap:purchased",
+            .iap_restored => "craft:iap:restored",
+            .localserver_request => "craft:localServer:request",
+            .location_authchanged => "craft:location:authChanged",
+            .location_error => "craft:location:error",
+            .location_update => "craft:location:update",
+            .menu_action => "craft:menu:action",
+            .menubar_statechange => "craft:menubar:stateChange",
+            .midi_message => "craft:midi:message",
+            .networkchange => "craft:networkChange",
+            .powersleep => "craft:powerSleep",
+            .powerwake => "craft:powerWake",
+            .screen_change => "craft:screen:change",
+            .screensharing_change => "craft:screenSharing:change",
             .serial_data => "craft:serial:data",
-            .speech_partial => "craft:speechRecognition:partial",
-            .speech_final => "craft:speechRecognition:final",
+            .servicemenu_invoked => "craft:serviceMenu:invoked",
+            .settings_open => "craft:settings:open",
+            .shortcut => "craft:shortcut",
+            .shortcut_error => "craft:shortcut:error",
+            .speechrecognition_final => "craft:speechRecognition:final",
+            .speechrecognition_partial => "craft:speechRecognition:partial",
+            .theme => "craft:theme",
+            .touchbar_action => "craft:touchbar:action",
+            .tray_menuaction => "craft:tray:menuAction",
+            .updateavailable => "craft:updateAvailable",
+            .updatedownloaded => "craft:updateDownloaded",
+            .window_blur => "craft:window:blur",
+            .window_close => "craft:window:close",
+            .window_focus => "craft:window:focus",
+            .window_minimize => "craft:window:minimize",
+            .window_move => "craft:window:move",
+            .window_resize => "craft:window:resize",
+            .window_restore => "craft:window:restore",
         };
     }
 };
@@ -171,6 +220,33 @@ pub const Emitter = struct {
 pub fn registerEmitter(channel: Channel) Emitter {
     live_channels[@backingInt(channel)] = true;
     return .{ .channel = channel };
+}
+
+/// What craft can honestly say about a channel.
+///
+/// There is no `dead`. A source scan cannot establish absence: `craft:window:*`
+/// names are composed in JavaScript from `__craftDeliverWindowEvent('focus')`,
+/// so no Zig file contains the literal even though the emitter is right there.
+/// The shipped version reported a bare `false` for anything unregistered, which
+/// a page reasonably reads as "this will never fire" — and 21 of 22 channels
+/// said it, including `craft:menu:action` and `craft:theme`, both of which work.
+pub const Liveness = enum {
+    /// Something in this build took out a permit to emit on it.
+    live,
+    /// Craft cannot prove it either way. Subscribe and see; do not disable a
+    /// feature over it.
+    unknown,
+
+    pub fn text(self: Liveness) []const u8 {
+        return switch (self) {
+            .live => "live",
+            .unknown => "unknown",
+        };
+    }
+};
+
+pub fn liveness(channel: Channel) Liveness {
+    return if (live_channels[@backingInt(channel)]) .live else .unknown;
 }
 
 pub fn isLive(channel: Channel) bool {
@@ -257,8 +333,9 @@ pub fn buildManifest(gpa: std.mem.Allocator, registry: []const NamespaceDecl) ![
         if (index > 0) try out.append(gpa, ',');
         try out.append(gpa, '"');
         try appendEscaped(gpa, &out, channel.eventName());
-        try out.appendSlice(gpa, "\":");
-        try out.appendSlice(gpa, if (isLive(channel)) "true" else "false");
+        try out.appendSlice(gpa, "\":\"");
+        try out.appendSlice(gpa, liveness(channel).text());
+        try out.append(gpa, '"');
     }
     try out.appendSlice(gpa, "}}");
 
@@ -281,17 +358,20 @@ test "a channel has no emitter until something registers one" {
     try testing.expectEqualStrings("craft:fs:change", emitter.eventName());
 
     // Registering one channel says nothing about any other.
-    try testing.expect(!isLive(.power_sleep));
+    try testing.expect(!isLive(.powersleep));
 }
 
 test "every channel has a distinct event name" {
     // A duplicate would make one of the two silently unreportable: the manifest
     // is keyed by event name, so the second would overwrite the first.
+    //
+    // Runtime rather than `inline for`: at 44 channels the nested comptime loop
+    // exceeds Zig's backwards-branch budget.
     const all = std.enums.values(Channel);
-    inline for (all, 0..) |left, i| {
-        inline for (all, 0..) |right, j| {
-            if (i < j) try testing.expect(!std.mem.eql(u8, left.eventName(), right.eventName()));
-        }
+    var names: [all.len][]const u8 = undefined;
+    for (all, 0..) |ch, i| names[i] = ch.eventName();
+    for (names, 0..) |a, i| {
+        for (names[i + 1 ..]) |b| try testing.expect(!std.mem.eql(u8, a, b));
     }
 }
 
@@ -388,8 +468,10 @@ test "the manifest reports every channel, live or not" {
     // Every channel is present — a dead one has to be reported as dead, not
     // omitted, or an app cannot tell "no emitter" from "channel I misspelled".
     try testing.expectEqual(@as(usize, channel_count), channels.count());
-    try testing.expect(channels.get("craft:menu:action").?.bool);
-    try testing.expect(!channels.get("craft:fs:change").?.bool);
+    try testing.expectEqualStrings("live", channels.get("craft:menu:action").?.string);
+    // Not "dead" — craft cannot prove a channel has no emitter, and saying so
+    // is what made the shipped manifest tell pages to disable working features.
+    try testing.expectEqualStrings("unknown", channels.get("craft:fs:change").?.string);
 }
 
 test "a reason cannot break the manifest out of its JSON" {

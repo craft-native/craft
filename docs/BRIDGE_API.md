@@ -559,11 +559,15 @@ holds a ceiling on how many may remain that only ever goes down.
 
 ### `channels`
 
-Every `craft:*` event, and whether anything native emits on it. This cannot be
-derived from the action tables — an emitter is a separate piece of code that may
-or may not have been written — so a channel is reported live only because the
-code that emits on it took out a permit at startup. Sixteen channels the JS
-surface subscribes to currently have no emitter at all.
+Every `craft:*` event, and what craft can say about it: `'live'` when something
+in this build took out a permit to emit on it, `'unknown'` when craft cannot
+prove it either way.
+
+There is no `'dead'`, deliberately. Craft cannot establish absence — the
+`craft:window:*` names are composed in JavaScript from
+`__craftDeliverWindowEvent('focus')`, so no source scan finds the literal even
+though the emitter is right there. Treat `'unknown'` as "subscribe and see", not
+as "this will never fire".
 
 ### `supports()` fails open
 
