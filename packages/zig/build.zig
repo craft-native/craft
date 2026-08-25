@@ -665,6 +665,7 @@ pub fn build(b: *std.Build) void {
         "src/bridge_app.zig",
         "src/bridge_screen.zig",
         "src/bridge_capabilities.zig",
+        "src/bridge_capabilities_actions.zig",
     }) |source_path| {
         capability_conformance_tests.root_module.addAnonymousImport(source_path, .{
             .root_source_file = b.path(source_path),
@@ -1086,13 +1087,6 @@ pub fn build(b: *std.Build) void {
             injected_js_tests.root_module.addAnonymousImport("craft-bridge.js", .{
                 .root_source_file = b.path("src/js/craft-bridge.js"),
             });
-
-            // The contracts module reaches the real capability registry, which
-            // reaches the declared bridges and through them the rest of the
-            // native graph — so this needs the same libraries the binary links.
-            // Worth it: the alternative is asserting the manifest shape against
-            // a fixture, which would not catch the registry drifting.
-            linkPlatformLibraries(b, injected_js_tests.root_module, target_os, macos_sdk);
 
             const run_injected_js_tests = b.addRunArtifact(injected_js_tests);
             b.step("test-js", "Run craft's injected JavaScript against zig-js")

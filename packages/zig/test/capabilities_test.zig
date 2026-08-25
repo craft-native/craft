@@ -23,12 +23,28 @@ const registry = registry_mod.registry;
 ///
 /// Embedded rather than read from disk: the test is then hermetic, independent
 /// of the working directory, and looking at exactly the bytes the compiler saw.
-const declared_sources = [_]struct { namespace: []const u8, path: []const u8, source: []const u8 }{
+const declared_sources = [_]struct {
+    namespace: []const u8,
+    path: []const u8,
+    /// The dispatch chain, which the literal ban and the dispatched-on check read.
+    source: []const u8,
+    /// Where the `pub const name = "action";` declarations live, when they are
+    /// not in the same file as the chain. Defaults to `source`.
+    names: ?[]const u8 = null,
+}{
     .{ .namespace = "clipboard", .path = "src/bridge_clipboard.zig", .source = @embedFile("src/bridge_clipboard.zig") },
     .{ .namespace = "tray", .path = "src/bridge_tray.zig", .source = @embedFile("src/bridge_tray.zig") },
     .{ .namespace = "app", .path = "src/bridge_app.zig", .source = @embedFile("src/bridge_app.zig") },
     .{ .namespace = "screen", .path = "src/bridge_screen.zig", .source = @embedFile("src/bridge_screen.zig") },
-    .{ .namespace = "capabilities", .path = "src/bridge_capabilities.zig", .source = @embedFile("src/bridge_capabilities.zig") },
+    .{
+        .namespace = "capabilities",
+        .path = "src/bridge_capabilities.zig",
+        .source = @embedFile("src/bridge_capabilities.zig"),
+        // Its action names live in a separate file so the JS-contract test can
+        // reference them without importing the registry — which reaches every
+        // declared bridge and, through them, the whole native graph.
+        .names = @embedFile("src/bridge_capabilities_actions.zig"),
+    },
 };
 
 const dispatcher_source = @embedFile("src/macos.zig");
@@ -100,22 +116,30 @@ test "a declared bridge compares against no action literals" {
     }
 }
 
-/// Pull `pub const <ident> = "<name>";` pairs out of a bridge's `A` block.
+/// Pull `pub const <ident> = "<name>";` pairs out of a source.
+///
+/// Indentation-agnostic: the names sit inside an `A` struct in most bridges and
+/// at the top level in the ones whose names are split into their own file, and
+/// which of those a bridge chose is not something this check should care about.
 fn constantFor(source: []const u8, action_name: []const u8) ?[]const u8 {
+    const decl = "pub const ";
     var search: usize = 0;
-    while (std.mem.indexOfPos(u8, source, search, "    pub const ")) |at| {
+    while (std.mem.indexOfPos(u8, source, search, decl)) |at| {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..at], '\n')) |nl| nl + 1 else 0;
         const line_end = std.mem.indexOfScalarPos(u8, source, at, '\n') orelse source.len;
-        const line = source[at..line_end];
         search = line_end;
 
+        // Only a declaration, not `pub const` appearing inside a comment.
+        if (std.mem.trim(u8, source[line_start..at], " \t").len != 0) continue;
+
+        const line = source[at..line_end];
         // ` = "` is four bytes, so the value starts at eq + 4.
         const eq = std.mem.indexOf(u8, line, " = \"") orelse continue;
         const close = std.mem.lastIndexOfScalar(u8, line, '"') orelse continue;
         if (close <= eq + 4) continue;
-        const value = line[eq + 4 .. close];
-        if (!std.mem.eql(u8, value, action_name)) continue;
+        if (!std.mem.eql(u8, line[eq + 4 .. close], action_name)) continue;
 
-        return std.mem.trim(u8, line["    pub const ".len..eq], " ");
+        return std.mem.trim(u8, line[decl.len..eq], " ");
     }
     return null;
 }
@@ -139,7 +163,7 @@ test "every declared action is actually dispatched on" {
                 // at all, and saying so is the whole point of declaring it.
                 if (action.status == .unavailable) continue;
 
-                const constant = constantFor(source, action.name) orelse {
+                const constant = constantFor(declared.names orelse source, action.name) orelse {
                     std.debug.print("{s} declares '{s}' with no `A` entry naming it\n", .{ declared.path, action.name });
                     return error.DeclaredActionHasNoConstant;
                 };
@@ -176,7 +200,7 @@ test "every dispatched action is declared" {
             for (registry) |ns| {
                 if (!std.mem.eql(u8, ns.name, declared.namespace)) continue;
                 for (ns.actions) |action| {
-                    const c = constantFor(source, action.name) orelse continue;
+                    const c = constantFor(declared.names orelse source, action.name) orelse continue;
                     if (std.mem.eql(u8, c, constant)) declared_here = true;
                 }
             }

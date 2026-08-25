@@ -15,9 +15,7 @@ const BridgeError = bridge_error.BridgeError;
 /// Namespace-qualified, like the prefs bridge and for the same reason: the
 /// pending-reply queue is keyed by action name alone, so a bare `get` would be
 /// drained by whichever of keychain or tags replied first.
-pub const A = struct {
-    pub const get = "capabilities:get";
-};
+pub const A = @import("bridge_capabilities_actions.zig");
 
 /// What craft serves on the `capabilities` namespace.
 pub const capability_actions = [_]@import("capabilities.zig").ActionDecl{
@@ -30,7 +28,7 @@ pub const action_get = A.get;
 ///
 /// Never the bytes that arrived: the action is interpolated into a JS literal
 /// unescaped, and `craft.invoke` lets a page choose it.
-pub const action_unknown = "capabilities:unknownAction";
+pub const action_unknown = A.unknown;
 
 pub const CapabilitiesBridge = struct {
     allocator: std.mem.Allocator,

@@ -17,5 +17,14 @@ pub const menu = @import("bridge_menu.zig");
 pub const shortcuts = @import("shortcut_registry.zig");
 pub const prefs = @import("prefs.zig");
 pub const prefs_actions = @import("bridge_prefs_actions.zig");
-pub const capabilities = @import("bridge_capabilities.zig");
-pub const registry = @import("capability_registry.zig");
+/// Pure: the manifest types and renderer, with no bridge behind them.
+pub const capabilities = @import("capabilities.zig");
+/// Pure: just the action-name constants the capabilities bridge dispatches on.
+///
+/// Deliberately not the registry. The registry reaches every declared bridge
+/// and through them the whole native graph, and a test about the shape of a
+/// JSON message has no business compiling the tray — on Linux it does not even
+/// compile, because of stale-API code in branches macOS never analyses.
+/// `test/capabilities_test.zig` is where the real registry is checked against
+/// the real dispatch chain.
+pub const capabilities_actions = @import("bridge_capabilities_actions.zig");

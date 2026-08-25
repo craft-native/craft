@@ -18,8 +18,8 @@ const js = @import("js");
 const testing = std.testing;
 const contracts = @import("bridge_contracts");
 const bridge_menu = contracts.menu;
-const bridge_capabilities = contracts.capabilities;
-const capability_registry = contracts.registry;
+const capabilities = contracts.capabilities;
+const capability_actions = contracts.capabilities_actions;
 const prefs = contracts.prefs;
 const prefs_actions = contracts.prefs_actions;
 const shortcut_registry = contracts.shortcuts;
@@ -822,6 +822,26 @@ test "unsubscribing from settings stops delivery, and does not double-count" {
 // Capabilities (#49)
 // =============================================================================
 
+/// A manifest with one of each namespace status, rendered by the real
+/// renderer. The registry's actual contents are checked against the actual
+/// dispatch chain in `test/capabilities_test.zig`; what matters here is that
+/// the JSON native produces is the JSON the facade reads.
+fn fixtureManifest() ![]u8 {
+    const registry = [_]capabilities.NamespaceDecl{
+        .{ .name = "clipboard", .status = .declared, .actions = &.{
+            .{ .name = "readText", .reply = .result },
+        } },
+        .{ .name = "tray", .status = .declared, .actions = &.{
+            .{ .name = "setTitle", .reply = .none },
+            .{ .name = "destroy", .reply = .none, .status = .unavailable, .reason = "not implemented; call craft.tray.hide() instead" },
+        } },
+        .{ .name = "updater", .status = .unavailable, .reason = "the Sparkle framework is not linked into this build" },
+        .{ .name = "marketplace", .status = .unrouted, .reason = "implemented but not routed" },
+        .{ .name = "midi", .status = .undeclared },
+    };
+    return capabilities.buildManifest(testing.allocator, &registry);
+}
+
 test "craft.capabilities posts the action the native bridge dispatches on" {
     var fx = try Fixture.init();
     defer fx.deinit();
@@ -833,7 +853,7 @@ test "craft.capabilities posts the action the native bridge dispatches on" {
 
     try testing.expectEqualStrings("1", try fx.text("String(posted.length)"));
     try testing.expectEqualStrings("capabilities", try fx.text("posted[0].t"));
-    try testing.expectEqualStrings(bridge_capabilities.A.get, try fx.text("posted[0].a"));
+    try testing.expectEqualStrings(capability_actions.get, try fx.text("posted[0].a"));
 }
 
 test "the manifest native builds is the shape the facade reads" {
@@ -850,13 +870,13 @@ test "the manifest native builds is the shape the facade reads" {
         \\window.craft.capabilities().then(function (c) { caps = c });
     );
 
-    const manifest = try capability_registry.manifestJson(testing.allocator);
+    const manifest = try fixtureManifest();
     defer testing.allocator.free(manifest);
 
     const script = try std.fmt.allocPrint(
         testing.allocator,
         "window.__craftBridgeResult('{s}',{s});",
-        .{ bridge_capabilities.A.get, manifest },
+        .{ capability_actions.get, manifest },
     );
     defer testing.allocator.free(script);
     _ = try ctx.evaluate(script);
@@ -883,12 +903,12 @@ test "craft.supports answers from the manifest, and fails open without one" {
     try testing.expectEqualStrings("true", try fx.text("String(window.craft.capabilitiesSync() === null)"));
 
     _ = try ctx.evaluate("window.craft.capabilities();");
-    const manifest = try capability_registry.manifestJson(testing.allocator);
+    const manifest = try fixtureManifest();
     defer testing.allocator.free(manifest);
     const script = try std.fmt.allocPrint(
         testing.allocator,
         "window.__craftBridgeResult('{s}',{s});",
-        .{ bridge_capabilities.A.get, manifest },
+        .{ capability_actions.get, manifest },
     );
     defer testing.allocator.free(script);
     _ = try ctx.evaluate(script);
