@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, windowsArchitecture, windowsExecutableName } from './package.js'
+import { candleArguments, codesignArguments, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, windowsArchitecture, windowsExecutableName } from './package.js'
 
 describe('Windows MSI packaging', () => {
   it('renders a deterministic major-upgrade installer without shell interpolation', () => {
@@ -179,6 +179,33 @@ describe('macOS app bundle assembly', () => {
     expect(readFileSync(join(app!.outputPath!, 'Contents', 'Info.plist'), 'utf8')).toContain('LSUIElement')
   })
 
+  it('writes the declared URL schemes into the bundle it produces', async () => {
+    // The unit tests below prove `macOSInfoPlist` can render the key. This
+    // proves `packageApp` actually asks it to: `urlSchemes` existed as a
+    // config field that nothing read, so an app could declare a scheme,
+    // typecheck, package, and never receive a link (#53).
+    const dir = workDir()
+    const binaryPath = join(dir, 'app-bin')
+    writeFileSync(binaryPath, '#!/bin/sh\n')
+    chmodSync(binaryPath, 0o755)
+
+    const results = await packageApp({
+      name: 'Harness',
+      version: '1.0.0',
+      binaryPath,
+      bundleId: 'org.stacksjs.harness',
+      outDir: join(dir, 'out'),
+      platforms: ['macos'],
+      macos: { dmg: false, urlSchemes: ['harness'] },
+    })
+
+    const app = results.find(result => result.format === 'app')
+    expect(app?.success).toBe(true)
+    const plist = readFileSync(join(app!.outputPath!, 'Contents', 'Info.plist'), 'utf8')
+    expect(plist).toContain('<key>CFBundleURLTypes</key>')
+    expect(plist).toContain('<string>harness</string>')
+  })
+
   it('fails clearly when a helper executable is missing', async () => {
     const dir = workDir()
     const binaryPath = join(dir, 'app-bin')
@@ -232,6 +259,69 @@ describe('macOS app bundle metadata', () => {
   it('escapes metadata rather than emitting malformed plist markup', () => {
     expect(macOSInfoPlist({ name: 'Stacks & Co', version: '1.0.0', bundleId: 'com.example.app' }))
       .toContain('<string>Stacks &amp; Co</string>')
+  })
+})
+
+describe('macOS URL schemes', () => {
+  // Craft's receive path was complete — a `kAEGetURL` AppleEvent handler, a
+  // buffer for a URL that arrives before the page loads — and nothing could
+  // ever cause macOS to send one, because no bundle craft produced declared a
+  // scheme. An app could set `urlSchemes`, typecheck, package, and never
+  // receive a link.
+  const base = { name: 'Harness', version: '1.0.0', bundleId: 'org.stacksjs.harness' }
+
+  it('declares the schemes an app handles', () => {
+    const plist = macOSInfoPlist({ ...base, urlSchemes: ['harness'] })
+    expect(plist).toContain('<key>CFBundleURLTypes</key>')
+    expect(plist).toContain('<string>harness</string>')
+    // The URL type has to be named, and the bundle id is the one identifier
+    // guaranteed unique to this app.
+    expect(plist).toContain('<key>CFBundleURLName</key>\n        <string>org.stacksjs.harness</string>')
+    expect(plist).toContain('<key>CFBundleTypeRole</key>\n        <string>Viewer</string>')
+  })
+
+  it('puts several schemes in one URL type', () => {
+    // They are alternative ways to reach the same app, not different kinds of
+    // document — splitting them across dicts would invent a distinction
+    // LaunchServices does not make.
+    const plist = macOSInfoPlist({ ...base, urlSchemes: ['harness', 'harness-dev'] })
+    expect(plist.match(/<key>CFBundleURLSchemes<\/key>/g)).toHaveLength(1)
+    expect(plist).toContain('<string>harness</string>')
+    expect(plist).toContain('<string>harness-dev</string>')
+  })
+
+  it('emits nothing at all when an app handles no schemes', () => {
+    // Every app packaged before this key existed must keep producing the same
+    // plist, and an empty array is a caller saying "none", not "broken".
+    expect(macOSInfoPlist(base)).not.toContain('CFBundleURLTypes')
+    expect(macOSInfoPlist({ ...base, urlSchemes: [] })).not.toContain('CFBundleURLTypes')
+  })
+
+  it('collapses schemes that differ only in case', () => {
+    // LaunchServices matches case-insensitively, so `Harness` and `harness`
+    // are one scheme declared twice.
+    const entry = urlTypesEntry(base.bundleId, ['harness', 'Harness'])!
+    expect(entry.match(/<string>[Hh]arness<\/string>/g)).toHaveLength(1)
+    expect(entry).toContain('<string>harness</string>')
+  })
+
+  it('refuses a scheme macOS would silently ignore', () => {
+    // The failure this prevents is invisible: LaunchServices drops a malformed
+    // scheme, the app installs and runs, and links simply never arrive.
+    expect(() => macOSInfoPlist({ ...base, urlSchemes: ['1harness'] })).toThrow(/Invalid URL scheme/)
+    expect(() => macOSInfoPlist({ ...base, urlSchemes: ['my app'] })).toThrow(/Invalid URL scheme/)
+    expect(() => macOSInfoPlist({ ...base, urlSchemes: ['harness://'] })).toThrow(/Invalid URL scheme/)
+    expect(() => macOSInfoPlist({ ...base, urlSchemes: [''] })).toThrow(/Invalid URL scheme/)
+    // RFC 3986 allows these three inside a scheme, and apps do use them.
+    expect(() => macOSInfoPlist({ ...base, urlSchemes: ['x-harness.dev+beta'] })).not.toThrow()
+  })
+
+  it('escapes a bundle id rather than emitting malformed markup', () => {
+    expect(urlTypesEntry('com.example.a&b', ['harness'])).toContain('<string>com.example.a&amp;b</string>')
+  })
+
+  it('returns null rather than an empty array for no schemes', () => {
+    expect(urlTypesEntry('com.example.app', [])).toBeNull()
   })
 })
 

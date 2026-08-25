@@ -19,11 +19,15 @@ const keyDirectObject: u32 = 0x2D2D2D2D; // '----'
 
 /// Register an AppleEvent handler for `kAEGetURL` so the OS routes
 /// `myapp://...` URLs into our process whenever the user opens such a
-/// link (including the very first launch). Apps still need to declare
-/// their URL scheme in the bundle's `Info.plist` under
-/// `CFBundleURLTypes` for macOS to dispatch URLs at all — Craft can't
-/// do that for them, but with the handler installed the rest is
-/// automatic.
+/// link (including the very first launch).
+///
+/// This is only half of it. macOS dispatches a URL to an app because the
+/// app's bundle claims the scheme under `CFBundleURLTypes`, and nothing
+/// craft produced used to write that key — so this handler was complete,
+/// correct, and could never fire. `packageApp` now emits it from the
+/// `urlSchemes` an app declares; a bare binary with no bundle still cannot
+/// be a URL handler, because there is nothing for LaunchServices to
+/// register.
 ///
 /// macOS-only. Idempotent.
 pub fn install() void {
