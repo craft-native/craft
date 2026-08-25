@@ -1119,6 +1119,92 @@ export interface CraftBridgeAPI {
    * Screen-sharing and screen-recording detection (macOS)
    */
   screenSharing?: CraftScreenSharingAPI
+
+  /**
+   * System-wide hotkeys (macOS).
+   *
+   * Absent in effect on Linux and Windows: the calls exist, and every
+   * registration is refused, because Craft has no implementation there and a
+   * shortcut that can never fire is worse than one that was never accepted.
+   */
+  shortcuts?: CraftGlobalShortcutsAPI
+}
+
+/** A global hotkey, as `craft.shortcuts.list()` reports it. */
+export interface GlobalShortcut {
+  /** The id the app registered it under. */
+  id: string
+  /**
+   * Craft's canonical spelling of the combination — `Cmd+Delete`, whatever
+   * the app originally wrote — so it can be passed straight back to
+   * `register()`.
+   */
+  accelerator: string
+  /** The key alone, canonically named. */
+  key: string
+  /** False while `disable()` has the key released back to the system. */
+  enabled: boolean
+}
+
+/** Why a registration was refused. */
+export interface GlobalShortcutError {
+  /** The id from the payload that failed, or `''` if it had none. */
+  id: string
+  /** Craft's error code, e.g. `NATIVE_CALL_FAILED`, `INVALID_PARAMETER`. */
+  code: string
+  message: string
+}
+
+/**
+ * System-wide hotkeys: they fire whether or not the app is frontmost.
+ *
+ * Accelerators are `+`-separated and case-insensitive — `'Cmd+Shift+H'`. The
+ * last component is the key, everything before it a modifier (`Cmd`/`Command`/
+ * `Meta`, `Ctrl`/`Control`, `Alt`/`Option`, `Shift`, or `CmdOrCtrl` for the
+ * platform's own). Keys are named by position on the keyboard, not by the
+ * character they produce, so a binding survives a layout change.
+ *
+ * At least one of Command, Control or Option is required, except on the
+ * function keys: a bare global hotkey on `H` would mean no application on the
+ * system ever saw the user type an h again.
+ */
+export interface CraftGlobalShortcutsAPI {
+  /**
+   * Reserve a combination system-wide. Registering an `id` twice replaces the
+   * first binding.
+   *
+   * The promise resolves once the message is posted, **not** once the key is
+   * reserved — so a combination that belongs to another app or to the system
+   * resolves here and reports on {@link CraftGlobalShortcutsAPI.onError}.
+   */
+  register: (id: string, accelerator: string) => Promise<void>
+  /** Give the key back to the system and forget the shortcut. */
+  unregister: (id: string) => Promise<void>
+  /** The same, for every shortcut this app holds. */
+  unregisterAll: () => Promise<void>
+  /**
+   * Stop firing *and release the key*, so other apps can use it again. The
+   * shortcut stays listed. Holding a reservation while dropping the event
+   * would make the combination dead in every other app for as long as Craft
+   * ran.
+   */
+  disable: (id: string) => Promise<void>
+  /**
+   * Take the key back. Can fail if something else claimed it while it was
+   * released, which reports on {@link CraftGlobalShortcutsAPI.onError}.
+   */
+  enable: (id: string) => Promise<void>
+  /** Whether the id is known — enabled or not. */
+  isRegistered: (id: string) => Promise<boolean>
+  list: () => Promise<GlobalShortcut[]>
+  /** Every press of a registered, enabled shortcut. Returns an unsubscribe. */
+  on: (handler: (event: { id: string, accelerator: string }) => void) => () => void
+  /**
+   * Where every fire-and-forget call reports its failure — `register`,
+   * `enable`, `disable`, `unregister`. (`isRegistered` and `list` are
+   * requests and reject their own promise instead.) Returns an unsubscribe.
+   */
+  onError: (handler: (error: GlobalShortcutError) => void) => () => void
 }
 
 /**

@@ -8,6 +8,7 @@ The Craft JavaScript Bridge provides a seamless interface for your web applicati
 - [Getting Started](#getting-started)
 - [System Tray API](#system-tray-api)
 - [Application Menu (macOS)](#application-menu-macos)
+- [Global Shortcuts (macOS)](#global-shortcuts-macos)
 - [Window API](#window-api)
 - [App API](#app-api)
 - [TypeScript Support](#typescript-support)
@@ -286,6 +287,86 @@ a newer bridge surface therefore fails soft on an older binary.
 | `checkItem(itemId)` / `uncheckItem(itemId)` | checkmark |
 | `setItemLabel(itemId, label)` | rename in place |
 
+## Global Shortcuts (macOS)
+
+System-wide hotkeys: they fire whether or not your app is frontmost. macOS only
+— on Linux and Windows every registration is refused, because craft has no
+implementation there and a shortcut that can never fire is worse than one that
+was never accepted.
+
+Craft registers these through Carbon's `RegisterEventHotKey`, which needs no
+Accessibility or Input Monitoring permission and only ever calls back for the
+exact combinations you asked for. Your app never sees any other keystroke.
+
+### `window.craft.shortcuts.register(id, accelerator): Promise<void>`
+
+Reserve a combination. `id` is yours to choose and is what comes back when the
+key is pressed. Registering an id twice replaces the first binding.
+
+```javascript
+await window.craft.shortcuts.register('summon', 'Cmd+Shift+H');
+
+window.craft.shortcuts.on(({ id, accelerator }) => {
+  if (id === 'summon') window.craft.window.toggle();
+});
+```
+
+Accelerators are `+`-separated and case-insensitive. The last component is the
+key; everything before it is a modifier:
+
+| Modifier | Accepted as |
+|---|---|
+| Command | `Cmd`, `Command`, `Meta`, `Super`, `⌘` |
+| Control | `Ctrl`, `Control`, `⌃` |
+| Option | `Alt`, `Option`, `Opt`, `⌥` |
+| Shift | `Shift`, `⇧` |
+| Either | `CmdOrCtrl`, `CommandOrControl`, `Mod` — command on macOS, control elsewhere |
+
+Keys are named by position on the keyboard, not by the character they produce,
+so a shortcut survives the user switching layout. Letters, digits, punctuation,
+`Space`, `Tab`, `Return`, `Escape`, `Delete`, the arrows, `Home`/`End`/`PageUp`/
+`PageDown`, `F1`–`F20` and the keypad (`Keypad0`–`Keypad9`, `KeypadEnter`, …)
+are all bindable. Web and Electron spellings — `Backspace`, `Esc`, `Enter`,
+`ArrowLeft`, `Plus` — resolve to the same keys.
+
+**At least one of Command, Control or Option is required**, except on the
+function keys. A bare global hotkey on `H` would mean no application on the
+system — including yours — ever saw the user type an h again; failing the
+registration is recoverable, and that is not. Shift alone does not count, since
+Shift+H is how you type a capital H.
+
+### `window.craft.shortcuts.onError(handler): () => void`
+
+Where a failed call arrives: `{ id, code, message }`. Every verb here except
+`isRegistered` and `list` is fire-and-forget — the promise resolves as soon as
+the message is posted, not when the key is reserved — so this is how you learn
+that a combination belongs to another app or to the system, or that `enable()`
+could not take a released key back.
+
+```javascript
+window.craft.shortcuts.onError(({ id, message }) => {
+  showToast(`Could not bind ${id}: ${message}`);
+});
+```
+
+### `window.craft.shortcuts.on(handler): () => void`
+
+Fires on every press of a registered, enabled shortcut, with `{ id, accelerator }`.
+The accelerator is craft's canonical spelling — `Cmd+Delete`, whatever you
+originally wrote — so it round-trips back through `register()`. Returns an
+unsubscribe function.
+
+### The rest
+
+| Call | What it does |
+|---|---|
+| `unregister(id)` | give the key back to the system and forget the shortcut |
+| `unregisterAll()` | the same, for every shortcut this app holds |
+| `disable(id)` | stop firing **and release the key**, so other apps can use it again; the shortcut stays listed |
+| `enable(id)` | take it back — this can fail if something else claimed it in the meantime, and reports on `onError` |
+| `isRegistered(id): Promise<boolean>` | whether the id is known, enabled or not |
+| `list(): Promise<Shortcut[]>` | `{ id, accelerator, key, enabled }` for each |
+
 ## Window API
 
 Control the application window from JavaScript.
@@ -519,6 +600,7 @@ async function onComplete() {
 | Tray Menu | 🚧 | 🚧 | 🚧 |
 | Window Control | ✅ | ✅ | ✅ |
 | Hide Dock Icon | ✅ | ➖ | ➖ |
+| Global Shortcuts | ✅ | 🚧 | 🚧 |
 
 ✅ Implemented | 🚧 In Progress | ➖ Not Applicable
 

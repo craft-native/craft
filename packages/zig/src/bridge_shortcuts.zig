@@ -1,454 +1,212 @@
+//! `window.craft.shortcuts` — global hotkeys.
+//!
+//! A thin adapter: it decodes the action, hands the payload to
+//! `shortcut_registry.zig`, and turns the answer back into JavaScript. The
+//! decisions live in the registry, where they are testable; the key is
+//! actually reserved by `macos_hotkey.zig`.
+//!
+//! What used to be here, and what craft-native/craft#47 was about: an app
+//! could register a hotkey, be told it worked, and never receive a keystroke.
+//! `setupGlobalMonitor` computed an event mask, discarded it, installed
+//! nothing, and logged "Global monitor setup (polling mode)" — there was no
+//! polling either. The matcher it was supposed to feed was reachable only from
+//! a function with no callers anywhere in the tree. Three further mismatches
+//! sat on top of it, each individually fatal:
+//!
+//!   * the JS bridge sends `{id, accelerator}`; this file read `key` and
+//!     `modifiers`, so every registration failed its own validation before it
+//!     got anywhere near the missing monitor;
+//!   * `isRegistered` and `list` answered by calling `__craftShortcutList` and
+//!     friends, which nothing defines — so those promises hung for the full
+//!     30-second request timeout and then rejected;
+//!   * a triggered shortcut called `__craftShortcutCallback`, which nothing
+//!     defines either, while the JS side was listening for a `craft:shortcut`
+//!     event that was never dispatched.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
 const logging = @import("logging.zig");
+const registry_mod = @import("shortcut_registry.zig");
+const accel = @import("accelerator.zig");
 
 const log = logging.shortcuts;
 
 const BridgeError = bridge_error.BridgeError;
 
-/// Modifier flags for keyboard shortcuts
-pub const Modifiers = struct {
-    cmd: bool = false,
-    ctrl: bool = false,
-    alt: bool = false,
-    shift: bool = false,
+/// Re-exported so callers that named these through this module keep working.
+pub const Modifiers = accel.Modifiers;
+pub const Shortcut = registry_mod.Registration;
 
-    pub fn toCocoaFlags(self: Modifiers) c_ulong {
-        var flags: c_ulong = 0;
-        if (self.cmd) flags |= (1 << 20); // NSEventModifierFlagCommand
-        if (self.ctrl) flags |= (1 << 18); // NSEventModifierFlagControl
-        if (self.alt) flags |= (1 << 19); // NSEventModifierFlagOption
-        if (self.shift) flags |= (1 << 17); // NSEventModifierFlagShift
-        return flags;
+pub const action_register = registry_mod.action_register;
+pub const action_unregister = registry_mod.action_unregister;
+pub const action_unregister_all = registry_mod.action_unregister_all;
+pub const action_enable = registry_mod.action_enable;
+pub const action_disable = registry_mod.action_disable;
+pub const action_is_registered = registry_mod.action_is_registered;
+pub const action_list = registry_mod.action_list;
+
+/// The event a triggered shortcut arrives on, matching `_evt('craft:shortcut')`
+/// in `craft-bridge.js`.
+pub const event_triggered = "craft:shortcut";
+
+/// Where a registration that could not be granted is reported.
+///
+/// `register` is fire-and-forget on the JS side — its action name collides
+/// with other bridges' in the request queue, so it cannot be a request without
+/// mixing replies — which leaves an app no way to hear that the key it asked
+/// for belongs to someone else. This event is that way.
+pub const event_error = "craft:shortcut:error";
+
+fn platform() registry_mod.Platform {
+    if (comptime builtin.os.tag == .macos) {
+        return .{
+            .register = struct {
+                fn f(keycode: u16, modifiers: u32, hotkey_id: u32) registry_mod.Ref {
+                    return @import("macos_hotkey.zig").register(keycode, modifiers, hotkey_id);
+                }
+            }.f,
+            .unregister = struct {
+                fn f(ref: registry_mod.Ref) void {
+                    @import("macos_hotkey.zig").unregister(ref);
+                }
+            }.f,
+        };
     }
-};
+    // Linux and Windows have no global-hotkey implementation in craft yet.
+    // Refusing every registration is the honest answer: the alternative —
+    // accepting them — is the bug this file was rewritten to fix.
+    return registry_mod.unsupported_platform;
+}
 
-/// Registered shortcut
-pub const Shortcut = struct {
-    id: []const u8,
-    key: []const u8,
-    modifiers: Modifiers,
-    callback_id: []const u8,
-    enabled: bool = true,
-};
-
-/// Bridge handler for global keyboard shortcuts
 pub const ShortcutsBridge = struct {
     allocator: std.mem.Allocator,
-    shortcuts: std.StringHashMap(Shortcut),
-    global_monitor: ?*anyopaque = null,
-    local_monitor: ?*anyopaque = null,
+    registry: registry_mod.Registry,
 
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .shortcuts = std.StringHashMap(Shortcut).init(allocator),
+            .registry = registry_mod.Registry.init(allocator, platform()),
         };
     }
 
-    /// Handle shortcut-related messages from JavaScript
+    pub fn deinit(self: *Self) void {
+        self.registry.deinit();
+        if (comptime builtin.os.tag == .macos) {
+            @import("macos_hotkey.zig").on_pressed = null;
+        }
+        const global_state = @import("global_state.zig");
+        global_state.instance.setShortcutsBridge(null);
+    }
+
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
         self.handleMessageInternal(action, data) catch |err| {
-            self.reportError(action, err);
+            const bridge_err: BridgeError = err;
+            // The action name travels with the error so `__craftBridgeError`
+            // rejects only that action's callers.
+            bridge_error.sendErrorToJS(self.allocator, action, bridge_err);
+
+            // `isRegistered` and `list` are requests: the line above rejects
+            // the promise their caller is holding, and that is the whole
+            // report. Every other verb is fire-and-forget, so its caller has
+            // already moved on and there is nothing to reject — the error
+            // event is the only way it hears anything at all.
+            const is_request = std.mem.eql(u8, action, action_is_registered) or
+                std.mem.eql(u8, action, action_list);
+            if (!is_request) self.reportFailure(data, bridge_err);
         };
     }
 
     fn handleMessageInternal(self: *Self, action: []const u8, data: []const u8) !void {
-        if (std.mem.eql(u8, action, "register")) {
-            try self.registerShortcut(data);
-        } else if (std.mem.eql(u8, action, "unregister")) {
-            try self.unregisterShortcut(data);
-        } else if (std.mem.eql(u8, action, "unregisterAll")) {
-            try self.unregisterAllShortcuts();
-        } else if (std.mem.eql(u8, action, "enable")) {
-            try self.enableShortcut(data);
-        } else if (std.mem.eql(u8, action, "disable")) {
-            try self.disableShortcut(data);
-        } else if (std.mem.eql(u8, action, "isRegistered")) {
-            try self.isRegistered(data);
-        } else if (std.mem.eql(u8, action, "list")) {
-            try self.listShortcuts();
+        if (std.mem.eql(u8, action, action_register)) {
+            self.ensureDelivery();
+            const entry = try self.registry.register(data);
+            log.debug("registered {s} as {s}", .{ entry.id, entry.accelerator });
+        } else if (std.mem.eql(u8, action, action_unregister)) {
+            try self.registry.unregister(data);
+        } else if (std.mem.eql(u8, action, action_unregister_all)) {
+            self.registry.unregisterAll();
+        } else if (std.mem.eql(u8, action, action_enable)) {
+            try self.registry.setEnabled(data, true);
+        } else if (std.mem.eql(u8, action, action_disable)) {
+            try self.registry.setEnabled(data, false);
+        } else if (std.mem.eql(u8, action, action_is_registered)) {
+            const json = try self.registry.isRegisteredJson(data);
+            defer self.allocator.free(json);
+            bridge_error.sendResultToJS(self.allocator, action, json);
+        } else if (std.mem.eql(u8, action, action_list)) {
+            const json = try self.registry.listJson();
+            defer self.allocator.free(json);
+            bridge_error.sendResultToJS(self.allocator, action, json);
         } else {
             return BridgeError.UnknownAction;
         }
     }
 
-    fn reportError(self: *Self, action: []const u8, err: anyerror) void {
-        const bridge_err: BridgeError = switch (err) {
-            BridgeError.MissingData => BridgeError.MissingData,
-            BridgeError.InvalidJSON => BridgeError.InvalidJSON,
-            else => BridgeError.NativeCallFailed,
-        };
-        bridge_error.sendErrorToJS(self.allocator, action, bridge_err);
-    }
-
-    /// Register a global shortcut
-    /// JSON: {"id": "toggle", "key": "Space", "modifiers": {"cmd": true, "shift": true}, "callback": "onToggle"}
-    fn registerShortcut(self: *Self, data: []const u8) !void {
-        // Parse shortcut data
-        var id: []const u8 = "";
-        var key: []const u8 = "";
-        var callback_id: []const u8 = "";
-        var modifiers = Modifiers{};
-
-        // Parse id
-        if (std.mem.indexOf(u8, data, "\"id\":\"")) |idx| {
-            const start = idx + 6;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                id = data[start..end];
-            }
-        }
-
-        // Parse key
-        if (std.mem.indexOf(u8, data, "\"key\":\"")) |idx| {
-            const start = idx + 7;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                key = data[start..end];
-            }
-        }
-
-        // Parse callback
-        if (std.mem.indexOf(u8, data, "\"callback\":\"")) |idx| {
-            const start = idx + 12;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                callback_id = data[start..end];
-            }
-        }
-
-        // Parse modifiers
-        if (std.mem.indexOf(u8, data, "\"cmd\":true")) |_| modifiers.cmd = true;
-        if (std.mem.indexOf(u8, data, "\"ctrl\":true")) |_| modifiers.ctrl = true;
-        if (std.mem.indexOf(u8, data, "\"alt\":true")) |_| modifiers.alt = true;
-        if (std.mem.indexOf(u8, data, "\"shift\":true")) |_| modifiers.shift = true;
-
-        if (id.len == 0 or key.len == 0) {
-            return BridgeError.MissingData;
-        }
-
-        log.debug("register: id={s}, key={s}, cmd={}, ctrl={}, alt={}, shift={}", .{ id, key, modifiers.cmd, modifiers.ctrl, modifiers.alt, modifiers.shift });
-
-        // Store shortcut
-        const id_owned = try self.allocator.dupe(u8, id);
-        const key_owned = try self.allocator.dupe(u8, key);
-        const callback_owned = try self.allocator.dupe(u8, callback_id);
-
-        try self.shortcuts.put(id_owned, Shortcut{
-            .id = id_owned,
-            .key = key_owned,
-            .modifiers = modifiers,
-            .callback_id = callback_owned,
-            .enabled = true,
-        });
-
-        // Setup global monitor if not already done
-        if (self.global_monitor == null) {
-            try self.setupGlobalMonitor();
-        }
-    }
-
-    /// Setup global event monitor
-    fn setupGlobalMonitor(self: *Self) !void {
-        if (comptime builtin.os.tag != .macos) return;
-
-        const macos = @import("macos.zig");
-
-        // Create a global monitor for key down events
-        // NSEventMaskKeyDown = 1 << 10 = 1024
-        const event_mask: c_ulonglong = 1 << 10;
-
-        // We need to use addGlobalMonitorForEventsMatchingMask:handler:
-        // This requires creating an Objective-C block, which is complex in Zig
-        // For now, we'll use a polling approach via the run loop
-
-        // Alternative: Use local monitor for when app is active
-        const NSEvent = macos.getClass("NSEvent");
-        _ = NSEvent;
-        _ = event_mask;
-
-        // Store reference to self for callback
+    /// Point the platform's hotkey callback at this bridge. Cheap and
+    /// idempotent, so it runs before every registration rather than depending
+    /// on an initialisation order.
+    fn ensureDelivery(self: *Self) void {
         const global_state = @import("global_state.zig");
         global_state.instance.setShortcutsBridge(self);
-
-        log.debug("Global monitor setup (polling mode)", .{});
-    }
-
-    /// Check if a key event matches any registered shortcut
-    pub fn checkKeyEvent(self: *Self, keycode: u16, flags: c_ulong) void {
-        const key_name = keycodeToName(keycode);
-
-        var it = self.shortcuts.iterator();
-        while (it.next()) |entry| {
-            const shortcut = entry.value_ptr.*;
-            if (!shortcut.enabled) continue;
-
-            // Check if key matches
-            if (!std.mem.eql(u8, shortcut.key, key_name)) continue;
-
-            // Check modifiers
-            const required_flags = shortcut.modifiers.toCocoaFlags();
-            const masked_flags = flags & ((1 << 17) | (1 << 18) | (1 << 19) | (1 << 20));
-
-            if (masked_flags == required_flags) {
-                log.debug("Shortcut triggered: {s}", .{shortcut.id});
-                self.triggerCallback(shortcut.id, shortcut.callback_id);
-            }
+        if (comptime builtin.os.tag == .macos) {
+            @import("macos_hotkey.zig").on_pressed = onHotKeyPressed;
         }
     }
 
-    /// Trigger JavaScript callback for shortcut.
-    /// Escapes both IDs before embedding them in the JS literal so a value
-    /// containing `'` / `\` / newline cannot break out and inject code.
-    fn triggerCallback(self: *Self, shortcut_id: []const u8, callback_id: []const u8) void {
-        _ = self;
+    /// Called on the main thread when a registered combination is pressed
+    /// anywhere in the system.
+    pub fn deliver(self: *Self, hotkey_id: u32) void {
+        const entry = self.registry.findByHotkeyId(hotkey_id) orelse return;
+        // A hotkey disabled between the press and its delivery must not fire.
+        if (!entry.enabled) return;
 
+        log.debug("triggered {s} ({s})", .{ entry.id, entry.accelerator });
+        const detail = registry_mod.triggeredDetail(self.allocator, entry.id, entry.accelerator) catch return;
+        defer self.allocator.free(detail);
+        self.dispatch(event_triggered, detail);
+    }
+
+    fn reportFailure(self: *Self, data: []const u8, err: BridgeError) void {
+        // Best effort: the id is read back out of the payload so the app can
+        // tell which of its registrations failed. A payload too malformed to
+        // yield an id still gets the error, just without one.
+        const IdOnly = struct { id: []const u8 = "" };
+        var id: []const u8 = "";
+        const parsed = std.json.parseFromSlice(IdOnly, self.allocator, data, .{
+            .ignore_unknown_fields = true,
+            .allocate = .alloc_always,
+        }) catch null;
+        defer if (parsed) |p| p.deinit();
+        if (parsed) |p| id = p.value.id;
+
+        const detail = registry_mod.errorDetail(
+            self.allocator,
+            id,
+            bridge_error.errorCodeString(err),
+            bridge_error.errorMessage(err),
+        ) catch return;
+        defer self.allocator.free(detail);
+        self.dispatch(event_error, detail);
+    }
+
+    /// Emit `new CustomEvent(name, { detail })` into the page.
+    fn dispatch(self: *Self, name: []const u8, detail: []const u8) void {
         const bridge = @import("bridge.zig");
 
-        var sid_buf: [128]u8 = undefined;
-        var cb_buf: [128]u8 = undefined;
-        const sid_esc = bridge_error.escapeJsSingleQuoted(&sid_buf, shortcut_id) catch return;
-        const cb_esc = bridge_error.escapeJsSingleQuoted(&cb_buf, callback_id) catch return;
+        const js = registry_mod.eventScript(self.allocator, name, detail) catch return;
+        defer self.allocator.free(js);
 
-        var buf: [512]u8 = undefined;
-        const js = std.fmt.bufPrint(&buf,
-            \\if(window.__craftShortcutCallback)window.__craftShortcutCallback('{s}','{s}');
-        , .{ sid_esc, cb_esc }) catch return;
-
-        bridge.evalJS(js) catch |err| {
-            log.debug("Failed to trigger callback: {}", .{err});
+        bridge.evalJS(js) catch |eval_err| {
+            log.debug("could not deliver {s}: {}", .{ name, eval_err });
         };
-    }
-
-    /// Unregister a shortcut
-    /// JSON: {"id": "toggle"}
-    fn unregisterShortcut(self: *Self, data: []const u8) !void {
-        var id: []const u8 = "";
-        if (std.mem.indexOf(u8, data, "\"id\":\"")) |idx| {
-            const start = idx + 6;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                id = data[start..end];
-            }
-        }
-
-        if (id.len == 0) return BridgeError.MissingData;
-
-        log.debug("unregister: {s}", .{id});
-
-        if (self.shortcuts.fetchRemove(id)) |kv| {
-            self.allocator.free(kv.value.id);
-            self.allocator.free(kv.value.key);
-            self.allocator.free(kv.value.callback_id);
-        }
-    }
-
-    /// Unregister all shortcuts
-    fn unregisterAllShortcuts(self: *Self) !void {
-        log.debug("unregisterAll", .{});
-
-        var it = self.shortcuts.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.value_ptr.id);
-            self.allocator.free(entry.value_ptr.key);
-            self.allocator.free(entry.value_ptr.callback_id);
-        }
-        self.shortcuts.clearAndFree();
-    }
-
-    /// Enable a shortcut
-    /// JSON: {"id": "toggle"}
-    fn enableShortcut(self: *Self, data: []const u8) !void {
-        var id: []const u8 = "";
-        if (std.mem.indexOf(u8, data, "\"id\":\"")) |idx| {
-            const start = idx + 6;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                id = data[start..end];
-            }
-        }
-
-        if (self.shortcuts.getPtr(id)) |shortcut| {
-            shortcut.enabled = true;
-            log.debug("enabled: {s}", .{id});
-        }
-    }
-
-    /// Disable a shortcut
-    /// JSON: {"id": "toggle"}
-    fn disableShortcut(self: *Self, data: []const u8) !void {
-        var id: []const u8 = "";
-        if (std.mem.indexOf(u8, data, "\"id\":\"")) |idx| {
-            const start = idx + 6;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                id = data[start..end];
-            }
-        }
-
-        if (self.shortcuts.getPtr(id)) |shortcut| {
-            shortcut.enabled = false;
-            log.debug("disabled: {s}", .{id});
-        }
-    }
-
-    /// Check if shortcut is registered
-    /// JSON: {"id": "toggle"}
-    fn isRegistered(self: *Self, data: []const u8) !void {
-        var id: []const u8 = "";
-        if (std.mem.indexOf(u8, data, "\"id\":\"")) |idx| {
-            const start = idx + 6;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                id = data[start..end];
-            }
-        }
-
-        const registered = self.shortcuts.contains(id);
-
-        const bridge = @import("bridge.zig");
-        var id_buf: [128]u8 = undefined;
-        const id_esc = bridge_error.escapeJsSingleQuoted(&id_buf, id) catch return;
-
-        var buf: [256]u8 = undefined;
-        const js = std.fmt.bufPrint(&buf,
-            \\if(window.__craftShortcutRegistered)window.__craftShortcutRegistered('{s}',{});
-        , .{ id_esc, registered }) catch return;
-
-        bridge.evalJS(js) catch |err| {
-            std.log.debug("JS eval failed for shortcut registered callback: {}", .{err});
-        };
-    }
-
-    /// List all registered shortcuts
-    fn listShortcuts(self: *Self) !void {
-        const bridge = @import("bridge.zig");
-
-        var buf: [2048]u8 = undefined;
-        var pos: usize = 0;
-
-        // Start JSON array
-        buf[pos] = '[';
-        pos += 1;
-
-        var first = true;
-        var it = self.shortcuts.iterator();
-        while (it.next()) |entry| {
-            const s = entry.value_ptr.*;
-            if (!first) {
-                buf[pos] = ',';
-                pos += 1;
-            }
-            first = false;
-
-            const item = std.fmt.bufPrint(buf[pos..],
-                \\{{"id":"{s}","key":"{s}","enabled":{}}}
-            , .{ s.id, s.key, s.enabled }) catch break;
-            pos += item.len;
-        }
-
-        buf[pos] = ']';
-        pos += 1;
-
-        var js_buf: [2200]u8 = undefined;
-        const js = std.fmt.bufPrint(&js_buf,
-            \\if(window.__craftShortcutList)window.__craftShortcutList({s});
-        , .{buf[0..pos]}) catch return;
-
-        bridge.evalJS(js) catch |err| {
-            std.log.debug("JS eval failed for shortcut list callback: {}", .{err});
-        };
-    }
-
-    pub fn deinit(self: *Self) void {
-        var it = self.shortcuts.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.value_ptr.id);
-            self.allocator.free(entry.value_ptr.key);
-            self.allocator.free(entry.value_ptr.callback_id);
-        }
-        self.shortcuts.deinit();
-        const global_state = @import("global_state.zig");
-        global_state.instance.setShortcutsBridge(null);
     }
 };
 
-/// Convert keycode to key name
-fn keycodeToName(keycode: u16) []const u8 {
-    return switch (keycode) {
-        0 => "A",
-        1 => "S",
-        2 => "D",
-        3 => "F",
-        4 => "H",
-        5 => "G",
-        6 => "Z",
-        7 => "X",
-        8 => "C",
-        9 => "V",
-        11 => "B",
-        12 => "Q",
-        13 => "W",
-        14 => "E",
-        15 => "R",
-        16 => "Y",
-        17 => "T",
-        18 => "1",
-        19 => "2",
-        20 => "3",
-        21 => "4",
-        22 => "6",
-        23 => "5",
-        24 => "=",
-        25 => "9",
-        26 => "7",
-        27 => "-",
-        28 => "8",
-        29 => "0",
-        30 => "]",
-        31 => "O",
-        32 => "U",
-        33 => "[",
-        34 => "I",
-        35 => "P",
-        36 => "Return",
-        37 => "L",
-        38 => "J",
-        39 => "'",
-        40 => "K",
-        41 => ";",
-        42 => "\\",
-        43 => ",",
-        44 => "/",
-        45 => "N",
-        46 => "M",
-        47 => ".",
-        48 => "Tab",
-        49 => "Space",
-        50 => "`",
-        51 => "Delete",
-        53 => "Escape",
-        96 => "F5",
-        97 => "F6",
-        98 => "F7",
-        99 => "F3",
-        100 => "F8",
-        101 => "F9",
-        103 => "F11",
-        109 => "F10",
-        111 => "F12",
-        118 => "F4",
-        120 => "F2",
-        122 => "F1",
-        123 => "Left",
-        124 => "Right",
-        125 => "Down",
-        126 => "Up",
-        else => "Unknown",
-    };
-}
-
-/// Public function for external event handling
-pub fn handleGlobalKeyEvent(keycode: u16, flags: c_ulong) void {
+/// Bridge between the platform's C callback and the live bridge instance.
+fn onHotKeyPressed(hotkey_id: u32) void {
     const global_state = @import("global_state.zig");
-    if (global_state.instance.getShortcutsBridge()) |bridge| {
-        bridge.checkKeyEvent(keycode, flags);
-    }
+    if (global_state.instance.getShortcutsBridge()) |bridge| bridge.deliver(hotkey_id);
 }

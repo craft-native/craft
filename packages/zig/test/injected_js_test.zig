@@ -16,7 +16,9 @@
 const std = @import("std");
 const js = @import("js");
 const testing = std.testing;
-const bridge_menu = @import("../src/bridge_menu.zig");
+const contracts = @import("bridge_contracts");
+const bridge_menu = contracts.menu;
+const shortcut_registry = contracts.shortcuts;
 
 // Supplied by build.zig as named imports — a test module cannot embed
 // files outside its own package path.
@@ -190,15 +192,36 @@ test "the bridge script parses" {
 ///
 /// Everything native would do with a posted message begins with these bytes,
 /// so capturing them is capturing the whole JS half of the contract.
+/// `addEventListener` and `dispatchEvent` are real rather than stubs, because
+/// half of what native sends the page arrives as an event — and a listener
+/// registered for a name nothing dispatches is exactly the failure being
+/// tested for.
 const WEBVIEW_HOST =
     \\var posted = [];
     \\window.webkit = { messageHandlers: { craft: { postMessage: function (m) { posted.push(m) } } } };
-    \\window.addEventListener = function () {};
-    \\window.removeEventListener = function () {};
-    \\window.dispatchEvent = function () { return true };
+    \\var listeners = {};
+    \\window.addEventListener = function (name, fn) { (listeners[name] = listeners[name] || []).push(fn) };
+    \\window.removeEventListener = function (name, fn) {
+    \\  var q = listeners[name] || [];
+    \\  var i = q.indexOf(fn);
+    \\  if (i >= 0) q.splice(i, 1);
+    \\};
+    \\window.dispatchEvent = function (e) {
+    \\  (listeners[e.type] || []).slice().forEach(function (fn) { fn(e) });
+    \\  return true;
+    \\};
     \\function CustomEvent(type, init) { this.type = type; this.detail = init && init.detail }
     \\var document = { readyState: 'complete', addEventListener: function () {} };
+    \\globalThis.setTimeout = function () { return 0 };
+    \\globalThis.clearTimeout = function () {};
 ;
+// The timer stubs are load-bearing rather than cosmetic. `_req` arms a
+// 30-second reaping timeout inside its Promise executor, so without a
+// `setTimeout` the executor throws a ReferenceError and every request-shaped
+// call rejects before it has posted anything — which is not a failure mode
+// worth reproducing in a test, and is invisible if you only ever exercise the
+// fire-and-forget half of the bridge. Stubs that never fire keep it
+// deterministic: these tests resolve their own calls explicitly.
 
 test "craft.menu.set posts what bridge_menu.zig's parser reads" {
     // The one path that matters, end to end and without a window: the real
@@ -276,4 +299,231 @@ test "an empty menu bar is a parse, not a failure" {
     defer parsed.deinit();
 
     try testing.expect(parsed.value.menus == null);
+}
+
+// =============================================================================
+// Global shortcuts (#47)
+// =============================================================================
+
+/// A registry over a platform that grants every key, so these tests are about
+/// the payload contract rather than about what the machine will hand over.
+const GrantingPlatform = struct {
+    var granted: usize = 0;
+
+    fn register(_: u16, _: u32, _: u32) shortcut_registry.Ref {
+        granted += 1;
+        return @ptrFromInt(granted);
+    }
+    fn unregister(_: shortcut_registry.Ref) void {}
+};
+
+fn grantingRegistry() shortcut_registry.Registry {
+    GrantingPlatform.granted = 0;
+    return shortcut_registry.Registry.init(testing.allocator, .{
+        .register = GrantingPlatform.register,
+        .unregister = GrantingPlatform.unregister,
+    });
+}
+
+test "craft.shortcuts.register posts what the native registry reads" {
+    // The mismatch that made #47 unfixable-looking: the JS side has always
+    // posted `{id, accelerator}` and the native side has always read `key` and
+    // `modifiers`, so every registration failed its own validation long before
+    // reaching the event monitor that was also never installed. Neither half
+    // was wrong on its own terms, and neither half's tests could see it.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("window.craft.shortcuts.register('harness.summon', 'Cmd+Shift+H');");
+
+    try testing.expectEqualStrings("1", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings("shortcuts", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings(shortcut_registry.action_register, try fx.text("posted[0].a"));
+
+    var registry = grantingRegistry();
+    defer registry.deinit();
+
+    const entry = try registry.register(try fx.text("posted[0].d"));
+    try testing.expectEqualStrings("harness.summon", entry.id);
+    try testing.expectEqualStrings("Cmd+Shift+H", entry.accelerator);
+    try testing.expectEqual(@as(u16, 0x04), entry.binding.keycode); // kVK_ANSI_H
+    try testing.expect(entry.binding.modifiers.cmd);
+    try testing.expect(entry.binding.modifiers.shift);
+}
+
+test "unregister, enable and disable post the id the registry looks up" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\window.craft.shortcuts.register('toggle', 'Cmd+Shift+H');
+        \\window.craft.shortcuts.disable('toggle');
+        \\window.craft.shortcuts.enable('toggle');
+        \\window.craft.shortcuts.unregister('toggle');
+    );
+
+    var registry = grantingRegistry();
+    defer registry.deinit();
+
+    _ = try registry.register(try fx.text("posted[0].d"));
+    try testing.expectEqualStrings(shortcut_registry.action_disable, try fx.text("posted[1].a"));
+    try registry.setEnabled(try fx.text("posted[1].d"), false);
+    try testing.expectEqualStrings(shortcut_registry.action_enable, try fx.text("posted[2].a"));
+    try registry.setEnabled(try fx.text("posted[2].d"), true);
+    try testing.expectEqualStrings(shortcut_registry.action_unregister, try fx.text("posted[3].a"));
+    try registry.unregister(try fx.text("posted[3].d"));
+
+    try testing.expectEqual(@as(usize, 0), registry.count());
+}
+
+test "the reply to list is the shape the JS facade unwraps" {
+    // `list()` resolves through `__craftBridgeResult`, and native used to
+    // answer by calling `window.__craftShortcutList` — which nothing defines.
+    // The promise hung for the full 30-second request timeout and rejected.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var listed = null;
+        \\window.craft.shortcuts.list().then(function (s) { listed = s });
+    );
+
+    var registry = grantingRegistry();
+    defer registry.deinit();
+    _ = try registry.register(
+        \\{"id":"toggle","accelerator":"Cmd+Shift+H"}
+    );
+
+    const reply = try registry.listJson();
+    defer testing.allocator.free(reply);
+
+    // Exactly what `sendResultToJS` evaluates in the page.
+    const script = try std.fmt.allocPrint(
+        testing.allocator,
+        "window.__craftBridgeResult('{s}',{s});",
+        .{ shortcut_registry.action_list, reply },
+    );
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("1", try fx.text("String(listed.length)"));
+    try testing.expectEqualStrings("toggle", try fx.text("listed[0].id"));
+    try testing.expectEqualStrings("Cmd+Shift+H", try fx.text("listed[0].accelerator"));
+    try testing.expectEqualStrings("true", try fx.text("String(listed[0].enabled)"));
+}
+
+test "the reply to isRegistered is the shape the JS facade unwraps" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var answer = null;
+        \\window.craft.shortcuts.isRegistered('toggle').then(function (v) { answer = v });
+    );
+
+    var registry = grantingRegistry();
+    defer registry.deinit();
+    _ = try registry.register(
+        \\{"id":"toggle","accelerator":"Cmd+Shift+H"}
+    );
+
+    const reply = try registry.isRegisteredJson(
+        \\{"id":"toggle"}
+    );
+    defer testing.allocator.free(reply);
+
+    const script = try std.fmt.allocPrint(
+        testing.allocator,
+        "window.__craftBridgeResult('{s}',{s});",
+        .{ shortcut_registry.action_is_registered, reply },
+    );
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("true", try fx.text("String(answer)"));
+}
+
+test "a triggered shortcut reaches the listener craft.shortcuts.on installs" {
+    // The third mismatch: native called `window.__craftShortcutCallback`,
+    // which nothing defines, while the JS side listened for `craft:shortcut`,
+    // which nothing dispatched. Both sides looked implemented.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var fired = [];
+        \\window.craft.shortcuts.on(function (d) { fired.push(d.id + '@' + d.accelerator) });
+    );
+
+    // The exact bytes `deliver` evaluates in the page.
+    const detail = try shortcut_registry.triggeredDetail(testing.allocator, "harness.summon", "Cmd+Shift+H");
+    defer testing.allocator.free(detail);
+    const script = try shortcut_registry.eventScript(testing.allocator, "craft:shortcut", detail);
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("harness.summon@Cmd+Shift+H", try fx.text("fired.join('|')"));
+}
+
+test "a refused registration reaches craft.shortcuts.onError" {
+    // `register` cannot be a request — its action name collides with other
+    // bridges' in the pending queue — so this event is the only way an app
+    // hears that the key it asked for belongs to someone else.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var failures = [];
+        \\window.craft.shortcuts.onError(function (d) { failures.push(d.id + ':' + d.code) });
+    );
+
+    const detail = try shortcut_registry.errorDetail(
+        testing.allocator,
+        "harness.summon",
+        "NATIVE_CALL_FAILED",
+        "Native API call failed",
+    );
+    defer testing.allocator.free(detail);
+    const script = try shortcut_registry.eventScript(testing.allocator, "craft:shortcut:error", detail);
+    defer testing.allocator.free(script);
+    _ = try ctx.evaluate(script);
+
+    try testing.expectEqualStrings("harness.summon:NATIVE_CALL_FAILED", try fx.text("failures.join('|')"));
+}
+
+test "an accelerator the native side cannot bind is refused, not accepted" {
+    // A registration that can never fire is the worst of the three outcomes:
+    // the app waits forever for a key that was never reserved.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("window.craft.shortcuts.register('oops', 'Cmd+Nonsense');");
+
+    var registry = grantingRegistry();
+    defer registry.deinit();
+    try testing.expectError(
+        error.InvalidParameter,
+        registry.register(try fx.text("posted[0].d")),
+    );
 }
