@@ -40,6 +40,12 @@ pub const WindowOptions = struct {
     // process. NSImage decodes everything Cocoa can render, so any common
     // raster format works; .icns is preferred for crispness across sizes.
     icon: ?[]const u8 = null,
+    // The name AppKit shows for the app: the App menu title and the
+    // "About X" / "Hide X" / "Quit X" items. Without it those read
+    // `NSProcessInfo.processName`, which for a bare binary is the executable
+    // — so every app launched through the shared `craft` binary called itself
+    // "craft". macOS only.
+    app_name: ?[]const u8 = null,
 };
 
 pub const CliError = error{
@@ -66,6 +72,7 @@ pub fn freeOptionStrings(allocator: std.mem.Allocator, options: *WindowOptions) 
     if (!std.mem.eql(u8, options.title, "Craft App")) allocator.free(options.title);
     if (options.sidebar_config) |s| allocator.free(s);
     if (options.icon) |s| allocator.free(s);
+    if (options.app_name) |s| allocator.free(s);
     if (options.eval_source) |s| allocator.free(s);
     if (options.eval_file) |s| allocator.free(s);
     options.* = WindowOptions{};
@@ -133,6 +140,7 @@ const BundleConfig = struct {
     html: ?[]const u8 = null,
     url: ?[]const u8 = null,
     title: ?[]const u8 = null,
+    appName: ?[]const u8 = null,
     width: ?u32 = null,
     height: ?u32 = null,
     icon: ?[]const u8 = null,
@@ -219,6 +227,7 @@ fn loadBundleConfig(allocator: std.mem.Allocator) ?WindowOptions {
     }
     if (cfg.url) |v| options.url = allocator.dupe(u8, v) catch null;
     if (cfg.title) |v| options.title = allocator.dupe(u8, v) catch options.title;
+    if (cfg.appName) |v| options.app_name = allocator.dupe(u8, v) catch null;
     if (cfg.icon) |v| options.icon = allocator.dupe(u8, v) catch null;
     applyScalarConfig(cfg, &options);
 
@@ -297,6 +306,23 @@ test "a manifest parses into the fields it names and no others" {
     // Absent stays null so `parseArgs` keeps craft's default rather than a zero.
     try std.testing.expect(parsed.value.url == null);
     try std.testing.expect(parsed.value.devTools == null);
+}
+
+test "a manifest can name the app without naming the window" {
+    // Two different strings: `title` is the window's, `appName` is the one in
+    // the menu bar. A packaged app usually gets the latter from CFBundleName,
+    // but a manifest may override it.
+    const source =
+        \\{"title":"Untitled — Hush","appName":"Hush"}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try std.testing.expectEqualStrings("Untitled — Hush", parsed.value.title.?);
+    try std.testing.expectEqualStrings("Hush", parsed.value.appName.?);
 }
 
 test "unknown manifest keys are ignored rather than failing the launch" {
@@ -455,6 +481,10 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
             options.icon = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--app-name")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            options.app_name = try allocator.dupe(u8, args[i]);
         } else if (!std.mem.startsWith(u8, arg, "--")) {
             // Treat as positional URL argument
             if (options.url == null) {
@@ -519,6 +549,8 @@ fn printHelp() void {
         \\      --sidebar-config <J> Sidebar JSON configuration
         \\      --sidebar-width <W>  Sidebar width in pixels (default: 220)
         \\      --icon <PATH>        Path to dock icon image (PNG/JPG/ICNS)
+        \\      --app-name <NAME>    Name in the menu bar and in About/Hide/Quit
+        \\                           (macOS; defaults to the executable name)
         \\
         \\Debugging:
         \\      --debug              Enable debug output
@@ -542,6 +574,7 @@ fn printHelp() void {
         \\  craft http://localhost:3000 --dark --hot-reload
         \\  craft http://localhost:3000 --system-tray --light
         \\  craft http://localhost:3000 --native-sidebar --sidebar-width 250
+        \\  craft http://localhost:3000 --app-name "My App"
         \\
         \\For more information, visit: https://github.com/home-lang/craft
         \\

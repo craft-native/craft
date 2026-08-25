@@ -366,7 +366,13 @@ export class CraftApp {
 
   private buildArgs(): string[] {
     const args: string[] = []
-    const { window, html, url } = this.config
+    const { window, html, url, appName } = this.config
+
+    // Before the window options: this names the *app*, not the window, and
+    // the two are independent — a note-taking app is "Notes" in the menu bar
+    // whatever the open document has put in the title bar.
+    if (appName)
+      args.push('--app-name', appName)
 
     // Menubar-only mode doesn't need content
     if (!window?.menubarOnly) {
