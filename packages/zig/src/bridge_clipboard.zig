@@ -8,6 +8,37 @@ const log = logging.clipboard;
 
 // Import GTK clipboard API from linux.zig (works on both X11 and Wayland)
 const linux = if (builtin.os.tag == .linux) @import("linux.zig") else undefined;
+const capabilities = @import("capabilities.zig");
+
+/// The action names this bridge dispatches on.
+///
+/// Declared once, here, and referenced by both the dispatch chain below and the
+/// capability table beside it — so the two cannot disagree. That is enforced:
+/// `test/capabilities_test.zig` fails if a declared bridge compares `action`
+/// against a bare string literal anywhere, which makes it impossible to add an
+/// action without also declaring it.
+pub const A = struct {
+    pub const write_text = "writeText";
+    pub const read_text = "readText";
+    pub const write_h_t_m_l = "writeHTML";
+    pub const read_h_t_m_l = "readHTML";
+    pub const clear = "clear";
+    pub const has_text = "hasText";
+    pub const has_h_t_m_l = "hasHTML";
+    pub const has_image = "hasImage";
+};
+
+/// What craft serves on the `clipboard` namespace.
+pub const capability_actions = [_]capabilities.ActionDecl{
+    .{ .name = A.write_text, .reply = .none },
+    .{ .name = A.read_text, .reply = .result },
+    .{ .name = A.write_h_t_m_l, .reply = .none },
+    .{ .name = A.read_h_t_m_l, .reply = .result },
+    .{ .name = A.clear, .reply = .none },
+    .{ .name = A.has_text, .reply = .result },
+    .{ .name = A.has_h_t_m_l, .reply = .result },
+    .{ .name = A.has_image, .reply = .result },
+};
 
 // Win32 symbols used by the Windows clipboard implementation. Declared at
 // file scope as `extern` so the file parses on every platform — Zig 0.17
@@ -48,21 +79,21 @@ pub const ClipboardBridge = struct {
     }
 
     pub fn handleMessageWithData(self: *Self, action: []const u8, data: ?[]const u8) !void {
-        if (std.mem.eql(u8, action, "writeText")) {
+        if (std.mem.eql(u8, action, A.write_text)) {
             try self.writeText(data);
-        } else if (std.mem.eql(u8, action, "readText")) {
+        } else if (std.mem.eql(u8, action, A.read_text)) {
             try self.readText();
-        } else if (std.mem.eql(u8, action, "writeHTML")) {
+        } else if (std.mem.eql(u8, action, A.write_h_t_m_l)) {
             try self.writeHTML(data);
-        } else if (std.mem.eql(u8, action, "readHTML")) {
+        } else if (std.mem.eql(u8, action, A.read_h_t_m_l)) {
             try self.readHTML();
-        } else if (std.mem.eql(u8, action, "clear")) {
+        } else if (std.mem.eql(u8, action, A.clear)) {
             try self.clear();
-        } else if (std.mem.eql(u8, action, "hasText")) {
+        } else if (std.mem.eql(u8, action, A.has_text)) {
             try self.hasText();
-        } else if (std.mem.eql(u8, action, "hasHTML")) {
+        } else if (std.mem.eql(u8, action, A.has_h_t_m_l)) {
             try self.hasHTML();
-        } else if (std.mem.eql(u8, action, "hasImage")) {
+        } else if (std.mem.eql(u8, action, A.has_image)) {
             try self.hasImage();
         } else {
             return BridgeError.UnknownAction;

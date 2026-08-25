@@ -24,6 +24,15 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// An environment variable as a slice, or null when it is unset.
+///
+/// libc rather than std: `std.posix` has no `getenv` in this compiler version,
+/// and this build links libc everywhere.
+fn envOrEmpty(name: [*:0]const u8) ?[]const u8 {
+    const raw = std.c.getenv(name) orelse return null;
+    return std.mem.span(raw);
+}
+
 /// Supported locale identifiers
 pub const Locale = struct {
     language: []const u8, // ISO 639-1 (e.g., "en", "es", "zh")
@@ -412,7 +421,7 @@ pub const Localization = struct {
         // and returned a Locale whose slices pointed into that dead buffer.
         const env_vars = [_][]const u8{ "LC_ALL", "LC_MESSAGES", "LANG" };
         for (env_vars) |env_var| {
-            if (std.posix.getenv(env_var)) |value| {
+            if (envOrEmpty(env_var)) |value| {
                 // Strip `.UTF-8`, `.ISO-8859-1`, etc. — the codepage suffix
                 // isn't part of the locale identifier.
                 const dot_pos = std.mem.indexOf(u8, value, ".");

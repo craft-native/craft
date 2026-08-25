@@ -738,6 +738,54 @@
   }
 
   // -------------------------------------------------------------------------
+  // capabilities — what the native side actually serves
+  // -------------------------------------------------------------------------
+  // This script is one blob, injected whole into every craft window, whatever
+  // the binary behind it implements. So `typeof craft.tray.destroy === 'function'`
+  // has never been evidence that anything is behind it — and three shipped bugs
+  // came from exactly that assumption. Ask instead.
+  //
+  //   const caps = await craft.capabilities()
+  //   caps.namespaces.updater.status   // 'unavailable'
+  //   caps.namespaces.updater.reason   // 'the Sparkle framework is not linked…'
+  //   caps.channels['craft:fs:change'] // false — subscribing would never fire
+  //
+  // A namespace craft has not audited reports `undeclared`, which means exactly
+  // that: craft will not claim anything either way. Treat it as "try it and
+  // handle failure", not as "missing".
+  window.craft.capabilities = function () {
+    return _req('capabilities', 'capabilities:get', '{}', 5000).then(function (manifest) {
+      window.__craftCapabilities = manifest
+      return manifest
+    })
+  }
+
+  // The last answer, or null if nothing has asked yet. For code that cannot
+  // await — a synchronous feature check during startup.
+  window.craft.capabilitiesSync = function () {
+    return window.__craftCapabilities || null
+  }
+
+  // Convenience: is this exact surface known to work?
+  //
+  // Answers false for an unavailable surface and true for an undeclared one.
+  // That asymmetry is deliberate — failing open is the only safe default for a
+  // mechanism that describes itself, and an older binary with no capabilities
+  // support at all must not make working code stop calling.
+  window.craft.supports = function (path) {
+    const caps = window.__craftCapabilities
+    if (!caps || !caps.namespaces) return true
+    const parts = String(path).split('.')
+    const ns = caps.namespaces[parts[0]]
+    if (!ns) return true
+    if (ns.status === 'unavailable' || ns.status === 'unrouted') return false
+    if (parts.length < 2 || !ns.actions) return ns.status !== 'unavailable'
+    const action = ns.actions[parts[1]]
+    if (!action) return ns.status !== 'declared'
+    return action.status !== 'unavailable'
+  }
+
+  // -------------------------------------------------------------------------
   // theme — system appearance
   // -------------------------------------------------------------------------
   // Native side delivers `craft:theme` with `{appearance:'dark'|'light'}`

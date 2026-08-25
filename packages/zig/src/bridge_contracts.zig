@@ -4,8 +4,8 @@
 //! decodes what it posted with the very code the bridge dispatches to — which
 //! is the only kind of test that can catch a JS side and a native side that
 //! are each individually correct and disagree with each other. #27 (menu action
-//! names), #47 (shortcut payload shape) and #51 (preference value tags) were
-//! all exactly that.
+//! names), #47 (shortcut payload shape), #51 (preference value tags) and #49
+//! (a capability manifest that describes nothing) were all exactly that.
 //!
 //! They arrive through one aggregate rather than as separate named modules
 //! because several of them reach `bridge_error.zig`, and a file may belong to
@@ -17,3 +17,14 @@ pub const menu = @import("bridge_menu.zig");
 pub const shortcuts = @import("shortcut_registry.zig");
 pub const prefs = @import("prefs.zig");
 pub const prefs_actions = @import("bridge_prefs_actions.zig");
+/// Pure: the manifest types and renderer, with no bridge behind them.
+pub const capabilities = @import("capabilities.zig");
+/// Pure: just the action-name constants the capabilities bridge dispatches on.
+///
+/// Deliberately not the registry. The registry reaches every declared bridge
+/// and through them the whole native graph, and a test about the shape of a
+/// JSON message has no business compiling the tray — on Linux it does not even
+/// compile, because of stale-API code in branches macOS never analyses.
+/// `test/capabilities_test.zig` is where the real registry is checked against
+/// the real dispatch chain.
+pub const capabilities_actions = @import("bridge_capabilities_actions.zig");

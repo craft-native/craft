@@ -2,6 +2,15 @@ const std = @import("std");
 const io_context = @import("io_context.zig");
 const builtin = @import("builtin");
 
+/// An environment variable as a slice, or null when it is unset.
+///
+/// libc rather than std: `std.posix` has no `getenv` in this compiler version,
+/// and this build links libc everywhere.
+fn envOrEmpty(name: [*:0]const u8) ?[]const u8 {
+    const raw = std.c.getenv(name) orelse return null;
+    return std.mem.span(raw);
+}
+
 /// System-level enhancements for Craft framework
 /// Includes: keyboard shortcuts, system events, dock features, etc.
 
@@ -612,7 +621,7 @@ pub const LocalStorage = struct {
 
     pub fn init(allocator: std.mem.Allocator, app_name: []const u8) !LocalStorage {
         // Create path: ~/Library/Application Support/<app_name>/storage.json (macOS)
-        const home = std.posix.getenv("HOME") orelse return error.NoHomeDir;
+        const home = envOrEmpty("HOME") orelse return error.NoHomeDir;
 
         const path = try std.fmt.allocPrint(
             allocator,
