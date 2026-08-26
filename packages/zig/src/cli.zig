@@ -50,6 +50,11 @@ pub const WindowOptions = struct {
     // — so every app launched through the shared `craft` binary called itself
     // "craft". macOS only.
     app_name: ?[]const u8 = null,
+    // Keep the process alive after the last window closes, instead of quitting.
+    // Null means craft decides from the shape of the app: a tray or
+    // menubar-only app stays, an ordinary windowed app goes. See
+    // `lifecycle_policy.zig`.
+    keep_running: ?bool = null,
     // Name AppKit remembers this window's size and position under, so the app
     // opens where the user last left it. Null means it forgets every launch.
     frame_autosave: ?[]const u8 = null,
@@ -165,6 +170,7 @@ const BundleConfig = struct {
     menubarOnly: ?bool = null,
     titlebarHidden: ?bool = null,
     headless: ?bool = null,
+    keepRunning: ?bool = null,
 };
 
 /// Absolute path of the running executable's directory.
@@ -264,6 +270,7 @@ fn applyScalarConfig(cfg: BundleConfig, options: *WindowOptions) void {
     if (cfg.hideDockIcon) |v| options.hide_dock_icon = v;
     if (cfg.titlebarHidden) |v| options.titlebar_hidden = v;
     if (cfg.headless) |v| options.headless = v;
+    if (cfg.keepRunning) |v| options.keep_running = v;
     // A menubar app with a dock icon and no tray is not a menubar app, so the
     // one flag sets all three rather than making every manifest repeat them.
     if (cfg.menubarOnly) |v| {
@@ -490,6 +497,13 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.hide_dock_icon = true;
         } else if (std.mem.eql(u8, arg, "--headless")) {
             options.headless = true;
+        } else if (std.mem.eql(u8, arg, "--keep-running")) {
+            options.keep_running = true;
+        } else if (std.mem.eql(u8, arg, "--quit-on-close")) {
+            // The other direction, for a tray app that does want to go away
+            // with its window. Without it, `--keep-running` would be a flag
+            // whose default cannot be restored from the command line.
+            options.keep_running = false;
         } else if (std.mem.eql(u8, arg, "--menubar-only")) {
             options.menubar_only = true;
             options.system_tray = true; // Menubar-only implies system tray
@@ -592,6 +606,11 @@ fn printHelp() void {
         \\      --system-tray        Show system tray icon
         \\      --hide-dock-icon     Hide dock icon (menubar-only mode, macOS)
         \\      --menubar-only       Menubar-only mode (no window, system tray only)
+        \\      --keep-running       Stay running after the last window closes.
+        \\                           The default for tray and menubar-only apps;
+        \\                           an ordinary windowed app quits.
+        \\      --quit-on-close      Quit when the last window closes, even for
+        \\                           a tray app.
         \\      --dev-tools          Enable WebKit DevTools and make the webview
         \\                           inspectable from Safari's Develop menu
         \\      --no-devtools        Disable WebKit DevTools
@@ -690,4 +709,63 @@ pub fn formatVersion(buffer: []u8, version: []const u8, platform_name: []const u
         "craft version {s}\nBuilt with Zig 0.17.0-dev\nPlatform: {s}\n\n",
         .{ version, platform_name },
     );
+}
+
+test "a manifest can ask the app to outlive its window" {
+    const source =
+        \\{"title":"Tray thing","keepRunning":true}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    var options = WindowOptions{};
+    // Null before, so the shape decides. That distinction is the whole point
+    // of the optional: `false` is "quit", not "nobody said".
+    try std.testing.expectEqual(@as(?bool, null), options.keep_running);
+    applyScalarConfig(parsed.value, &options);
+    try std.testing.expectEqual(@as(?bool, true), options.keep_running);
+}
+
+test "a manifest that says nothing about it leaves the decision to the shape" {
+    const source =
+        \\{"title":"Plain"}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    var options = WindowOptions{};
+    applyScalarConfig(parsed.value, &options);
+    try std.testing.expectEqual(@as(?bool, null), options.keep_running);
+}
+
+test "--keep-running and --quit-on-close both say so explicitly" {
+    {
+        var args = [_][:0]const u8{ "craft", "--keep-running" };
+        const options = try parseArgs(std.testing.allocator, &args);
+        try std.testing.expectEqual(@as(?bool, true), options.keep_running);
+    }
+    {
+        var args = [_][:0]const u8{ "craft", "--quit-on-close" };
+        const options = try parseArgs(std.testing.allocator, &args);
+        // Not null: a tray app passing this has said something, and the shape
+        // must not overrule it.
+        try std.testing.expectEqual(@as(?bool, false), options.keep_running);
+    }
+    {
+        var args = [_][:0]const u8{"craft"};
+        const options = try parseArgs(std.testing.allocator, &args);
+        try std.testing.expectEqual(@as(?bool, null), options.keep_running);
+    }
+}
+
+test "the last of the two flags wins" {
+    var args = [_][:0]const u8{ "craft", "--keep-running", "--quit-on-close" };
+    const options = try parseArgs(std.testing.allocator, &args);
+    try std.testing.expectEqual(@as(?bool, false), options.keep_running);
 }

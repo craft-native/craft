@@ -651,6 +651,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Allocate and initialize window
     const window_alloc = msgSend0(WindowClass, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
+    keepWindowAfterClose(window);
 
     // Create title NSString
     const title_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
@@ -1962,6 +1963,7 @@ pub fn createWindowWithSidebar(
     // Create window
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
+    keepWindowAfterClose(window);
 
     // Set window title
     const title_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
@@ -3077,6 +3079,7 @@ pub fn createWindowWithSidebarURL(
 
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
+    keepWindowAfterClose(window);
 
     // Set window title
     const title_str = createNSString(title);
@@ -6372,10 +6375,161 @@ pub const Installer = struct {
     }
 };
 
+// =============================================================================
+// NSApplicationDelegate — app-level lifecycle
+// =============================================================================
+
+/// Keep an `NSWindow` alive after it is closed.
+///
+/// `releasedWhenClosed` defaults to **YES** for a window created with
+/// `initWithContentRect:`, and that default is what made "reopen the window"
+/// impossible rather than merely unimplemented: closing the window
+/// deallocated it, so there was nothing left to show and `[NSApp windows]` no
+/// longer listed it. Reopening a released window is a use-after-free, not a
+/// missing feature.
+///
+/// Measured with the flag off: the window, its `WKWebView`, the DOM and the
+/// JavaScript context all survive a close — a value assigned to `window` before
+/// closing was still there after reopening. So reopen restores the app as the
+/// user left it rather than reloading it.
+///
+/// The cost is that a closed window is never freed. Craft opens one; when #67
+/// opens many, whatever closes them for real will need to release them, and
+/// this is the line it will have to pair with.
+fn keepWindowAfterClose(window: objc.id) void {
+    _ = msgSend1(window, "setReleasedWhenClosed:", false);
+}
+
+/// Whether the app should quit when its last window closes.
+///
+/// Set from the parsed options before the run loop starts; read by the
+/// delegate each time AppKit asks. A variable rather than a compile-time
+/// answer because the delegate is installed before the options that decide it
+/// have been applied — the delegate has to exist early enough for #65's
+/// notification callbacks, which arrive before anything else runs.
+var quit_on_last_window_closed: bool = true;
+
+/// Tell the delegate what to answer. See `lifecycle_policy.zig` for the rule.
+pub fn setQuitOnLastWindowClosed(value: bool) void {
+    quit_on_last_window_closed = value;
+}
+
+/// `applicationShouldTerminateAfterLastWindowClosed:`
+///
+/// Without a delegate AppKit answers NO, which for a plain windowed app means
+/// closing the window strands the process: no window, no Dock icon response,
+/// and force-quit as the only way out.
+fn appShouldTerminateAfterLastWindowClosed(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) bool {
+    return quit_on_last_window_closed;
+}
+
+/// `applicationShouldHandleReopen:hasVisibleWindows:`
+///
+/// Sent when the Dock icon is clicked, or the app is reopened while already
+/// running. Craft implemented nothing, so the click did nothing.
+///
+/// Only acts when there is nothing visible — with a window already up, AppKit's
+/// own behaviour (bring it forward) is the right one and returning true lets it
+/// happen.
+fn appShouldHandleReopen(_: objc.id, _: objc.SEL, app: objc.id, has_visible: bool) callconv(.c) bool {
+    if (has_visible) return true;
+
+    const windows = msgSend0(app, "windows");
+    if (@intFromPtr(windows) == 0) return true;
+
+    const countFn = @as(
+        *const fn (objc.id, objc.SEL) callconv(.c) c_ulong,
+        @ptrCast(&objc.objc_msgSend),
+    );
+    const count = countFn(windows, sel("count"));
+
+    var i: c_ulong = 0;
+    while (i < count) : (i += 1) {
+        const window = msgSend1(windows, "objectAtIndex:", i);
+        // `[NSApp windows]` includes panels and the offscreen windows AppKit
+        // keeps for menus and tooltips. Ordering one of those front puts an
+        // empty frame on screen, so only windows craft made are reopened.
+        if (!isCraftWindow(window)) continue;
+        _ = msgSend1(window, "makeKeyAndOrderFront:", @as(objc.id, null));
+    }
+
+    // Reopening without activating leaves the window behind whatever the user
+    // clicked away to, which is not what clicking a Dock icon means.
+    _ = msgSend1(app, "activateIgnoringOtherApps:", true);
+    return true;
+}
+
+/// Whether this is a window craft opened, rather than one AppKit keeps for its
+/// own purposes.
+///
+/// Identified by having craft's webview in it: every craft window sets a
+/// `WKWebView` as its content view, and nothing AppKit creates does.
+fn isCraftWindow(window: objc.id) bool {
+    if (@intFromPtr(window) == 0) return false;
+    const content = msgSend0(window, "contentView");
+    if (@intFromPtr(content) == 0) return false;
+    const WKWebView = getClass("WKWebView");
+    if (@intFromPtr(WKWebView) == 0) return false;
+    const isKindFn = @as(
+        *const fn (objc.id, objc.SEL, objc.id) callconv(.c) bool,
+        @ptrCast(&objc.objc_msgSend),
+    );
+    return isKindFn(content, sel("isKindOfClass:"), WKWebView);
+}
+
+var app_delegate_installed = false;
+
+/// Install craft's `NSApplicationDelegate`.
+///
+/// Called from both startup paths, and before `finishLaunching` on the tray
+/// path, because a delegate installed after launch has already missed the
+/// callbacks that only fire during it.
+pub fn installAppDelegate() void {
+    if (app_delegate_installed) return;
+
+    const className = "CraftAppDelegate";
+    var cls = objc.objc_getClass(className);
+    if (cls == null) {
+        cls = objc.objc_allocateClassPair(getClass("NSObject"), className, 0);
+        if (cls == null) return;
+
+        // BOOL return, so "B" rather than "c": on arm64 a BOOL is a real
+        // `bool` and the two are not interchangeable in a method signature.
+        _ = objc.class_addMethod(
+            cls,
+            sel("applicationShouldTerminateAfterLastWindowClosed:"),
+            @as(objc.IMP, @ptrCast(@constCast(&appShouldTerminateAfterLastWindowClosed))),
+            "B@:@",
+        );
+        _ = objc.class_addMethod(
+            cls,
+            sel("applicationShouldHandleReopen:hasVisibleWindows:"),
+            @as(objc.IMP, @ptrCast(@constCast(&appShouldHandleReopen))),
+            "B@:@B",
+        );
+
+        objc.objc_registerClassPair(cls);
+    }
+
+    const app = msgSend0(getClass("NSApplication"), "sharedApplication");
+    // `delegate` is a weak reference, so the +1 from alloc/init is what keeps
+    // this alive. One object for the life of the process, deliberately never
+    // released: freeing it would leave NSApp pointing at freed memory the next
+    // time the Dock icon is clicked.
+    const delegate = msgSend0(msgSend0(@as(objc.id, @ptrCast(@alignCast(cls))), "alloc"), "init");
+    msgSendVoid1(app, "setDelegate:", delegate);
+    app_delegate_installed = true;
+
+    if (comptime builtin.mode == .debug)
+        std.debug.print("[App] Installed NSApplicationDelegate\n", .{});
+}
+
 /// Initialize the NSApplication for regular apps (with Dock icon)
 pub fn initApp() void {
     const NSApplication = getClass("NSApplication");
     const app = msgSend0(NSApplication, "sharedApplication");
+
+    installAppDelegate();
 
     const NSApplicationActivationPolicyRegular: c_long = 0;
     _ = msgSend1(app, "setActivationPolicy:", NSApplicationActivationPolicyRegular);
@@ -6386,6 +6540,7 @@ pub fn initAppWithoutLaunching() void {
     const NSApplication = getClass("NSApplication");
     const app = msgSend0(NSApplication, "sharedApplication");
     _ = app; // Just ensure app exists
+    installAppDelegate();
 }
 
 /// Set the dock icon for the running NSApplication. `path` may point to any
@@ -6704,6 +6859,10 @@ pub fn initAppForTray() void {
     // Use Accessory policy for menubar-only apps
     const NSApplicationActivationPolicyAccessory: c_long = 1;
     _ = msgSend1(app, "setActivationPolicy:", NSApplicationActivationPolicyAccessory);
+
+    // Before `finishLaunching`, not after: a delegate installed afterwards has
+    // already missed every callback that only fires during launch.
+    installAppDelegate();
 
     // MUST call finishLaunching BEFORE creating status bar items!
     // This is the key - the working test does it in this order
