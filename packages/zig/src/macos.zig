@@ -6,6 +6,7 @@ const local_tls = @import("local_tls.zig");
 const menu_roles = @import("menu_roles.zig");
 const external_link = @import("external_link.zig");
 const webview_recovery = @import("webview_recovery.zig");
+const window_registry = @import("window_registry.zig");
 const request_context = @import("request_context.zig");
 
 // Objective-C runtime types and functions (manual declarations to avoid @cImport issues)
@@ -6415,25 +6416,15 @@ fn keepWindowAfterClose(window: objc.id) void {
     rememberCraftWindow(window);
 }
 
-/// Every window craft opened, so reopen can tell them from AppKit's own.
-///
-/// Craft opens one today; #67 opens more. Sixteen is far past any real app and
-/// bounded so this needs no allocator on a path that runs during window
-/// creation.
-var craft_windows: [16]objc.id = @splat(null);
-
 fn rememberCraftWindow(window: objc.id) void {
-    if (@intFromPtr(window) == 0) return;
-    for (&craft_windows) |*slot| {
-        if (slot.* == window) return;
-        if (@intFromPtr(slot.*) == 0) {
-            slot.* = window;
-            return;
-        }
-    }
-    // Full. Reopen will not restore this window, which is a worse outcome than
-    // the table being bigger — say so rather than failing silently.
-    std.log.warn("more than {d} windows; the newest will not be restored by a Dock click", .{craft_windows.len});
+    if (window_registry.remember(@intFromPtr(window))) return;
+    // Full. Reopen will not restore this window, which is worse than the table
+    // being bigger — say so rather than letting a window quietly stop being
+    // reopenable, which is the bug this registry exists to prevent.
+    std.log.warn(
+        "more than {d} windows open; the newest will not be restored by a Dock click",
+        .{window_registry.capacity},
+    );
 }
 
 /// Whether the app should quit when its last window closes.
@@ -6511,11 +6502,7 @@ fn appShouldHandleReopen(_: objc.id, _: objc.SEL, app: objc.id, has_visible: boo
 /// A test cannot see that. It needs a real reopen event against a sidebar
 /// window, so the fix is to stop inferring the answer at all.
 fn isCraftWindow(window: objc.id) bool {
-    if (@intFromPtr(window) == 0) return false;
-    for (craft_windows) |known| {
-        if (known == window) return true;
-    }
-    return false;
+    return window_registry.isKnown(@intFromPtr(window));
 }
 
 var app_delegate_installed = false;

@@ -706,6 +706,32 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Whether every window craft opens can be reopened. A source conformance
+    // test: constructing a window needs a live NSApplication and a WebContent
+    // process, but the two properties worth defending — every constructor
+    // registers, and nothing infers craft-ness from a window again — are
+    // properties of the source.
+    const window_lifecycle_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/window_lifecycle_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    window_lifecycle_tests.root_module.addAnonymousImport("src/macos.zig", .{
+        .root_source_file = b.path("src/macos.zig"),
+    });
+
+    // The window registry itself, free of Objective-C so the whole lifecycle
+    // is provable without AppKit.
+    const window_registry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/window_registry.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1077,6 +1103,8 @@ pub fn build(b: *std.Build) void {
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
+    const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
+    const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
@@ -1196,6 +1224,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
+    test_step.dependOn(&run_window_lifecycle_tests.step);
+    test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);
