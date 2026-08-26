@@ -77,6 +77,23 @@ export interface WindowOptions {
   headless?: boolean
 
   /**
+   * Keep the process running after the last window closes (macOS).
+   *
+   * Craft decides this from the shape of the app when it is not set: an app
+   * with a tray icon or in menubar-only mode stays running, because outliving
+   * its window is what those are for; an ordinary windowed app quits.
+   *
+   * Set it to `true` for a windowed app that should stay resident and be
+   * brought back by clicking the Dock icon, or `false` for a tray app that
+   * should genuinely go away when its window closes.
+   *
+   * Before this existed the answer was AppKit's default, `false`, for every
+   * app: closing the last window left a process with no window and no way to
+   * get one back.
+   */
+  keepRunning?: boolean
+
+  /**
    * Remember this window's size and position across launches, under this name
    * (macOS).
    *

@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const craft = @import("craft");
 const cli = @import("cli.zig");
+const lifecycle_policy = @import("lifecycle_policy.zig");
 const io_context = craft.io_context;
 // Reached through the craft module: a file cannot belong to both `root` and
 // `craft`, and macos.zig already owns it there.
@@ -54,6 +55,18 @@ pub fn main(init: std.process.Init) !void {
     if (options.headless and options.menubar_only) {
         std.debug.print("Error: --headless and --menubar-only are contradictory — a menubar app has no window to hide\n", .{});
         std.process.exit(1);
+    }
+
+    // Whether closing the last window ends the process. Decided here, before
+    // either startup path, because both need the same answer and only this
+    // scope knows the shape of the app. See `lifecycle_policy.zig` for the
+    // rule; the delegate that reads it is installed a moment later.
+    if (builtin.os.tag == .macos) {
+        craft.macos.setQuitOnLastWindowClosed(lifecycle_policy.quitOnLastWindowClosed(.{
+            .has_tray = options.system_tray,
+            .menubar_only = options.menubar_only,
+            .explicit_keep_running = options.keep_running,
+        }));
     }
 
     // In benchmark mode, disable dev_tools for lower overhead

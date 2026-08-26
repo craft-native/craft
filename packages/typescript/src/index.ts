@@ -429,6 +429,13 @@ export class CraftApp {
       args.push('--titlebar-hidden')
     if (window?.headless)
       args.push('--headless')
+    // Tri-state: unset means craft decides from the shape of the app, so
+    // neither flag is passed. `false` has to be passed explicitly, or a tray
+    // app could never be told to quit with its window.
+    if (window?.keepRunning === true)
+      args.push('--keep-running')
+    else if (window?.keepRunning === false)
+      args.push('--quit-on-close')
     if (window?.webSidebarMaterial) {
       args.push('--web-sidebar-material')
       if (window?.webSidebarWidth)

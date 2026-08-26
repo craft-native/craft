@@ -650,6 +650,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Whether closing the last window quits the app. Pure rule, exhaustively
+    // tested, so the default and its opt-out are stated once.
+    const lifecycle_policy_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/lifecycle_policy.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The reload budget that brings a window back after WebKit's content
     // process dies. Pure, and takes its clock as an argument, so a crash loop
     // is testable without crashing anything.
@@ -670,6 +680,20 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    // The CLI's own tests. `src/cli.zig` was only ever built as a *module*, so
+    // the tests inside it — flag parsing, and the manifest keys those flags
+    // mirror — had no artifact to run in and never ran at all.
+    const cli_unit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/cli.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = build_options.createModule() },
+            },
+        }),
+    });
+    cli_unit_tests.root_module.link_libc = true;
 
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
@@ -1045,6 +1069,8 @@ pub fn build(b: *std.Build) void {
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
+    const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
+    const run_lifecycle_policy_tests = b.addRunArtifact(lifecycle_policy_tests);
     const run_prefs_tests = b.addRunArtifact(prefs_tests);
     const run_prefs_macos_tests = b.addRunArtifact(prefs_macos_tests);
     const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
@@ -1161,6 +1187,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);
+    test_step.dependOn(&run_cli_unit_tests.step);
+    test_step.dependOn(&run_lifecycle_policy_tests.step);
     // macOS only: the registry describes the dispatch chain in macos.zig, and
     // compiling it elsewhere drags the whole native graph into a test binary
     // for a platform it does not describe.
