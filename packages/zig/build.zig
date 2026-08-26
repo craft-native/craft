@@ -640,6 +640,27 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Where a link that asks for a new window is allowed to go. Pure policy,
+    // so the whole drop list is provable without a browser.
+    const external_link_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/external_link.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    // The reload budget that brings a window back after WebKit's content
+    // process dies. Pure, and takes its clock as an argument, so a crash loop
+    // is testable without crashing anything.
+    const webview_recovery_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/webview_recovery.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1010,6 +1031,8 @@ pub fn build(b: *std.Build) void {
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
+    const run_external_link_tests = b.addRunArtifact(external_link_tests);
+    const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_prefs_tests = b.addRunArtifact(prefs_tests);
     const run_prefs_macos_tests = b.addRunArtifact(prefs_macos_tests);
     const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
@@ -1123,6 +1146,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
+    test_step.dependOn(&run_external_link_tests.step);
+    test_step.dependOn(&run_webview_recovery_tests.step);
     // macOS only: the registry describes the dispatch chain in macos.zig, and
     // compiling it elsewhere drags the whole native graph into a test binary
     // for a platform it does not describe.

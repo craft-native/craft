@@ -4,6 +4,8 @@ const javascript = @import("javascript.zig");
 const native_sidebar_bootstrap = @import("native_sidebar_bootstrap.zig");
 const local_tls = @import("local_tls.zig");
 const menu_roles = @import("menu_roles.zig");
+const external_link = @import("external_link.zig");
+const webview_recovery = @import("webview_recovery.zig");
 
 // Objective-C runtime types and functions (manual declarations to avoid @cImport issues)
 pub const objc = struct {
@@ -843,6 +845,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         const nsurl = msgSend1(getClass("NSURL"), "URLWithString:", url_str);
         const request = msgSend1(getClass("NSURLRequest"), "requestWithURL:", nsurl);
         _ = msgSend1(webview, "loadRequest:", request);
+        rememberContent(webview, .{ .request = request });
         startup_timing.mark(.load_started);
     } else if (html) |h| {
         if (style.benchmark) {
@@ -866,6 +869,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             const base_url = msgSend1(getClass("NSURL"), "URLWithString:", base_url_string);
 
             _ = msgSend2(webview, "loadHTMLString:baseURL:", html_str, base_url);
+            rememberContent(webview, .{ .html = .{ .string = html_str, .base_url = base_url } });
         }
     }
 
@@ -882,21 +886,34 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         @import("macos_file_drop.zig").install();
     }
 
-    // Set up UI delegate for camera/microphone permission handling (skip if not needed)
-    if (style.dev_tools) {
+    // Both delegates, in every non-benchmark window.
+    //
+    // The UI delegate used to be installed only with `--dev-tools`, which is
+    // not a condition any of its callbacks have anything to do with: a
+    // packaged app calling `getUserMedia()` got no delegate and so was denied
+    // the camera outright, and `window.open()` had nowhere to be handled. The
+    // navigation delegate used to install only under `CRAFT_ALLOW_LOCAL_TLS`,
+    // which left every shipped window without the callback that notices the
+    // content process has died.
+    //
+    // Skipped in benchmark mode alongside the file-drop hook and the bridge,
+    // so the startup numbers keep measuring the same window they always did.
+    //
+    // After the load, not before, and that is safe: `loadRequest:` only
+    // schedules the fetch, and every delegate callback arrives through the run
+    // loop, which is not entered until much later. (The note that used to be
+    // here said "before the load below" — the load moved above it.)
+    if (!style.benchmark) {
         setupUIDelegate(webview) catch |err| {
             if (comptime builtin.mode == .debug)
                 std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
         };
-    }
 
-    // Not gated on dev_tools: whether the inspector is available and whether a
-    // local certificate is trusted are unrelated questions. Before the load
-    // below, so it is in place for the first request's challenge.
-    setupNavigationDelegate(webview) catch |err| {
-        if (comptime builtin.mode == .debug)
-            std.debug.print("[Nav] Failed to setup navigation delegate: {}\n", .{err});
-    };
+        setupNavigationDelegate(webview) catch |err| {
+            if (comptime builtin.mode == .debug)
+                std.debug.print("[Nav] Failed to setup navigation delegate: {}\n", .{err});
+        };
+    }
 
     if (style.benchmark) {
         // Benchmark mode: minimal setup — just set content view and return
@@ -5153,7 +5170,69 @@ fn handleMediaCapturePermission(
     }
 }
 
-/// Set up WKUIDelegate to handle media capture permission requests
+/// `webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:`
+///
+/// WKWebView asks for this whenever the page wants a second window —
+/// `window.open()`, `target="_blank"`, `<form target>`. If the delegate does
+/// not implement it, WebKit's answer is to do nothing at all: `window.open()`
+/// returns null and the link dies with no error, no console message and no
+/// log. Every link in a rendered transcript or feed simply did nothing.
+///
+/// Craft has no second window to give (that is #67), so the answer is the one
+/// Electron settled on: hand the URL to the system browser and return nil, so
+/// no child webview is created.
+///
+/// Which URLs get handed over is decided by `external_link.zig`, and it is
+/// deliberately narrower than `shell.openExternal`: this is a *page* asking,
+/// possibly on behalf of content nobody vetted, and `NSWorkspace openURL:`
+/// means "ask LaunchServices to do whatever this URL means".
+fn handleCreateWebView(
+    _: objc.id,
+    _: objc.SEL,
+    _: objc.id,
+    _: objc.id,
+    navigationAction: objc.id,
+    _: objc.id,
+) callconv(.c) objc.id {
+    // Returning nil is the point of the method, so every path out returns nil.
+    const request = msgSend0(navigationAction, "request");
+    if (request == null) return null;
+    const nsurl = msgSend0(request, "URL");
+    if (nsurl == null) return null;
+
+    const absolute = msgSend0(nsurl, "absoluteString");
+    if (absolute == null) return null;
+    const raw = msgSend0(absolute, "UTF8String") orelse return null;
+    const cstr: [*:0]const u8 = @ptrCast(@alignCast(raw));
+    const url = std.mem.span(cstr);
+
+    switch (external_link.decide(url)) {
+        .open_externally => {
+            const NSWorkspace = getClass("NSWorkspace");
+            const workspace = msgSend0(NSWorkspace, "sharedWorkspace");
+            _ = msgSend1(workspace, "openURL:", nsurl);
+        },
+        // Logged, never silent: a dropped link that says nothing is the bug
+        // this method exists to fix, and refusing one quietly is the same
+        // experience by a different route.
+        .drop => std.log.warn(
+            "refused to open a new window for a URL the page cannot send to the browser: {s}",
+            .{url},
+        ),
+    }
+
+    return null;
+}
+
+/// Attach craft's `WKUIDelegate`.
+///
+/// Two callbacks, neither of which has anything to do with the other:
+/// `getUserMedia()` permission, and the page asking for a second window.
+///
+/// Installed in every non-benchmark window. It used to be installed only under
+/// `--dev-tools`, which meant a packaged app was denied the camera outright
+/// and had `window.open()` silently dropped — neither of which is a debugging
+/// concern.
 pub fn setupUIDelegate(webview: objc.id) !void {
     if (comptime builtin.mode == .debug)
         std.debug.print("[Media] Setting up WKUIDelegate for media permissions...\n", .{});
@@ -5195,6 +5274,19 @@ pub fn setupUIDelegate(webview: objc.id) !void {
             } else {
                 std.debug.print("[Media] Added webView:requestMediaCapturePermissionForOrigin:... method\n", .{});
             }
+        }
+
+        // `window.open()` / `target="_blank"`. Returns an object (the child
+        // webview, or nil): @ = id return, self, _cmd, webView, configuration,
+        // navigationAction, windowFeatures.
+        if (!objc.class_addMethod(
+            @ptrCast(@alignCast(delegateClass)),
+            objc.sel_registerName("webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:"),
+            @as(objc.IMP, @ptrCast(@constCast(&handleCreateWebView))),
+            "@@:@@@@",
+        )) {
+            if (comptime builtin.mode == .debug)
+                std.debug.print("[UI] Failed to add createWebView method\n", .{});
         }
 
         // Register the class
@@ -5289,6 +5381,14 @@ fn handleAuthChallenge(
     challenge: objc.id,
     completionHandler: objc.id,
 ) callconv(.c) void {
+    // The opt-in used to be enforced by not installing the delegate at all.
+    // The delegate is installed in every window now — it is what notices the
+    // content process has died — so the check has to live here instead.
+    // Without this line, ungating the delegate would silently start trusting
+    // local development certificates in every craft app ever shipped.
+    if (!allowsLocalDevTLS())
+        return finishAuthChallenge(completionHandler, .perform_default_handling, null);
+
     const protectionSpace = msgSend0(challenge, "protectionSpace");
     if (protectionSpace == null)
         return finishAuthChallenge(completionHandler, .perform_default_handling, null);
@@ -5309,19 +5409,154 @@ fn handleAuthChallenge(
     finishAuthChallenge(completionHandler, .use_credential, credential);
 }
 
-/// Attach a `WKNavigationDelegate` that trusts local development certificates.
-///
-/// A no-op unless the process opted in: without `CRAFT_ALLOW_LOCAL_TLS` craft
-/// installs no navigation delegate at all, which is exactly the behaviour it
-/// has always had. Implementing only the auth-challenge method leaves every
-/// other navigation decision — policy, redirects, provisional failures — at its
-/// AppKit default.
-///
-/// Call before loading, so the delegate is in place for the first request's
-/// challenge.
-pub fn setupNavigationDelegate(webview: objc.id) !void {
-    if (!allowsLocalDevTLS()) return;
+// =============================================================================
+// Recovering a window after the WebKit content process dies
+// =============================================================================
 
+/// What craft put in a webview, kept so it can be put back.
+///
+/// `-reload` is Apple's documented recovery and it is wrong for half of
+/// craft's windows. HTML loaded through `loadHTMLString:baseURL:` has no
+/// request to repeat: reloading navigates to the synthetic base URL,
+/// `http://localhost/`, where there is usually nothing listening — so a window
+/// started from `--html` would come back as a connection error instead of the
+/// app it was showing. Re-applying what was loaded is right for both paths.
+const LoadedContent = union(enum) {
+    none,
+    request: objc.id,
+    html: struct { string: objc.id, base_url: objc.id },
+};
+
+const ContentSlot = struct {
+    key: usize = 0,
+    content: LoadedContent = .none,
+};
+
+/// Sized to match `webview_recovery`'s budget table: the two are keyed the
+/// same way and a window in one should be in the other.
+var content_slots: [8]ContentSlot = @splat(.{});
+
+/// Hold on to what a webview was given, retaining it for as long as the window
+/// might need it back.
+///
+/// `requestWithURL:` and `URLWithString:` both hand back autoreleased objects,
+/// so without the retain these are dangling by the time the run loop next
+/// drains — which is long before any crash. The matching release would be at
+/// window teardown; craft never tears one down today, and one request or one
+/// HTML string per window is not a leak worth the risk of releasing early.
+fn rememberContent(webview: objc.id, content: LoadedContent) void {
+    switch (content) {
+        .none => {},
+        .request => |r| _ = msgSend0(r, "retain"),
+        .html => |h| {
+            _ = msgSend0(h.string, "retain");
+            if (h.base_url != null) _ = msgSend0(h.base_url, "retain");
+        },
+    }
+
+    const key = @intFromPtr(webview);
+    // Existing entry first, then a free one. Taking whichever comes first would
+    // leave a stale duplicate behind for a webview that loads twice.
+    for (&content_slots) |*slot| {
+        if (slot.key == key) {
+            slot.content = content;
+            return;
+        }
+    }
+    for (&content_slots) |*slot| {
+        if (slot.key == 0) {
+            slot.* = .{ .key = key, .content = content };
+            return;
+        }
+    }
+    // Full. Slot zero holds the earliest window registered, which is the one
+    // least likely to still be around.
+    content_slots[0] = .{ .key = key, .content = content };
+}
+
+fn contentFor(webview: objc.id) LoadedContent {
+    const key = @intFromPtr(webview);
+    for (&content_slots) |slot| {
+        if (slot.key == key) return slot.content;
+    }
+    return .none;
+}
+
+/// Put the window's content back after the content process was replaced.
+fn restoreContent(webview: objc.id) void {
+    switch (contentFor(webview)) {
+        .request => |r| _ = msgSend1(webview, "loadRequest:", r),
+        .html => |h| _ = msgSend2(webview, "loadHTMLString:baseURL:", h.string, h.base_url),
+        // Nothing recorded — a webview craft did not load. `reload` is the
+        // best available guess and does no harm if there is nothing to reload.
+        .none => _ = msgSend0(webview, "reload"),
+    }
+}
+
+/// `webViewWebContentProcessDidTerminate:`
+///
+/// WKWebView renders in a separate process, and when that process is killed
+/// the view does not error or close — it goes white and stays white. This is
+/// the only notification of it. Without this method craft had no route back
+/// except the Reload menu item, which a user has to know to look for, and
+/// which nothing on the blank screen suggests.
+///
+/// Logged at warning level rather than behind a debug check: an app that quietly
+/// reloaded itself at 3am is something whoever reads the logs should be able to
+/// find out about.
+fn handleContentProcessTerminated(_: objc.id, _: objc.SEL, webview: objc.id) callconv(.c) void {
+    const key = @intFromPtr(webview);
+    const state = webview_recovery.stateFor(key);
+    // `compat.nanoTimestamp` is CLOCK_MONOTONIC here, which is what a rate
+    // budget wants: a clock the user can move is a clock that can hand out
+    // extra reloads. It returns 0 if the clock cannot be read at all, which
+    // reads as "no time passed" and keeps the burst intact — the conservative
+    // direction.
+    const now = @import("compat.zig").nanoTimestamp();
+    const action = webview_recovery.onCrash(state, now, .{});
+
+    switch (action) {
+        .reload => {
+            std.log.warn(
+                "WebKit content process terminated; restoring the window (attempt {d})",
+                .{state.attempts},
+            );
+            restoreContent(webview);
+        },
+        .give_up => {
+            std.log.warn(
+                "WebKit content process terminated {d} times in quick succession; " ++
+                    "leaving the window alone so it stops looping",
+                .{state.attempts},
+            );
+            const NSString = getClass("NSString");
+            const html = msgSend1(
+                NSString,
+                "stringWithUTF8String:",
+                @as([*:0]const u8, webview_recovery.give_up_page),
+            );
+            _ = msgSend2(webview, "loadHTMLString:baseURL:", html, @as(objc.id, null));
+        },
+    }
+}
+
+/// Attach craft's `WKNavigationDelegate`.
+///
+/// Two methods, for two unrelated jobs:
+///
+///   - `webViewWebContentProcessDidTerminate:` — the only notification that
+///     WebKit's renderer died. Without it the window is white and stays white.
+///     Every window needs this.
+///   - `webView:didReceiveAuthenticationChallenge:completionHandler:` — trusts
+///     a local development CA, and only when `CRAFT_ALLOW_LOCAL_TLS` says so.
+///     That opt-in is enforced inside the handler, because the delegate itself
+///     is no longer optional.
+///
+/// It used to install only under `CRAFT_ALLOW_LOCAL_TLS`, which meant every
+/// shipped app ran without the crash notification. Everything not implemented
+/// here — navigation policy, redirects, provisional failures — stays at its
+/// AppKit default, as before.
+pub fn setupNavigationDelegate(webview: objc.id) !void {
     const superclass = getClass("NSObject");
     const className = "CraftNavigationDelegate";
 
@@ -5339,6 +5574,15 @@ pub fn setupNavigationDelegate(webview: objc.id) !void {
         if (!objc.class_addMethod(@ptrCast(@alignCast(delegateClass)), method_sel, method_imp, method_types))
             return error.MethodAdditionFailed;
 
+        // void; self, _cmd, webView
+        if (!objc.class_addMethod(
+            @ptrCast(@alignCast(delegateClass)),
+            objc.sel_registerName("webViewWebContentProcessDidTerminate:"),
+            @as(objc.IMP, @ptrCast(@constCast(&handleContentProcessTerminated))),
+            "v@:@",
+        ))
+            return error.MethodAdditionFailed;
+
         objc.objc_registerClassPair(@ptrCast(delegateClass));
     }
 
@@ -5350,8 +5594,10 @@ pub fn setupNavigationDelegate(webview: objc.id) !void {
     const delegate = msgSend0(msgSend0(delegate_class_id, "alloc"), "init");
     msgSendVoid1(webview, "setNavigationDelegate:", delegate);
 
-    if (comptime builtin.mode == .debug)
-        std.debug.print("[Nav] Local development TLS enabled via {s}\n", .{local_tls.env_var});
+    if (comptime builtin.mode == .debug) {
+        if (allowsLocalDevTLS())
+            std.debug.print("[Nav] Local development TLS enabled via {s}\n", .{local_tls.env_var});
+    }
 }
 
 // ============================================================================
