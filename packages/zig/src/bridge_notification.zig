@@ -950,13 +950,22 @@ fn ensureCategory(actions: []const notification_actions.Action, id_buf: []u8) ?[
         *const fn (objc.id, objc.SEL, objc.id, objc.id, objc.id, c_ulong) callconv(.c) objc.id,
         @ptrCast(&objc.objc_msgSend),
     );
+    // UNNotificationCategoryOptionCustomDismissAction.
+    //
+    // Without it macOS handles a swipe-away itself and never delivers
+    // `UNNotificationDismissActionIdentifier` to the delegate, which makes the
+    // `.dismissed` arm of `handleNotificationResponse` unreachable — the
+    // notification would simply vanish and the page would hear nothing. An app
+    // waiting on Approve/Deny has to be told the banner was dismissed, or it
+    // waits for an answer that is never coming.
+    const options: c_ulong = 1 << 0;
     const category = makeCategory(
         UNNotificationCategory,
         macos_mod.sel("categoryWithIdentifier:actions:intentIdentifiers:options:"),
         ns_category_id,
         action_array,
         empty,
-        0,
+        options,
     );
     if (@intFromPtr(category) == 0) return null;
 
