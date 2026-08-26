@@ -814,11 +814,50 @@ export interface AppInfo {
 /**
  * Notification options
  */
+/**
+ * A button on a notification banner.
+ *
+ * macOS shows two directly on a banner and puts any others behind an
+ * "Options" disclosure, so craft accepts at most four — past that they are
+ * a menu the user has to go looking for rather than a choice they can see.
+ *
+ * Two spellings are accepted. `{ id, label }` is the one to use. `{ action,
+ * title }` is what this type has said since before anything implemented it,
+ * and it keeps working rather than being deleted out from under whoever wrote
+ * against it — the field was published, it just never did anything.
+ */
+export type NotificationAction =
+  | {
+    /** Comes back as `actionId` in `craft.notifications.onAction`. */
+    id: string
+    /** The text on the button. */
+    label: string
+  }
+  | {
+    /** @deprecated Use `id`. */
+    action: string
+    /** @deprecated Use `label`. */
+    title: string
+  }
+
 export interface NotificationOptions {
     /**
      * Notification title (required)
      */
     title: string
+
+    /**
+     * Buttons on the banner.
+     *
+     * Pressing one brings the app forward and fires
+     * `craft.notifications.onAction` with `{ notificationId, actionId }` —
+     * which is what lets a prompt be answered without switching to the app
+     * first.
+     *
+     * Two buttons cannot share an `id`: the response names the button by id,
+     * and for an Approve/Deny prompt that name is the entire answer.
+     */
+    actions?: NotificationAction[]
 
     /**
      * Notification body text
@@ -838,14 +877,6 @@ export interface NotificationOptions {
      * - Or any system sound name
      */
     sound?: string
-
-    /**
-     * Action buttons (platform dependent)
-     */
-    actions?: Array<{
-        action: string
-        title: string
-    }>
 
     /**
      * Notification tag (for grouping/replacing)

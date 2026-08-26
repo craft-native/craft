@@ -695,6 +695,17 @@ pub fn build(b: *std.Build) void {
     });
     cli_unit_tests.root_module.link_libc = true;
 
+    // Notification action buttons: which category a set of buttons forms, and
+    // what a response means. Pure, so the whole thing is provable without
+    // posting a banner or clicking one.
+    const notification_actions_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/notification_actions.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1069,6 +1080,7 @@ pub fn build(b: *std.Build) void {
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
+    const run_notification_actions_tests = b.addRunArtifact(notification_actions_tests);
     const run_cli_unit_tests = b.addRunArtifact(cli_unit_tests);
     const run_lifecycle_policy_tests = b.addRunArtifact(lifecycle_policy_tests);
     const run_prefs_tests = b.addRunArtifact(prefs_tests);
@@ -1187,6 +1199,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);
+    test_step.dependOn(&run_notification_actions_tests.step);
     test_step.dependOn(&run_cli_unit_tests.step);
     test_step.dependOn(&run_lifecycle_policy_tests.step);
     // macOS only: the registry describes the dispatch chain in macos.zig, and

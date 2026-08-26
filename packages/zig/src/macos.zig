@@ -6561,6 +6561,12 @@ pub fn installAppDelegate() void {
     msgSendVoid1(app, "setDelegate:", delegate);
     app_delegate_installed = true;
 
+    // The notification centre's delegate has the same deadline — Apple wants
+    // it set before the app finishes launching, so a notification the user
+    // clicked to launch the app is not delivered to nobody. This is the point
+    // #63 created for it. It is a no-op for an unbundled process.
+    @import("bridge_notification.zig").installResponseDelegate();
+
     if (comptime builtin.mode == .debug)
         std.debug.print("[App] Installed NSApplicationDelegate\n", .{});
 }
