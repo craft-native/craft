@@ -23,6 +23,7 @@ const capability_actions = contracts.capabilities_actions;
 const prefs = contracts.prefs;
 const prefs_actions = contracts.prefs_actions;
 const shortcut_registry = contracts.shortcuts;
+const bridge_error = contracts.errors;
 
 // Supplied by build.zig as named imports — a test module cannot embed
 // files outside its own package path.
@@ -934,4 +935,194 @@ test "craft.supports answers from the manifest, and fails open without one" {
     // passing.
     try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('marketplace'))"));
     try testing.expectEqualStrings("false", try fx.text("String(window.craft.supports('marketplace.list'))"));
+}
+
+// =============================================================================
+// Reply correlation (#66)
+// =============================================================================
+
+/// Answer a call the way native does: the exact string `sendResultToJS`
+/// evaluates in the page, built by the same function, id and all.
+fn answer(fx: *Fixture, action: []const u8, payload: []const u8, id: ?u64) !void {
+    const script = try bridge_error.formatResultJS(testing.allocator, action, payload, id);
+    defer testing.allocator.free(script);
+    _ = try fx.ctx.evaluate(script);
+}
+
+test "a call carries an id, and the reply that names it resolves that call" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var got = null;
+        \\window.craft.tags.get('/a').then(function (t) { got = t.join(',') });
+    );
+
+    // The page put its own id on the message; native reads it back out of the
+    // envelope in `handleBridgeMessageJSON` and hands it to `formatResultJS`.
+    const id_text = try fx.text("String(posted[0].i)");
+    const id = try std.fmt.parseInt(u64, id_text, 10);
+    try testing.expect(id > 0);
+
+    try answer(&fx, "get", "{\"tags\":[\"red\"]}", id);
+    try testing.expectEqualStrings("red", try fx.text("String(got)"));
+}
+
+test "two bridges sharing an action name do not swap replies" {
+    // `get` is served by keychain and tags both. Answered out of order, which
+    // is what a modal run loop or any slower handler produces, the action-name
+    // queue alone hands each caller the other's payload.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var secret = 'unset';
+        \\var labels = 'unset';
+        \\window.craft.keychain.get('svc', 'acct').then(function (v) { secret = String(v) });
+        \\window.craft.tags.get('/a').then(function (t) { labels = t.join(',') });
+    );
+
+    try testing.expectEqualStrings("keychain", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("tags", try fx.text("posted[1].t"));
+
+    const keychain_id = try std.fmt.parseInt(u64, try fx.text("String(posted[0].i)"), 10);
+    const tags_id = try std.fmt.parseInt(u64, try fx.text("String(posted[1].i)"), 10);
+    try testing.expect(keychain_id != tags_id);
+
+    // Tags answers first — the ordering that used to swap them.
+    try answer(&fx, "get", "{\"tags\":[\"red\",\"blue\"]}", tags_id);
+    try answer(&fx, "get", "{\"value\":\"hunter2\"}", keychain_id);
+
+    try testing.expectEqualStrings("hunter2", try fx.text("secret"));
+    try testing.expectEqualStrings("red,blue", try fx.text("labels"));
+}
+
+test "a reply for an id nobody is waiting on resolves nobody" {
+    // A late reply, or a second reply to a call already answered. Without an id
+    // to check against, this payload went to whoever was at the head of the
+    // action queue — a different call's answer, delivered as correct.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var got = 'unset';
+        \\window.craft.tags.get('/a').then(function (t) { got = t.join(',') });
+    );
+    const id = try std.fmt.parseInt(u64, try fx.text("String(posted[0].i)"), 10);
+
+    try answer(&fx, "get", "{\"tags\":[\"ghost\"]}", id + 1000);
+    try testing.expectEqualStrings("unset", try fx.text("got"));
+
+    try answer(&fx, "get", "{\"tags\":[\"mine\"]}", id);
+    try testing.expectEqualStrings("mine", try fx.text("got"));
+}
+
+test "a reply that arrives without an id still resolves its caller" {
+    // The fallback path, for a reply raised outside any dispatch — native has
+    // no request to name. `formatResultJS` renders `null` and the page matches
+    // by action name, exactly as it did before ids.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var got = 'unset';
+        \\window.craft.tags.get('/a').then(function (t) { got = t.join(',') });
+    );
+    try answer(&fx, "get", "{\"tags\":[\"ok\"]}", null);
+    try testing.expectEqualStrings("ok", try fx.text("got"));
+}
+
+test "fire-and-forget messages carry an id too" {
+    // So a failure can name the exact send it came from instead of rejecting
+    // whatever request happens to share its action name.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate("window.craft.keychain.set('svc', 'acct', 'pw');");
+    try testing.expectEqualStrings("keychain", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("true", try fx.text("String(typeof posted[0].i === 'number' && posted[0].i > 0)"));
+}
+
+test "a failure rejects the call it names and leaves the others alone" {
+    // `isEnabled` is served by autoLaunch, bluetooth and crashReporter.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var autoLaunch = 'pending';
+        \\var bluetooth = 'pending';
+        \\window.craft.autoLaunch.isEnabled().then(
+        \\  function (v) { autoLaunch = 'ok:' + v }, function (e) { autoLaunch = 'rejected' });
+        \\window.craft.bluetooth.isEnabled().then(
+        \\  function (v) { bluetooth = 'ok:' + v }, function (e) { bluetooth = 'rejected:' + e.message });
+    );
+
+    const bluetooth_id = try std.fmt.parseInt(u64, try fx.text("String(posted[1].i)"), 10);
+
+    var ctx = bridge_error.ErrorContext.init(
+        bridge_error.BridgeError.NativeCallFailed,
+        "isEnabled",
+        "no bluetooth",
+    );
+    ctx.request_id = bluetooth_id;
+    const json = try ctx.toJSON(testing.allocator);
+    defer testing.allocator.free(json);
+    const script = try std.fmt.allocPrint(testing.allocator, "window.__craftBridgeError({s});", .{json});
+    defer testing.allocator.free(script);
+    _ = try fx.ctx.evaluate(script);
+
+    try testing.expectEqualStrings("rejected:no bluetooth", try fx.text("bluetooth"));
+    // The other bridge never heard about it and still answers normally.
+    try testing.expectEqualStrings("pending", try fx.text("autoLaunch"));
+
+    const auto_id = try std.fmt.parseInt(u64, try fx.text("String(posted[0].i)"), 10);
+    try answer(&fx, "isEnabled", "{\"value\":true}", auto_id);
+    try testing.expectEqualStrings("ok:true", try fx.text("autoLaunch"));
+}
+
+test "the menubar state reply no longer needs a queue of its own" {
+    // `getState` used to be answered under an invented reply key,
+    // `menubarCollapse:getState`, with a hand-rolled pending entry on the JS
+    // side that had no timeout. It is an ordinary request now, and the reply
+    // is matched by id like every other — which also keeps it apart from
+    // screenSharing's `getState`, the seventh action name two bridges share.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var menubar = 'pending';
+        \\var sharing = 'pending';
+        \\window.craft.menubar.getState().then(function (s) { menubar = String(s.collapsed) });
+        \\window.craft.screenSharing.getState().then(function (s) { sharing = String(s.sharing) });
+    );
+
+    try testing.expectEqualStrings("menubarCollapse", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("getState", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("screenSharing", try fx.text("posted[1].t"));
+
+    const menubar_id = try std.fmt.parseInt(u64, try fx.text("String(posted[0].i)"), 10);
+    const sharing_id = try std.fmt.parseInt(u64, try fx.text("String(posted[1].i)"), 10);
+
+    try answer(&fx, "getState", "{\"sharing\":true}", sharing_id);
+    try answer(&fx, "getState", "{\"collapsed\":true,\"initialized\":true,\"separatorHidden\":false}", menubar_id);
+
+    try testing.expectEqualStrings("true", try fx.text("menubar"));
+    try testing.expectEqualStrings("true", try fx.text("sharing"));
+
+    // And nothing is left queued under the key it used to invent.
+    try testing.expectEqualStrings("undefined", try fx.text("String(window.__craftBridgePending['menubarCollapse:getState'])"));
 }

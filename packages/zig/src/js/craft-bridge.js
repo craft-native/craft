@@ -12,9 +12,10 @@
 //      when served outside a Craft window). Don't throw at module load.
 //
 // The native side dispatches messages by `t` (type) and answers async ones
-// via `window.__craftBridgeResult(action, payload)`. Promises are resolved
-// per-action — callers that need different per-call replies should pass an
-// `id` field through the `data` payload and correlate themselves.
+// via `window.__craftBridgeResult(action, payload, id)`, where `id` is the
+// `i` this file put on the outgoing message. Replies are matched by that id,
+// so concurrent calls to the same action — and to the same action name on two
+// different bridges — resolve their own callers and nobody else's.
 
 ;(function () {
   if (window.craft && window.craft.__craft_bridge_loaded) return
@@ -25,63 +26,143 @@
   // Core: pending-call queue, result/error delivery, send helpers.
   // -------------------------------------------------------------------------
 
+  // Calls in flight, queued per action name.
+  //
+  // Kept as the fallback for replies that arrive without an id. This file is
+  // `@embedFile`d into the binary and injected at document-start, so the page's
+  // bridge and the native side always ship together and cannot disagree about
+  // the protocol — the fallback is not for version skew. It is for replies
+  // raised outside any dispatch, where there is no request to name: a handler
+  // that answers from a callback after its message returned, or an error the
+  // bridge raises on its own behalf. Matching by name in order is the best
+  // guess available then, and it is exactly what this file did before ids.
   window.__craftBridgePending = window.__craftBridgePending || {}
 
-  // Native calls this with the same `action` string the JS facade enqueued
-  // under, so the queue is keyed by action name. Action collisions across
-  // bridges would confuse the queue — keep names unique on the Zig side.
-  window.__craftBridgeResult = function (action, payload) {
-    const q = window.__craftBridgePending[action] || []
-    if (q.length > 0) {
-      const e = q.shift()
-      if (e && e.resolve) e.resolve(payload || {})
+  // Calls in flight, indexed by the id native echoes back. This is the
+  // correlation that actually holds, and the one used whenever native gives us
+  // an id to use.
+  window.__craftBridgeById = window.__craftBridgeById || {}
+
+  // Monotonic, starting at 1, so `if (id)` is never true for a real call and
+  // zero is free to mean nothing at all.
+  window.__craftBridgeSeq = window.__craftBridgeSeq || 0
+  function _nextId() {
+    window.__craftBridgeSeq += 1
+    return window.__craftBridgeSeq
+  }
+
+  // Drop an entry from both tables. Both, always: an entry left in `byId`
+  // holds its resolver forever, and one left in the action queue shifts every
+  // later fallback reply onto the wrong caller.
+  function _forget(entry) {
+    if (!entry) return
+    if (entry.id) delete window.__craftBridgeById[entry.id]
+    const q = window.__craftBridgePending[entry.action]
+    if (Array.isArray(q)) {
+      const i = q.indexOf(entry)
+      if (i !== -1) q.splice(i, 1)
+      if (q.length === 0) delete window.__craftBridgePending[entry.action]
     }
   }
 
-  // Catastrophic native-side failure: drop every pending promise with the
-  // same error so callers don't hang forever.
-  // Native calls this when an action fails. The payload names the action that
-  // failed, so only that action's callers are rejected — this used to empty the
-  // whole pending table, so one bridge failing took down every unrelated call
-  // in flight at the time.
+  // Native's answer to one call. `id` is the `i` we sent, echoed back; a reply
+  // raised outside any dispatch has none and falls back to the action queue.
+  window.__craftBridgeResult = function (action, payload, id) {
+    if (id !== undefined && id !== null) {
+      const e = window.__craftBridgeById[id]
+      // An id we don't recognise is a call that has already settled — it timed
+      // out, or native answered it twice. Drop it. The old code had no id to
+      // check, so it shifted the action queue and handed this payload to
+      // whoever was at the head: another call's answer, delivered as that
+      // call's own, with nothing to indicate anything had gone wrong.
+      if (!e) return
+      _forget(e)
+      if (e.resolve) e.resolve(payload || {})
+      return
+    }
+
+    // No id to match on. Match by action name, in order, exactly as this file
+    // did before ids existed.
+    const q = window.__craftBridgePending[action]
+    if (!q || q.length === 0) return
+    const e = q[0]
+    _forget(e)
+    if (e.resolve) e.resolve(payload || {})
+  }
+
+  // Native calls this when an action fails.
   //
-  // Fire-and-forget calls (`_send`) never register a pending entry: native
-  // acknowledges nothing on success, so there is nothing to wait on and the
-  // promise has already resolved by the time a failure comes back. Those have
-  // no caller left to reject, so they are reported to the console instead —
+  // `err.id` names the exact call that failed, so exactly that caller is
+  // rejected. That matters more than it sounds: six action names are served by
+  // two or three bridges each (`get` by keychain and tags, `isEnabled` by
+  // autoLaunch, bluetooth and crashReporter, and four more), and rejecting by
+  // action name hands one bridge's failure to a caller waiting on a different
+  // bridge — `craft.bluetooth.isEnabled()` failing would reject an in-flight
+  // `craft.autoLaunch.isEnabled()` with bluetooth's error.
+  //
+  // Without an id, the old behaviour stands: drain that action's queue, or the
+  // whole table if the error does not even name an action, since an error that
+  // cannot be attributed is most likely the bridge itself being in trouble.
+  //
+  // Fire-and-forget calls (`_send`) carry an id but register no pending entry:
+  // native acknowledges nothing on success, so there is nothing to wait on and
+  // the promise resolved the moment the message was posted. Those have no
+  // caller left to reject, so they are reported to the console instead —
   // otherwise the only trace is in the native log, which is not where anyone
   // writing a web page is looking.
   window.__craftBridgeError = function (err) {
     const pending = window.__craftBridgePending || {}
     const action = err && err.action
+    const id = err && err.id
     let rejected = 0
+
+    const report = function () {
+      if (typeof console !== 'undefined' && console.error) {
+        console.error(
+          '[craft] bridge call failed: ' + (action || '(unnamed action)'),
+          (err && err.code) || '', (err && err.message) || '',
+        )
+      }
+    }
+
+    if (id !== undefined && id !== null) {
+      const e = window.__craftBridgeById[id]
+      // No entry means the call already settled, or it was a `_send` that
+      // never registered one. Nobody to tell — say so, rather than rejecting
+      // some other caller who is still waiting and would have succeeded.
+      if (!e) { report(); return }
+      _forget(e)
+      if (e.reject) e.reject(err)
+      return
+    }
 
     const drain = function (key) {
       const q = pending[key]
       if (!Array.isArray(q)) return
       while (q.length > 0) {
         const e = q.shift()
-        if (e && e.reject) { e.reject(err); rejected++ }
+        if (e) {
+          if (e.id) delete window.__craftBridgeById[e.id]
+          if (e.reject) { e.reject(err); rejected++ }
+        }
       }
       delete pending[key]
     }
 
     if (action) drain(action)
-    // An error that does not name its action cannot be targeted; the
-    // conservative reading is that the bridge itself is in trouble.
     else Object.keys(pending).forEach(drain)
 
-    if (rejected === 0 && typeof console !== 'undefined' && console.error) {
-      console.error(
-        '[craft] bridge call failed: ' + (action || '(unnamed action)'),
-        (err && err.code) || '', (err && err.message) || '',
-      )
-    }
+    if (rejected === 0) report()
   }
 
-  function _post(t, a, d) {
+  // `i` is the call id. Every message carries one, fire-and-forget included:
+  // a failure has to be able to name the exact call it came from, and native
+  // reads it back out of the envelope in `handleBridgeMessageJSON`.
+  function _post(t, a, d, i) {
     try {
-      window.webkit.messageHandlers.craft.postMessage({ t: t, a: a, d: d || '' })
+      const msg = { t: t, a: a, d: d || '' }
+      if (i) msg.i = i
+      window.webkit.messageHandlers.craft.postMessage(msg)
       return true
     }
     catch (e) {
@@ -103,19 +184,18 @@
   // can still `await craft.window.show()` without surprises.
   function _send(t, a, d) {
     return new Promise(function (ok, no) {
-      if (_post(t, a, d)) ok()
+      if (_post(t, a, d, _nextId())) ok()
       else no(new Error('craft bridge unavailable'))
     })
   }
 
   // Request-with-response. Native must call sendResultToJS(action, json)
-  // exactly once for each in-flight call. The action name must match.
+  // exactly once for each in-flight call; the dispatcher stamps the reply with
+  // the `i` this call sent, and that id is what resolves the promise.
   //
-  // Note: keyed by action only (not type+action) for compat with the
-  // existing `__craftBridgeResult(action, payload)` contract bridges
-  // have been using. Action collisions across bridges (e.g. two
-  // bridges both having `cancel`) would mix replies; in practice the
-  // action namespace is small and unique. Documented limitation.
+  // The call is registered in both tables: by id, which is exact, and on the
+  // action-name queue, which catches a reply that reaches us without one.
+  // Whichever settles it, `_forget` clears both.
   //
   // Each call is reaped after `__craftBridgeRequestTimeoutMs` (default
   // 30s) so a misbehaving native side can't strand callers forever.
@@ -124,21 +204,22 @@
   const DEFAULT_TIMEOUT_MS = 30000
   function _req(t, a, d, timeoutMs) {
     return new Promise(function (ok, no) {
+      const id = _nextId()
       const q = (window.__craftBridgePending[a] = window.__craftBridgePending[a] || [])
-      const entry = { resolve: ok, reject: no }
+      const entry = { id: id, action: a, resolve: ok, reject: no }
       q.push(entry)
+      window.__craftBridgeById[id] = entry
 
       const timeout = (typeof window.__craftBridgeRequestTimeoutMs === 'number')
         ? window.__craftBridgeRequestTimeoutMs
         : (typeof timeoutMs === 'number' ? timeoutMs : DEFAULT_TIMEOUT_MS)
       const timer = (timeout > 0)
         ? setTimeout(function () {
-            // Remove our entry (may be at any position since other
-            // calls might have arrived in the meantime) and reject.
-            // We only target our own entry, so concurrent calls for
-            // the same action stay healthy.
-            const idx = q.indexOf(entry)
-            if (idx !== -1) q.splice(idx, 1)
+            // Only ever our own entry, from both tables. A late reply then
+            // finds no entry under this id and is dropped, rather than being
+            // handed to whichever caller has since taken our place at the head
+            // of the action queue.
+            _forget(entry)
             no(new Error('craft bridge timed out for ' + t + '/' + a))
           }, timeout)
         : null
@@ -147,9 +228,8 @@
       entry.resolve = function (v) { if (timer) clearTimeout(timer); ok(v) }
       entry.reject  = function (e) { if (timer) clearTimeout(timer); no(e) }
 
-      if (!_post(t, a, d)) {
-        const pi = q.indexOf(entry)
-        if (pi !== -1) q.splice(pi, 1)
+      if (!_post(t, a, d, id)) {
+        _forget(entry)
         if (timer) clearTimeout(timer)
         no(new Error('craft bridge unavailable'))
       }
@@ -1402,19 +1482,13 @@
     collapse:              function ()      { return _send('menubarCollapse', 'collapse') },
     expand:                function ()      { return _send('menubarCollapse', 'expand') },
     toggle:                function ()      { return _send('menubarCollapse', 'toggle') },
-    getState:              function () {
-      // Native menubar uses a fully-qualified result key, so we have to
-      // queue under the same key to receive the response.
-      return new Promise(function (ok, no) {
-        const key = 'menubarCollapse:getState'
-        const q = (window.__craftBridgePending[key] = window.__craftBridgePending[key] || [])
-        q.push({ resolve: ok, reject: no })
-        if (!_post('menubarCollapse', 'getState', '')) {
-          q.pop()
-          no(new Error('craft bridge unavailable'))
-        }
-      })
-    },
+    // Was a hand-rolled pending entry queued under the reply key native used
+    // to invent for it, `menubarCollapse:getState` — with no timeout, so a
+    // call native never answered held its resolver until the page went away.
+    // Native answers by request id now, so the key carries no meaning and this
+    // is an ordinary request. `getState` is also served by screenSharing; the
+    // id is what keeps the two apart.
+    getState:              function ()      { return _req('menubarCollapse', 'getState') },
     // Seconds to wait before tidying up again, or 0 to leave the bar alone.
     // The native side parses this as a number: coercing it to a boolean here
     // sent "true", which parsed as 0 and quietly switched the feature off.

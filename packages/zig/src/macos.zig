@@ -6,6 +6,7 @@ const local_tls = @import("local_tls.zig");
 const menu_roles = @import("menu_roles.zig");
 const external_link = @import("external_link.zig");
 const webview_recovery = @import("webview_recovery.zig");
+const request_context = @import("request_context.zig");
 
 // Objective-C runtime types and functions (manual declarations to avoid @cImport issues)
 pub const objc = struct {
@@ -4584,6 +4585,17 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
         .string => |value| value,
         else => return error.InvalidBridgeMessage,
     };
+
+    // The call this message is, so the reply can name it instead of leaving
+    // `craft-bridge.js` to guess by action name. Recorded here, once, rather
+    // than passed down through 267 reply sites that would each have to
+    // remember to forward it. See `request_context.zig`.
+    //
+    // Pushed unconditionally — a message with no `i` pushes null, so it
+    // shadows an enclosing request instead of inheriting an id that is not
+    // its own. The pop is deferred because dispatch below can fail anywhere.
+    request_context.push(request_context.fromEnvelope(root));
+    defer request_context.pop();
 
     // Extract data if present - could be string, object, array, or missing
     var data_json_str: []const u8 = "";

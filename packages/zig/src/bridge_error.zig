@@ -1,4 +1,5 @@
 const std = @import("std");
+const request_context = @import("request_context.zig");
 const builtin = @import("builtin");
 
 /// Common error types for all bridge operations
@@ -67,6 +68,13 @@ pub const ErrorContext = struct {
     err: BridgeError,
     action: []const u8,
     message: []const u8,
+    /// The page's id for the call that failed, when the failure happened while
+    /// serving one. Lets `craft-bridge.js` reject exactly that caller instead
+    /// of every caller queued under the same action name — which matters most
+    /// here, because six action names are served by more than one bridge, so
+    /// draining by name rejects unrelated calls with an error from a bridge
+    /// they never touched.
+    request_id: ?u64 = null,
 
     pub fn init(err: BridgeError, action: []const u8, message: []const u8) ErrorContext {
         return .{
@@ -90,7 +98,12 @@ pub const ErrorContext = struct {
         try appendJsonEscaped(allocator, &out, self.action);
         try out.appendSlice(allocator, "\",\"message\":\"");
         try appendJsonEscaped(allocator, &out, self.message);
-        try out.appendSlice(allocator, "\"}");
+        try out.append(allocator, '"');
+        if (self.request_id) |id| {
+            try out.appendSlice(allocator, ",\"id\":");
+            try out.print(allocator, "{d}", .{id});
+        }
+        try out.append(allocator, '}');
 
         return out.toOwnedSlice(allocator);
     }
@@ -165,7 +178,8 @@ pub fn errorMessage(err: BridgeError) []const u8 {
 
 /// Send error to JavaScript via eval
 pub fn sendErrorToJS(allocator: std.mem.Allocator, action: []const u8, err: BridgeError) void {
-    const ctx = ErrorContext.init(err, action, errorMessage(err));
+    var ctx = ErrorContext.init(err, action, errorMessage(err));
+    ctx.request_id = request_context.current();
     const json = ctx.toJSON(allocator) catch {
         if (comptime builtin.mode == .debug)
             std.debug.print("[BridgeError] Failed to serialize error\n", .{});
@@ -198,26 +212,48 @@ pub fn sendErrorToJS(allocator: std.mem.Allocator, action: []const u8, err: Brid
         std.debug.print("[BridgeError] {s}: {s} - {s}\n", .{ action, errorCodeString(err), errorMessage(err) });
 }
 
+/// Render the JS call that hands `result_json` back to the page as the answer
+/// to `request_id`.
+///
+/// Split out from `sendResultToJS` so the exact string that reaches the page
+/// can be asserted in a test. It could not be before, and the shape of this
+/// string is the whole reply contract.
+pub fn formatResultJS(
+    allocator: std.mem.Allocator,
+    action: []const u8,
+    result_json: []const u8,
+    request_id: ?u64,
+) ![]u8 {
+    // Null, not 0 or -1, for "no id": JSON has a real absent value and zero is
+    // a perfectly good id. A sentinel here is how the page ends up treating
+    // some real call as unidentified.
+    var id_buf: [24]u8 = undefined;
+    const id_text: []const u8 = if (request_id) |id|
+        try std.fmt.bufPrint(&id_buf, "{d}", .{id})
+    else
+        "null";
+
+    return std.fmt.allocPrint(
+        allocator,
+        "if(window.__craftBridgeResult)window.__craftBridgeResult('{s}',{s},{s});",
+        .{ action, result_json, id_text },
+    );
+}
+
 /// Send success result to JavaScript
 pub fn sendResultToJS(allocator: std.mem.Allocator, action: []const u8, result_json: []const u8) void {
     const bridge = @import("bridge.zig");
 
-    // Build JavaScript to call result handler
-    const js_template = "if(window.__craftBridgeResult)window.__craftBridgeResult('{s}',{s});";
-    const js_len = js_template.len + action.len + result_json.len;
-
-    const js_buf = allocator.alloc(u8, js_len) catch {
-        if (comptime builtin.mode == .debug)
-            std.debug.print("[BridgeResult] Failed to allocate JS buffer\n", .{});
-        return;
-    };
-    defer allocator.free(js_buf);
-
-    const js = std.fmt.bufPrint(js_buf, js_template, .{ action, result_json }) catch {
+    // Which call this answers. Null when there is no call to name: a reply
+    // raised outside any dispatch, or a message the page sent without an `i`
+    // (the tray and menubar polling `_post`s, which nobody awaits). The page
+    // then matches by action name exactly as it did before ids.
+    const js = formatResultJS(allocator, action, result_json, request_context.current()) catch {
         if (comptime builtin.mode == .debug)
             std.debug.print("[BridgeResult] Failed to format JS\n", .{});
         return;
     };
+    defer allocator.free(js);
 
     bridge.evalJS(js) catch |err| {
         // Was misleadingly logged as "failed to send error to JS" — this
@@ -403,4 +439,132 @@ test "ErrorContext.toJSON handles long messages without overflow" {
     defer allocator.free(json);
 
     try testing.expect(json.len > 4096);
+}
+
+test "a reply names the call it answers" {
+    const allocator = std.testing.allocator;
+    const js = try formatResultJS(allocator, "getDisplays", "{\"displays\":[]}", 7);
+    defer allocator.free(js);
+    try std.testing.expectEqualStrings(
+        "if(window.__craftBridgeResult)window.__craftBridgeResult('getDisplays',{\"displays\":[]},7);",
+        js,
+    );
+}
+
+test "a reply with no call to name says null, not a sentinel" {
+    // An old page, or a reply raised outside dispatch. The page falls back to
+    // matching by action name; it must not read this as "call number 0".
+    const allocator = std.testing.allocator;
+    const js = try formatResultJS(allocator, "getPrimary", "{}", null);
+    defer allocator.free(js);
+    try std.testing.expectEqualStrings(
+        "if(window.__craftBridgeResult)window.__craftBridgeResult('getPrimary',{},null);",
+        js,
+    );
+}
+
+test "call zero is answered as zero" {
+    const allocator = std.testing.allocator;
+    const js = try formatResultJS(allocator, "a", "{}", 0);
+    defer allocator.free(js);
+    try std.testing.expect(std.mem.endsWith(u8, js, "('a',{},0);"));
+}
+
+test "the largest id JavaScript can hold survives the round trip" {
+    // Number.MAX_SAFE_INTEGER. The page counts up from 1 and will never reach
+    // it, but a buffer sized for a small id is the kind of thing that only
+    // fails in the field.
+    const allocator = std.testing.allocator;
+    const js = try formatResultJS(allocator, "a", "{}", 9007199254740991);
+    defer allocator.free(js);
+    try std.testing.expect(std.mem.endsWith(u8, js, "('a',{},9007199254740991);"));
+}
+
+test "a failure names the call that failed" {
+    const allocator = std.testing.allocator;
+    var ctx = ErrorContext.init(BridgeError.NotFound, "get", "Resource not found");
+    ctx.request_id = 42;
+    const json = try ctx.toJSON(allocator);
+    defer allocator.free(json);
+    try std.testing.expectEqualStrings(
+        "{\"error\":true,\"code\":\"NOT_FOUND\",\"action\":\"get\",\"message\":\"Resource not found\",\"id\":42}",
+        json,
+    );
+
+    // Still valid JSON with the field appended, not just string-equal.
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(i64, 42), parsed.value.object.get("id").?.integer);
+}
+
+test "a failure outside any call carries no id at all" {
+    // Not `"id":null` — absent. The page tells the two apart: an id it does not
+    // recognise is a call that already settled and the error is dropped, while
+    // no id at all is the old whole-action drain.
+    const allocator = std.testing.allocator;
+    const ctx = ErrorContext.init(BridgeError.NotFound, "get", "Resource not found");
+    const json = try ctx.toJSON(allocator);
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "id") == null);
+}
+
+test "the id survives an action name that needs escaping" {
+    const allocator = std.testing.allocator;
+    var ctx = ErrorContext.init(BridgeError.InvalidJSON, "we\"ird\\", "boom\nboom");
+    ctx.request_id = 5;
+    const json = try ctx.toJSON(allocator);
+    defer allocator.free(json);
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+    try std.testing.expectEqual(@as(i64, 5), parsed.value.object.get("id").?.integer);
+    try std.testing.expectEqualStrings("we\"ird\\", parsed.value.object.get("action").?.string);
+}
+
+test "the reply to a dispatched message names that message's call" {
+    // The seam this whole change turns on, walked end to end: the id is read
+    // out of the envelope the way `handleBridgeMessageJSON` reads it, recorded
+    // the way the dispatcher records it, and read back the way
+    // `sendResultToJS` reads it — without any of the 267 reply sites in
+    // between being told about it.
+    const allocator = std.testing.allocator;
+    request_context.resetForTesting();
+
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        allocator,
+        \\{"t":"tags","a":"get","d":"{\"path\":\"/a\"}","i":12}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+
+    request_context.push(request_context.fromEnvelope(parsed.value.object));
+    defer request_context.pop();
+
+    const js = try formatResultJS(allocator, "get", "{\"tags\":[]}", request_context.current());
+    defer allocator.free(js);
+    try std.testing.expect(std.mem.endsWith(u8, js, ",12);"));
+}
+
+test "a dialog's reply is not stamped with the call it dispatched while it waited" {
+    // `runModal` spins a nested run loop that keeps delivering bridge
+    // messages, so a second call is served in the middle of the first. The
+    // dialog's own reply, sent after the inner one, still belongs to the outer
+    // call — this is why the dispatcher keeps a stack.
+    const allocator = std.testing.allocator;
+    request_context.resetForTesting();
+
+    request_context.push(4); // showOpenDialog, now blocked in runModal
+    defer request_context.pop();
+    {
+        request_context.push(5); // a getState the nested run loop delivered
+        defer request_context.pop();
+        const inner = try formatResultJS(allocator, "getState", "{}", request_context.current());
+        defer allocator.free(inner);
+        try std.testing.expect(std.mem.endsWith(u8, inner, ",5);"));
+    }
+
+    const outer = try formatResultJS(allocator, "showOpenDialog", "{}", request_context.current());
+    defer allocator.free(outer);
+    try std.testing.expect(std.mem.endsWith(u8, outer, ",4);"));
 }

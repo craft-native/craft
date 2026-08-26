@@ -661,6 +661,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Which bridge call a reply belongs to. A thread-local stack, so nesting
+    // (a modal run loop re-entering dispatch) is part of what gets tested.
+    const request_context_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/request_context.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1034,6 +1044,7 @@ pub fn build(b: *std.Build) void {
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
+    const run_request_context_tests = b.addRunArtifact(request_context_tests);
     const run_prefs_tests = b.addRunArtifact(prefs_tests);
     const run_prefs_macos_tests = b.addRunArtifact(prefs_macos_tests);
     const run_key_codes_tests = b.addRunArtifact(key_codes_tests);
@@ -1149,6 +1160,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_capabilities_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
+    test_step.dependOn(&run_request_context_tests.step);
     // macOS only: the registry describes the dispatch chain in macos.zig, and
     // compiling it elsewhere drags the whole native graph into a test binary
     // for a platform it does not describe.
