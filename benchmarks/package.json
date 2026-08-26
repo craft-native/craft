@@ -9,7 +9,8 @@
     "bench:startup": "bun run startup.bench.ts",
     "bench:size": "bun run size.bench.ts",
     "bench:ipc": "bun run ipc.bench.ts",
-    "bench:memory": "bun run memory.bench.ts"
+    "bench:memory": "bun run memory.bench.ts",
+    "bench:load": "bun run binary-load-ab.ts"
   },
   "dependencies": {
     "mitata": "^1.0.10"

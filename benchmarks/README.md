@@ -80,6 +80,7 @@ Craft's minimal envelope is **1.4x** faster than Electrobun, **1.5x** faster tha
 | **IPC Overhead** | `ipc.bench.ts` | JSON serialization with each framework's message format | mitata micro-benchmark |
 | **Memory** | `memory.bench.ts` | RSS of entire process tree after 3s stabilization | `ps -o rss=` across all child PIDs |
 | **Startup** | `startup.bench.ts` | Cold-start time (spawn -> ready -> exit) | `performance.now()` across 10 iterations |
+| **Binary load** | `binary-load-ab.ts` | Process spawn, dynamic linking and argument parsing — **not** window startup | p50 of interleaved A/B runs of two binaries on one machine |
 
 ## Run Individual Benchmarks
 
@@ -88,7 +89,24 @@ bun run bench:size      # Bundle/binary size comparison
 bun run bench:ipc       # IPC protocol micro-benchmarks
 bun run bench:memory    # Process memory (RSS)
 bun run bench:startup   # Startup time
+bun run bench:load --base <binary> --head <binary>   # A/B binary load time
 ```
+
+## What CI gates on
+
+`binary-load-ab.ts`, and only that one. It needs no display, so it is the only
+benchmark here that can run on a CI runner honestly.
+
+It compares two binaries **interleaved on the same runner**, rather than a
+measurement against a number recorded elsewhere. That matters more than it
+sounds: on one unchanging binary this measurement reads p50 22.9ms, p95
+38.8ms, max 65.6ms, and comparing a mean-of-5 against a stored baseline swung
+22ms to 32ms — a 45% spread, through a gate that fired at 20%. Interleaving
+brought the same experiment to 3.5% worst case.
+
+`startup.bench.ts` measures the thing people actually mean by startup — window,
+webview, first paint — and needs a display, so it is run by hand rather than
+gated.
 
 ## Hello World Apps
 

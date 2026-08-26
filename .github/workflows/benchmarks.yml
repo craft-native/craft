@@ -54,134 +54,131 @@ jobs:
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
 
-      - name: Build benchmark executable
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # ---------------------------------------------------------------------
+      # Binary load time, A/B against main on this runner
+      #
+      # What is measured is `craft --help`: process spawn, dynamic linking and
+      # argument parsing. It never opens a window, so it cannot see a change in
+      # window or webview startup. This step used to call that "Startup Time"
+      # and fail pull requests on it, which is how a number that cannot move
+      # ended up gating the code that would move it. Real startup is
+      # `benchmarks/startup.bench.ts`, and it needs a display.
+      #
+      # The comparison is A/B on one runner rather than against a stored
+      # number, because the stored number compared machines instead of
+      # binaries. Measured on one unchanging binary: p50 22.9ms, p95 38.8ms,
+      # max 65.6ms, and the old mean-of-5-against-a-cached-number method swung
+      # 22ms to 32ms — a 45% spread through a gate that fired at 20%.
+      # Interleaving both binaries in one sitting brought the same experiment
+      # to 3.5% worst case.
+      #
+      # So the cache holds main's *binary*, not main's timing.
+      # ---------------------------------------------------------------------
+      - name: Build binary
         working-directory: packages/zig
         run: |
           eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseFast
+          mkdir -p "$RUNNER_TEMP/bench"
+          cp zig-out/bin/craft "$RUNNER_TEMP/bench/craft-head"
 
-      - name: First-party Zig dependencies
-        uses: ./.github/actions/first-party-zig-deps
-
-      - name: Run benchmarks
-        id: bench
-        working-directory: packages/zig
-        run: |
-          mkdir -p benchmark-results
-
-          # Run system tray benchmark
-          if [ -f "zig-out/bin/craft" ]; then
-            echo "Running startup benchmark..."
-
-            # Measure startup time (average of 5 runs)
-            TOTAL=0
-            for i in {1..5}; do
-              START=$(date +%s%N)
-              timeout 2 ./zig-out/bin/craft --help >/dev/null
-              END=$(date +%s%N)
-              ELAPSED=$(( (END - START) / 1000000 ))
-              TOTAL=$((TOTAL + ELAPSED))
-            done
-            AVG_STARTUP=$((TOTAL / 5))
-            echo "startup_ms=$AVG_STARTUP" >> $GITHUB_OUTPUT
-
-            # Measure memory footprint
-            MEMORY=$(cat /proc/self/status | grep VmRSS | awk '{print $2}')
-            echo "memory_kb=${MEMORY:-0}" >> $GITHUB_OUTPUT
-          fi
-
-          # Run Zig benchmark tests
-          echo "Running benchmark tests..."
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build test 2>&1 | tee benchmark-results/test-output.txt
-
-          # Extract benchmark results if available
-          if grep -q "benchmark" benchmark-results/test-output.txt 2>/dev/null; then
-            grep "benchmark" benchmark-results/test-output.txt > benchmark-results/benchmarks.txt || true
-          fi
-
-      - name: Download baseline benchmarks
+      - name: Restore main's binary
         if: github.event_name == 'pull_request'
-        uses: actions/cache@v5
+        id: baseline
+        uses: actions/cache/restore@v4
         with:
-          path: baseline-benchmarks
-          key: benchmarks-baseline-${{ github.base_ref }}
+          path: baseline-binary
+          key: benchmarks-baseline-binary-${{ github.base_ref }}
           restore-keys: |
-            benchmarks-baseline-main
+            benchmarks-baseline-binary-main
 
-      - name: Compare benchmarks
+      - name: Compare against main
         if: github.event_name == 'pull_request'
         id: compare
+        working-directory: benchmarks
         run: |
-          CURRENT_STARTUP=${{ steps.bench.outputs.startup_ms }}
-
-          if [ -f "baseline-benchmarks/startup_ms.txt" ]; then
-            BASELINE_STARTUP=$(cat baseline-benchmarks/startup_ms.txt)
-            DIFF=$((CURRENT_STARTUP - BASELINE_STARTUP))
-            PERCENT=$(echo "scale=2; ($DIFF * 100) / $BASELINE_STARTUP" | bc 2>/dev/null || echo "0")
-
-            echo "startup_diff=$DIFF" >> $GITHUB_OUTPUT
-            echo "startup_percent=$PERCENT" >> $GITHUB_OUTPUT
-            echo "baseline_startup=$BASELINE_STARTUP" >> $GITHUB_OUTPUT
-
-            # Fail if startup time regressed by more than 20%
-            THRESHOLD=$(echo "$BASELINE_STARTUP * 1.2" | bc | cut -d. -f1)
-            if [ "$CURRENT_STARTUP" -gt "$THRESHOLD" ]; then
-              echo "regression=true" >> $GITHUB_OUTPUT
-              echo "::warning::Startup time regressed by ${PERCENT}%"
-            else
-              echo "regression=false" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "No baseline available for comparison"
-            echo "regression=false" >> $GITHUB_OUTPUT
+          if [ ! -f "../baseline-binary/craft" ]; then
+            echo "No baseline binary cached yet — reporting without a comparison."
+            echo "compared=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
+          echo "compared=true" >> $GITHUB_OUTPUT
+          chmod +x ../baseline-binary/craft
 
-      - name: Generate benchmark report
+          # Redirect, then cat — deliberately not `| tee`. `$?` after a
+          # pipeline is the last command's status, so `... | tee file` would
+          # report tee's success and the gate below could never fire. Whether
+          # `pipefail` happens to be set is not something a gate should depend
+          # on.
+          set +e
+          bun run binary-load-ab.ts \
+            --base ../baseline-binary/craft \
+            --head "$RUNNER_TEMP/bench/craft-head" \
+            --rounds 25 > ab-output.txt 2>&1
+          RC=$?
+          set -e
+          cat ab-output.txt
+
+          echo "regressed=$RC" >> $GITHUB_OUTPUT
+          DELTA=$(python3 -c "import json;print(json.load(open('binary-load-ab.json'))['delta_percent'])")
+          echo "delta=$DELTA" >> $GITHUB_OUTPUT
+
+      - name: Report
         run: |
-          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Binary load time" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Startup Performance" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Startup Time | ${{ steps.bench.outputs.startup_ms }}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Memory Usage | ${{ steps.bench.outputs.memory_kb }}KB |" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ github.event_name }}" == "pull_request" ] && [ -n "${{ steps.compare.outputs.baseline_startup }}" ]; then
+          if [ "${{ steps.compare.outputs.compared }}" = "true" ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat benchmarks/ab-output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### Comparison with main" >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Baseline | Current | Diff |" >> $GITHUB_STEP_SUMMARY
-            echo "|--------|----------|---------|------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Startup | ${{ steps.compare.outputs.baseline_startup }}ms | ${{ steps.bench.outputs.startup_ms }}ms | ${{ steps.compare.outputs.startup_diff }}ms (${{ steps.compare.outputs.startup_percent }}%) |" >> $GITHUB_STEP_SUMMARY
           fi
+          echo "Measures \`craft --help\` — process spawn, dynamic linking and argument" >> $GITHUB_STEP_SUMMARY
+          echo "parsing. It does **not** measure window or webview startup." >> $GITHUB_STEP_SUMMARY
+
+      - name: Save main's binary as the baseline
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p baseline-binary
+          cp "$RUNNER_TEMP/bench/craft-head" baseline-binary/craft
+
+      - name: Cache main's binary
+        if: github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        with:
+          path: baseline-binary
+          key: benchmarks-baseline-binary-main-${{ github.sha }}
 
       - name: Comment on PR
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.compare.outputs.compared == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const startup = '${{ steps.bench.outputs.startup_ms }}';
-            const memory = '${{ steps.bench.outputs.memory_kb }}';
-            const diff = '${{ steps.compare.outputs.startup_diff }}' || '0';
-            const percent = '${{ steps.compare.outputs.startup_percent }}' || '0';
-            const regression = '${{ steps.compare.outputs.regression }}' === 'true';
+            const fs = require('fs');
+            const out = fs.readFileSync('benchmarks/ab-output.txt', 'utf8');
+            const regressed = '${{ steps.compare.outputs.regressed }}' === '1';
+            const body = `## ${regressed ? '\u{1F534}' : '\u2705'} Binary load time
 
-            let emoji = regression ? '🔴' : '✅';
-            let status = regression ? 'Performance regression detected!' : 'Performance looks good';
-
-            const body = `## ${emoji} Benchmark Results
-
-            ${status}
-
-            | Metric | Value |
-            |--------|-------|
-            | Startup Time | ${startup}ms |
-            | Memory Usage | ${memory}KB |
-            | Change | ${diff}ms (${percent}%) |
+            \`\`\`
+            ${out.trim()}
+            \`\`\`
 
             <details>
-            <summary>Benchmark Details</summary>
+            <summary>What this measures</summary>
 
-            - Startup time measured as average of 5 runs
-            - Regression threshold: 20% slower than baseline
+            \`craft --help\`: process spawn, dynamic linking and argument parsing.
+            It never opens a window, so it **cannot** see a change in window or
+            webview startup — real startup is \`benchmarks/startup.bench.ts\`, which
+            needs a display.
+
+            Both binaries are measured interleaved on this runner and compared by
+            p50, rather than against a number recorded on another machine. On
+            byte-identical binaries that method reads within ~3.5%; the old one
+            swung 45%.
             </details>`;
 
             const { data: comments } = await github.rest.issues.listComments({
@@ -189,62 +186,34 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-
-            const existingComment = comments.find(c =>
-              c.user.login === 'github-actions[bot]' &&
-              c.body.includes('Benchmark Results')
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.includes('Binary load time')
             );
-
-            if (existingComment) {
+            if (existing) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existingComment.id,
-                body: body
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
               });
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: body
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
               });
             }
 
-      - name: Save benchmark baseline
-        if: github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p baseline-benchmarks
-          echo "${{ steps.bench.outputs.startup_ms }}" > baseline-benchmarks/startup_ms.txt
-          echo "${{ steps.bench.outputs.memory_kb }}" > baseline-benchmarks/memory_kb.txt
-
-      - name: Cache benchmark baseline
-        if: github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
-        with:
-          path: baseline-benchmarks
-          key: benchmarks-baseline-main-${{ github.sha }}
-
-      - name: Save benchmark history
-        if: github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p .github/metrics
-          DATE=$(date -u +%Y-%m-%d)
-          COMMIT=$(git rev-parse --short HEAD)
-
-          echo "{\"date\": \"$DATE\", \"commit\": \"$COMMIT\", \"startup_ms\": ${{ steps.bench.outputs.startup_ms }}, \"memory_kb\": ${{ steps.bench.outputs.memory_kb }}}" >> .github/metrics/benchmarks.jsonl
-
       - name: Upload benchmark results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
           path: |
-            packages/zig/benchmark-results/
-            .github/metrics/
+            benchmarks/ab-output.txt
+            benchmarks/binary-load-ab.json
+          if-no-files-found: ignore
           retention-days: 90
 
       - name: Fail on regression
-        if: steps.compare.outputs.regression == 'true'
+        if: steps.compare.outputs.regressed == '1'
         run: |
-          echo "::error::Performance regression detected. Startup time increased by ${{ steps.compare.outputs.startup_percent }}%"
+          echo "::error::Binary load time regressed by ${{ steps.compare.outputs.delta }}% against main, measured A/B on this runner."
           exit 1
