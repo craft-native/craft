@@ -151,7 +151,7 @@ pub const give_up_page =
     \\<main>
     \\<h1>This page stopped responding</h1>
     \\<p>It was reloaded a few times and kept failing, so it has been left alone.</p>
-    \\<button onclick="location.reload()">Reload</button>
+    \\<button onclick="if(window.craft&&window.craft.window)window.craft.window.reload();else location.reload()">Reload</button>
     \\</main>
 ;
 
@@ -277,6 +277,12 @@ test "more windows than the table holds still each get tracked" {
 test "the give-up page carries its own styling and a way back" {
     // It is shown when there is no server, no bundle path and possibly no
     // network, so anything it references it must contain.
+    // `location.reload()` alone cannot work here: the page is installed with
+    // `loadHTMLString:baseURL:` and a nil base, so reloading navigates to the
+    // base rather than re-rendering the substitute document. The button has to
+    // go through the bridge, which re-applies what the window actually had.
+    try testing.expect(std.mem.indexOf(u8, give_up_page, "window.craft.window.reload()") != null);
+    // The fallback still has to be there for a page served without the bridge.
     try testing.expect(std.mem.indexOf(u8, give_up_page, "location.reload()") != null);
     try testing.expect(std.mem.indexOf(u8, give_up_page, "<style>") != null);
     try testing.expect(std.mem.indexOf(u8, give_up_page, "prefers-color-scheme") != null);

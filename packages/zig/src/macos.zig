@@ -3660,8 +3660,22 @@ pub fn showNotification(title: []const u8, message: []const u8) !void {
 }
 
 // Hot reload - reload URL in webview
+/// Reload, as `craft.window.reload()` and the Reload menu item mean it.
+///
+/// Not `-reload:`, which is wrong for half of craft's windows for the same
+/// reason it was wrong as crash recovery: HTML loaded through
+/// `loadHTMLString:baseURL:` has no request to repeat, so reloading navigates
+/// to the synthetic base URL — `http://localhost/`, where nothing is
+/// listening. An app started from `--html` reloaded itself into a connection
+/// error. `restoreContent` re-applies what was actually loaded, and falls back
+/// to `-reload` for a webview craft did not load.
+///
+/// Reloading also ends the crash burst. A person clicking Reload is not a
+/// crash loop, and leaving the budget spent would mean the next renderer
+/// crash went straight to the give-up page.
 pub fn reloadWindow(webview: objc.id) void {
-    msgSendVoid0(webview, "reload:");
+    webview_recovery.forget(@intFromPtr(webview));
+    restoreContent(webview);
 }
 
 pub fn reloadWindowIgnoringCache(webview: objc.id) void {
@@ -6398,6 +6412,28 @@ pub const Installer = struct {
 /// this is the line it will have to pair with.
 fn keepWindowAfterClose(window: objc.id) void {
     _ = msgSend1(window, "setReleasedWhenClosed:", false);
+    rememberCraftWindow(window);
+}
+
+/// Every window craft opened, so reopen can tell them from AppKit's own.
+///
+/// Craft opens one today; #67 opens more. Sixteen is far past any real app and
+/// bounded so this needs no allocator on a path that runs during window
+/// creation.
+var craft_windows: [16]objc.id = @splat(null);
+
+fn rememberCraftWindow(window: objc.id) void {
+    if (@intFromPtr(window) == 0) return;
+    for (&craft_windows) |*slot| {
+        if (slot.* == window) return;
+        if (@intFromPtr(slot.*) == 0) {
+            slot.* = window;
+            return;
+        }
+    }
+    // Full. Reopen will not restore this window, which is a worse outcome than
+    // the table being bigger — say so rather than failing silently.
+    std.log.warn("more than {d} windows; the newest will not be restored by a Dock click", .{craft_windows.len});
 }
 
 /// Whether the app should quit when its last window closes.
@@ -6462,19 +6498,24 @@ fn appShouldHandleReopen(_: objc.id, _: objc.SEL, app: objc.id, has_visible: boo
 /// Whether this is a window craft opened, rather than one AppKit keeps for its
 /// own purposes.
 ///
-/// Identified by having craft's webview in it: every craft window sets a
-/// `WKWebView` as its content view, and nothing AppKit creates does.
+/// Answered from the list of windows craft actually created, not by inspecting
+/// one. The first version of this asked whether the content view *was* a
+/// `WKWebView`, which is true only of the plain window: `--web-sidebar-material`
+/// installs a backdrop container (macos.zig:959), `createWindowWithSidebar` sets
+/// a split view controller (:2214), and `createWindowWithSidebarURL` installs
+/// its own container (:3363). All three still keep their closed window alive, so
+/// the reopen loop found them and skipped them — a Dock click on a sidebar app
+/// activated the process and restored no window, which is the exact dead end
+/// this delegate exists to remove.
+///
+/// A test cannot see that. It needs a real reopen event against a sidebar
+/// window, so the fix is to stop inferring the answer at all.
 fn isCraftWindow(window: objc.id) bool {
     if (@intFromPtr(window) == 0) return false;
-    const content = msgSend0(window, "contentView");
-    if (@intFromPtr(content) == 0) return false;
-    const WKWebView = getClass("WKWebView");
-    if (@intFromPtr(WKWebView) == 0) return false;
-    const isKindFn = @as(
-        *const fn (objc.id, objc.SEL, objc.id) callconv(.c) bool,
-        @ptrCast(&objc.objc_msgSend),
-    );
-    return isKindFn(content, sel("isKindOfClass:"), WKWebView);
+    for (craft_windows) |known| {
+        if (known == window) return true;
+    }
+    return false;
 }
 
 var app_delegate_installed = false;
