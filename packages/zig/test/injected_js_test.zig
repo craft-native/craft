@@ -614,7 +614,7 @@ test "every wire action the prefs facade posts is namespaced" {
         try fx.text("String(posted.every(function (m) { return m.a.indexOf('prefs:') === 0 }))"),
     );
     for ([_][]const u8{
-        prefs_actions.get,  prefs_actions.set,  prefs_actions.delete,
+        prefs_actions.get,   prefs_actions.set,  prefs_actions.delete,
         prefs_actions.clear, prefs_actions.keys, prefs_actions.info,
     }, 0..) |want, index| {
         var buf: [64]u8 = undefined;
@@ -886,7 +886,10 @@ test "the manifest native builds is the shape the facade reads" {
     // The reason is the difference between an app hunting a bug in its own code
     // and an app knowing the answer.
     try testing.expect(std.mem.indexOf(u8, try fx.text("caps.namespaces.updater.reason"), "Sparkle") != null);
-    try testing.expectEqualStrings("false", try fx.text("String(caps.channels['craft:fs:change'])"));
+    // Not "false" — craft cannot prove a channel has no emitter, and saying it
+    // could is what made the shipped manifest tell pages to disable working
+    // features. The only two answers are "live" and "unknown".
+    try testing.expectEqualStrings("unknown", try fx.text("caps.channels['craft:fs:change']"));
 }
 
 test "craft.supports answers from the manifest, and fails open without one" {

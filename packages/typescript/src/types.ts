@@ -1247,13 +1247,18 @@ export interface CapabilityNamespace {
 export interface CraftCapabilities {
   namespaces: Record<string, CapabilityNamespace>
   /**
-   * Every `craft:*` event channel, and whether anything native emits on it.
+   * Every `craft:*` event channel, and what craft can say about it.
    *
-   * A `false` here means subscribing would work and never fire — which cannot
-   * be derived from the action tables, so it is tracked separately by the
-   * emitters themselves.
+   * `'live'` means something in this build took out a permit to emit on it.
+   * `'unknown'` means craft cannot prove it either way — subscribe and see, and
+   * do **not** disable a feature over it.
+   *
+   * There is deliberately no `'dead'`. Craft cannot establish absence: the
+   * `craft:window:*` names are composed in JavaScript from
+   * `__craftDeliverWindowEvent('focus')`, so no source scan finds the literal
+   * even though the emitter is right there.
    */
-  channels: Record<string, boolean>
+  channels: Record<string, 'live' | 'unknown'>
 }
 
 

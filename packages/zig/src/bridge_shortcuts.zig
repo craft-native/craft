@@ -29,6 +29,7 @@ const bridge_error = @import("bridge_error.zig");
 const logging = @import("logging.zig");
 const registry_mod = @import("shortcut_registry.zig");
 const accel = @import("accelerator.zig");
+const capabilities = @import("capabilities.zig");
 
 const log = logging.shortcuts;
 
@@ -149,6 +150,8 @@ pub const ShortcutsBridge = struct {
     /// idempotent, so it runs before every registration rather than depending
     /// on an initialisation order.
     fn ensureDelivery(self: *Self) void {
+        _ = capabilities.registerEmitter(.shortcut);
+        _ = capabilities.registerEmitter(.shortcut_error);
         const global_state = @import("global_state.zig");
         global_state.instance.setShortcutsBridge(self);
         if (comptime builtin.os.tag == .macos) {

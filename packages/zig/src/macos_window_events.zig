@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const macos = @import("macos.zig");
+const capabilities = @import("capabilities.zig");
 
 const objc = macos.objc;
 
@@ -50,6 +51,11 @@ pub fn install(window: objc.id) void {
 
         delegate_instance = macos.msgSend0(macos.msgSend0(cls, "alloc"), "init");
         installed = true;
+        // Five channels, one delegate. The names are composed in JS from
+        // `__craftDeliverWindowEvent`, so no source scan could ever find them.
+        inline for ([_]capabilities.Channel{ .window_focus, .window_blur, .window_resize, .window_move, .window_close }) |ch| {
+            _ = capabilities.registerEmitter(ch);
+        }
 
         if (comptime builtin.mode == .debug) {
             std.debug.print("[WindowEvents] Installed NSWindowDelegate\n", .{});

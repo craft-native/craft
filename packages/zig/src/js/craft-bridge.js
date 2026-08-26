@@ -748,11 +748,13 @@
   //   const caps = await craft.capabilities()
   //   caps.namespaces.updater.status   // 'unavailable'
   //   caps.namespaces.updater.reason   // 'the Sparkle framework is not linked…'
-  //   caps.channels['craft:fs:change'] // false — subscribing would never fire
+  //   caps.channels['craft:fs:change'] // 'live' | 'unknown'
   //
   // A namespace craft has not audited reports `undeclared`, which means exactly
   // that: craft will not claim anything either way. Treat it as "try it and
-  // handle failure", not as "missing".
+  // handle failure", not as "missing". Channels answer 'live' or 'unknown' for
+  // the same reason — there is no 'dead', because craft cannot prove a channel
+  // has no emitter.
   window.craft.capabilities = function () {
     return _req('capabilities', 'capabilities:get', '{}', 5000).then(function (manifest) {
       window.__craftCapabilities = manifest

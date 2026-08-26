@@ -56,6 +56,52 @@ const dispatcher_source = @embedFile("src/macos.zig");
 /// lowered, and lowering it is what "declaring a namespace" costs.
 const max_undeclared: usize = 45;
 
+/// The injected bridge script, so the channel list can be checked against the
+/// events the page actually subscribes to.
+const bridge_js = @embedFile("src/js/craft-bridge.js");
+
+test "every event the page subscribes to is a declared channel" {
+    // The check that was missing. `Channel` shipped with 22 entries and a doc
+    // comment claiming it listed every `craft:*` the JS surface subscribes to;
+    // there were 44. A manifest that omits a channel answers nothing about it,
+    // which is the same overclaiming this mechanism exists to stop — so the
+    // claim is now enforced rather than asserted.
+    var search: usize = 0;
+    var checked: usize = 0;
+    while (std.mem.indexOfPos(u8, bridge_js, search, "_evt('craft:")) |at| {
+        const name_start = at + "_evt('".len;
+        const name_end = std.mem.indexOfScalarPos(u8, bridge_js, name_start, '\'') orelse break;
+        const name = bridge_js[name_start..name_end];
+        search = name_end;
+
+        var known = false;
+        for (std.enums.values(capabilities.Channel)) |ch| {
+            if (std.mem.eql(u8, ch.eventName(), name)) known = true;
+        }
+        if (!known) {
+            std.debug.print(
+                "craft-bridge.js subscribes to '{s}' but it is not in the Channel enum,\n" ++
+                    "  so craft.capabilities() says nothing about it at all.\n",
+                .{name},
+            );
+            return error.SubscribedChannelNotDeclared;
+        }
+        checked += 1;
+    }
+    // A regex that silently matched nothing would make this test vacuous.
+    try testing.expect(checked >= 40);
+}
+
+test "no channel is reported as definitely dead" {
+    // `false` was never knowledge — it only ever meant "no emitter has
+    // registered", and a page reasonably read it as "this will never fire".
+    // Absence of proof is reported as `unknown` now, and there is deliberately
+    // no third value to regress to.
+    try testing.expectEqualStrings("live", capabilities.Liveness.live.text());
+    try testing.expectEqualStrings("unknown", capabilities.Liveness.unknown.text());
+    try testing.expectEqual(@as(usize, 2), std.enums.values(capabilities.Liveness).len);
+}
+
 test "nothing is marked declared without being enforced" {
     // Closes the obvious loophole: marking a namespace `.declared` in the
     // registry buys the app's trust, and it must cost a `declared_sources` row,

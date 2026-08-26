@@ -297,8 +297,8 @@ test "parseArgs - --frame-autosave leaves the explicit geometry alone" {
     // The two are not alternatives: the geometry flags are what the window
     // opens at the first time, before anything has been saved to restore.
     var options = try parse(&.{
-        "craft",           "--frame-autosave", "main", "--width", "900",
-        "--height",        "700",              "--x",  "40",      "--y",
+        "craft",    "--frame-autosave", "main", "--width", "900",
+        "--height", "700",              "--x",  "40",      "--y",
         "60",
     });
     defer freeOptions(&options);
