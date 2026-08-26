@@ -1126,3 +1126,108 @@ test "the menubar state reply no longer needs a queue of its own" {
     // And nothing is left queued under the key it used to invent.
     try testing.expectEqualStrings("undefined", try fx.text("String(window.__craftBridgePending['menubarCollapse:getState'])"));
 }
+
+// =============================================================================
+// Notification responses (#65)
+// =============================================================================
+
+test "show means now, not in a minute" {
+    // `show` routes through the `schedule` action, whose native `delay`
+    // defaults to sixty seconds. Every `show()` therefore arrived a minute
+    // later, which from the page is indistinguishable from one that never
+    // arrived at all.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate("window.craft.notifications.show({ title: 'Hi' });");
+    try testing.expectEqualStrings("notification", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("schedule", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("0", try fx.text("String(JSON.parse(posted[0].d).delay)"));
+}
+
+test "an explicit delay is still honoured by show" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate("window.craft.notifications.show({ title: 'Hi', delay: 30 });");
+    try testing.expectEqualStrings("30", try fx.text("String(JSON.parse(posted[0].d).delay)"));
+}
+
+test "action buttons reach native in the shape it parses" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\window.craft.notifications.show({
+        \\  title: 'Tool approval',
+        \\  body: 'Claude wants to run rm -rf build/',
+        \\  actions: [{ id: 'approve', label: 'Approve' }, { id: 'deny', label: 'Deny' }],
+        \\});
+    );
+
+    const payload = try fx.text("posted[0].d");
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+
+    // Decoded with the very struct the bridge decodes it with, so a rename on
+    // either side fails here rather than producing a silent buttonless banner.
+    const Spec = struct { id: []const u8 = "", label: []const u8 = "" };
+    const Body = struct { title: []const u8 = "", actions: []const Spec = &.{} };
+    const decoded = try std.json.parseFromSlice(Body, testing.allocator, payload, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer decoded.deinit();
+
+    try testing.expectEqual(@as(usize, 2), decoded.value.actions.len);
+    try testing.expectEqualStrings("approve", decoded.value.actions[0].id);
+    try testing.expectEqualStrings("Approve", decoded.value.actions[0].label);
+    try testing.expectEqualStrings("deny", decoded.value.actions[1].id);
+}
+
+test "a click and a button press reach the page as their own events" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(BRIDGE);
+
+    _ = try fx.ctx.evaluate(
+        \\var clicked = 'none';
+        \\var acted = 'none';
+        \\window.craft.notifications.onClick(function (d) { clicked = d.notificationId });
+        \\window.craft.notifications.onAction(function (d) { acted = d.notificationId + ':' + d.actionId });
+    );
+
+    // Exactly what `emitNotificationEvent` evaluates in the page.
+    _ = try fx.ctx.evaluate(
+        \\window.dispatchEvent(new CustomEvent('craft:notification:click',{detail:{"notificationId":"n1"}}));
+    );
+    _ = try fx.ctx.evaluate(
+        \\window.dispatchEvent(new CustomEvent('craft:notification:action',{detail:{"notificationId":"n1","actionId":"approve"}}));
+    );
+
+    try testing.expectEqualStrings("n1", try fx.text("clicked"));
+    try testing.expectEqualStrings("n1:approve", try fx.text("acted"));
+}
+
+test "the event names the page listens for are the ones the channels declare" {
+    // The page subscribes with `_evt('craft:notification:click')`; native emits
+    // through `capabilities.Channel`. If those two strings ever drift, the
+    // handler is simply never called and nothing reports it.
+    try testing.expectEqualStrings(
+        "craft:notification:click",
+        capabilities.Channel.notification_click.eventName(),
+    );
+    try testing.expectEqualStrings(
+        "craft:notification:action",
+        capabilities.Channel.notification_action.eventName(),
+    );
+    try testing.expect(std.mem.indexOf(u8, BRIDGE, "_evt('craft:notification:click')") != null);
+    try testing.expect(std.mem.indexOf(u8, BRIDGE, "_evt('craft:notification:action')") != null);
+}

@@ -577,11 +577,14 @@
   // -------------------------------------------------------------------------
   window.craft.notifications = {
     show: function (opts) {
-      // Convenience wrapper around schedule with no triggerAt.
       const o = Object.assign({}, opts || {})
       if (typeof o.title !== 'string' || o.title.length === 0) {
         return Promise.reject(new Error('notification title is required'))
       }
+      // `show` means now. This routes through `schedule`, whose delay defaults
+      // to sixty seconds — so every `show()` used to arrive a minute later,
+      // which from here is indistinguishable from one that never arrived.
+      if (typeof o.delay !== 'number') o.delay = 0
       return _send('notification', 'schedule', _stringify(o))
     },
     schedule:          function (opts) { return _send('notification', 'schedule', _stringify(opts || {})) },
@@ -590,6 +593,14 @@
     setBadge:          function (n)    { return _send('notification', 'setBadge', _stringify({ count: Number(n) || 0 })) },
     clearBadge:        function ()     { return _send('notification', 'clearBadge') },
     requestPermission: function ()     { return _req('notification', 'requestPermission').then(function (r) { return (r && r.granted) === true }) },
+    // The banner was a dead end: craft posted real notifications and
+    // registered no delegate, so a click reached nothing.
+    //   onClick  -> { notificationId }
+    //   onAction -> { notificationId, actionId }
+    // A swipe-away arrives as an action with actionId 'dismiss', so an app
+    // waiting on an answer hears that there will not be one.
+    onClick:           _evt('craft:notification:click'),
+    onAction:          _evt('craft:notification:action'),
   }
 
   // -------------------------------------------------------------------------
