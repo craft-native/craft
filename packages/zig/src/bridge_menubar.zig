@@ -17,8 +17,6 @@ pub const MenubarCollapseBridge = struct {
     }
 
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
-        _ = self;
-
         if (std.mem.eql(u8, action, "init")) {
             menubar_collapse.init();
         } else if (std.mem.eql(u8, action, "collapse")) {
@@ -28,20 +26,25 @@ pub const MenubarCollapseBridge = struct {
         } else if (std.mem.eql(u8, action, "toggle")) {
             menubar_collapse.toggle();
         } else if (std.mem.eql(u8, action, "getState")) {
-            // Return current state via JS callback
-            const collapsed = menubar_collapse.isCollapsed();
-            const initialized = menubar_collapse.isInitialized();
-            const sep_hidden = menubar_collapse.isSeparatorHidden();
+            // Answered through `sendResultToJS` like every other request, so it
+            // is stamped with the id of the call it answers. It used to hand
+            // the page a bespoke reply key — `menubarCollapse:getState` — which
+            // the JS side had to queue under by hand: its own pending entry,
+            // its own failure path, and no timeout, so a call native never
+            // answered held its resolver for the life of the page. The id makes
+            // the key irrelevant, so the bespoke queue is gone and this is an
+            // ordinary `_req`.
             var buf: [384]u8 = undefined;
-            const js = std.fmt.bufPrint(&buf, "window.__craftBridgeResult('menubarCollapse:getState',{{collapsed:{s},initialized:{s},separatorHidden:{s}}});", .{
-                if (collapsed) "true" else "false",
-                if (initialized) "true" else "false",
-                if (sep_hidden) "true" else "false",
-            }) catch return;
-            const bridge = @import("bridge.zig");
-            bridge.evalJS(js) catch |err| {
-                std.log.debug("JS eval failed for menubar status callback: {}", .{err});
-            };
+            const json = std.fmt.bufPrint(
+                &buf,
+                "{{\"collapsed\":{s},\"initialized\":{s},\"separatorHidden\":{s}}}",
+                .{
+                    if (menubar_collapse.isCollapsed()) "true" else "false",
+                    if (menubar_collapse.isInitialized()) "true" else "false",
+                    if (menubar_collapse.isSeparatorHidden()) "true" else "false",
+                },
+            ) catch return;
+            @import("bridge_error.zig").sendResultToJS(self.allocator, "getState", json);
         } else if (std.mem.eql(u8, action, "setAutoCollapse")) {
             // Parse delay from data (seconds as string)
             if (data.len > 0) {

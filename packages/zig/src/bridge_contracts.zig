@@ -13,6 +13,10 @@
 //! its own directory, so this has to live here beside the code it re-exports
 //! rather than in `test/`.
 
+/// The reply formatter. `test/injected_js_test.zig` answers the page with the
+/// very string `sendResultToJS` evaluates, rather than a hand-written copy of
+/// it that cannot notice when the two drift apart.
+pub const errors = @import("bridge_error.zig");
 pub const menu = @import("bridge_menu.zig");
 pub const shortcuts = @import("shortcut_registry.zig");
 pub const prefs = @import("prefs.zig");
