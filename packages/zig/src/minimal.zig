@@ -8,6 +8,47 @@ const io_context = craft.io_context;
 // `craft`, and macos.zig already owns it there.
 const timing = craft.startup_timing;
 
+/// Craft's log handler.
+///
+/// One declaration in the executable's root, and every `std.log` call in the
+/// program routes through it — across module boundaries, because `std.log`
+/// resolves its handler from the compilation root rather than from the calling
+/// module. That is what makes `--log-file` worth having: without it the flag
+/// opens a file that only `devmode.zig` and `hotreload.zig` ever write to,
+/// which is to say an empty one.
+///
+/// `log_level = .debug` was already here and is load-bearing. `std.log.debug`
+/// is compiled out at comptime below the threshold, and most of craft's
+/// `std.log` calls are debug level; releases build ReleaseSafe, so without it
+/// `--log-level debug` would be a flag that could not do anything.
+///
+/// Not captured: `std.debug.print`, which craft uses in far more places than
+/// `std.log`. Those go through `std.Options.debug_io` rather than the log
+/// handler, and most sit behind `if (builtin.mode == .debug)`. Said plainly in
+/// `--help`, rather than left for someone to work out from a log file that is
+/// quieter than they expected.
+pub const std_options: std.Options = .{
+    .log_level = .debug,
+    .logFn = craftLogFn,
+};
+
+fn craftLogFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    // The scope is prefixed rather than dropped: `std.log.scoped(...)` is used
+    // throughout craft, and the scope is most of what makes a line findable.
+    const prefix = if (scope == .default) "" else "[" ++ @tagName(scope) ++ "] ";
+    craft.Log.log(switch (message_level) {
+        .debug => .Debug,
+        .info => .Info,
+        .warn => .Warning,
+        .err => .Error,
+    }, prefix ++ format, args);
+}
+
 pub fn main(init: std.process.Init) !void {
     io_context.init(init.io);
     const allocator = init.gpa;
@@ -56,6 +97,18 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("Error: --headless and --menubar-only are contradictory — a menubar app has no window to hide\n", .{});
         std.process.exit(1);
     }
+
+    // Configure logging before anything else that might have something to
+    // say. Both startup paths flow through here, and `--log-file` is only
+    // useful if it is open before the interesting part of startup runs.
+    //
+    // Safe to do with strings the caller will free: `log.init` copies them.
+    // It did not until now, and nothing had ever configured it, which is the
+    // only reason that was not already a use-after-free.
+    configureLogging(options) catch |err| {
+        std.debug.print("Error: could not open --log-file '{s}': {s}\n", .{ options.log_file orelse "", @errorName(err) });
+        std.process.exit(1);
+    };
 
     // Whether closing the last window ends the process. Decided here, before
     // either startup path, because both need the same answer and only this
@@ -388,6 +441,86 @@ pub fn main(init: std.process.Init) !void {
 
 /// Run with system tray using a modified App flow
 /// Key difference: we create the system tray BEFORE calling initPlatform
+/// Turn the logging flags into a configured sink.
+///
+/// A bad path is fatal rather than ignored. Someone who passed `--log-file`
+/// is going to go looking in that file, and a run that silently logged
+/// nowhere is worse than one that refused to start — the whole point of the
+/// flag is to be able to find out what happened afterwards.
+fn configureLogging(options: cli.WindowOptions) !void {
+    const wants_file = options.log_file != null;
+    const wants_level = options.log_level != null;
+    if (!wants_file and !wants_level and !options.log_json and !options.log_quiet) return;
+
+    const level: craft.Log.LogLevel = if (options.log_level) |name| blk: {
+        break :blk parseLogLevel(name) orelse {
+            std.debug.print(
+                "Error: unknown --log-level '{s}' (expected debug, info, warn, error or fatal)\n",
+                .{name},
+            );
+            std.process.exit(1);
+        };
+    } else .Info;
+
+    try craft.Log.init(.{
+        .min_level = level,
+        .output_file = options.log_file,
+        .json_output = options.log_json,
+        // Colour codes in a file are noise; on a terminal they are not.
+        .enable_colors = !options.log_json and !wants_file,
+        // --log-quiet only makes sense with somewhere else for records to go.
+        .mirror_to_stderr = !(options.log_quiet and wants_file),
+    });
+
+    // The scoped front end (`logging.notification`, `logging.menu`, ...) feeds
+    // the same sink through the callback it already had, so its call sites
+    // reach the log file without any of them being touched.
+    craft.Logging.init(.{
+        .target = .callback,
+        .callback = forwardScopedLog,
+        .level = switch (level) {
+            .Debug => .debug,
+            .Info => .info,
+            .Warning => .warn,
+            .Error => .err,
+            .Fatal => .fatal,
+        },
+        // Timestamp and colour are the outer sink's job now; doubling them
+        // would put two of each on every line.
+        .colored = false,
+        .show_timestamp = false,
+    });
+}
+
+fn forwardScopedLog(level: craft.Logging.LogLevel, module: []const u8, message: []const u8) void {
+    _ = module; // already present in the formatted message
+    switch (level) {
+        .trace, .debug => craft.Log.log(.Debug, "{s}", .{message}),
+        .info => craft.Log.log(.Info, "{s}", .{message}),
+        .warn => craft.Log.log(.Warning, "{s}", .{message}),
+        .err => craft.Log.log(.Error, "{s}", .{message}),
+        .fatal => craft.Log.log(.Fatal, "{s}", .{message}),
+        .off => {},
+    }
+}
+
+/// Spellings accepted by `--log-level`.
+fn parseLogLevel(name: []const u8) ?craft.Log.LogLevel {
+    const table = .{
+        .{ "debug", craft.Log.LogLevel.Debug },
+        .{ "info", craft.Log.LogLevel.Info },
+        .{ "warn", craft.Log.LogLevel.Warning },
+        .{ "warning", craft.Log.LogLevel.Warning },
+        .{ "error", craft.Log.LogLevel.Error },
+        .{ "err", craft.Log.LogLevel.Error },
+        .{ "fatal", craft.Log.LogLevel.Fatal },
+    };
+    inline for (table) |entry| {
+        if (std.ascii.eqlIgnoreCase(name, entry[0])) return entry[1];
+    }
+    return null;
+}
+
 fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !void {
     std.debug.print("\n⚡ Creating system tray application\n", .{});
     std.debug.print("   Title: {s}\n", .{options.title});

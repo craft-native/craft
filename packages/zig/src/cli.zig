@@ -50,6 +50,15 @@ pub const WindowOptions = struct {
     // — so every app launched through the shared `craft` binary called itself
     // "craft". macOS only.
     app_name: ?[]const u8 = null,
+    // Write craft's own log to this file, in addition to stderr. Null leaves
+    // logging where it has always been: stderr only.
+    log_file: ?[]const u8 = null,
+    // Emit each record as a JSON object rather than a human-readable line.
+    log_json: bool = false,
+    // Lowest level that gets recorded: debug, info, warn, error, fatal.
+    log_level: ?[]const u8 = null,
+    // Send records only to the log file, leaving the terminal quiet.
+    log_quiet: bool = false,
     // Keep the process alive after the last window closes, instead of quitting.
     // Null means craft decides from the shape of the app: a tray or
     // menubar-only app stays, an ordinary windowed app goes. See
@@ -86,6 +95,8 @@ pub fn freeOptionStrings(allocator: std.mem.Allocator, options: *WindowOptions) 
     if (options.icon) |s| allocator.free(s);
     if (options.app_name) |s| allocator.free(s);
     if (options.frame_autosave) |s| allocator.free(s);
+    if (options.log_file) |s| allocator.free(s);
+    if (options.log_level) |s| allocator.free(s);
     if (options.eval_source) |s| allocator.free(s);
     if (options.eval_file) |s| allocator.free(s);
     options.* = WindowOptions{};
@@ -171,6 +182,9 @@ const BundleConfig = struct {
     titlebarHidden: ?bool = null,
     headless: ?bool = null,
     keepRunning: ?bool = null,
+    logFile: ?[]const u8 = null,
+    logJson: ?bool = null,
+    logLevel: ?[]const u8 = null,
 };
 
 /// Absolute path of the running executable's directory.
@@ -245,6 +259,8 @@ fn loadBundleConfig(allocator: std.mem.Allocator) ?WindowOptions {
     if (cfg.title) |v| options.title = allocator.dupe(u8, v) catch options.title;
     if (cfg.appName) |v| options.app_name = allocator.dupe(u8, v) catch null;
     if (cfg.frameAutosave) |v| options.frame_autosave = allocator.dupe(u8, v) catch null;
+    if (cfg.logFile) |v| options.log_file = allocator.dupe(u8, v) catch null;
+    if (cfg.logLevel) |v| options.log_level = allocator.dupe(u8, v) catch null;
     if (cfg.icon) |v| options.icon = allocator.dupe(u8, v) catch null;
     applyScalarConfig(cfg, &options);
 
@@ -271,6 +287,7 @@ fn applyScalarConfig(cfg: BundleConfig, options: *WindowOptions) void {
     if (cfg.titlebarHidden) |v| options.titlebar_hidden = v;
     if (cfg.headless) |v| options.headless = v;
     if (cfg.keepRunning) |v| options.keep_running = v;
+    if (cfg.logJson) |v| options.log_json = v;
     // A menubar app with a dock icon and no tray is not a menubar app, so the
     // one flag sets all three rather than making every manifest repeat them.
     if (cfg.menubarOnly) |v| {
@@ -497,6 +514,18 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.hide_dock_icon = true;
         } else if (std.mem.eql(u8, arg, "--headless")) {
             options.headless = true;
+        } else if (std.mem.eql(u8, arg, "--log-file")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            options.log_file = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--log-json")) {
+            options.log_json = true;
+        } else if (std.mem.eql(u8, arg, "--log-quiet")) {
+            options.log_quiet = true;
+        } else if (std.mem.eql(u8, arg, "--log-level")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            options.log_level = try allocator.dupe(u8, args[i]);
         } else if (std.mem.eql(u8, arg, "--keep-running")) {
             options.keep_running = true;
         } else if (std.mem.eql(u8, arg, "--quit-on-close")) {
@@ -606,6 +635,13 @@ fn printHelp() void {
         \\      --system-tray        Show system tray icon
         \\      --hide-dock-icon     Hide dock icon (menubar-only mode, macOS)
         \\      --menubar-only       Menubar-only mode (no window, system tray only)
+        \\      --log-file <PATH>    Append craft's own log to this file as well as
+        \\                           stderr. Captures everything craft logs through
+        \\                           std.log; debug-mode std.debug.print tracing is
+        \\                           not included.
+        \\      --log-json           One JSON object per record instead of a line.
+        \\      --log-level <LEVEL>  debug, info, warn, error or fatal (default info).
+        \\      --log-quiet          Write only to --log-file, leaving stderr alone.
         \\      --keep-running       Stay running after the last window closes.
         \\                           The default for tray and menubar-only apps;
         \\                           an ordinary windowed app quits.
@@ -768,4 +804,52 @@ test "the last of the two flags wins" {
     var args = [_][:0]const u8{ "craft", "--keep-running", "--quit-on-close" };
     const options = try parseArgs(std.testing.allocator, &args);
     try std.testing.expectEqual(@as(?bool, false), options.keep_running);
+}
+
+test "the logging flags are parsed" {
+    var args = [_][:0]const u8{ "craft", "--log-file", "/tmp/craft.log", "--log-json", "--log-level", "debug", "--log-quiet" };
+    const options = try parseArgs(std.testing.allocator, &args);
+    defer {
+        var o = options;
+        freeOptionStrings(std.testing.allocator, &o);
+    }
+    try std.testing.expectEqualStrings("/tmp/craft.log", options.log_file.?);
+    try std.testing.expect(options.log_json);
+    try std.testing.expectEqualStrings("debug", options.log_level.?);
+    try std.testing.expect(options.log_quiet);
+}
+
+test "logging is off unless asked for" {
+    var args = [_][:0]const u8{"craft"};
+    const options = try parseArgs(std.testing.allocator, &args);
+    try std.testing.expectEqual(@as(?[]const u8, null), options.log_file);
+    try std.testing.expectEqual(@as(?[]const u8, null), options.log_level);
+    try std.testing.expect(!options.log_json);
+    try std.testing.expect(!options.log_quiet);
+}
+
+test "--log-file without a value is an error, not a silent default" {
+    var args = [_][:0]const u8{ "craft", "--log-file" };
+    try std.testing.expectError(CliError.MissingValue, parseArgs(std.testing.allocator, &args));
+}
+
+test "a manifest can ask for a log file" {
+    const source =
+        \\{"title":"Probe","logFile":"/var/log/app.log","logLevel":"warn","logJson":true}
+    ;
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, source, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    // The path and level are applied inside `loadBundleConfig`, which reads the
+    // filesystem; what is checkable here is that the manifest keys decode and
+    // that the scalar reaches the options.
+    try std.testing.expectEqualStrings("/var/log/app.log", parsed.value.logFile.?);
+    try std.testing.expectEqualStrings("warn", parsed.value.logLevel.?);
+
+    var options = WindowOptions{};
+    applyScalarConfig(parsed.value, &options);
+    try std.testing.expect(options.log_json);
 }
