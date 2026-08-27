@@ -217,9 +217,15 @@ export interface SpawnOptions {
   cwd?: string
   env?: Record<string, string>
   /**
-   * Run the command through a shell. The Craft bridge translates this
-   * automatically (cmd.exe on Windows, /bin/sh elsewhere). On the Node
-   * fallback the command is rewritten to `cmd.exe /c <cmd>` on win32.
+   * Run `command` as a command line through a shell (cmd.exe on Windows,
+   * /bin/sh elsewhere) instead of executing it directly.
+   *
+   * Off by default, as in Node. Without it `command` is a program and `args`
+   * are its arguments, so a `;` or `|` inside an argument reaches the program
+   * as a plain character rather than as shell syntax.
+   *
+   * A shell takes one string, so `args` cannot be passed with it — supplying
+   * both is refused rather than silently honouring one of them.
    */
   shell?: boolean
 }

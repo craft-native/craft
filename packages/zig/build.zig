@@ -732,6 +732,18 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // The shell bridge's argv construction: what a `spawn` actually runs.
+    // Untested until now, which is how it shipped parsing an `args` array and
+    // throwing it away.
+    const bridge_shell_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_shell.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    bridge_shell_tests.root_module.link_libc = true;
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1103,6 +1115,7 @@ pub fn build(b: *std.Build) void {
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
+    const run_bridge_shell_tests = b.addRunArtifact(bridge_shell_tests);
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
@@ -1224,6 +1237,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
+    test_step.dependOn(&run_bridge_shell_tests.step);
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_external_link_tests.step);

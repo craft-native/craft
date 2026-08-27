@@ -633,9 +633,22 @@
     openExternal: function (url)              { return _send('shell', 'openUrl', _stringify({ url: String(url) })) },
     openPath:     function (path)             { return _send('shell', 'openPath', _stringify({ path: String(path) })) },
     showInFinder: function (path)             { return _send('shell', 'showInFinder', _stringify({ path: String(path) })) },
+    // spawn(id, command, args, opts)
+    //
+    // `command` is a program and `args` are its arguments — no shell is
+    // involved, so a `;` or `|` inside an argument reaches the program as a
+    // plain character rather than as syntax. Native used to run
+    // `sh -c command` and drop `args` on the floor entirely, so
+    // `spawn('p', 'git', ['status'])` ran `git` bare and reported success.
+    //
+    // `opts.shell = true` runs `command` as a command line through the
+    // platform shell instead. Arguments cannot be passed that way — a shell
+    // takes one string — so passing both is refused rather than half-honoured.
     spawn:        function (id, cmd, args, opts) {
       return _send('shell', 'spawn', _stringify(Object.assign({
-        id: String(id), command: String(cmd), args: args || [],
+        id: String(id),
+        command: String(cmd),
+        args: (args || []).map(String),
       }, opts || {})))
     },
     kill:         function (id)               { return _send('shell', 'kill', _stringify({ id: String(id) })) },
