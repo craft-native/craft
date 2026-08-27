@@ -6,6 +6,11 @@ const global_state = @import("global_state.zig");
 /// Thread-safe access is provided through global_state.
 /// Initialize the global Io context. Must be called once at startup from main().
 pub fn init(io: std.Io) void {
+    // First, and before `global_state` — which locks one of these mutexes to
+    // answer `get()`. Handing the `Io` to the primitives here rather than
+    // having them ask for it is what keeps a lock acquisition from recursing
+    // into the lock it is acquiring.
+    @import("compat_mutex.zig").install(io);
     global_state.instance.setIo(io);
 }
 
