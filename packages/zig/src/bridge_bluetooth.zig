@@ -463,16 +463,28 @@ pub const BluetoothBridge = struct {
 
     /// Connect to a Bluetooth device
     /// JSON: {"address": "XX:XX:XX:XX:XX:XX"}
-    fn connectDevice(self: *Self, data: []const u8) !void {
-        _ = self;
-        var address: []const u8 = "";
-
-        if (std.mem.indexOf(u8, data, "\"address\":\"")) |idx| {
-            const start = idx + 11;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                address = data[start..end];
+    /// The device a connect/disconnect names.
+    ///
+    /// `craft.bluetooth.connectDevice(id)` sends `{"id":"…"}`, and both
+    /// handlers scanned only for `"address":"`. The needle never matched, the
+    /// address stayed empty, and the call failed its own `MissingData` check —
+    /// so connecting to a device found by `craft.bluetooth.onDeviceFound` was
+    /// impossible. `address` stays accepted for anything posting raw messages.
+    fn deviceAddress(data: []const u8) []const u8 {
+        for ([_][]const u8{ "\"id\":\"", "\"address\":\"" }) |key| {
+            if (std.mem.indexOf(u8, data, key)) |idx| {
+                const start = idx + key.len;
+                if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
+                    return data[start..end];
+                }
             }
         }
+        return "";
+    }
+
+    fn connectDevice(self: *Self, data: []const u8) !void {
+        _ = self;
+        const address = deviceAddress(data);
 
         if (address.len == 0) return BridgeError.MissingData;
 
@@ -497,14 +509,7 @@ pub const BluetoothBridge = struct {
     /// JSON: {"address": "XX:XX:XX:XX:XX:XX"}
     fn disconnectDevice(self: *Self, data: []const u8) !void {
         _ = self;
-        var address: []const u8 = "";
-
-        if (std.mem.indexOf(u8, data, "\"address\":\"")) |idx| {
-            const start = idx + 11;
-            if (std.mem.indexOfPos(u8, data, start, "\"")) |end| {
-                address = data[start..end];
-            }
-        }
+        const address = deviceAddress(data);
 
         if (address.len == 0) return BridgeError.MissingData;
 

@@ -64,7 +64,7 @@ pub const AppBridge = struct {
         } else if (std.mem.eql(u8, action, A.set_badge)) {
             try self.setBadge(data);
         } else if (std.mem.eql(u8, action, A.bounce)) {
-            try self.bounce();
+            try self.bounce(data);
         } else {
             if (comptime builtin.mode == .debug)
                 std.debug.print("[AppBridge] Unknown action: {s}\n", .{action});
@@ -244,17 +244,32 @@ pub const AppBridge = struct {
         }
     }
 
-    fn bounce(self: *Self) !void {
+    /// `craft.app.bounce(type)` — 'critical' or 'informational'.
+    ///
+    /// This took no payload at all and always requested an informational
+    /// bounce, so `bounce('critical')` hopped the Dock icon once instead of
+    /// bouncing until the user activates the app — which is the entire
+    /// difference between the two, and the only reason to pass an argument.
+    fn bounce(self: *Self, data: ?[]const u8) !void {
         _ = self;
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
             const NSApplication = macos.getClass("NSApplication");
             const app = macos.msgSend0(NSApplication, "sharedApplication");
 
-            // NSApplicationActivateIgnoringOtherApps + request user attention
-            // NSInformationalRequest = 10
+            // `NSRequestUserAttentionType`: critical bounces until the app is
+            // activated, informational bounces once.
+            const NSCriticalRequest: c_long = 0;
             const NSInformationalRequest: c_long = 10;
-            _ = macos.msgSend1(app, "requestUserAttention:", NSInformationalRequest);
+
+            const request = if (data) |json_data| blk: {
+                break :blk if (std.mem.indexOf(u8, json_data, "critical") != null)
+                    NSCriticalRequest
+                else
+                    NSInformationalRequest;
+            } else NSInformationalRequest;
+
+            _ = macos.msgSend1(app, "requestUserAttention:", request);
         }
     }
 
