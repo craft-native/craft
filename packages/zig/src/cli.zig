@@ -640,7 +640,8 @@ fn printHelp() void {
         \\                           std.log; debug-mode std.debug.print tracing is
         \\                           not included.
         \\      --log-json           One JSON object per record instead of a line.
-        \\      --log-level <LEVEL>  debug, info, warn, error or fatal (default info).
+        \\      --log-level <LEVEL>  debug, info, warn, error, fatal or off
+        \\                           (default info).
         \\      --log-quiet          Write only to --log-file, leaving stderr alone.
         \\      --keep-running       Stay running after the last window closes.
         \\                           The default for tray and menubar-only apps;
