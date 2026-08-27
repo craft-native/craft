@@ -8,6 +8,15 @@ pub const macos = if (builtin.os.tag == .macos) @import("macos.zig") else struct
 const BridgeAPI = @import("bridge_api.zig").BridgeAPI;
 
 // Re-export io_context so root modules can access it without dual-module conflicts
+/// The host-side logger, and the sink `--log-file` configures.
+///
+/// Exported here because `minimal.zig` — the executable's root — cannot
+/// `@import("log.zig")` directly: a file may belong to only one module per
+/// compilation and this one belongs to `craft`. `src/craft.zig` appears to
+/// export it as `craft.app.Log`, but that file is not a module root and
+/// nothing imports it, so it was never a reachable surface.
+pub const Log = @import("log.zig");
+pub const Logging = @import("logging.zig");
 pub const io_context = @import("io_context.zig");
 pub const startup_timing = @import("startup_timing.zig");
 pub const js_runtime = @import("js_runtime.zig");

@@ -37,16 +37,64 @@ pub const LogConfig = struct {
     enable_timestamps: bool = true,
     output_file: ?[]const u8 = null,
     json_output: bool = false,
+    /// Also write every record to stderr.
+    ///
+    /// On by default, which is what this logger has always done. A caller that
+    /// wants a file and a quiet terminal — a packaged app, a headless run —
+    /// had no way to ask, because the stderr write was unconditional.
+    mirror_to_stderr: bool = true,
     filter_pattern: ?[]const u8 = null,
 };
 
 var current_config: LogConfig = .{};
 var log_file: ?std.Io.File = null;
+
+/// Where the next record goes.
+///
+/// `Io.Dir.CreateFileOptions` has no append flag in this Zig, and
+/// `writeStreamingAll` starts at position zero — so an existing log was
+/// overwritten from the beginning on every run, leaving whatever was longer
+/// than the new content stranded past the end as garbage. Seeded from the
+/// file's size at open and advanced by every write, with `writePositionalAll`,
+/// which is how appending is spelled here.
+var log_file_offset: u64 = 0;
+
+/// Storage for the configuration's strings.
+///
+/// `LogConfig` carries `output_file` and `filter_pattern` as slices, and
+/// `init` used to keep the caller's. The path arrives from the command line
+/// and `minimal.zig` frees those strings during startup, so retaining them
+/// would leave this module reading freed memory on the first log call after
+/// argument parsing finished — a use-after-free that arrives only once
+/// something actually configures the logger, which nothing did until now.
+var output_file_storage: [std.fs.max_path_bytes]u8 = undefined;
+var filter_storage: [256]u8 = undefined;
 /// Guards `current_config`, `log_file`, and the final write to stderr+file
 /// so concurrent loggers don't interleave bytes or race on config updates.
 /// The previous module-level `var`s were read/written from every call site
 /// without any synchronization.
 var log_mutex: compat_mutex.Mutex = .{};
+
+/// True while this thread is inside `log`.
+///
+/// `compat_mutex` falls back to a spinlock when `std.Thread.Mutex` is absent,
+/// and it is absent in this Zig — so the lock is non-recursive and never
+/// yields. A `std.log` call made from inside `log` would spin against a lock
+/// this thread already holds, forever: a hard hang with no panic and no
+/// stack. That was unreachable while nothing configured the logger, and
+/// routing every `std.log` site through it is exactly what makes it reachable.
+///
+/// Dropping the inner record is the right trade. The alternative is a process
+/// that stops responding because something logged while logging.
+threadlocal var in_log: bool = false;
+
+/// The `Io` to write through, captured at `init`.
+///
+/// `io_context.get()` takes `global_state`'s own non-recursive spinlock, and
+/// `log` used to call it while holding `log_mutex` — two spinlocks nested in a
+/// fixed order, and a lazy `std.Io.Threaded` construction on the C allocator
+/// reachable from inside a log call. Captured once instead.
+var log_io: ?std.Io = null;
 
 pub fn init(config: LogConfig) !void {
     log_mutex.lock();
@@ -60,12 +108,35 @@ pub fn init(config: LogConfig) !void {
     }
 
     current_config = config;
+    log_file_offset = 0;
+    log_io = io_context.get();
 
+    // Take copies before anything else can free the originals.
     if (config.output_file) |path| {
-        log_file = try std.Io.Dir.cwd().createFile(io_context.get(), path, .{
+        if (path.len > output_file_storage.len) return error.NameTooLong;
+        @memcpy(output_file_storage[0..path.len], path);
+        current_config.output_file = output_file_storage[0..path.len];
+    }
+    if (config.filter_pattern) |pattern| {
+        if (pattern.len > filter_storage.len) return error.NameTooLong;
+        @memcpy(filter_storage[0..pattern.len], pattern);
+        current_config.filter_pattern = filter_storage[0..pattern.len];
+    }
+
+    if (current_config.output_file) |path| {
+        const io = io_context.get();
+        const file = try std.Io.Dir.cwd().createFile(io, path, .{
             .truncate = false,
             .read = true,
         });
+        // Append rather than overwrite: a log that starts again from byte zero
+        // on every launch loses the run that diagnosed the problem.
+        const existing = file.stat(io) catch |stat_err| {
+            file.close(io);
+            return stat_err;
+        };
+        log_file_offset = existing.size;
+        log_file = file;
     }
 }
 
@@ -103,6 +174,32 @@ fn shouldLogLocked(level: LogLevel) bool {
     return @backingInt(level) >= @backingInt(current_config.min_level);
 }
 
+/// `std.fmt.bufPrint` that clips instead of failing.
+///
+/// Returns as much of the formatted text as fits, ending with a marker so a
+/// reader can tell the difference between a short message and a clipped one.
+/// The alternative — what this code did before — was to return nothing at all
+/// and log no record, silently.
+fn formatTruncating(buf: []u8, comptime format: []const u8, args: anytype) []const u8 {
+    if (std.fmt.bufPrint(buf, format, args)) |written| {
+        return written;
+    } else |_| {}
+
+    const marker = "…[truncated]";
+    if (buf.len <= marker.len) return buf[0..0];
+
+    // Re-format into the space that is left, then stamp the marker on the end.
+    // A second failure means even the clipped form does not fit, so keep
+    // whatever was written and mark it.
+    const room = buf.len - marker.len;
+    var written_len: usize = room;
+    if (std.fmt.bufPrint(buf[0..room], format, args)) |written| {
+        written_len = written.len;
+    } else |_| {}
+    @memcpy(buf[written_len..][0..marker.len], marker);
+    return buf[0 .. written_len + marker.len];
+}
+
 pub fn log(
     comptime level: LogLevel,
     comptime format: []const u8,
@@ -113,14 +210,26 @@ pub fn log(
     // prevents stderr interleaving between threads and makes config
     // updates atomic with emission. Previously every call touched
     // `current_config` and `log_file` unsynchronized.
+    // Before the lock, not after: the point is to never reach a lock this
+    // thread already holds.
+    if (in_log) return;
+    in_log = true;
+    defer in_log = false;
+
     log_mutex.lock();
     defer log_mutex.unlock();
 
     if (!shouldLogLocked(level)) return;
 
-    // Format message
+    // Format the message, truncating rather than dropping it.
+    //
+    // This was `bufPrint(...) catch return`, which discarded the whole record
+    // when it did not fit — so the longest messages, which are usually the
+    // ones worth reading, were the only ones guaranteed to be missing. A log
+    // that silently omits its biggest entries is worse than one that clips
+    // them, because nothing indicates anything was lost.
     var msg_buf: [2048]u8 = undefined;
-    const message = std.fmt.bufPrint(&msg_buf, format, args) catch return;
+    const message = formatTruncating(&msg_buf, format, args);
 
     // Apply filter if configured
     if (current_config.filter_pattern) |pattern| {
@@ -133,7 +242,7 @@ pub fn log(
     var output_len: usize = 0;
 
     // Each call owns its own timestamp buffer — safe for concurrent logging.
-    var ts_buf: [8]u8 = undefined;
+    var ts_buf: [timestamp_len]u8 = undefined;
     const timestamp = formatTimestamp(&ts_buf);
 
     if (current_config.json_output) {
@@ -142,7 +251,29 @@ pub fn log(
         // `foo "bar"\nbaz` would corrupt every log consumer parsing the stream.
         var esc_buf: [4096]u8 = undefined;
         var esc_len: usize = 0;
-        for (message) |c| {
+        var i: usize = 0;
+        while (i < message.len) {
+            const c = message[i];
+
+            // Anything outside ASCII is walked as a UTF-8 sequence rather than
+            // byte by byte. Passing high bytes through individually is what
+            // the previous loop did, and a message carrying invalid UTF-8 — a
+            // filename, a truncated IPC frame — then produced a line that
+            // `JSON.parse` rejects. A log format that a bad byte can make
+            // unreadable is not a structured log format.
+            if (c >= 0x80) {
+                const seq_len = std.unicode.utf8ByteSequenceLength(c) catch 0;
+                const valid = seq_len > 0 and i + seq_len <= message.len and
+                    std.unicode.utf8ValidateSlice(message[i..][0..seq_len]);
+                const chunk: []const u8 = if (valid) message[i..][0..seq_len] else "\\ufffd";
+                if (esc_len + chunk.len > esc_buf.len) break;
+                @memcpy(esc_buf[esc_len..][0..chunk.len], chunk);
+                esc_len += chunk.len;
+                i += if (valid) seq_len else 1;
+                continue;
+            }
+
+            i += 1;
             const esc: []const u8 = switch (c) {
                 '"' => "\\\"",
                 '\\' => "\\\\",
@@ -165,36 +296,36 @@ pub fn log(
             esc_len += esc.len;
         }
 
-        const result = std.fmt.bufPrint(&output_buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"message\":\"{s}\"}}\n", .{ timestamp, level.toString(), esc_buf[0..esc_len] }) catch return;
-        output_len = result.len;
+        output_len = formatTruncating(&output_buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"message\":\"{s}\"}}\n", .{ timestamp, level.toString(), esc_buf[0..esc_len] }).len;
     } else {
         // Standard output
         const reset = "\x1B[0m";
         const dim = "\x1B[2m";
 
         if (current_config.enable_timestamps and current_config.enable_colors) {
-            const result = std.fmt.bufPrint(&output_buf, "{s}[{s}]{s} {s}{s}{s} {s}\n", .{ dim, timestamp, reset, level.color(), level.toString(), reset, message }) catch return;
-            output_len = result.len;
+            output_len = formatTruncating(&output_buf, "{s}[{s}]{s} {s}{s}{s} {s}\n", .{ dim, timestamp, reset, level.color(), level.toString(), reset, message }).len;
         } else if (current_config.enable_timestamps) {
-            const result = std.fmt.bufPrint(&output_buf, "[{s}] {s} {s}\n", .{ timestamp, level.toString(), message }) catch return;
-            output_len = result.len;
+            output_len = formatTruncating(&output_buf, "[{s}] {s} {s}\n", .{ timestamp, level.toString(), message }).len;
         } else if (current_config.enable_colors) {
-            const result = std.fmt.bufPrint(&output_buf, "{s}{s}{s} {s}\n", .{ level.color(), level.toString(), reset, message }) catch return;
-            output_len = result.len;
+            output_len = formatTruncating(&output_buf, "{s}{s}{s} {s}\n", .{ level.color(), level.toString(), reset, message }).len;
         } else {
-            const result = std.fmt.bufPrint(&output_buf, "{s} {s}\n", .{ level.toString(), message }) catch return;
-            output_len = result.len;
+            output_len = formatTruncating(&output_buf, "{s} {s}\n", .{ level.toString(), message }).len;
         }
     }
 
     const output = output_buf[0..output_len];
 
-    // Write to stderr
-    _ = std.Io.File.stderr().writeStreamingAll(io_context.get(), output) catch return;
+    const io = log_io orelse io_context.get();
 
-    // Write to file if configured
+    if (current_config.mirror_to_stderr) {
+        _ = std.Io.File.stderr().writeStreamingAll(io, output) catch {};
+    }
+
+    // Appended at the tracked offset. `writeStreamingAll` writes from position
+    // zero, which overwrote the previous run in place.
     if (log_file) |file| {
-        _ = file.writeStreamingAll(io_context.get(), output) catch return;
+        file.writePositionalAll(io, output, log_file_offset) catch return;
+        log_file_offset += output.len;
     }
 }
 
@@ -224,27 +355,309 @@ pub fn fatal(comptime format: []const u8, args: anytype) void {
 /// reading live logs see their own wall-clock time instead of raw UTC.
 /// `ts.sec` values below zero are clamped to 0 so pre-1970 clocks (e.g.
 /// a VM booting with no RTC) can't panic in `@intCast`.
-fn formatTimestamp(buf: *[8]u8) []const u8 {
-    var ts: std.c.timespec = undefined;
-    if (std.c.clock_gettime(.REALTIME, &ts) != 0) {
-        @memcpy(buf, "00:00:00");
+/// An ISO-8601 UTC timestamp: `YYYY-MM-DDTHH:MM:SSZ`.
+///
+/// This used to emit `HH:MM:SS` and nothing else, which is fine for watching a
+/// terminal and useless for the thing `--log-file` exists to produce: a trail
+/// you read afterwards, possibly days afterwards, to work out what a
+/// long-running app did. A time with no date cannot answer that.
+///
+/// UTC rather than local. The previous comment claimed it used `localtime_r`;
+/// the body did modular arithmetic on the epoch and left a dead `_ = t;`
+/// behind. `localtime_r` is not declared in `std.c` in this Zig, so honouring
+/// that comment would mean declaring the extern — and a log shared between a
+/// machine and whoever reads it later is better off unambiguous anyway.
+fn formatTimestamp(buf: *[timestamp_len]u8) []const u8 {
+    const fallback = "0000-00-00T00:00:00Z";
+
+    // `compat.timestamp` rather than `std.c.clock_gettime`: the latter does not
+    // compile for Windows in this Zig, and this file only ever built because
+    // nothing instantiated `log` — wiring every std.log site through it is
+    // what made the Windows path get analysed for the first time.
+    const secs = @import("compat.zig").timestamp();
+    const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = @intCast(@max(secs, 0)) };
+    const day = epoch_seconds.getEpochDay().calculateYearDay();
+    const month_day = day.calculateMonthDay();
+    const time = epoch_seconds.getDaySeconds();
+
+    const written = std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}Z", .{
+        day.year,
+        month_day.month.numeric(),
+        month_day.day_index + 1,
+        time.getHoursIntoDay(),
+        time.getMinutesIntoHour(),
+        time.getSecondsIntoMinute(),
+    }) catch {
+        @memcpy(buf, fallback);
         return buf[0..];
+    };
+    return written;
+}
+
+/// Width of `YYYY-MM-DDTHH:MM:SSZ`.
+const timestamp_len = 20;
+
+// =============================================================================
+// Tests
+// =============================================================================
+//
+// This module had none. It was written complete — levels, JSON, a filter, a
+// mutex, file output — and then never configured by anything, so every path
+// below the default was unexercised. Wiring `--log-file` in front of it
+// without first running it would have been the same mistake the rest of this
+// codebase keeps making: shipping code that looks right and has never run.
+
+const testing = std.testing;
+
+fn resetInLogForTesting() void {
+    in_log = false;
+}
+
+test "a message longer than the buffer is clipped, not discarded" {
+    // The defect: `bufPrint(...) catch return` dropped the entire record when
+    // it did not fit, so the longest messages — usually the interesting ones —
+    // were the only ones certain to be missing, with nothing to say so.
+    var buf: [64]u8 = undefined;
+    var long: [500]u8 = undefined;
+    @memset(&long, 'x');
+
+    const out = formatTruncating(&buf, "{s}", .{long});
+    try testing.expect(out.len > 0);
+    try testing.expect(out.len <= buf.len);
+    try testing.expect(std.mem.endsWith(u8, out, "…[truncated]"));
+}
+
+test "a message that fits is untouched" {
+    var buf: [64]u8 = undefined;
+    const out = formatTruncating(&buf, "hello {s}", .{"world"});
+    try testing.expectEqualStrings("hello world", out);
+}
+
+test "a buffer too small even for the marker yields nothing rather than corrupting it" {
+    var buf: [4]u8 = undefined;
+    const out = formatTruncating(&buf, "{s}", .{"much longer than four"});
+    try testing.expectEqual(@as(usize, 0), out.len);
+}
+
+test "the configuration's strings are copied, not borrowed" {
+    // `init` stored the caller's slices, and `minimal.zig` frees the
+    // command-line strings during startup — so the first log call after
+    // argument parsing would have read freed memory. Nothing had configured
+    // the logger before, which is the only reason it never happened.
+    var path_buf: [64]u8 = undefined;
+    const scratch = try std.fmt.bufPrint(&path_buf, "{s}", .{"craft-log-borrow-test.txt"});
+
+    try init(.{ .output_file = scratch, .filter_pattern = "keepme", .mirror_to_stderr = false });
+    defer {
+        deinit();
+        std.Io.Dir.cwd().deleteFile(io_context.get(), "craft-log-borrow-test.txt") catch {};
     }
 
-    const safe_sec = @max(ts.sec, 0);
-    const t: std.c.time_t = @intCast(safe_sec);
+    // Scribble over the caller's buffer. A borrowed slice would now be garbage.
+    @memset(&path_buf, '!');
 
-    _ = t;
-    const slice = blk: {
-        const total_seconds: u64 = @intCast(safe_sec);
-        const seconds = @mod(total_seconds, 60);
-        const minutes = @mod(@divFloor(total_seconds, 60), 60);
-        const hours = @mod(@divFloor(total_seconds, 3600), 24);
-        break :blk std.fmt.bufPrint(buf, "{d:0>2}:{d:0>2}:{d:0>2}", .{ hours, minutes, seconds }) catch null;
-    };
+    try testing.expectEqualStrings("craft-log-borrow-test.txt", current_config.output_file.?);
+    try testing.expectEqualStrings("keepme", current_config.filter_pattern.?);
+}
 
-    return slice orelse retry: {
-        @memcpy(buf, "00:00:00");
-        break :retry buf[0..];
-    };
+test "a second run appends instead of overwriting the first" {
+    // `Io.Dir.CreateFileOptions` has no append flag and `writeStreamingAll`
+    // starts at position zero, so every run rewrote the file from the
+    // beginning — losing the run that diagnosed the problem and leaving any
+    // longer previous content stranded past the end.
+    const io = io_context.get();
+    const path = "craft-log-append-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .enable_colors = false,
+        .enable_timestamps = false,
+        .mirror_to_stderr = false,
+    });
+    log(.Info, "first run {d}", .{1});
+    deinit();
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .enable_colors = false,
+        .enable_timestamps = false,
+        .mirror_to_stderr = false,
+    });
+    log(.Info, "second run {d}", .{2});
+    deinit();
+
+    var read_buf: [4096]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    const contents = read_buf[0..n];
+
+    // Both runs are present, and in order.
+    const first = std.mem.indexOf(u8, contents, "first run 1") orelse return error.FirstRunLost;
+    const second = std.mem.indexOf(u8, contents, "second run 2") orelse return error.SecondRunLost;
+    try testing.expect(first < second);
+}
+
+test "the level filter keeps quiet records out of the file" {
+    const io = io_context.get();
+    const path = "craft-log-level-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Warning,
+        .enable_colors = false,
+        .enable_timestamps = false,
+        .mirror_to_stderr = false,
+    });
+    log(.Debug, "quiet", .{});
+    log(.Info, "also quiet", .{});
+    log(.Warning, "loud", .{});
+    deinit();
+
+    var read_buf: [4096]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    const contents = read_buf[0..n];
+
+    try testing.expect(std.mem.indexOf(u8, contents, "loud") != null);
+    try testing.expect(std.mem.indexOf(u8, contents, "quiet") == null);
+}
+
+test "json output stays parseable when the message fights back" {
+    const io = io_context.get();
+    const path = "craft-log-json-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .json_output = true,
+        .mirror_to_stderr = false,
+    });
+    log(.Error, "he said {s} then a newline{s}and a tab{s}", .{ "\"hi\"", "\n", "\t" });
+    deinit();
+
+    var read_buf: [4096]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    const line = std.mem.trimEnd(u8, read_buf[0..n], "\n");
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, line, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("ERROR", parsed.value.object.get("level").?.string);
+    const msg = parsed.value.object.get("message").?.string;
+    try testing.expect(std.mem.indexOf(u8, msg, "\"hi\"") != null);
+}
+
+test "mirroring to stderr can be turned off without losing the file" {
+    // The stderr write was unconditional, so a packaged or headless app could
+    // not ask for a file and a quiet terminal.
+    const io = io_context.get();
+    const path = "craft-log-quiet-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .enable_colors = false,
+        .enable_timestamps = false,
+        .mirror_to_stderr = false,
+    });
+    log(.Info, "written to the file only", .{});
+    deinit();
+
+    var read_buf: [1024]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    try testing.expect(std.mem.indexOf(u8, read_buf[0..n], "written to the file only") != null);
+}
+
+test "re-initialising closes the previous file rather than leaking it" {
+    const io = io_context.get();
+    const a = "craft-log-reinit-a.txt";
+    const b = "craft-log-reinit-b.txt";
+    defer std.Io.Dir.cwd().deleteFile(io, a) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, b) catch {};
+
+    try init(.{ .output_file = a, .mirror_to_stderr = false });
+    try init(.{ .output_file = b, .mirror_to_stderr = false });
+    try testing.expectEqualStrings(b, current_config.output_file.?);
+    deinit();
+    try testing.expect(log_file == null);
+}
+
+test "json survives a message that is not valid UTF-8" {
+    // A filename, a truncated IPC frame, any raw byte over 0x7f: these used to
+    // be copied into the JSON string verbatim, producing a line that
+    // `JSON.parse` rejects. A structured log a single bad byte can make
+    // unreadable is not structured.
+    const io = io_context.get();
+    const path = "craft-log-utf8-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .json_output = true,
+        .mirror_to_stderr = false,
+    });
+    // 0xFF is never valid UTF-8; the é is, and must survive intact.
+    log(.Warning, "bad byte {s} and caf\xc3\xa9", .{"\xff\xfe"});
+    deinit();
+
+    var read_buf: [4096]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    const line = std.mem.trimEnd(u8, read_buf[0..n], "\n");
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, line, .{});
+    defer parsed.deinit();
+    const msg = parsed.value.object.get("message").?.string;
+    try testing.expect(std.mem.indexOf(u8, msg, "café") != null);
+    try testing.expect(std.mem.indexOf(u8, msg, "\u{fffd}") != null);
+}
+
+test "a timestamp carries the date, not just the time" {
+    // `--log-file` produces a trail read afterwards, sometimes days
+    // afterwards. `HH:MM:SS` alone cannot say which day.
+    var buf: [timestamp_len]u8 = undefined;
+    const ts = formatTimestamp(&buf);
+    try testing.expectEqual(timestamp_len, ts.len);
+    try testing.expectEqual(@as(u8, '-'), ts[4]);
+    try testing.expectEqual(@as(u8, '-'), ts[7]);
+    try testing.expectEqual(@as(u8, 'T'), ts[10]);
+    try testing.expectEqual(@as(u8, 'Z'), ts[timestamp_len - 1]);
+    // A plausible year rather than the epoch fallback.
+    const year = try std.fmt.parseInt(u16, ts[0..4], 10);
+    try testing.expect(year >= 2020);
+}
+
+test "logging from inside logging drops the inner record instead of hanging" {
+    // `compat_mutex` is a non-recursive spinlock here — `std.Thread.Mutex`
+    // does not exist in this Zig — so a reentrant call would spin against a
+    // lock this thread already holds, forever. Routing every std.log site
+    // through this module is what made that reachable.
+    resetInLogForTesting();
+    try testing.expect(!in_log);
+
+    in_log = true;
+    // Would deadlock without the guard; returns immediately with it.
+    log(.Error, "reentrant", .{});
+    try testing.expect(in_log);
+
+    resetInLogForTesting();
+    try testing.expect(!in_log);
 }
