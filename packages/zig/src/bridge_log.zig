@@ -91,6 +91,10 @@ pub const LogBridge = struct {
             .Warning => host_log.log(.Warning, "[page] {s}", .{message}),
             .Error => host_log.log(.Error, "[page] {s}", .{message}),
             .Fatal => host_log.log(.Fatal, "[page] {s}", .{message}),
+            // `levelFor` never returns this — a page cannot ask to be silenced,
+            // only the host can — but the switch stays exhaustive so adding a
+            // level is a compile error rather than a dropped record.
+            .Off => {},
         }
 
         bridge_error.sendResultToJS(self.allocator, "log", "{\"ok\":true}");

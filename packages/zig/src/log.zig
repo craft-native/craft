@@ -9,6 +9,15 @@ pub const LogLevel = enum {
     Warning,
     Error,
     Fatal,
+    /// Record nothing.
+    ///
+    /// Last, so the existing `level >= min_level` comparison silences
+    /// everything when it is the minimum — no branch anywhere else has to know
+    /// about it. `logging.zig` has had an `off` for as long as it has existed;
+    /// this side had no way to say the same thing, so an app that wanted
+    /// quiet had to not configure logging at all, which is not the same as
+    /// asking for it.
+    Off,
 
     pub fn toString(self: LogLevel) []const u8 {
         return switch (self) {
@@ -17,6 +26,7 @@ pub const LogLevel = enum {
             .Warning => "WARN",
             .Error => "ERROR",
             .Fatal => "FATAL",
+            .Off => "OFF",
         };
     }
 
@@ -27,6 +37,8 @@ pub const LogLevel = enum {
             .Warning => "\x1B[33m", // Yellow
             .Error => "\x1B[31m", // Red
             .Fatal => "\x1B[35m", // Magenta
+            // Never emitted; a record at this level is filtered before formatting.
+            .Off => "",
         };
     }
 };
@@ -96,6 +108,12 @@ threadlocal var in_log: bool = false;
 /// reachable from inside a log call. Captured once instead.
 var log_io: ?std.Io = null;
 
+/// Whether stderr is a terminal, decided once at `init`.
+///
+/// Per-record would mean an `isatty` on every line, and the answer cannot
+/// change for a running process anyway.
+var stderr_is_tty: bool = false;
+
 pub fn init(config: LogConfig) !void {
     log_mutex.lock();
     defer log_mutex.unlock();
@@ -110,6 +128,7 @@ pub fn init(config: LogConfig) !void {
     current_config = config;
     log_file_offset = 0;
     log_io = io_context.get();
+    stderr_is_tty = std.Io.File.stderr().isTty(log_io.?) catch false;
 
     // Take copies before anything else can free the originals.
     if (config.output_file) |path| {
@@ -297,28 +316,41 @@ pub fn log(
         }
 
         output_len = formatTruncating(&output_buf, "{{\"timestamp\":\"{s}\",\"level\":\"{s}\",\"message\":\"{s}\"}}\n", .{ timestamp, level.toString(), esc_buf[0..esc_len] }).len;
+    } else if (current_config.enable_timestamps) {
+        output_len = formatTruncating(&output_buf, "[{s}] {s} {s}\n", .{ timestamp, level.toString(), message }).len;
     } else {
-        // Standard output
-        const reset = "\x1B[0m";
-        const dim = "\x1B[2m";
-
-        if (current_config.enable_timestamps and current_config.enable_colors) {
-            output_len = formatTruncating(&output_buf, "{s}[{s}]{s} {s}{s}{s} {s}\n", .{ dim, timestamp, reset, level.color(), level.toString(), reset, message }).len;
-        } else if (current_config.enable_timestamps) {
-            output_len = formatTruncating(&output_buf, "[{s}] {s} {s}\n", .{ timestamp, level.toString(), message }).len;
-        } else if (current_config.enable_colors) {
-            output_len = formatTruncating(&output_buf, "{s}{s}{s} {s}\n", .{ level.color(), level.toString(), reset, message }).len;
-        } else {
-            output_len = formatTruncating(&output_buf, "{s} {s}\n", .{ level.toString(), message }).len;
-        }
+        output_len = formatTruncating(&output_buf, "{s} {s}\n", .{ level.toString(), message }).len;
     }
 
     const output = output_buf[0..output_len];
 
+    // Colour is formatted separately, for stderr only.
+    //
+    // Both sinks used to receive the same bytes, so a run with `--log-file`
+    // either put ANSI escapes in the file or — the workaround this replaces —
+    // turned colour off for the terminal as well, to keep the file clean. A
+    // log file full of `\x1b[2m` is unreadable to `grep`, and a terminal that
+    // loses its colours because a file was requested is a strange trade.
+    //
+    // Only when stderr is a terminal, decided once at `init` rather than per
+    // record: colour written into a redirected stderr is the same problem as
+    // colour written into the file.
+    var colour_buf: [4096]u8 = undefined;
+    var colour_len: usize = 0;
+    if (current_config.enable_colors and stderr_is_tty and !current_config.json_output) {
+        const reset = "\x1B[0m";
+        const dim = "\x1B[2m";
+        colour_len = if (current_config.enable_timestamps)
+            formatTruncating(&colour_buf, "{s}[{s}]{s} {s}{s}{s} {s}\n", .{ dim, timestamp, reset, level.color(), level.toString(), reset, message }).len
+        else
+            formatTruncating(&colour_buf, "{s}{s}{s} {s}\n", .{ level.color(), level.toString(), reset, message }).len;
+    }
+
     const io = log_io orelse io_context.get();
 
     if (current_config.mirror_to_stderr) {
-        _ = std.Io.File.stderr().writeStreamingAll(io, output) catch {};
+        const for_stderr = if (colour_len > 0) colour_buf[0..colour_len] else output;
+        _ = std.Io.File.stderr().writeStreamingAll(io, for_stderr) catch {};
     }
 
     // Appended at the tracked offset. `writeStreamingAll` writes from position
@@ -660,4 +692,73 @@ test "logging from inside logging drops the inner record instead of hanging" {
 
     resetInLogForTesting();
     try testing.expect(!in_log);
+}
+
+test "off silences every level" {
+    // `logging.zig` has always had an `off`; this side had no way to say the
+    // same thing, so an app that wanted quiet had to not configure logging at
+    // all — which is not the same as asking for it.
+    const io = io_context.get();
+    const path = "craft-log-off-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{ .output_file = path, .min_level = .Off, .mirror_to_stderr = false });
+    log(.Debug, "no", .{});
+    log(.Info, "no", .{});
+    log(.Warning, "no", .{});
+    log(.Error, "no", .{});
+    log(.Fatal, "not even this", .{});
+    deinit();
+
+    var read_buf: [256]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    try testing.expectEqual(@as(usize, 0), n);
+}
+
+test "off is the highest level, so the ordering check silences by itself" {
+    // Placed last in the enum on purpose: `level >= min_level` then does the
+    // work and no other branch has to know the concept exists.
+    const values = std.enums.values(LogLevel);
+    try testing.expectEqual(LogLevel.Off, values[values.len - 1]);
+    for (values) |level| {
+        if (level == .Off) continue;
+        try testing.expect(@backingInt(level) < @backingInt(LogLevel.Off));
+    }
+}
+
+test "the file never receives colour, even when the terminal is getting it" {
+    // Both sinks used to be handed the same bytes, so a run with --log-file
+    // either wrote ANSI escapes into the file or turned colour off for the
+    // terminal too. A log full of \x1b[2m is unreadable to grep.
+    //
+    // `stderr_is_tty` is forced, because a test process is piped and would
+    // otherwise produce no coloured line at all — the first version of this
+    // test passed against a deliberately reverted fix for exactly that reason.
+    const io = io_context.get();
+    const path = "craft-log-colour-test.txt";
+    std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    defer std.Io.Dir.cwd().deleteFile(io, path) catch {};
+
+    try init(.{
+        .output_file = path,
+        .min_level = .Debug,
+        .enable_colors = true, // asked for, and still must not reach the file
+        .mirror_to_stderr = false,
+    });
+    stderr_is_tty = true; // after init, which computes it
+    defer stderr_is_tty = false;
+    log(.Error, "a red line on a terminal", .{});
+    deinit();
+
+    var read_buf: [1024]u8 = undefined;
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    defer file.close(io);
+    const n = try file.readPositionalAll(io, &read_buf, 0);
+    const contents = read_buf[0..n];
+
+    try testing.expect(std.mem.indexOf(u8, contents, "a red line on a terminal") != null);
+    try testing.expect(std.mem.indexOfScalar(u8, contents, 0x1B) == null);
 }

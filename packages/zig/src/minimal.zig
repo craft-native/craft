@@ -455,7 +455,7 @@ fn configureLogging(options: cli.WindowOptions) !void {
     const level: craft.Log.LogLevel = if (options.log_level) |name| blk: {
         break :blk parseLogLevel(name) orelse {
             std.debug.print(
-                "Error: unknown --log-level '{s}' (expected debug, info, warn, error or fatal)\n",
+                "Error: unknown --log-level '{s}' (expected debug, info, warn, error, fatal or off)\n",
                 .{name},
             );
             std.process.exit(1);
@@ -484,6 +484,7 @@ fn configureLogging(options: cli.WindowOptions) !void {
             .Warning => .warn,
             .Error => .err,
             .Fatal => .fatal,
+            .Off => .off,
         },
         // Timestamp and colour are the outer sink's job now; doubling them
         // would put two of each on every line.
@@ -514,6 +515,9 @@ fn parseLogLevel(name: []const u8) ?craft.Log.LogLevel {
         .{ "error", craft.Log.LogLevel.Error },
         .{ "err", craft.Log.LogLevel.Error },
         .{ "fatal", craft.Log.LogLevel.Fatal },
+        .{ "off", craft.Log.LogLevel.Off },
+        .{ "none", craft.Log.LogLevel.Off },
+        .{ "silent", craft.Log.LogLevel.Off },
     };
     inline for (table) |entry| {
         if (std.ascii.eqlIgnoreCase(name, entry[0])) return entry[1];
