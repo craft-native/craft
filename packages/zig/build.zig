@@ -768,6 +768,18 @@ pub fn build(b: *std.Build) void {
     });
     bridge_log_tests.root_module.link_libc = true;
 
+    // The blocking primitives every other lock in craft is built on. They
+    // spun without yielding until now, so this is the first time they have
+    // been exercised at all.
+    const compat_mutex_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/compat_mutex.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    compat_mutex_tests.root_module.link_libc = true;
+
     // The conformance test: what craft declares, against what it dispatches.
     const capability_conformance_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1139,6 +1151,7 @@ pub fn build(b: *std.Build) void {
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
+    const run_compat_mutex_tests = b.addRunArtifact(compat_mutex_tests);
     const run_bridge_log_tests = b.addRunArtifact(bridge_log_tests);
     const run_log_unit_tests = b.addRunArtifact(log_unit_tests);
     const run_bridge_shell_tests = b.addRunArtifact(bridge_shell_tests);
@@ -1263,6 +1276,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
+    test_step.dependOn(&run_compat_mutex_tests.step);
     test_step.dependOn(&run_bridge_log_tests.step);
     test_step.dependOn(&run_log_unit_tests.step);
     test_step.dependOn(&run_bridge_shell_tests.step);
