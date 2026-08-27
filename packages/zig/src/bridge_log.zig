@@ -1,31 +1,63 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
+const host_log = @import("log.zig");
 
 const BridgeError = bridge_error.BridgeError;
 
-extern "c" fn os_log_create(subsystem: [*:0]const u8, category: [*:0]const u8) ?*anyopaque;
-
-/// Unified system log integration. Apps call `craft.log.{debug,info,
-/// warn,error}(message)` and we route through `os_log` so messages
-/// land in Console.app, `log show`, and any aggregator the user has
-/// configured (e.g. Sentry's macOS log adapter).
+/// The page's own log, forwarded to the same sink as craft's.
 ///
-/// `os_log` itself is macro-driven and can't be invoked from C
-/// without going through libBlocksRuntime; for now we stamp messages
-/// with `std.debug.print` which routes to stderr and is captured by
-/// the unified log subsystem when run from a launched app. The
-/// `os_log_create` hook is in place so a future revision can swap to
-/// the proper macro path without touching the JS surface.
+/// `craft.log.{debug,info,warn,error}(message)` used to reach
+/// `std.debug.print` on macOS and *nothing at all* anywhere else — the write
+/// sat behind `if (builtin.os.tag == .macos)`, so on Linux and Windows the
+/// payload was parsed, discarded, and answered `{"ok":true}`. A page that
+/// logged into that got a resolved promise and no record.
+///
+/// It goes through `log.zig` now, which is what `--log-file` configures, so a
+/// page's diagnostics land in the same file and the same order as the host's
+/// rather than in a different place on one platform and nowhere on the others.
+///
+/// The `os_log_create` handle this file used to open on macOS is gone. It was
+/// created at init, never used, and the comment beside it called it a
+/// placeholder for a future revision that would reach `os_log` proper —
+/// which needs libBlocksRuntime and never happened. A file sink is the thing
+/// it was standing in for.
+/// The host level a page's `level` string means.
+///
+/// Anything unrecognised is info rather than dropped: a page that invents a
+/// level, or sends none, should still be heard. Silently discarding it would
+/// be the same failure this file already had on Linux and Windows.
+fn levelFor(name: []const u8) host_log.LogLevel {
+    const table = .{
+        .{ "debug", host_log.LogLevel.Debug },
+        .{ "trace", host_log.LogLevel.Debug },
+        .{ "info", host_log.LogLevel.Info },
+        .{ "log", host_log.LogLevel.Info },
+        .{ "warn", host_log.LogLevel.Warning },
+        .{ "warning", host_log.LogLevel.Warning },
+        .{ "error", host_log.LogLevel.Error },
+        .{ "err", host_log.LogLevel.Error },
+        .{ "fatal", host_log.LogLevel.Fatal },
+    };
+    inline for (table) |entry| {
+        if (std.ascii.eqlIgnoreCase(name, entry[0])) return entry[1];
+    }
+    return .Info;
+}
+
 pub const LogBridge = struct {
     allocator: std.mem.Allocator,
-    log_handle: ?*anyopaque = null,
 
     const Self = @This();
 
+    /// Longest page message recorded. The text comes from the page, and the
+    /// host sink formats into a fixed buffer — clamping here means a long
+    /// message is clipped at a boundary this file chose rather than one the
+    /// formatter happened to have.
+    const max_message = 1024;
+
     pub fn init(allocator: std.mem.Allocator) Self {
-        const handle = if (builtin.os.tag == .macos) os_log_create("com.craft.app", "default") else null;
-        return .{ .allocator = allocator, .log_handle = handle };
+        return .{ .allocator = allocator };
     }
 
     pub fn deinit(_: *Self) void {}
@@ -45,9 +77,72 @@ pub const LogBridge = struct {
         }) catch return BridgeError.InvalidJSON;
         defer parsed.deinit();
 
-        if (builtin.os.tag == .macos) {
-            std.debug.print("[craft.{s}] {s}\n", .{ parsed.value.level, parsed.value.message });
+        const message = if (parsed.value.message.len > max_message)
+            parsed.value.message[0..max_message]
+        else
+            parsed.value.message;
+
+        // Tagged `[page]` so a log file makes it obvious which side a line came
+        // from — the host's records and the page's now share one stream, and
+        // telling them apart is most of what makes that stream readable.
+        switch (levelFor(parsed.value.level)) {
+            .Debug => host_log.log(.Debug, "[page] {s}", .{message}),
+            .Info => host_log.log(.Info, "[page] {s}", .{message}),
+            .Warning => host_log.log(.Warning, "[page] {s}", .{message}),
+            .Error => host_log.log(.Error, "[page] {s}", .{message}),
+            .Fatal => host_log.log(.Fatal, "[page] {s}", .{message}),
         }
+
         bridge_error.sendResultToJS(self.allocator, "log", "{\"ok\":true}");
     }
 };
+
+const testing = std.testing;
+
+test "the levels the page facade sends all map to a host level" {
+    // These four are exactly what `craft.log.*` sends (craft-bridge.js).
+    try testing.expectEqual(host_log.LogLevel.Debug, levelFor("debug"));
+    try testing.expectEqual(host_log.LogLevel.Info, levelFor("info"));
+    try testing.expectEqual(host_log.LogLevel.Warning, levelFor("warn"));
+    try testing.expectEqual(host_log.LogLevel.Error, levelFor("error"));
+}
+
+test "level names are matched without regard to case" {
+    try testing.expectEqual(host_log.LogLevel.Warning, levelFor("WARN"));
+    try testing.expectEqual(host_log.LogLevel.Error, levelFor("Error"));
+}
+
+test "an unrecognised level is still heard" {
+    // Dropping it would repeat the failure this file already had, where a
+    // page's log was parsed, discarded, and answered ok.
+    try testing.expectEqual(host_log.LogLevel.Info, levelFor("verbose"));
+    try testing.expectEqual(host_log.LogLevel.Info, levelFor(""));
+    try testing.expectEqual(host_log.LogLevel.Info, levelFor("🙂"));
+}
+
+test "the payload the page sends decodes into a level and a message" {
+    const Shape = struct {
+        level: []const u8 = "info",
+        message: []const u8 = "",
+    };
+    const payload =
+        \\{"level":"warn","message":"something happened"}
+    ;
+    const parsed = try std.json.parseFromSlice(Shape, testing.allocator, payload, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try testing.expectEqual(host_log.LogLevel.Warning, levelFor(parsed.value.level));
+    try testing.expectEqualStrings("something happened", parsed.value.message);
+}
+
+test "a page cannot log an unbounded message" {
+    // The text comes from the page. Clipping here means the boundary is one
+    // this file chose rather than whatever the host formatter happened to have.
+    var huge: [LogBridge.max_message * 2]u8 = undefined;
+    @memset(&huge, 'x');
+    const clipped = if (huge.len > LogBridge.max_message) huge[0..LogBridge.max_message] else huge[0..];
+    try testing.expectEqual(LogBridge.max_message, clipped.len);
+}
