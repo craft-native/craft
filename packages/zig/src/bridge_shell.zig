@@ -111,6 +111,13 @@ pub const ShellBridge = struct {
     }
 
     /// Shell argument tuple for cross-platform support.
+    /// Most arguments a page may hand to one `spawn`.
+    ///
+    /// Generous for any real command and bounded because the array comes from
+    /// the page: without a limit a single message can ask craft to build an
+    /// argv as large as the JSON it is willing to parse.
+    const max_spawn_args = 256;
+
     const ShellArgs = struct { argv: [3][]const u8 };
 
     /// Return the platform-appropriate shell invocation for a command string.
@@ -119,6 +126,48 @@ pub const ShellBridge = struct {
             .windows => .{ .argv = .{ "cmd.exe", "/c", command } },
             else => .{ .argv = .{ "/bin/sh", "-c", command } },
         };
+    }
+
+    /// The argv a spawn should run, and the only place that decision is made.
+    ///
+    /// Pure and separated from `spawn` so it can be tested without starting a
+    /// process: the interesting behaviour is entirely in what ends up in the
+    /// array, and nothing about that needs a running child to check.
+    fn buildSpawnArgv(
+        allocator: std.mem.Allocator,
+        command: []const u8,
+        args: []const []const u8,
+        use_shell: bool,
+    ) BridgeError!std.ArrayListUnmanaged([]const u8) {
+        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
+        errdefer argv.deinit(allocator);
+
+        if (use_shell) {
+            // A command line run by the platform shell. Arguments have no
+            // meaning here — `sh -c` takes one string — and silently ignoring
+            // them is the exact bug this change exists to fix, so refuse
+            // rather than half-honour them.
+            if (args.len > 0) {
+                std.log.warn("bridge_shell: spawn with shell:true cannot take args; pass one command string", .{});
+                return BridgeError.InvalidParameter;
+            }
+            try validateCommand(command);
+            const shell = getShellArgs(command);
+            argv.appendSlice(allocator, &shell.argv) catch return BridgeError.AllocationFailed;
+            return argv;
+        }
+
+        // Executed directly: argv[0] is the program, the rest are its
+        // arguments, and no shell ever sees them.
+        //
+        // Deliberately not `validateCommand`. That blocklist exists to stop
+        // `sh -c` interpreting metacharacters; with no shell in the picture a
+        // `;` in an argument is a semicolon the program receives, and
+        // rejecting it would refuse ordinary commands to defend against
+        // nothing.
+        argv.append(allocator, command) catch return BridgeError.AllocationFailed;
+        argv.appendSlice(allocator, args) catch return BridgeError.AllocationFailed;
+        return argv;
     }
 
     /// Validate a command string for dangerous shell metacharacters.
@@ -260,13 +309,44 @@ pub const ShellBridge = struct {
         self.sendShellResult(callback_id, "exec", exit_code, stdout, stderr);
     }
 
-    /// Spawn a process without waiting
-    /// JSON: {"id": "proc1", "command": "long-running-cmd", "cwd": "/path"}
+    /// Spawn a process without waiting.
+    ///
+    /// JSON: {"id", "command", "args": [..], "cwd", "shell": false}
+    ///
+    /// `command` is an executable and `args` are its arguments — the shape both
+    /// `craft.shell.spawn(id, cmd, args)` and the SDK's
+    /// `spawn(command, args?, options?)` have always advertised. The arguments
+    /// were parsed and thrown away: `SpawnParams` did not declare `args`, and
+    /// `ignore_unknown_fields` dropped it without a word, so
+    /// `craft.shell.spawn('p', 'git', ['status'])` ran `git` bare and reported
+    /// success.
+    ///
+    /// ## Why this no longer goes through a shell
+    ///
+    /// It used to run `/bin/sh -c <command>`, which is why the arguments had
+    /// nowhere to go — a shell takes one string, not an argv. Appending them to
+    /// that string would have meant quoting every argument correctly forever,
+    /// on two platforms, against page-supplied input, to avoid handing a web
+    /// page a shell. Executing the program directly removes the shell, and with
+    /// it the entire class: `;`, `|` and `$(...)` inside an argument are now
+    /// just bytes the program receives.
+    ///
+    /// `shell: true` asks for the old behaviour explicitly, for a caller who
+    /// genuinely wants a command line. That path keeps the metacharacter
+    /// blocklist, because that is the path that needs it.
+    ///
+    /// This changes what `spawn('p', 'git status')` does: it used to work,
+    /// because `sh` split the string, and now looks for a program named
+    /// "git status". That is the same break Node made deliberate — the fix is
+    /// `spawn('p', 'git', ['status'])`, which is what the signature asked for
+    /// all along.
     fn spawn(self: *Self, data: []const u8) !void {
         const SpawnParams = struct {
             id: []const u8 = "",
             command: []const u8 = "",
             cwd: []const u8 = "",
+            args: []const []const u8 = &.{},
+            shell: bool = false,
         };
 
         const parsed = std.json.parseFromSlice(SpawnParams, self.allocator, data, .{
@@ -282,18 +362,23 @@ pub const ShellBridge = struct {
 
         if (id.len == 0 or command.len == 0) return BridgeError.MissingData;
 
-        try validateCommand(command);
+        // Bounded so a page cannot ask craft to build an unbounded argv.
+        if (params.args.len > max_spawn_args) {
+            std.log.warn("bridge_shell: spawn refused, {d} arguments exceeds {d}", .{ params.args.len, max_spawn_args });
+            return BridgeError.InvalidParameter;
+        }
+
+        var argv = try buildSpawnArgv(self.allocator, command, params.args, params.shell);
+        defer argv.deinit(self.allocator);
 
         if (comptime builtin.mode == .debug)
-            std.debug.print("[ShellBridge] spawn: {s} -> {s}\n", .{ id, command });
+            std.debug.print("[ShellBridge] spawn: {s} -> {s} ({d} args, shell={})\n", .{ id, command, params.args.len, params.shell });
 
-        // Build argv array using cross-platform shell args
-        const shell = getShellArgs(command);
         const io = io_context.get();
 
         // Create child process using Zig 0.16 API
         const child = std.process.spawn(io, .{
-            .argv = &shell.argv,
+            .argv = argv.items,
             .cwd = if (cwd.len > 0) .{ .path = cwd } else .inherit,
             .stdout = .inherit,
             .stderr = .inherit,
@@ -797,4 +882,159 @@ pub fn getGlobalShellBridge() ?*ShellBridge {
 
 pub fn setGlobalShellBridge(bridge: *ShellBridge) void {
     global_state.instance.setShellBridge(bridge);
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+//
+// `spawn` had no tests, which is how it shipped parsing an `args` array and
+// throwing it away. The decision worth testing is what ends up in the argv, and
+// none of that needs a child process.
+
+const testing = std.testing;
+
+fn argvFor(command: []const u8, args: []const []const u8, use_shell: bool) !std.ArrayListUnmanaged([]const u8) {
+    return ShellBridge.buildSpawnArgv(testing.allocator, command, args, use_shell);
+}
+
+test "arguments reach the program instead of being dropped" {
+    // The bug: `craft.shell.spawn('p', 'git', ['status'])` ran `git` bare and
+    // reported success, because SpawnParams never declared `args`.
+    var argv = try argvFor("git", &.{ "status", "--porcelain" }, false);
+    defer argv.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 3), argv.items.len);
+    try testing.expectEqualStrings("git", argv.items[0]);
+    try testing.expectEqualStrings("status", argv.items[1]);
+    try testing.expectEqualStrings("--porcelain", argv.items[2]);
+}
+
+test "no shell is involved, so no shell metacharacters are interpreted" {
+    // These would each have been an injection through `sh -c` had the
+    // arguments been appended to a command string. Executed directly they are
+    // bytes the program receives, so they are passed through untouched rather
+    // than rejected.
+    const nasty = [_][]const u8{ "; rm -rf /", "$(whoami)", "a|b", "x>y", "`id`", "&& curl evil" };
+    var argv = try argvFor("echo", &nasty, false);
+    defer argv.deinit(testing.allocator);
+
+    try testing.expectEqual(nasty.len + 1, argv.items.len);
+    for (nasty, 0..) |expected, i| {
+        try testing.expectEqualStrings(expected, argv.items[i + 1]);
+    }
+    // And nothing that could run them is in the argv.
+    try testing.expectEqualStrings("echo", argv.items[0]);
+    for (argv.items) |a| {
+        try testing.expect(!std.mem.eql(u8, a, "/bin/sh"));
+        try testing.expect(!std.mem.eql(u8, a, "cmd.exe"));
+        try testing.expect(!std.mem.eql(u8, a, "-c"));
+    }
+}
+
+test "a program with no arguments is just the program" {
+    var argv = try argvFor("/usr/bin/true", &.{}, false);
+    defer argv.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), argv.items.len);
+    try testing.expectEqualStrings("/usr/bin/true", argv.items[0]);
+}
+
+test "shell:true still runs a command line through the shell" {
+    var argv = try argvFor("echo hello", &.{}, true);
+    defer argv.deinit(testing.allocator);
+
+    try testing.expectEqual(@as(usize, 3), argv.items.len);
+    const shell_path = if (builtin.os.tag == .windows) "cmd.exe" else "/bin/sh";
+    const shell_flag = if (builtin.os.tag == .windows) "/c" else "-c";
+    try testing.expectEqualStrings(shell_path, argv.items[0]);
+    try testing.expectEqualStrings(shell_flag, argv.items[1]);
+    try testing.expectEqualStrings("echo hello", argv.items[2]);
+}
+
+test "shell:true keeps the blocklist that path needs" {
+    // The metacharacter check is not dropped, it is moved to the only place it
+    // defends anything: the path that hands a string to a shell.
+    try testing.expectError(BridgeError.UnsafeCommand, argvFor("ls; rm -rf /", &.{}, true));
+    try testing.expectError(BridgeError.UnsafeCommand, argvFor("echo $(whoami)", &.{}, true));
+    try testing.expectError(BridgeError.UnsafeCommand, argvFor("a | b", &.{}, true));
+}
+
+test "asking for a shell and arguments at once is refused, not half-honoured" {
+    // `sh -c` takes one string. Quietly ignoring the arguments is exactly the
+    // failure this change exists to remove, so it must not be reintroduced by
+    // the compatibility path.
+    try testing.expectError(
+        BridgeError.InvalidParameter,
+        argvFor("git", &.{"status"}, true),
+    );
+}
+
+test "the argv is built in order, and order is the whole meaning" {
+    var argv = try argvFor("cmd", &.{ "1", "2", "3", "4", "5" }, false);
+    defer argv.deinit(testing.allocator);
+    const expected = [_][]const u8{ "cmd", "1", "2", "3", "4", "5" };
+    try testing.expectEqual(expected.len, argv.items.len);
+    for (expected, 0..) |e, i| try testing.expectEqualStrings(e, argv.items[i]);
+}
+
+test "an empty argument is still an argument" {
+    // `find . -name ""` is meaningful; dropping empty strings would silently
+    // change the command.
+    var argv = try argvFor("find", &.{ ".", "-name", "" }, false);
+    defer argv.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 4), argv.items.len);
+    try testing.expectEqualStrings("", argv.items[3]);
+}
+
+test "the JSON the page sends decodes into the arguments the argv is built from" {
+    // The seam the bug lived in: the payload was parsed correctly and the
+    // struct simply had nowhere to put `args`, so `ignore_unknown_fields`
+    // dropped them without a word.
+    const Params = struct {
+        id: []const u8 = "",
+        command: []const u8 = "",
+        cwd: []const u8 = "",
+        args: []const []const u8 = &.{},
+        shell: bool = false,
+    };
+    const payload =
+        \\{"id":"p1","command":"git","args":["status","--porcelain"],"cwd":"/tmp"}
+    ;
+    const parsed = try std.json.parseFromSlice(Params, testing.allocator, payload, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    try testing.expectEqual(@as(usize, 2), parsed.value.args.len);
+    try testing.expectEqualStrings("status", parsed.value.args[0]);
+    try testing.expect(!parsed.value.shell);
+
+    var argv = try argvFor(parsed.value.command, parsed.value.args, parsed.value.shell);
+    defer argv.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 3), argv.items.len);
+    try testing.expectEqualStrings("--porcelain", argv.items[2]);
+}
+
+test "a payload from before this change still spawns the same program" {
+    // No `args` key at all: an older page, or any caller that never used them.
+    const Params = struct {
+        id: []const u8 = "",
+        command: []const u8 = "",
+        args: []const []const u8 = &.{},
+        shell: bool = false,
+    };
+    const payload =
+        \\{"id":"p1","command":"/usr/bin/true"}
+    ;
+    const parsed = try std.json.parseFromSlice(Params, testing.allocator, payload, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+
+    var argv = try argvFor(parsed.value.command, parsed.value.args, parsed.value.shell);
+    defer argv.deinit(testing.allocator);
+    try testing.expectEqual(@as(usize, 1), argv.items.len);
+    try testing.expectEqualStrings("/usr/bin/true", argv.items[0]);
 }
