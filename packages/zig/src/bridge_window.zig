@@ -216,7 +216,12 @@ pub const WindowBridge = struct {
         // a payload like `{"resize":false,"fullscreen":true}` was read as
         // `fullscreen=false` because the `:false` needle fired first.
         const should_be_fullscreen = if (data) |json_data|
-            json_utils.getBool(json_data, "fullscreen") orelse true
+            // `craft.window.setFullscreen(on)` sends `{"value":…}`; this read
+            // `fullscreen`, which the page has never sent, so `orelse true`
+            // fired on every call and `setFullscreen(false)` *entered*
+            // fullscreen. `fullscreen` stays accepted for raw callers.
+            json_utils.getBool(json_data, "value") orelse
+                json_utils.getBool(json_data, "fullscreen") orelse true
         else
             true;
 
@@ -325,8 +330,19 @@ pub const WindowBridge = struct {
             // Parse vibrancy type from {"vibrancy": "..."}
             var vibrancy_type: []const u8 = "none";
             if (data) |json_data| {
-                if (std.mem.indexOf(u8, json_data, "\"vibrancy\":\"")) |idx| {
-                    const start = idx + 12;
+                // `setVibrancy(material)` sends `{"material":"sidebar"}`;
+                // this scanned for `"vibrancy":"`, never matched, and left
+                // "none" — which takes the *removal* branch below, so the call
+                // stripped vibrancy instead of applying it.
+                const vkey = if (std.mem.indexOf(u8, json_data, "\"material\":\"") != null)
+                    "\"material\":\""
+                else
+                    "\"vibrancy\":\"";
+                if (std.mem.indexOf(u8, json_data, vkey)) |idx| {
+                    // `vkey.len`, not a literal: the two spellings happen to
+                    // be the same length, which is luck and not something the
+                    // next key added here would inherit.
+                    const start = idx + vkey.len;
                     if (std.mem.indexOfPos(u8, json_data, start, "\"")) |end| {
                         vibrancy_type = json_data[start..end];
                     }
@@ -423,8 +439,12 @@ pub const WindowBridge = struct {
         var opacity: f64 = 1.0;
         if (data) |json_data| {
             // Parse {"opacity": 0.8}
-            if (std.mem.indexOf(u8, json_data, "\"opacity\":")) |idx| {
-                var start = idx + 10;
+            // The page sends `{"value":0.4}`; this scanned for `"opacity":`,
+            // never matched, and left the default 1.0 — so every opacity was
+            // fully opaque and each value was indistinguishable from the next.
+            const key = if (std.mem.indexOf(u8, json_data, "\"value\":") != null) "\"value\":" else "\"opacity\":";
+            if (std.mem.indexOf(u8, json_data, key)) |idx| {
+                var start = idx + key.len;
                 while (start < json_data.len and (json_data[start] == ' ' or json_data[start] == '\t')) : (start += 1) {}
                 var end = start;
                 while (end < json_data.len and ((json_data[end] >= '0' and json_data[end] <= '9') or json_data[end] == '.')) : (end += 1) {}

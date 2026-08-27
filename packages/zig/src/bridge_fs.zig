@@ -152,7 +152,13 @@ pub const FSBridge = struct {
     /// JSON: {"path": "/path/to/file", "content": "data", "callbackId": "cb1"}
     fn writeFile(self: *Self, data: []const u8) !void {
         const path = json_utils.getString(data, "path") orelse "";
-        const content = json_utils.getString(data, "content") orelse "";
+        // `craft.fs.writeFile(path, data)` sends the bytes under `data`; this
+        // read `content`, which the page has never sent, so `orelse ""` fired
+        // on every call and the file was created empty. `content` stays
+        // accepted for anything posting raw bridge messages against the old
+        // spelling.
+        const content = json_utils.getString(data, "data") orelse
+            json_utils.getString(data, "content") orelse "";
         const callback_id = json_utils.getString(data, "callbackId") orelse "";
 
         if (path.len == 0) return BridgeError.MissingData;
@@ -179,7 +185,10 @@ pub const FSBridge = struct {
     /// JSON: {"path": "/path/to/file", "content": "data", "callbackId": "cb1"}
     fn appendFile(self: *Self, data: []const u8) !void {
         const path = json_utils.getString(data, "path") orelse "";
-        const content = json_utils.getString(data, "content") orelse "";
+        // Same mismatch as `writeFile`: the page sends `data`, this read
+        // `content`, and the append wrote nothing while reporting success.
+        const content = json_utils.getString(data, "data") orelse
+            json_utils.getString(data, "content") orelse "";
         const callback_id = json_utils.getString(data, "callbackId") orelse "";
 
         if (path.len == 0) return BridgeError.MissingData;
@@ -451,8 +460,13 @@ pub const FSBridge = struct {
     /// Copy file
     /// JSON: {"src": "/path/from", "dest": "/path/to", "callbackId": "cb1"}
     fn copy(self: *Self, data: []const u8) !void {
-        const src = json_utils.getString(data, "src") orelse "";
-        const dest = json_utils.getString(data, "dest") orelse "";
+        // `craft.fs.copy(from, to)` sends `from`/`to`; this read `src`/`dest`,
+        // so both were empty and the call failed its own path check while the
+        // caller's promise resolved.
+        const src = json_utils.getString(data, "from") orelse
+            json_utils.getString(data, "src") orelse "";
+        const dest = json_utils.getString(data, "to") orelse
+            json_utils.getString(data, "dest") orelse "";
         const callback_id = json_utils.getString(data, "callbackId") orelse "";
 
         if (src.len == 0 or dest.len == 0) return BridgeError.MissingData;
@@ -473,8 +487,13 @@ pub const FSBridge = struct {
     /// Move/rename file
     /// JSON: {"src": "/path/from", "dest": "/path/to", "callbackId": "cb1"}
     fn move(self: *Self, data: []const u8) !void {
-        const src = json_utils.getString(data, "src") orelse "";
-        const dest = json_utils.getString(data, "dest") orelse "";
+        // `craft.fs.move(from, to)` sends `from`/`to`; this read `src`/`dest`,
+        // so both were empty and the call failed its own path check while the
+        // caller's promise resolved.
+        const src = json_utils.getString(data, "from") orelse
+            json_utils.getString(data, "src") orelse "";
+        const dest = json_utils.getString(data, "to") orelse
+            json_utils.getString(data, "dest") orelse "";
         const callback_id = json_utils.getString(data, "callbackId") orelse "";
 
         if (src.len == 0 or dest.len == 0) return BridgeError.MissingData;

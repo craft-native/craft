@@ -807,6 +807,14 @@ pub fn build(b: *std.Build) void {
         "src/bridge_capabilities.zig",
         "src/bridge_capabilities_actions.zig",
         "src/js/craft-bridge.js",
+        // The bridges whose payload field names are checked against the page's
+        // — see `field_checked` in the test.
+        "src/bridge_fs.zig",
+        "src/bridge_window.zig",
+        "src/bridge_updater.zig",
+        "src/bridge_bluetooth.zig",
+        "src/bridge_serial.zig",
+        "src/bridge_local_server.zig",
     }) |source_path| {
         capability_conformance_tests.root_module.addAnonymousImport(source_path, .{
             .root_source_file = b.path(source_path),

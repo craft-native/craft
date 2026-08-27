@@ -416,3 +416,269 @@ test "the manifest renders and parses" {
     try testing.expect(channels.count() > 0);
     try testing.expect(channels.get("craft:fs:change") != null);
 }
+
+test "every bridge type the page can send is routed by the dispatcher" {
+    // The direction nothing checked. `test "the registry covers exactly the
+    // namespaces the dispatcher routes"` pins the registry against the
+    // dispatcher, and the channel test pins the events — but what the page can
+    // *call* was never compared against what native will answer.
+    //
+    // A new `craft.foo.bar()` added to the facade with no arm in
+    // `handleBridgeMessageJSON` posts a message that is parsed, matched
+    // against every arm, and dropped. `_send` resolves the moment the message
+    // leaves, so the caller gets a fulfilled promise and nothing happens —
+    // silent, and exactly the shape of #27, #47 and #69.
+    const chain = blk: {
+        const start = std.mem.indexOf(u8, dispatcher_source, "pub fn handleBridgeMessageJSON") orelse
+            return error.DispatcherNotFound;
+        const end = std.mem.indexOfPos(u8, dispatcher_source, start, "\npub fn handleBridgeMessage(") orelse
+            dispatcher_source.len;
+        break :blk dispatcher_source[start..end];
+    };
+
+    var checked: usize = 0;
+    var unrouted: usize = 0;
+
+    // `_send('type', 'action'` / `_req(` / `_post(` — the three ways the
+    // facade posts a message.
+    for ([_][]const u8{ "_send('", "_req('", "_post('" }) |opener| {
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, bridge_js, search, opener)) |hit| {
+            search = hit + opener.len;
+            const rest = bridge_js[search..];
+            const close = std.mem.indexOfScalar(u8, rest, '\'') orelse continue;
+            const msg_type = rest[0..close];
+            if (msg_type.len == 0 or msg_type.len > 64) continue;
+
+            checked += 1;
+
+            var needle_buf: [128]u8 = undefined;
+            const needle = try std.fmt.bufPrint(&needle_buf, "msg_type, \"{s}\"", .{msg_type});
+            if (std.mem.indexOf(u8, chain, needle) == null) {
+                unrouted += 1;
+                std.debug.print(
+                    "craft-bridge.js posts type '{s}' but handleBridgeMessageJSON does not route it\n",
+                    .{msg_type},
+                );
+            }
+        }
+    }
+
+    // Floor: the facade posts hundreds of messages. If a refactor changes how
+    // they are written this scan finds none and would otherwise pass having
+    // compared nothing at all.
+    try testing.expect(checked >= 200);
+    try testing.expectEqual(@as(usize, 0), unrouted);
+}
+
+/// Bridges whose payload field names are checked against what the page sends.
+///
+/// A ratchet like `max_undeclared`: this list may only grow. Adding a bridge
+/// here is what "the fields on both sides agree" costs, and it is cheap —
+/// every entry below was added after the audit that found nine bridges reading
+/// keys the page has never sent.
+const field_checked = [_]struct {
+    /// The bridge type as the page names it in `_send`/`_req`.
+    namespace: []const u8,
+    source: []const u8,
+}{
+    .{ .namespace = "fs", .source = @embedFile("src/bridge_fs.zig") },
+    .{ .namespace = "window", .source = @embedFile("src/bridge_window.zig") },
+    .{ .namespace = "updater", .source = @embedFile("src/bridge_updater.zig") },
+    .{ .namespace = "bluetooth", .source = @embedFile("src/bridge_bluetooth.zig") },
+    .{ .namespace = "serial", .source = @embedFile("src/bridge_serial.zig") },
+    .{ .namespace = "localServer", .source = @embedFile("src/bridge_local_server.zig") },
+};
+
+/// The body of `fn <action>(...)`, from its signature to the next `    fn `.
+///
+/// Narrowing the search to the handler is what makes this catch a name used in
+/// the *wrong* handler — `writeFile` reading a key only `readFile` sends. A
+/// file-wide search cannot: the first version of this test passed against the
+/// exact bug it was written for, because the name still appeared elsewhere in
+/// the same file.
+fn handlerBody(source: []const u8, action: []const u8) ?[]const u8 {
+    var needle_buf: [96]u8 = undefined;
+    const needle = std.fmt.bufPrint(&needle_buf, "\n    fn {s}(", .{action}) catch return null;
+    const start = std.mem.indexOf(u8, source, needle) orelse return null;
+    const after = start + needle.len;
+
+    // Ends at the next declaration *or* the next doc comment, whichever comes
+    // first. Stopping only at `fn ` swallows the following function's `///`
+    // block — and these bridges document their payloads in it, so
+    // `appendFile`'s `/// JSON: {"content": "data"}` leaked into `writeFile`'s
+    // span and made the check pass against the bug it was written for.
+    const next_fn = std.mem.indexOfPos(u8, source, after, "\n    fn ") orelse source.len;
+    const next_doc = std.mem.indexOfPos(u8, source, after, "\n    ///") orelse source.len;
+    return source[start..@min(next_fn, next_doc)];
+}
+
+/// Whether a bridge's source mentions `name` as a payload field.
+///
+/// Two spellings, because bridges read payloads two ways. Some scan for a
+/// literal needle — `json_utils.getString(data, "path")` — where the name
+/// appears quoted. Others parse into a struct, where it is an unquoted field
+/// declaration: `path: []const u8 = ""`. A check that knew only the first
+/// reports every struct-based bridge as broken, which is exactly what the
+/// first version of this test did.
+fn bridgeKnowsField(source: []const u8, name: []const u8) bool {
+    var quoted_buf: [96]u8 = undefined;
+    const quoted = std.fmt.bufPrint(&quoted_buf, "\"{s}\"", .{name}) catch return true;
+    if (std.mem.indexOf(u8, source, quoted) != null) return true;
+
+    // A struct field: the name at the start of an indented line, followed by a
+    // colon. Anchored on the newline so `path:` inside `filePath:` or a
+    // comment does not count.
+    var field_buf: [96]u8 = undefined;
+    const field = std.fmt.bufPrint(&field_buf, "\n    {s}: ", .{name}) catch return true;
+    if (std.mem.indexOf(u8, source, field) != null) return true;
+
+    // A struct field at any indentation, identified by its default: every
+    // payload struct in these bridges declares one (`baud: u32 = 9600`).
+    //
+    // The default is what tells a field from a *parameter*. `fn writeFile(self:
+    // *Self, data: []const u8)` contains `data: `, and accepting that made the
+    // check pass against the exact bug it was written for — the handler was
+    // reading the wrong key while its own parameter supplied the name.
+    var nested_buf: [96]u8 = undefined;
+    const nested = std.fmt.bufPrint(&nested_buf, "{s}: ", .{name}) catch return true;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, source, search, nested)) |hit| {
+        search = hit + nested.len;
+        if (hit != 0) {
+            const before = source[hit - 1];
+            if (before != ' ' and before != '\n' and before != '\t') continue;
+        }
+        const line_end = std.mem.indexOfScalarPos(u8, source, hit, '\n') orelse source.len;
+        if (std.mem.indexOfScalarPos(u8, source[0..line_end], hit, '=') != null) return true;
+    }
+    return false;
+}
+
+/// Fields a handler legitimately does not name.
+///
+/// Narrowing the search to the handler is what makes the check catch a name
+/// read in the wrong place — but it also flags two honest patterns: a handler
+/// that reads the payload without keying off the field name, and one that
+/// delegates the parsing to a helper. Each exemption costs a line and a
+/// reason, which is the point: the list is short and every entry is arguable,
+/// rather than the check being weakened for everyone.
+const field_exempt = [_]struct {
+    namespace: []const u8,
+    action: []const u8,
+    field: []const u8,
+    why: []const u8,
+}{
+    .{
+        .namespace = "window",
+        .action = "setAlwaysOnTop",
+        .field = "value",
+        .why = "scans the payload for the literal \"false\", so it reads the boolean without naming the key",
+    },
+    .{ .namespace = "window", .action = "setResizable", .field = "value", .why = "same key-agnostic boolean scan" },
+    .{ .namespace = "window", .action = "setMovable", .field = "value", .why = "same key-agnostic boolean scan" },
+    .{ .namespace = "window", .action = "setHasShadow", .field = "value", .why = "same key-agnostic boolean scan" },
+    .{
+        .namespace = "bluetooth",
+        .action = "connectDevice",
+        .field = "id",
+        .why = "delegates to `deviceAddress`, which accepts both \"id\" and \"address\"",
+    },
+    .{ .namespace = "bluetooth", .action = "disconnectDevice", .field = "id", .why = "same helper" },
+};
+
+fn isExempt(namespace: []const u8, action: []const u8, field: []const u8) bool {
+    for (field_exempt) |e| {
+        if (std.mem.eql(u8, e.namespace, namespace) and
+            std.mem.eql(u8, e.action, action) and
+            std.mem.eql(u8, e.field, field)) return true;
+    }
+    return false;
+}
+
+test "every field the page sends is a name the handler actually looks for" {
+    // The bug class this exists for, from issue #69 and the audit that
+    // followed it: the page posts `{"data": "..."}`, the handler reads
+    // `"content"`, and nothing objects. Every bridge parses with
+    // `ignore_unknown_fields = true` or scans for a literal needle, so a name
+    // that does not match is not an error — the value is simply gone and the
+    // caller's promise resolves.
+    //
+    // It cost `craft.fs.writeFile` writing empty files, `setFullscreen(false)`
+    // entering fullscreen, `setVibrancy` removing vibrancy, and Bluetooth
+    // connects that could never name a device.
+    //
+    // The check is deliberately loose: it asks only whether the field name
+    // appears *somewhere* in the handling bridge, quoted. That is enough to
+    // catch a name the native side has never heard of, which is the whole
+    // failure, without trying to model which handler owns which action.
+    var checked: usize = 0;
+    var missing: usize = 0;
+
+    for ([_][]const u8{ "_send('", "_req('" }) |opener| {
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, bridge_js, search, opener)) |hit| {
+            search = hit + opener.len;
+            const rest = bridge_js[search..];
+
+            const type_end = std.mem.indexOfScalar(u8, rest, '\'') orelse continue;
+            const msg_type = rest[0..type_end];
+
+            // Only the bridges that have opted in.
+            var source: ?[]const u8 = null;
+            for (field_checked) |entry| {
+                if (std.mem.eql(u8, entry.namespace, msg_type)) source = entry.source;
+            }
+            if (source == null) continue;
+
+            // The action, so the search can be narrowed to its handler.
+            const after_type = rest[type_end + 1 ..];
+            const a_open = std.mem.indexOf(u8, after_type, "'") orelse continue;
+            const a_rest = after_type[a_open + 1 ..];
+            const a_end = std.mem.indexOfScalar(u8, a_rest, '\'') orelse continue;
+            const action_name = a_rest[0..a_end];
+
+            // `fn <action>(` when the handler is named after the action, which
+            // is the convention throughout. Falls back to the whole file when
+            // it is not — looser, but never a false alarm.
+            const scope = handlerBody(source.?, action_name) orelse source.?;
+
+            // The `_stringify({ ... })` literal for this call, if it has one.
+            const call_end = std.mem.indexOfScalarPos(u8, bridge_js, search, '\n') orelse bridge_js.len;
+            const call = bridge_js[search..call_end];
+            const brace = std.mem.indexOf(u8, call, "_stringify({") orelse continue;
+            const obj_start = brace + "_stringify({".len;
+            const obj_end = std.mem.indexOfScalarPos(u8, call, obj_start, '}') orelse continue;
+            const obj = call[obj_start..obj_end];
+
+            // Field names: an identifier followed by a colon.
+            var i: usize = 0;
+            while (i < obj.len) {
+                while (i < obj.len and !std.ascii.isAlphabetic(obj[i])) i += 1;
+                const name_start = i;
+                while (i < obj.len and (std.ascii.isAlphanumeric(obj[i]) or obj[i] == '_')) i += 1;
+                if (i >= obj.len or name_start == i) break;
+                const name = obj[name_start..i];
+                var j = i;
+                while (j < obj.len and obj[j] == ' ') j += 1;
+                if (j >= obj.len or obj[j] != ':') continue;
+
+                checked += 1;
+                if (isExempt(msg_type, action_name, name)) continue;
+                if (!bridgeKnowsField(scope, name)) {
+                    missing += 1;
+                    std.debug.print(
+                        "craft-bridge.js sends '{s}' to the {s} bridge, which never mentions that name —\n" ++
+                            "  the value is parsed and discarded, and the caller's promise still resolves.\n",
+                        .{ name, msg_type },
+                    );
+                }
+            }
+        }
+    }
+
+    // Floor: these six bridges carry dozens of fields between them. A scan
+    // that matched nothing would pass having compared nothing.
+    try testing.expect(checked >= 30);
+    try testing.expectEqual(@as(usize, 0), missing);
+}

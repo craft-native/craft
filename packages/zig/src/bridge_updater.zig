@@ -213,7 +213,12 @@ pub const UpdaterBridge = struct {
 
         const macos = @import("macos.zig");
 
+        // `craft.updater.setAutomaticChecks(on)` sends `{"value":…}`; this
+        // declared only `enabled`, so `ignore_unknown_fields` dropped the
+        // boolean and every call read the `false` default — automatic checks
+        // could be turned off but never on. `enabled` stays accepted.
         const EnabledParams = struct {
+            value: ?bool = null,
             enabled: bool = false,
         };
 
@@ -222,7 +227,7 @@ pub const UpdaterBridge = struct {
             .allocate = .alloc_always,
         }) catch return BridgeError.InvalidJSON;
         defer parsed.deinit();
-        const enabled = parsed.value.enabled;
+        const enabled = parsed.value.value orelse parsed.value.enabled;
 
         self.automatic_checks = enabled;
 
@@ -242,7 +247,10 @@ pub const UpdaterBridge = struct {
 
         const macos = @import("macos.zig");
 
+        // Same mismatch: the page sends `{"seconds":…}` and this declared only
+        // `interval`, so every interval silently stayed at the 24-hour default.
         const IntervalParams = struct {
+            seconds: ?u32 = null,
             interval: u32 = 86400,
         };
 
@@ -251,7 +259,7 @@ pub const UpdaterBridge = struct {
             .allocate = .alloc_always,
         }) catch return BridgeError.InvalidJSON;
         defer parsed.deinit();
-        const interval = parsed.value.interval;
+        const interval = parsed.value.seconds orelse parsed.value.interval;
 
         self.check_interval = interval;
 
