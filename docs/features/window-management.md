@@ -204,6 +204,45 @@ window.focus()
 const isFocused = window.isFocused()
 ```
 
+## Window Controls (Traffic Lights)
+
+The close, minimise and zoom buttons are the platform's. Craft never asks the
+web layer to draw them, and the web layer should never try: on macOS AppKit
+draws real ones on every window Craft creates except a `frameless` one, so a
+page that renders its own puts six circles in the corner — three live buttons
+and three coloured `<div>`s that only look like buttons, in the wrong shade,
+missing the hover glyphs, and dead to keyboard and accessibility.
+
+Because a page cannot ask AppKit where those buttons are, Craft tells it at
+document start, on every window:
+
+```javascript
+window.craft.windowControls
+// { style: 'overlay', native: true, x: 10, y: 8, width: 62, height: 28 }
+```
+
+| `style` | What the platform drew | What the page must do |
+| --- | --- | --- |
+| `titlebar` | Buttons in a titlebar above the web content | Nothing |
+| `overlay` | Buttons floating over the top-left of the content (`titlebarHidden`, native sidebar, web sidebar material) | Keep that corner clear |
+| `none` | Nothing — `frameless: true` | Draw its own chrome, if it wants any |
+
+The same facts land on the document, so CSS can use them without JavaScript:
+
+```css
+/* <html data-craft-window-controls="overlay"> */
+.sidebar-header {
+  /* 62px under an overlay, 0 otherwise, and the fallback covers a browser tab */
+  padding-left: var(--craft-window-controls-width, 62px);
+}
+```
+
+`--craft-window-controls-height`, `--craft-window-controls-inset-x` and
+`--craft-window-controls-inset-y` are published alongside it.
+
+A frameless window is the one case where a page owns its window chrome, and it
+gets `style: 'none'` to say so — see below.
+
 ## Window Styles
 
 ### Frameless Window
