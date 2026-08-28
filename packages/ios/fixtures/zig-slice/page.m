@@ -2,22 +2,27 @@
 //
 // Signals are carried by *request id*, because ids are already logged by the
 // dispatcher and need no extra native code to observe. Each is sent at most
-// once — an earlier version of this page re-sent its confirmation from inside
-// the reply handler that the confirmation's own reply then re-entered, which
-// span forever and made the assertion pass on its first iteration regardless.
+// once — an earlier version re-sent its confirmation from inside the reply
+// handler that the confirmation's own reply then re-entered, which span
+// forever and made the assertion pass on its first iteration regardless.
 //
-//   i=1  the page called native
-//   i=2  native's reply came back carrying a real UIKit systemName
+//   i=1  the page called an action Zig serves
+//   i=2  that reply came back carrying a real UIKit systemName
 //   i=3  the user script had already run when the page's own script executed
+//   i=4  the page called an action Zig does *not* serve
+//   i=5  that reply came back, having been answered by the host shim
 //
-// i=2 is the one that matters. It cannot be produced by a stub, a browser
-// fallback, or native talking to itself: it exists only if the page received
-// and understood an answer that came from UIKit.
+// i=2 and i=5 are the load-bearing ones, and they prove different things.
+// i=2 cannot be produced by a stub: only a real UIKit process reports
+// systemName "iOS". i=5 cannot be produced by Zig alone: `servedBy` is a
+// string only the shim writes, delivered back through Zig's own reply path.
+// Together they show both arms of the dispatcher reaching the same page over
+// one protocol.
 const char craft_slice_page[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "</head><body><h1 id=\"s\">craft slice</h1><script>\n"
-    "var sentRoundTrip = false;\n"
+    "var sentRoundTrip = false, sentHandOff = false;\n"
     "var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft;\n"
     "\n"
     "// Read before anything else touches it: the user script is installed at\n"
@@ -31,14 +36,25 @@ const char craft_slice_page[] =
     "window.__craftBridgeResult = function (action, payload, id) {\n"
     "  window.__craftSliceAck = JSON.stringify({action: action, id: id, payload: payload});\n"
     "  document.getElementById('s').textContent = window.__craftSliceAck;\n"
+    "\n"
     "  if (!sentRoundTrip && payload && payload.systemName === 'iOS') {\n"
     "    sentRoundTrip = true;\n"
     "    bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:2});\n"
+    "  }\n"
+    "\n"
+    "  // Only the shim writes servedBy. Zig routed the call to it, the shim\n"
+    "  // answered through craft_ios_deliver_result, and Zig delivered it here\n"
+    "  // over the same protocol it uses for its own actions.\n"
+    "  if (!sentHandOff && payload && payload.servedBy === 'host-shim') {\n"
+    "    sentHandOff = true;\n"
+    "    bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:5});\n"
     "  }\n"
     "};\n"
     "\n"
     "if (bridge) {\n"
     "  bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:1});\n"
+    "  // An action Zig does not serve, so it must reach the host shim.\n"
+    "  bridge.postMessage({t:'mobile', a:'hostOnlyPing', i:4});\n"
     "} else {\n"
     "  document.getElementById('s').textContent = 'NO BRIDGE';\n"
     "}\n"

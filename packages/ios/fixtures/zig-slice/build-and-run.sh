@@ -26,7 +26,7 @@ rm -rf "$OUT"; mkdir -p "$APP"
 echo "==> linking CraftSlice"
 clang -isysroot "$SDK" -target "$TRIPLE" \
     -fobjc-arc -O1 \
-    "$FIXTURE/main.m" "$FIXTURE/page.m" \
+    "$FIXTURE/main.m" "$FIXTURE/page.m" "$FIXTURE/shim.m" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation \
     -o "$APP/CraftSlice"
@@ -50,7 +50,7 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=2' "$LOG" 2>/dev/null && grep -q 'i=3' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=5' "$LOG" 2>/dev/null && grep -q 'i=3' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -66,7 +66,7 @@ echo "==> assertions"
 PLAIN="$OUT/console.plain"
 sed -e $'s/\x1b\[[0-9;]*m//g' -e 's/\r$//' "$LOG" > "$PLAIN"
 
-count() { grep -c "craft-bridge dispatch t=mobile a=getDeviceInfo i=$1" "$PLAIN" || true; }
+count() { grep -cE "craft-bridge dispatch t=mobile a=[A-Za-z]+ i=$1\$" "$PLAIN" || true; }
 
 C1="$(count 1)"; C2="$(count 2)"; C3="$(count 3)"
 
@@ -84,5 +84,15 @@ echo "ok: no feedback loop"
 
 [ "$C3" -ge 1 ] || { echo "FAIL: the user script had not run when the page executed"; exit 1; }
 echo "ok: user script ran at document start"
+
+C4="$(count 4)"; C5="$(count 5)"
+
+[ "$C4" -ge 1 ] || { echo "FAIL: the host-only action never reached the dispatcher"; exit 1; }
+echo "ok: unserved action reached the dispatcher (i=4 seen ${C4}x)"
+
+# servedBy is a string only the shim writes, and it came back through Zig's own
+# reply path. Neither side could have produced this alone.
+[ "$C5" -ge 1 ] || { echo "FAIL: the host shim never answered, or its answer never reached the page"; exit 1; }
+echo "ok: hand-off to host shim closed (i=5 seen ${C5}x)"
 
 echo "PASS"
