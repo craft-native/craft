@@ -213,40 +213,59 @@ page that renders its own puts six circles in the corner — three live buttons
 and three coloured `<div>`s that only look like buttons, in the wrong shade,
 missing the hover glyphs, and dead to keyboard and accessibility.
 
-Because a page cannot ask AppKit where those buttons are, Craft tells it at
-document start, on every window:
+Because a page cannot ask AppKit where those buttons are, Craft measures them on
+the live window and tells it, at document start and again whenever the answer
+changes:
 
 ```javascript
 window.craft.windowControls
-// { style: 'overlay', native: true, x: 10, y: 8, width: 62, height: 28 }
+// {
+//   style: 'overlay', native: true, visible: true,
+//   x: 9, y: 9, width: 60, height: 14,
+//   reserveWidth: 69, reserveHeight: 23, insetX: 9, insetY: 9,
+//   replicas: 'none'
+// }
 ```
 
 | `style` | What the platform drew | What the page must do |
 | --- | --- | --- |
 | `titlebar` | Buttons in a titlebar above the web content | Nothing |
-| `overlay` | Buttons floating over the top-left of the content (`titlebarHidden`, native sidebar, web sidebar material) | Keep that corner clear |
-| `none` | Nothing — `frameless: true` | Draw its own chrome, if it wants any |
+| `overlay` | Buttons over the top-left of the content (`titlebarHidden`, and any window whose web content runs full height) | Keep that corner clear |
+| `custom` | Nothing — `frameless: true` | Draw its own chrome, if it wants any |
+| `none` | No window chrome in this environment — iOS, Android | Nothing |
+
+Nothing in that object is a constant. The buttons move between window styles,
+they sit over a native sidebar rather than over the web content in a sidebar
+window, they slide away in fullscreen, and Apple has resized them across
+releases — 60×14 points at (9, 9) on macOS 27, and not the same on 14. Craft
+re-measures and re-publishes on every resize, fullscreen transition and
+navigation, so a layout that reads these values stays right; one that hardcodes
+what it saw once does not.
 
 The same facts land on the document, so CSS can use them without JavaScript:
 
 ```css
 /* <html data-craft-window-controls="overlay"> */
 .sidebar-header {
-  /* 62px under an overlay, 0 otherwise, and the fallback covers a browser tab */
-  padding-left: var(--craft-window-controls-width, 62px);
+  /* the far edge of the real buttons, or 0 where they are not over the page */
+  padding-left: var(--craft-window-controls-width, 0px);
 }
 ```
 
 `--craft-window-controls-height`, `--craft-window-controls-inset-x` and
-`--craft-window-controls-inset-y` are published alongside it.
+`--craft-window-controls-inset-y` are published alongside it. All four are the
+room to leave *inside the page*, so all four are zero whenever the buttons are
+not over it — a window with its own titlebar, a window whose content starts
+after a native sidebar, a fullscreen window whose titlebar has slid away.
 
 A UI shared between a Craft window and a browser — a component library, a page
 that is also a marketing demo — often wants mock traffic lights in the browser
 and must not draw them here. `--craft-window-controls-replicas` is the `display`
-value a replica should take: `none` wherever the platform drew real buttons, and
-unset in a frameless window, where the page really does own its chrome. Written
-as a fallback, it needs no JavaScript and cannot flash, because the host sets it
-before the document is parsed:
+value a replica should take: `none` wherever the platform drew real buttons and
+wherever there is no window to control at all, and *unset* in a frameless
+window, where the page really does own its chrome. Written as a fallback, it
+needs no JavaScript and cannot flash, because the host sets it before the
+document is parsed:
 
 ```css
 .traffic-lights {
@@ -254,8 +273,18 @@ before the document is parsed:
 }
 ```
 
+For layout CSS cannot express — a canvas, a measured scroller — listen for the
+change instead. It fires only when something really moved, never for the
+initial state, which the seed already applied:
+
+```javascript
+window.addEventListener('craft:windowcontrols', (event) => {
+  layout(event.detail.reserveWidth)
+})
+```
+
 A frameless window is the one case where a page owns its window chrome, and it
-gets `style: 'none'` to say so — see below.
+gets `style: 'custom'` to say so — see below.
 
 ## Window Styles
 
