@@ -23,10 +23,26 @@ SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 APP="$OUT/CraftSlice.app"
 rm -rf "$OUT"; mkdir -p "$APP"
 
+echo "==> compiling the fixture"
+# The ObjC translation units first, then swiftc drives the link. swiftc is the
+# linker rather than clang because Swift auto-links compatibility shims
+# (swiftCompatibility56 and friends) that live in the toolchain, not the SDK —
+# clang cannot find them and the link fails on undefined symbols.
+clang -isysroot "$SDK" -target "$TRIPLE" -fobjc-arc -O1 -c \
+    "$FIXTURE/main.m" -o "$OUT/main.o"
+clang -isysroot "$SDK" -target "$TRIPLE" -fobjc-arc -O1 -c \
+    "$FIXTURE/page.m" -o "$OUT/page.o"
+
 echo "==> linking CraftSlice"
-clang -isysroot "$SDK" -target "$TRIPLE" \
-    -fobjc-arc -O1 \
-    "$FIXTURE/main.m" "$FIXTURE/page.m" "$FIXTURE/shim.m" \
+# The shim class has to survive into the binary for
+# `objc_getClass("CraftSwiftShim")` to find it at runtime. Compiling it into
+# the executable directly (rather than through an archive) is what guarantees
+# that: a linker is free to drop an archive member nothing references
+# statically, and a class reached only by name is exactly that.
+swiftc -target "$TRIPLE" -sdk "$SDK" \
+    -parse-as-library -O \
+    "$FIXTURE/shim.swift" \
+    "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation \
     -o "$APP/CraftSlice"
