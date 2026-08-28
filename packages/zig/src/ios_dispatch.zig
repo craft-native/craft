@@ -135,25 +135,128 @@ fn payloadOf(root: std.json.ObjectMap) ![]const u8 {
     };
 }
 
-/// Namespace routing.
+/// Namespace routing, with a hand-off for what Zig does not serve yet.
 ///
-/// One arm today. Every action not served here answers with an error rather
-/// than silence — a page awaiting a reply that never comes is
-/// indistinguishable from a slow one until its timeout fires, and thirty
-/// seconds of nothing is the worst diagnostic a bridge can give.
+/// This is the piece that makes the migration incremental rather than a
+/// cutover. An action Zig has not taken over is passed to the host shim, which
+/// answers it exactly as it does today; each later phase moves actions from the
+/// shim arm to the Zig arm and the page sees no difference. Without it, every
+/// phase before the last would ship an app missing most of its API.
+///
+/// Whatever happens, the page gets an answer. Silence is the one outcome ruled
+/// out: a reply that never arrives is indistinguishable from a slow one until
+/// the page's timeout fires, and thirty seconds of nothing is the worst
+/// diagnostic a bridge can give.
 fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8, data: []const u8) !void {
     if (std.mem.eql(u8, msg_type, "mobile")) {
         var bridge = bridge_mobile.MobileBridge.init(allocator);
         defer bridge.deinit();
-        bridge.handleMessage(action, data) catch |err| {
-            bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
-            return err;
-        };
-        return;
+
+        if (bridge.handleMessage(action, data)) |_| {
+            return;
+        } else |err| switch (err) {
+            // The only error worth handing on. Anything else means a handler
+            // ran and failed, and it has already decided what the real answer
+            // is — asking the shim to try the same action again would replace
+            // a specific failure with whatever it happens to say.
+            bridge_error.BridgeError.UnknownAction => {},
+            else => {
+                bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
+                return err;
+            },
+        }
+
+        if (try handOffToHost(action, data)) return;
+
+        bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
+        return error.UnknownAction;
     }
 
     bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
     return error.UnknownNamespace;
+}
+
+/// Narrow an arbitrary handler error to one the page's error codes can express.
+///
+/// A handler's error set is wider than `BridgeError` — it picks up allocation
+/// failures and whatever else its implementation can raise. Those still have to
+/// reach the page as *something*: the alternative is a handler that fails and
+/// says nothing, which leaves the caller waiting on a promise that will not
+/// settle. `NativeCallFailed` is the honest catch-all for "it broke in a way
+/// the protocol has no word for".
+fn asBridgeError(err: anyerror) bridge_error.BridgeError {
+    return switch (err) {
+        error.AllocationFailed, error.OutOfMemory => bridge_error.BridgeError.AllocationFailed,
+        error.InvalidJSON => bridge_error.BridgeError.InvalidJSON,
+        error.InvalidParameter => bridge_error.BridgeError.InvalidParameter,
+        error.MissingData => bridge_error.BridgeError.MissingData,
+        error.NotFound => bridge_error.BridgeError.NotFound,
+        error.PermissionDenied => bridge_error.BridgeError.PermissionDenied,
+        error.PlatformNotSupported, error.UnsupportedPlatform => bridge_error.BridgeError.PlatformNotSupported,
+        error.Timeout => bridge_error.BridgeError.Timeout,
+        error.UnknownAction => bridge_error.BridgeError.UnknownAction,
+        else => bridge_error.BridgeError.NativeCallFailed,
+    };
+}
+
+/// Hand an action to the host shim. Returns false when there is no shim.
+///
+/// Found by name at runtime rather than linked, so a Zig-only app — the
+/// fixture, or any app that has migrated everything — carries no dependency on
+/// the shim existing. `objc_getClass` returning null is the normal answer
+/// there, not an error.
+///
+/// The shim does not reply. It produces a payload and hands it back through
+/// `craft_ios_deliver_result`, so the wire format, the request id, and the
+/// escaping all stay in one place. Two components replying to the same page by
+/// two different routes is how this codebase ended up with five envelopes.
+fn handOffToHost(action: []const u8, data: []const u8) !bool {
+    if (!builtin.target.os.tag.isDarwin()) return false;
+
+    const shim = objc.objc_getClass("CraftSwiftShim") orelse return false;
+
+    const sel = objc.sel_registerName("handleAction:payload:requestId:") orelse
+        return error.SelectorNotFound;
+
+    const allocator = std.heap.c_allocator;
+    const ns_action = try objc.createNSString(action, allocator);
+    const ns_payload = try objc.createNSString(data, allocator);
+
+    // The id the reply must carry. Read here, while the dispatch frame is still
+    // on the stack, because the shim may answer asynchronously and
+    // `request_context.current()` will be empty by then.
+    const request_id: i64 = if (request_context.current()) |id| @intCast(id) else -1;
+
+    const Fn = *const fn (objc.id, objc.SEL, objc.id, objc.id, i64) callconv(.c) bool;
+    const func: Fn = @ptrCast(&objc.objc_msgSend);
+    return func(shim, sel, ns_action, ns_payload, request_id);
+}
+
+/// Deliver a result the host shim produced.
+///
+/// Exported for the shim to call. Everything after this point is the same path
+/// a Zig-served action takes — same formatting, same escaping, same evalJS —
+/// which is the point: the shim decides *what* the answer is, never *how* it
+/// gets there.
+///
+/// `request_id` is negative for a message the page sent without one, matching
+/// the null the envelope carries in that case.
+export fn craft_ios_deliver_result(
+    action_ptr: [*]const u8,
+    action_len: usize,
+    json_ptr: [*]const u8,
+    json_len: usize,
+    request_id: i64,
+) callconv(.c) void {
+    const action = action_ptr[0..action_len];
+    const json = json_ptr[0..json_len];
+
+    // Restore the id the shim was handed, so the reply names the call that is
+    // actually waiting on it rather than falling back to action-name matching.
+    request_context.push(if (request_id < 0) null else @intCast(request_id));
+    defer request_context.pop();
+
+    bridge_error.sendResultToJS(std.heap.c_allocator, action, json);
 }
 
 const testing = std.testing;
@@ -219,4 +322,57 @@ test "evalJS without a webview reports it rather than crashing" {
     global_webview = null;
 
     try testing.expectError(error.NoWebView, evalJS("void 0"));
+}
+
+test "with no host shim present, the hand-off declines rather than failing" {
+    // The host build has no `CraftSwiftShim` class, which is the same situation
+    // a fully-migrated app is in. Declining has to be the normal answer, not an
+    // error: an app that has taken every action into Zig should carry no
+    // dependency on a shim existing.
+    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    try testing.expect(!try handOffToHost("anything", "{}"));
+}
+
+test "a handler error reaches the page as something the protocol can say" {
+    // A handler's error set is wider than BridgeError. Whatever it raises still
+    // has to arrive as an error code, because the alternative is a handler that
+    // fails silently and leaves the caller on a promise that never settles.
+    try testing.expectEqual(
+        bridge_error.BridgeError.AllocationFailed,
+        asBridgeError(error.OutOfMemory),
+    );
+    try testing.expectEqual(
+        bridge_error.BridgeError.UnknownAction,
+        asBridgeError(error.UnknownAction),
+    );
+    try testing.expectEqual(
+        bridge_error.BridgeError.PlatformNotSupported,
+        asBridgeError(error.UnsupportedPlatform),
+    );
+    // The catch-all. An error the protocol has no word for still gets one.
+    try testing.expectEqual(
+        bridge_error.BridgeError.NativeCallFailed,
+        asBridgeError(error.SomethingNobodyAnticipated),
+    );
+}
+
+test "a request id survives the trip out to the host and back" {
+    // The shim may answer asynchronously, by which point the dispatch frame is
+    // gone and `request_context.current()` is empty. The id is therefore read
+    // at hand-off time and passed explicitly, then restored on delivery. Losing
+    // it would drop the reply back to action-name matching, which hands one
+    // caller's answer to another whenever two calls of the same action are in
+    // flight.
+    request_context.push(7);
+    const captured: i64 = if (request_context.current()) |id| @intCast(id) else -1;
+    request_context.pop();
+
+    try testing.expectEqual(@as(i64, 7), captured);
+    try testing.expectEqual(@as(?u64, null), request_context.current());
+
+    // And the negative sentinel round-trips as "no id", matching the null the
+    // envelope carries when the page sent none.
+    request_context.push(if (captured < 0) null else @intCast(captured));
+    defer request_context.pop();
+    try testing.expectEqual(@as(?u64, 7), request_context.current());
 }
