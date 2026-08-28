@@ -1156,32 +1156,69 @@ export interface CraftMobileAPI {
  * Where the platform drew this window's window buttons — the macOS traffic
  * lights, and their equivalents elsewhere.
  *
- * The buttons are always the platform's own: real, correctly styled, and
- * wired to the window server. A page must never draw replicas beside them,
- * which is what this exists to make unnecessary — it says where they are, so
- * a layout can leave room instead of inventing its own.
+ * The buttons are the window server's on every desktop window Craft opens that
+ * is not frameless: real, correctly styled, wired to the keyboard and to
+ * accessibility. A page must never draw replicas beside them, and this is what
+ * makes that unnecessary — it says where they are, so a layout can leave room
+ * instead of inventing its own.
+ *
+ * Every number is measured from the live window and re-sent when it changes: a
+ * resize, a fullscreen transition, a new document. Listen for the
+ * `craft:windowcontrols` event on `window` for layout that CSS cannot express;
+ * everything else is better served by the four CSS variables, which the host
+ * sets before the document is parsed.
  *
  * The same facts reach CSS as `--craft-window-controls-width` / `-height` /
- * `-inset-x` / `-inset-y`, and the document as
+ * `-inset-x` / `-inset-y` / `-replicas`, and the document as
  * `<html data-craft-window-controls="...">`.
  */
 export interface CraftWindowControls {
   /**
-   * `titlebar` — in a titlebar above the web content; nothing to do.
-   * `overlay` — floating over the content's top-left corner; keep it clear.
-   * `none` — a frameless window, so the page owns its chrome.
+   * `titlebar` — real buttons, in a titlebar above the page. Nothing to do.
+   * `overlay` — real buttons, over the page's own top-left corner. Leave room.
+   * `custom` — a frameless window: no buttons, and the page's own are the only
+   *   ones there can be.
+   * `none` — no window chrome in this environment at all (iOS, Android).
    */
-  style: 'titlebar' | 'overlay' | 'none'
-  /** Whether the platform drew any buttons at all. */
+  style: 'titlebar' | 'overlay' | 'custom' | 'none'
+  /** The platform drew real buttons for this window. */
   native: boolean
-  /** Left edge of the button block, in CSS px from the window's left edge. */
+  /**
+   * ...and they are on screen right now. False in fullscreen, where macOS
+   * takes them into an auto-hiding titlebar — which is why a layout should
+   * reserve `reserveWidth` rather than a remembered constant.
+   */
+  visible: boolean
+  /**
+   * The block's true position, in CSS px from the top-left of the web
+   * viewport. Negative where the buttons are not over the page at all: above
+   * it in a plain titlebar window, to its left in a window whose web content
+   * starts after a native sidebar.
+   */
   x: number
-  /** Top edge of the button block, in CSS px from the window's top edge. */
   y: number
-  /** Window's left edge to the right edge of the block, in CSS px. */
   width: number
-  /** Height of the strip to keep clear around the buttons, in CSS px. */
   height: number
+  /**
+   * The room to leave inside the page — the block's far edge, or zero when it
+   * does not reach into the page. `--craft-window-controls-width` / `-height`.
+   */
+  reserveWidth: number
+  reserveHeight: number
+  /**
+   * Where the block starts inside the page, zero unless it overlaps.
+   * `--craft-window-controls-inset-x` / `-inset-y`.
+   */
+  insetX: number
+  insetY: number
+  /**
+   * The `display` a replica should take: `'none'` wherever real buttons exist
+   * and wherever there is no window to control, and `null` in a frameless
+   * window, where the page's own controls are the real ones. Published as
+   * `--craft-window-controls-replicas`, which is *removed* rather than set when
+   * this is null, so the page's own fallback applies.
+   */
+  replicas: 'none' | null
 }
 
 export interface CraftBridgeAPI {
