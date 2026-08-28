@@ -1329,7 +1329,17 @@ pub fn build(b: *std.Build) void {
     if (js_test_run) |run| test_step.dependOn(&run.step);
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(&run_mobile_tests.step);
-    test_step.dependOn(&run_ios_surface_tests.step);
+    // Darwin only. `objc_runtime.zig` resolves `objc` to an empty struct off
+    // Apple platforms, so `ios.zig` cannot compile on Linux at all — `objc.id`
+    // is not a member of `struct {}`. Forcing analysis of every iOS
+    // declaration there asks the compiler to check code that has no meaning on
+    // the target, and CI is right to refuse.
+    //
+    // The conformance gate is not gated the same way: it scans source text and
+    // touches no platform types, so it runs everywhere.
+    if (target.result.os.tag.isDarwin()) {
+        test_step.dependOn(&run_ios_surface_tests.step);
+    }
     test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
@@ -1410,7 +1420,9 @@ pub fn build(b: *std.Build) void {
     test_mobile_step.dependOn(&run_mobile_tests.step);
 
     const test_ios_step = b.step("test:ios", "Run the iOS surface gate");
-    test_ios_step.dependOn(&run_ios_surface_tests.step);
+    if (target.result.os.tag.isDarwin()) {
+        test_ios_step.dependOn(&run_ios_surface_tests.step);
+    }
     test_ios_step.dependOn(&run_ios_conformance_tests.step);
 
     const test_menubar_step = b.step("test:menubar", "Run Menubar tests");

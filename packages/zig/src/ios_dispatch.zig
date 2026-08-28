@@ -24,7 +24,6 @@ const objc = objc_runtime.objc;
 /// `webkit.messageHandlers.craft` was undefined, so every call took the
 /// fallback branch and resolved `{success:true, browser:true}`. "The bridge
 /// worked" and "there is no bridge" were the same value.
-
 /// The webview a reply is evaluated against.
 ///
 /// One slot, because iOS has one webview. When multi-window arrives this

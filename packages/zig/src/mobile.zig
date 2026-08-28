@@ -542,7 +542,6 @@ pub const iOS = struct {
             },
         }
     }
-
 };
 
 /// Android Native Integration

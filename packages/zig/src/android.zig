@@ -253,7 +253,6 @@ pub const JSBridge = struct {
 
         try self.activity.?.evaluateJavaScript(script, null);
     }
-
 };
 
 // ============================================================================
