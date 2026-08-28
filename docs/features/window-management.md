@@ -240,6 +240,20 @@ The same facts land on the document, so CSS can use them without JavaScript:
 `--craft-window-controls-height`, `--craft-window-controls-inset-x` and
 `--craft-window-controls-inset-y` are published alongside it.
 
+A UI shared between a Craft window and a browser — a component library, a page
+that is also a marketing demo — often wants mock traffic lights in the browser
+and must not draw them here. `--craft-window-controls-replicas` is the `display`
+value a replica should take: `none` wherever the platform drew real buttons, and
+unset in a frameless window, where the page really does own its chrome. Written
+as a fallback, it needs no JavaScript and cannot flash, because the host sets it
+before the document is parsed:
+
+```css
+.traffic-lights {
+  display: var(--craft-window-controls-replicas, flex);
+}
+```
+
 A frameless window is the one case where a page owns its window chrome, and it
 gets `style: 'none'` to say so — see below.
 

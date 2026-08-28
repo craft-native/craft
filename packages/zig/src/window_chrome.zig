@@ -17,10 +17,20 @@
 //!   window.craft.windowControls   { style, native, x, y, width, height }
 //!   <html data-craft-window-controls="titlebar|overlay|none">
 //!   --craft-window-controls-width / -height / -inset-x / -inset-y
+//!   --craft-window-controls-replicas
 //!
-//! The CSS variables are the room to leave inside the page, which is why they
-//! are zero for a `titlebar` window: there the buttons sit in the titlebar,
-//! above the web content, and nothing in the page overlaps them.
+//! The first group is the room to leave inside the page, which is why it is
+//! zero for a `titlebar` window: there the buttons sit in the titlebar, above
+//! the web content, and nothing in the page overlaps them.
+//!
+//! `--craft-window-controls-replicas` is for the other half of the problem — a
+//! UI shared between a Craft window and a browser, which wants its mock lights
+//! in the browser and must not draw them here. It is the `display` value a
+//! replica should take, set to `none` wherever the platform drew real buttons
+//! and left unset in a frameless window, where the page really does own its
+//! chrome. A page writes it as a fallback and needs no JavaScript to adapt:
+//!
+//!     .traffic-lights { display: var(--craft-window-controls-replicas, flex); }
 //!
 //! Geometry is AppKit's own placement, measured on a titlebar-hidden Craft
 //! window at 2x: 12pt discs, 20pt apart, the leftmost 10pt from the window's
@@ -54,7 +64,12 @@ fn make(
     comptime native: []const u8,
     comptime reserve_w: []const u8,
     comptime reserve_h: []const u8,
+    comptime hide_replicas: bool,
 ) []const u8 {
+    const replicas = if (hide_replicas)
+        "    el.style.setProperty('--craft-window-controls-replicas', 'none');\n"
+    else
+        "";
     return "window.craft = window.craft || {};\n" ++
         "window.craft.windowControls = Object.freeze({\n" ++
         "  style: '" ++ style ++ "',\n" ++
@@ -71,6 +86,7 @@ fn make(
         "    el.style.setProperty('--craft-window-controls-height', '" ++ reserve_h ++ "px');\n" ++
         "    el.style.setProperty('--craft-window-controls-inset-x', '" ++ inset_x ++ "px');\n" ++
         "    el.style.setProperty('--craft-window-controls-inset-y', '" ++ inset_y ++ "px');\n" ++
+        replicas ++
         "  }\n" ++
         "  apply();\n" ++
         "  document.addEventListener('DOMContentLoaded', apply);\n" ++
@@ -80,9 +96,11 @@ fn make(
 /// The document-start script for a window with these controls.
 pub fn scriptFor(controls: WindowControls) []const u8 {
     return switch (controls) {
-        .titlebar => comptime make("titlebar", "true", "0", "0"),
-        .overlay => comptime make("overlay", "true", block_width, block_height),
-        .none => comptime make("none", "false", "0", "0"),
+        .titlebar => comptime make("titlebar", "true", "0", "0", true),
+        .overlay => comptime make("overlay", "true", block_width, block_height, true),
+        // A frameless window has no buttons to be replicas *of*, so the page
+        // keeps whatever chrome it draws.
+        .none => comptime make("none", "false", "0", "0", false),
     };
 }
 
@@ -100,6 +118,15 @@ test "only an overlay window asks the page to leave room" {
     try testing.expect(std.mem.indexOf(u8, scriptFor(.overlay), "'62px'") != null);
     try testing.expect(std.mem.indexOf(u8, scriptFor(.titlebar), "'62px'") == null);
     try testing.expect(std.mem.indexOf(u8, scriptFor(.none), "'62px'") == null);
+}
+
+test "replicas are suppressed wherever the platform drew real buttons" {
+    const testing = std.testing;
+    const marker = "'--craft-window-controls-replicas', 'none'";
+    try testing.expect(std.mem.indexOf(u8, scriptFor(.titlebar), marker) != null);
+    try testing.expect(std.mem.indexOf(u8, scriptFor(.overlay), marker) != null);
+    // Frameless: nothing to duplicate, so a page's own chrome stands.
+    try testing.expect(std.mem.indexOf(u8, scriptFor(.none), marker) == null);
 }
 
 test "a frameless window says the platform draws nothing" {
