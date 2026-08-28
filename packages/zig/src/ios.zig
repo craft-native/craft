@@ -2,6 +2,7 @@ const std = @import("std");
 const objc_runtime = @import("objc_runtime.zig");
 const mobile = @import("mobile.zig");
 const ios_dispatch = @import("ios_dispatch.zig");
+const window_chrome = @import("window_chrome.zig");
 
 /// iOS Application Infrastructure
 /// Provides UIApplicationDelegate, UIViewController, and full app lifecycle management
@@ -151,6 +152,28 @@ fn installUserScript(content_controller: objc.id, source: [:0]const u8) !void {
 const phase1_user_script: [:0]const u8 =
     \\window.__craftInjectedAtDocumentStart = true;
 ;
+
+/// Tell the page there is no window chrome here.
+///
+/// A component library renders the same markup on a Mac and on a phone. On the
+/// Mac it must not draw window buttons, because AppKit already did; on a phone
+/// it must not draw them either, because there is no window to close, minimise
+/// or zoom — three fake macOS discs in the corner of an iPhone screen are
+/// decoration pretending to be controls.
+///
+/// Saying so explicitly is what makes the difference reachable: the same CSS
+/// variable answers "should I draw these?" on both platforms, and the page
+/// needs no `navigator.platform` sniffing to ask.
+fn installWindowChromeScript(content_controller: objc.id) !void {
+    var buffer: [window_chrome.seed_script_size + 1]u8 = undefined;
+    const script = window_chrome.seedScript(
+        window_chrome.classify(.absent, null, .{}),
+        buffer[0 .. buffer.len - 1],
+    ) catch return error.WindowChromeScriptTooLong;
+
+    buffer[script.len] = 0;
+    try installUserScript(content_controller, buffer[0..script.len :0]);
+}
 
 // ============================================================================
 // UIApplicationMain
@@ -469,6 +492,7 @@ pub const CraftAppDelegate = struct {
 
         try installScriptMessageHandler(content_controller);
         try installUserScript(content_controller, phase1_user_script);
+        try installWindowChromeScript(content_controller);
 
         const sel_set_ucc = objc.sel_registerName("setUserContentController:") orelse
             return error.SelectorNotFound;
