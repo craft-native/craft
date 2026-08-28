@@ -161,6 +161,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/mobile.zig"),
     });
 
+    // Rooted at `src/ios.zig`, which reaches `src/mobile.zig` through its own
+    // relative import — so this module owns both files and must not be mixed
+    // with `mobile_module` in one compilation.
+    const ios_module = b.createModule(.{
+        .root_source_file = b.path("src/ios.zig"),
+    });
+
     const menubar_module = b.createModule(.{
         .root_source_file = b.path("src/menubar.zig"),
     });
@@ -290,6 +297,65 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "../src/mobile.zig", .module = mobile_module },
             },
         }),
+    });
+
+    // The iOS surface gate. Rooted at `src/ios.zig` rather than sharing
+    // `mobile_module`, because a file may belong to only one module per
+    // compilation and `ios.zig` reaches `mobile.zig` through a relative
+    // import of its own. The `mobile.iOS` half of the gate therefore lives in
+    // `test/mobile_test.zig`, which already owns that module.
+    //
+    // This builds for the host, so it costs seconds and runs in `zig build
+    // test` — which is the point. Cross-compiling to iOS is the truth, but it
+    // is not a loop anyone iterates in locally.
+    const ios_surface_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ios_surface_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "../src/ios.zig", .module = ios_module },
+            },
+        }),
+    });
+    // Forcing analysis of every declaration means the linker now sees every
+    // `objc_msgSend`/`sel_registerName` reference too, so the ObjC runtime has
+    // to be present. No frameworks are needed: nothing here calls UIKit or
+    // AppKit, it only resolves classes by name at runtime — which is exactly
+    // why `[UIScreen mainScreen]` returns null on the host rather than failing
+    // to link.
+    if (target.result.os.tag.isDarwin()) {
+        ios_surface_tests.root_module.link_libc = true;
+        ios_surface_tests.root_module.linkSystemLibrary("objc", .{});
+        // `ios_dispatch` replies through `bridge_error`, which reaches
+        // `bridge.evalJS`, which on a macOS *host* build resolves to the
+        // desktop arm and drags in the AppKit/CoreFoundation surface behind it.
+        // That is the price of the gate analysing the real reply path rather
+        // than a stub of one, and it is the right trade: the alternative is a
+        // test that compiles iOS code which never reaches the code it replies
+        // through.
+        ios_surface_tests.root_module.linkFramework("Cocoa", .{});
+        ios_surface_tests.root_module.linkFramework("WebKit", .{});
+        ios_surface_tests.root_module.linkFramework("CoreFoundation", .{});
+        ios_surface_tests.root_module.linkFramework("CoreGraphics", .{});
+        ios_surface_tests.root_module.linkFramework("CoreMIDI", .{});
+    }
+
+    // The iOS conformance gate. It embeds the Swift template as the migration
+    // spec and `bridge_mobile.zig` as what Zig currently serves, so an action
+    // cannot be dropped on the way across without the build saying so.
+    const ios_conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ios_conformance_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
+        .root_source_file = b.path("../ios/templates/CraftApp.swift"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile.zig", .{
+        .root_source_file = b.path("src/bridge_mobile.zig"),
     });
 
     const menubar_tests = b.addTest(.{
@@ -1136,6 +1202,8 @@ pub fn build(b: *std.Build) void {
 
     const run_api_tests = b.addRunArtifact(api_tests);
     const run_mobile_tests = b.addRunArtifact(mobile_tests);
+    const run_ios_surface_tests = b.addRunArtifact(ios_surface_tests);
+    const run_ios_conformance_tests = b.addRunArtifact(ios_conformance_tests);
     const run_menubar_tests = b.addRunArtifact(menubar_tests);
     const run_components_tests = b.addRunArtifact(components_tests);
     const run_gpu_tests = b.addRunArtifact(gpu_tests);
@@ -1261,6 +1329,18 @@ pub fn build(b: *std.Build) void {
     if (js_test_run) |run| test_step.dependOn(&run.step);
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(&run_mobile_tests.step);
+    // Darwin only. `objc_runtime.zig` resolves `objc` to an empty struct off
+    // Apple platforms, so `ios.zig` cannot compile on Linux at all — `objc.id`
+    // is not a member of `struct {}`. Forcing analysis of every iOS
+    // declaration there asks the compiler to check code that has no meaning on
+    // the target, and CI is right to refuse.
+    //
+    // The conformance gate is not gated the same way: it scans source text and
+    // touches no platform types, so it runs everywhere.
+    if (target.result.os.tag.isDarwin()) {
+        test_step.dependOn(&run_ios_surface_tests.step);
+    }
+    test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -1338,6 +1418,12 @@ pub fn build(b: *std.Build) void {
 
     const test_mobile_step = b.step("test:mobile", "Run Mobile tests");
     test_mobile_step.dependOn(&run_mobile_tests.step);
+
+    const test_ios_step = b.step("test:ios", "Run the iOS surface gate");
+    if (target.result.os.tag.isDarwin()) {
+        test_ios_step.dependOn(&run_ios_surface_tests.step);
+    }
+    test_ios_step.dependOn(&run_ios_conformance_tests.step);
 
     const test_menubar_step = b.step("test:menubar", "Run Menubar tests");
     test_menubar_step.dependOn(&run_menubar_tests.step);
@@ -1792,11 +1878,6 @@ pub fn build(b: *std.Build) void {
     const build_android_x86 = b.step("build-android-x86", "Build for Android (x86_64)");
     const build_android_all = b.step("build-android-all", "Build for Android (all architectures)");
 
-    // Android module
-    const android_module = b.createModule(.{
-        .root_source_file = b.path("src/android.zig"),
-    });
-
     // Android Device (arm64)
     const android_arm64_target = b.resolveTargetQuery(.{
         .cpu_arch = .aarch64,
@@ -1847,46 +1928,13 @@ pub fn build(b: *std.Build) void {
     build_android_x86.dependOn(&android_x86_install.step);
     build_android_all.dependOn(&android_x86_install.step);
 
-    // ========================================================================
-    // Android Example (demo mode - runs on host for testing)
-    // ========================================================================
-
-    const run_android = b.step("run-android", "Run the Android example (demo mode)");
-
-    const android_demo_exe = b.addExecutable(.{
-        .name = "android-example",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/android/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "craft", .module = craft_module },
-                .{ .name = "android", .module = android_module },
-            },
-        }),
-    });
-
-    switch (target_os) {
-        .macos => {
-            android_demo_exe.root_module.linkFramework("Cocoa", .{});
-            android_demo_exe.root_module.linkFramework("WebKit", .{});
-        },
-        .linux => {
-            android_demo_exe.root_module.linkSystemLibrary("gtk+-3.0", .{});
-            android_demo_exe.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-        .windows => {
-            android_demo_exe.root_module.linkSystemLibrary("ole32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("user32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("gdi32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("shell32", .{});
-        },
-        else => {},
-    }
-    android_demo_exe.root_module.link_libc = true;
-
-    const run_android_cmd = b.addRunArtifact(android_demo_exe);
-    run_android.dependOn(&run_android_cmd.step);
+    // The `run-android` step and its `android-example` executable used to sit
+    // here. It was not an Android artifact: it built for the *host* and linked
+    // Cocoa/WebKit on macOS and GTK on Linux, so "running the Android example"
+    // meant running a desktop printf demo. Its source called
+    // `AndroidFeatures.getDeviceInfo()`, which returned a hardcoded
+    // "Android Device" / SDK 34 no matter what, and printed the result as if
+    // it had queried something.
 
     // ========================================================================
     // Android Tests

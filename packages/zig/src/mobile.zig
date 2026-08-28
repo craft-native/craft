@@ -1,209 +1,12 @@
 const std = @import("std");
 const objc_runtime = @import("objc_runtime.zig");
+const compat = @import("compat.zig");
 
 /// Mobile Platform Support
 /// Provides iOS and Android native integration
 
 // Use the proper Objective-C runtime wrapper
 const objc = objc_runtime.objc;
-
-// JNI for Android
-const jni = if (@import("builtin").target.os.tag == .linux) struct {
-    // JNI types
-    pub const JNIEnv = opaque {};
-    pub const jobject = ?*anyopaque;
-    pub const jclass = ?*anyopaque;
-    pub const jmethodID = ?*anyopaque;
-    pub const jfieldID = ?*anyopaque;
-    pub const jstring = ?*anyopaque;
-    pub const jboolean = u8;
-    pub const jint = i32;
-    pub const jlong = i64;
-
-    // JNI function pointers (these will be looked up from JNIEnv vtable)
-    // The JNIEnv is actually a pointer to a vtable of function pointers
-    const JNINativeInterface = extern struct {
-        reserved0: ?*anyopaque,
-        reserved1: ?*anyopaque,
-        reserved2: ?*anyopaque,
-        reserved3: ?*anyopaque,
-        GetVersion: ?*const fn (*JNIEnv) callconv(.c) jint,
-        // ... many more function pointers ...
-        FindClass: ?*const fn (*JNIEnv, [*:0]const u8) callconv(.c) jclass,
-        GetMethodID: ?*const fn (*JNIEnv, jclass, [*:0]const u8, [*:0]const u8) callconv(.c) jmethodID,
-        GetObjectClass: ?*const fn (*JNIEnv, jobject) callconv(.c) jclass,
-        CallObjectMethodV: ?*const fn (*JNIEnv, jobject, jmethodID, ...) callconv(.c) jobject,
-        CallVoidMethodV: ?*const fn (*JNIEnv, jobject, jmethodID, ...) callconv(.c) void,
-        NewStringUTF: ?*const fn (*JNIEnv, [*:0]const u8) callconv(.c) jstring,
-        GetStringUTFChars: ?*const fn (*JNIEnv, jstring, ?*jboolean) callconv(.c) [*:0]const u8,
-        ReleaseStringUTFChars: ?*const fn (*JNIEnv, jstring, [*:0]const u8) callconv(.c) void,
-    };
-
-    // Helper to get the function table from JNIEnv
-    fn getTable(env: *JNIEnv) *JNINativeInterface {
-        const env_ptr: **JNINativeInterface = @ptrCast(@alignCast(env));
-        return env_ptr.*;
-    }
-
-    // Wrapper functions
-    pub fn FindClass(env: *JNIEnv, name: [*:0]const u8) jclass {
-        const table = getTable(env);
-        if (table.FindClass) |func| {
-            return func(env, name);
-        }
-        return null;
-    }
-
-    pub fn GetObjectClass(env: *JNIEnv, obj: jobject) jclass {
-        const table = getTable(env);
-        if (table.GetObjectClass) |func| {
-            return func(env, obj);
-        }
-        return null;
-    }
-
-    pub fn GetMethodID(env: *JNIEnv, cls: jclass, name: [*:0]const u8, sig: [*:0]const u8) jmethodID {
-        const table = getTable(env);
-        if (table.GetMethodID) |func| {
-            return func(env, cls, name, sig);
-        }
-        return null;
-    }
-
-    pub fn CallVoidMethod(env: *JNIEnv, obj: jobject, methodID: jmethodID, args: anytype) void {
-        const table = getTable(env);
-        if (table.CallVoidMethodV) |func| {
-            _ = @call(.auto, func, .{ env, obj, methodID } ++ args);
-        }
-    }
-
-    pub fn CallObjectMethod(env: *JNIEnv, obj: jobject, methodID: jmethodID, args: anytype) jobject {
-        const table = getTable(env);
-        if (table.CallObjectMethodV) |func| {
-            return @call(.auto, func, .{ env, obj, methodID } ++ args);
-        }
-        return null;
-    }
-
-    pub fn NewStringUTF(env: *JNIEnv, bytes: [*:0]const u8) jstring {
-        const table = getTable(env);
-        if (table.NewStringUTF) |func| {
-            return func(env, bytes);
-        }
-        return null;
-    }
-
-    pub fn GetStringUTFChars(env: *JNIEnv, string: jstring, isCopy: ?*jboolean) [*:0]const u8 {
-        const table = getTable(env);
-        if (table.GetStringUTFChars) |func| {
-            return func(env, string, isCopy);
-        }
-        return @ptrCast(&[_]u8{0});
-    }
-
-    pub fn ReleaseStringUTFChars(env: *JNIEnv, string: jstring, utf: [*:0]const u8) void {
-        const table = getTable(env);
-        if (table.ReleaseStringUTFChars) |func| {
-            func(env, string, utf);
-        }
-    }
-} else struct {};
-
-// ============================================================================
-// Android Callback Storage
-// ============================================================================
-
-/// Stored callbacks for Android ValueCallback (JS evaluation) and permissions
-pub const AndroidCallbackStorage = struct {
-    // JavaScript evaluation callbacks - indexed by request ID
-    js_callbacks: [16]?*const fn ([]const u8) void = @splat(null),
-    js_callback_next_id: u32 = 0,
-
-    // Permission callbacks - indexed by request code
-    permission_callbacks: [16]?*const fn (bool) void = @splat(null),
-
-    const Self = @This();
-
-    /// Store a JS callback and return its ID
-    pub fn storeJsCallback(self: *Self, callback: *const fn ([]const u8) void) u32 {
-        const id = self.js_callback_next_id % 16;
-        self.js_callbacks[id] = callback;
-        self.js_callback_next_id +%= 1;
-        return id;
-    }
-
-    /// Invoke and clear a JS callback
-    pub fn invokeJsCallback(self: *Self, id: u32, result: []const u8) void {
-        const idx = id % 16;
-        if (self.js_callbacks[idx]) |callback| {
-            callback(result);
-            self.js_callbacks[idx] = null;
-        }
-    }
-
-    /// Store a permission callback with request code
-    pub fn storePermissionCallback(self: *Self, request_code: u32, callback: *const fn (bool) void) void {
-        const idx = request_code % 16;
-        self.permission_callbacks[idx] = callback;
-    }
-
-    /// Invoke and clear a permission callback
-    pub fn invokePermissionCallback(self: *Self, request_code: u32, granted: bool) void {
-        const idx = request_code % 16;
-        if (self.permission_callbacks[idx]) |callback| {
-            callback(granted);
-            self.permission_callbacks[idx] = null;
-        }
-    }
-};
-
-/// Global callback storage for Android
-var android_callbacks: AndroidCallbackStorage = .{};
-
-// JNI export functions are only compiled on Android (Linux target)
-// On other platforms, these are no-ops
-comptime {
-    if (@import("builtin").target.os.tag == .linux) {
-        @export(&Java_app_craft_CraftValueCallback_nativeOnReceiveValue_impl, .{ .name = "Java_app_craft_CraftValueCallback_nativeOnReceiveValue" });
-        @export(&Java_app_craft_CraftActivity_nativeOnPermissionResult_impl, .{ .name = "Java_app_craft_CraftActivity_nativeOnPermissionResult" });
-    }
-}
-
-/// JNI callback function exported for ValueCallback.onReceiveValue
-/// Called from Java when evaluateJavascript completes
-fn Java_app_craft_CraftValueCallback_nativeOnReceiveValue_impl(
-    env: *jni.JNIEnv,
-    this: jni.jobject,
-    callback_id: jni.jint,
-    result: jni.jstring,
-) callconv(.c) void {
-    _ = this;
-
-    // Convert Java string result to Zig slice
-    const result_chars = jni.GetStringUTFChars(env, result, null);
-    const result_slice = std.mem.span(result_chars);
-
-    // Invoke the stored callback
-    android_callbacks.invokeJsCallback(@intCast(callback_id), result_slice);
-
-    // Release the string
-    jni.ReleaseStringUTFChars(env, result, result_chars);
-}
-
-/// JNI callback function exported for permission results
-/// Called from Activity.onRequestPermissionsResult
-fn Java_app_craft_CraftActivity_nativeOnPermissionResult_impl(
-    env: *jni.JNIEnv,
-    this: jni.jobject,
-    request_code: jni.jint,
-    granted: jni.jboolean,
-) callconv(.c) void {
-    _ = env;
-    _ = this;
-
-    // Invoke the stored callback
-    android_callbacks.invokePermissionCallback(@intCast(request_code), granted != 0);
-}
 
 pub const Platform = enum {
     ios,
@@ -265,7 +68,7 @@ pub const NativeObjectManager = struct {
             .ptr = ptr,
             .size = size,
             .type_name = type_name,
-            .allocation_time = std.time.timestamp(),
+            .allocation_time = compat.timestamp(),
         };
 
         try self.tracked_objects.put(addr, info);
@@ -322,7 +125,7 @@ pub const NativeObjectManager = struct {
 
         std.debug.print("Memory Leak Report:\n", .{});
         while (it.next()) |entry| {
-            const age = std.time.timestamp() - entry.value.*.allocation_time;
+            const age = compat.timestamp() - entry.value.*.allocation_time;
             std.debug.print("  Leaked {s} at 0x{x} (size: {d} bytes, age: {d}s)\n", .{
                 entry.value.*.type_name,
                 entry.key_ptr.*,
@@ -469,11 +272,21 @@ pub const iOS = struct {
         const allocated = objc.msgSendId(WKWebViewClass, sel_alloc);
         const Fn = *const fn (objc.id, objc.SEL, objc.CGRect, objc.id) callconv(.c) objc.id;
         const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const webview = func(allocated, sel_initWithFrame, frame, configObj);
+        // `objc.id` is `?*anyopaque`, so this is optional and a failed
+        // `initWithFrame:configuration:` comes back as null. Unwrap once, here,
+        // rather than `@ptrCast` the optional away further down — a cast cannot
+        // discard optionality, and pretending otherwise is how a nil webview
+        // would have reached callers as a live pointer.
+        const webview = func(allocated, sel_initWithFrame, frame, configObj) orelse
+            return error.WebViewCreationFailed;
 
-        // Track the webview in memory manager
+        // Track the webview in memory manager.
+        //
+        // The size reported here is `@sizeOf(WKWebView)` as the runtime knows
+        // it, not `@sizeOf(@TypeOf(webview))` — the latter is the width of a
+        // pointer, which made every WKWebView in the accounting cost 8 bytes.
         if (getGlobalObjectManager()) |manager| {
-            try manager.trackObject(webview, @sizeOf(@TypeOf(webview)), "WKWebView");
+            try manager.trackObject(webview, objc.classInstanceSize(WKWebViewClass), "WKWebView");
         }
 
         // Associate allocator with webview for cleanup
@@ -567,82 +380,35 @@ pub const iOS = struct {
         // Create NSString from script
         const ns_script = try objc.createNSString(script, allocator.*);
 
-        // Create completion handler block for JavaScript evaluation
         const sel_evaluateJavaScript = objc.sel_registerName("evaluateJavaScript:completionHandler:") orelse return error.SelectorNotFound;
 
-        // Block structure for completion handler
-        // typedef void (^CompletionHandler)(id result, NSError *error);
-        const BlockDescriptor = extern struct {
-            reserved: c_ulong,
-            size: c_ulong,
-        };
+        // A completion handler is not wired up yet, and asking for one is an
+        // error rather than a silent drop.
+        //
+        // The block that used to live here did not work and could not have.
+        // It was built on the stack and handed to an *asynchronous* API — the
+        // comment beside it read "valid for duration of call", which is not
+        // the property an async callee needs. `_Block_copy` copies the block
+        // body but keeps the descriptor *pointer*, and that descriptor was
+        // also a function local, so both were dead before WebKit ever invoked
+        // them. Its `invoke` signature took `?objc.id`, which is `??*anyopaque`
+        // and illegal under `callconv(.c)`; and the `callback` field it stored
+        // had a different signature from this function's own parameter, so
+        // even the assignment was a type error. None of that was ever noticed
+        // because nothing reachable from the iOS exports called this function —
+        // which is precisely what `test/ios_surface_test.zig` now prevents.
+        //
+        // Doing it correctly means a module-level block with static storage
+        // (see `bridge_permissions.zig:131-164` for the shape that works) plus
+        // a pending-request table so the reply can find its caller. That lands
+        // with the dispatcher, not here.
+        if (callback != null) return error.CompletionHandlerNotImplemented;
 
-        const Block = extern struct {
-            isa: ?*anyopaque,
-            flags: c_int,
-            reserved: c_int,
-            invoke: ?*const fn (*@This(), ?objc.id, ?objc.id) callconv(.c) void,
-            descriptor: *const BlockDescriptor,
-            callback: ?*const fn (?[]const u8, ?[]const u8) void,
-        };
-
-        // Block invoke function that calls our Zig callback
-        const block_invoke = struct {
-            fn invoke(block: *Block, result: ?objc.id, err: ?objc.id) callconv(.c) void {
-                var result_str: ?[]const u8 = null;
-                var error_str: ?[]const u8 = null;
-
-                // Extract result string if present
-                if (result) |res| {
-                    const desc = @import("objc_runtime.zig").objc.objc_msgSend;
-                    const desc_fn: *const fn (objc.id, objc.SEL) callconv(.c) objc.id = @ptrCast(&desc);
-                    const description = desc_fn(res, objc.sel_registerName("description").?);
-                    if (description != null) {
-                        const utf8_fn: *const fn (objc.id, objc.SEL) callconv(.c) [*:0]const u8 = @ptrCast(&desc);
-                        const utf8 = utf8_fn(description, objc.sel_registerName("UTF8String").?);
-                        result_str = std.mem.span(utf8);
-                    }
-                }
-
-                // Extract error string if present
-                if (err) |e| {
-                    const desc = @import("objc_runtime.zig").objc.objc_msgSend;
-                    const desc_fn: *const fn (objc.id, objc.SEL) callconv(.c) objc.id = @ptrCast(&desc);
-                    const description = desc_fn(e, objc.sel_registerName("localizedDescription").?);
-                    if (description != null) {
-                        const utf8_fn: *const fn (objc.id, objc.SEL) callconv(.c) [*:0]const u8 = @ptrCast(&desc);
-                        const utf8 = utf8_fn(description, objc.sel_registerName("UTF8String").?);
-                        error_str = std.mem.span(utf8);
-                    }
-                }
-
-                // Call the user's callback
-                if (block.callback) |cb| {
-                    cb(result_str, error_str);
-                }
-            }
-        }.invoke;
-
-        // Static descriptor (must persist)
-        const descriptor = BlockDescriptor{
-            .reserved = 0,
-            .size = @sizeOf(Block),
-        };
-
-        // Create block on stack (valid for duration of call)
-        var block = Block{
-            .isa = @extern(*anyopaque, .{ .name = "_NSConcreteStackBlock" }),
-            .flags = 0,
-            .reserved = 0,
-            .invoke = block_invoke,
-            .descriptor = &descriptor,
-            .callback = callback,
-        };
-
-        // Call evaluateJavaScript with our block
-        const Fn = *const fn (*anyopaque, objc.SEL, objc.id, *Block) callconv(.c) void;
+        // Passing nil for `completionHandler:` is legal and is what a
+        // fire-and-forget evaluation wants.
+        const Fn = *const fn (*anyopaque, objc.SEL, objc.id, ?*anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        func(webview_ptr, sel_evaluateJavaScript, ns_script, &block);
+        func(webview_ptr, sel_evaluateJavaScript, ns_script, null);
     }
 
     /// Handle Deep Links
@@ -663,78 +429,6 @@ pub const iOS = struct {
         reminders,
     };
 
-    /// Check current permission status
-    pub fn checkPermissionStatus(permission: Permission) !PermissionStatus {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return error.UnsupportedPlatform;
-        }
-
-        switch (permission) {
-            .camera, .microphone => {
-                const AVCaptureDeviceClass = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForMediaType:") orelse return error.SelectorNotFound;
-
-                // AVMediaTypeVideo or AVMediaTypeAudio
-                const mediaType = if (permission == .camera) "vide" else "soun";
-                const mediaTypeStr = objc.objc_getClass("AVMediaTypeVideo") orelse {
-                    // Fallback - create NSString for media type
-                    const allocator = std.heap.page_allocator;
-                    const ns_media = try objc.createNSString(mediaType, allocator);
-                    const Fn = *const fn (objc.Class, objc.SEL, objc.id) callconv(.c) i64;
-                    const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                    const status = func(AVCaptureDeviceClass, sel_authorizationStatus, ns_media);
-                    return statusFromAVAuthorizationStatus(status);
-                };
-
-                const Fn = *const fn (objc.Class, objc.SEL, objc.id) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(AVCaptureDeviceClass, sel_authorizationStatus, mediaTypeStr);
-                return statusFromAVAuthorizationStatus(status);
-            },
-            .location => {
-                const CLLocationManagerClass = objc.objc_getClass("CLLocationManager") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatus") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL) callconv(.c) i32;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(CLLocationManagerClass, sel_authorizationStatus);
-                return statusFromCLAuthorizationStatus(status);
-            },
-            .photos => {
-                const PHPhotoLibraryClass = objc.objc_getClass("PHPhotoLibrary") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatus") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(PHPhotoLibraryClass, sel_authorizationStatus);
-                return statusFromPHAuthorizationStatus(status);
-            },
-            .notifications => {
-                // Notifications require async check - return unknown for sync check
-                return .not_determined;
-            },
-            .contacts => {
-                const CNContactStoreClass = objc.objc_getClass("CNContactStore") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForEntityType:") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL, i64) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(CNContactStoreClass, sel_authorizationStatus, 0); // CNEntityTypeContacts = 0
-                return statusFromCNAuthorizationStatus(status);
-            },
-            .calendar, .reminders => {
-                const EKEventStoreClass = objc.objc_getClass("EKEventStore") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForEntityType:") orelse return error.SelectorNotFound;
-
-                const entity_type: i64 = if (permission == .calendar) 0 else 1; // EKEntityTypeEvent = 0, EKEntityTypeReminder = 1
-                const Fn = *const fn (objc.Class, objc.SEL, i64) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(EKEventStoreClass, sel_authorizationStatus, entity_type);
-                return statusFromEKAuthorizationStatus(status);
-            },
-        }
-    }
-
     pub const PermissionStatus = enum {
         not_determined,
         restricted,
@@ -743,145 +437,27 @@ pub const iOS = struct {
         limited, // For photos
     };
 
-    fn statusFromAVAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined, // AVAuthorizationStatusNotDetermined
-            1 => .restricted, // AVAuthorizationStatusRestricted
-            2 => .denied, // AVAuthorizationStatusDenied
-            3 => .authorized, // AVAuthorizationStatusAuthorized
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromCLAuthorizationStatus(status: i32) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined, // kCLAuthorizationStatusNotDetermined
-            1 => .restricted, // kCLAuthorizationStatusRestricted
-            2 => .denied, // kCLAuthorizationStatusDenied
-            3, 4 => .authorized, // kCLAuthorizationStatusAuthorizedAlways/WhenInUse
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromPHAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            4 => .limited, // PHAuthorizationStatusLimited (iOS 14+)
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromCNAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromEKAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            else => .not_determined,
-        };
-    }
-
-    pub fn requestPermission(permission: Permission, callback: *const fn (bool) void) !void {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return error.UnsupportedPlatform;
-        }
-
-        // Store callback for later invocation (would need proper callback management)
-        _ = callback;
-
-        // Different permission types require different iOS APIs
-        switch (permission) {
-            .camera, .microphone => {
-                const AVCaptureDeviceClass = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
-                const sel_requestAccessForMediaType = objc.sel_registerName("requestAccessForMediaType:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Create media type string
-                const allocator = std.heap.page_allocator;
-                const mediaType = if (permission == .camera) "vide" else "soun";
-                const ns_media = try objc.createNSString(mediaType, allocator);
-
-                // Request access (completion handler would need block creation)
-                const Fn = *const fn (objc.Class, objc.SEL, objc.id, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(AVCaptureDeviceClass, sel_requestAccessForMediaType, ns_media, null);
-            },
-            .location => {
-                const CLLocationManagerClass = objc.objc_getClass("CLLocationManager") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestWhenInUseAuthorization = objc.sel_registerName("requestWhenInUseAuthorization") orelse return error.SelectorNotFound;
-
-                // Create location manager and request authorization
-                const allocated = objc.msgSendId(CLLocationManagerClass, sel_alloc);
-                const manager = objc.msgSendId(allocated, sel_init);
-                objc.msgSend(manager, sel_requestWhenInUseAuthorization);
-            },
-            .photos => {
-                const PHPhotoLibraryClass = objc.objc_getClass("PHPhotoLibrary") orelse return error.ClassNotFound;
-                const sel_requestAuthorization = objc.sel_registerName("requestAuthorization:") orelse return error.SelectorNotFound;
-
-                // Request photo library access (completion handler would need block creation)
-                const Fn = *const fn (objc.Class, objc.SEL, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(PHPhotoLibraryClass, sel_requestAuthorization, null);
-            },
-            .notifications => {
-                const UNUserNotificationCenterClass = objc.objc_getClass("UNUserNotificationCenter") orelse return error.ClassNotFound;
-                const sel_currentNotificationCenter = objc.sel_registerName("currentNotificationCenter") orelse return error.SelectorNotFound;
-                const sel_requestAuthorizationWithOptions = objc.sel_registerName("requestAuthorizationWithOptions:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Get notification center
-                const center = objc.msgSendId(UNUserNotificationCenterClass, sel_currentNotificationCenter);
-
-                // Request authorization with alert, badge, sound (7 = alert | badge | sound)
-                const Fn = *const fn (objc.id, objc.SEL, u64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(center, sel_requestAuthorizationWithOptions, 7, null);
-            },
-            .contacts => {
-                const CNContactStoreClass = objc.objc_getClass("CNContactStore") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestAccessForEntityType = objc.sel_registerName("requestAccessForEntityType:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Create contact store and request access
-                const allocated = objc.msgSendId(CNContactStoreClass, sel_alloc);
-                const store = objc.msgSendId(allocated, sel_init);
-
-                const Fn = *const fn (objc.id, objc.SEL, i64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(store, sel_requestAccessForEntityType, 0, null); // CNEntityTypeContacts = 0
-            },
-            .calendar, .reminders => {
-                const EKEventStoreClass = objc.objc_getClass("EKEventStore") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestAccessToEntityType = objc.sel_registerName("requestAccessToEntityType:completion:") orelse return error.SelectorNotFound;
-
-                // Create event store and request access
-                const allocated = objc.msgSendId(EKEventStoreClass, sel_alloc);
-                const store = objc.msgSendId(allocated, sel_init);
-
-                const entity_type: i64 = if (permission == .calendar) 0 else 1;
-                const Fn = *const fn (objc.id, objc.SEL, i64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(store, sel_requestAccessToEntityType, entity_type, null);
-            },
-        }
-    }
+    // `checkPermissionStatus`, its five `statusFrom*AuthorizationStatus`
+    // mappers, `requestPermission`, and `showAlert` used to sit between these
+    // two enums. The types stay because they are the vocabulary; the functions
+    // went because each was broken in a way no test could have caught, since
+    // nothing ever called them:
+    //
+    //   - `requestPermission` took a `callback` and immediately did
+    //     `_ = callback;`, then passed null as the completion handler to all
+    //     five system calls. Permissions were write-only: the answer was never
+    //     delivered to anyone, and Apple documents a null completion for
+    //     `requestAccessForMediaType:` as undefined behaviour.
+    //   - `checkPermissionStatus` returned `.not_determined` for notifications
+    //     unconditionally, whatever the system actually held.
+    //   - `showAlert` presented against `keyWindow`, deprecated since iOS 13
+    //     and nil in any scene-based app — which is every app the templates
+    //     generate. It also computed an auto-dismiss delay and discarded it,
+    //     so the alert its own doc comment called self-dismissing never was.
+    //
+    // They return in the permissions phase, replies correlated by the
+    // envelope's request id through a pending-request table rather than by a
+    // callback pointer that nothing invokes.
 
     /// Haptic Feedback
     pub const HapticType = enum {
@@ -966,62 +542,6 @@ pub const iOS = struct {
             },
         }
     }
-
-    /// Show iOS Alert/Toast
-    /// Uses UIAlertController for simple toast-like alerts
-    pub fn showAlert(message: []const u8, duration_short: bool) void {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return;
-        }
-
-        // Get UIAlertController class
-        const UIAlertControllerClass = objc.objc_getClass("UIAlertController") orelse return;
-
-        // Create alert title NSString (nil for toast-like appearance)
-        const NSStringClass = objc.objc_getClass("NSString") orelse return;
-        const sel_stringWithUTF8String = objc.sel_registerName("stringWithUTF8String:") orelse return;
-
-        // Create message string
-        const allocator = std.heap.page_allocator;
-        const msg_z = @import("memory.zig").dupeZ(allocator, u8, message) catch return;
-        defer allocator.free(msg_z);
-
-        const Fn1 = *const fn (objc.id, objc.SEL, [*:0]const u8) callconv(.c) objc.id;
-        const stringFn: Fn1 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const messageStr = stringFn(NSStringClass, sel_stringWithUTF8String, msg_z.ptr);
-
-        // Create UIAlertController with style Alert (1)
-        const sel_alertWithTitle = objc.sel_registerName("alertControllerWithTitle:message:preferredStyle:") orelse return;
-        const Fn2 = *const fn (objc.id, objc.SEL, ?objc.id, objc.id, i64) callconv(.c) objc.id;
-        const alertFn: Fn2 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const alert = alertFn(UIAlertControllerClass, sel_alertWithTitle, null, messageStr, 1); // UIAlertControllerStyleAlert = 1
-
-        // Get the key window and root view controller
-        const UIApplicationClass = objc.objc_getClass("UIApplication") orelse return;
-        const sel_sharedApplication = objc.sel_registerName("sharedApplication") orelse return;
-        const app = objc.msgSendId(UIApplicationClass, sel_sharedApplication);
-
-        const sel_keyWindow = objc.sel_registerName("keyWindow") orelse return;
-        const window = objc.msgSendId(app, sel_keyWindow);
-        if (window == null) return;
-
-        const sel_rootViewController = objc.sel_registerName("rootViewController") orelse return;
-        const rootVC = objc.msgSendId(window, sel_rootViewController);
-        if (rootVC == null) return;
-
-        // Present the alert
-        const sel_presentViewController = objc.sel_registerName("presentViewController:animated:completion:") orelse return;
-        const Fn3 = *const fn (objc.id, objc.SEL, objc.id, bool, ?objc.id) callconv(.c) void;
-        const presentFn: Fn3 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        presentFn(rootVC, sel_presentViewController, alert, true, null);
-
-        // Auto-dismiss after delay using dispatch_after
-        const delay_seconds: f64 = if (duration_short) 2.0 else 3.5;
-        _ = delay_seconds;
-
-        // For simplicity, just present the alert - user can tap away
-        // In production, would use dispatch_after to dismiss automatically
-    }
 };
 
 /// Android Native Integration
@@ -1079,161 +599,6 @@ pub const Android = struct {
         };
     };
 
-    /// JNI Environment (global reference, must be set by Java/Kotlin code)
-    var jni_env: ?*jni.JNIEnv = null;
-
-    pub fn setJNIEnv(env: *jni.JNIEnv) void {
-        jni_env = env;
-    }
-
-    /// Create Android WebView
-    pub fn createWebView(allocator: std.mem.Allocator, context: *Context, config: WebViewConfig) !*WebView {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_class_name = "android/webkit/WebView";
-        const webview_class = try getJNIClass(env, webview_class_name);
-
-        // Get WebView constructor
-        const constructor_id = try getJNIMethod(env, webview_class, "<init>", "(Landroid/content/Context;)V");
-
-        // Create WebView instance
-        const webview_obj = jni.CallObjectMethod(env, context, constructor_id, .{});
-        if (webview_obj == null) {
-            return error.WebViewCreationFailed;
-        }
-
-        // Configure WebView settings
-        const settings_method = try getJNIMethod(env, webview_class, "getSettings", "()Landroid/webkit/WebSettings;");
-        const settings = jni.CallObjectMethod(env, webview_obj, settings_method, .{});
-
-        if (settings != null) {
-            const settings_class_name = "android/webkit/WebSettings";
-            const settings_class = try getJNIClass(env, settings_class_name);
-
-            // Enable JavaScript
-            if (config.javascript_enabled) {
-                const set_js_enabled = try getJNIMethod(env, settings_class, "setJavaScriptEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_js_enabled, .{@as(jni.jboolean, 1)});
-            }
-
-            // Enable DOM storage
-            if (config.dom_storage_enabled) {
-                const set_dom_storage = try getJNIMethod(env, settings_class, "setDomStorageEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_dom_storage, .{@as(jni.jboolean, 1)});
-            }
-
-            // Enable database
-            if (config.database_enabled) {
-                const set_database = try getJNIMethod(env, settings_class, "setDatabaseEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_database, .{@as(jni.jboolean, 1)});
-            }
-        }
-
-        _ = allocator; // Will be used for cleanup tracking
-        return @ptrCast(@alignCast(webview_obj));
-    }
-
-    /// Load URL in WebView
-    pub fn loadURL(webview: *WebView, url: []const u8) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_obj: jni.jobject = @ptrCast(@alignCast(webview));
-        const webview_class = jni.GetObjectClass(env, webview_obj);
-
-        // Get loadUrl method
-        const load_url_method = try getJNIMethod(env, webview_class, "loadUrl", "(Ljava/lang/String;)V");
-
-        // Convert URL to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const url_z = try @import("memory.zig").dupeZ(allocator, u8, url);
-        defer allocator.free(url_z);
-        const url_jstring = jni.NewStringUTF(env, url_z.ptr);
-
-        // Call loadUrl
-        jni.CallVoidMethod(env, webview_obj, load_url_method, .{url_jstring});
-    }
-
-    /// Execute JavaScript
-    pub fn evaluateJavaScript(webview: *WebView, script: []const u8, callback: ?*const fn ([]const u8) void) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_obj: jni.jobject = @ptrCast(@alignCast(webview));
-        const webview_class = jni.GetObjectClass(env, webview_obj);
-
-        // Get evaluateJavascript method
-        const eval_js_method = try getJNIMethod(env, webview_class, "evaluateJavascript", "(Ljava/lang/String;Landroid/webkit/ValueCallback;)V");
-
-        // Convert script to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const script_z = try @import("memory.zig").dupeZ(allocator, u8, script);
-        defer allocator.free(script_z);
-        const script_jstring = jni.NewStringUTF(env, script_z.ptr);
-
-        // Create ValueCallback wrapper if callback is provided
-        var value_callback: jni.jobject = null;
-        if (callback) |cb| {
-            // Store callback and get ID
-            const callback_id = android_callbacks.storeJsCallback(cb);
-
-            // Create CraftValueCallback instance (Java class that implements ValueCallback)
-            // Java code: new CraftValueCallback(callbackId)
-            const craft_callback_class = try getJNIClass(env, "app/craft/CraftValueCallback");
-            const callback_init = try getJNIMethod(env, craft_callback_class, "<init>", "(I)V");
-
-            // Allocate new object
-            const alloc_method = try getJNIMethod(env, craft_callback_class, "<init>", "(I)V");
-            _ = alloc_method;
-
-            // Create instance with callback ID
-            value_callback = jni.CallObjectMethod(env, craft_callback_class, callback_init, .{@as(jni.jint, @intCast(callback_id))});
-        }
-
-        // Call evaluateJavascript with the ValueCallback wrapper
-        jni.CallVoidMethod(env, webview_obj, eval_js_method, .{ script_jstring, value_callback });
-    }
-
-    /// Helper function to get JNI class
-    fn getJNIClass(env: *jni.JNIEnv, class_name: [:0]const u8) !jni.jclass {
-        const cls = jni.FindClass(env, class_name.ptr);
-        if (cls == null) {
-            return error.ClassNotFound;
-        }
-        return cls;
-    }
-
-    /// Helper function to get JNI method
-    fn getJNIMethod(env: *jni.JNIEnv, cls: jni.jclass, method_name: [:0]const u8, signature: [:0]const u8) !jni.jmethodID {
-        const method_id = jni.GetMethodID(env, cls, method_name.ptr, signature.ptr);
-        if (method_id == null) {
-            return error.MethodNotFound;
-        }
-        return method_id;
-    }
-
-    /// Handle Deep Links
-    pub fn handleDeepLink(intent_data: []const u8) !void {
-        _ = intent_data;
-        // Parse and handle Android Intent data
-    }
-
     /// Request Permissions
     pub const Permission = enum {
         camera,
@@ -1247,133 +612,36 @@ pub const Android = struct {
         record_audio,
     };
 
-    pub fn requestPermission(activity: *Activity, permission: Permission, callback: *const fn (bool) void) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get ActivityCompat class
-        const activity_compat_class = try getJNIClass(env, "androidx/core/app/ActivityCompat");
-
-        // Convert permission to Android permission string
-        const permission_str = switch (permission) {
-            .camera => "android.permission.CAMERA",
-            .microphone => "android.permission.RECORD_AUDIO",
-            .location_fine => "android.permission.ACCESS_FINE_LOCATION",
-            .location_coarse => "android.permission.ACCESS_COARSE_LOCATION",
-            .read_external_storage => "android.permission.READ_EXTERNAL_STORAGE",
-            .write_external_storage => "android.permission.WRITE_EXTERNAL_STORAGE",
-            .read_contacts => "android.permission.READ_CONTACTS",
-            .write_contacts => "android.permission.WRITE_CONTACTS",
-            .record_audio => "android.permission.RECORD_AUDIO",
-        };
-
-        // Get requestPermissions method
-        const request_permissions_method = try getJNIMethod(
-            env,
-            activity_compat_class,
-            "requestPermissions",
-            "(Landroid/app/Activity;[Ljava/lang/String;I)V",
-        );
-
-        // Create string array with single permission
-        const allocator = std.heap.page_allocator;
-        const permission_z = try @import("memory.zig").dupeZ(allocator, u8, permission_str);
-        defer allocator.free(permission_z);
-        const permission_jstring = jni.NewStringUTF(env, permission_z.ptr);
-
-        // Use a unique request code based on permission type
-        const request_code: u32 = 1001 + @backingInt(permission);
-
-        // Store callback to be invoked in onRequestPermissionsResult
-        if (callback) |cb| {
-            android_callbacks.storePermissionCallback(request_code, cb);
-        }
-
-        // Call requestPermissions with unique request code
-        const activity_obj: jni.jobject = @ptrCast(@alignCast(activity));
-        jni.CallVoidMethod(env, activity_obj, request_permissions_method, .{ permission_jstring, @as(jni.jint, @intCast(request_code)) });
-    }
-
-    /// Vibration
-    pub fn vibrate(context: *Context, duration_ms: u64) void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return;
-        }
-
-        const env = jni_env orelse return;
-
-        // Get Vibrator service
-        const context_obj: jni.jobject = @ptrCast(@alignCast(context));
-        const context_class = jni.GetObjectClass(env, context_obj);
-
-        const get_system_service_method = getJNIMethod(env, context_class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;") catch return;
-
-        // Get VIBRATOR_SERVICE constant
-        const vibrator_service_str = jni.NewStringUTF(env, "vibrator");
-        const vibrator_obj = jni.CallObjectMethod(env, context_obj, get_system_service_method, .{vibrator_service_str});
-
-        if (vibrator_obj != null) {
-            const vibrator_class = jni.GetObjectClass(env, vibrator_obj);
-
-            // For Android 26+, use VibrationEffect
-            const vibrate_method = getJNIMethod(env, vibrator_class, "vibrate", "(J)V") catch return;
-            jni.CallVoidMethod(env, vibrator_obj, vibrate_method, .{@as(jni.jlong, @intCast(duration_ms))});
-        }
-    }
-
-    /// Toast Notification
-    pub fn showToast(context: *Context, message: []const u8, duration: ToastDuration) void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return;
-        }
-
-        const env = jni_env orelse return;
-
-        // Get Toast class
-        const toast_class = getJNIClass(env, "android/widget/Toast") catch return;
-
-        // Get makeText method
-        const make_text_method = getJNIMethod(
-            env,
-            toast_class,
-            "makeText",
-            "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;",
-        ) catch return;
-
-        // Convert message to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const message_z = @import("memory.zig").dupeZ(allocator, u8, message) catch return;
-        defer allocator.free(message_z);
-        const message_jstring = jni.NewStringUTF(env, message_z.ptr);
-
-        // Convert duration
-        const duration_int: jni.jint = switch (duration) {
-            .short => 0, // Toast.LENGTH_SHORT
-            .long => 1, // Toast.LENGTH_LONG
-        };
-
-        // Create toast
-        const context_obj: jni.jobject = @ptrCast(@alignCast(context));
-        const toast_obj = jni.CallObjectMethod(env, toast_class, make_text_method, .{ context_obj, message_jstring, duration_int });
-
-        if (toast_obj != null) {
-            // Show toast
-            const toast_obj_class = jni.GetObjectClass(env, toast_obj);
-            const show_method = getJNIMethod(env, toast_obj_class, "show", "()V") catch return;
-            jni.CallVoidMethod(env, toast_obj, show_method, .{});
-        }
-    }
-
     pub const ToastDuration = enum {
         short,
         long,
     };
+
+    // Every function that used to live in this struct — `setJNIEnv`,
+    // `createWebView`, `loadURL`, `evaluateJavaScript`, `getJNIClass`,
+    // `getJNIMethod`, `handleDeepLink`, `requestPermission`, `vibrate`,
+    // `showToast` — has been deleted. The types stay because they are the
+    // vocabulary the rest of the codebase and the test suite use; the
+    // functions went because none of them could ever have worked.
+    //
+    // They all read through a hand-written `JNINativeInterface` that declared
+    // four reserved slots, then `GetVersion`, then jumped straight to
+    // `FindClass` under a comment reading "... many more function pointers
+    // ...". The real JNI vtable has roughly 230 entries in a fixed ABI order —
+    // `FindClass` is index 6, `GetObjectClass` 31, `NewStringUTF` 167 — so
+    // every call read the wrong slot and would have jumped to a garbage
+    // address. That is not a bug you fix in place; the replacement `@cImport`s
+    // the NDK's own `jni.h`, where the layout cannot be got wrong.
+    //
+    // Individually they were also wrong in ways that prove none was ever
+    // compiled, let alone run: `requestPermission` resolved the *static*
+    // `ActivityCompat.requestPermissions` with `GetMethodID` and passed two
+    // varargs where the signature demands three with a `jobjectArray`;
+    // `createWebView` and `evaluateJavaScript` invoked constructors through
+    // `CallObjectMethod`, which cannot construct anything — `NewObject` is the
+    // one that can; and `requestPermission` contained `if (callback) |cb|` on
+    // a non-optional parameter, an unconditional compile error that never
+    // fired because nothing referenced the function.
 };
 
 /// Cross-Platform Mobile Window
@@ -1420,10 +688,11 @@ pub const MobileWindow = struct {
                 const webview: *iOS.WKWebView = @ptrCast(@alignCast(self.handle));
                 try iOS.loadURL(webview, url);
             },
-            .android => {
-                const webview: *Android.WebView = @ptrCast(@alignCast(self.handle));
-                try Android.loadURL(webview, url);
-            },
+            // Android has no JNI layer yet. Returning an error is the honest
+            // answer; the deleted `Android.loadURL` would have jumped through
+            // a mis-ordered vtable instead, which is a crash wearing the
+            // costume of an implementation.
+            .android => return error.AndroidBridgeNotImplemented,
             .unknown => return error.UnsupportedPlatform,
         }
     }
@@ -1434,10 +703,7 @@ pub const MobileWindow = struct {
                 const webview: *iOS.WKWebView = @ptrCast(@alignCast(self.handle));
                 try iOS.evaluateJavaScript(webview, script, null);
             },
-            .android => {
-                const webview: *Android.WebView = @ptrCast(@alignCast(self.handle));
-                try Android.evaluateJavaScript(webview, script, null);
-            },
+            .android => return error.AndroidBridgeNotImplemented,
             .unknown => return error.UnsupportedPlatform,
         }
     }

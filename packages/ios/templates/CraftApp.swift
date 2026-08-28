@@ -2222,41 +2222,33 @@ struct CraftWebView: UIViewRepresentable {
                     _progressCallbacks: [],
                     _statusCallbacks: [],
 
+                    // OTA is not implemented natively. These five used to post
+                    // to actions the switch below does not handle, and register
+                    // a resolve/reject pair that nothing would ever call — they
+                    // also bypassed _createCallback, which is what owns the 30s
+                    // timeout, so the promises hung forever rather than
+                    // rejecting. An immediate rejection is the honest answer:
+                    // an app can catch it, where it could never catch a hang.
+                    _unavailable: function(name) {
+                        return Promise.reject(new Error(
+                            'craft.ota.' + name + ' is not implemented on this platform'
+                        ));
+                    },
                     configure: function(options) {
                         this._config = options;
-                        window.webkit.messageHandlers.craft.postMessage({action: 'otaConfigure', config: options});
+                        console.warn('[craft] ota.configure stored locally; OTA is not implemented natively');
                     },
                     checkForUpdate: function() {
-                        var self = window.craft;
-                        var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'otaCheckForUpdate', callbackId: id});
-                        return new Promise(function(resolve, reject) {
-                            self._callbacks[id] = {resolve: resolve, reject: reject};
-                        });
+                        return window.craft.ota._unavailable('checkForUpdate');
                     },
                     downloadUpdate: function(options) {
-                        var self = window.craft;
-                        var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'otaDownloadUpdate', options: options || {}, callbackId: id});
-                        return new Promise(function(resolve, reject) {
-                            self._callbacks[id] = {resolve: resolve, reject: reject};
-                        });
+                        return window.craft.ota._unavailable('downloadUpdate');
                     },
                     applyUpdate: function() {
-                        var self = window.craft;
-                        var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'otaApplyUpdate', callbackId: id});
-                        return new Promise(function(resolve, reject) {
-                            self._callbacks[id] = {resolve: resolve, reject: reject};
-                        });
+                        return window.craft.ota._unavailable('applyUpdate');
                     },
                     rollback: function() {
-                        var self = window.craft;
-                        var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'otaRollback', callbackId: id});
-                        return new Promise(function(resolve, reject) {
-                            self._callbacks[id] = {resolve: resolve, reject: reject};
-                        });
+                        return window.craft.ota._unavailable('rollback');
                     },
                     getCurrentBundle: function() {
                         // This returns synchronously from stored data

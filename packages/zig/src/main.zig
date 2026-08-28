@@ -29,7 +29,13 @@ pub const mobile = @import("mobile.zig");
 pub const android = @import("android.zig");
 pub const CraftActivity = android.CraftActivity;
 pub const AndroidJSBridge = android.JSBridge;
-pub const AndroidFeatures = android.AndroidFeatures;
+// `AndroidFeatures` was re-exported here. It was ten functions — `showToast`,
+// `vibrate`, `requestPermission`, `openURL`, `share`, `setClipboard`,
+// `getClipboard`, `hasPermission`, `isNetworkConnected`, `getDeviceInfo` — and
+// every one had a body of `_ = param;` and a comment naming the JNI call it
+// would have made. `isNetworkConnected` returned true unconditionally and
+// `getDeviceInfo` returned a hardcoded "Android Device" on SDK 34, so a caller
+// asking about the device got a plausible answer that was never true.
 
 // Re-export API module
 pub const api = @import("api.zig");

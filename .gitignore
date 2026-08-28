@@ -46,3 +46,6 @@ pantry
 # Signing material: the private key and CSR for the Developer ID certificate.
 # Never committed — the key here is what signs releases.
 .signing/
+
+# Phase 1 iOS slice fixture build output
+packages/ios/fixtures/zig-slice/build/

@@ -9,7 +9,19 @@ pub fn evalJS(script: []const u8) !void {
             const macos = @import("macos.zig");
             try macos.tryEvalJS(script);
         },
+        .ios => {
+            const ios_dispatch = @import("ios_dispatch.zig");
+            try ios_dispatch.evalJS(script);
+        },
         .linux => {
+            // Android reports `os.tag == .linux` (its target is
+            // `linux-android`), so without this guard it lands in the GTK arm
+            // below and drags in `linux.zig`'s 44 `extern "c"` GTK/WebKit2GTK
+            // declarations. That costs nothing in a static archive — which is
+            // exactly why it has never surfaced — and fails the link the
+            // moment Android emits a shared library.
+            if (comptime builtin.abi == .android) return error.AndroidBridgeNotImplemented;
+
             const linux = @import("linux.zig");
             try linux.evalJS(script);
         },

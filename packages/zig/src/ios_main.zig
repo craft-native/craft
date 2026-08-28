@@ -33,7 +33,7 @@ export fn craft_ios_init() callconv(.c) c_int {
 }
 
 /// Set HTML content to load in the webview
-/// Call this before craft_ios_run() to specify what to display
+/// Call this before craft_ios_main() to specify what to display
 export fn craft_ios_set_html(html: [*]const u8, len: usize) callconv(.c) void {
     if (g_allocator) |allocator| {
         // Copy the HTML content
@@ -45,7 +45,7 @@ export fn craft_ios_set_html(html: [*]const u8, len: usize) callconv(.c) void {
 }
 
 /// Set URL to load in the webview
-/// Call this before craft_ios_run() to specify what to display
+/// Call this before craft_ios_main() to specify what to display
 export fn craft_ios_set_url(url: [*]const u8, len: usize) callconv(.c) void {
     if (g_allocator) |allocator| {
         const url_slice = url[0..len];
@@ -55,24 +55,34 @@ export fn craft_ios_set_url(url: [*]const u8, len: usize) callconv(.c) void {
     }
 }
 
-/// Run the Craft iOS application
-/// This creates the UIWindow, WKWebView, and starts the app
-export fn craft_ios_run() callconv(.c) c_int {
-    const allocator = g_allocator orelse return -1;
+/// Run the Craft iOS application. Does not return.
+///
+/// Renamed from `craft_ios_run` and given `argc`/`argv` because
+/// `UIApplicationMain` needs them: UIKit reads launch arguments from that pair,
+/// and it is what an app's `main` is handed. The old signature took nothing and
+/// returned `c_int`, which could not express either fact — it implied the call
+/// returns, and an iOS app's does not.
+///
+/// Call it from `main`:
+///
+///     extern int craft_ios_main(int argc, char **argv);
+///     int main(int argc, char **argv) { return craft_ios_main(argc, argv); }
+export fn craft_ios_main(argc: c_int, argv: [*][*:0]u8) callconv(.c) c_int {
+    const allocator = g_allocator orelse {
+        std.log.err("craft_ios_main called before craft_ios_init", .{});
+        return -1;
+    };
 
-    // Determine content to load
     const content: ios.CraftAppDelegate.AppConfig.Content = blk: {
         if (g_html_content) |html| {
             break :blk .{ .html = html };
         } else if (g_url_content) |url| {
             break :blk .{ .url = url };
         } else {
-            // Default HTML content
             break :blk .{ .html = default_html };
         }
     };
 
-    // Create app delegate
     const app = allocator.create(ios.CraftAppDelegate) catch return -1;
     app.* = ios.CraftAppDelegate.init(allocator, .{
         .name = "Craft App",
@@ -88,10 +98,7 @@ export fn craft_ios_run() callconv(.c) c_int {
 
     g_app_delegate = app;
 
-    // Run the app
-    app.run() catch return -1;
-
-    return 0;
+    app.run(argc, argv);
 }
 
 /// Clean up Craft iOS resources
@@ -131,11 +138,15 @@ export fn craft_ios_haptic(haptic_type: c_int) callconv(.c) void {
     mobile.iOS.triggerHaptic(h_type);
 }
 
-/// Show native alert
-export fn craft_ios_show_alert(message: [*]const u8, len: usize) callconv(.c) void {
-    const msg = message[0..len];
-    mobile.iOS.showAlert(msg, true);
-}
+// `craft_ios_show_alert` used to be exported here. It forwarded to
+// `mobile.iOS.showAlert`, which presented its UIAlertController against
+// `[UIApplication sharedApplication].keyWindow` — deprecated since iOS 13 and
+// nil in any scene-based app, which is every app the templates generate. It
+// also computed an auto-dismiss delay and then discarded it, so the alert its
+// doc comment described as self-dismissing never dismissed.
+//
+// Nothing outside this file ever called it: no Swift template references any
+// `craft_ios_*` symbol.
 
 // ============================================================================
 // Default HTML Content
@@ -181,43 +192,49 @@ const default_html =
 // Zig-native API (for pure Zig iOS apps)
 // ============================================================================
 
-/// Create and run an iOS app with HTML content
-pub fn runWithHTML(allocator: std.mem.Allocator, html: []const u8, config: ios.CraftAppDelegate.AppConfig) !void {
+/// Create and run an iOS app with HTML content. Does not return.
+pub fn runWithHTML(
+    allocator: std.mem.Allocator,
+    html: []const u8,
+    config: ios.CraftAppDelegate.AppConfig,
+    argc: c_int,
+    argv: [*][*:0]u8,
+) noreturn {
     var app_config = config;
     app_config.initial_content = .{ .html = html };
 
     var app = ios.CraftAppDelegate.init(allocator, app_config);
-    try app.run();
+    app.run(argc, argv);
 }
 
-/// Create and run an iOS app with a URL
-pub fn runWithURL(allocator: std.mem.Allocator, url: []const u8, config: ios.CraftAppDelegate.AppConfig) !void {
+/// Create and run an iOS app with a URL. Does not return.
+pub fn runWithURL(
+    allocator: std.mem.Allocator,
+    url: []const u8,
+    config: ios.CraftAppDelegate.AppConfig,
+    argc: c_int,
+    argv: [*][*:0]u8,
+) noreturn {
     var app_config = config;
     app_config.initial_content = .{ .url = url };
 
     var app = ios.CraftAppDelegate.init(allocator, app_config);
-    try app.run();
+    app.run(argc, argv);
 }
 
 /// Quick start an iOS app with just HTML
-pub fn quickStart(allocator: std.mem.Allocator, html: []const u8) !void {
-    try ios.quickStart(allocator, html);
+pub fn quickStart(allocator: std.mem.Allocator, html: []const u8, argc: c_int, argv: [*][*:0]u8) noreturn {
+    ios.quickStart(allocator, html, argc, argv);
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
-test "iOS main exports" {
-    // Just verify the exports compile correctly
-    _ = craft_ios_init;
-    _ = craft_ios_set_html;
-    _ = craft_ios_set_url;
-    _ = craft_ios_run;
-    _ = craft_ios_deinit;
-    _ = craft_ios_haptic;
-    _ = craft_ios_show_alert;
-    _ = craft_ios_set_clipboard;
-    _ = craft_ios_open_url;
-    _ = craft_ios_share;
-}
+// The C API surface used to be asserted by a `test` block here that listed
+// `craft_ios_set_clipboard`, `craft_ios_open_url`, and `craft_ios_share` —
+// three functions this file has never declared. Undeclared identifiers are
+// resolved in AstGen, which runs over the whole file regardless of whether a
+// test is being built, so those three names were three of the nine errors that
+// kept `zig build build-ios-simulator` red from the 0.17 migration onward.
+//
+// It also asserted nothing a compiler would not: `_ = craft_ios_init;` on an
+// `export fn` in the same file cannot fail. `test/ios_surface_test.zig` covers
+// the real property — that every declaration reachable from `ios.zig` and
+// `mobile.iOS` actually compiles — and it does so on the host, in seconds.
