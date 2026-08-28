@@ -753,13 +753,33 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // `windowControls="native"` for exactly this.
     }
 
-    // Configure toolbar style and vibrancy (skip in benchmark mode for faster startup)
-    if (!style.benchmark) {
-        // NSWindowToolbarStyleUnified = 1 - Creates unified toolbar that works with glass materials
-        _ = msgSend1(window, "setToolbarStyle:", @as(c_long, 1));
+    // A clear window background, for the windows that have something behind the
+    // web content to show through.
+    //
+    // This used to apply to every window craft opened, and the cost was a
+    // see-through titlebar on all of them: `setOpaque:NO` with a clear
+    // background means AppKit paints nothing behind the title strip, and a
+    // plain window's webview stops below it, so the strip showed whatever
+    // happened to be behind the window — the desktop, another app. Real traffic
+    // lights and a real title, floating on somebody else's window. The chrome
+    // looked wrong in exactly the way that makes people suspect it is not
+    // native.
+    //
+    // A window only needs it when something is drawn behind the web content: a
+    // vibrancy view, a material backdrop, or a page the app explicitly asked to
+    // be see-through. `wants_translucent_surface` below is the same predicate,
+    // applied to the webview; the two now agree.
+    //
+    // `setToolbarStyle:` went with it. Unified style is about how a toolbar and
+    // its title share a row, and craft creates no toolbar here — its only
+    // visible effect on a plain window was to shove the title left against the
+    // window buttons, where macOS puts a toolbar's title and nobody else's. The
+    // sidebar windows that do build a toolbar set their own style.
+    const wants_translucent_surface = style.transparent or style.titlebar_hidden or
+        style.native_sidebar or style.web_sidebar_material;
 
-        // Configure window for vibrancy - allow NSVisualEffectView to show through
-        _ = msgSend1(window, "setOpaque:", @as(c_int, 0)); // NO - window is not opaque
+    if (!style.benchmark and wants_translucent_surface) {
+        _ = msgSend1(window, "setOpaque:", @as(c_int, 0)); // NO — something shows through
         const clearColor = msgSend0(getClass("NSColor"), "clearColor");
         _ = msgSend1(window, "setBackgroundColor:", clearColor);
     }
@@ -902,7 +922,6 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     }
 
     // Cosmetic and lazily-needed setup, now overlapping the fetch.
-    const wants_translucent_surface = style.transparent or style.titlebar_hidden or style.native_sidebar or style.web_sidebar_material;
     if (!style.benchmark and wants_translucent_surface) {
         makeWindowTranslucent(window);
         makeWebViewTransparent(webview);
