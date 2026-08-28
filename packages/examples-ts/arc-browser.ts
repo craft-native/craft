@@ -51,13 +51,17 @@ const html = `
       the corner, three of which do nothing. All this strip does is leave them
       room and stay draggable.
 
-      Craft publishes the room to leave as `--craft-window-controls-width`
-      (62px on macOS today, 0 where the platform keeps its buttons in a
-      titlebar of their own), so the fallback below only matters in a browser.
+      Craft measures the real buttons and publishes the room to leave as the
+      --craft-window-controls-width variable used below: their far edge where
+      they overlay the page, and 0 where they do not — a window with its own
+      titlebar, fullscreen, or this page opened in a browser, which is what the
+      fallback is for.
+
+      (No backticks in this comment: the whole document is a template literal.)
     */
     .window-controls {
       height: 38px;
-      padding-left: var(--craft-window-controls-width, 62px);
+      padding-left: var(--craft-window-controls-width, 0px);
       -webkit-app-region: drag;
     }
 
