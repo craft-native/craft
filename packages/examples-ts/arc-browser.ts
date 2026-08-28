@@ -42,31 +42,24 @@ const html = `
       user-select: none;
     }
 
-    /* Window controls area */
+    /*
+      Window controls area.
+
+      The buttons themselves are AppKit's, not ours. This window hides its
+      titlebar, so macOS floats the real close/minimise/zoom buttons over the
+      top-left of the sidebar — drawing replicas here would put six circles in
+      the corner, three of which do nothing. All this strip does is leave them
+      room and stay draggable.
+
+      Craft publishes the room to leave as `--craft-window-controls-width`
+      (62px on macOS today, 0 where the platform keeps its buttons in a
+      titlebar of their own), so the fallback below only matters in a browser.
+    */
     .window-controls {
       height: 38px;
-      display: flex;
-      align-items: center;
-      padding-left: 4px;
+      padding-left: var(--craft-window-controls-width, 62px);
       -webkit-app-region: drag;
     }
-
-    .traffic-lights {
-      display: flex;
-      gap: 8px;
-      -webkit-app-region: no-drag;
-    }
-
-    .traffic-light {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      cursor: pointer;
-    }
-
-    .traffic-light.close { background: #ff5f57; }
-    .traffic-light.minimize { background: #febc2e; }
-    .traffic-light.maximize { background: #28c840; }
 
     /* Search bar */
     .search-bar {
@@ -403,13 +396,7 @@ const html = `
 </head>
 <body>
   <aside class="sidebar">
-    <div class="window-controls">
-      <div class="traffic-lights">
-        <div class="close traffic-light"></div>
-        <div class="minimize traffic-light"></div>
-        <div class="maximize traffic-light"></div>
-      </div>
-    </div>
+    <div class="window-controls"></div>
 
     <div class="search-bar">
       <span class="icon">🔍</span>
