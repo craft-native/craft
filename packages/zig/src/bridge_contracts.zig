@@ -23,6 +23,11 @@ pub const prefs = @import("prefs.zig");
 pub const prefs_actions = @import("bridge_prefs_actions.zig");
 /// Pure: the manifest types and renderer, with no bridge behind them.
 pub const capabilities = @import("capabilities.zig");
+/// Pure: the window-controls contract. `macos.zig` measures a real window and
+/// prints one of these literals; `craft-window-chrome.js` reads it. The test
+/// drives the client with literals from here rather than hand-written ones, so
+/// a field renamed on either side fails the build.
+pub const window_chrome = @import("window_chrome.zig");
 /// Pure: just the action-name constants the capabilities bridge dispatches on.
 ///
 /// Deliberately not the registry. The registry reaches every declared bridge

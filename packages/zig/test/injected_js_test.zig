@@ -24,11 +24,13 @@ const prefs = contracts.prefs;
 const prefs_actions = contracts.prefs_actions;
 const shortcut_registry = contracts.shortcuts;
 const bridge_error = contracts.errors;
+const window_chrome = contracts.window_chrome;
 
 // Supplied by build.zig as named imports — a test module cannot embed
 // files outside its own package path.
 const GESTURES = @embedFile("craft-gestures.js");
 const BRIDGE = @embedFile("craft-bridge.js");
+const WINDOW_CHROME = @embedFile("craft-window-chrome.js");
 
 /// A context with the globals a browser would supply.
 ///
@@ -1230,4 +1232,222 @@ test "the event names the page listens for are the ones the channels declare" {
     );
     try testing.expect(std.mem.indexOf(u8, BRIDGE, "_evt('craft:notification:click')") != null);
     try testing.expect(std.mem.indexOf(u8, BRIDGE, "_evt('craft:notification:action')") != null);
+}
+
+// ============================================================================
+// craft-window-chrome.js — where the platform put the window buttons
+// ============================================================================
+//
+// The host measures the real buttons and prints an object literal; the client
+// turns it into an attribute, four CSS variables and an event. Both halves are
+// exercised together here, with the literal produced by the same code the
+// binary runs, so a field renamed on either side fails the build instead of
+// quietly leaving a page laid out for buttons that are somewhere else.
+
+/// A document rich enough for the client: a root element with attributes and a
+/// style object, and a DOMContentLoaded queue the tests can fire by hand.
+///
+/// Evaluated after `WEBVIEW_HOST`, whose `document` has no element at all.
+const DOM_HOST =
+    \\document = {
+    \\  readyState: 'loading',
+    \\  _ready: [],
+    \\  addEventListener: function (name, fn) { if (name === 'DOMContentLoaded') document._ready.push(fn) },
+    \\  fireReady: function () { document._ready.slice().forEach(function (fn) { fn() }) },
+    \\  documentElement: {
+    \\    attributes: {},
+    \\    setAttribute: function (name, value) { this.attributes[name] = value },
+    \\    style: {
+    \\      properties: {},
+    \\      setProperty: function (name, value) { this.properties[name] = value },
+    \\      removeProperty: function (name) { delete this.properties[name] },
+    \\      value: function (name) {
+    \\        var v = this.properties[name];
+    \\        return v === undefined ? '(unset)' : v;
+    \\      }
+    \\    }
+    \\  }
+    \\};
+;
+
+/// `window.__craftWindowControls = <literal>;` for a given state — the exact
+/// line `window_chrome.seedScript` puts in front of the client.
+fn seedLine(buffer: []u8, state: window_chrome.State) ![]const u8 {
+    var literal: [512]u8 = undefined;
+    return std.fmt.bufPrint(
+        buffer,
+        "window.__craftWindowControls = {s};",
+        .{try window_chrome.literal(state, &literal)},
+    );
+}
+
+const overlay_state = window_chrome.classify(
+    .platform,
+    .{ .x = 9, .y = 9, .width = 60, .height = 14 },
+    .{ .width = 1200, .height = 800 },
+);
+
+test "the seed reaches the document as an attribute and four variables" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+
+    try testing.expectEqualStrings(
+        "overlay",
+        try fx.text("document.documentElement.attributes['data-craft-window-controls']"),
+    );
+    // 9 + 60 across, 9 + 14 down: the far edge of the real buttons, which is
+    // the room a header has to leave.
+    try testing.expectEqualStrings("69px", try fx.text("document.documentElement.style.value('--craft-window-controls-width')"));
+    try testing.expectEqualStrings("23px", try fx.text("document.documentElement.style.value('--craft-window-controls-height')"));
+    try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-controls-inset-x')"));
+    try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-controls-inset-y')"));
+    try testing.expectEqualStrings("none", try fx.text("document.documentElement.style.value('--craft-window-controls-replicas')"));
+}
+
+test "a frameless window leaves the replica variable alone" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.page, null, .{})));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+
+    try testing.expectEqualStrings("custom", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
+    // Unset, not `flex`: the page's own fallback decides, because in a
+    // frameless window its controls are the only ones there are.
+    try testing.expectEqualStrings("(unset)", try fx.text("document.documentElement.style.value('--craft-window-controls-replicas')"));
+}
+
+test "a phone is told there is nothing to draw" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.absent, null, .{})));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+
+    try testing.expectEqualStrings("none", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
+    try testing.expectEqualStrings("none", try fx.text("document.documentElement.style.value('--craft-window-controls-replicas')"));
+}
+
+test "the seed is not a change, and a restatement is not either" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+    _ = try fx.ctx.evaluate(
+        \\var changes = 0;
+        \\window.addEventListener('craft:windowcontrols', function () { changes++ });
+    );
+
+    // A listener added after first paint has not missed an event, because the
+    // seed is not one.
+    try testing.expectEqualStrings("0", try fx.text("String(changes)"));
+
+    // The host re-states the same measurement on every window activation.
+    var update: [1024]u8 = undefined;
+    _ = try fx.ctx.evaluate(try window_chrome.updateScript(overlay_state, &update));
+    try testing.expectEqualStrings("0", try fx.text("String(changes)"));
+}
+
+test "entering fullscreen takes the reserved room back and says so once" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+    _ = try fx.ctx.evaluate(
+        \\var changes = 0;
+        \\var last = null;
+        \\window.addEventListener('craft:windowcontrols', function (e) { changes++; last = e.detail });
+    );
+
+    // macOS takes the buttons into an auto-hiding titlebar. A page that kept
+    // reserving 69px would hold a hole open for as long as the app stayed
+    // fullscreen.
+    var update: [1024]u8 = undefined;
+    _ = try fx.ctx.evaluate(try window_chrome.updateScript(
+        window_chrome.classify(.platform, null, .{ .width = 1200, .height = 800 }),
+        &update,
+    ));
+
+    try testing.expectEqualStrings("1", try fx.text("String(changes)"));
+    try testing.expectEqualStrings("0px", try fx.text("document.documentElement.style.value('--craft-window-controls-width')"));
+    try testing.expectEqualStrings("titlebar", try fx.text("last.style"));
+    // Still no replicas: the window has chrome, it is merely out of sight.
+    try testing.expectEqualStrings("none", try fx.text("document.documentElement.style.value('--craft-window-controls-replicas')"));
+}
+
+test "a document that replaces its root is repainted when it is ready" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+
+    // `document.write`, a framework that swaps the root, an XSLT result — the
+    // attribute and the variables went with the old element.
+    _ = try fx.ctx.evaluate(
+        \\document.documentElement = {
+        \\  attributes: {},
+        \\  setAttribute: function (name, value) { this.attributes[name] = value },
+        \\  style: {
+        \\    properties: {},
+        \\    setProperty: function (name, value) { this.properties[name] = value },
+        \\    removeProperty: function (name) { delete this.properties[name] },
+        \\    value: function (name) {
+        \\      var v = this.properties[name];
+        \\      return v === undefined ? '(unset)' : v;
+        \\    }
+        \\  }
+        \\};
+        \\document.fireReady();
+    );
+
+    try testing.expectEqualStrings("overlay", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
+    try testing.expectEqualStrings("69px", try fx.text("document.documentElement.style.value('--craft-window-controls-width')"));
+}
+
+test "the client is installed once, however many times it is injected" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+    _ = try fx.ctx.evaluate(
+        \\var changes = 0;
+        \\window.addEventListener('craft:windowcontrols', function () { changes++ });
+    );
+
+    // A second injection — an iframe's parent document, a reload racing a
+    // navigation — must not re-arm the DOMContentLoaded listener or reset the
+    // "what have we already applied" record into firing a spurious change.
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+    _ = try fx.ctx.evaluate("document.fireReady()");
+
+    try testing.expectEqualStrings("0", try fx.text("String(changes)"));
+    try testing.expectEqualStrings("overlay", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
 }

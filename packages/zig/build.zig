@@ -1304,6 +1304,7 @@ pub fn build(b: *std.Build) void {
                         .{ .name = "bridge_contracts", .module = b.createModule(.{
                             .root_source_file = b.path("src/bridge_contracts.zig"),
                         }) },
+
                     },
                 }),
             });
@@ -1315,6 +1316,9 @@ pub fn build(b: *std.Build) void {
             });
             injected_js_tests.root_module.addAnonymousImport("craft-bridge.js", .{
                 .root_source_file = b.path("src/js/craft-bridge.js"),
+            });
+            injected_js_tests.root_module.addAnonymousImport("craft-window-chrome.js", .{
+                .root_source_file = b.path("src/js/craft-window-chrome.js"),
             });
 
             const run_injected_js_tests = b.addRunArtifact(injected_js_tests);
