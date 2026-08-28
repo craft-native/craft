@@ -395,6 +395,23 @@ pub fn msgSendRect1Rect(target: anytype, selector: [*:0]const u8, rect: NSRect) 
     return msg(target, sel(selector), rect);
 }
 
+/// Message send that takes an NSRect and a view and returns NSRect — the
+/// `-[NSView convertRect:toView:]` family, where a nil view means the window's
+/// own base coordinates.
+pub fn msgSendRect1RectId(target: anytype, selector: [*:0]const u8, rect: NSRect, view: objc.id) NSRect {
+    const msg = @as(*const fn (@TypeOf(target), objc.SEL, NSRect, objc.id) callconv(.c) NSRect, @ptrCast(&objc.objc_msgSend));
+    return msg(target, sel(selector), rect, view);
+}
+
+/// Message send returning BOOL whose one argument is an object, e.g.
+/// `-[NSObject isKindOfClass:]`. Distinct from the `objc.id`-returning form
+/// because a BOOL is one byte and reading it as a pointer is only accidentally
+/// right.
+pub fn msgSendBool1Id(target: anytype, selector: [*:0]const u8, arg: objc.id) bool {
+    const msg = @as(*const fn (@TypeOf(target), objc.SEL, objc.id) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
+    return msg(target, sel(selector), arg);
+}
+
 /// Message send that returns CGFloat (f64)
 pub fn msgSendFloat(target: anytype, selector: [*:0]const u8) f64 {
     const msg = @as(*const fn (@TypeOf(target), objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
@@ -801,12 +818,10 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             // A frameless window has no standard buttons; every other style
             // has them, either in a titlebar of their own or floating over a
             // full-height content view.
-            .window_controls = if (style.frameless)
-                .none
-            else if (style.titlebar_hidden or style.web_sidebar_material)
-                .overlay
-            else
-                .titlebar,
+            // Measured, not deduced from the flags above: where the buttons
+            // land depends on what AppKit does with them, and the window is
+            // already built by the time this runs.
+            .window_controls = measureWindowChrome(window, null, style.frameless),
         });
 
         // Set up the script message handler
@@ -1017,6 +1032,10 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             msgSendVoid0(window, "toggleFullScreen:");
         }
     }
+
+    // Watch for anything that moves the window buttons relative to the page.
+    // Benchmark windows inject no Craft JavaScript, so there is nobody to tell.
+    if (!style.benchmark) observeWindowChrome(window);
 
     // DON'T show window here - it will be shown in runApp() after system tray is created
     // This is critical: makeKeyAndOrderFront activates the app, which must happen AFTER
@@ -2172,9 +2191,7 @@ pub fn createWindowWithSidebar(
         .full_bridge = true,
         .sidebar_bootstrap = true,
         .native_ui = true,
-        // The sidebar runs up into the titlebar, so the buttons float over the
-        // top of the web content rather than sitting above it.
-        .window_controls = .overlay,
+        .window_controls = measureWindowChrome(window, null, false),
     });
     _ = msgSend1(config, "setUserContentController:", userContentController);
 
@@ -2259,6 +2276,8 @@ pub fn createWindowWithSidebar(
         if (comptime builtin.mode == .debug)
             std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
     };
+
+    observeWindowChrome(window);
 
     if (comptime builtin.mode == .debug)
         std.debug.print("[NativeSidebar] ✓ Window with native sidebar created successfully\n", .{});
@@ -3202,7 +3221,7 @@ pub fn createWindowWithSidebarURL(
         .full_bridge = false,
         .sidebar_bootstrap = true,
         .native_ui = true,
-        .window_controls = .overlay,
+        .window_controls = measureWindowChrome(window, null, false),
     });
 
     _ = msgSend1(config, "setUserContentController:", userContentController);
@@ -3453,6 +3472,8 @@ pub fn createWindowWithSidebarURL(
         if (comptime builtin.mode == .debug)
             std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
     };
+
+    observeWindowChrome(window);
 
     if (comptime builtin.mode == .debug)
         std.debug.print("[NativeSidebar] ✓ Window with native sidebar (URL mode) created\n", .{});
@@ -3940,6 +3961,288 @@ fn getNativeSidebarBootstrapScript() []const u8 {
 }
 
 // ============================================================================
+// Window controls — measuring what AppKit drew, and telling the page
+// ============================================================================
+//
+// `window_chrome.zig` decides what the page is told; everything here is the
+// measuring. The numbers are read from the live window on every change rather
+// than written down once, because the buttons move: between window styles, when
+// a native sidebar puts them over the sidebar instead of over the web content,
+// when the window enters fullscreen and AppKit takes them into an auto-hiding
+// titlebar, and between macOS releases that resize them.
+//
+// Three moments matter:
+//
+//   creation    the seed, baked into the document-start user script so the
+//               first paint is already correct
+//   change      a resize, a fullscreen transition — the window tells us
+//   navigation  a new document has not seen any of the above, so it is told
+//               again as it commits
+
+/// `-[NSWindow standardWindowButton:]` indices.
+const NSWindowCloseButton: c_ulong = 0;
+const NSWindowMiniaturizeButton: c_ulong = 1;
+const NSWindowZoomButton: c_ulong = 2;
+
+const NSWindowStyleMaskFullScreen: c_ulong = 1 << 14;
+
+/// One button's rect in the window's base coordinates, or null when the window
+/// has no such button or is not showing it.
+fn standardButtonRect(window: objc.id, index: c_ulong) ?NSRect {
+    const button = msgSend1(window, "standardWindowButton:", index);
+    if (button == null) return null;
+    if (msgSendBool(button, "isHidden")) return null;
+
+    return msgSendRect1RectId(button, "convertRect:toView:", msgSendRect(button, "bounds"), null);
+}
+
+/// The three buttons as one block, in the window's base coordinates.
+///
+/// Null when the window shows none — a frameless window, or a fullscreen one,
+/// where the buttons live in a titlebar that is only on screen while the
+/// pointer is at the top of the display. Reserving room for those would leave a
+/// hole in the layout for as long as the app stayed fullscreen.
+fn windowButtonBlock(window: objc.id) ?NSRect {
+    if (window == null) return null;
+    if (msgSend0Ulong(window, "styleMask") & NSWindowStyleMaskFullScreen != 0) return null;
+
+    var block: ?NSRect = null;
+    for ([_]c_ulong{ NSWindowCloseButton, NSWindowMiniaturizeButton, NSWindowZoomButton }) |index| {
+        const rect = standardButtonRect(window, index) orelse continue;
+        block = if (block) |current| unionRect(current, rect) else rect;
+    }
+
+    return block;
+}
+
+fn unionRect(a: NSRect, b: NSRect) NSRect {
+    const min_x = @min(a.origin.x, b.origin.x);
+    const min_y = @min(a.origin.y, b.origin.y);
+    const max_x = @max(a.origin.x + a.size.width, b.origin.x + b.size.width);
+    const max_y = @max(a.origin.y + a.size.height, b.origin.y + b.size.height);
+
+    return .{
+        .origin = .{ .x = min_x, .y = min_y },
+        .size = .{ .width = max_x - min_x, .height = max_y - min_y },
+    };
+}
+
+/// The webview inside a window, wherever it was put.
+///
+/// Craft's window styles nest it differently — straight into the content view,
+/// inside a material backdrop, inside a split view controller's detail pane —
+/// and a search finds it in all of them without any of them having to register
+/// it. The alternative, a table of window-to-webview, is a second place for the
+/// truth to live and to go stale when a webview is replaced after a content
+/// process crash.
+fn findWebView(view: objc.id) ?objc.id {
+    if (view == null) return null;
+    if (msgSendBool1Id(view, "isKindOfClass:", getClass("WKWebView"))) return view;
+
+    const subviews = msgSend0(view, "subviews");
+    if (subviews == null) return null;
+
+    const count = msgSend0Ulong(subviews, "count");
+    var index: c_ulong = 0;
+    while (index < count) : (index += 1) {
+        if (findWebView(msgSend1(subviews, "objectAtIndex:", index))) |found| return found;
+    }
+
+    return null;
+}
+
+/// The web viewport in the window's base coordinates.
+///
+/// Before the webview exists — the seed is built while the window's
+/// configuration is still being assembled — the content view stands in for it.
+/// It is the right size and in the right place; only a native sidebar window
+/// insets the webview within it, and that window's webview is created moments
+/// later, before anything is shown.
+fn webViewportRect(window: objc.id, webview: objc.id) NSRect {
+    const view = if (webview != null) webview else msgSend0(window, "contentView");
+    if (view == null) return .{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = 0, .height = 0 } };
+
+    return msgSendRect1RectId(view, "convertRect:toView:", msgSendRect(view, "bounds"), null);
+}
+
+/// What this window's buttons look like to the page inside it.
+///
+/// AppKit's y runs up from the window's bottom-left; CSS runs down from the
+/// viewport's top-left. The flip happens here, and it is what makes a plain
+/// titlebar window report a negative `y` — the buttons really are above the
+/// page — rather than a made-up zero.
+pub fn measureWindowChrome(window: objc.id, webview: objc.id, frameless: bool) window_chrome.State {
+    if (frameless) return window_chrome.classify(.page, null, .{});
+
+    const viewport = webViewportRect(window, webview);
+    const size = window_chrome.Size{ .width = viewport.size.width, .height = viewport.size.height };
+
+    const block = windowButtonBlock(window) orelse
+        return window_chrome.classify(.platform, null, size);
+
+    return window_chrome.classify(.platform, .{
+        .x = block.origin.x - viewport.origin.x,
+        .y = (viewport.origin.y + viewport.size.height) - (block.origin.y + block.size.height),
+        .width = block.size.width,
+        .height = block.size.height,
+    }, size);
+}
+
+/// One window's chrome bookkeeping: the last state published to it, so an
+/// update that says nothing new is not evaluated in the webview, and a flag so
+/// a window is observed once however many times a constructor calls in.
+const ChromeSlot = struct {
+    window: usize = 0,
+    published: ?window_chrome.State = null,
+    observed: bool = false,
+};
+
+var chrome_slots: [window_registry.capacity]ChromeSlot = @splat(.{});
+
+fn chromeSlot(window: objc.id) ?*ChromeSlot {
+    const handle = @intFromPtr(window);
+    if (handle == 0) return null;
+
+    for (&chrome_slots) |*slot| {
+        if (slot.window == handle) return slot;
+        if (slot.window == 0) {
+            slot.window = handle;
+            return slot;
+        }
+    }
+
+    // More windows than slots. The seed is still correct for every one of
+    // them; only live updates are lost, so this is quiet rather than fatal.
+    return null;
+}
+
+pub const ChromePublish = enum {
+    /// Skip the evaluation when nothing has changed. The usual case: a live
+    /// resize sends a notification per frame and the buttons do not move.
+    if_changed,
+    /// Say it regardless — a fresh document has not been told anything, and
+    /// its seed may predate the last change.
+    always,
+};
+
+/// Measure this window and tell the page inside it.
+pub fn publishWindowChrome(window: objc.id, when: ChromePublish) void {
+    if (window == null) return;
+
+    const webview = findWebView(msgSend0(window, "contentView")) orelse return;
+
+    // A frameless window is created with an empty style mask, which is also
+    // the only way to have no titlebar and no buttons at all.
+    const frameless = msgSend0Ulong(window, "styleMask") == 0;
+    const state = measureWindowChrome(window, webview, frameless);
+
+    const slot = chromeSlot(window);
+    if (when == .if_changed) {
+        if (slot) |s| {
+            if (s.published) |last| {
+                if (last.eql(state)) return;
+            }
+        }
+    }
+
+    var buffer: [window_chrome.update_script_size]u8 = undefined;
+    const script = window_chrome.updateScript(state, &buffer) catch return;
+
+    _ = msgSend2(webview, "evaluateJavaScript:completionHandler:", createNSString(script), @as(?*anyopaque, null));
+    if (slot) |s| s.published = state;
+}
+
+/// Block ABI, as in `installScrollGestureMonitor` — a notification block takes
+/// the notification and returns nothing.
+const NotificationBlockLayout = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int,
+    invoke: *const fn (*const anyopaque, objc.id) callconv(.c) void,
+    descriptor: *const ScrollBlockDescriptor,
+};
+
+fn windowChromeChanged(_: *const anyopaque, note: objc.id) callconv(.c) void {
+    const window = msgSend0(note, "object");
+
+    // One block serves every notification this window is watched for, so it
+    // asks which one arrived. A closing window gives its slot back: the table
+    // is fixed-size, and an app that opens and closes windows all day would
+    // otherwise fill it with the dead and stop updating the living.
+    const name = msgSend0(note, "name");
+    if (name != null and msgSendBool1Id(name, "isEqualToString:", createNSString(window_closed_notification))) {
+        forgetWindowChrome(window);
+        return;
+    }
+
+    publishWindowChrome(window, .if_changed);
+}
+
+/// Give a closed window's slot back.
+fn forgetWindowChrome(window: objc.id) void {
+    const handle = @intFromPtr(window);
+    if (handle == 0) return;
+
+    for (&chrome_slots) |*slot| {
+        if (slot.window != handle) continue;
+        slot.* = .{};
+        return;
+    }
+}
+
+const window_chrome_block_descriptor = ScrollBlockDescriptor{ .size = @sizeOf(NotificationBlockLayout) };
+var window_chrome_block = NotificationBlockLayout{
+    .isa = &_NSConcreteStackBlock,
+    .flags = 0,
+    .reserved = 0,
+    .invoke = windowChromeChanged,
+    .descriptor = &window_chrome_block_descriptor,
+};
+
+/// Everything that can move the buttons relative to the page.
+///
+/// `DidBecomeKey` is not a geometry change; it is the first moment a window is
+/// certainly on screen and laid out, which is when the seed's measurement —
+/// taken while the window was still being assembled — is worth checking.
+const window_closed_notification = "NSWindowWillCloseNotification";
+
+const window_chrome_notifications = [_][]const u8{
+    "NSWindowDidResizeNotification",
+    "NSWindowDidEnterFullScreenNotification",
+    "NSWindowDidExitFullScreenNotification",
+    "NSWindowDidBecomeKeyNotification",
+    window_closed_notification,
+};
+
+/// Watch a window for anything that moves its buttons. Idempotent.
+pub fn observeWindowChrome(window: objc.id) void {
+    if (window == null) return;
+
+    const slot = chromeSlot(window) orelse return;
+    if (slot.observed) return;
+    slot.observed = true;
+
+    const center = msgSend0(getClass("NSNotificationCenter"), "defaultCenter");
+    if (center == null) return;
+
+    for (window_chrome_notifications) |name| {
+        // The returned token is what `removeObserver:` would take. Craft never
+        // stops watching a window it owns, and the centre keeps the token
+        // alive, so there is nothing to hold onto here.
+        _ = msgSend4(
+            center,
+            "addObserverForName:object:queue:usingBlock:",
+            createNSString(name),
+            window,
+            @as(objc.id, null),
+            @as(objc.id, @ptrCast(&window_chrome_block)),
+        );
+    }
+
+    publishWindowChrome(window, .always);
+}
+
+// ============================================================================
 // Trackpad swipe phases → window.craft.gestures
 //
 // A WKWebView's `wheel` stream has no phase information, so web code has to
@@ -4044,10 +4347,13 @@ pub const CraftScripts = struct {
     /// it. On by default: the registry is inert until the host emits, and a
     /// swipeable sidebar in any window should feel native.
     gestures: bool = true,
-    /// Where AppKit puts this window's close/minimise/zoom buttons, so the page
-    /// can leave room for them instead of drawing replicas. See
-    /// `window_chrome.zig`.
-    window_controls: window_chrome.WindowControls = .titlebar,
+    /// What this window's close/minimise/zoom buttons look like to the page
+    /// inside it, measured from the window itself — see `measureWindowChrome`.
+    ///
+    /// Carried here rather than looked up inside `injectCraftScripts` because
+    /// it is the one script whose text depends on the window, and a caller that
+    /// forgot to measure would otherwise silently seed a page with defaults.
+    window_controls: window_chrome.State,
 };
 
 /// Add one source string to a content controller as an at-document-start,
@@ -4093,8 +4399,12 @@ pub fn injectCraftScripts(userContentController: objc.id, scripts: CraftScripts)
         getCraftBridgeScriptMinimal());
 
     // Before anything that might render: a page that knows the platform drew
-    // the window buttons does not draw its own.
-    addUserScriptSource(userContentController, window_chrome.scriptFor(scripts.window_controls));
+    // the window buttons does not draw its own, and one that knows where they
+    // are lays itself out around them on the first frame.
+    var chrome_buffer: [window_chrome.seed_script_size]u8 = undefined;
+    if (window_chrome.seedScript(scripts.window_controls, &chrome_buffer)) |seed| {
+        addUserScriptSource(userContentController, seed);
+    } else |_| {}
 
     if (scripts.native_ui)
         addUserScriptSource(userContentController, getNativeUIScript());
@@ -5545,6 +5855,21 @@ fn restoreContent(webview: objc.id) void {
     }
 }
 
+/// `webView:didCommitNavigation:`
+///
+/// The window-controls seed is baked into a document-start user script, and a
+/// user script's text is fixed when it is added. So a window that is resized,
+/// or taken in and out of fullscreen, and then navigates would hand the new
+/// document the measurement from before all that.
+///
+/// Commit is the moment the new document exists and before it has painted, so
+/// telling it again here costs one evaluation per navigation and closes the
+/// only window in which the page could hold a stale answer.
+fn handleDidCommitNavigation(_: objc.id, _: objc.SEL, webview: objc.id, _: objc.id) callconv(.c) void {
+    if (webview == null) return;
+    publishWindowChrome(msgSend0(webview, "window"), .always);
+}
+
 /// `webViewWebContentProcessDidTerminate:`
 ///
 /// WKWebView renders in a separate process, and when that process is killed
@@ -5632,6 +5957,15 @@ pub fn setupNavigationDelegate(webview: objc.id) !void {
             objc.sel_registerName("webViewWebContentProcessDidTerminate:"),
             @as(objc.IMP, @ptrCast(@constCast(&handleContentProcessTerminated))),
             "v@:@",
+        ))
+            return error.MethodAdditionFailed;
+
+        // void; self, _cmd, webView, navigation
+        if (!objc.class_addMethod(
+            @ptrCast(@alignCast(delegateClass)),
+            objc.sel_registerName("webView:didCommitNavigation:"),
+            @as(objc.IMP, @ptrCast(@constCast(&handleDidCommitNavigation))),
+            "v@:@@",
         ))
             return error.MethodAdditionFailed;
 
