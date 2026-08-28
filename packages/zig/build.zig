@@ -341,6 +341,23 @@ pub fn build(b: *std.Build) void {
         ios_surface_tests.root_module.linkFramework("CoreMIDI", .{});
     }
 
+    // The iOS conformance gate. It embeds the Swift template as the migration
+    // spec and `bridge_mobile.zig` as what Zig currently serves, so an action
+    // cannot be dropped on the way across without the build saying so.
+    const ios_conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ios_conformance_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
+        .root_source_file = b.path("../ios/templates/CraftApp.swift"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile.zig", .{
+        .root_source_file = b.path("src/bridge_mobile.zig"),
+    });
+
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/menubar_test.zig"),
@@ -1186,6 +1203,7 @@ pub fn build(b: *std.Build) void {
     const run_api_tests = b.addRunArtifact(api_tests);
     const run_mobile_tests = b.addRunArtifact(mobile_tests);
     const run_ios_surface_tests = b.addRunArtifact(ios_surface_tests);
+    const run_ios_conformance_tests = b.addRunArtifact(ios_conformance_tests);
     const run_menubar_tests = b.addRunArtifact(menubar_tests);
     const run_components_tests = b.addRunArtifact(components_tests);
     const run_gpu_tests = b.addRunArtifact(gpu_tests);
@@ -1312,6 +1330,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(&run_mobile_tests.step);
     test_step.dependOn(&run_ios_surface_tests.step);
+    test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -1392,6 +1411,7 @@ pub fn build(b: *std.Build) void {
 
     const test_ios_step = b.step("test:ios", "Run the iOS surface gate");
     test_ios_step.dependOn(&run_ios_surface_tests.step);
+    test_ios_step.dependOn(&run_ios_conformance_tests.step);
 
     const test_menubar_step = b.step("test:menubar", "Run Menubar tests");
     test_menubar_step.dependOn(&run_menubar_tests.step);
