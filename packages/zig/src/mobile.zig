@@ -1,5 +1,6 @@
 const std = @import("std");
 const objc_runtime = @import("objc_runtime.zig");
+const compat = @import("compat.zig");
 
 /// Mobile Platform Support
 /// Provides iOS and Android native integration
@@ -265,7 +266,7 @@ pub const NativeObjectManager = struct {
             .ptr = ptr,
             .size = size,
             .type_name = type_name,
-            .allocation_time = std.time.timestamp(),
+            .allocation_time = compat.timestamp(),
         };
 
         try self.tracked_objects.put(addr, info);
@@ -322,7 +323,7 @@ pub const NativeObjectManager = struct {
 
         std.debug.print("Memory Leak Report:\n", .{});
         while (it.next()) |entry| {
-            const age = std.time.timestamp() - entry.value.*.allocation_time;
+            const age = compat.timestamp() - entry.value.*.allocation_time;
             std.debug.print("  Leaked {s} at 0x{x} (size: {d} bytes, age: {d}s)\n", .{
                 entry.value.*.type_name,
                 entry.key_ptr.*,
@@ -469,11 +470,21 @@ pub const iOS = struct {
         const allocated = objc.msgSendId(WKWebViewClass, sel_alloc);
         const Fn = *const fn (objc.id, objc.SEL, objc.CGRect, objc.id) callconv(.c) objc.id;
         const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const webview = func(allocated, sel_initWithFrame, frame, configObj);
+        // `objc.id` is `?*anyopaque`, so this is optional and a failed
+        // `initWithFrame:configuration:` comes back as null. Unwrap once, here,
+        // rather than `@ptrCast` the optional away further down — a cast cannot
+        // discard optionality, and pretending otherwise is how a nil webview
+        // would have reached callers as a live pointer.
+        const webview = func(allocated, sel_initWithFrame, frame, configObj) orelse
+            return error.WebViewCreationFailed;
 
-        // Track the webview in memory manager
+        // Track the webview in memory manager.
+        //
+        // The size reported here is `@sizeOf(WKWebView)` as the runtime knows
+        // it, not `@sizeOf(@TypeOf(webview))` — the latter is the width of a
+        // pointer, which made every WKWebView in the accounting cost 8 bytes.
         if (getGlobalObjectManager()) |manager| {
-            try manager.trackObject(webview, @sizeOf(@TypeOf(webview)), "WKWebView");
+            try manager.trackObject(webview, objc.classInstanceSize(WKWebViewClass), "WKWebView");
         }
 
         // Associate allocator with webview for cleanup
@@ -567,82 +578,35 @@ pub const iOS = struct {
         // Create NSString from script
         const ns_script = try objc.createNSString(script, allocator.*);
 
-        // Create completion handler block for JavaScript evaluation
         const sel_evaluateJavaScript = objc.sel_registerName("evaluateJavaScript:completionHandler:") orelse return error.SelectorNotFound;
 
-        // Block structure for completion handler
-        // typedef void (^CompletionHandler)(id result, NSError *error);
-        const BlockDescriptor = extern struct {
-            reserved: c_ulong,
-            size: c_ulong,
-        };
+        // A completion handler is not wired up yet, and asking for one is an
+        // error rather than a silent drop.
+        //
+        // The block that used to live here did not work and could not have.
+        // It was built on the stack and handed to an *asynchronous* API — the
+        // comment beside it read "valid for duration of call", which is not
+        // the property an async callee needs. `_Block_copy` copies the block
+        // body but keeps the descriptor *pointer*, and that descriptor was
+        // also a function local, so both were dead before WebKit ever invoked
+        // them. Its `invoke` signature took `?objc.id`, which is `??*anyopaque`
+        // and illegal under `callconv(.c)`; and the `callback` field it stored
+        // had a different signature from this function's own parameter, so
+        // even the assignment was a type error. None of that was ever noticed
+        // because nothing reachable from the iOS exports called this function —
+        // which is precisely what `test/ios_surface_test.zig` now prevents.
+        //
+        // Doing it correctly means a module-level block with static storage
+        // (see `bridge_permissions.zig:131-164` for the shape that works) plus
+        // a pending-request table so the reply can find its caller. That lands
+        // with the dispatcher, not here.
+        if (callback != null) return error.CompletionHandlerNotImplemented;
 
-        const Block = extern struct {
-            isa: ?*anyopaque,
-            flags: c_int,
-            reserved: c_int,
-            invoke: ?*const fn (*@This(), ?objc.id, ?objc.id) callconv(.c) void,
-            descriptor: *const BlockDescriptor,
-            callback: ?*const fn (?[]const u8, ?[]const u8) void,
-        };
-
-        // Block invoke function that calls our Zig callback
-        const block_invoke = struct {
-            fn invoke(block: *Block, result: ?objc.id, err: ?objc.id) callconv(.c) void {
-                var result_str: ?[]const u8 = null;
-                var error_str: ?[]const u8 = null;
-
-                // Extract result string if present
-                if (result) |res| {
-                    const desc = @import("objc_runtime.zig").objc.objc_msgSend;
-                    const desc_fn: *const fn (objc.id, objc.SEL) callconv(.c) objc.id = @ptrCast(&desc);
-                    const description = desc_fn(res, objc.sel_registerName("description").?);
-                    if (description != null) {
-                        const utf8_fn: *const fn (objc.id, objc.SEL) callconv(.c) [*:0]const u8 = @ptrCast(&desc);
-                        const utf8 = utf8_fn(description, objc.sel_registerName("UTF8String").?);
-                        result_str = std.mem.span(utf8);
-                    }
-                }
-
-                // Extract error string if present
-                if (err) |e| {
-                    const desc = @import("objc_runtime.zig").objc.objc_msgSend;
-                    const desc_fn: *const fn (objc.id, objc.SEL) callconv(.c) objc.id = @ptrCast(&desc);
-                    const description = desc_fn(e, objc.sel_registerName("localizedDescription").?);
-                    if (description != null) {
-                        const utf8_fn: *const fn (objc.id, objc.SEL) callconv(.c) [*:0]const u8 = @ptrCast(&desc);
-                        const utf8 = utf8_fn(description, objc.sel_registerName("UTF8String").?);
-                        error_str = std.mem.span(utf8);
-                    }
-                }
-
-                // Call the user's callback
-                if (block.callback) |cb| {
-                    cb(result_str, error_str);
-                }
-            }
-        }.invoke;
-
-        // Static descriptor (must persist)
-        const descriptor = BlockDescriptor{
-            .reserved = 0,
-            .size = @sizeOf(Block),
-        };
-
-        // Create block on stack (valid for duration of call)
-        var block = Block{
-            .isa = @extern(*anyopaque, .{ .name = "_NSConcreteStackBlock" }),
-            .flags = 0,
-            .reserved = 0,
-            .invoke = block_invoke,
-            .descriptor = &descriptor,
-            .callback = callback,
-        };
-
-        // Call evaluateJavaScript with our block
-        const Fn = *const fn (*anyopaque, objc.SEL, objc.id, *Block) callconv(.c) void;
+        // Passing nil for `completionHandler:` is legal and is what a
+        // fire-and-forget evaluation wants.
+        const Fn = *const fn (*anyopaque, objc.SEL, objc.id, ?*anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        func(webview_ptr, sel_evaluateJavaScript, ns_script, &block);
+        func(webview_ptr, sel_evaluateJavaScript, ns_script, null);
     }
 
     /// Handle Deep Links
@@ -663,78 +627,6 @@ pub const iOS = struct {
         reminders,
     };
 
-    /// Check current permission status
-    pub fn checkPermissionStatus(permission: Permission) !PermissionStatus {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return error.UnsupportedPlatform;
-        }
-
-        switch (permission) {
-            .camera, .microphone => {
-                const AVCaptureDeviceClass = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForMediaType:") orelse return error.SelectorNotFound;
-
-                // AVMediaTypeVideo or AVMediaTypeAudio
-                const mediaType = if (permission == .camera) "vide" else "soun";
-                const mediaTypeStr = objc.objc_getClass("AVMediaTypeVideo") orelse {
-                    // Fallback - create NSString for media type
-                    const allocator = std.heap.page_allocator;
-                    const ns_media = try objc.createNSString(mediaType, allocator);
-                    const Fn = *const fn (objc.Class, objc.SEL, objc.id) callconv(.c) i64;
-                    const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                    const status = func(AVCaptureDeviceClass, sel_authorizationStatus, ns_media);
-                    return statusFromAVAuthorizationStatus(status);
-                };
-
-                const Fn = *const fn (objc.Class, objc.SEL, objc.id) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(AVCaptureDeviceClass, sel_authorizationStatus, mediaTypeStr);
-                return statusFromAVAuthorizationStatus(status);
-            },
-            .location => {
-                const CLLocationManagerClass = objc.objc_getClass("CLLocationManager") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatus") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL) callconv(.c) i32;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(CLLocationManagerClass, sel_authorizationStatus);
-                return statusFromCLAuthorizationStatus(status);
-            },
-            .photos => {
-                const PHPhotoLibraryClass = objc.objc_getClass("PHPhotoLibrary") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatus") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(PHPhotoLibraryClass, sel_authorizationStatus);
-                return statusFromPHAuthorizationStatus(status);
-            },
-            .notifications => {
-                // Notifications require async check - return unknown for sync check
-                return .not_determined;
-            },
-            .contacts => {
-                const CNContactStoreClass = objc.objc_getClass("CNContactStore") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForEntityType:") orelse return error.SelectorNotFound;
-
-                const Fn = *const fn (objc.Class, objc.SEL, i64) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(CNContactStoreClass, sel_authorizationStatus, 0); // CNEntityTypeContacts = 0
-                return statusFromCNAuthorizationStatus(status);
-            },
-            .calendar, .reminders => {
-                const EKEventStoreClass = objc.objc_getClass("EKEventStore") orelse return error.ClassNotFound;
-                const sel_authorizationStatus = objc.sel_registerName("authorizationStatusForEntityType:") orelse return error.SelectorNotFound;
-
-                const entity_type: i64 = if (permission == .calendar) 0 else 1; // EKEntityTypeEvent = 0, EKEntityTypeReminder = 1
-                const Fn = *const fn (objc.Class, objc.SEL, i64) callconv(.c) i64;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                const status = func(EKEventStoreClass, sel_authorizationStatus, entity_type);
-                return statusFromEKAuthorizationStatus(status);
-            },
-        }
-    }
-
     pub const PermissionStatus = enum {
         not_determined,
         restricted,
@@ -743,145 +635,27 @@ pub const iOS = struct {
         limited, // For photos
     };
 
-    fn statusFromAVAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined, // AVAuthorizationStatusNotDetermined
-            1 => .restricted, // AVAuthorizationStatusRestricted
-            2 => .denied, // AVAuthorizationStatusDenied
-            3 => .authorized, // AVAuthorizationStatusAuthorized
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromCLAuthorizationStatus(status: i32) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined, // kCLAuthorizationStatusNotDetermined
-            1 => .restricted, // kCLAuthorizationStatusRestricted
-            2 => .denied, // kCLAuthorizationStatusDenied
-            3, 4 => .authorized, // kCLAuthorizationStatusAuthorizedAlways/WhenInUse
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromPHAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            4 => .limited, // PHAuthorizationStatusLimited (iOS 14+)
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromCNAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            else => .not_determined,
-        };
-    }
-
-    fn statusFromEKAuthorizationStatus(status: i64) PermissionStatus {
-        return switch (status) {
-            0 => .not_determined,
-            1 => .restricted,
-            2 => .denied,
-            3 => .authorized,
-            else => .not_determined,
-        };
-    }
-
-    pub fn requestPermission(permission: Permission, callback: *const fn (bool) void) !void {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return error.UnsupportedPlatform;
-        }
-
-        // Store callback for later invocation (would need proper callback management)
-        _ = callback;
-
-        // Different permission types require different iOS APIs
-        switch (permission) {
-            .camera, .microphone => {
-                const AVCaptureDeviceClass = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
-                const sel_requestAccessForMediaType = objc.sel_registerName("requestAccessForMediaType:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Create media type string
-                const allocator = std.heap.page_allocator;
-                const mediaType = if (permission == .camera) "vide" else "soun";
-                const ns_media = try objc.createNSString(mediaType, allocator);
-
-                // Request access (completion handler would need block creation)
-                const Fn = *const fn (objc.Class, objc.SEL, objc.id, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(AVCaptureDeviceClass, sel_requestAccessForMediaType, ns_media, null);
-            },
-            .location => {
-                const CLLocationManagerClass = objc.objc_getClass("CLLocationManager") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestWhenInUseAuthorization = objc.sel_registerName("requestWhenInUseAuthorization") orelse return error.SelectorNotFound;
-
-                // Create location manager and request authorization
-                const allocated = objc.msgSendId(CLLocationManagerClass, sel_alloc);
-                const manager = objc.msgSendId(allocated, sel_init);
-                objc.msgSend(manager, sel_requestWhenInUseAuthorization);
-            },
-            .photos => {
-                const PHPhotoLibraryClass = objc.objc_getClass("PHPhotoLibrary") orelse return error.ClassNotFound;
-                const sel_requestAuthorization = objc.sel_registerName("requestAuthorization:") orelse return error.SelectorNotFound;
-
-                // Request photo library access (completion handler would need block creation)
-                const Fn = *const fn (objc.Class, objc.SEL, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(PHPhotoLibraryClass, sel_requestAuthorization, null);
-            },
-            .notifications => {
-                const UNUserNotificationCenterClass = objc.objc_getClass("UNUserNotificationCenter") orelse return error.ClassNotFound;
-                const sel_currentNotificationCenter = objc.sel_registerName("currentNotificationCenter") orelse return error.SelectorNotFound;
-                const sel_requestAuthorizationWithOptions = objc.sel_registerName("requestAuthorizationWithOptions:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Get notification center
-                const center = objc.msgSendId(UNUserNotificationCenterClass, sel_currentNotificationCenter);
-
-                // Request authorization with alert, badge, sound (7 = alert | badge | sound)
-                const Fn = *const fn (objc.id, objc.SEL, u64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(center, sel_requestAuthorizationWithOptions, 7, null);
-            },
-            .contacts => {
-                const CNContactStoreClass = objc.objc_getClass("CNContactStore") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestAccessForEntityType = objc.sel_registerName("requestAccessForEntityType:completionHandler:") orelse return error.SelectorNotFound;
-
-                // Create contact store and request access
-                const allocated = objc.msgSendId(CNContactStoreClass, sel_alloc);
-                const store = objc.msgSendId(allocated, sel_init);
-
-                const Fn = *const fn (objc.id, objc.SEL, i64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(store, sel_requestAccessForEntityType, 0, null); // CNEntityTypeContacts = 0
-            },
-            .calendar, .reminders => {
-                const EKEventStoreClass = objc.objc_getClass("EKEventStore") orelse return error.ClassNotFound;
-                const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
-                const sel_init = objc.sel_registerName("init") orelse return error.SelectorNotFound;
-                const sel_requestAccessToEntityType = objc.sel_registerName("requestAccessToEntityType:completion:") orelse return error.SelectorNotFound;
-
-                // Create event store and request access
-                const allocated = objc.msgSendId(EKEventStoreClass, sel_alloc);
-                const store = objc.msgSendId(allocated, sel_init);
-
-                const entity_type: i64 = if (permission == .calendar) 0 else 1;
-                const Fn = *const fn (objc.id, objc.SEL, i64, ?*anyopaque) callconv(.c) void;
-                const func: Fn = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-                func(store, sel_requestAccessToEntityType, entity_type, null);
-            },
-        }
-    }
+    // `checkPermissionStatus`, its five `statusFrom*AuthorizationStatus`
+    // mappers, `requestPermission`, and `showAlert` used to sit between these
+    // two enums. The types stay because they are the vocabulary; the functions
+    // went because each was broken in a way no test could have caught, since
+    // nothing ever called them:
+    //
+    //   - `requestPermission` took a `callback` and immediately did
+    //     `_ = callback;`, then passed null as the completion handler to all
+    //     five system calls. Permissions were write-only: the answer was never
+    //     delivered to anyone, and Apple documents a null completion for
+    //     `requestAccessForMediaType:` as undefined behaviour.
+    //   - `checkPermissionStatus` returned `.not_determined` for notifications
+    //     unconditionally, whatever the system actually held.
+    //   - `showAlert` presented against `keyWindow`, deprecated since iOS 13
+    //     and nil in any scene-based app — which is every app the templates
+    //     generate. It also computed an auto-dismiss delay and discarded it,
+    //     so the alert its own doc comment called self-dismissing never was.
+    //
+    // They return in the permissions phase, replies correlated by the
+    // envelope's request id through a pending-request table rather than by a
+    // callback pointer that nothing invokes.
 
     /// Haptic Feedback
     pub const HapticType = enum {
@@ -967,61 +741,6 @@ pub const iOS = struct {
         }
     }
 
-    /// Show iOS Alert/Toast
-    /// Uses UIAlertController for simple toast-like alerts
-    pub fn showAlert(message: []const u8, duration_short: bool) void {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return;
-        }
-
-        // Get UIAlertController class
-        const UIAlertControllerClass = objc.objc_getClass("UIAlertController") orelse return;
-
-        // Create alert title NSString (nil for toast-like appearance)
-        const NSStringClass = objc.objc_getClass("NSString") orelse return;
-        const sel_stringWithUTF8String = objc.sel_registerName("stringWithUTF8String:") orelse return;
-
-        // Create message string
-        const allocator = std.heap.page_allocator;
-        const msg_z = @import("memory.zig").dupeZ(allocator, u8, message) catch return;
-        defer allocator.free(msg_z);
-
-        const Fn1 = *const fn (objc.id, objc.SEL, [*:0]const u8) callconv(.c) objc.id;
-        const stringFn: Fn1 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const messageStr = stringFn(NSStringClass, sel_stringWithUTF8String, msg_z.ptr);
-
-        // Create UIAlertController with style Alert (1)
-        const sel_alertWithTitle = objc.sel_registerName("alertControllerWithTitle:message:preferredStyle:") orelse return;
-        const Fn2 = *const fn (objc.id, objc.SEL, ?objc.id, objc.id, i64) callconv(.c) objc.id;
-        const alertFn: Fn2 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        const alert = alertFn(UIAlertControllerClass, sel_alertWithTitle, null, messageStr, 1); // UIAlertControllerStyleAlert = 1
-
-        // Get the key window and root view controller
-        const UIApplicationClass = objc.objc_getClass("UIApplication") orelse return;
-        const sel_sharedApplication = objc.sel_registerName("sharedApplication") orelse return;
-        const app = objc.msgSendId(UIApplicationClass, sel_sharedApplication);
-
-        const sel_keyWindow = objc.sel_registerName("keyWindow") orelse return;
-        const window = objc.msgSendId(app, sel_keyWindow);
-        if (window == null) return;
-
-        const sel_rootViewController = objc.sel_registerName("rootViewController") orelse return;
-        const rootVC = objc.msgSendId(window, sel_rootViewController);
-        if (rootVC == null) return;
-
-        // Present the alert
-        const sel_presentViewController = objc.sel_registerName("presentViewController:animated:completion:") orelse return;
-        const Fn3 = *const fn (objc.id, objc.SEL, objc.id, bool, ?objc.id) callconv(.c) void;
-        const presentFn: Fn3 = @ptrCast(&@import("objc_runtime.zig").objc.objc_msgSend);
-        presentFn(rootVC, sel_presentViewController, alert, true, null);
-
-        // Auto-dismiss after delay using dispatch_after
-        const delay_seconds: f64 = if (duration_short) 2.0 else 3.5;
-        _ = delay_seconds;
-
-        // For simplicity, just present the alert - user can tap away
-        // In production, would use dispatch_after to dismiss automatically
-    }
 };
 
 /// Android Native Integration

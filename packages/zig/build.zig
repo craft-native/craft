@@ -161,6 +161,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/mobile.zig"),
     });
 
+    // Rooted at `src/ios.zig`, which reaches `src/mobile.zig` through its own
+    // relative import — so this module owns both files and must not be mixed
+    // with `mobile_module` in one compilation.
+    const ios_module = b.createModule(.{
+        .root_source_file = b.path("src/ios.zig"),
+    });
+
     const menubar_module = b.createModule(.{
         .root_source_file = b.path("src/menubar.zig"),
     });
@@ -291,6 +298,36 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+
+    // The iOS surface gate. Rooted at `src/ios.zig` rather than sharing
+    // `mobile_module`, because a file may belong to only one module per
+    // compilation and `ios.zig` reaches `mobile.zig` through a relative
+    // import of its own. The `mobile.iOS` half of the gate therefore lives in
+    // `test/mobile_test.zig`, which already owns that module.
+    //
+    // This builds for the host, so it costs seconds and runs in `zig build
+    // test` — which is the point. Cross-compiling to iOS is the truth, but it
+    // is not a loop anyone iterates in locally.
+    const ios_surface_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ios_surface_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "../src/ios.zig", .module = ios_module },
+            },
+        }),
+    });
+    // Forcing analysis of every declaration means the linker now sees every
+    // `objc_msgSend`/`sel_registerName` reference too, so the ObjC runtime has
+    // to be present. No frameworks are needed: nothing here calls UIKit or
+    // AppKit, it only resolves classes by name at runtime — which is exactly
+    // why `[UIScreen mainScreen]` returns null on the host rather than failing
+    // to link.
+    if (target.result.os.tag.isDarwin()) {
+        ios_surface_tests.root_module.link_libc = true;
+        ios_surface_tests.root_module.linkSystemLibrary("objc", .{});
+    }
 
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -1136,6 +1173,7 @@ pub fn build(b: *std.Build) void {
 
     const run_api_tests = b.addRunArtifact(api_tests);
     const run_mobile_tests = b.addRunArtifact(mobile_tests);
+    const run_ios_surface_tests = b.addRunArtifact(ios_surface_tests);
     const run_menubar_tests = b.addRunArtifact(menubar_tests);
     const run_components_tests = b.addRunArtifact(components_tests);
     const run_gpu_tests = b.addRunArtifact(gpu_tests);
@@ -1261,6 +1299,7 @@ pub fn build(b: *std.Build) void {
     if (js_test_run) |run| test_step.dependOn(&run.step);
     test_step.dependOn(&run_api_tests.step);
     test_step.dependOn(&run_mobile_tests.step);
+    test_step.dependOn(&run_ios_surface_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -1338,6 +1377,9 @@ pub fn build(b: *std.Build) void {
 
     const test_mobile_step = b.step("test:mobile", "Run Mobile tests");
     test_mobile_step.dependOn(&run_mobile_tests.step);
+
+    const test_ios_step = b.step("test:ios", "Run the iOS surface gate");
+    test_ios_step.dependOn(&run_ios_surface_tests.step);
 
     const test_menubar_step = b.step("test:menubar", "Run Menubar tests");
     test_menubar_step.dependOn(&run_menubar_tests.step);

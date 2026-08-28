@@ -131,11 +131,15 @@ export fn craft_ios_haptic(haptic_type: c_int) callconv(.c) void {
     mobile.iOS.triggerHaptic(h_type);
 }
 
-/// Show native alert
-export fn craft_ios_show_alert(message: [*]const u8, len: usize) callconv(.c) void {
-    const msg = message[0..len];
-    mobile.iOS.showAlert(msg, true);
-}
+// `craft_ios_show_alert` used to be exported here. It forwarded to
+// `mobile.iOS.showAlert`, which presented its UIAlertController against
+// `[UIApplication sharedApplication].keyWindow` — deprecated since iOS 13 and
+// nil in any scene-based app, which is every app the templates generate. It
+// also computed an auto-dismiss delay and then discarded it, so the alert its
+// doc comment described as self-dismissing never dismissed.
+//
+// Nothing outside this file ever called it: no Swift template references any
+// `craft_ios_*` symbol.
 
 // ============================================================================
 // Default HTML Content
@@ -204,20 +208,14 @@ pub fn quickStart(allocator: std.mem.Allocator, html: []const u8) !void {
     try ios.quickStart(allocator, html);
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
-test "iOS main exports" {
-    // Just verify the exports compile correctly
-    _ = craft_ios_init;
-    _ = craft_ios_set_html;
-    _ = craft_ios_set_url;
-    _ = craft_ios_run;
-    _ = craft_ios_deinit;
-    _ = craft_ios_haptic;
-    _ = craft_ios_show_alert;
-    _ = craft_ios_set_clipboard;
-    _ = craft_ios_open_url;
-    _ = craft_ios_share;
-}
+// The C API surface used to be asserted by a `test` block here that listed
+// `craft_ios_set_clipboard`, `craft_ios_open_url`, and `craft_ios_share` —
+// three functions this file has never declared. Undeclared identifiers are
+// resolved in AstGen, which runs over the whole file regardless of whether a
+// test is being built, so those three names were three of the nine errors that
+// kept `zig build build-ios-simulator` red from the 0.17 migration onward.
+//
+// It also asserted nothing a compiler would not: `_ = craft_ios_init;` on an
+// `export fn` in the same file cannot fail. `test/ios_surface_test.zig` covers
+// the real property — that every declaration reachable from `ios.zig` and
+// `mobile.iOS` actually compiles — and it does so on the host, in seconds.

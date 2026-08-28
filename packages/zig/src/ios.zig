@@ -16,7 +16,6 @@ pub const CraftAppDelegate = struct {
     window: ?objc.id = null,
     root_view_controller: ?objc.id = null,
     webview: ?*mobile.iOS.WKWebView = null,
-    js_bridge: ?*JSBridge = null,
     allocator: std.mem.Allocator,
     config: AppConfig,
 
@@ -107,18 +106,12 @@ pub const CraftAppDelegate = struct {
         self.on_memory_warning = callback;
     }
 
-    /// Register a custom JavaScript handler
-    /// The handler will be called when JS calls: craft.invoke('name', params)
-    pub fn registerJSHandler(self: *Self, name: []const u8, handler: JSBridge.Handler) !void {
-        if (self.js_bridge) |bridge| {
-            try bridge.registerHandler(name, handler);
-        }
-    }
-
-    /// Get the JavaScript bridge for advanced usage
-    pub fn getBridge(self: *Self) ?*JSBridge {
-        return self.js_bridge;
-    }
+    // `registerJSHandler` and `getBridge` used to sit here, handing callers a
+    // `*JSBridge` whose `handleMessage` had no caller anywhere in the tree —
+    // `setupJSBridge` below never registered a `WKScriptMessageHandler`, so
+    // nothing could ever deliver a message to it. They are gone along with the
+    // bridge itself; the replacement routes through `ios_dispatch.zig` and the
+    // same `bridge_*.zig` modules the desktop uses.
 
     /// Start the iOS application
     /// This should be called from main() and will not return until the app terminates
@@ -131,48 +124,34 @@ pub const CraftAppDelegate = struct {
         mobile.initGlobalObjectManager(self.allocator);
         defer mobile.deinitGlobalObjectManager();
 
-        // Initialize JavaScript bridge
-        const bridge = try self.allocator.create(JSBridge);
-        bridge.* = JSBridge.init(self.allocator);
-        bridge.app_delegate = self;
-        self.js_bridge = bridge;
-        defer {
-            bridge.deinit();
-            self.allocator.destroy(bridge);
-        }
-
-        // Create UIWindow
+        // These four are the pieces that survive into the real startup path,
+        // and they are called here so the compiler keeps checking them. They
+        // must not run in this order on a device: every one of them touches
+        // UIKit, and UIKit is not initialised until `UIApplicationMain` has
+        // been called. `[UIScreen mainScreen]` returns nil before that, so
+        // `createWindow` builds its `initWithFrame:` rect out of garbage, and
+        // `showWindow`'s `makeKeyAndVisible` traps with no `UIApplication`
+        // instance to key against.
         try self.createWindow();
-
-        // Create and configure root view controller with WKWebView
         try self.createRootViewController();
-
-        // Set up JavaScript bridge with WKWebView
         try self.setupJSBridge();
-
-        // Inject craft bridge JavaScript
-        try self.injectBridgeScript();
-
-        // Load initial content
         try self.loadInitialContent();
-
-        // Make window visible
         try self.showWindow();
 
-        // Dispatch ready event to JavaScript
-        if (self.js_bridge) |bridge_ptr| {
-            bridge_ptr.sendEvent("ready", "{}") catch |err| {
-                std.log.warn("failed to send ready event to JS bridge: {}", .{err});
-            };
-        }
-
-        // Call launch callback
         if (self.on_launch) |callback| {
             callback();
         }
 
-        // Start the run loop (blocks until app terminates)
-        try self.runMainLoop();
+        // There is no run loop to enter. The previous version spun
+        // `[[NSRunLoop currentRunLoop] run]`, which is not how an iOS app
+        // starts and gave no touch delivery and no lifecycle events.
+        //
+        // Saying so is the honest state of this file: iOS compiles again, and
+        // it does not yet launch. The next phase registers a delegate class,
+        // calls `UIApplicationMain`, and moves the five calls above into
+        // `application:didFinishLaunchingWithOptions:`, which is the only
+        // point at which they are legal.
+        return error.RunLoopNotImplemented;
     }
 
     /// Set up WKScriptMessageHandler for JavaScript bridge
@@ -188,78 +167,17 @@ pub const CraftAppDelegate = struct {
         const sel_userContentController = objc.sel_registerName("userContentController") orelse return error.SelectorNotFound;
         const content_controller = objc.msgSendId(configuration, sel_userContentController);
 
-        // Note: In a full implementation, we would create a custom Objective-C class
-        // that implements WKScriptMessageHandler protocol and register it here.
-        // For now, the JS bridge will work through evaluateJavaScript polling.
-
+        // Nothing is registered on the controller yet, so a page's
+        // `window.webkit.messageHandlers.craft` is undefined and every call
+        // from JS is silently dropped. The comment that used to sit here said
+        // the bridge would "work through evaluateJavaScript polling" instead —
+        // no such polling was ever written, which is why iOS has looked wired
+        // up without being reachable.
+        //
+        // `macos.zig:5071` already does this correctly and uses nothing from
+        // AppKit — objc runtime, Foundation, and WebKit only — so the next
+        // phase ports it here rather than inventing a second one.
         _ = content_controller;
-    }
-
-    /// Inject the craft bridge JavaScript into the webview
-    fn injectBridgeScript(self: *Self) !void {
-        if (self.webview == null) return error.WebViewNotInitialized;
-
-        // This JavaScript sets up the craft object that web apps can use
-        const bridge_script =
-            \\(function() {
-            \\    if (window.craft) return; // Already initialized
-            \\
-            \\    window.craft = {
-            \\        _callbacks: {},
-            \\        _callbackId: 0,
-            \\
-            \\        isNative: function() {
-            \\            return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft);
-            \\        },
-            \\
-            \\        invoke: function(method, params) {
-            \\            var self = this;
-            \\            params = params || {};
-            \\
-            \\            return new Promise(function(resolve, reject) {
-            \\                var callbackId = String(++self._callbackId);
-            \\
-            \\                // Store callback
-            \\                window['__craftCallback_' + callbackId] = function(result) {
-            \\                    delete window['__craftCallback_' + callbackId];
-            \\                    if (result && result.error) {
-            \\                        reject(new Error(result.error));
-            \\                    } else {
-            \\                        resolve(result);
-            \\                    }
-            \\                };
-            \\
-            \\                // Send to native
-            \\                if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft) {
-            \\                    window.webkit.messageHandlers.craft.postMessage({
-            \\                        method: method,
-            \\                        params: params,
-            \\                        callbackId: callbackId
-            \\                    });
-            \\                } else {
-            \\                    // Browser fallback - simulate native response
-            \\                    setTimeout(function() {
-            \\                        window['__craftCallback_' + callbackId]({ success: true, browser: true });
-            \\                    }, 10);
-            \\                }
-            \\
-            \\                // Timeout after 10 seconds
-            \\                setTimeout(function() {
-            \\                    if (window['__craftCallback_' + callbackId]) {
-            \\                        delete window['__craftCallback_' + callbackId];
-            \\                        reject(new Error('Timeout'));
-            \\                    }
-            \\                }, 10000);
-            \\            });
-            \\        }
-            \\    };
-            \\
-            \\    // Dispatch ready event
-            \\    window.dispatchEvent(new CustomEvent('craft:ready'));
-            \\})();
-        ;
-
-        try self.evaluateJavaScript(bridge_script, null);
     }
 
     /// Create the main UIWindow
@@ -435,7 +353,12 @@ pub const CraftAppDelegate = struct {
 
         // Load HTML: [webview loadHTMLString:html baseURL:baseURL]
         const sel_loadHTMLString = objc.sel_registerName("loadHTMLString:baseURL:") orelse return error.SelectorNotFound;
-        const LoadHTMLFn = *const fn (objc.id, objc.SEL, objc.id, ?objc.id) callconv(.c) objc.id;
+        // `objc.id` is already `?*anyopaque`, so `?objc.id` is a double
+        // optional — and a non-pointer optional has no guaranteed in-memory
+        // representation, which makes it illegal in a `callconv(.c)`
+        // signature. A nil `baseURL:` is spelled by passing a null `objc.id`,
+        // not by wrapping the type in another optional.
+        const LoadHTMLFn = *const fn (objc.id, objc.SEL, objc.id, objc.id) callconv(.c) objc.id;
         const loadHTMLFn: LoadHTMLFn = @ptrCast(&objc_runtime.objc.objc_msgSend);
         _ = loadHTMLFn(webview_ptr, sel_loadHTMLString, html_ns, base_url);
     }
@@ -475,18 +398,17 @@ pub const CraftAppDelegate = struct {
         objc.msgSend(self.window.?, sel_makeKeyAndVisible);
     }
 
-    /// Run the main event loop
-    fn runMainLoop(self: *Self) !void {
-        _ = self;
-
-        // Get NSRunLoop
-        const NSRunLoopClass = objc.objc_getClass("NSRunLoop") orelse return error.ClassNotFound;
-        const sel_currentRunLoop = objc.sel_registerName("currentRunLoop") orelse return error.SelectorNotFound;
-        const sel_run = objc.sel_registerName("run") orelse return error.SelectorNotFound;
-
-        const runLoop = objc.msgSendId(NSRunLoopClass, sel_currentRunLoop);
-        objc.msgSend(runLoop, sel_run);
-    }
+    // `runMainLoop` used to live here, spinning
+    // `[[NSRunLoop currentRunLoop] run]`. That is not how an iOS app starts.
+    // UIKit owns the run loop, and it only owns it once `UIApplicationMain`
+    // has been called — which is also what makes `UIApplication.sharedApplication`
+    // and `[UIScreen mainScreen]` return anything but nil. Spinning a bare
+    // NSRunLoop meant no touch delivery, no lifecycle notifications, and a
+    // window built against a garbage frame.
+    //
+    // The replacement is not a function; it is a restructure. `run()` registers
+    // a delegate class and calls `UIApplicationMain`, and everything this file
+    // used to do inline moves into `application:didFinishLaunchingWithOptions:`.
 
     /// Execute JavaScript in the webview
     pub fn evaluateJavaScript(self: *Self, script: []const u8, callback: ?*const fn ([]const u8) void) !void {
@@ -518,23 +440,16 @@ pub const CraftAppDelegate = struct {
         mobile.iOS.triggerHaptic(haptic_type);
     }
 
-    /// Show alert
-    pub fn showAlert(self: *Self, message: []const u8) void {
-        _ = self;
-        mobile.iOS.showAlert(message, true);
-    }
-
-    /// Request permission
-    pub fn requestPermission(self: *Self, permission: mobile.iOS.Permission, callback: *const fn (bool) void) !void {
-        _ = self;
-        try mobile.iOS.requestPermission(permission, callback);
-    }
-
-    /// Check permission status
-    pub fn checkPermission(self: *Self, permission: mobile.iOS.Permission) !mobile.iOS.PermissionStatus {
-        _ = self;
-        return try mobile.iOS.checkPermissionStatus(permission);
-    }
+    // `showAlert`, `requestPermission`, and `checkPermission` were one-line
+    // forwards to `mobile.iOS` functions that have been deleted, for reasons
+    // recorded where they used to live: the alert presented against
+    // `keyWindow`, nil in any scene-based app; the permission request threw
+    // its caller's callback away (`_ = callback;`) and passed null for every
+    // completion handler; and the status check returned `.not_determined` for
+    // notifications no matter what the system said.
+    //
+    // They come back in the permissions phase, against a pending-request table
+    // keyed by the envelope's request id — not a callback that nothing calls.
 };
 
 /// Safe area insets
@@ -551,298 +466,6 @@ const UIEdgeInsets = extern struct {
     left: f64,
     bottom: f64,
     right: f64,
-};
-
-// ============================================================================
-// JavaScript Bridge
-// ============================================================================
-
-/// JavaScript bridge message handler
-/// Handles messages from JavaScript: window.webkit.messageHandlers.craft.postMessage(data)
-///
-/// Expected message format:
-/// {
-///     "method": "methodName",
-///     "params": { ... },
-///     "callbackId": "unique_id"
-/// }
-pub const JSBridge = struct {
-    handlers: std.StringHashMap(Handler),
-    allocator: std.mem.Allocator,
-    app_delegate: ?*CraftAppDelegate = null,
-
-    pub const Handler = *const fn (params: []const u8, bridge: *JSBridge, callback_id: []const u8) void;
-
-    const Self = @This();
-
-    pub fn init(allocator: std.mem.Allocator) JSBridge {
-        var bridge = JSBridge{
-            .handlers = std.StringHashMap(Handler).init(allocator),
-            .allocator = allocator,
-        };
-
-        // Register built-in handlers
-        bridge.registerBuiltinHandlers() catch |err| {
-            std.log.warn("failed to register iOS built-in JS handlers: {}", .{err});
-        };
-
-        return bridge;
-    }
-
-    pub fn deinit(self: *JSBridge) void {
-        self.handlers.deinit();
-    }
-
-    /// Register built-in handlers for common native features
-    fn registerBuiltinHandlers(self: *Self) !void {
-        try self.handlers.put("getPlatform", handleGetPlatform);
-        try self.handlers.put("showAlert", handleShowAlert);
-        try self.handlers.put("haptic", handleHaptic);
-        try self.handlers.put("setClipboard", handleSetClipboard);
-        try self.handlers.put("getClipboard", handleGetClipboard);
-        try self.handlers.put("getNetworkStatus", handleGetNetworkStatus);
-        try self.handlers.put("getSafeArea", handleGetSafeArea);
-        try self.handlers.put("openURL", handleOpenURL);
-        try self.handlers.put("share", handleShare);
-    }
-
-    /// Register a custom handler for a specific method
-    pub fn registerHandler(self: *Self, name: []const u8, handler: Handler) !void {
-        try self.handlers.put(name, handler);
-    }
-
-    /// Handle incoming message from JavaScript
-    /// Parses JSON message and routes to appropriate handler
-    pub fn handleMessage(self: *Self, message: []const u8) void {
-        // Parse the message - expected format:
-        // {"method": "name", "params": {...}, "callbackId": "123"}
-
-        const method = self.extractJsonString(message, "method") orelse return;
-        const callback_id = self.extractJsonString(message, "callbackId") orelse "";
-        const params = self.extractJsonObject(message, "params") orelse "{}";
-
-        if (self.handlers.get(method)) |handler| {
-            handler(params, self, callback_id);
-        } else {
-            // Unknown method - send error response
-            self.sendError(callback_id, "Unknown method") catch |err| {
-                std.log.debug("failed to send unknown method error to JS: {}", .{err});
-            };
-        }
-    }
-
-    /// Extract a string value from JSON
-    fn extractJsonString(self: *Self, json: []const u8, key: []const u8) ?[]const u8 {
-        _ = self;
-
-        // Build search pattern: "key":"
-        var pattern_buf: [64]u8 = undefined;
-        const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\":\"", .{key}) catch return null;
-
-        if (std.mem.indexOf(u8, json, pattern)) |start| {
-            const value_start = start + pattern.len;
-            if (value_start < json.len) {
-                // Find closing quote
-                if (std.mem.indexOf(u8, json[value_start..], "\"")) |end| {
-                    return json[value_start..][0..end];
-                }
-            }
-        }
-        return null;
-    }
-
-    /// Extract an object value from JSON
-    fn extractJsonObject(self: *Self, json: []const u8, key: []const u8) ?[]const u8 {
-        _ = self;
-
-        // Build search pattern: "key":{
-        var pattern_buf: [64]u8 = undefined;
-        const pattern = std.fmt.bufPrint(&pattern_buf, "\"{s}\":{{", .{key}) catch return null;
-
-        if (std.mem.indexOf(u8, json, pattern)) |start| {
-            const value_start = start + pattern.len - 1; // Include opening brace
-            if (value_start < json.len) {
-                // Find matching closing brace (simple nested brace counting)
-                var depth: usize = 0;
-                var i: usize = value_start;
-                while (i < json.len) : (i += 1) {
-                    if (json[i] == '{') {
-                        depth += 1;
-                    } else if (json[i] == '}') {
-                        depth -= 1;
-                        if (depth == 0) {
-                            return json[value_start .. i + 1];
-                        }
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    /// Send success response to JavaScript callback
-    pub fn sendResponse(self: *Self, callback_id: []const u8, result: []const u8) !void {
-        if (self.app_delegate == null) return error.NoAppDelegate;
-        if (callback_id.len == 0) return;
-
-        var buf: [2048]u8 = undefined;
-        const script = std.fmt.bufPrint(&buf,
-            \\if (window['__craftCallback_{s}']) {{ window['__craftCallback_{s}']({s}); }}
-        , .{ callback_id, callback_id, result }) catch return;
-
-        try self.app_delegate.?.evaluateJavaScript(script, null);
-    }
-
-    /// Send error response to JavaScript callback
-    pub fn sendError(self: *Self, callback_id: []const u8, error_message: []const u8) !void {
-        if (self.app_delegate == null) return error.NoAppDelegate;
-        if (callback_id.len == 0) return;
-
-        var buf: [2048]u8 = undefined;
-        const script = std.fmt.bufPrint(&buf,
-            \\if (window['__craftCallback_{s}']) {{ window['__craftCallback_{s}']({{ error: '{s}' }}); }}
-        , .{ callback_id, callback_id, error_message }) catch return;
-
-        try self.app_delegate.?.evaluateJavaScript(script, null);
-    }
-
-    /// Send event to JavaScript (not a callback response)
-    pub fn sendEvent(self: *Self, event: []const u8, data: []const u8) !void {
-        if (self.app_delegate == null) return error.NoAppDelegate;
-
-        var buf: [2048]u8 = undefined;
-        const script = std.fmt.bufPrint(&buf,
-            \\window.dispatchEvent(new CustomEvent('craft:{s}', {{ detail: {s} }}));
-        , .{ event, data }) catch return;
-
-        try self.app_delegate.?.evaluateJavaScript(script, null);
-    }
-
-    // ========================================================================
-    // Built-in Handlers
-    // ========================================================================
-
-    fn handleGetPlatform(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        _ = params;
-
-        const response =
-            \\{"os": "ios", "version": "17.0", "device": "iPhone", "native": true}
-        ;
-
-        bridge.sendResponse(callback_id, response) catch |err| {
-            std.log.debug("failed to send getPlatform response: {}", .{err});
-        };
-    }
-
-    fn handleShowAlert(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        // Extract title and message from params
-        const title = bridge.extractJsonString(params, "title") orelse "Alert";
-        const message = bridge.extractJsonString(params, "message") orelse "";
-        _ = title;
-
-        // Show native alert
-        mobile.iOS.showAlert(message, true);
-
-        bridge.sendResponse(callback_id, "{ \"success\": true }") catch |err| {
-            std.log.debug("failed to send showAlert response: {}", .{err});
-        };
-    }
-
-    fn handleHaptic(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        // Extract haptic type
-        const haptic_type_str = bridge.extractJsonString(params, "type") orelse "light";
-
-        const haptic_type: mobile.iOS.HapticType = blk: {
-            if (std.mem.eql(u8, haptic_type_str, "success")) break :blk .success;
-            if (std.mem.eql(u8, haptic_type_str, "warning")) break :blk .warning;
-            if (std.mem.eql(u8, haptic_type_str, "error")) break :blk .error_haptic;
-            if (std.mem.eql(u8, haptic_type_str, "light")) break :blk .light;
-            if (std.mem.eql(u8, haptic_type_str, "medium")) break :blk .medium;
-            if (std.mem.eql(u8, haptic_type_str, "heavy")) break :blk .heavy;
-            break :blk .light;
-        };
-
-        mobile.iOS.triggerHaptic(haptic_type);
-
-        bridge.sendResponse(callback_id, "{ \"success\": true }") catch |err| {
-            std.log.debug("failed to send haptic response: {}", .{err});
-        };
-    }
-
-    fn handleSetClipboard(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        const text = bridge.extractJsonString(params, "text") orelse "";
-
-        mobile.iOS.setClipboard(text);
-
-        bridge.sendResponse(callback_id, "{ \"success\": true }") catch |err| {
-            std.log.debug("failed to send setClipboard response: {}", .{err});
-        };
-    }
-
-    fn handleGetClipboard(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        _ = params;
-
-        const text = mobile.iOS.getClipboard(bridge.allocator) catch "";
-
-        var buf: [1024]u8 = undefined;
-        const response = std.fmt.bufPrint(&buf, "{{ \"text\": \"{s}\" }}", .{text}) catch "{}";
-
-        bridge.sendResponse(callback_id, response) catch |err| {
-            std.log.debug("failed to send getClipboard response: {}", .{err});
-        };
-    }
-
-    fn handleGetNetworkStatus(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        _ = params;
-
-        // For now, assume connected - real implementation would check reachability
-        const response = "{ \"connected\": true, \"type\": \"wifi\" }";
-
-        bridge.sendResponse(callback_id, response) catch |err| {
-            std.log.debug("failed to send getNetworkStatus response: {}", .{err});
-        };
-    }
-
-    fn handleGetSafeArea(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        _ = params;
-
-        if (bridge.app_delegate) |app| {
-            const insets = app.getSafeAreaInsets() catch SafeAreaInsets{ .top = 0, .bottom = 0, .left = 0, .right = 0 };
-
-            var buf: [256]u8 = undefined;
-            const response = std.fmt.bufPrint(&buf,
-                \\{{ "top": {d}, "bottom": {d}, "left": {d}, "right": {d} }}
-            , .{ insets.top, insets.bottom, insets.left, insets.right }) catch "{}";
-
-            bridge.sendResponse(callback_id, response) catch |err| {
-                std.log.debug("failed to send getSafeArea response: {}", .{err});
-            };
-        } else {
-            bridge.sendResponse(callback_id, "{ \"top\": 0, \"bottom\": 0, \"left\": 0, \"right\": 0 }") catch |err| {
-                std.log.debug("failed to send getSafeArea fallback response: {}", .{err});
-            };
-        }
-    }
-
-    fn handleOpenURL(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        const url = bridge.extractJsonString(params, "url") orelse "";
-
-        mobile.iOS.openURL(url);
-
-        bridge.sendResponse(callback_id, "{ \"success\": true }") catch |err| {
-            std.log.debug("failed to send openURL response: {}", .{err});
-        };
-    }
-
-    fn handleShare(params: []const u8, bridge: *JSBridge, callback_id: []const u8) void {
-        const text = bridge.extractJsonString(params, "text") orelse "";
-
-        mobile.iOS.share(text);
-
-        bridge.sendResponse(callback_id, "{ \"success\": true }") catch |err| {
-            std.log.debug("failed to send share response: {}", .{err});
-        };
-    }
 };
 
 // ============================================================================
@@ -885,39 +508,6 @@ test "CraftAppDelegate initialization" {
     _ = app;
 
     // Can't fully test without iOS runtime
-}
-
-test "JSBridge initialization" {
-    const allocator = std.testing.allocator;
-
-    var bridge = JSBridge.init(allocator);
-    defer bridge.deinit();
-
-    const handler = struct {
-        fn handle(_: []const u8, _: *JSBridge, _: []const u8) void {}
-    }.handle;
-
-    try bridge.registerHandler("test", handler);
-}
-
-test "JSBridge JSON parsing" {
-    const allocator = std.testing.allocator;
-
-    var bridge = JSBridge.init(allocator);
-    defer bridge.deinit();
-
-    // Test extractJsonString
-    const json =
-        \\{"method":"getPlatform","params":{},"callbackId":"123"}
-    ;
-
-    const method = bridge.extractJsonString(json, "method");
-    try std.testing.expect(method != null);
-    try std.testing.expectEqualStrings("getPlatform", method.?);
-
-    const callback_id = bridge.extractJsonString(json, "callbackId");
-    try std.testing.expect(callback_id != null);
-    try std.testing.expectEqualStrings("123", callback_id.?);
 }
 
 test "SafeAreaInsets" {

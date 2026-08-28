@@ -15,6 +15,7 @@ pub const objc = if (is_darwin) struct {
     pub extern "c" fn class_addMethod(cls: ?*anyopaque, name: ?*anyopaque, imp: *const anyopaque, types: [*:0]const u8) bool;
     pub extern "c" fn object_getClass(obj: ?*anyopaque) ?*anyopaque;
     pub extern "c" fn class_createInstance(cls: ?*anyopaque, extraBytes: usize) ?*anyopaque;
+    pub extern "c" fn class_getInstanceSize(cls: ?*anyopaque) usize;
     pub extern "c" fn objc_setAssociatedObject(obj: ?*anyopaque, key: ?*const anyopaque, value: ?*anyopaque, policy: c_uint) void;
     pub extern "c" fn objc_getAssociatedObject(obj: ?*anyopaque, key: ?*const anyopaque) ?*anyopaque;
     pub extern "c" fn objc_removeAssociatedObjects(obj: ?*anyopaque) void;
@@ -149,6 +150,26 @@ pub const objc = if (is_darwin) struct {
         return msgSendId1(NSURLClass, sel, ns_string);
     }
 
+    /// How many bytes an instance of `class` occupies, as the runtime reports
+    /// it. Useful for memory accounting, where `@sizeOf` on a Zig `opaque{}`
+    /// handle would report zero and `@sizeOf(@TypeOf(ptr))` the width of a
+    /// pointer.
+    pub fn classInstanceSize(class: Class) usize {
+        return class_getInstanceSize(@ptrCast(class));
+    }
+
+    /// Allocate an instance without initialising it.
+    ///
+    /// Separate from `allocInit` because a caller that has its own designated
+    /// initialiser — `initWithFrame:`, `initWithFrame:configuration:` — must
+    /// not have `init` sent first. `ios.zig` needs exactly this half, and
+    /// `mobile.zig` open-coded it rather than reach for a helper that did too
+    /// much.
+    pub fn alloc(class: Class) !id {
+        const sel_alloc = sel_registerName("alloc") orelse return error.SelectorNotFound;
+        return msgSendId(class, sel_alloc);
+    }
+
     /// Helper to alloc and init an object
     pub fn allocInit(class: Class) !id {
         const sel_alloc = sel_registerName("alloc") orelse return error.SelectorNotFound;
@@ -179,7 +200,7 @@ pub const objc = if (is_darwin) struct {
 
 // Tests
 test "NSString creation" {
-    if (!@import("builtin").target.isDarwin()) return error.SkipZigTest;
+    if (!@import("builtin").target.os.tag.isDarwin()) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
     const ns_string = try objc.createNSString("Hello, World!", allocator);
@@ -190,7 +211,7 @@ test "NSString creation" {
 }
 
 test "NSURL creation" {
-    if (!@import("builtin").target.isDarwin()) return error.SkipZigTest;
+    if (!@import("builtin").target.os.tag.isDarwin()) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
     const ns_url = try objc.createNSURL("https://example.com", allocator);
