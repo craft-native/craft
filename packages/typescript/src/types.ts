@@ -1152,7 +1152,48 @@ export interface CraftMobileAPI {
  * defines the CraftBridge interface with additional mobile-only features
  * such as AR, ML, deep links, OTA updates, widgets, and auth persistence.
  */
+/**
+ * Where the platform drew this window's window buttons — the macOS traffic
+ * lights, and their equivalents elsewhere.
+ *
+ * The buttons are always the platform's own: real, correctly styled, and
+ * wired to the window server. A page must never draw replicas beside them,
+ * which is what this exists to make unnecessary — it says where they are, so
+ * a layout can leave room instead of inventing its own.
+ *
+ * The same facts reach CSS as `--craft-window-controls-width` / `-height` /
+ * `-inset-x` / `-inset-y`, and the document as
+ * `<html data-craft-window-controls="...">`.
+ */
+export interface CraftWindowControls {
+  /**
+   * `titlebar` — in a titlebar above the web content; nothing to do.
+   * `overlay` — floating over the content's top-left corner; keep it clear.
+   * `none` — a frameless window, so the page owns its chrome.
+   */
+  style: 'titlebar' | 'overlay' | 'none'
+  /** Whether the platform drew any buttons at all. */
+  native: boolean
+  /** Left edge of the button block, in CSS px from the window's left edge. */
+  x: number
+  /** Top edge of the button block, in CSS px from the window's top edge. */
+  y: number
+  /** Window's left edge to the right edge of the block, in CSS px. */
+  width: number
+  /** Height of the strip to keep clear around the buttons, in CSS px. */
+  height: number
+}
+
 export interface CraftBridgeAPI {
+  /**
+   * Where the platform drew this window's close/minimise/zoom buttons.
+   *
+   * Present in every Craft window, so a UI that has to lay out around them can
+   * ask instead of guessing — and so a UI shared with the browser can tell the
+   * two apart. See `CraftWindowControls`.
+   */
+  windowControls?: CraftWindowControls
+
   /**
    * Trackpad gesture phases (desktop only).
    *
