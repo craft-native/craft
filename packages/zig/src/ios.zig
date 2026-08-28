@@ -1,10 +1,230 @@
 const std = @import("std");
 const objc_runtime = @import("objc_runtime.zig");
 const mobile = @import("mobile.zig");
+const ios_dispatch = @import("ios_dispatch.zig");
 
 /// iOS Application Infrastructure
 /// Provides UIApplicationDelegate, UIViewController, and full app lifecycle management
-const objc = objc_runtime.objc;
+/// Re-exported so `test/ios_surface_test.zig` can reach the runtime without
+/// importing `objc_runtime.zig` as a second module — a file may belong to only
+/// one module per compilation, and this one already belongs to the iOS module.
+pub const objc = objc_runtime.objc;
+
+// ============================================================================
+// WKScriptMessageHandler
+// ============================================================================
+
+/// What the page's `webkit.messageHandlers.craft.postMessage` reaches.
+///
+/// This is registered as a real Objective-C method on a class built at runtime,
+/// which is the piece iOS never had. `setupJSBridge` used to fetch the
+/// `WKUserContentController` and then discard it with `_ = content_controller;`
+/// under a comment saying a full implementation would register a handler here.
+/// Because it never did, `webkit.messageHandlers.craft` was `undefined` in
+/// every page craft ever loaded on iOS.
+///
+/// `macos.zig:5017` is the source this is ported from, and it needed no
+/// adaptation beyond the dispatch target: it uses the Objective-C runtime,
+/// Foundation and WebKit only, with nothing from AppKit.
+export fn craftDidReceiveScriptMessage(
+    _: objc.id,
+    _: objc.SEL,
+    _: objc.id,
+    message: objc.id,
+) void {
+    const sel_body = objc.sel_registerName("body") orelse return;
+    const body = objc.msgSendId(message, sel_body);
+    if (body == null) return;
+
+    // Re-serialise the message body with NSJSONSerialization rather than
+    // walking the Objective-C object graph by hand. WebKit has already parsed
+    // the page's object into NSDictionary/NSArray/NSNumber, and asking
+    // Foundation to render it back to JSON is both shorter and correct for
+    // nested values, unicode, and numbers — none of which the substring parser
+    // this replaces could handle.
+    const NSJSONSerialization = objc.objc_getClass("NSJSONSerialization") orelse return;
+    const sel_data = objc.sel_registerName("dataWithJSONObject:options:error:") orelse return;
+    const DataFn = *const fn (objc.id, objc.SEL, objc.id, c_ulong, ?*anyopaque) callconv(.c) objc.id;
+    const data_fn: DataFn = @ptrCast(&objc.objc_msgSend);
+    const json_data = data_fn(NSJSONSerialization, sel_data, body, 0, null);
+    if (json_data == null) return;
+
+    const NSString = objc.objc_getClass("NSString") orelse return;
+    const sel_alloc = objc.sel_registerName("alloc") orelse return;
+    const allocated = objc.msgSendId(NSString, sel_alloc);
+    const sel_init = objc.sel_registerName("initWithData:encoding:") orelse return;
+    const NSUTF8StringEncoding: c_ulong = 4;
+    const InitFn = *const fn (objc.id, objc.SEL, objc.id, c_ulong) callconv(.c) objc.id;
+    const init_fn: InitFn = @ptrCast(&objc.objc_msgSend);
+    const json_string = init_fn(allocated, sel_init, json_data, NSUTF8StringEncoding);
+    if (json_string == null) return;
+    defer objc.release(json_string);
+
+    const utf8 = objc.getNSStringUTF8(json_string) orelse return;
+    const json = std.mem.span(utf8);
+
+    ios_dispatch.handleMessage(std.heap.c_allocator, json) catch |err| {
+        // A message that cannot be routed is logged, not swallowed. The page
+        // has already been answered with an error by the dispatcher where one
+        // could be attributed; this covers the cases where it could not.
+        std.log.warn("ios bridge: could not handle message: {}", .{err});
+    };
+}
+
+/// Build the handler class once and attach it to the content controller under
+/// the name `craft` — which is what `craft-bridge.js` already posts to.
+///
+/// `objc_getClass` first, so a second call is a no-op rather than a duplicate
+/// class registration.
+fn installScriptMessageHandler(content_controller: objc.id) !void {
+    const class_name = "CraftIOSScriptMessageHandler";
+
+    var handler_class = objc.objc_getClass(class_name);
+    if (handler_class == null) {
+        const NSObject = objc.objc_getClass("NSObject") orelse return error.ClassNotFound;
+        handler_class = objc.objc_allocateClassPair(NSObject, class_name, 0) orelse
+            return error.ClassAllocationFailed;
+
+        const sel = objc.sel_registerName("userContentController:didReceiveScriptMessage:") orelse
+            return error.SelectorNotFound;
+        const imp: objc.IMP = @ptrCast(@constCast(&craftDidReceiveScriptMessage));
+        // v@:@@ — returns void, takes self, _cmd, and two objects.
+        if (!objc.class_addMethod(handler_class, sel, imp, "v@:@@")) {
+            return error.MethodNotAdded;
+        }
+        objc.objc_registerClassPair(handler_class);
+    }
+
+    const handler = try objc.allocInit(handler_class);
+
+    const sel_add = objc.sel_registerName("addScriptMessageHandler:name:") orelse
+        return error.SelectorNotFound;
+    const NSString = objc.objc_getClass("NSString") orelse return error.ClassNotFound;
+    const sel_string = objc.sel_registerName("stringWithUTF8String:") orelse return error.SelectorNotFound;
+    const name = objc.msgSendId1(NSString, sel_string, @as([*:0]const u8, "craft"));
+
+    const AddFn = *const fn (objc.id, objc.SEL, objc.id, objc.id) callconv(.c) void;
+    const add_fn: AddFn = @ptrCast(&objc.objc_msgSend);
+    add_fn(content_controller, sel_add, handler, name);
+}
+
+/// Install a script that runs before the page's own scripts do.
+///
+/// The previous code called `evaluateJavaScript` *before* `loadInitialContent`,
+/// so the script ran against the empty document and the navigation that
+/// followed discarded it. A `WKUserScript` at `atDocumentStart` is the
+/// mechanism that actually survives navigation, and it must be added to the
+/// content controller before the webview is constructed — which is why webview
+/// creation moved into this file.
+fn installUserScript(content_controller: objc.id, source: [:0]const u8) !void {
+    const WKUserScript = objc.objc_getClass("WKUserScript") orelse return error.ClassNotFound;
+    const NSString = objc.objc_getClass("NSString") orelse return error.ClassNotFound;
+    const sel_string = objc.sel_registerName("stringWithUTF8String:") orelse return error.SelectorNotFound;
+    const ns_source = objc.msgSendId1(NSString, sel_string, source.ptr);
+
+    const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
+    const allocated = objc.msgSendId(WKUserScript, sel_alloc);
+
+    const sel_init = objc.sel_registerName("initWithSource:injectionTime:forMainFrameOnly:") orelse
+        return error.SelectorNotFound;
+    // 0 == WKUserScriptInjectionTimeAtDocumentStart
+    const InitFn = *const fn (objc.id, objc.SEL, objc.id, c_long, bool) callconv(.c) objc.id;
+    const init_fn: InitFn = @ptrCast(&objc.objc_msgSend);
+    const user_script = init_fn(allocated, sel_init, ns_source, 0, true);
+    if (user_script == null) return error.UserScriptCreationFailed;
+
+    const sel_add = objc.sel_registerName("addUserScript:") orelse return error.SelectorNotFound;
+    objc.msgSendVoid1(content_controller, sel_add, user_script);
+}
+
+/// The Phase 1 user script.
+///
+/// Deliberately not `craft-bridge.js`: that file defines `craft.window.*`,
+/// `craft.tray.*`, and `craft.menu.*`, surfaces iOS has no business exposing,
+/// and deciding which of them iOS should carry is a larger question than the
+/// first vertical slice needs to answer.
+///
+/// What it does prove is injection *timing*: a page can observe this flag from
+/// its own inline script, which is only possible if the user script ran at
+/// document start. That is the exact property the previous implementation got
+/// wrong.
+const phase1_user_script: [:0]const u8 =
+    \\window.__craftInjectedAtDocumentStart = true;
+;
+
+// ============================================================================
+// UIApplicationMain
+// ============================================================================
+
+/// int UIApplicationMain(int, char *[], NSString *principal, NSString *delegate)
+extern "c" fn UIApplicationMain(
+    argc: c_int,
+    argv: [*][*:0]u8,
+    principal_class_name: objc.id,
+    delegate_class_name: objc.id,
+) c_int;
+
+const app_delegate_class_name = "CraftAppDelegate";
+
+/// The Zig delegate UIKit's instance calls back into.
+///
+/// UIKit constructs the delegate itself, from the class name handed to
+/// `UIApplicationMain`, so the callback receives an Objective-C object that
+/// knows nothing about this struct. A module-level pointer is the bridge
+/// between them. One slot, because an iOS process has one `UIApplication`.
+var g_delegate: ?*CraftAppDelegate = null;
+
+/// `application:didFinishLaunchingWithOptions:`
+///
+/// The first moment UIKit is up and it is legal to touch `UIScreen`,
+/// `UIWindow`, or `makeKeyAndVisible`. Everything `run` used to do inline
+/// happens from here.
+///
+/// Returns `bool` rather than `i8`: on 64-bit Apple platforms `__OBJC_BOOL_IS_BOOL`
+/// is defined, so `BOOL` is C99 `_Bool` and the type encoding is `B`.
+export fn craftAppDidFinishLaunching(
+    _: objc.id,
+    _: objc.SEL,
+    _: objc.id,
+    _: objc.id,
+) bool {
+    const delegate = g_delegate orelse {
+        std.log.err("ios: didFinishLaunching fired with no delegate registered", .{});
+        return false;
+    };
+
+    delegate.didFinishLaunching() catch |err| {
+        // Returning false from here tells UIKit the launch failed, which is
+        // the truthful answer. The alternative — returning true over a window
+        // that was never built — produces a black screen and no diagnostic,
+        // which is the failure mode this whole file is being rewritten to
+        // stop producing.
+        std.log.err("ios: launch failed: {}", .{err});
+        return false;
+    };
+
+    return true;
+}
+
+/// Register the delegate class UIKit will instantiate.
+///
+/// Same runtime class-building the script message handler uses, and the same
+/// `objc_getClass`-first guard so a second call is a no-op.
+pub fn registerAppDelegateClass() !void {
+    if (objc.objc_getClass(app_delegate_class_name) != null) return;
+
+    const NSObject = objc.objc_getClass("NSObject") orelse return error.ClassNotFound;
+    const cls = objc.objc_allocateClassPair(NSObject, app_delegate_class_name, 0) orelse
+        return error.ClassAllocationFailed;
+
+    const sel = objc.sel_registerName("application:didFinishLaunchingWithOptions:") orelse
+        return error.SelectorNotFound;
+    const imp: objc.IMP = @ptrCast(@constCast(&craftAppDidFinishLaunching));
+    // B@:@@ — returns BOOL, takes self, _cmd, UIApplication, NSDictionary.
+    if (!objc.class_addMethod(cls, sel, imp, "B@:@@")) return error.MethodNotAdded;
+
+    objc.objc_registerClassPair(cls);
+}
 
 // ============================================================================
 // iOS Application Delegate
@@ -113,72 +333,86 @@ pub const CraftAppDelegate = struct {
     // bridge itself; the replacement routes through `ios_dispatch.zig` and the
     // same `bridge_*.zig` modules the desktop uses.
 
-    /// Start the iOS application
-    /// This should be called from main() and will not return until the app terminates
-    pub fn run(self: *Self) !void {
-        if (!@import("builtin").target.os.tag.isDarwin()) {
-            return error.UnsupportedPlatform;
+    /// Start the iOS application. Does not return.
+    ///
+    /// An iOS app starts by handing control to `UIApplicationMain`, which
+    /// creates the `UIApplication`, instantiates the delegate class it is
+    /// named, and runs the event loop. Everything this file does to UIKit is
+    /// only legal after that has happened: `[UIScreen mainScreen]` is nil
+    /// before it, so a window built beforehand takes its frame from garbage,
+    /// and `makeKeyAndVisible` has no application instance to key against.
+    ///
+    /// So `run` does two things and then stops being in charge: register a
+    /// delegate class whose `application:didFinishLaunchingWithOptions:` is
+    /// `craftAppDidFinishLaunching`, and call `UIApplicationMain`. The window,
+    /// the webview, and the bridge are all built from inside that callback.
+    ///
+    /// The previous version spun `[[NSRunLoop currentRunLoop] run]` on the
+    /// calling thread, which UIKit does not own — no touch delivery, no
+    /// lifecycle notifications, no `UIApplication.sharedApplication`.
+    pub fn run(self: *Self, argc: c_int, argv: [*][*:0]u8) noreturn {
+        // `comptime`, not a runtime check: `UIApplicationMain` lives in UIKit,
+        // which does not exist on macOS. A runtime branch would still leave the
+        // call analysed and the symbol referenced, and the host build — which
+        // is where `test/ios_surface_test.zig` forces analysis of this file —
+        // would fail to link.
+        if (comptime @import("builtin").target.os.tag != .ios) {
+            std.log.err("ios: run() is only callable on iOS", .{});
+            std.process.exit(1);
         }
 
-        // Initialize global object manager for memory tracking
         mobile.initGlobalObjectManager(self.allocator);
-        defer mobile.deinitGlobalObjectManager();
 
-        // These four are the pieces that survive into the real startup path,
-        // and they are called here so the compiler keeps checking them. They
-        // must not run in this order on a device: every one of them touches
-        // UIKit, and UIKit is not initialised until `UIApplicationMain` has
-        // been called. `[UIScreen mainScreen]` returns nil before that, so
-        // `createWindow` builds its `initWithFrame:` rect out of garbage, and
-        // `showWindow`'s `makeKeyAndVisible` traps with no `UIApplication`
-        // instance to key against.
+        // UIKit instantiates the delegate class itself, so the callback below
+        // receives an Objective-C instance rather than this Zig struct. This is
+        // how it finds its way back.
+        g_delegate = self;
+
+        registerAppDelegateClass() catch |err| {
+            std.log.err("ios: could not register the app delegate class: {}", .{err});
+            std.process.exit(1);
+        };
+
+        const NSString = objc.objc_getClass("NSString") orelse std.process.exit(1);
+        const sel_string = objc.sel_registerName("stringWithUTF8String:") orelse std.process.exit(1);
+        const delegate_name = objc.msgSendId1(
+            NSString,
+            sel_string,
+            @as([*:0]const u8, app_delegate_class_name),
+        );
+
+        _ = UIApplicationMain(argc, argv, null, delegate_name);
+
+        // `UIApplicationMain` does not return under normal operation.
+        std.process.exit(0);
+    }
+
+    /// Build the UI. Called by UIKit, once, from
+    /// `application:didFinishLaunchingWithOptions:`.
+    ///
+    /// This is the body `run` used to have, moved to the only point where it is
+    /// legal to execute it.
+    pub fn didFinishLaunching(self: *Self) !void {
         try self.createWindow();
         try self.createRootViewController();
-        try self.setupJSBridge();
         try self.loadInitialContent();
         try self.showWindow();
 
         if (self.on_launch) |callback| {
             callback();
         }
-
-        // There is no run loop to enter. The previous version spun
-        // `[[NSRunLoop currentRunLoop] run]`, which is not how an iOS app
-        // starts and gave no touch delivery and no lifecycle events.
-        //
-        // Saying so is the honest state of this file: iOS compiles again, and
-        // it does not yet launch. The next phase registers a delegate class,
-        // calls `UIApplicationMain`, and moves the five calls above into
-        // `application:didFinishLaunchingWithOptions:`, which is the only
-        // point at which they are legal.
-        return error.RunLoopNotImplemented;
     }
 
-    /// Set up WKScriptMessageHandler for JavaScript bridge
-    fn setupJSBridge(self: *Self) !void {
-        if (self.webview == null) return error.WebViewNotInitialized;
-
-        // Get the webview's configuration
-        const webview_ptr: objc.id = @ptrCast(@alignCast(self.webview.?));
-        const sel_configuration = objc.sel_registerName("configuration") orelse return error.SelectorNotFound;
-        const configuration = objc.msgSendId(webview_ptr, sel_configuration);
-
-        // Get user content controller
-        const sel_userContentController = objc.sel_registerName("userContentController") orelse return error.SelectorNotFound;
-        const content_controller = objc.msgSendId(configuration, sel_userContentController);
-
-        // Nothing is registered on the controller yet, so a page's
-        // `window.webkit.messageHandlers.craft` is undefined and every call
-        // from JS is silently dropped. The comment that used to sit here said
-        // the bridge would "work through evaluateJavaScript polling" instead —
-        // no such polling was ever written, which is why iOS has looked wired
-        // up without being reachable.
-        //
-        // `macos.zig:5071` already does this correctly and uses nothing from
-        // AppKit — objc runtime, Foundation, and WebKit only — so the next
-        // phase ports it here rather than inventing a second one.
-        _ = content_controller;
-    }
+    // `setupJSBridge` used to sit here. It fetched the
+    // `WKUserContentController` and then discarded it with
+    // `_ = content_controller;`, under a comment promising that a real
+    // implementation would register a `WKScriptMessageHandler`. It never did,
+    // which is why `webkit.messageHandlers.craft` was undefined in every page
+    // craft loaded on iOS.
+    //
+    // The handler is now installed in `createWebViewWithBridge`, which is the
+    // only place it can be: on the configuration, before the webview is built
+    // from it.
 
     /// Create the main UIWindow
     fn createWindow(self: *Self) !void {
@@ -215,21 +449,66 @@ pub const CraftAppDelegate = struct {
     }
 
     /// Create root view controller with WKWebView
+    /// Create the WKWebView with the bridge already attached.
+    ///
+    /// Order is the whole point of this function, and it is the order the old
+    /// code could not express: content controller → handler → user script →
+    /// configuration → webview. Anything that attaches to the content
+    /// controller has to happen before the webview is constructed from the
+    /// configuration that holds it.
+    fn createWebViewWithBridge(self: *Self) !objc.id {
+        _ = self;
+
+        const WKWebViewConfiguration = objc.objc_getClass("WKWebViewConfiguration") orelse
+            return error.ClassNotFound;
+        const configuration = try objc.allocInit(WKWebViewConfiguration);
+
+        const WKUserContentController = objc.objc_getClass("WKUserContentController") orelse
+            return error.ClassNotFound;
+        const content_controller = try objc.allocInit(WKUserContentController);
+
+        try installScriptMessageHandler(content_controller);
+        try installUserScript(content_controller, phase1_user_script);
+
+        const sel_set_ucc = objc.sel_registerName("setUserContentController:") orelse
+            return error.SelectorNotFound;
+        objc.msgSendVoid1(configuration, sel_set_ucc, content_controller);
+
+        const WKWebView = objc.objc_getClass("WKWebView") orelse return error.ClassNotFound;
+        const allocated = try objc.alloc(WKWebView);
+
+        // A zero rect: Auto Layout sets the real frame in
+        // `setupWebViewConstraints`, and reading `[UIScreen mainScreen] bounds`
+        // here would be reading it before UIKit is up.
+        const frame = objc.CGRect{
+            .origin = .{ .x = 0, .y = 0 },
+            .size = .{ .width = 0, .height = 0 },
+        };
+
+        const sel_init = objc.sel_registerName("initWithFrame:configuration:") orelse
+            return error.SelectorNotFound;
+        const InitFn = *const fn (objc.id, objc.SEL, objc.CGRect, objc.id) callconv(.c) objc.id;
+        const init_fn: InitFn = @ptrCast(&objc.objc_msgSend);
+        const webview = init_fn(allocated, sel_init, frame, configuration);
+        if (webview == null) return error.WebViewCreationFailed;
+
+        return webview;
+    }
+
     fn createRootViewController(self: *Self) !void {
         // Create CraftViewController (our custom UIViewController)
         const UIViewControllerClass = objc.objc_getClass("UIViewController") orelse return error.ClassNotFound;
         self.root_view_controller = try objc.allocInit(UIViewControllerClass);
 
-        // Create WKWebView configuration
-        const webview_config = mobile.iOS.WebViewConfig{
-            .allows_inline_media_playback = true,
-            .allows_air_play = true,
-            .allows_back_forward_navigation_gestures = true,
-        };
-
-        // Create WKWebView
-        self.webview = try mobile.iOS.createWebView(self.allocator, webview_config);
-        const webview_obj: objc.id = @ptrCast(@alignCast(self.webview.?));
+        // Build the webview here rather than through `mobile.iOS.createWebView`,
+        // which constructs its own `WKWebViewConfiguration` internally and never
+        // hands it back. Both the script message handler and the user script
+        // attach to the `WKUserContentController`, and that has to be set on the
+        // configuration *before* `initWithFrame:configuration:` runs — a webview
+        // cannot be given a message handler after the fact.
+        const webview_obj = try self.createWebViewWithBridge();
+        self.webview = @ptrCast(@alignCast(webview_obj));
+        ios_dispatch.setWebView(webview_obj);
 
         // Get view controller's view
         const sel_view = objc.sel_registerName("view") orelse return error.SelectorNotFound;
@@ -472,24 +751,28 @@ const UIEdgeInsets = extern struct {
 // Convenience Functions
 // ============================================================================
 
-/// Quick start function for simple apps
-pub fn quickStart(allocator: std.mem.Allocator, html: []const u8) !void {
+/// Quick start function for simple apps. Does not return.
+///
+/// `argc`/`argv` are forwarded because `UIApplicationMain` wants the real ones:
+/// UIKit reads launch arguments from them, and synthesising a fake pair means
+/// anything passed to the process is silently lost.
+pub fn quickStart(allocator: std.mem.Allocator, html: []const u8, argc: c_int, argv: [*][*:0]u8) noreturn {
     var app = CraftAppDelegate.init(allocator, .{
         .name = "Craft App",
         .initial_content = .{ .html = html },
     });
 
-    try app.run();
+    app.run(argc, argv);
 }
 
-/// Quick start with URL
-pub fn quickStartURL(allocator: std.mem.Allocator, url: []const u8) !void {
+/// Quick start with URL. Does not return.
+pub fn quickStartURL(allocator: std.mem.Allocator, url: []const u8, argc: c_int, argv: [*][*:0]u8) noreturn {
     var app = CraftAppDelegate.init(allocator, .{
         .name = "Craft App",
         .initial_content = .{ .url = url },
     });
 
-    try app.run();
+    app.run(argc, argv);
 }
 
 // ============================================================================

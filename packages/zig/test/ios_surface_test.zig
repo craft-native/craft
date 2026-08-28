@@ -1,5 +1,6 @@
 const std = @import("std");
 const ios = @import("../src/ios.zig");
+const objc = ios.objc;
 
 // `std.testing.refAllDeclsRecursive` is gone in 0.17 — only the shallow
 // `refAllDecls` survives, and shallow is not enough here. Everything that
@@ -52,25 +53,18 @@ test "the app delegate and its startup helpers compile" {
     refAllDeclsRecursive(ios.CraftAppDelegate);
 }
 
-// Not a smoke test — an assertion about honesty.
+// `run()` is now `noreturn` — it hands control to `UIApplicationMain` and
+// never comes back — so it cannot be called from a test. What can be checked
+// on the host is the part that used to be inline in `run` and is now the
+// launch callback's body.
 //
-// `run()` cannot start an iOS app yet: UIKit owns the run loop and only hands
-// it over through `UIApplicationMain`, which this file does not yet call. The
-// previous version spun a bare `NSRunLoop` and returned no error, so a caller
-// could not tell "running" apart from "did nothing".
-//
-// What this pins is only that: **it must not report success.** The specific
-// error is deliberately not asserted, because which one comes back depends on
-// where the host gives out. Running on macOS, `createWindow` fails first —
-// `objc_getClass("UIScreen")` is null, since UIScreen is UIKit and this is
-// AppKit's platform — so the error is `ClassNotFound`, not the
-// `RunLoopNotImplemented` at the end of the function. Pinning the exact tag
-// would be pinning the host, not the property.
-//
-// When `UIApplicationMain` lands, this test should be revisited rather than
-// deleted: the property it protects — that a startup path which did not start
-// anything says so — is the one that failed here for three months.
-test "run never reports success while it cannot start an app" {
+// On macOS this fails at `createWindow`, because `objc_getClass("UIScreen")`
+// is null: UIScreen is UIKit, and this is AppKit's platform. The specific
+// error is not asserted — that would pin the host rather than the property.
+// What is asserted is that it reports *something*. A startup path that builds
+// no window and says nothing is the failure this file exists to prevent, and
+// it is what shipped here for three months.
+test "the launch callback never reports success without building anything" {
     if (!@import("builtin").target.os.tag.isDarwin()) return error.SkipZigTest;
 
     var app = ios.CraftAppDelegate.init(std.testing.allocator, .{
@@ -78,9 +72,30 @@ test "run never reports success while it cannot start an app" {
         .initial_content = .{ .html = "<h1>hi</h1>" },
     });
 
-    if (app.run()) |_| {
-        return error.RunClaimedSuccessWithoutStartingAnApp;
+    if (app.didFinishLaunching()) |_| {
+        return error.LaunchClaimedSuccessOnAHostWithoutUIKit;
     } else |_| {
         // Any error is correct. Silence is not.
     }
+}
+
+// The delegate class UIKit is asked to instantiate must actually exist by the
+// time `UIApplicationMain` is told its name. Registering it is pure
+// Objective-C runtime work — `objc_allocateClassPair`, `class_addMethod`,
+// `objc_registerClassPair` — with nothing from UIKit in it, so it can be
+// exercised on the host even though the app it serves cannot launch here.
+//
+// A silent failure here would surface on a device as an app that launches to
+// a black screen with no delegate callbacks and no error, which is among the
+// least diagnosable failures iOS has.
+test "the app delegate class registers, and registering twice is harmless" {
+    if (!@import("builtin").target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    try ios.registerAppDelegateClass();
+    try std.testing.expect(objc.objc_getClass("CraftAppDelegate") != null);
+
+    // Idempotent: `UIApplicationMain` is called once, but nothing in the
+    // runtime stops a second registration attempt, and `objc_allocateClassPair`
+    // returns null for a name already taken rather than erroring usefully.
+    try ios.registerAppDelegateClass();
 }

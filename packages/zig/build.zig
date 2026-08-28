@@ -327,6 +327,18 @@ pub fn build(b: *std.Build) void {
     if (target.result.os.tag.isDarwin()) {
         ios_surface_tests.root_module.link_libc = true;
         ios_surface_tests.root_module.linkSystemLibrary("objc", .{});
+        // `ios_dispatch` replies through `bridge_error`, which reaches
+        // `bridge.evalJS`, which on a macOS *host* build resolves to the
+        // desktop arm and drags in the AppKit/CoreFoundation surface behind it.
+        // That is the price of the gate analysing the real reply path rather
+        // than a stub of one, and it is the right trade: the alternative is a
+        // test that compiles iOS code which never reaches the code it replies
+        // through.
+        ios_surface_tests.root_module.linkFramework("Cocoa", .{});
+        ios_surface_tests.root_module.linkFramework("WebKit", .{});
+        ios_surface_tests.root_module.linkFramework("CoreFoundation", .{});
+        ios_surface_tests.root_module.linkFramework("CoreGraphics", .{});
+        ios_surface_tests.root_module.linkFramework("CoreMIDI", .{});
     }
 
     const menubar_tests = b.addTest(.{
