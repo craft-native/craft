@@ -1834,11 +1834,6 @@ pub fn build(b: *std.Build) void {
     const build_android_x86 = b.step("build-android-x86", "Build for Android (x86_64)");
     const build_android_all = b.step("build-android-all", "Build for Android (all architectures)");
 
-    // Android module
-    const android_module = b.createModule(.{
-        .root_source_file = b.path("src/android.zig"),
-    });
-
     // Android Device (arm64)
     const android_arm64_target = b.resolveTargetQuery(.{
         .cpu_arch = .aarch64,
@@ -1889,46 +1884,13 @@ pub fn build(b: *std.Build) void {
     build_android_x86.dependOn(&android_x86_install.step);
     build_android_all.dependOn(&android_x86_install.step);
 
-    // ========================================================================
-    // Android Example (demo mode - runs on host for testing)
-    // ========================================================================
-
-    const run_android = b.step("run-android", "Run the Android example (demo mode)");
-
-    const android_demo_exe = b.addExecutable(.{
-        .name = "android-example",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/android/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "craft", .module = craft_module },
-                .{ .name = "android", .module = android_module },
-            },
-        }),
-    });
-
-    switch (target_os) {
-        .macos => {
-            android_demo_exe.root_module.linkFramework("Cocoa", .{});
-            android_demo_exe.root_module.linkFramework("WebKit", .{});
-        },
-        .linux => {
-            android_demo_exe.root_module.linkSystemLibrary("gtk+-3.0", .{});
-            android_demo_exe.root_module.linkSystemLibrary("webkit2gtk-4.1", .{});
-        },
-        .windows => {
-            android_demo_exe.root_module.linkSystemLibrary("ole32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("user32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("gdi32", .{});
-            android_demo_exe.root_module.linkSystemLibrary("shell32", .{});
-        },
-        else => {},
-    }
-    android_demo_exe.root_module.link_libc = true;
-
-    const run_android_cmd = b.addRunArtifact(android_demo_exe);
-    run_android.dependOn(&run_android_cmd.step);
+    // The `run-android` step and its `android-example` executable used to sit
+    // here. It was not an Android artifact: it built for the *host* and linked
+    // Cocoa/WebKit on macOS and GTK on Linux, so "running the Android example"
+    // meant running a desktop printf demo. Its source called
+    // `AndroidFeatures.getDeviceInfo()`, which returned a hardcoded
+    // "Android Device" / SDK 34 no matter what, and printed the result as if
+    // it had queried something.
 
     // ========================================================================
     // Android Tests

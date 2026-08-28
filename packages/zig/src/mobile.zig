@@ -8,204 +8,6 @@ const compat = @import("compat.zig");
 // Use the proper Objective-C runtime wrapper
 const objc = objc_runtime.objc;
 
-// JNI for Android
-const jni = if (@import("builtin").target.os.tag == .linux) struct {
-    // JNI types
-    pub const JNIEnv = opaque {};
-    pub const jobject = ?*anyopaque;
-    pub const jclass = ?*anyopaque;
-    pub const jmethodID = ?*anyopaque;
-    pub const jfieldID = ?*anyopaque;
-    pub const jstring = ?*anyopaque;
-    pub const jboolean = u8;
-    pub const jint = i32;
-    pub const jlong = i64;
-
-    // JNI function pointers (these will be looked up from JNIEnv vtable)
-    // The JNIEnv is actually a pointer to a vtable of function pointers
-    const JNINativeInterface = extern struct {
-        reserved0: ?*anyopaque,
-        reserved1: ?*anyopaque,
-        reserved2: ?*anyopaque,
-        reserved3: ?*anyopaque,
-        GetVersion: ?*const fn (*JNIEnv) callconv(.c) jint,
-        // ... many more function pointers ...
-        FindClass: ?*const fn (*JNIEnv, [*:0]const u8) callconv(.c) jclass,
-        GetMethodID: ?*const fn (*JNIEnv, jclass, [*:0]const u8, [*:0]const u8) callconv(.c) jmethodID,
-        GetObjectClass: ?*const fn (*JNIEnv, jobject) callconv(.c) jclass,
-        CallObjectMethodV: ?*const fn (*JNIEnv, jobject, jmethodID, ...) callconv(.c) jobject,
-        CallVoidMethodV: ?*const fn (*JNIEnv, jobject, jmethodID, ...) callconv(.c) void,
-        NewStringUTF: ?*const fn (*JNIEnv, [*:0]const u8) callconv(.c) jstring,
-        GetStringUTFChars: ?*const fn (*JNIEnv, jstring, ?*jboolean) callconv(.c) [*:0]const u8,
-        ReleaseStringUTFChars: ?*const fn (*JNIEnv, jstring, [*:0]const u8) callconv(.c) void,
-    };
-
-    // Helper to get the function table from JNIEnv
-    fn getTable(env: *JNIEnv) *JNINativeInterface {
-        const env_ptr: **JNINativeInterface = @ptrCast(@alignCast(env));
-        return env_ptr.*;
-    }
-
-    // Wrapper functions
-    pub fn FindClass(env: *JNIEnv, name: [*:0]const u8) jclass {
-        const table = getTable(env);
-        if (table.FindClass) |func| {
-            return func(env, name);
-        }
-        return null;
-    }
-
-    pub fn GetObjectClass(env: *JNIEnv, obj: jobject) jclass {
-        const table = getTable(env);
-        if (table.GetObjectClass) |func| {
-            return func(env, obj);
-        }
-        return null;
-    }
-
-    pub fn GetMethodID(env: *JNIEnv, cls: jclass, name: [*:0]const u8, sig: [*:0]const u8) jmethodID {
-        const table = getTable(env);
-        if (table.GetMethodID) |func| {
-            return func(env, cls, name, sig);
-        }
-        return null;
-    }
-
-    pub fn CallVoidMethod(env: *JNIEnv, obj: jobject, methodID: jmethodID, args: anytype) void {
-        const table = getTable(env);
-        if (table.CallVoidMethodV) |func| {
-            _ = @call(.auto, func, .{ env, obj, methodID } ++ args);
-        }
-    }
-
-    pub fn CallObjectMethod(env: *JNIEnv, obj: jobject, methodID: jmethodID, args: anytype) jobject {
-        const table = getTable(env);
-        if (table.CallObjectMethodV) |func| {
-            return @call(.auto, func, .{ env, obj, methodID } ++ args);
-        }
-        return null;
-    }
-
-    pub fn NewStringUTF(env: *JNIEnv, bytes: [*:0]const u8) jstring {
-        const table = getTable(env);
-        if (table.NewStringUTF) |func| {
-            return func(env, bytes);
-        }
-        return null;
-    }
-
-    pub fn GetStringUTFChars(env: *JNIEnv, string: jstring, isCopy: ?*jboolean) [*:0]const u8 {
-        const table = getTable(env);
-        if (table.GetStringUTFChars) |func| {
-            return func(env, string, isCopy);
-        }
-        return @ptrCast(&[_]u8{0});
-    }
-
-    pub fn ReleaseStringUTFChars(env: *JNIEnv, string: jstring, utf: [*:0]const u8) void {
-        const table = getTable(env);
-        if (table.ReleaseStringUTFChars) |func| {
-            func(env, string, utf);
-        }
-    }
-} else struct {};
-
-// ============================================================================
-// Android Callback Storage
-// ============================================================================
-
-/// Stored callbacks for Android ValueCallback (JS evaluation) and permissions
-pub const AndroidCallbackStorage = struct {
-    // JavaScript evaluation callbacks - indexed by request ID
-    js_callbacks: [16]?*const fn ([]const u8) void = @splat(null),
-    js_callback_next_id: u32 = 0,
-
-    // Permission callbacks - indexed by request code
-    permission_callbacks: [16]?*const fn (bool) void = @splat(null),
-
-    const Self = @This();
-
-    /// Store a JS callback and return its ID
-    pub fn storeJsCallback(self: *Self, callback: *const fn ([]const u8) void) u32 {
-        const id = self.js_callback_next_id % 16;
-        self.js_callbacks[id] = callback;
-        self.js_callback_next_id +%= 1;
-        return id;
-    }
-
-    /// Invoke and clear a JS callback
-    pub fn invokeJsCallback(self: *Self, id: u32, result: []const u8) void {
-        const idx = id % 16;
-        if (self.js_callbacks[idx]) |callback| {
-            callback(result);
-            self.js_callbacks[idx] = null;
-        }
-    }
-
-    /// Store a permission callback with request code
-    pub fn storePermissionCallback(self: *Self, request_code: u32, callback: *const fn (bool) void) void {
-        const idx = request_code % 16;
-        self.permission_callbacks[idx] = callback;
-    }
-
-    /// Invoke and clear a permission callback
-    pub fn invokePermissionCallback(self: *Self, request_code: u32, granted: bool) void {
-        const idx = request_code % 16;
-        if (self.permission_callbacks[idx]) |callback| {
-            callback(granted);
-            self.permission_callbacks[idx] = null;
-        }
-    }
-};
-
-/// Global callback storage for Android
-var android_callbacks: AndroidCallbackStorage = .{};
-
-// JNI export functions are only compiled on Android (Linux target)
-// On other platforms, these are no-ops
-comptime {
-    if (@import("builtin").target.os.tag == .linux) {
-        @export(&Java_app_craft_CraftValueCallback_nativeOnReceiveValue_impl, .{ .name = "Java_app_craft_CraftValueCallback_nativeOnReceiveValue" });
-        @export(&Java_app_craft_CraftActivity_nativeOnPermissionResult_impl, .{ .name = "Java_app_craft_CraftActivity_nativeOnPermissionResult" });
-    }
-}
-
-/// JNI callback function exported for ValueCallback.onReceiveValue
-/// Called from Java when evaluateJavascript completes
-fn Java_app_craft_CraftValueCallback_nativeOnReceiveValue_impl(
-    env: *jni.JNIEnv,
-    this: jni.jobject,
-    callback_id: jni.jint,
-    result: jni.jstring,
-) callconv(.c) void {
-    _ = this;
-
-    // Convert Java string result to Zig slice
-    const result_chars = jni.GetStringUTFChars(env, result, null);
-    const result_slice = std.mem.span(result_chars);
-
-    // Invoke the stored callback
-    android_callbacks.invokeJsCallback(@intCast(callback_id), result_slice);
-
-    // Release the string
-    jni.ReleaseStringUTFChars(env, result, result_chars);
-}
-
-/// JNI callback function exported for permission results
-/// Called from Activity.onRequestPermissionsResult
-fn Java_app_craft_CraftActivity_nativeOnPermissionResult_impl(
-    env: *jni.JNIEnv,
-    this: jni.jobject,
-    request_code: jni.jint,
-    granted: jni.jboolean,
-) callconv(.c) void {
-    _ = env;
-    _ = this;
-
-    // Invoke the stored callback
-    android_callbacks.invokePermissionCallback(@intCast(request_code), granted != 0);
-}
-
 pub const Platform = enum {
     ios,
     android,
@@ -798,161 +600,6 @@ pub const Android = struct {
         };
     };
 
-    /// JNI Environment (global reference, must be set by Java/Kotlin code)
-    var jni_env: ?*jni.JNIEnv = null;
-
-    pub fn setJNIEnv(env: *jni.JNIEnv) void {
-        jni_env = env;
-    }
-
-    /// Create Android WebView
-    pub fn createWebView(allocator: std.mem.Allocator, context: *Context, config: WebViewConfig) !*WebView {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_class_name = "android/webkit/WebView";
-        const webview_class = try getJNIClass(env, webview_class_name);
-
-        // Get WebView constructor
-        const constructor_id = try getJNIMethod(env, webview_class, "<init>", "(Landroid/content/Context;)V");
-
-        // Create WebView instance
-        const webview_obj = jni.CallObjectMethod(env, context, constructor_id, .{});
-        if (webview_obj == null) {
-            return error.WebViewCreationFailed;
-        }
-
-        // Configure WebView settings
-        const settings_method = try getJNIMethod(env, webview_class, "getSettings", "()Landroid/webkit/WebSettings;");
-        const settings = jni.CallObjectMethod(env, webview_obj, settings_method, .{});
-
-        if (settings != null) {
-            const settings_class_name = "android/webkit/WebSettings";
-            const settings_class = try getJNIClass(env, settings_class_name);
-
-            // Enable JavaScript
-            if (config.javascript_enabled) {
-                const set_js_enabled = try getJNIMethod(env, settings_class, "setJavaScriptEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_js_enabled, .{@as(jni.jboolean, 1)});
-            }
-
-            // Enable DOM storage
-            if (config.dom_storage_enabled) {
-                const set_dom_storage = try getJNIMethod(env, settings_class, "setDomStorageEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_dom_storage, .{@as(jni.jboolean, 1)});
-            }
-
-            // Enable database
-            if (config.database_enabled) {
-                const set_database = try getJNIMethod(env, settings_class, "setDatabaseEnabled", "(Z)V");
-                jni.CallVoidMethod(env, settings, set_database, .{@as(jni.jboolean, 1)});
-            }
-        }
-
-        _ = allocator; // Will be used for cleanup tracking
-        return @ptrCast(@alignCast(webview_obj));
-    }
-
-    /// Load URL in WebView
-    pub fn loadURL(webview: *WebView, url: []const u8) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_obj: jni.jobject = @ptrCast(@alignCast(webview));
-        const webview_class = jni.GetObjectClass(env, webview_obj);
-
-        // Get loadUrl method
-        const load_url_method = try getJNIMethod(env, webview_class, "loadUrl", "(Ljava/lang/String;)V");
-
-        // Convert URL to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const url_z = try @import("memory.zig").dupeZ(allocator, u8, url);
-        defer allocator.free(url_z);
-        const url_jstring = jni.NewStringUTF(env, url_z.ptr);
-
-        // Call loadUrl
-        jni.CallVoidMethod(env, webview_obj, load_url_method, .{url_jstring});
-    }
-
-    /// Execute JavaScript
-    pub fn evaluateJavaScript(webview: *WebView, script: []const u8, callback: ?*const fn ([]const u8) void) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get WebView class
-        const webview_obj: jni.jobject = @ptrCast(@alignCast(webview));
-        const webview_class = jni.GetObjectClass(env, webview_obj);
-
-        // Get evaluateJavascript method
-        const eval_js_method = try getJNIMethod(env, webview_class, "evaluateJavascript", "(Ljava/lang/String;Landroid/webkit/ValueCallback;)V");
-
-        // Convert script to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const script_z = try @import("memory.zig").dupeZ(allocator, u8, script);
-        defer allocator.free(script_z);
-        const script_jstring = jni.NewStringUTF(env, script_z.ptr);
-
-        // Create ValueCallback wrapper if callback is provided
-        var value_callback: jni.jobject = null;
-        if (callback) |cb| {
-            // Store callback and get ID
-            const callback_id = android_callbacks.storeJsCallback(cb);
-
-            // Create CraftValueCallback instance (Java class that implements ValueCallback)
-            // Java code: new CraftValueCallback(callbackId)
-            const craft_callback_class = try getJNIClass(env, "app/craft/CraftValueCallback");
-            const callback_init = try getJNIMethod(env, craft_callback_class, "<init>", "(I)V");
-
-            // Allocate new object
-            const alloc_method = try getJNIMethod(env, craft_callback_class, "<init>", "(I)V");
-            _ = alloc_method;
-
-            // Create instance with callback ID
-            value_callback = jni.CallObjectMethod(env, craft_callback_class, callback_init, .{@as(jni.jint, @intCast(callback_id))});
-        }
-
-        // Call evaluateJavascript with the ValueCallback wrapper
-        jni.CallVoidMethod(env, webview_obj, eval_js_method, .{ script_jstring, value_callback });
-    }
-
-    /// Helper function to get JNI class
-    fn getJNIClass(env: *jni.JNIEnv, class_name: [:0]const u8) !jni.jclass {
-        const cls = jni.FindClass(env, class_name.ptr);
-        if (cls == null) {
-            return error.ClassNotFound;
-        }
-        return cls;
-    }
-
-    /// Helper function to get JNI method
-    fn getJNIMethod(env: *jni.JNIEnv, cls: jni.jclass, method_name: [:0]const u8, signature: [:0]const u8) !jni.jmethodID {
-        const method_id = jni.GetMethodID(env, cls, method_name.ptr, signature.ptr);
-        if (method_id == null) {
-            return error.MethodNotFound;
-        }
-        return method_id;
-    }
-
-    /// Handle Deep Links
-    pub fn handleDeepLink(intent_data: []const u8) !void {
-        _ = intent_data;
-        // Parse and handle Android Intent data
-    }
-
     /// Request Permissions
     pub const Permission = enum {
         camera,
@@ -966,133 +613,36 @@ pub const Android = struct {
         record_audio,
     };
 
-    pub fn requestPermission(activity: *Activity, permission: Permission, callback: *const fn (bool) void) !void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return error.UnsupportedPlatform;
-        }
-
-        const env = jni_env orelse return error.JNINotInitialized;
-
-        // Get ActivityCompat class
-        const activity_compat_class = try getJNIClass(env, "androidx/core/app/ActivityCompat");
-
-        // Convert permission to Android permission string
-        const permission_str = switch (permission) {
-            .camera => "android.permission.CAMERA",
-            .microphone => "android.permission.RECORD_AUDIO",
-            .location_fine => "android.permission.ACCESS_FINE_LOCATION",
-            .location_coarse => "android.permission.ACCESS_COARSE_LOCATION",
-            .read_external_storage => "android.permission.READ_EXTERNAL_STORAGE",
-            .write_external_storage => "android.permission.WRITE_EXTERNAL_STORAGE",
-            .read_contacts => "android.permission.READ_CONTACTS",
-            .write_contacts => "android.permission.WRITE_CONTACTS",
-            .record_audio => "android.permission.RECORD_AUDIO",
-        };
-
-        // Get requestPermissions method
-        const request_permissions_method = try getJNIMethod(
-            env,
-            activity_compat_class,
-            "requestPermissions",
-            "(Landroid/app/Activity;[Ljava/lang/String;I)V",
-        );
-
-        // Create string array with single permission
-        const allocator = std.heap.page_allocator;
-        const permission_z = try @import("memory.zig").dupeZ(allocator, u8, permission_str);
-        defer allocator.free(permission_z);
-        const permission_jstring = jni.NewStringUTF(env, permission_z.ptr);
-
-        // Use a unique request code based on permission type
-        const request_code: u32 = 1001 + @backingInt(permission);
-
-        // Store callback to be invoked in onRequestPermissionsResult
-        if (callback) |cb| {
-            android_callbacks.storePermissionCallback(request_code, cb);
-        }
-
-        // Call requestPermissions with unique request code
-        const activity_obj: jni.jobject = @ptrCast(@alignCast(activity));
-        jni.CallVoidMethod(env, activity_obj, request_permissions_method, .{ permission_jstring, @as(jni.jint, @intCast(request_code)) });
-    }
-
-    /// Vibration
-    pub fn vibrate(context: *Context, duration_ms: u64) void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return;
-        }
-
-        const env = jni_env orelse return;
-
-        // Get Vibrator service
-        const context_obj: jni.jobject = @ptrCast(@alignCast(context));
-        const context_class = jni.GetObjectClass(env, context_obj);
-
-        const get_system_service_method = getJNIMethod(env, context_class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;") catch return;
-
-        // Get VIBRATOR_SERVICE constant
-        const vibrator_service_str = jni.NewStringUTF(env, "vibrator");
-        const vibrator_obj = jni.CallObjectMethod(env, context_obj, get_system_service_method, .{vibrator_service_str});
-
-        if (vibrator_obj != null) {
-            const vibrator_class = jni.GetObjectClass(env, vibrator_obj);
-
-            // For Android 26+, use VibrationEffect
-            const vibrate_method = getJNIMethod(env, vibrator_class, "vibrate", "(J)V") catch return;
-            jni.CallVoidMethod(env, vibrator_obj, vibrate_method, .{@as(jni.jlong, @intCast(duration_ms))});
-        }
-    }
-
-    /// Toast Notification
-    pub fn showToast(context: *Context, message: []const u8, duration: ToastDuration) void {
-        const builtin = @import("builtin");
-        if (builtin.target.os.tag != .linux) {
-            return;
-        }
-
-        const env = jni_env orelse return;
-
-        // Get Toast class
-        const toast_class = getJNIClass(env, "android/widget/Toast") catch return;
-
-        // Get makeText method
-        const make_text_method = getJNIMethod(
-            env,
-            toast_class,
-            "makeText",
-            "(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;",
-        ) catch return;
-
-        // Convert message to Java string (need null-terminated string)
-        const allocator = std.heap.page_allocator;
-        const message_z = @import("memory.zig").dupeZ(allocator, u8, message) catch return;
-        defer allocator.free(message_z);
-        const message_jstring = jni.NewStringUTF(env, message_z.ptr);
-
-        // Convert duration
-        const duration_int: jni.jint = switch (duration) {
-            .short => 0, // Toast.LENGTH_SHORT
-            .long => 1, // Toast.LENGTH_LONG
-        };
-
-        // Create toast
-        const context_obj: jni.jobject = @ptrCast(@alignCast(context));
-        const toast_obj = jni.CallObjectMethod(env, toast_class, make_text_method, .{ context_obj, message_jstring, duration_int });
-
-        if (toast_obj != null) {
-            // Show toast
-            const toast_obj_class = jni.GetObjectClass(env, toast_obj);
-            const show_method = getJNIMethod(env, toast_obj_class, "show", "()V") catch return;
-            jni.CallVoidMethod(env, toast_obj, show_method, .{});
-        }
-    }
-
     pub const ToastDuration = enum {
         short,
         long,
     };
+
+    // Every function that used to live in this struct — `setJNIEnv`,
+    // `createWebView`, `loadURL`, `evaluateJavaScript`, `getJNIClass`,
+    // `getJNIMethod`, `handleDeepLink`, `requestPermission`, `vibrate`,
+    // `showToast` — has been deleted. The types stay because they are the
+    // vocabulary the rest of the codebase and the test suite use; the
+    // functions went because none of them could ever have worked.
+    //
+    // They all read through a hand-written `JNINativeInterface` that declared
+    // four reserved slots, then `GetVersion`, then jumped straight to
+    // `FindClass` under a comment reading "... many more function pointers
+    // ...". The real JNI vtable has roughly 230 entries in a fixed ABI order —
+    // `FindClass` is index 6, `GetObjectClass` 31, `NewStringUTF` 167 — so
+    // every call read the wrong slot and would have jumped to a garbage
+    // address. That is not a bug you fix in place; the replacement `@cImport`s
+    // the NDK's own `jni.h`, where the layout cannot be got wrong.
+    //
+    // Individually they were also wrong in ways that prove none was ever
+    // compiled, let alone run: `requestPermission` resolved the *static*
+    // `ActivityCompat.requestPermissions` with `GetMethodID` and passed two
+    // varargs where the signature demands three with a `jobjectArray`;
+    // `createWebView` and `evaluateJavaScript` invoked constructors through
+    // `CallObjectMethod`, which cannot construct anything — `NewObject` is the
+    // one that can; and `requestPermission` contained `if (callback) |cb|` on
+    // a non-optional parameter, an unconditional compile error that never
+    // fired because nothing referenced the function.
 };
 
 /// Cross-Platform Mobile Window
@@ -1139,10 +689,11 @@ pub const MobileWindow = struct {
                 const webview: *iOS.WKWebView = @ptrCast(@alignCast(self.handle));
                 try iOS.loadURL(webview, url);
             },
-            .android => {
-                const webview: *Android.WebView = @ptrCast(@alignCast(self.handle));
-                try Android.loadURL(webview, url);
-            },
+            // Android has no JNI layer yet. Returning an error is the honest
+            // answer; the deleted `Android.loadURL` would have jumped through
+            // a mis-ordered vtable instead, which is a crash wearing the
+            // costume of an implementation.
+            .android => return error.AndroidBridgeNotImplemented,
             .unknown => return error.UnsupportedPlatform,
         }
     }
@@ -1153,10 +704,7 @@ pub const MobileWindow = struct {
                 const webview: *iOS.WKWebView = @ptrCast(@alignCast(self.handle));
                 try iOS.evaluateJavaScript(webview, script, null);
             },
-            .android => {
-                const webview: *Android.WebView = @ptrCast(@alignCast(self.handle));
-                try Android.evaluateJavaScript(webview, script, null);
-            },
+            .android => return error.AndroidBridgeNotImplemented,
             .unknown => return error.UnsupportedPlatform,
         }
     }
