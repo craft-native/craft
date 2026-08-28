@@ -8,6 +8,7 @@ const external_link = @import("external_link.zig");
 const webview_recovery = @import("webview_recovery.zig");
 const window_registry = @import("window_registry.zig");
 const request_context = @import("request_context.zig");
+const window_chrome = @import("window_chrome.zig");
 
 // Objective-C runtime types and functions (manual declarations to avoid @cImport issues)
 pub const objc = struct {
@@ -797,6 +798,15 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             // window mode that wants a native space rail was the one mode that
             // could not reach it.
             .native_ui = style.native_sidebar or style.web_sidebar_material,
+            // A frameless window has no standard buttons; every other style
+            // has them, either in a titlebar of their own or floating over a
+            // full-height content view.
+            .window_controls = if (style.frameless)
+                .none
+            else if (style.titlebar_hidden or style.web_sidebar_material)
+                .overlay
+            else
+                .titlebar,
         });
 
         // Set up the script message handler
@@ -2162,6 +2172,9 @@ pub fn createWindowWithSidebar(
         .full_bridge = true,
         .sidebar_bootstrap = true,
         .native_ui = true,
+        // The sidebar runs up into the titlebar, so the buttons float over the
+        // top of the web content rather than sitting above it.
+        .window_controls = .overlay,
     });
     _ = msgSend1(config, "setUserContentController:", userContentController);
 
@@ -3189,6 +3202,7 @@ pub fn createWindowWithSidebarURL(
         .full_bridge = false,
         .sidebar_bootstrap = true,
         .native_ui = true,
+        .window_controls = .overlay,
     });
 
     _ = msgSend1(config, "setUserContentController:", userContentController);
@@ -4030,6 +4044,10 @@ pub const CraftScripts = struct {
     /// it. On by default: the registry is inert until the host emits, and a
     /// swipeable sidebar in any window should feel native.
     gestures: bool = true,
+    /// Where AppKit puts this window's close/minimise/zoom buttons, so the page
+    /// can leave room for them instead of drawing replicas. See
+    /// `window_chrome.zig`.
+    window_controls: window_chrome.WindowControls = .titlebar,
 };
 
 /// Add one source string to a content controller as an at-document-start,
@@ -4073,6 +4091,10 @@ pub fn injectCraftScripts(userContentController: objc.id, scripts: CraftScripts)
         getCraftBridgeScriptFull()
     else
         getCraftBridgeScriptMinimal());
+
+    // Before anything that might render: a page that knows the platform drew
+    // the window buttons does not draw its own.
+    addUserScriptSource(userContentController, window_chrome.scriptFor(scripts.window_controls));
 
     if (scripts.native_ui)
         addUserScriptSource(userContentController, getNativeUIScript());
