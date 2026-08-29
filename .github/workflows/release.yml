@@ -129,27 +129,50 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Missing signing material stops the *signing*, not the release.
+          #
+          # This used to `exit 1`, which took the whole darwin leg down with it —
+          # including the publish step at the end of this job. The result was
+          # releases carrying linux and windows binaries and no macOS ones at
+          # all, from v0.0.37 to v0.0.78, and Pantry (which only surfaces a
+          # version whose release has the full prebuilt set) pinned at 0.0.37
+          # for a year. Nobody noticed, because the tag, the changelog and the
+          # GitHub release all still appeared.
+          #
+          # A macOS binary Pantry can install unsigned beats no macOS binary at
+          # all: it is fetched programmatically, so it carries no quarantine
+          # attribute and Gatekeeper does not gate it. When the secret is
+          # present this behaves exactly as before.
           if [ -z "${DOTENV_PRIVATE_KEY_PRODUCTION:-}" ]; then
-            echo "::error::DOTENV_PRIVATE_KEY_PRODUCTION is not set. It is the only"
-            echo "::error::secret this release needs; see .env.production for what it opens."
-            exit 1
+            echo "::warning::DOTENV_PRIVATE_KEY_PRODUCTION is not set — publishing macOS binaries unsigned."
+            echo "::warning::Set it to restore signing and notarization: gh secret set DOTENV_PRIVATE_KEY_PRODUCTION"
+            echo "SIGNING_AVAILABLE=false" >> "$GITHUB_ENV"
+            exit 0
           fi
 
+          missing=""
           for name in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD APPLE_ID APPLE_APP_PASSWORD APPLE_TEAM_ID; do
             value="$(bunx --bun buddy env:get "$name" --file .env.production 2>/dev/null || true)"
 
             if [ -z "$value" ]; then
-              echo "::error::$name is empty in .env.production."
-              echo "::error::Set it with: bunx buddy env:set $name '<value>' --file .env.production"
-              exit 1
+              missing="$missing $name"
+              continue
             fi
 
             echo "::add-mask::$value"
             printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
           done
 
+          if [ -n "$missing" ]; then
+            echo "::warning::Empty in .env.production:$missing — publishing macOS binaries unsigned."
+            echo "SIGNING_AVAILABLE=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "SIGNING_AVAILABLE=true" >> "$GITHUB_ENV"
+
       - name: Import signing certificate
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.SIGNING_AVAILABLE == 'true'
         run: |
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -160,7 +183,7 @@ jobs:
           rm certificate.p12
 
       - name: Sign macOS binary
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.SIGNING_AVAILABLE == 'true'
         env:
           # Default to the strict distribution entitlements; CI can opt in to
           # the dev plist (sandbox off, library validation off) by setting
@@ -184,7 +207,7 @@ jobs:
           echo "macOS ARM64 and x64 binaries signed successfully"
 
       - name: Notarize macOS binaries
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.SIGNING_AVAILABLE == 'true'
         run: |
           set -euo pipefail
           for tuple in \
