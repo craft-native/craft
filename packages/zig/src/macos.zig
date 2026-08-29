@@ -834,7 +834,19 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             // `web_sidebar_material` case. Leaving the old gate meant the one
             // window mode that wants a native space rail was the one mode that
             // could not reach it.
-            .native_ui = style.native_sidebar or style.web_sidebar_material,
+            // Widened again, and this time to always. `showContextMenu` is not a
+            // sidebar facility — it opens a menu at a point, over whatever the
+            // page just right-clicked — but it shipped inside this bundle, so a
+            // plain web window could not reach it. The only way to get one was
+            // `--native-sidebar`, which costs 220px of viewport to a sidebar the
+            // app never asked for; every such app wrote its own div menu
+            // instead, which is the outcome this surface exists to prevent.
+            //
+            // Injecting always is safe: the script only *defines* the namespace.
+            // Nothing native is created until a page calls a constructor, so a
+            // window that never mentions sidebars is unchanged but for one more
+            // namespace on `window.craft`.
+            .native_ui = true,
             // A frameless window has no standard buttons; every other style
             // has them, either in a titlebar of their own or floating over a
             // full-height content view.
