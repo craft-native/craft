@@ -11,6 +11,8 @@
 //   i=3  the user script had already run when the page's own script executed
 //   i=4  the page called an action Zig does *not* serve
 //   i=5  that reply came back, having been answered by the host shim
+//   i=8  the page called a Tier-0 action Zig newly serves (getAppState) and
+//        its reply named a real UIKit application state
 //   i=6  the page called an action the shim answers by *rejecting*
 //   i=7  the rejection arrived via __craftBridgeError with its id, code, and
 //        an unmangled message — proving the error route and Zig-side escaping
@@ -25,7 +27,7 @@ const char craft_slice_page[] =
     "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
     "</head><body><h1 id=\"s\">craft slice</h1><script>\n"
-    "var sentRoundTrip = false, sentHandOff = false;\n"
+    "var sentRoundTrip = false, sentHandOff = false, sentTierZero = false;\n"
     "var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft;\n"
     "\n"
     "// Read before anything else touches it: the user script is installed at\n"
@@ -62,6 +64,12 @@ const char craft_slice_page[] =
     "  // Zig routed the call out, Swift answered through\n"
     "  // craft_ios_deliver_result, and Zig delivered it here over the same\n"
     "  // protocol it uses for its own actions.\n"
+    "  // A Tier-0 action served by Zig itself: the reply carries the UIKit\n"
+    "  // application state, which only a live foregrounded process reports.\n"
+    "  if (!sentTierZero && (payload === 'active' || payload === 'inactive')) {\n"
+    "    sentTierZero = true;\n"
+    "    bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:8});\n"
+    "  }\n"
     "  if (!sentHandOff && payload && payload.servedBy === 'host-shim'\n"
     "      && payload.language === 'swift') {\n"
     "    sentHandOff = true;\n"
@@ -73,6 +81,8 @@ const char craft_slice_page[] =
     "  bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:1});\n"
     "  // An action Zig does not serve, so it must reach the host shim.\n"
     "  bridge.postMessage({t:'mobile', a:'hostOnlyPing', i:4});\n"
+    "  // A Tier-0 action migrated in this phase, served by Zig directly.\n"
+    "  bridge.postMessage({t:'mobile', a:'getAppState', i:88});\n"
     "  // And one the shim answers by rejecting, to prove the error route.\n"
     "  bridge.postMessage({t:'mobile', a:'hostOnlyFail', i:6});\n"
     "} else {\n"

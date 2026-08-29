@@ -4,6 +4,12 @@ const objc_runtime = @import("objc_runtime.zig");
 const request_context = @import("request_context.zig");
 const bridge_error = @import("bridge_error.zig");
 const bridge_mobile = @import("bridge_mobile.zig");
+const bridge_mobile_clipboard = @import("bridge_mobile_clipboard.zig");
+const bridge_mobile_haptics = @import("bridge_mobile_haptics.zig");
+const bridge_mobile_device = @import("bridge_mobile_device.zig");
+const bridge_mobile_system = @import("bridge_mobile_system.zig");
+const bridge_mobile_display = @import("bridge_mobile_display.zig");
+const bridge_mobile_storage = @import("bridge_mobile_storage.zig");
 
 const objc = objc_runtime.objc;
 
@@ -149,21 +155,27 @@ fn payloadOf(root: std.json.ObjectMap) ![]const u8 {
 /// diagnostic a bridge can give.
 fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8, data: []const u8) !void {
     if (std.mem.eql(u8, msg_type, "mobile")) {
-        var bridge = bridge_mobile.MobileBridge.init(allocator);
-        defer bridge.deinit();
+        // First module that recognises the action wins. UnknownAction means
+        // "not mine, ask the next"; any other error means a handler ran and
+        // failed, and its answer is final — retrying the same action against
+        // another module (or the shim) would replace a specific failure with
+        // whatever the next thing happens to say.
+        //
+        // The conformance test guarantees no action appears in two modules'
+        // tables, so first-match is deterministic rather than order-dependent.
+        inline for (mobile_bridges) |Bridge| {
+            var bridge = Bridge.init(allocator);
+            defer bridge.deinit();
 
-        if (bridge.handleMessage(action, data)) |_| {
-            return;
-        } else |err| switch (err) {
-            // The only error worth handing on. Anything else means a handler
-            // ran and failed, and it has already decided what the real answer
-            // is — asking the shim to try the same action again would replace
-            // a specific failure with whatever it happens to say.
-            bridge_error.BridgeError.UnknownAction => {},
-            else => {
-                bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
-                return err;
-            },
+            if (bridge.handleMessage(action, data)) |_| {
+                return;
+            } else |err| switch (err) {
+                bridge_error.BridgeError.UnknownAction => {},
+                else => {
+                    bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
+                    return err;
+                },
+            }
         }
 
         if (try handOffToHost(action, data)) return;
@@ -175,6 +187,22 @@ fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8,
     bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
     return error.UnknownNamespace;
 }
+
+/// Every Zig module serving the `mobile` namespace, in dispatch order.
+///
+/// Growing this list is what a migration phase does. The conformance test in
+/// `test/ios_conformance_test.zig` embeds the same files and holds the ratchet,
+/// so adding a module here without listing it there — or vice versa — fails
+/// the build rather than silently narrowing the served surface.
+const mobile_bridges = .{
+    bridge_mobile.MobileBridge,
+    bridge_mobile_clipboard.ClipboardBridge,
+    bridge_mobile_haptics.HapticsBridge,
+    bridge_mobile_device.DeviceBridge,
+    bridge_mobile_system.SystemBridge,
+    bridge_mobile_display.DisplayBridge,
+    bridge_mobile_storage.StorageBridge,
+};
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.
 ///

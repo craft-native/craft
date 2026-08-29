@@ -48,6 +48,16 @@ const objc_runtime = @import("objc_runtime.zig");
 
 const objc = objc_runtime.objc;
 
+/// The same type as `objc.id` — `?*anyopaque` — spelled locally.
+///
+/// `objc_runtime.objc` is an empty struct off Darwin, and a function
+/// *signature* is analysed even when a comptime platform guard makes its body
+/// unreachable. Naming `objc.id` in the signatures below would therefore break
+/// the host build, which is exactly what the guards exist to prevent. It stays
+/// a single optional pointer, never `?objc.id`, because a double optional is
+/// illegal in a `callconv(.c)` type.
+const Id = ?*anyopaque;
+
 /// The action names, spelled exactly as the Swift `case` labels spell them.
 ///
 /// `test/ios_conformance_test.zig` matches the two lists by string, so a
@@ -187,6 +197,21 @@ pub const ClipboardBridge = struct {
         defer parsed.deinit();
 
         const text = try requiredText(parsed.value);
+
+        // `putString` builds its NSString with `+stringWithUTF8String:`, which
+        // reads a NUL-terminated C string and stops at the first zero byte. A
+        // `text` carrying one — JSON spells it `\u0000` and std.json decodes
+        // it to a real byte — would reach the pasteboard truncated, bump the
+        // change count, pass the verification below, and be acknowledged
+        // `true`: a write reported as successful that stored something the
+        // caller never asked for. Refusing is the honest answer. Writing it
+        // properly is possible (`+stringWithBytes:length:encoding:` takes an
+        // explicit length) and is a deliberate non-goal here, because that is a
+        // new capability rather than the removal of a false report.
+        if (std.mem.indexOfScalar(u8, text, 0) != null) {
+            return bridge_error.BridgeError.InvalidParameter;
+        }
+
         try putString(self.allocator, text);
         bridge_error.sendResultToJS(self.allocator, A.clipboard_write, reply_true);
     }
@@ -234,7 +259,7 @@ fn quoteAsJsonString(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
 /// answers null when UIKit is not in the process, and `generalPasteboard`
 /// answers nil in an app extension, where `UIPasteboard` is unavailable
 /// outright.
-fn generalPasteboard() !objc.id {
+fn generalPasteboard() !Id {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const UIPasteboard = objc.objc_getClass("UIPasteboard") orelse return error.ClassNotFound;
@@ -245,7 +270,7 @@ fn generalPasteboard() !objc.id {
 }
 
 /// `-[UIPasteboard hasStrings]` — whether there is any text to ask for.
-fn hasStrings(pasteboard: objc.id) !bool {
+fn hasStrings(pasteboard: Id) !bool {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const sel = objc.sel_registerName("hasStrings") orelse return error.SelectorNotFound;
@@ -257,7 +282,7 @@ fn hasStrings(pasteboard: objc.id) !bool {
 /// No helper for this in `objc_runtime.zig`, which stops at id/bool/stret, so
 /// the cast is local. `NSInteger` is 64-bit on every supported iOS target,
 /// hence `isize`.
-fn changeCount(pasteboard: objc.id) !isize {
+fn changeCount(pasteboard: Id) !isize {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const sel = objc.sel_registerName("changeCount") orelse return error.SelectorNotFound;
@@ -272,7 +297,7 @@ fn changeCount(pasteboard: objc.id) !isize {
 /// The bytes belong to the autoreleased NSString and live until the pool drains
 /// at the end of this run-loop turn; every caller here copies or compares
 /// before returning.
-fn pasteboardString(pasteboard: objc.id) !?[]const u8 {
+fn pasteboardString(pasteboard: Id) !?[]const u8 {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const sel = objc.sel_registerName("string") orelse return error.SelectorNotFound;
@@ -288,7 +313,7 @@ fn pasteboardString(pasteboard: objc.id) !?[]const u8 {
 /// and `std.mem.span` would truncate there without saying so — the same quiet
 /// data loss as a dropped payload field, on bytes the user chose. A zero length
 /// means empty or not representable as UTF-8, and both answer `""`.
-fn nsStringUTF8(ns: objc.id) ![]const u8 {
+fn nsStringUTF8(ns: Id) ![]const u8 {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const utf8 = objc.getNSStringUTF8(ns) orelse return error.NilString;
@@ -330,7 +355,15 @@ fn putString(allocator: std.mem.Allocator, text: []const u8) !void {
 
     // Autoreleased by `+stringWithUTF8String:`; releasing it here would
     // over-release something the pasteboard has retained.
-    const ns_text = try objc.createNSString(text, allocator);
+    //
+    // Nil is a real answer, not a can't-happen: `+stringWithUTF8String:` returns
+    // nil for bytes that are not valid UTF-8, and `text` comes from a JSON
+    // string that may hold an unpaired surrogate. Passing that nil on would send
+    // `-[UIPasteboard setString:nil]`, which raises an Objective-C exception
+    // that Zig has no way to catch — the process dies with the page's promise
+    // still pending, which is a worse answer than any error code.
+    const ns_text = try objc.createNSString(text, allocator) orelse
+        return bridge_error.BridgeError.InvalidParameter;
     const sel_set = objc.sel_registerName("setString:") orelse return error.SelectorNotFound;
     objc.msgSendVoid1(pasteboard, sel_set, ns_text);
 
@@ -457,6 +490,34 @@ test "a non-string text is refused rather than coerced" {
         defer parsed.deinit();
         try testing.expectError(bridge_error.BridgeError.InvalidParameter, requiredText(parsed.value));
     }
+}
+
+test "a text carrying a NUL is refused rather than written truncated" {
+    // `objc.createNSString` goes through `+stringWithUTF8String:`, which stops
+    // at the first zero byte. Writing the prefix would still bump the change
+    // count and so would be acknowledged `true` — the caller told a write
+    // succeeded that stored something it never asked for. This runs on every
+    // host because the refusal happens before any UIKit call.
+    var bridge = ClipboardBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    // `\u0000` is what `JSON.stringify` emits for a NUL, and std.json decodes
+    // it back to one, so this is the exact payload a page can produce.
+    try testing.expectError(
+        bridge_error.BridgeError.InvalidParameter,
+        bridge.handleMessage(A.clipboard_write, "{\"text\":\"a\\u0000b\"}"),
+    );
+
+    // Guard against the check being written as `startsWith`/`endsWith` or as a
+    // length test: the byte is refused wherever it sits, including alone.
+    try testing.expectError(
+        bridge_error.BridgeError.InvalidParameter,
+        bridge.handleMessage(A.clipboard_write, "{\"text\":\"\\u0000\"}"),
+    );
+    try testing.expectError(
+        bridge_error.BridgeError.InvalidParameter,
+        bridge.handleMessage(A.clipboard_write, "{\"text\":\"trailing\\u0000\"}"),
+    );
 }
 
 test "a payload that is not an object is refused" {

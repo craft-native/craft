@@ -18,7 +18,20 @@ const testing = std.testing;
 /// Embedded with `@embedFile` rather than read from disk, so the test is
 /// hermetic and reads exactly the bytes the build saw.
 const swift_spec = @embedFile("CraftApp.swift");
-const zig_actions = @embedFile("src/bridge_mobile.zig");
+
+/// Every Zig module that serves part of the `mobile` namespace. A module
+/// migrating actions out of the Swift spec adds itself here — and the ratchet
+/// below is what forces that to happen, because migrated actions the scan
+/// cannot see would read as "dropped" and fail the build.
+const zig_sources = [_][]const u8{
+    @embedFile("src/bridge_mobile.zig"),
+    @embedFile("src/bridge_mobile_clipboard.zig"),
+    @embedFile("src/bridge_mobile_haptics.zig"),
+    @embedFile("src/bridge_mobile_device.zig"),
+    @embedFile("src/bridge_mobile_system.zig"),
+    @embedFile("src/bridge_mobile_display.zig"),
+    @embedFile("src/bridge_mobile_storage.zig"),
+};
 
 /// The action list lives in the `switch action` block, and nowhere else.
 ///
@@ -39,7 +52,10 @@ const dispatch_end = "func webView(";
 /// If this ever needs raising, something has been removed from Zig without
 /// being removed from the spec, and that is the conversation this constant
 /// exists to force.
-const max_not_yet_migrated: usize = 105;
+///
+/// History: 105 after the vertical slice (getDeviceInfo); 86 after Tier 0
+/// landed clipboard, haptics, device, system, display, and storage.
+const max_not_yet_migrated: usize = 86;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -79,26 +95,28 @@ fn collectPostedActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     return set;
 }
 
-/// Every action name declared in `bridge_mobile.zig`'s `A` block.
+/// Every action name declared in the `A` blocks of every mobile module.
 fn collectZigActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
     errdefer set.deinit();
 
-    var it = std.mem.splitScalar(u8, zig_actions, '\n');
-    var in_block = false;
-    while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (std.mem.startsWith(u8, trimmed, "pub const A = struct {")) {
-            in_block = true;
-            continue;
-        }
-        if (in_block and std.mem.eql(u8, trimmed, "};")) break;
-        if (!in_block) continue;
+    for (zig_sources) |source| {
+        var it = std.mem.splitScalar(u8, source, '\n');
+        var in_block = false;
+        while (it.next()) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r");
+            if (std.mem.startsWith(u8, trimmed, "pub const A = struct {")) {
+                in_block = true;
+                continue;
+            }
+            if (in_block and std.mem.eql(u8, trimmed, "};")) break;
+            if (!in_block) continue;
 
-        // pub const get_device_info = "getDeviceInfo";
-        const open = std.mem.indexOfScalar(u8, trimmed, '"') orelse continue;
-        const close = std.mem.indexOfScalarPos(u8, trimmed, open + 1, '"') orelse continue;
-        try set.put(trimmed[open + 1 .. close], {});
+            // pub const get_device_info = "getDeviceInfo";
+            const open = std.mem.indexOfScalar(u8, trimmed, '"') orelse continue;
+            const close = std.mem.indexOfScalarPos(u8, trimmed, open + 1, '"') orelse continue;
+            try set.put(trimmed[open + 1 .. close], {});
+        }
     }
     return set;
 }

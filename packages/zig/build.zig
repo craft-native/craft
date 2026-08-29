@@ -339,6 +339,40 @@ pub fn build(b: *std.Build) void {
         ios_surface_tests.root_module.linkFramework("CoreFoundation", .{});
         ios_surface_tests.root_module.linkFramework("CoreGraphics", .{});
         ios_surface_tests.root_module.linkFramework("CoreMIDI", .{});
+        // The storage module is Keychain: SecItemAdd and the kSec* constants
+        // live in Security.framework.
+        ios_surface_tests.root_module.linkFramework("Security", .{});
+    }
+
+    // Tests are collected from the ROOT module only — a named-module import is
+    // a different module, so `test { _ = ios; }` in the surface gate enrolls
+    // nothing. This artifact makes src/ios.zig itself the root, which is the
+    // only arrangement that runs the tests inside ios_dispatch.zig and the
+    // mobile modules. Proven with a canary: a deliberately failing module test
+    // stayed green under every other wiring.
+    // A fresh module object rather than reusing `ios_module`: an artifact root
+    // needs a resolved target, and the one-module-per-file rule only applies
+    // within a single compilation — this artifact is its own.
+    const ios_module_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ios.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    if (target.result.os.tag.isDarwin()) {
+        ios_module_tests.root_module.link_libc = true;
+        ios_module_tests.root_module.linkSystemLibrary("objc", .{});
+        ios_module_tests.root_module.linkFramework("Cocoa", .{});
+        ios_module_tests.root_module.linkFramework("WebKit", .{});
+        ios_module_tests.root_module.linkFramework("CoreFoundation", .{});
+        ios_module_tests.root_module.linkFramework("CoreGraphics", .{});
+        ios_module_tests.root_module.linkFramework("CoreMIDI", .{});
+        ios_module_tests.root_module.linkFramework("Security", .{});
+        // Rooting at ios.zig compiles its exports, whose reply path reaches the
+        // desktop bridge — including the Carbon hotkey machinery. Same linkage
+        // macos_hotkey_tests already carries.
+        ios_module_tests.root_module.linkFramework("Carbon", .{});
     }
 
     // The iOS conformance gate. It embeds the Swift template as the migration
@@ -356,6 +390,24 @@ pub fn build(b: *std.Build) void {
     });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile.zig", .{
         .root_source_file = b.path("src/bridge_mobile.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_clipboard.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_clipboard.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_haptics.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_haptics.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_device.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_device.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_system.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_system.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_display.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_display.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_storage.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_storage.zig"),
     });
 
     const menubar_tests = b.addTest(.{
@@ -1204,6 +1256,7 @@ pub fn build(b: *std.Build) void {
     const run_mobile_tests = b.addRunArtifact(mobile_tests);
     const run_ios_surface_tests = b.addRunArtifact(ios_surface_tests);
     const run_ios_conformance_tests = b.addRunArtifact(ios_conformance_tests);
+    const run_ios_module_tests = b.addRunArtifact(ios_module_tests);
     const run_menubar_tests = b.addRunArtifact(menubar_tests);
     const run_components_tests = b.addRunArtifact(components_tests);
     const run_gpu_tests = b.addRunArtifact(gpu_tests);
@@ -1339,6 +1392,7 @@ pub fn build(b: *std.Build) void {
     // touches no platform types, so it runs everywhere.
     if (target.result.os.tag.isDarwin()) {
         test_step.dependOn(&run_ios_surface_tests.step);
+        test_step.dependOn(&run_ios_module_tests.step);
     }
     test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
@@ -1422,6 +1476,7 @@ pub fn build(b: *std.Build) void {
     const test_ios_step = b.step("test:ios", "Run the iOS surface gate");
     if (target.result.os.tag.isDarwin()) {
         test_ios_step.dependOn(&run_ios_surface_tests.step);
+        test_ios_step.dependOn(&run_ios_module_tests.step);
     }
     test_ios_step.dependOn(&run_ios_conformance_tests.step);
 
@@ -1681,6 +1736,11 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // Linked by clang/swiftc, not by Zig, so the compiler-rt intrinsics Zig
+    // code needs (f128 soft-float from std.json's number parsing, among
+    // others) must travel inside the archive — no later link step provides
+    // them, and the failure is undefined symbols in whoever consumes the lib.
+    ios_device_lib.bundle_compiler_rt = true;
     // Frameworks are linked at the app level in Xcode, not in the static library
     const ios_device_install = b.addInstallArtifact(ios_device_lib, .{});
     build_ios.dependOn(&ios_device_install.step);
@@ -1705,6 +1765,11 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // Linked by clang/swiftc, not by Zig, so the compiler-rt intrinsics Zig
+    // code needs (f128 soft-float from std.json's number parsing, among
+    // others) must travel inside the archive — no later link step provides
+    // them, and the failure is undefined symbols in whoever consumes the lib.
+    ios_sim_arm64_lib.bundle_compiler_rt = true;
     const ios_sim_arm64_install = b.addInstallArtifact(ios_sim_arm64_lib, .{});
     build_ios_simulator.dependOn(&ios_sim_arm64_install.step);
     build_ios_all.dependOn(&ios_sim_arm64_install.step);
@@ -1728,6 +1793,11 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // Linked by clang/swiftc, not by Zig, so the compiler-rt intrinsics Zig
+    // code needs (f128 soft-float from std.json's number parsing, among
+    // others) must travel inside the archive — no later link step provides
+    // them, and the failure is undefined symbols in whoever consumes the lib.
+    ios_sim_x64_lib.bundle_compiler_rt = true;
     const ios_sim_x64_install = b.addInstallArtifact(ios_sim_x64_lib, .{});
     build_ios_simulator.dependOn(&ios_sim_x64_install.step);
     build_ios_all.dependOn(&ios_sim_x64_install.step);
