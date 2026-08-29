@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.79...v0.0.80)
+
+## 🧹 Chores
+
+- release v0.0.80 ([bcf476b](https://github.com/craft-native/craft/commit/bcf476b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.78...v0.0.79)
 
 ## 🚀 Features
