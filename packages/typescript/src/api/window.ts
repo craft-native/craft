@@ -113,8 +113,6 @@ export interface WindowCreateOptions {
   webSidebarMaterialOpacity?: number
   /** Titlebar style (macOS) */
   titlebarStyle?: 'default' | 'hidden' | 'hiddenInset' | 'customButtonsOnHover'
-  /** Traffic light position (macOS) */
-  trafficLightPosition?: { x: number; y: number }
   /** Vibrancy effect (macOS) */
   vibrancy?: 'appearance-based' | 'light' | 'dark' | 'titlebar' | 'selection' | 'menu' | 'popover' | 'sidebar' | 'header' | 'sheet' | 'window' | 'hud' | 'fullscreen-ui' | 'tooltip' | 'content' | 'under-window' | 'under-page'
   /** Background material (Windows 11) */
@@ -566,10 +564,25 @@ export class Window {
   }
 
   /**
-   * Set traffic light position (macOS)
+   * Where the platform's window buttons are — read, not written.
+   *
+   * There was a `setTrafficLightPosition` here, and a `trafficLightPosition`
+   * window option beside it. Neither ever moved anything: the host has no
+   * handler for the call, and AppKit re-lays out the standard window buttons
+   * after any one-shot `setFrameOrigin:`, which is why `macos.zig` leaves them
+   * where the window server puts them and says so at length.
+   *
+   * What a layout actually needs is the opposite direction — where they *are*,
+   * which the host measures and publishes on every window:
+   *
+   *   window.craft.windowControls        { style, x, y, width, height, ... }
+   *   --craft-window-controls-width      the room to leave, in CSS
+   *
+   * See `CraftWindowControls`, and `docs/features/window-management.md`.
    */
-  async setTrafficLightPosition(position: { x: number; y: number }): Promise<void> {
-    await this._call('setTrafficLightPosition', position)
+  get windowControls(): import('../types.js').CraftWindowControls | undefined {
+    return (globalThis as { craft?: { windowControls?: import('../types.js').CraftWindowControls } })
+      .craft?.windowControls
   }
 
   /**

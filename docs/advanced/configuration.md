@@ -83,7 +83,6 @@ export default {
     // Title Bar
     titleBarStyle: 'default', // 'default' | 'hidden' | 'hiddenInset'
     titleBarOverlay: false,
-    trafficLightPosition: undefined, // { x: 10, y: 10 }
   },
 
   // Webview Configuration
@@ -345,7 +344,6 @@ export default {
   window: {
     // macOS-specific window options
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 10, y: 10 },
     vibrancy: 'under-window', // Translucent background
     visualEffectState: 'active',
   },
