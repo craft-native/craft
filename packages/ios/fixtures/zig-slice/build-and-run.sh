@@ -44,7 +44,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$FIXTURE/shim.swift" \
     "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
-    -framework UIKit -framework WebKit -framework Foundation \
+    -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -o "$APP/CraftSlice"
 
 cp "$FIXTURE/Info.plist" "$APP/Info.plist"
@@ -66,7 +66,7 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=5' "$LOG" 2>/dev/null && grep -q 'i=3' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=7' "$LOG" 2>/dev/null && grep -q 'i=8' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -110,5 +110,20 @@ echo "ok: unserved action reached the dispatcher (i=4 seen ${C4}x)"
 # reply path. Neither side could have produced this alone.
 [ "$C5" -ge 1 ] || { echo "FAIL: the host shim never answered, or its answer never reached the page"; exit 1; }
 echo "ok: hand-off to host shim closed (i=5 seen ${C5}x)"
+
+C6="$(count 6)"; C7="$(count 7)"
+
+[ "$C6" -ge 1 ] || { echo "FAIL: the rejecting action never reached the dispatcher"; exit 1; }
+echo "ok: rejecting action reached the dispatcher (i=6 seen ${C6}x)"
+
+# i=7 requires the page's __craftBridgeError handler to have seen error:true,
+# the HOST_DECLINED code, id 6, and a message whose backslash, quote and
+# newline survived Zig's escaping. Any of those wrong and this never fires.
+[ "$C7" -ge 1 ] || { echo "FAIL: the shim's rejection never reached the page intact"; exit 1; }
+echo "ok: error route closed with escaping intact (i=7 seen ${C7}x)"
+
+C8="$(count 8)"
+[ "$C8" -ge 1 ] || { echo "FAIL: the Tier-0 action's reply never carried a real app state"; exit 1; }
+echo "ok: Tier-0 action served by Zig with a live UIKit value (i=8 seen ${C8}x)"
 
 echo "PASS"

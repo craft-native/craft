@@ -4,6 +4,15 @@ const mobile = @import("mobile.zig");
 const ios_dispatch = @import("ios_dispatch.zig");
 const window_chrome = @import("window_chrome.zig");
 
+// Test collection, not a test. Zig only collects `test` blocks from
+// containers the test root *references*, and `ios_dispatch` is a non-pub
+// import — so without this, its tests and every mobile module's tests were
+// silently absent from `zig build test:ios`. That was found with a canary:
+// a deliberately failing test in a module, and a green run.
+test {
+    _ = ios_dispatch;
+}
+
 /// iOS Application Infrastructure
 /// Provides UIApplicationDelegate, UIViewController, and full app lifecycle management
 /// Re-exported so `test/ios_surface_test.zig` can reach the runtime without

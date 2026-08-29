@@ -1,5 +1,16 @@
 const std = @import("std");
 const ios = @import("../src/ios.zig");
+
+// Test *collection*, distinct from the analysis the gate below forces.
+// `refAllDeclsRecursive` makes the compiler check every declaration, which is
+// what catches compile errors — but it does not enroll imported files' `test`
+// blocks. Only this idiom does. Without it, every test in ios.zig,
+// ios_dispatch.zig, and the mobile modules was silently absent from the run:
+// found with a canary — a deliberately failing test in a module, and a green
+// build.
+test {
+    _ = ios;
+}
 const objc = ios.objc;
 
 // `std.testing.refAllDeclsRecursive` is gone in 0.17 — only the shallow

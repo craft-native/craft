@@ -4,6 +4,12 @@ const objc_runtime = @import("objc_runtime.zig");
 const request_context = @import("request_context.zig");
 const bridge_error = @import("bridge_error.zig");
 const bridge_mobile = @import("bridge_mobile.zig");
+const bridge_mobile_clipboard = @import("bridge_mobile_clipboard.zig");
+const bridge_mobile_haptics = @import("bridge_mobile_haptics.zig");
+const bridge_mobile_device = @import("bridge_mobile_device.zig");
+const bridge_mobile_system = @import("bridge_mobile_system.zig");
+const bridge_mobile_display = @import("bridge_mobile_display.zig");
+const bridge_mobile_storage = @import("bridge_mobile_storage.zig");
 
 const objc = objc_runtime.objc;
 
@@ -149,21 +155,27 @@ fn payloadOf(root: std.json.ObjectMap) ![]const u8 {
 /// diagnostic a bridge can give.
 fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8, data: []const u8) !void {
     if (std.mem.eql(u8, msg_type, "mobile")) {
-        var bridge = bridge_mobile.MobileBridge.init(allocator);
-        defer bridge.deinit();
+        // First module that recognises the action wins. UnknownAction means
+        // "not mine, ask the next"; any other error means a handler ran and
+        // failed, and its answer is final — retrying the same action against
+        // another module (or the shim) would replace a specific failure with
+        // whatever the next thing happens to say.
+        //
+        // The conformance test guarantees no action appears in two modules'
+        // tables, so first-match is deterministic rather than order-dependent.
+        inline for (mobile_bridges) |Bridge| {
+            var bridge = Bridge.init(allocator);
+            defer bridge.deinit();
 
-        if (bridge.handleMessage(action, data)) |_| {
-            return;
-        } else |err| switch (err) {
-            // The only error worth handing on. Anything else means a handler
-            // ran and failed, and it has already decided what the real answer
-            // is — asking the shim to try the same action again would replace
-            // a specific failure with whatever it happens to say.
-            bridge_error.BridgeError.UnknownAction => {},
-            else => {
-                bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
-                return err;
-            },
+            if (bridge.handleMessage(action, data)) |_| {
+                return;
+            } else |err| switch (err) {
+                bridge_error.BridgeError.UnknownAction => {},
+                else => {
+                    bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
+                    return err;
+                },
+            }
         }
 
         if (try handOffToHost(action, data)) return;
@@ -175,6 +187,22 @@ fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8,
     bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
     return error.UnknownNamespace;
 }
+
+/// Every Zig module serving the `mobile` namespace, in dispatch order.
+///
+/// Growing this list is what a migration phase does. The conformance test in
+/// `test/ios_conformance_test.zig` embeds the same files and holds the ratchet,
+/// so adding a module here without listing it there — or vice versa — fails
+/// the build rather than silently narrowing the served surface.
+const mobile_bridges = .{
+    bridge_mobile.MobileBridge,
+    bridge_mobile_clipboard.ClipboardBridge,
+    bridge_mobile_haptics.HapticsBridge,
+    bridge_mobile_device.DeviceBridge,
+    bridge_mobile_system.SystemBridge,
+    bridge_mobile_display.DisplayBridge,
+    bridge_mobile_storage.StorageBridge,
+};
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.
 ///
@@ -257,6 +285,74 @@ export fn craft_ios_deliver_result(
     defer request_context.pop();
 
     bridge_error.sendResultToJS(std.heap.c_allocator, action, json);
+}
+
+/// Deliver an error the host shim produced.
+///
+/// A separate export from `craft_ios_deliver_result` because results and
+/// errors reach the page by different routes — `__craftBridgeResult` resolves
+/// the pending promise, `__craftBridgeError` rejects it. Delivering a shim
+/// rejection as a result would make the caller's promise *resolve* with an
+/// error-shaped object, which is the fabricated-success bug wearing a
+/// different hat: the catch block the app wrote never runs.
+///
+/// The message and code are free text from the shim, escaped here with the
+/// same `appendJsonEscaped` every native error already goes through — the
+/// Swift side must not hand-escape (its own attempt replaced only `'` and
+/// let backslashes break out of the string literal).
+export fn craft_ios_deliver_error(
+    action_ptr: [*]const u8,
+    action_len: usize,
+    message_ptr: [*]const u8,
+    message_len: usize,
+    code_ptr: [*]const u8,
+    code_len: usize,
+    request_id: i64,
+) callconv(.c) void {
+    const allocator = std.heap.c_allocator;
+    const action = action_ptr[0..action_len];
+    const message = message_ptr[0..message_len];
+    const code = code_ptr[0..code_len];
+
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    defer json.deinit(allocator);
+
+    buildShimError(allocator, &json, action, message, code, request_id) catch return;
+
+    const js = std.fmt.allocPrint(
+        allocator,
+        "if(window.__craftBridgeError)window.__craftBridgeError({s});",
+        .{json.items},
+    ) catch return;
+    defer allocator.free(js);
+
+    evalJS(js) catch |err| {
+        std.log.warn("ios bridge: could not deliver shim error for '{s}': {}", .{ action, err });
+    };
+}
+
+/// The `__craftBridgeError` payload for a shim-raised error. Split out so the
+/// host tests can pin the exact shape without a webview.
+fn buildShimError(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    action: []const u8,
+    message: []const u8,
+    code: []const u8,
+    request_id: i64,
+) !void {
+    try out.appendSlice(allocator, "{\"error\":true,\"code\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, code);
+    try out.appendSlice(allocator, "\",\"action\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, action);
+    try out.appendSlice(allocator, "\",\"message\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, message);
+    try out.append(allocator, '"');
+    if (request_id >= 0) {
+        try out.appendSlice(allocator, ",\"id\":");
+        try out.print(allocator, "{d}", .{request_id});
+    }
+    try out.append(allocator, '}');
 }
 
 const testing = std.testing;
@@ -375,4 +471,28 @@ test "a request id survives the trip out to the host and back" {
     request_context.push(if (captured < 0) null else @intCast(captured));
     defer request_context.pop();
     try testing.expectEqual(@as(?u64, 7), request_context.current());
+}
+
+test "a shim error carries its code, message, and id, correctly escaped" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    // The message contains the three characters Swift's hand-escaping got
+    // wrong: a backslash, a quote, and a newline.
+    try buildShimError(testing.allocator, &out, "share", "path \\ \"x\"\ngone", "NOT_FOUND", 9);
+    try testing.expectEqualStrings(
+        "{\"error\":true,\"code\":\"NOT_FOUND\",\"action\":\"share\",\"message\":\"path \\\\ \\\"x\\\"\\ngone\",\"id\":9}",
+        out.items,
+    );
+}
+
+test "a shim error with no request id omits the id field entirely" {
+    // Omitted, not null or -1: the page's error handler treats a present id as
+    // a promise to reject, and a sentinel would reject nothing — or worse,
+    // someone else's call.
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    try buildShimError(testing.allocator, &out, "share", "m", "E", -1);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\"id\"") == null);
 }
