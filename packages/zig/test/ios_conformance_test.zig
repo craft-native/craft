@@ -31,6 +31,11 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_system.zig"),
     @embedFile("src/bridge_mobile_display.zig"),
     @embedFile("src/bridge_mobile_storage.zig"),
+    @embedFile("src/bridge_mobile_misc.zig"),
+    @embedFile("src/bridge_mobile_shortcuts.zig"),
+    @embedFile("src/bridge_mobile_securestore.zig"),
+    @embedFile("src/bridge_mobile_biometric.zig"),
+    @embedFile("src/bridge_mobile_permissions.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -54,8 +59,10 @@ const dispatch_end = "func webView(";
 /// exists to force.
 ///
 /// History: 105 after the vertical slice (getDeviceInfo); 86 after Tier 0
-/// landed clipboard, haptics, device, system, display, and storage.
-const max_not_yet_migrated: usize = 86;
+/// landed clipboard, haptics, device, system, display, and storage; 74 after
+/// the secure tier landed flashlight, shortcuts, the Keychain secure store,
+/// biometric persistence, and permissions — including the first async reply.
+const max_not_yet_migrated: usize = 74;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
