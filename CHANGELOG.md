@@ -1,5 +1,30 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.78...v0.0.79)
+
+## 🚀 Features
+
+- **ios**: the data tier — SQLite and notification cancels; ratchet 74 -> 70 (#87) ([6c1f198](https://github.com/craft-native/craft/commit/6c1f198)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#87](https://github.com/craft-native/craft/issues/87), [#87](https://github.com/craft-native/craft/issues/87))
+
+## 🐛 Bug Fixes
+
+- **release**: missing signing material must not swallow the macOS binaries ([2596e98](https://github.com/craft-native/craft/commit/2596e98)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **macos**: inject the nativeUI bridge in every window ([d82e9b6](https://github.com/craft-native/craft/commit/d82e9b6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.79 ([4a33ac4](https://github.com/craft-native/craft/commit/4a33ac4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- iOS Phase 4: the secure tier — async replies, Keychain, permissions; ratchet 86 → 74 (#86) ([2f6e5f3](https://github.com/craft-native/craft/commit/2f6e5f3)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#86](https://github.com/craft-native/craft/issues/86), [#86](https://github.com/craft-native/craft/issues/86))
+- iOS Phase 3: Tier-0 actions in Zig — 19 migrated, ratchet 105 → 86 (#85) ([585173e](https://github.com/craft-native/craft/commit/585173e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#85](https://github.com/craft-native/craft/issues/85), [#85](https://github.com/craft-native/craft/issues/85))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.77...v0.0.78)
 
 ## 🚀 Features
