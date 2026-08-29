@@ -409,6 +409,21 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_storage.zig", .{
         .root_source_file = b.path("src/bridge_mobile_storage.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_misc.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_misc.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_shortcuts.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_shortcuts.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_securestore.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_securestore.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_biometric.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_biometric.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_permissions.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_permissions.zig"),
+    });
 
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{

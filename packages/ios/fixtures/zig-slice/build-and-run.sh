@@ -33,6 +33,24 @@ clang -isysroot "$SDK" -target "$TRIPLE" -fobjc-arc -O1 -c \
 clang -isysroot "$SDK" -target "$TRIPLE" -fobjc-arc -O1 -c \
     "$FIXTURE/page.m" -o "$OUT/page.o"
 
+# Simulator keychain identity. On the simulator, application-identifier and
+# keychain-access-groups are NOT signed in — a signature carrying them is
+# refused at launch (POSIX 163 from RunningBoard, bisected: the same signature
+# without them launches). Xcode instead embeds them as a __TEXT,__entitlements
+# section and the simulator's security layer reads them from there. Without
+# any identity, SecItemAdd fails with errSecMissingEntitlement (-34018).
+cat > "$OUT/sim.entitlements" <<'ENTS'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>application-identifier</key><string>SLICE00000.app.craft.slice</string>
+    <key>keychain-access-groups</key>
+    <array><string>SLICE00000.app.craft.slice</string></array>
+</dict>
+</plist>
+ENTS
+
 echo "==> linking CraftSlice"
 # The shim class has to survive into the binary for
 # `objc_getClass("CraftSwiftShim")` to find it at runtime. Compiling it into
@@ -45,9 +63,15 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
+    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
 cp "$FIXTURE/Info.plist" "$APP/Info.plist"
+
+# Ad-hoc signature. The identity entitlements live in the __entitlements
+# section above; signing them in instead makes the launch be denied.
+codesign --force --sign - "$APP"
+
 
 echo "==> booting a simulator"
 UDID="$(xcrun simctl list devices available -j \
@@ -66,7 +90,7 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=7' "$LOG" 2>/dev/null && grep -q 'i=8' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=7' "$LOG" 2>/dev/null && grep -q 'i=10' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -125,5 +149,9 @@ echo "ok: error route closed with escaping intact (i=7 seen ${C7}x)"
 C8="$(count 8)"
 [ "$C8" -ge 1 ] || { echo "FAIL: the Tier-0 action's reply never carried a real app state"; exit 1; }
 echo "ok: Tier-0 action served by Zig with a live UIKit value (i=8 seen ${C8}x)"
+
+C10="$(count 10)"
+[ "$C10" -ge 1 ] || { echo "FAIL: the Keychain round trip never completed byte-identical"; exit 1; }
+echo "ok: secureSet/secureGet round-tripped a secret through the Keychain (i=10 seen ${C10}x)"
 
 echo "PASS"
