@@ -1,5 +1,64 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.77...v0.0.78)
+
+## 🚀 Features
+
+- **sdk**: type the measured window-controls contract ([b29b15b](https://github.com/craft-native/craft/commit/b29b15b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ios**: say there is no window chrome here ([d6d935f](https://github.com/craft-native/craft/commit/d6d935f)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: measure the window buttons instead of remembering them ([1774a40](https://github.com/craft-native/craft/commit/1774a40)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: let a shared UI keep its browser-only traffic lights ([2273c84](https://github.com/craft-native/craft/commit/2273c84)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sdk**: type `window.craft.windowControls` ([182062d](https://github.com/craft-native/craft/commit/182062d)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: tell the page where the native window buttons are ([f7b47de](https://github.com/craft-native/craft/commit/f7b47de)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **log**: --log-file, and a logger that survives being used (#78) ([c602b3e](https://github.com/craft-native/craft/commit/c602b3e)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#78](https://github.com/craft-native/craft/issues/78), [#78](https://github.com/craft-native/craft/issues/78))
+- **notifications**: make the banner answerable — clicks, buttons, and a crash (#74) ([e891d56](https://github.com/craft-native/craft/commit/e891d56)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#74](https://github.com/craft-native/craft/issues/74), [#74](https://github.com/craft-native/craft/issues/74))
+- **lifecycle**: an app delegate, so closing the window is not the end (#73) ([d4b885f](https://github.com/craft-native/craft/commit/d4b885f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#73](https://github.com/craft-native/craft/issues/73), [#73](https://github.com/craft-native/craft/issues/73))
+
+## 🐛 Bug Fixes
+
+- **build**: format build.zig ([c542e3e](https://github.com/craft-native/craft/commit/c542e3e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **sdk**: stop offering to move the traffic lights ([73bb1ee](https://github.com/craft-native/craft/commit/73bb1ee)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **examples**: repair the Arc example's template literal, and its fallback ([cdb5d6b](https://github.com/craft-native/craft/commit/cdb5d6b)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: stop making every window's titlebar see-through ([aaeebec](https://github.com/craft-native/craft/commit/aaeebec)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **examples**: use the real traffic lights in the Arc example ([908837c](https://github.com/craft-native/craft/commit/908837c)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **bridge**: stop discarding the fields the page actually sends (#82) ([49fe9e4](https://github.com/craft-native/craft/commit/49fe9e4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#82](https://github.com/craft-native/craft/issues/82), [#82](https://github.com/craft-native/craft/issues/82))
+- **log**: keep the terminal's colour, and let logging be turned off (#81) ([9e4e58f](https://github.com/craft-native/craft/commit/9e4e58f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#81](https://github.com/craft-native/craft/issues/81), [#81](https://github.com/craft-native/craft/issues/81))
+- **sync**: stop craft's locks busy-waiting (#80) ([e5cb271](https://github.com/craft-native/craft/commit/e5cb271)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#80](https://github.com/craft-native/craft/issues/80), [#80](https://github.com/craft-native/craft/issues/80))
+- **log**: send the page's own log somewhere it can be read (#79) ([bc35ed9](https://github.com/craft-native/craft/commit/bc35ed9)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#79](https://github.com/craft-native/craft/issues/79), [#79](https://github.com/craft-native/craft/issues/79))
+- **shell**: actually pass spawn its arguments (#77) ([1e19526](https://github.com/craft-native/craft/commit/1e19526)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#77](https://github.com/craft-native/craft/issues/77), [#77](https://github.com/craft-native/craft/issues/77))
+- **ci**: make the benchmark gate measure something, and stop it failing at random (#75) ([97d9b70](https://github.com/craft-native/craft/commit/97d9b70)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#75](https://github.com/craft-native/craft/issues/75), [#75](https://github.com/craft-native/craft/issues/75))
+- **bridge**: correlate replies by request id, not by action name (#71) ([a394ecc](https://github.com/craft-native/craft/commit/a394ecc)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#71](https://github.com/craft-native/craft/issues/71), [#71](https://github.com/craft-native/craft/issues/71))
+- **capabilities**: stop the channel manifest claiming knowledge it does not have (#68) ([3a3270c](https://github.com/craft-native/craft/commit/3a3270c)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#68](https://github.com/craft-native/craft/issues/68), [#68](https://github.com/craft-native/craft/issues/68))
+- **webview**: recover from renderer crashes, and stop dropping window.open() (#72) ([93fc86e](https://github.com/craft-native/craft/commit/93fc86e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#72](https://github.com/craft-native/craft/issues/72), [#72](https://github.com/craft-native/craft/issues/72))
+
+## 📚 Documentation
+
+- **window**: name the hosts that cannot publish this yet, and why ([93648cc](https://github.com/craft-native/craft/commit/93648cc)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: describe the contract as measured, not as constant ([69abed3](https://github.com/craft-native/craft/commit/69abed3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: document the window-controls contract ([1b5dc0c](https://github.com/craft-native/craft/commit/1b5dc0c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧪 Tests
+
+- **window**: drive the injected client with the host's own literals ([eee2538](https://github.com/craft-native/craft/commit/eee2538)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: make "every window can be reopened" a property the build checks (#76) ([ccfb1ed](https://github.com/craft-native/craft/commit/ccfb1ed)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#76](https://github.com/craft-native/craft/issues/76), [#76](https://github.com/craft-native/craft/issues/76))
+
+## 🧹 Chores
+
+- release v0.0.78 ([aa545f5](https://github.com/craft-native/craft/commit/aa545f5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## iOS
+
+- hand unserved actions to the host shim, over one reply path (#84) ([d1dca20](https://github.com/craft-native/craft/commit/d1dca20)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#84](https://github.com/craft-native/craft/issues/84), [#84](https://github.com/craft-native/craft/issues/84))
+
+## 📄 Miscellaneous
+
+- Zig-native mobile: iOS compiles, serves a bridge call on a simulator, and is gated against drift (#83) ([08f42fb](https://github.com/craft-native/craft/commit/08f42fb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#83](https://github.com/craft-native/craft/issues/83), [#83](https://github.com/craft-native/craft/issues/83))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.76...v0.0.77)
 
 ## 🚀 Features
