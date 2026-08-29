@@ -50,11 +50,17 @@
 //!
 //! ## Other platforms
 //!
-//! Windows and Linux inject no Craft JavaScript at all today — no bridge, no
-//! `window.craft` — so there is nothing for this to attach to yet. Both hosts
-//! draw real window buttons, so when their bridge lands they want this same
-//! contract: measure the frame, call `classify`, inject `seedScript`. Nothing
-//! in this module is macOS-specific.
+//! macOS and iOS publish this. Windows, Linux and Android do not, and cannot
+//! yet: none of them injects any Craft JavaScript at all — `windows.zig` and
+//! `linux.zig` have an `injectScript` nobody calls, and `android.zig`'s
+//! `evaluateJavaScript` is still a stub. There is nothing for this to attach
+//! to, and publishing half a `window.craft` on those hosts would be worse than
+//! silence: a page that tests for it would find a bridge that cannot send.
+//!
+//! When those hosts do get a JS pipeline, they want this same contract, and
+//! nothing here is macOS-specific. Windows and Linux draw real window buttons,
+//! so they measure their frames and call `classify` with `.platform`; Android
+//! has no window chrome at all, so it seeds `.absent`, as iOS does.
 
 const std = @import("std");
 
