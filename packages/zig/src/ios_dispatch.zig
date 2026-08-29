@@ -16,6 +16,8 @@ const bridge_mobile_shortcuts = @import("bridge_mobile_shortcuts.zig");
 const bridge_mobile_securestore = @import("bridge_mobile_securestore.zig");
 const bridge_mobile_biometric = @import("bridge_mobile_biometric.zig");
 const bridge_mobile_permissions = @import("bridge_mobile_permissions.zig");
+const bridge_mobile_db = @import("bridge_mobile_db.zig");
+const bridge_mobile_notifcancel = @import("bridge_mobile_notifcancel.zig");
 
 const objc = objc_runtime.objc;
 
@@ -213,6 +215,8 @@ const mobile_bridges = .{
     bridge_mobile_securestore.SecureStoreBridge,
     bridge_mobile_biometric.BiometricStoreBridge,
     bridge_mobile_permissions.PermissionsBridge,
+    bridge_mobile_db.DbBridge,
+    bridge_mobile_notifcancel.NotifCancelBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.

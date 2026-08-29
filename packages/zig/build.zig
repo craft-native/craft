@@ -342,6 +342,11 @@ pub fn build(b: *std.Build) void {
         // The storage module is Keychain: SecItemAdd and the kSec* constants
         // live in Security.framework.
         ios_surface_tests.root_module.linkFramework("Security", .{});
+        ios_surface_tests.root_module.addCSourceFile(.{
+            .file = b.path("vendor/sqlite/sqlite3.c"),
+            .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
+        });
+        ios_surface_tests.root_module.addIncludePath(b.path("vendor/sqlite"));
     }
 
     // Tests are collected from the ROOT module only — a named-module import is
@@ -369,6 +374,11 @@ pub fn build(b: *std.Build) void {
         ios_module_tests.root_module.linkFramework("CoreGraphics", .{});
         ios_module_tests.root_module.linkFramework("CoreMIDI", .{});
         ios_module_tests.root_module.linkFramework("Security", .{});
+        ios_module_tests.root_module.addCSourceFile(.{
+            .file = b.path("vendor/sqlite/sqlite3.c"),
+            .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
+        });
+        ios_module_tests.root_module.addIncludePath(b.path("vendor/sqlite"));
         // Rooting at ios.zig compiles its exports, whose reply path reaches the
         // desktop bridge — including the Carbon hotkey machinery. Same linkage
         // macos_hotkey_tests already carries.
@@ -423,6 +433,12 @@ pub fn build(b: *std.Build) void {
     });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_permissions.zig", .{
         .root_source_file = b.path("src/bridge_mobile_permissions.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_db.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_db.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_notifcancel.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_notifcancel.zig"),
     });
 
     const menubar_tests = b.addTest(.{
@@ -1759,6 +1775,21 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_device_lib.bundle_compiler_rt = true;
+    // The db actions run on the vendored SQLite, same flags as every other
+    // target — an iOS archive without it would push the whole amalgamation
+    // onto the consuming app's build instead.
+    if (iosSdkPath(b, "iphoneos")) |sdk_path| {
+        ios_device_lib.root_module.addCSourceFile(.{
+            .file = b.path("vendor/sqlite/sqlite3.c"),
+            .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
+        });
+        ios_device_lib.root_module.addIncludePath(b.path("vendor/sqlite"));
+        ios_device_lib.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
+    } else {
+        // No xcrun: the archive ships without sqlite and the db actions
+        // resolve as undefined symbols at app link — loud, not silent.
+    }
+    ios_device_lib.root_module.link_libc = true;
     // Frameworks are linked at the app level in Xcode, not in the static library
     const ios_device_install = b.addInstallArtifact(ios_device_lib, .{});
     build_ios.dependOn(&ios_device_install.step);
@@ -1788,6 +1819,21 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_sim_arm64_lib.bundle_compiler_rt = true;
+    // The db actions run on the vendored SQLite, same flags as every other
+    // target — an iOS archive without it would push the whole amalgamation
+    // onto the consuming app's build instead.
+    if (iosSdkPath(b, "iphonesimulator")) |sdk_path| {
+        ios_sim_arm64_lib.root_module.addCSourceFile(.{
+            .file = b.path("vendor/sqlite/sqlite3.c"),
+            .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
+        });
+        ios_sim_arm64_lib.root_module.addIncludePath(b.path("vendor/sqlite"));
+        ios_sim_arm64_lib.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
+    } else {
+        // No xcrun: the archive ships without sqlite and the db actions
+        // resolve as undefined symbols at app link — loud, not silent.
+    }
+    ios_sim_arm64_lib.root_module.link_libc = true;
     const ios_sim_arm64_install = b.addInstallArtifact(ios_sim_arm64_lib, .{});
     build_ios_simulator.dependOn(&ios_sim_arm64_install.step);
     build_ios_all.dependOn(&ios_sim_arm64_install.step);
@@ -1816,6 +1862,21 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_sim_x64_lib.bundle_compiler_rt = true;
+    // The db actions run on the vendored SQLite, same flags as every other
+    // target — an iOS archive without it would push the whole amalgamation
+    // onto the consuming app's build instead.
+    if (iosSdkPath(b, "iphonesimulator")) |sdk_path| {
+        ios_sim_x64_lib.root_module.addCSourceFile(.{
+            .file = b.path("vendor/sqlite/sqlite3.c"),
+            .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
+        });
+        ios_sim_x64_lib.root_module.addIncludePath(b.path("vendor/sqlite"));
+        ios_sim_x64_lib.root_module.addSystemIncludePath(.{ .cwd_relative = b.fmt("{s}/usr/include", .{sdk_path}) });
+    } else {
+        // No xcrun: the archive ships without sqlite and the db actions
+        // resolve as undefined symbols at app link — loud, not silent.
+    }
+    ios_sim_x64_lib.root_module.link_libc = true;
     const ios_sim_x64_install = b.addInstallArtifact(ios_sim_x64_lib, .{});
     build_ios_simulator.dependOn(&ios_sim_x64_install.step);
     build_ios_all.dependOn(&ios_sim_x64_install.step);
@@ -2048,6 +2109,27 @@ pub fn build(b: *std.Build) void {
 /// Link platform-specific system libraries for a build module.
 /// Centralizes the per-OS library linking that is shared across exe, craft_exe,
 /// lib_unit_tests, and cross-compilation targets.
+/// The iOS SDK sysroot, resolved through xcrun at configure time.
+///
+/// Needed because the iOS archives compile the vendored sqlite3.c, and C
+/// compilation for an Apple target wants the SDK's libc headers — Zig's
+/// bundled headers cover Zig code, not a C translation unit's <stdio.h>.
+/// Absent xcrun (a non-mac host), returns null and the C source is skipped;
+/// the cross-compile of *Zig* code still works, and CI's mac runners have
+/// xcrun.
+fn iosSdkPath(b: *std.Build, sdk_name: []const u8) ?[]const u8 {
+    var exit_code: u8 = 0;
+    const out = b.runAllowFail(
+        &.{ "xcrun", "--sdk", sdk_name, "--show-sdk-path" },
+        &exit_code,
+        .ignore,
+    ) catch return null;
+    if (exit_code != 0) return null;
+    const trimmed = std.mem.trim(u8, out, " \n\r\t");
+    if (trimmed.len == 0) return null;
+    return trimmed;
+}
+
 fn linkPlatformLibraries(b: *std.Build, module: *std.Build.Module, target_os: std.Target.Os.Tag, sdk_path: ?[]const u8) void {
     switch (target_os) {
         .macos => {
