@@ -1,57 +1,78 @@
-// The host shim, in Swift, presenting the contract `CraftApp.swift` will.
+// The host shim, mirroring the design `CraftApp.swift`'s CraftSwiftShim uses —
+// including the part most likely to fail silently in production: discovering
+// Zig's delivery exports with `dlsym` rather than linking them.
 //
-// This replaces an Objective-C stand-in. The stand-in proved the runtime
-// mechanism — `objc_getClass` plus a message send — but not that *Swift*
-// presents that mechanism the way Zig expects: that `@objc(CraftSwiftShim)`
-// really does register under that name, that a `static func` becomes a class
-// method reachable by selector, that `String` parameters bridge from NSString,
-// and that `Bool` comes back as the ObjC BOOL Zig reads.
+// That discovery is the template's load-bearing assumption. A pure-Swift app
+// has no Zig runtime, so the template cannot use `@_silgen_name` (a hard link
+// dependency); it resolves the symbols at runtime and declines when absent.
+// Whether `dlsym(dlopen(nil, RTLD_NOW), ...)` finds a symbol that was
+// *statically linked* into the executable is exactly the kind of fact that
+// must be proven on a simulator, because if a build setting strips it from the
+// dynamic symbol table the seam degrades to "shim declines everything" with no
+// error anywhere.
 //
-// Those are exactly the assumptions the real wiring will rest on, so they are
-// worth testing against the real compiler rather than assumed from a language
-// that shares an ABI with it.
+// Two actions, proving the two reply routes:
+//   hostOnlyPing  -> craft_ios_deliver_result  (the page's promise resolves)
+//   hostOnlyFail  -> craft_ios_deliver_error   (the page's promise rejects)
+// The error route matters independently: delivering a rejection as a result
+// would run the app's then-branch with an error-shaped object.
 import Foundation
 
-// Zig owns the reply path. The shim decides *what* the answer is and hands it
-// back; the wire format, the request id and the escaping stay on the other
-// side. `@_silgen_name` reaches the exported symbol without needing a bridging
-// header, which keeps the harness to one swiftc invocation.
-@_silgen_name("craft_ios_deliver_result")
-func craft_ios_deliver_result(
-    _ action: UnsafePointer<CChar>, _ actionLen: UInt,
-    _ json: UnsafePointer<CChar>, _ jsonLen: UInt,
-    _ requestId: Int64
-)
+private typealias DeliverResultFn = @convention(c) (
+    UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt, Int64
+) -> Void
+private typealias DeliverErrorFn = @convention(c) (
+    UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt,
+    UnsafePointer<CChar>, UInt, Int64
+) -> Void
+
+private let deliverResult: DeliverResultFn? = {
+    guard let sym = dlsym(dlopen(nil, RTLD_NOW), "craft_ios_deliver_result") else { return nil }
+    return unsafeBitCast(sym, to: DeliverResultFn.self)
+}()
+
+private let deliverError: DeliverErrorFn? = {
+    guard let sym = dlsym(dlopen(nil, RTLD_NOW), "craft_ios_deliver_error") else { return nil }
+    return unsafeBitCast(sym, to: DeliverErrorFn.self)
+}()
 
 @objc(CraftSwiftShim)
 public class CraftSwiftShim: NSObject {
-    // Selector: handleAction:payload:requestId:  — which is what
-    // `ios_dispatch.handOffToHost` sends. A mismatch here is not a compile
-    // error on either side, so the simulator assertion is what catches it.
     @objc public static func handleAction(
         _ action: String,
         payload: String,
         requestId: Int64
     ) -> Bool {
-        // Exactly one action, to prove the seam. A real shim dispatches the
-        // ~105 the Swift template still owns.
-        guard action == "hostOnlyPing" else {
-            // Not ours. Zig answers UnknownAction, which is the same path a
-            // fully-migrated app with no shim at all takes.
+        switch action {
+        case "hostOnlyPing":
+            guard let deliverResult else { return false }
+            let json = "{\"servedBy\":\"host-shim\",\"language\":\"swift\",\"payloadBytes\":\(payload.utf8.count)}"
+            action.withCString { a in
+                json.withCString { j in
+                    deliverResult(a, UInt(strlen(a)), j, UInt(strlen(j)), requestId)
+                }
+            }
+            return true
+
+        case "hostOnlyFail":
+            guard let deliverError else { return false }
+            // The message deliberately contains the characters Swift's old
+            // hand-escaping mangled: a backslash, a quote, and a newline. If
+            // they reach the page intact, escaping lives on the Zig side where
+            // it belongs.
+            let message = "declined \\ \"on purpose\"\nsecond line"
+            action.withCString { a in
+                message.withCString { m in
+                    "HOST_DECLINED".withCString { c in
+                        deliverError(a, UInt(strlen(a)), m, UInt(strlen(m)),
+                                     c, UInt(strlen(c)), requestId)
+                    }
+                }
+            }
+            return true
+
+        default:
             return false
         }
-
-        let json = "{\"servedBy\":\"host-shim\",\"language\":\"swift\",\"payloadBytes\":\(payload.utf8.count)}"
-
-        action.withCString { a in
-            json.withCString { j in
-                craft_ios_deliver_result(
-                    a, UInt(strlen(a)),
-                    j, UInt(strlen(j)),
-                    requestId
-                )
-            }
-        }
-        return true
     }
 }

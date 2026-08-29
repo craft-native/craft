@@ -364,7 +364,12 @@ struct CraftWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(config: config)
+        let coordinator = Coordinator(config: config)
+        // The Zig dispatcher finds CraftSwiftShim by class name; the shim finds
+        // its way back to the live coordinator through this. Weak, because
+        // SwiftUI owns the coordinator's lifetime.
+        CraftSwiftShim.coordinator = coordinator
+        return coordinator
     }
 
     // MARK: - Coordinator (Native Bridge)
@@ -511,8 +516,19 @@ struct CraftWebView: UIViewRepresentable {
             guard let body = message.body as? [String: Any],
                   let action = body["action"] as? String else { return }
 
-            let callbackId = body["callbackId"] as? String
+            dispatch(action: action, body: body, callbackId: body["callbackId"] as? String)
+        }
 
+        /// The action switch, reachable from two directions: the
+        /// WKScriptMessageHandler above, and `CraftSwiftShim.handleAction` when
+        /// the Zig dispatcher hands over an action it has not migrated yet.
+        ///
+        /// A hand-off call arrives with a synthetic callbackId of the form
+        /// "zig:<requestId>". The reply helpers recognise that prefix and route
+        /// the answer back through the Zig runtime's exported
+        /// `craft_ios_deliver_result` instead of evaluating JavaScript here —
+        /// one reply path, owned by whichever side received the page's message.
+        func dispatch(action: String, body: [String: Any], callbackId: String?) {
             switch action {
             case "startListening":
                 if config.enableSpeechRecognition { startSpeechRecognition() }
@@ -2426,6 +2442,10 @@ struct CraftWebView: UIViewRepresentable {
                 rejectCallback(callbackId, error: "Native result could not be serialized", code: "SERIALIZATION_ERROR")
                 return
             }
+            // A hand-off from the Zig dispatcher replies through Zig, which
+            // owns the wire format, the request id, and the escaping. Replying
+            // by JavaScript here as well would give the page two answers.
+            if CraftSwiftShim.deliverResultIfHandOff(id, json: resultStr) { return }
             let script = "window.craft._resolveCallback('\(id)', \(resultStr));"
             DispatchQueue.main.async { self.webView?.evaluateJavaScript(script, completionHandler: nil) }
         }
@@ -2436,7 +2456,17 @@ struct CraftWebView: UIViewRepresentable {
 
         private func rejectCallback(_ callbackId: String?, error: String, code: String = "CRAFT_ERROR") {
             guard let id = callbackId else { return }
-            let escapedError = error.replacingOccurrences(of: "'", with: "\\'").replacingOccurrences(of: "\n", with: "\\n")
+            // A hand-off rejection goes back through Zig's error route, so the
+            // page's promise *rejects*. Delivering it as a result would run the
+            // app's then-branch with an error-shaped object — fabricated
+            // success wearing a different hat.
+            if CraftSwiftShim.deliverErrorIfHandOff(id, message: error, code: code) { return }
+            // Backslashes first: escaping ' and \n but not \ let an error
+            // message containing a backslash break out of the string literal.
+            let escapedError = error
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(of: "\n", with: "\\n")
             let script = "window.craft._rejectCallback('\(id)', '\(escapedError)', '\(code)');"
             DispatchQueue.main.async { self.webView?.evaluateJavaScript(script, completionHandler: nil) }
         }
@@ -5157,5 +5187,100 @@ extension CraftWebView.Coordinator: WCSessionDelegate {
             self?.sendToWeb("craftWatchUserInfo", data: userInfo)
             self?.sendToWeb("craftWatchMessage", data: userInfo)
         }
+    }
+}
+
+
+// MARK: - Zig hand-off shim
+
+/// The seam the Zig dispatcher hands unmigrated actions through.
+///
+/// Discovery is symmetric and both directions are runtime-only. Zig finds this
+/// class with `objc_getClass("CraftSwiftShim")`; this class finds Zig's
+/// delivery exports with `dlsym`. Neither side links the other, so a
+/// pure-Swift app (no Zig runtime) and a fully-migrated Zig app (no shim work
+/// left) both build and run without dead dependencies.
+///
+/// The shim decides *what* the answer is, never *how* it reaches the page.
+/// Replies go back through Zig's `craft_ios_deliver_result` /
+/// `craft_ios_deliver_error`, which own the wire format, the request id, and
+/// the escaping. Two components replying to one page by different routes is
+/// how this codebase accumulated five envelopes.
+@objc(CraftSwiftShim)
+final class CraftSwiftShim: NSObject {
+    /// The coordinator serving hand-offs. Set by `makeCoordinator`.
+    static weak var coordinator: CraftWebView.Coordinator?
+
+    private typealias DeliverResultFn = @convention(c) (
+        UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt, Int64
+    ) -> Void
+    private typealias DeliverErrorFn = @convention(c) (
+        UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt,
+        UnsafePointer<CChar>, UInt, Int64
+    ) -> Void
+
+    private static let deliverResult: DeliverResultFn? = {
+        guard let sym = dlsym(dlopen(nil, RTLD_NOW), "craft_ios_deliver_result") else { return nil }
+        return unsafeBitCast(sym, to: DeliverResultFn.self)
+    }()
+
+    private static let deliverError: DeliverErrorFn? = {
+        guard let sym = dlsym(dlopen(nil, RTLD_NOW), "craft_ios_deliver_error") else { return nil }
+        return unsafeBitCast(sym, to: DeliverErrorFn.self)
+    }()
+
+    /// Entry point for the Zig dispatcher. Selector: handleAction:payload:requestId:
+    ///
+    /// Returns false when this shim cannot serve the call — no live
+    /// coordinator, or no Zig runtime to reply through — so Zig answers the
+    /// page with UnknownAction instead of the call vanishing.
+    @objc static func handleAction(_ action: String, payload: String, requestId: Int64) -> Bool {
+        guard let coordinator, deliverResult != nil else { return false }
+
+        let body = ((try? JSONSerialization.jsonObject(with: Data(payload.utf8))) as? [String: Any]) ?? [:]
+
+        // The synthetic callbackId routes this call's reply back through Zig.
+        // It carries the action too, because the reply helpers do not otherwise
+        // know it, and Zig's reply names the action for the page's
+        // action-matching fallback.
+        coordinator.dispatch(action: action, body: body, callbackId: "zig:\(requestId):\(action)")
+        return true
+    }
+
+    /// Route a resolve through Zig when the callbackId marks a hand-off.
+    /// Returns true when the reply has been (or could only be) handled here.
+    static func deliverResultIfHandOff(_ callbackId: String, json: String) -> Bool {
+        guard let (requestId, action) = parseHandOffId(callbackId) else { return false }
+        guard let deliverResult else { return true } // hand-off id but no runtime: drop, never eval JS
+        action.withCString { a in
+            json.withCString { j in
+                deliverResult(a, UInt(strlen(a)), j, UInt(strlen(j)), requestId)
+            }
+        }
+        return true
+    }
+
+    /// Route a rejection through Zig's error path, so the page's promise
+    /// rejects rather than resolving with an error-shaped object.
+    static func deliverErrorIfHandOff(_ callbackId: String, message: String, code: String) -> Bool {
+        guard let (requestId, action) = parseHandOffId(callbackId) else { return false }
+        guard let deliverError else { return true }
+        action.withCString { a in
+            message.withCString { m in
+                code.withCString { c in
+                    deliverError(a, UInt(strlen(a)), m, UInt(strlen(m)), c, UInt(strlen(c)), requestId)
+                }
+            }
+        }
+        return true
+    }
+
+    /// "zig:<requestId>:<action>" -> (requestId, action). Nil for ordinary
+    /// page-issued callback ids, which keep their JavaScript reply path.
+    private static func parseHandOffId(_ callbackId: String) -> (Int64, String)? {
+        guard callbackId.hasPrefix("zig:") else { return nil }
+        let rest = callbackId.dropFirst(4)
+        guard let sep = rest.firstIndex(of: ":"), let id = Int64(rest[..<sep]) else { return nil }
+        return (id, String(rest[rest.index(after: sep)...]))
     }
 }

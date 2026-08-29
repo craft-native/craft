@@ -259,6 +259,74 @@ export fn craft_ios_deliver_result(
     bridge_error.sendResultToJS(std.heap.c_allocator, action, json);
 }
 
+/// Deliver an error the host shim produced.
+///
+/// A separate export from `craft_ios_deliver_result` because results and
+/// errors reach the page by different routes — `__craftBridgeResult` resolves
+/// the pending promise, `__craftBridgeError` rejects it. Delivering a shim
+/// rejection as a result would make the caller's promise *resolve* with an
+/// error-shaped object, which is the fabricated-success bug wearing a
+/// different hat: the catch block the app wrote never runs.
+///
+/// The message and code are free text from the shim, escaped here with the
+/// same `appendJsonEscaped` every native error already goes through — the
+/// Swift side must not hand-escape (its own attempt replaced only `'` and
+/// let backslashes break out of the string literal).
+export fn craft_ios_deliver_error(
+    action_ptr: [*]const u8,
+    action_len: usize,
+    message_ptr: [*]const u8,
+    message_len: usize,
+    code_ptr: [*]const u8,
+    code_len: usize,
+    request_id: i64,
+) callconv(.c) void {
+    const allocator = std.heap.c_allocator;
+    const action = action_ptr[0..action_len];
+    const message = message_ptr[0..message_len];
+    const code = code_ptr[0..code_len];
+
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    defer json.deinit(allocator);
+
+    buildShimError(allocator, &json, action, message, code, request_id) catch return;
+
+    const js = std.fmt.allocPrint(
+        allocator,
+        "if(window.__craftBridgeError)window.__craftBridgeError({s});",
+        .{json.items},
+    ) catch return;
+    defer allocator.free(js);
+
+    evalJS(js) catch |err| {
+        std.log.warn("ios bridge: could not deliver shim error for '{s}': {}", .{ action, err });
+    };
+}
+
+/// The `__craftBridgeError` payload for a shim-raised error. Split out so the
+/// host tests can pin the exact shape without a webview.
+fn buildShimError(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    action: []const u8,
+    message: []const u8,
+    code: []const u8,
+    request_id: i64,
+) !void {
+    try out.appendSlice(allocator, "{\"error\":true,\"code\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, code);
+    try out.appendSlice(allocator, "\",\"action\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, action);
+    try out.appendSlice(allocator, "\",\"message\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, message);
+    try out.append(allocator, '"');
+    if (request_id >= 0) {
+        try out.appendSlice(allocator, ",\"id\":");
+        try out.print(allocator, "{d}", .{request_id});
+    }
+    try out.append(allocator, '}');
+}
+
 const testing = std.testing;
 
 test "an envelope without a type is rejected" {
@@ -375,4 +443,28 @@ test "a request id survives the trip out to the host and back" {
     request_context.push(if (captured < 0) null else @intCast(captured));
     defer request_context.pop();
     try testing.expectEqual(@as(?u64, 7), request_context.current());
+}
+
+test "a shim error carries its code, message, and id, correctly escaped" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    // The message contains the three characters Swift's hand-escaping got
+    // wrong: a backslash, a quote, and a newline.
+    try buildShimError(testing.allocator, &out, "share", "path \\ \"x\"\ngone", "NOT_FOUND", 9);
+    try testing.expectEqualStrings(
+        "{\"error\":true,\"code\":\"NOT_FOUND\",\"action\":\"share\",\"message\":\"path \\\\ \\\"x\\\"\\ngone\",\"id\":9}",
+        out.items,
+    );
+}
+
+test "a shim error with no request id omits the id field entirely" {
+    // Omitted, not null or -1: the page's error handler treats a present id as
+    // a promise to reject, and a sentinel would reject nothing — or worse,
+    // someone else's call.
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    try buildShimError(testing.allocator, &out, "share", "m", "E", -1);
+    try testing.expect(std.mem.indexOf(u8, out.items, "\"id\"") == null);
 }

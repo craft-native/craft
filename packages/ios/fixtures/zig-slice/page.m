@@ -11,6 +11,9 @@
 //   i=3  the user script had already run when the page's own script executed
 //   i=4  the page called an action Zig does *not* serve
 //   i=5  that reply came back, having been answered by the host shim
+//   i=6  the page called an action the shim answers by *rejecting*
+//   i=7  the rejection arrived via __craftBridgeError with its id, code, and
+//        an unmangled message — proving the error route and Zig-side escaping
 //
 // i=2 and i=5 are the load-bearing ones, and they prove different things.
 // i=2 cannot be produced by a stub: only a real UIKit process reports
@@ -33,6 +36,18 @@ const char craft_slice_page[] =
     "  bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:3});\n"
     "}\n"
     "\n"
+    "var sentErrorAck = false;\n"
+    "window.__craftBridgeError = function (ctx) {\n"
+    "  // The message crossed Zig's escaping with a backslash, quote, and\n"
+    "  // newline intact; anything mangled and this equality fails, i=7 never\n"
+    "  // fires, and the harness reports the error route broken.\n"
+    "  var messageIntact = ctx && ctx.message === 'declined \\\\ \"on purpose\"\\nsecond line';\n"
+    "  if (!sentErrorAck && ctx && ctx.error === true && ctx.code === 'HOST_DECLINED'\n"
+    "      && ctx.id === 6 && messageIntact) {\n"
+    "    sentErrorAck = true;\n"
+    "    bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:7});\n"
+    "  }\n"
+    "};\n"
     "window.__craftBridgeResult = function (action, payload, id) {\n"
     "  window.__craftSliceAck = JSON.stringify({action: action, id: id, payload: payload});\n"
     "  document.getElementById('s').textContent = window.__craftSliceAck;\n"
@@ -58,6 +73,8 @@ const char craft_slice_page[] =
     "  bridge.postMessage({t:'mobile', a:'getDeviceInfo', i:1});\n"
     "  // An action Zig does not serve, so it must reach the host shim.\n"
     "  bridge.postMessage({t:'mobile', a:'hostOnlyPing', i:4});\n"
+    "  // And one the shim answers by rejecting, to prove the error route.\n"
+    "  bridge.postMessage({t:'mobile', a:'hostOnlyFail', i:6});\n"
     "} else {\n"
     "  document.getElementById('s').textContent = 'NO BRIDGE';\n"
     "}\n"
