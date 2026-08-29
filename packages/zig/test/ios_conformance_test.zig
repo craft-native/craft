@@ -36,6 +36,8 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_securestore.zig"),
     @embedFile("src/bridge_mobile_biometric.zig"),
     @embedFile("src/bridge_mobile_permissions.zig"),
+    @embedFile("src/bridge_mobile_db.zig"),
+    @embedFile("src/bridge_mobile_notifcancel.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -61,8 +63,10 @@ const dispatch_end = "func webView(";
 /// History: 105 after the vertical slice (getDeviceInfo); 86 after Tier 0
 /// landed clipboard, haptics, device, system, display, and storage; 74 after
 /// the secure tier landed flashlight, shortcuts, the Keychain secure store,
-/// biometric persistence, and permissions — including the first async reply.
-const max_not_yet_migrated: usize = 74;
+/// biometric persistence, and permissions — including the first async reply;
+/// 70 after the data tier landed SQLite (dbExecute/dbQuery) and the
+/// notification cancels.
+const max_not_yet_migrated: usize = 70;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
