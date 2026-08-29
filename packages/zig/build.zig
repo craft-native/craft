@@ -1304,7 +1304,6 @@ pub fn build(b: *std.Build) void {
                         .{ .name = "bridge_contracts", .module = b.createModule(.{
                             .root_source_file = b.path("src/bridge_contracts.zig"),
                         }) },
-
                     },
                 }),
             });
