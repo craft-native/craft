@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.80...v0.0.81)
+
+## 🧹 Chores
+
+- release v0.0.81 ([1e0e456](https://github.com/craft-native/craft/commit/1e0e456)) _(by Chris <chrisbreuer93@gmail.com>)_
+- configure macOS release signing ([c1bdbce](https://github.com/craft-native/craft/commit/c1bdbce)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.79...v0.0.80)
 
 ## 🧹 Chores
