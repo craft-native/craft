@@ -52,6 +52,20 @@ pub const ParsedItem = struct {
     role: ?[]const u8 = null,
 };
 
+/// The identifier an item is built with, or null for one that cannot be built.
+///
+/// Separators never reach here — they are added before this is consulted.
+///
+/// A role item needs no caller-supplied id: its selector comes from the role
+/// and nothing is ever reported back for it. Requiring one anyway meant
+/// `{label: "Copy", role: "copy"}` — the obvious way to write it, and the way
+/// `@stacksjs/desktop`'s standard menus wrote it — was skipped in silence, so a
+/// menu of nothing but role items rendered as a menu of nothing but separators.
+/// Nothing was logged, and the payload inspected correctly on the JS side.
+pub fn identifierFor(item: ParsedItem) ?[]const u8 {
+    return item.id orelse item.role;
+}
+
 /// Shape parsed from JSON: a top-level menu (bar / dock root).
 pub const ParsedMenu = struct {
     label: ?[]const u8 = null,
@@ -222,7 +236,7 @@ pub const MenuBridge = struct {
                 continue;
             }
 
-            const id = it.id orelse continue;
+            const id = identifierFor(it) orelse continue;
             const label = it.label orelse id;
             const shortcut = it.shortcut orelse "";
             const item = try self.createMenuItemFull(id, label, shortcut, it.icon, it.role);
@@ -947,4 +961,20 @@ pub fn handleMenuItemClick(item_id: []const u8) void {
     bridge.evalJS(js) catch |err| {
         log.err("Failed to trigger callback: {}", .{err});
     };
+}
+
+test "a role item builds without a caller-supplied id" {
+    // What `{label: "Copy", role: "copy"}` parses to. This used to return null
+    // and the item was skipped, so Edit shipped with only its separators.
+    const copy = ParsedItem{ .label = "Copy", .role = "copy" };
+    try std.testing.expectEqualStrings("copy", identifierFor(copy).?);
+}
+
+test "an explicit id still wins, so ids keep reporting back under their own name" {
+    const item = ParsedItem{ .id = "app.copy", .label = "Copy", .role = "copy" };
+    try std.testing.expectEqualStrings("app.copy", identifierFor(item).?);
+}
+
+test "an item with neither is the one thing that cannot be built" {
+    try std.testing.expect(identifierFor(ParsedItem{ .label = "Orphan" }) == null);
 }
