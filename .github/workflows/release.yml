@@ -255,6 +255,88 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
+  # ── Gate: is this release actually installable? ─────────────────────
+  #
+  # v0.0.82 published with no macOS binaries at all. The darwin leg failed at
+  # notarization, so its "Publish & Release" step was skipped — but the linux
+  # leg had already created the GitHub release, and it created it complete-
+  # looking: tag, changelog, linux and windows zips, npm packages, the zig
+  # package on the registry. Everything except the two assets that make craft
+  # installable on a Mac.
+  #
+  # Nothing noticed. Pantry's recipe only surfaces a version whose release
+  # carries the whole prebuilt set, so v0.0.82 was quietly unlistable forever
+  # while looking, from GitHub, exactly like every other release.
+  #
+  # `fail-fast: false` on the matrix is deliberate and stays — one platform's
+  # signing trouble should not throw away another's build. This job is the other
+  # half of that bargain: the run goes red, naming the assets that are missing.
+  verify-release:
+    name: verify release assets
+    needs: [pantry]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Every platform pantry installs must have shipped
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Kept in step with the `required` list in pantry's recipe:
+          # packages/ts-pantry/src/recipes/craft-native.org.ts
+          REQUIRED="craft-darwin-arm64.zip craft-darwin-x64.zip craft-linux-x64.zip"
+
+          echo "Assets on $TAG:"
+          ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$ASSETS" | sed 's/^/  /'
+
+          MISSING=""
+          for asset in $REQUIRED; do
+            echo "$ASSETS" | grep -qx "$asset" || MISSING="$MISSING $asset"
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::$TAG is missing:$MISSING — pantry will never list this version."
+            echo "::error::Re-run the failed platform leg, then re-run this job. Publishing a release without the full prebuilt set leaves a version that looks released and cannot be installed."
+            exit 1
+          fi
+
+          echo "All required assets present."
+
+      # Pantry's sweep is a cron that GitHub throttles to every few hours, so a
+      # good release would otherwise sit uninstallable for most of a day. This
+      # tells the registry to refresh this one domain now. Best-effort: the cron
+      # remains the backstop, so a missing token warns rather than fails a
+      # release that is otherwise complete.
+      - name: Tell the pantry registry to index this version
+        if: ${{ success() }}
+        env:
+          DISPATCH_TOKEN: ${{ secrets.PANTRY_DISPATCH_TOKEN || secrets.PAT_TOKEN }}
+        run: |
+          if [ -z "${DISPATCH_TOKEN:-}" ]; then
+            echo "::warning::No PANTRY_DISPATCH_TOKEN — the registry will pick this up on its next scheduled sweep instead."
+            exit 0
+          fi
+
+          code=$(curl -sS -o /tmp/dispatch.out -w '%{http_code}' \
+            -X POST https://api.github.com/repos/pantry-pm/pantry/dispatches \
+            -H "Authorization: Bearer $DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -d '{"event_type":"package-released","client_payload":{"domain":"craft-native.org"}}')
+
+          if [ "$code" = "204" ]; then
+            echo "Registry refresh dispatched for craft-native.org."
+          else
+            # Not fatal: the release is good, and the cron will still find it.
+            echo "::warning::Dispatch returned $code — the registry will index this on its next sweep."
+            cat /tmp/dispatch.out || true
+          fi
+
   npm:
     name: npm
     # Ordered after the binaries, not gated on them.
