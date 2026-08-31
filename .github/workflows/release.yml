@@ -362,33 +362,42 @@ jobs:
 
           echo "All required assets present."
 
-      # Pantry's sweep is a cron that GitHub throttles to every few hours, so a
-      # good release would otherwise sit uninstallable for most of a day. This
-      # tells the registry to refresh this one domain now. Best-effort: the cron
-      # remains the backstop, so a missing token warns rather than fails a
-      # release that is otherwise complete.
+      # Tell the registry this version exists, with the token this workflow
+      # already holds to publish to it.
+      #
+      # This used to POST a `repository_dispatch` to pantry-pm/pantry, which
+      # needed a GitHub PAT with write access to a repository this one does not
+      # own — a second credential, per publishing project, for the sole purpose
+      # of poking a workflow. The secret was never created, so the step warned
+      # and did nothing on every release, and the registry only ever learned
+      # about a new version when its cron next swept all several hundred
+      # packages. PANTRY_TOKEN authenticates to the registry itself, which is
+      # the thing that actually needs to know, so ask it directly.
+      #
+      # Best-effort: the sweep remains the backstop, so an unreachable registry
+      # warns rather than failing a release that is otherwise complete.
       - name: Tell the pantry registry to index this version
         if: ${{ success() }}
         env:
-          DISPATCH_TOKEN: ${{ secrets.PANTRY_DISPATCH_TOKEN || secrets.PAT_TOKEN }}
+          PANTRY_TOKEN: ${{ secrets.PANTRY_TOKEN }}
         run: |
-          if [ -z "${DISPATCH_TOKEN:-}" ]; then
-            echo "::warning::No PANTRY_DISPATCH_TOKEN — the registry will pick this up on its next scheduled sweep instead."
+          if [ -z "${PANTRY_TOKEN:-}" ]; then
+            echo "::warning::No PANTRY_TOKEN — the registry will pick this up on its next scheduled sweep instead."
             exit 0
           fi
 
-          code=$(curl -sS -o /tmp/dispatch.out -w '%{http_code}' \
-            -X POST https://api.github.com/repos/pantry-pm/pantry/dispatches \
-            -H "Authorization: Bearer $DISPATCH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -d '{"event_type":"package-released","client_payload":{"domain":"craft-native.org"}}')
+          code=$(curl -sS -o /tmp/index.out -w '%{http_code}' --max-time 30 \
+            -X POST https://registry.pantry.dev/api/rebuild \
+            -H "Authorization: Bearer $PANTRY_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"domain":"craft-native.org"}')
 
-          if [ "$code" = "204" ]; then
-            echo "Registry refresh dispatched for craft-native.org."
+          if [ "$code" = "200" ]; then
+            echo "Registry notified: craft-native.org queued for indexing."
           else
-            # Not fatal: the release is good, and the cron will still find it.
-            echo "::warning::Dispatch returned $code — the registry will index this on its next sweep."
-            cat /tmp/dispatch.out || true
+            # Not fatal: the release is good, and the sweep will still find it.
+            echo "::warning::Registry returned $code — it will index this on its next sweep."
+            cat /tmp/index.out || true
           fi
 
   npm:
