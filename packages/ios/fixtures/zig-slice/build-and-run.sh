@@ -162,4 +162,14 @@ C14="$(count 14)"
 [ "$C14" -ge 1 ] || { echo "FAIL: the async array reply never reached the page"; exit 1; }
 echo "ok: async NSArray completion delivered via ios_async (i=14 seen ${C14}x)"
 
+C16="$(count 16)"
+# The simulator has no device motion. A module that fabricated a stream would
+# fire craftMotionUpdate and trip i=16; an honest one refuses and never does.
+[ "$C16" -eq 0 ] || { echo "FAIL: motion emitted on a simulator that has no motion sensor"; exit 1; }
+echo "ok: unavailable sensor refused rather than faking a stream (i=16 absent)"
+
+C60="$(count 60)"
+[ "$C60" -ge 1 ] || { echo "FAIL: startMotionUpdates never reached the dispatcher"; exit 1; }
+echo "ok: event-driven action dispatched to Zig (i=60 seen ${C60}x)"
+
 echo "PASS"

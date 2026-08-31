@@ -22,6 +22,9 @@ const bridge_mobile_notifcancel = @import("bridge_mobile_notifcancel.zig");
 const bridge_mobile_notifications = @import("bridge_mobile_notifications.zig");
 const bridge_mobile_bgtasks = @import("bridge_mobile_bgtasks.zig");
 const bridge_mobile_watch = @import("bridge_mobile_watch.zig");
+const bridge_mobile_location = @import("bridge_mobile_location.zig");
+const bridge_mobile_locrecording = @import("bridge_mobile_locrecording.zig");
+const bridge_mobile_motion = @import("bridge_mobile_motion.zig");
 
 const objc = objc_runtime.objc;
 
@@ -226,6 +229,9 @@ const mobile_bridges = .{
     bridge_mobile_notifications.NotificationsBridge,
     bridge_mobile_bgtasks.BgTasksBridge,
     bridge_mobile_watch.WatchBridge,
+    bridge_mobile_location.LocationBridge,
+    bridge_mobile_locrecording.LocationRecordingBridge,
+    bridge_mobile_motion.MotionBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.

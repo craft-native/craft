@@ -16,15 +16,84 @@
 //! interpolated as a *name* comes from the `Channel` enum, which is a fixed
 //! set of literals rather than anything a page or a device can influence.
 //!
-//! Emitting also marks the channel live, so `craft.capabilities()` stops
-//! saying "unknown" about a channel that has actually fired. A page asking
-//! what it can subscribe to gets an answer from the code that does the
-//! subscribing, not from a list someone maintained by hand.
+//! ## The event vocabulary is iOS's, not the desktop's
+//!
+//! This file was first written against `capabilities.Channel`, whose names are
+//! all `craft:`-prefixed (`craft:location:update`) and whose own test enforces
+//! that prefix. The iOS page contract is a different vocabulary: Swift's
+//! `sendToWeb` dispatches `craftLocationUpdate`, `craftMotionUpdate`,
+//! `craftSpeechResult` — camelCase, no colon. A `Channel` therefore cannot
+//! *spell* the name an iOS page is listening for, and emitting the desktop
+//! spelling would fire an event with no subscriber: a stream that looks
+//! implemented and delivers nothing.
+//!
+//! So `Event` below is the iOS vocabulary, taken from the `sendToWeb` call
+//! sites. Where a desktop channel means the same thing, `capabilityChannel`
+//! maps to it, and emitting marks that channel live — so `craft.capabilities()`
+//! still answers from the code that does the emitting rather than a
+//! hand-maintained list. Where there is no desktop equivalent the mapping is
+//! null, which is honest rather than approximate.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const capabilities = @import("capabilities.zig");
 const compat_mutex = @import("compat_mutex.zig");
+
+/// The events an iOS page subscribes to.
+///
+/// Every name here is copied from a `sendToWeb` call in
+/// `packages/ios/templates/CraftApp.swift` — that is the contract, and a page
+/// written against the Swift app must keep working when Zig serves the same
+/// action. `eventName` is what lands in the `CustomEvent` constructor.
+pub const Event = enum {
+    location_update,
+    location_error,
+    motion_update,
+    speech_result,
+    speech_error,
+    speech_end,
+    network_change,
+    deep_link,
+    push_token,
+    notification_response,
+    bluetooth_device,
+    ar_plane,
+
+    pub fn eventName(self: Event) []const u8 {
+        return switch (self) {
+            .location_update => "craftLocationUpdate",
+            .location_error => "craftLocationError",
+            .motion_update => "craftMotionUpdate",
+            .speech_result => "craftSpeechResult",
+            .speech_error => "craftSpeechError",
+            .speech_end => "craftSpeechEnd",
+            .network_change => "craftNetworkChange",
+            .deep_link => "craftDeepLink",
+            .push_token => "craftPushToken",
+            .notification_response => "craftNotificationResponse",
+            .bluetooth_device => "craftBluetoothDevice",
+            .ar_plane => "craftARPlane",
+        };
+    }
+};
+
+// There is deliberately no mapping from an `Event` to a
+// `capabilities.Channel`.
+//
+// An earlier version had one, and emitting `craftLocationUpdate` registered
+// `craft:location:update` as live. That reads as a small convenience and is a
+// false claim: `Liveness.live` means "something in this build took out a
+// permit to emit on it", and nothing in an iOS build ever dispatches the
+// `craft:`-prefixed name. A page reading `craft.capabilities()` would be told
+// a channel is live that it cannot receive — the overclaiming this manifest
+// exists to prevent, committed by the manifest's own plumbing.
+//
+// `unknown` is the honest answer for a desktop channel on iOS. It also removed
+// an unsynchronised write: `registerEmitter` sets `live_channels[...]` and
+// `emit` is explicitly callable from any thread.
+//
+// When the capabilities vocabulary grows names an iOS page actually
+// subscribes to, this becomes a real mapping rather than an approximate one.
 
 /// A queued event, owned until the main queue drains it.
 const Pending = struct {
@@ -32,7 +101,7 @@ const Pending = struct {
     /// The channel, not its name: an enum is a fixed vocabulary, and the
     /// formatter reads the literal from it rather than accepting a string that
     /// could carry a quote into a JS source position.
-    channel: capabilities.Channel = @fromBackingInt(@intCast(0)),
+    event: Event = .location_update,
     /// The `detail` payload as JSON. Owned; freed after delivery.
     detail: ?[]u8 = null,
 };
@@ -72,7 +141,7 @@ extern var _dispatch_main_q: anyopaque;
 ///
 /// A full queue drops the *oldest* pending event rather than refusing the new
 /// one. For a stream, stale data is worse than a gap.
-pub fn emit(channel: capabilities.Channel, detail_json: []const u8) void {
+pub fn emit(event: Event, detail_json: []const u8) void {
     if (!builtin.target.os.tag.isDarwin()) return;
 
     const allocator = std.heap.c_allocator;
@@ -100,13 +169,8 @@ pub fn emit(channel: capabilities.Channel, detail_json: []const u8) void {
             break :blk 0;
         };
 
-        queue[index] = .{ .in_use = true, .channel = channel, .detail = copy };
+        queue[index] = .{ .in_use = true, .event = event, .detail = copy };
     }
-
-    // Marking the channel live is what makes `craft.capabilities()` answer
-    // truthfully. Done on emit rather than on subscribe, because a channel
-    // nothing has ever fired is not knowably live.
-    _ = capabilities.registerEmitter(channel);
 
     dispatch_async_f(&_dispatch_main_q, @ptrFromInt(index + 1), deliverOnMain);
 }
@@ -122,14 +186,14 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     const index: usize = @intFromPtr(context orelse return) - 1;
     if (index >= max_queued) return;
 
-    var channel: capabilities.Channel = undefined;
+    var event: Event = undefined;
     var detail: ?[]u8 = null;
     {
         queue_mutex.lock();
         defer queue_mutex.unlock();
         const slot = &queue[index];
         if (!slot.in_use) return; // evicted before this hop ran
-        channel = slot.channel;
+        event = slot.event;
         detail = slot.detail;
         slot.* = .{};
     }
@@ -138,12 +202,12 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     const payload = detail orelse return;
     defer allocator.free(payload);
 
-    const js = formatEvent(allocator, channel, payload) catch return;
+    const js = formatEvent(allocator, event, payload) catch return;
     defer allocator.free(js);
 
     const ios_dispatch = @import("ios_dispatch.zig");
     ios_dispatch.evalJS(js) catch |err| {
-        std.log.warn("ios events: could not emit {s}: {}", .{ channel.eventName(), err });
+        std.log.warn("ios events: could not emit {s}: {}", .{ event.eventName(), err });
     };
 }
 
@@ -158,13 +222,13 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
 /// webview or a run loop.
 fn formatEvent(
     allocator: std.mem.Allocator,
-    channel: capabilities.Channel,
+    event: Event,
     detail_json: []const u8,
 ) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         "if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('{s}',{{detail:{s}}}));",
-        .{ channel.eventName(), detail_json },
+        .{ event.eventName(), detail_json },
     );
 }
 
@@ -178,17 +242,37 @@ test "an event inlines its detail as JSON, not as a quoted string" {
     defer testing.allocator.free(js);
 
     try testing.expectEqualStrings(
-        "if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('craft:location:update',{detail:{\"latitude\":1.5}}));",
+        "if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('craftLocationUpdate',{detail:{\"latitude\":1.5}}));",
         js,
     );
 }
 
-test "the event name comes from the enum, so a page cannot influence it" {
-    // The name lands in a JS source position. Taking it from the Channel enum
-    // rather than a caller-supplied string is what makes escaping unnecessary
-    // there — this pins that the formatter reads the enum.
-    try testing.expectEqualStrings("craft:location:error", capabilities.Channel.location_error.eventName());
-    try testing.expectEqualStrings("craft:location:authChanged", capabilities.Channel.location_authchanged.eventName());
+test "every event name is one an iOS page actually subscribes to" {
+    // The names come from Swift's sendToWeb call sites, NOT from
+    // capabilities.Channel — whose names are all `craft:`-prefixed and which
+    // therefore cannot spell any of these. Emitting the desktop spelling would
+    // fire an event with no listener: a stream that looks implemented and
+    // delivers nothing. This is the check that keeps the two vocabularies from
+    // being confused again.
+    try testing.expectEqualStrings("craftLocationUpdate", Event.location_update.eventName());
+    try testing.expectEqualStrings("craftMotionUpdate", Event.motion_update.eventName());
+    try testing.expectEqualStrings("craftSpeechResult", Event.speech_result.eventName());
+
+    inline for (std.enums.values(Event)) |e| {
+        // camelCase, no colon — the iOS convention.
+        try testing.expect(std.mem.startsWith(u8, e.eventName(), "craft"));
+        try testing.expect(std.mem.indexOfScalar(u8, e.eventName(), ':') == null);
+    }
+}
+
+test "emitting claims nothing about the desktop channel vocabulary" {
+    // The iOS names and the `craft:` names are different vocabularies. An
+    // earlier version registered a desktop channel on emit, which made
+    // craft.capabilities() report `craft:location:update` live on a platform
+    // that never dispatches it. A manifest whose own plumbing overclaims is
+    // worse than no manifest, so the mapping is gone — and this fails if it
+    // comes back.
+    try testing.expect(!@hasDecl(Event, "capabilityChannel"));
 }
 
 test "a full queue drops the oldest event and counts it" {
@@ -201,15 +285,11 @@ test "a full queue drops the oldest event and counts it" {
 
     queue_mutex.lock();
     for (&queue) |*slot| {
-        if (!slot.in_use) {
-            slot.* = .{ .in_use = true, .channel = .location_update, .detail = null };
-        }
+        if (!slot.in_use) slot.* = .{ .in_use = true, .event = .location_update, .detail = null };
     }
     queue_mutex.unlock();
 
-    // No free slot: this must evict rather than block or leak.
     emit(.location_update, "{\"n\":1}");
-
     try testing.expect(droppedCount() > before);
 
     queue_mutex.lock();
@@ -218,13 +298,4 @@ test "a full queue drops the oldest event and counts it" {
         if (slot.detail) |owned| std.heap.c_allocator.free(owned);
         slot.* = .{};
     }
-}
-
-test "emitting marks the channel live for craft.capabilities()" {
-    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
-
-    // A channel nothing has fired is honestly unknown; one that has fired is
-    // knowably live. This is the only thing that moves it.
-    const emitter = capabilities.registerEmitter(.location_update);
-    try testing.expectEqualStrings("craft:location:update", emitter.eventName());
 }
