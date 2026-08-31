@@ -38,6 +38,9 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_permissions.zig"),
     @embedFile("src/bridge_mobile_db.zig"),
     @embedFile("src/bridge_mobile_notifcancel.zig"),
+    @embedFile("src/bridge_mobile_notifications.zig"),
+    @embedFile("src/bridge_mobile_bgtasks.zig"),
+    @embedFile("src/bridge_mobile_watch.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -65,8 +68,15 @@ const dispatch_end = "func webView(";
 /// the secure tier landed flashlight, shortcuts, the Keychain secure store,
 /// biometric persistence, and permissions — including the first async reply;
 /// 70 after the data tier landed SQLite (dbExecute/dbQuery) and the
-/// notification cancels.
-const max_not_yet_migrated: usize = 70;
+/// notification cancels; 64 after pending notifications, background-task
+/// scheduling/cancellation, and Watch context/reachability.
+///
+/// Three actions in that round were deliberately left with the Swift shim
+/// rather than served here: scheduleNotification, registerBackgroundTask and
+/// sendToWatch all hand iOS a callback that fires later, which needs an event
+/// channel iOS does not have yet. Falling through beats `.unavailable`, which
+/// would make Zig dispatch and refuse an action the shim serves correctly.
+const max_not_yet_migrated: usize = 64;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -111,6 +121,11 @@ fn collectZigActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
     errdefer set.deinit();
 
+    // Duplicates are an error, not a merge. `ios_dispatch.route` takes the
+    // first module whose handleMessage does not return UnknownAction, so two
+    // modules declaring one action makes dispatch order — an implementation
+    // detail of a comptime tuple — decide which implementation a page gets.
+    // Folding them into one set, as this did, made that invisible.
     for (zig_sources) |source| {
         var it = std.mem.splitScalar(u8, source, '\n');
         var in_block = false;
@@ -126,7 +141,16 @@ fn collectZigActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
             // pub const get_device_info = "getDeviceInfo";
             const open = std.mem.indexOfScalar(u8, trimmed, '"') orelse continue;
             const close = std.mem.indexOfScalarPos(u8, trimmed, open + 1, '"') orelse continue;
-            try set.put(trimmed[open + 1 .. close], {});
+            const name = trimmed[open + 1 .. close];
+            if (set.contains(name)) {
+                std.debug.print(
+                    "action '{s}' is declared by more than one mobile module.\n" ++
+                        "  Dispatch order would silently pick one.\n",
+                    .{name},
+                );
+                return error.ActionDeclaredTwice;
+            }
+            try set.put(name, {});
         }
     }
     return set;

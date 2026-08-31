@@ -18,6 +18,9 @@ const bridge_mobile_biometric = @import("bridge_mobile_biometric.zig");
 const bridge_mobile_permissions = @import("bridge_mobile_permissions.zig");
 const bridge_mobile_db = @import("bridge_mobile_db.zig");
 const bridge_mobile_notifcancel = @import("bridge_mobile_notifcancel.zig");
+const bridge_mobile_notifications = @import("bridge_mobile_notifications.zig");
+const bridge_mobile_bgtasks = @import("bridge_mobile_bgtasks.zig");
+const bridge_mobile_watch = @import("bridge_mobile_watch.zig");
 
 const objc = objc_runtime.objc;
 
@@ -169,8 +172,10 @@ fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8,
         // another module (or the shim) would replace a specific failure with
         // whatever the next thing happens to say.
         //
-        // The conformance test guarantees no action appears in two modules'
-        // tables, so first-match is deterministic rather than order-dependent.
+        // `test/ios_conformance_test.zig` fails the build if one action is
+        // declared by two modules, so first-match is deterministic rather than
+        // dependent on the order of this tuple. That check was claimed here
+        // before it existed; it exists now.
         inline for (mobile_bridges) |Bridge| {
             var bridge = Bridge.init(allocator);
             defer bridge.deinit();
@@ -217,6 +222,9 @@ const mobile_bridges = .{
     bridge_mobile_permissions.PermissionsBridge,
     bridge_mobile_db.DbBridge,
     bridge_mobile_notifcancel.NotifCancelBridge,
+    bridge_mobile_notifications.NotificationsBridge,
+    bridge_mobile_bgtasks.BgTasksBridge,
+    bridge_mobile_watch.WatchBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.

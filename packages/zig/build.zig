@@ -440,6 +440,15 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_notifcancel.zig", .{
         .root_source_file = b.path("src/bridge_mobile_notifcancel.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_notifications.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_notifications.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_bgtasks.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_bgtasks.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_watch.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_watch.zig"),
+    });
 
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{

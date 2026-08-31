@@ -90,7 +90,7 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=12' "$LOG" 2>/dev/null && grep -q 'i=10' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=12' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -157,5 +157,9 @@ echo "ok: secureSet/secureGet round-tripped a secret through the Keychain (i=10 
 C12="$(count 12)"
 [ "$C12" -ge 1 ] || { echo "FAIL: the SQLite round trip never returned the bound value"; exit 1; }
 echo "ok: dbExecute/dbQuery round-tripped through in-process SQLite (i=12 seen ${C12}x)"
+
+C14="$(count 14)"
+[ "$C14" -ge 1 ] || { echo "FAIL: the async array reply never reached the page"; exit 1; }
+echo "ok: async NSArray completion delivered via ios_async (i=14 seen ${C14}x)"
 
 echo "PASS"
