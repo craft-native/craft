@@ -449,6 +449,15 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_watch.zig", .{
         .root_source_file = b.path("src/bridge_mobile_watch.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_location.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_location.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_locrecording.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_locrecording.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_motion.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_motion.zig"),
+    });
 
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{

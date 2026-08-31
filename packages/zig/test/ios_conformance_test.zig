@@ -41,6 +41,9 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_notifications.zig"),
     @embedFile("src/bridge_mobile_bgtasks.zig"),
     @embedFile("src/bridge_mobile_watch.zig"),
+    @embedFile("src/bridge_mobile_location.zig"),
+    @embedFile("src/bridge_mobile_locrecording.zig"),
+    @embedFile("src/bridge_mobile_motion.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -76,7 +79,9 @@ const dispatch_end = "func webView(";
 /// sendToWatch all hand iOS a callback that fires later, which needs an event
 /// channel iOS does not have yet. Falling through beats `.unavailable`, which
 /// would make Zig dispatch and refuse an action the shim serves correctly.
-const max_not_yet_migrated: usize = 64;
+/// 58 after the event channel landed and unblocked the location tier: the
+/// first actions that push a stream to the page rather than answering a call.
+const max_not_yet_migrated: usize = 58;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
