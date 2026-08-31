@@ -26,6 +26,9 @@ const bridge_mobile_watch = @import("bridge_mobile_watch.zig");
 const bridge_mobile_location = @import("bridge_mobile_location.zig");
 const bridge_mobile_locrecording = @import("bridge_mobile_locrecording.zig");
 const bridge_mobile_motion = @import("bridge_mobile_motion.zig");
+const bridge_mobile_imagepicker = @import("bridge_mobile_imagepicker.zig");
+const bridge_mobile_filepicker = @import("bridge_mobile_filepicker.zig");
+const bridge_mobile_contactpicker = @import("bridge_mobile_contactpicker.zig");
 
 const objc = objc_runtime.objc;
 
@@ -233,6 +236,9 @@ const mobile_bridges = .{
     bridge_mobile_location.LocationBridge,
     bridge_mobile_locrecording.LocationRecordingBridge,
     bridge_mobile_motion.MotionBridge,
+    bridge_mobile_imagepicker.ImagePickerBridge,
+    bridge_mobile_filepicker.FilePickerBridge,
+    bridge_mobile_contactpicker.ContactPickerBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.

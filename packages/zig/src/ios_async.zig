@@ -62,6 +62,10 @@ const Slot = struct {
     /// A module-shaped reply, for completions this file cannot shape itself.
     /// Owned by the slot; freed on delivery. Null means use `granted`.
     json: ?[]u8 = null,
+    /// Which error to report when `failed`. Defaults to the generic one, so
+    /// `deliverError` keeps its meaning and only a caller that knows better
+    /// has to say so.
+    fail_code: bridge_error.BridgeError = bridge_error.BridgeError.NativeCallFailed,
     /// Set when the reply could not be produced at all. Distinct from a null
     /// `json`, which legitimately means "this was a BOOL completion" — without
     /// the flag, a failure falls through to the BOOL wording and resolves
@@ -230,6 +234,7 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     var granted = false;
     var json: ?[]u8 = null;
     var failed = false;
+    var fail_code = bridge_error.BridgeError.NativeCallFailed;
     {
         slots_mutex.lock();
         defer slots_mutex.unlock();
@@ -241,8 +246,10 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
         granted = slot.granted;
         json = slot.json;
         failed = slot.failed;
+        fail_code = slot.fail_code;
         slot.json = null;
         slot.failed = false;
+        slot.fail_code = bridge_error.BridgeError.NativeCallFailed;
         slot.in_use = false;
         slot.generation +%= 1;
     }
@@ -256,11 +263,7 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     defer request_context.pop();
 
     if (failed) {
-        bridge_error.sendErrorToJS(
-            std.heap.c_allocator,
-            action,
-            bridge_error.BridgeError.NativeCallFailed,
-        );
+        bridge_error.sendErrorToJS(std.heap.c_allocator, action, fail_code);
         return;
     }
 
@@ -298,6 +301,26 @@ pub fn deliverJson(ticket: Ticket, json: []const u8) void {
         } else |_| {
             slots[ticket.index].failed = true;
         }
+    }
+    slots_mutex.unlock();
+
+    if (!valid) return;
+    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
+}
+
+/// Reply to a captured call with a *specific* error.
+///
+/// `deliverError` reports `NativeCallFailed`, which is right for "the answer
+/// could not be shaped" and wrong for everything else. A user tapping Cancel
+/// on a picker is not a native call failing — the call worked perfectly and
+/// the answer is "no". Telling the page otherwise sends anyone reading the
+/// error looking for a bug that is not there.
+pub fn deliverErrorCode(ticket: Ticket, err: bridge_error.BridgeError) void {
+    slots_mutex.lock();
+    const valid = slots[ticket.index].in_use and slots[ticket.index].generation == ticket.generation;
+    if (valid) {
+        slots[ticket.index].failed = true;
+        slots[ticket.index].fail_code = err;
     }
     slots_mutex.unlock();
 
@@ -421,6 +444,44 @@ test "a reply that could not be shaped is flagged, not silently downgraded" {
     try testing.expect(slots[ticket.index].json == null);
 
     // Drain by hand: no run loop here to service the dispatch hop.
+    slots[ticket.index].failed = false;
+    slots[ticket.index].in_use = false;
+    slots[ticket.index].generation +%= 1;
+}
+
+test "a cancel reports being cancelled, not a native failure" {
+    // The distinction matters to whoever reads the error. A user tapping
+    // Cancel is not a native call failing — the call worked and the answer is
+    // "no" — and reporting NativeCallFailed sends a reader looking for a bug
+    // that is not there.
+    request_context.push(11);
+    const ticket = acquire("pickImage") orelse return error.PoolUnexpectedlyFull;
+    request_context.pop();
+
+    deliverErrorCode(ticket, bridge_error.BridgeError.Cancelled);
+
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    try testing.expect(slots[ticket.index].failed);
+    try testing.expectEqual(bridge_error.BridgeError.Cancelled, slots[ticket.index].fail_code);
+
+    slots[ticket.index].failed = false;
+    slots[ticket.index].fail_code = bridge_error.BridgeError.NativeCallFailed;
+    slots[ticket.index].in_use = false;
+    slots[ticket.index].generation +%= 1;
+}
+
+test "the generic deliverError still means a native failure" {
+    // deliverErrorCode must not have changed what deliverError says: a
+    // shaping failure genuinely is a native call that did not produce an
+    // answer, and that is the default a slot resets to.
+    const ticket = acquire("x") orelse return error.PoolUnexpectedlyFull;
+    deliverError(ticket);
+
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    try testing.expectEqual(bridge_error.BridgeError.NativeCallFailed, slots[ticket.index].fail_code);
+
     slots[ticket.index].failed = false;
     slots[ticket.index].in_use = false;
     slots[ticket.index].generation +%= 1;

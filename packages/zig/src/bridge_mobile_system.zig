@@ -355,7 +355,7 @@ fn failFromCallback(request_id: i64, action: []const u8, err: bridge_error.Bridg
 /// The non-Darwin arm is not a stub that pretends to work — it returns
 /// `error.UnsupportedPlatform`, which `ios_dispatch.asBridgeError` turns into
 /// `PLATFORM_NOT_SUPPORTED` for the page.
-const uikit = if (is_darwin) struct {
+pub const uikit = if (is_darwin) struct {
     /// `[[UIApplication sharedApplication] openURL:options:completionHandler:]`
     ///
     /// The modern three-argument selector, never the deprecated one-argument
@@ -554,7 +554,7 @@ const uikit = if (is_darwin) struct {
     /// draws no arrow. It is emphatically not `UIPopoverArrowDirectionUnknown`,
     /// which is `NSUIntegerMax`: passing that would permit every direction and
     /// point an arrow at the middle of the screen.
-    fn anchorPopover(activity_vc: objc.id, presenter: objc.id) !void {
+    pub fn anchorPopover(activity_vc: objc.id, presenter: objc.id) !void {
         const sel_popover = objc.sel_registerName("popoverPresentationController") orelse
             return error.SelectorNotFound;
         const popover = objc.msgSendId(activity_vc, sel_popover);
@@ -669,7 +669,7 @@ const uikit = if (is_darwin) struct {
     /// presenting on a controller that is already presenting something logs
     /// "which is already presenting" and silently does nothing, so the
     /// completion handler never fires and the caller waits out its timeout.
-    fn topmostViewController() !objc.id {
+    pub fn topmostViewController() !objc.id {
         const webview = ios_dispatch.getWebView() orelse
             return bridge_error.BridgeError.WebViewHandleNotSet;
         if (webview == null) return bridge_error.BridgeError.WebViewHandleNotSet;
