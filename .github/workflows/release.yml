@@ -17,12 +17,24 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { os: macos-15, name: darwin-arm64, deps: '' }
+          - { os: macos-26, name: darwin-arm64, deps: '' }
           - { os: ubuntu-latest, name: linux-x86-64, deps: 'sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev' }
     runs-on: ${{ matrix.platform.os }}
     permissions:
       contents: write
       id-token: write
+    env:
+      # Pinned, not inherited from the runner. `zig build` with no -Dtarget
+      # builds for the host, which sets the deployment target to the build
+      # machine's own OS version — that is how the published binary came to
+      # demand macOS 15.7.7 while PLATFORMS.md advertised 10.15. 15.0 is the
+      # floor the last release actually had, rounded down to the release
+      # itself, so nothing that runs craft today stops.
+      DEPLOYMENT_TARGET: '15.0'
+      ARM64_TARGET: aarch64-macos.15.0
+      X64_TARGET: x86_64-macos.15.0
+      # macOS 26 is where the window controls were restyled.
+      SDK_FLOOR: '26'
 
     steps:
       - uses: actions/checkout@v6
@@ -62,7 +74,7 @@ jobs:
           mkdir -p zig-out/cross
 
           echo "::group::Cross-compile darwin-x64"
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget=x86_64-macos -Dmacos-sdk="$SDK_PATH"
+          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$X64_TARGET" -Dmacos-sdk="$SDK_PATH"
           mkdir -p zig-out/cross/darwin-x64 && cp zig-out/bin/craft zig-out/cross/darwin-x64/craft
           echo "::endgroup::"
 
@@ -70,8 +82,50 @@ jobs:
           # the publish step zips that directory whole and unfiltered, so
           # anything a cross build left in it ships to users under the host's
           # archive name.
+          # `-Dmacos-sdk` is not optional once `-Dtarget` is given, even for
+          # the host's own architecture: naming a target puts Zig in
+          # cross-compilation mode, where it stops looking for the system SDK
+          # on its own and every `-framework Cocoa` fails to resolve.
           rm -rf zig-out/bin
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
+          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$ARM64_TARGET" -Dmacos-sdk="$SDK_PATH"
+
+      # AppKit decides how it draws a window's controls from the SDK recorded
+      # in LC_BUILD_VERSION, so that it can restyle them without restyling
+      # every app built before the change. macOS 26 restyled the traffic
+      # lights. A binary built against an older SDK therefore draws last
+      # year's, and no downstream app embedding this runtime can override it —
+      # this job is the only place it can be fixed.
+      #
+      # Assert it rather than trust the runner label: an image bump or a
+      # changed Xcode default would otherwise put the old buttons back with
+      # nothing in the log to say so.
+      - name: Verify macOS binaries opt into the current appearance
+        if: runner.os == 'macOS'
+        working-directory: packages/zig
+        run: |
+          check() {
+            local binary="$1"
+            local build_version
+            build_version="$(otool -l "$binary" | grep -A 4 LC_BUILD_VERSION)"
+            local sdk minos
+            sdk="$(echo "$build_version" | awk '/sdk/ { print $2 }')"
+            minos="$(echo "$build_version" | awk '/minos/ { print $2 }')"
+            echo "$binary: minos=$minos sdk=$sdk"
+
+            if [ "${sdk%%.*}" -lt "$SDK_FLOOR" ]; then
+              echo "::error::$binary is linked against the macOS $sdk SDK; $SDK_FLOOR or newer is required for the current window controls." >&2
+              exit 1
+            fi
+            # A deployment target that tracks the build machine is how the
+            # floor silently became 15.7.7 while the docs said 10.15.
+            if [ "$minos" != "$DEPLOYMENT_TARGET" ]; then
+              echo "::error::$binary declares minos=$minos, expected $DEPLOYMENT_TARGET." >&2
+              exit 1
+            fi
+          }
+
+          check zig-out/bin/craft
+          check zig-out/cross/darwin-x64/craft
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
