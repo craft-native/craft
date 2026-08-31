@@ -47,6 +47,9 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_imagepicker.zig"),
     @embedFile("src/bridge_mobile_filepicker.zig"),
     @embedFile("src/bridge_mobile_contactpicker.zig"),
+    @embedFile("src/bridge_mobile_calendar.zig"),
+    @embedFile("src/bridge_mobile_contacts.zig"),
+    @embedFile("src/bridge_mobile_speech.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -87,7 +90,10 @@ const dispatch_end = "func webView(";
 /// 53 after the presented pickers — image, document and contact — landed on
 /// the delegate factory, the last of the three mechanisms this migration
 /// needed. Everything remaining is a repetition of a proven pattern.
-const max_not_yet_migrated: usize = 53;
+/// 48 after calendar and contacts. Speech was researched in full and left
+/// with the shim: neither action replies, so unlike the earlier deferrals
+/// there is no promise to strand and falling through costs the page nothing.
+const max_not_yet_migrated: usize = 48;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";

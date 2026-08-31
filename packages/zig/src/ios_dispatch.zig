@@ -29,6 +29,15 @@ const bridge_mobile_motion = @import("bridge_mobile_motion.zig");
 const bridge_mobile_imagepicker = @import("bridge_mobile_imagepicker.zig");
 const bridge_mobile_filepicker = @import("bridge_mobile_filepicker.zig");
 const bridge_mobile_contactpicker = @import("bridge_mobile_contactpicker.zig");
+const bridge_mobile_calendar = @import("bridge_mobile_calendar.zig");
+const bridge_mobile_contacts = @import("bridge_mobile_contacts.zig");
+// `bridge_mobile_speech.zig` is deliberately NOT in the chain. Its
+// capability_actions table is empty — the two speech actions were researched
+// in full and left with the Swift shim — so a module here would iterate,
+// return UnknownAction, and cost a comparison to serve nothing. Keeping it in
+// the chain would also read as coverage it does not provide, which is the
+// habit this migration exists to break. The file stays as the record of that
+// decision and of the Swift behaviour a future port has to match.
 
 const objc = objc_runtime.objc;
 
@@ -239,6 +248,8 @@ const mobile_bridges = .{
     bridge_mobile_imagepicker.ImagePickerBridge,
     bridge_mobile_filepicker.FilePickerBridge,
     bridge_mobile_contactpicker.ContactPickerBridge,
+    bridge_mobile_calendar.CalendarBridge,
+    bridge_mobile_contacts.ContactsBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.
