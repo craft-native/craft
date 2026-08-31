@@ -430,17 +430,38 @@ pub const PermissionsBridge = struct {
         func(session, sel, ios_async.boolBlock(ticket));
     }
 
+    /// Refuse before touching the notification centre in a process the
+    /// centre will refuse to exist in.
+    fn requireBundleIdentifier() !void {
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        const NSBundle = objc.objc_getClass("NSBundle") orelse return error.ClassNotFound;
+        const sel_main = objc.sel_registerName("mainBundle") orelse return error.SelectorNotFound;
+        const bundle = objc.msgSendId(NSBundle, sel_main) orelse return error.NoBundleIdentifier;
+        const sel_ident = objc.sel_registerName("bundleIdentifier") orelse return error.SelectorNotFound;
+        if (objc.msgSendId(bundle, sel_ident) == null) return error.NoBundleIdentifier;
+    }
+
     /// `-[UNUserNotificationCenter requestAuthorizationWithOptions:completionHandler:]`
     /// with a `void(^)(BOOL, NSError *)` from the pool. The error object is
     /// discarded by the pool's invoke, exactly as Swift's `{ granted, _ in }`
     /// discards it — the granted flag is the whole page contract.
     ///
-    /// `currentNotificationCenter` raises (rather than returning nil) in a
-    /// process with no bundle identifier; that is unreachable from a
-    /// dispatched page message, which only exists inside a bundled app, and
-    /// it is the same exposure the Swift call has.
+    /// `currentNotificationCenter` RAISES — an uncatchable
+    /// `NSInternalInconsistencyException`, not a nil return — in a process
+    /// with no bundle identifier, so the bundle is checked first.
+    ///
+    /// The previous comment here argued the guard was unnecessary because a
+    /// dispatched page message only exists inside a bundled app. That is true
+    /// of the shipping app and false of every test runner, and "the Swift call
+    /// has the same exposure" is not a reason to inherit a crash: an
+    /// unguarded call takes the process down with the page's promise still
+    /// pending, which is the least diagnosable failure iOS offers.
+    /// `bridge_mobile_notifcancel.zig` guards the same call the same way.
     fn requestNotifications() !void {
         if (!is_darwin) return error.UnsupportedPlatform;
+
+        try requireBundleIdentifier();
 
         const UNUserNotificationCenter = objc.objc_getClass("UNUserNotificationCenter") orelse
             return error.ClassNotFound;

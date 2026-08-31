@@ -62,6 +62,12 @@ const Slot = struct {
     /// A module-shaped reply, for completions this file cannot shape itself.
     /// Owned by the slot; freed on delivery. Null means use `granted`.
     json: ?[]u8 = null,
+    /// Set when the reply could not be produced at all. Distinct from a null
+    /// `json`, which legitimately means "this was a BOOL completion" — without
+    /// the flag, a failure falls through to the BOOL wording and resolves
+    /// `"denied"` for a caller expecting an array. That is a wrong answer
+    /// reported as success, and the page's catch never runs.
+    failed: bool = false,
 };
 
 var slots: [max_in_flight]Slot = @splat(.{});
@@ -223,6 +229,7 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     var request_id: i64 = -1;
     var granted = false;
     var json: ?[]u8 = null;
+    var failed = false;
     {
         slots_mutex.lock();
         defer slots_mutex.unlock();
@@ -233,7 +240,9 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
         request_id = slot.request_id;
         granted = slot.granted;
         json = slot.json;
+        failed = slot.failed;
         slot.json = null;
+        slot.failed = false;
         slot.in_use = false;
         slot.generation +%= 1;
     }
@@ -245,6 +254,15 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     // that is actually waiting — the whole point of this file.
     request_context.push(if (request_id < 0) null else @intCast(request_id));
     defer request_context.pop();
+
+    if (failed) {
+        bridge_error.sendErrorToJS(
+            std.heap.c_allocator,
+            action,
+            bridge_error.BridgeError.NativeCallFailed,
+        );
+        return;
+    }
 
     bridge_error.sendResultToJS(
         std.heap.c_allocator,
@@ -275,8 +293,28 @@ pub fn deliverJson(ticket: Ticket, json: []const u8) void {
     if (valid) {
         // Stash the payload on the slot so the main-queue hop carries nothing
         // but an index, same as the BOOL path.
-        slots[ticket.index].json = allocator.dupe(u8, json) catch null;
+        if (allocator.dupe(u8, json)) |copy| {
+            slots[ticket.index].json = copy;
+        } else |_| {
+            slots[ticket.index].failed = true;
+        }
     }
+    slots_mutex.unlock();
+
+    if (!valid) return;
+    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
+}
+
+/// Reply to a captured call with an error rather than a result.
+///
+/// A module's own completion can fail to shape its answer — a nil object where
+/// one was promised, a serialisation that ran out of room. Without this the
+/// only options were silence (the page waits out its timeout) or a fabricated
+/// result. The slot is released either way.
+pub fn deliverError(ticket: Ticket) void {
+    slots_mutex.lock();
+    const valid = slots[ticket.index].in_use and slots[ticket.index].generation == ticket.generation;
+    if (valid) slots[ticket.index].failed = true;
     slots_mutex.unlock();
 
     if (!valid) return;
@@ -364,4 +402,26 @@ test "a stale ticket cannot inject a payload into a re-leased slot" {
     slots_mutex.lock();
     defer slots_mutex.unlock();
     try testing.expect(slots[second.index].json == null);
+}
+
+test "a reply that could not be shaped is flagged, not silently downgraded" {
+    // Without the flag, a failure falls through to the BOOL wording and the
+    // caller gets the string "denied" where it expected an array — a wrong
+    // answer delivered as success. The flag is what makes deliverOnMain send
+    // an error instead.
+    request_context.push(3);
+    const ticket = acquire("getPendingNotifications") orelse return error.PoolUnexpectedlyFull;
+    request_context.pop();
+
+    deliverError(ticket);
+
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    try testing.expect(slots[ticket.index].failed);
+    try testing.expect(slots[ticket.index].json == null);
+
+    // Drain by hand: no run loop here to service the dispatch hop.
+    slots[ticket.index].failed = false;
+    slots[ticket.index].in_use = false;
+    slots[ticket.index].generation +%= 1;
 }
