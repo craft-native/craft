@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.82...v0.0.83)
+
+## 🐛 Bug Fixes
+
+- **menu**: a role item with no id was skipped in silence ([05790e0](https://github.com/craft-native/craft/commit/05790e0)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.83 ([5b93ee1](https://github.com/craft-native/craft/commit/5b93ee1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.81...v0.0.82)
 
 ## 🧹 Chores
