@@ -59,6 +59,9 @@ const Slot = struct {
     /// What the completion resolved. Written on the firing thread, read on
     /// the main thread after the dispatch_async_f hop.
     granted: bool = false,
+    /// A module-shaped reply, for completions this file cannot shape itself.
+    /// Owned by the slot; freed on delivery. Null means use `granted`.
+    json: ?[]u8 = null,
 };
 
 var slots: [max_in_flight]Slot = @splat(.{});
@@ -219,6 +222,7 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     var action_len: usize = 0;
     var request_id: i64 = -1;
     var granted = false;
+    var json: ?[]u8 = null;
     {
         slots_mutex.lock();
         defer slots_mutex.unlock();
@@ -228,9 +232,12 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
         @memcpy(action_buf[0..action_len], slot.action_buf[0..action_len]);
         request_id = slot.request_id;
         granted = slot.granted;
+        json = slot.json;
+        slot.json = null;
         slot.in_use = false;
         slot.generation +%= 1;
     }
+    defer if (json) |owned| std.heap.c_allocator.free(owned);
 
     const action = action_buf[0..action_len];
 
@@ -242,8 +249,38 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     bridge_error.sendResultToJS(
         std.heap.c_allocator,
         action,
-        if (granted) "\"granted\"" else "\"denied\"",
+        json orelse if (granted) "\"granted\"" else "\"denied\"",
     );
+}
+
+/// Deliver a reply for a ticket whose completion this file could not shape.
+///
+/// The pre-built pool blocks cover `void (^)(BOOL)` and `void (^)(BOOL, NSError *)`,
+/// which is most permission-style APIs and nothing else. A completion handing
+/// back an array — `getPendingNotificationRequestsWithCompletionHandler:` — has
+/// to be shaped by the module that knows how to serialise it.
+///
+/// So a module may build its own block, and still get the two things that are
+/// genuinely hard: the request id captured at dispatch (the block reads its
+/// ticket from wherever it stashed it) and the hop to the main queue. It hands
+/// the finished JSON here and this does the rest.
+///
+/// The JSON is copied, because the caller's buffer is usually a stack local in
+/// a completion that returns immediately after this call.
+pub fn deliverJson(ticket: Ticket, json: []const u8) void {
+    const allocator = std.heap.c_allocator;
+
+    slots_mutex.lock();
+    const valid = slots[ticket.index].in_use and slots[ticket.index].generation == ticket.generation;
+    if (valid) {
+        // Stash the payload on the slot so the main-queue hop carries nothing
+        // but an index, same as the BOOL path.
+        slots[ticket.index].json = allocator.dupe(u8, json) catch null;
+    }
+    slots_mutex.unlock();
+
+    if (!valid) return;
+    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
 }
 
 const testing = std.testing;
@@ -292,4 +329,39 @@ test "an action longer than the slot's storage is refused at acquire" {
     // (`**` no longer lexes as one operator in this Zig; @splat says the same.)
     const long: [65]u8 = @splat('a');
     try testing.expect(acquire(&long) == null);
+}
+
+test "a module-shaped reply is carried and freed, and beats the granted flag" {
+    request_context.push(5);
+    const ticket = acquire("getPendingNotifications") orelse return error.PoolUnexpectedlyFull;
+    request_context.pop();
+
+    deliverJson(ticket, "[{\"id\":\"a\"}]");
+
+    // The payload is on the slot until the main-queue hop drains it. Reading it
+    // here is the only way to assert the copy happened without a run loop.
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    try testing.expect(slots[ticket.index].json != null);
+    try testing.expectEqualStrings("[{\"id\":\"a\"}]", slots[ticket.index].json.?);
+
+    // Drain by hand so the test leaves no allocation behind: the dispatch hop
+    // will not run without a live main queue.
+    std.heap.c_allocator.free(slots[ticket.index].json.?);
+    slots[ticket.index].json = null;
+    slots[ticket.index].in_use = false;
+    slots[ticket.index].generation +%= 1;
+}
+
+test "a stale ticket cannot inject a payload into a re-leased slot" {
+    const first = acquire("a") orelse return error.PoolUnexpectedlyFull;
+    abandon(first);
+    const second = acquire("b") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(second);
+
+    deliverJson(first, "\"stale\"");
+
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    try testing.expect(slots[second.index].json == null);
 }
