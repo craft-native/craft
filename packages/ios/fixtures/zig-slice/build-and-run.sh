@@ -90,7 +90,7 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=12' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=18' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -171,5 +171,14 @@ echo "ok: unavailable sensor refused rather than faking a stream (i=16 absent)"
 C60="$(count 60)"
 [ "$C60" -ge 1 ] || { echo "FAIL: startMotionUpdates never reached the dispatcher"; exit 1; }
 echo "ok: event-driven action dispatched to Zig (i=60 seen ${C60}x)"
+
+C18="$(count 18)"
+# The fixture has no NSCameraUsageDescription, and presenting a camera picker
+# without one TERMINATES the process — so the module refuses before it ever
+# asks whether hardware exists, with PERMISSION_DENIED. What is asserted
+# is that the code is specific: the generic NATIVE_CALL_FAILED would send
+# whoever reads it looking for a bug that is not there.
+[ "$C18" -ge 1 ] || { echo "FAIL: the refusal did not name its own cause"; exit 1; }
+echo "ok: unavailable hardware refused with a specific code (i=18 seen ${C18}x)"
 
 echo "PASS"

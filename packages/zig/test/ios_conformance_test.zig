@@ -44,6 +44,9 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_location.zig"),
     @embedFile("src/bridge_mobile_locrecording.zig"),
     @embedFile("src/bridge_mobile_motion.zig"),
+    @embedFile("src/bridge_mobile_imagepicker.zig"),
+    @embedFile("src/bridge_mobile_filepicker.zig"),
+    @embedFile("src/bridge_mobile_contactpicker.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -81,7 +84,10 @@ const dispatch_end = "func webView(";
 /// would make Zig dispatch and refuse an action the shim serves correctly.
 /// 58 after the event channel landed and unblocked the location tier: the
 /// first actions that push a stream to the page rather than answering a call.
-const max_not_yet_migrated: usize = 58;
+/// 53 after the presented pickers — image, document and contact — landed on
+/// the delegate factory, the last of the three mechanisms this migration
+/// needed. Everything remaining is a repetition of a proven pattern.
+const max_not_yet_migrated: usize = 53;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
