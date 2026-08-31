@@ -467,6 +467,15 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_contactpicker.zig", .{
         .root_source_file = b.path("src/bridge_mobile_contactpicker.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_calendar.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_calendar.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_contacts.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_contacts.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_speech.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_speech.zig"),
+    });
 
     const menubar_tests = b.addTest(.{
         .root_module = b.createModule(.{
