@@ -5,6 +5,7 @@ const request_context = @import("request_context.zig");
 const bridge_error = @import("bridge_error.zig");
 pub const ios_async = @import("ios_async.zig");
 pub const ios_events = @import("ios_events.zig");
+pub const ios_delegate = @import("ios_delegate.zig");
 const bridge_mobile = @import("bridge_mobile.zig");
 const bridge_mobile_clipboard = @import("bridge_mobile_clipboard.zig");
 const bridge_mobile_haptics = @import("bridge_mobile_haptics.zig");
@@ -388,6 +389,7 @@ fn buildShimError(
 test {
     _ = ios_async;
     _ = ios_events;
+    _ = ios_delegate;
 }
 
 const testing = std.testing;
