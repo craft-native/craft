@@ -1,6 +1,6 @@
 {
   "name": "craft-native",
-  "version": "0.0.83",
+  "version": "0.0.84",
   "type": "module",
   "description": "Build desktop apps with web languages - TypeScript SDK for Craft",
   "author": "Chris Breuer <chris@stacksjs.org>",

@@ -1,5 +1,31 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.83...v0.0.84)
+
+## 🚀 Features
+
+- **ios**: calendar and contacts — ratchet 53 -> 48 (#91) ([dbc6fd3](https://github.com/craft-native/craft/commit/dbc6fd3)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#91](https://github.com/craft-native/craft/issues/91), [#91](https://github.com/craft-native/craft/issues/91))
+
+## 🐛 Bug Fixes
+
+- **release**: build macOS binaries against a current SDK, and pin the floor ([66c0cd1](https://github.com/craft-native/craft/commit/66c0cd1)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **release**: a half-published release looked exactly like a whole one ([a58e2f8](https://github.com/craft-native/craft/commit/a58e2f8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.84 ([6ffe5c1](https://github.com/craft-native/craft/commit/6ffe5c1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- iOS Phase 8: the presented pickers — ratchet 58 → 53, last mechanism landed (#90) ([abfbd8f](https://github.com/craft-native/craft/commit/abfbd8f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#90](https://github.com/craft-native/craft/issues/90), [#90](https://github.com/craft-native/craft/issues/90))
+- iOS Phase 7: location and motion streams — ratchet 64 → 58 (#89) ([7f605ab](https://github.com/craft-native/craft/commit/7f605ab)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#89](https://github.com/craft-native/craft/issues/89), [#89](https://github.com/craft-native/craft/issues/89))
+- iOS Phase 6: notifications, background tasks, Watch — ratchet 70 → 64 (#88) ([0a97def](https://github.com/craft-native/craft/commit/0a97def)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#88](https://github.com/craft-native/craft/issues/88), [#88](https://github.com/craft-native/craft/issues/88))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.82...v0.0.83)
 
 ## 🐛 Bug Fixes
