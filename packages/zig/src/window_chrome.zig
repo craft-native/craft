@@ -208,18 +208,28 @@ pub fn classify(chrome: Chrome, block: ?Rect, host_chrome: ?Rect, viewport: Size
         .platform => {},
     }
 
-    const rect = block orelse return .{
+    const rect = block orelse {
         // Real buttons exist but are not on screen — fullscreen, most often.
-        // Still `titlebar` rather than `custom`: this window has chrome, the
-        // page must not grow its own, and there is nothing to leave room for
-        // until the buttons come back.
-        .style = .titlebar,
-        .native = true,
-        .visible = false,
-        .buttons = .{},
-        .reserve = .{},
-        .inset = .{},
-        .hide_replicas = true,
+        // Still `titlebar` rather than `custom`: this window has chrome and the
+        // page must not grow its own.
+        //
+        // The host's chrome can outlive the buttons here. macOS takes the
+        // lights into the auto-hiding titlebar on the way into fullscreen and
+        // leaves Craft's row drawn over the page, so answering zero would hand
+        // the page a corner that three real NSButtons are still sitting in.
+        const host_over_page = if (host_chrome) |host| overlaps(host, viewport) else false;
+        return .{
+            .style = .titlebar,
+            .native = true,
+            .visible = false,
+            .buttons = .{},
+            .reserve = if (host_chrome) |host| (if (host_over_page) .{
+                .width = clamp(host.right(), viewport.width),
+                .height = clamp(host.bottom(), viewport.height),
+            } else .{}) else .{},
+            .inset = .{},
+            .hide_replicas = true,
+        };
     };
 
     // Reserve spans the host's own chrome too; `buttons` deliberately does not.
@@ -480,6 +490,32 @@ test "buttons in a titlebar still reserve for host chrome that reaches the page"
     try testing.expectEqual(@as(f64, 28), state.reserve.height);
     // Inset describes where the buttons start, and they do not overlap.
     try testing.expectEqual(@as(f64, 0), state.inset.width);
+}
+
+test "fullscreen hides the buttons but not the host's own chrome" {
+    // Found by driving a real window into fullscreen: macOS takes the lights
+    // into the auto-hiding titlebar and leaves Craft's row drawn over the page.
+    // Reserving nothing there would put the page's own content under three real
+    // NSButtons — the same bug as the overlay case, in the branch where there
+    // is no button block to union with.
+    const state = classify(
+        .platform,
+        null,
+        .{ .x = 80, .y = 4, .width = 100, .height = 24 },
+        window,
+    );
+
+    try testing.expectEqual(Style.titlebar, state.style);
+    try testing.expect(!state.visible);
+    try testing.expectEqual(@as(f64, 180), state.reserve.width);
+    try testing.expectEqual(@as(f64, 28), state.reserve.height);
+}
+
+test "fullscreen with no host chrome still reserves nothing" {
+    const state = classify(.platform, null, null, window);
+
+    try testing.expectEqual(@as(f64, 0), state.reserve.width);
+    try testing.expectEqual(@as(f64, 0), state.reserve.height);
 }
 
 test "the reserve never exceeds the viewport" {
