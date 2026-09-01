@@ -38,6 +38,7 @@ const bridge_mobile_siri = @import("bridge_mobile_siri.zig");
 const bridge_mobile_pdf = @import("bridge_mobile_pdf.zig");
 const bridge_mobile_bluetooth = @import("bridge_mobile_bluetooth.zig");
 const bridge_mobile_audiorec = @import("bridge_mobile_audiorec.zig");
+const bridge_mobile_health = @import("bridge_mobile_health.zig");
 // `bridge_mobile_speech.zig` is deliberately NOT in the chain. Its
 // capability_actions table is empty — the two speech actions were researched
 // in full and left with the Swift shim — so a module here would iterate,
@@ -285,6 +286,7 @@ const mobile_bridges = .{
     bridge_mobile_pdf.PdfBridge,
     bridge_mobile_bluetooth.BluetoothBridge,
     bridge_mobile_audiorec.AudioRecordingBridge,
+    bridge_mobile_health.HealthBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.
