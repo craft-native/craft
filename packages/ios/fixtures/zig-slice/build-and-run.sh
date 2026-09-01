@@ -63,7 +63,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
-    -framework Vision \
+    -framework Vision -framework LocalAuthentication \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -100,6 +100,7 @@ LAUNCH_PID=$!
 for _ in $(seq 1 60); do
     if grep -q 'i=26' "$LOG" 2>/dev/null && grep -q 'i=28' "$LOG" 2>/dev/null \
        && grep -q 'i=32' "$LOG" 2>/dev/null && grep -q 'i=22' "$LOG" 2>/dev/null \
+       && grep -q 'i=34' "$LOG" 2>/dev/null && grep -q 'i=38' "$LOG" 2>/dev/null \
        && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
@@ -266,5 +267,20 @@ echo "ok: classifyImage answered rather than hanging (i=28 seen ${C28}x)"
 C32="$(count 32)"
 [ "$C32" -ge 1 ] || { echo "FAIL: detectObjects neither answered nor failed — it hung"; exit 1; }
 echo "ok: detectObjects answered rather than hanging (i=32 seen ${C32}x)"
+
+C34="$(count 34)"
+[ "$C34" -ge 1 ] || { echo "FAIL: authenticate did not refuse with a specific code"; exit 1; }
+echo "ok: biometrics refused by the framework, not by a missing class (i=34 seen ${C34}x)"
+
+C36="$(count 36)"
+[ "$C36" -ge 1 ] || { echo "FAIL: registerSiriShortcut did not echo the donated shortcut"; exit 1; }
+echo "ok: NSUserActivity donated and echoed back (i=36 seen ${C36}x)"
+
+C38="$(count 38)"
+# removeSiriShortcut answers from a void(^)(void) completion that carries no
+# arguments at all, so this reply arriving proves Foundation fired the block
+# and the parked payload was delivered under the right request id.
+[ "$C38" -ge 1 ] || { echo "FAIL: the deletion completion never fired, or its reply was lost"; exit 1; }
+echo "ok: argument-free completion block delivered its parked reply (i=38 seen ${C38}x)"
 
 echo "PASS"
