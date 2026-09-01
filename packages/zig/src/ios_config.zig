@@ -419,6 +419,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "haptic", .haptics },
         .{ "lockOrientation", .orientation_lock },
         .{ "openCamera", .camera },
+        .{ "openPDF", .pdf_viewer },
         .{ "pickContact", .contacts },
         .{ "pickFile", .file_picker },
         .{ "pickImage", .camera },

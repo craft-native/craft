@@ -35,7 +35,7 @@
   "enableBackgroundLocation": false,
   "enableBackgroundTasks": false,
   "enableScreenCapture": true,
-  "enablePDFViewer": false,
+  "enablePDFViewer": true,
   "enableAR": false,
   "enableMLKit": true,
   "trustedOrigins": []
