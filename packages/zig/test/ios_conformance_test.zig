@@ -93,7 +93,7 @@ const dispatch_end = "func webView(";
 /// 48 after calendar and contacts. Speech was researched in full and left
 /// with the shim: neither action replies, so unlike the earlier deferrals
 /// there is no promise to strand and falling through costs the page nothing.
-const max_not_yet_migrated: usize = 48;
+const max_not_yet_migrated: usize = 46;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -276,4 +276,365 @@ test "every action Zig declares is one the spec actually has" {
             return error.ZigServesAnActionTheSpecDoesNotHave;
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The capability gate
+//
+// Every action in the spec's dispatcher is guarded by a `config.enable*` flag,
+// and until `src/ios_config.zig` existed Zig could not read one — so 32 actions
+// it already served were served unconditionally, whatever the app had been
+// configured to allow. The table in `gateFor` closes that, and the four tests
+// below are what stop it from being a hand-written list that drifts.
+//
+// The scans are textual, which is the same shape as the action scan above and
+// carries the same hazard: a needle that stops matching turns a real check into
+// a vacuous one. Each has an explicit floor for that reason.
+// ---------------------------------------------------------------------------
+
+const zig_config_source = @embedFile("src/ios_config.zig");
+
+/// `case "action":` -> the `config.X` flag guarding it, for the whole
+/// dispatcher.
+///
+/// A case block runs to the next `case "` at any indent, so the flag found is
+/// the one inside *this* case rather than the next one's. Reading a fixed
+/// number of following lines instead would attribute `stopListening`, which is
+/// ungated, to the `enableHaptics` of the `haptic` case below it.
+fn collectSpecGates(allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+
+    const region = dispatcherRegion();
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, region, search, "case \"")) |at| {
+        const name_start = at + "case \"".len;
+        const name_end = std.mem.indexOfScalarPos(u8, region, name_start, '"') orelse break;
+        const action = region[name_start..name_end];
+        search = name_end;
+
+        const block_end = if (std.mem.indexOfPos(u8, region, name_end, "case \"")) |next|
+            next
+        else
+            region.len;
+        const block = region[name_end..block_end];
+
+        const needle = "if config.";
+        if (std.mem.indexOf(u8, block, needle)) |flag_at| {
+            const flag_start = flag_at + needle.len;
+            var flag_end = flag_start;
+            while (flag_end < block.len and (std.ascii.isAlphanumeric(block[flag_end]) or
+                block[flag_end] == '_')) : (flag_end += 1)
+            {}
+            try map.put(action, block[flag_start..flag_end]);
+        }
+    }
+    return map;
+}
+
+/// `.{ "action", .feature },` from `gateFor`'s table, paired with the JSON key
+/// that `feature` maps to in `jsonKey`.
+fn collectZigGates(allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+
+    const table_start = std.mem.indexOf(u8, zig_config_source, "const table = comptime") orelse
+        return error.GateTableNotFound;
+    const table_end = std.mem.indexOfPos(u8, zig_config_source, table_start, "\n    };") orelse
+        return error.GateTableNotFound;
+    const table = zig_config_source[table_start..table_end];
+
+    var it = std.mem.splitScalar(u8, table, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, ".{ \"")) continue;
+
+        const name_start = std.mem.indexOfScalar(u8, trimmed, '"').? + 1;
+        const name_end = std.mem.indexOfScalarPos(u8, trimmed, name_start, '"').?;
+        const action = trimmed[name_start..name_end];
+
+        const dot = std.mem.indexOfScalarPos(u8, trimmed, name_end, '.') orelse continue;
+        var member_end = dot + 1;
+        while (member_end < trimmed.len and (std.ascii.isAlphanumeric(trimmed[member_end]) or
+            trimmed[member_end] == '_')) : (member_end += 1)
+        {}
+        const member = trimmed[dot + 1 .. member_end];
+
+        try map.put(action, try jsonKeyOf(member));
+    }
+    return map;
+}
+
+/// The `.member => "enableX",` arm of `jsonKey`, read from the source.
+fn jsonKeyOf(member: []const u8) ![]const u8 {
+    const body_start = std.mem.indexOf(u8, zig_config_source, "pub fn jsonKey(") orelse
+        return error.JsonKeyFnNotFound;
+    const body = zig_config_source[body_start..];
+
+    var it = std.mem.splitScalar(u8, body, '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, ".")) continue;
+        const arrow = std.mem.indexOf(u8, trimmed, " => \"") orelse continue;
+        if (!std.mem.eql(u8, trimmed[1..arrow], member)) continue;
+
+        const key_start = arrow + " => \"".len;
+        const key_end = std.mem.indexOfScalarPos(u8, trimmed, key_start, '"') orelse continue;
+        return trimmed[key_start..key_end];
+    }
+    return error.MemberHasNoJsonKey;
+}
+
+/// Every `var name: Bool` in `struct CraftConfig`.
+fn collectSpecConfigBools(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    const at = std.mem.indexOf(u8, swift_spec, "struct CraftConfig: Codable {") orelse
+        return error.CraftConfigNotFound;
+    const rest = swift_spec[at..];
+    const end = std.mem.indexOf(u8, rest, "\n}") orelse rest.len;
+
+    var it = std.mem.splitScalar(u8, rest[0..end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, "var ")) continue;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        const type_part = std.mem.trim(u8, trimmed[colon + 1 ..], " \t\r");
+        if (!std.mem.startsWith(u8, type_part, "Bool")) continue;
+        try set.put(std.mem.trim(u8, trimmed["var ".len..colon], " \t\r"), {});
+    }
+    return set;
+}
+
+test "the gate scans find something, so the subset checks below mean something" {
+    // The vacuity floor. Every assertion after this is "for each X, ..."; a
+    // scan that matched nothing would satisfy all of them silently. The numbers
+    // are floors rather than equalities so migrating an action does not have to
+    // edit this test — but a rename that breaks a needle drops the count to
+    // zero and fails here.
+    var spec_gates = try collectSpecGates(testing.allocator);
+    defer spec_gates.deinit();
+    var zig_gates = try collectZigGates(testing.allocator);
+    defer zig_gates.deinit();
+    var config_bools = try collectSpecConfigBools(testing.allocator);
+    defer config_bools.deinit();
+
+    try testing.expect(spec_gates.count() >= 60);
+    try testing.expect(zig_gates.count() >= 30);
+    try testing.expect(config_bools.count() >= 35);
+
+    // And the scans read what they claim to read, rather than something that
+    // merely has the right shape.
+    try testing.expectEqualStrings("enableClipboard", spec_gates.get("clipboardRead").?);
+    try testing.expectEqualStrings("enableClipboard", zig_gates.get("clipboardRead").?);
+    try testing.expect(config_bools.contains("enableClipboard"));
+}
+
+test "every gated action Zig serves consults the flag the spec gates it on" {
+    // The check the 32 table entries exist for. Before `ios_config.zig`, every
+    // one of these was served whatever the app's configuration said; a new
+    // migration that forgets its gate lands back in that state, and this is
+    // what refuses it.
+    var spec_gates = try collectSpecGates(testing.allocator);
+    defer spec_gates.deinit();
+    var zig_gates = try collectZigGates(testing.allocator);
+    defer zig_gates.deinit();
+    var zig_actions = try collectZigActions(testing.allocator);
+    defer zig_actions.deinit();
+
+    var missing: usize = 0;
+    var disagreeing: usize = 0;
+
+    var it = zig_actions.keyIterator();
+    while (it.next()) |action| {
+        const spec_flag = spec_gates.get(action.*) orelse continue;
+        const zig_flag = zig_gates.get(action.*) orelse {
+            std.debug.print(
+                "'{s}' is gated on config.{s} in the spec, and Zig serves it ungated.\n" ++
+                    "  Add it to ios_config.gateFor's table.\n",
+                .{ action.*, spec_flag },
+            );
+            missing += 1;
+            continue;
+        };
+        if (!std.mem.eql(u8, spec_flag, zig_flag)) {
+            std.debug.print(
+                "'{s}' is gated on config.{s} in the spec but on {s} in Zig.\n",
+                .{ action.*, spec_flag, zig_flag },
+            );
+            disagreeing += 1;
+        }
+    }
+
+    try testing.expectEqual(@as(usize, 0), missing);
+    try testing.expectEqual(@as(usize, 0), disagreeing);
+}
+
+test "the gate table has no entry for an action Zig does not serve" {
+    // A stale entry is not harmless. `route` consults `gateFor` before the
+    // module chain, so an entry for an action that has moved back to the shim
+    // would have Zig refuse it on the shim's behalf — deciding, from Zig's
+    // parse of the config, a question the arm that owns the action is about to
+    // decide from its own.
+    var zig_gates = try collectZigGates(testing.allocator);
+    defer zig_gates.deinit();
+    var zig_actions = try collectZigActions(testing.allocator);
+    defer zig_actions.deinit();
+    var spec_gates = try collectSpecGates(testing.allocator);
+    defer spec_gates.deinit();
+
+    var it = zig_gates.keyIterator();
+    while (it.next()) |action| {
+        if (!zig_actions.contains(action.*)) {
+            std.debug.print("gateFor has '{s}', which no mobile module serves.\n", .{action.*});
+            return error.StaleGateEntry;
+        }
+        if (!spec_gates.contains(action.*)) {
+            std.debug.print(
+                "gateFor gates '{s}', which the spec does not gate — Zig would refuse " ++
+                    "a call the Swift app allows.\n",
+                .{action.*},
+            );
+            return error.GateNotInSpec;
+        }
+    }
+}
+
+test "every flag Zig can read is a flag the spec's config actually has" {
+    // A misspelled key is not a one-flag bug. A key that is not in the file
+    // reads as missing, and one missing key makes the whole decode throw, so
+    // `enableMlKit` for `enableMLKit` would disable all 35 capabilities at once
+    // — in an app whose config is perfectly valid.
+    var config_bools = try collectSpecConfigBools(testing.allocator);
+    defer config_bools.deinit();
+
+    const marker = "pub fn jsonKey(";
+    const body_start = std.mem.indexOf(u8, zig_config_source, marker).?;
+    const body = zig_config_source[body_start..];
+    const body_end = std.mem.indexOf(u8, body, "\n    }").?;
+
+    var checked: usize = 0;
+    var it = std.mem.splitScalar(u8, body[0..body_end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, ".")) continue;
+        if (std.mem.indexOf(u8, trimmed, " => \"") == null) continue;
+
+        const key_start = std.mem.indexOfScalar(u8, trimmed, '"').? + 1;
+        const key_end = std.mem.indexOfScalarPos(u8, trimmed, key_start, '"').?;
+        const key = trimmed[key_start..key_end];
+
+        if (!config_bools.contains(key)) {
+            std.debug.print(
+                "ios_config spells '{s}', which is not a Bool in the spec's CraftConfig.\n" ++
+                    "  A key that is not in the file disables every capability, not this one.\n",
+                .{key},
+            );
+            return error.UnknownConfigKey;
+        }
+        checked += 1;
+    }
+    try testing.expect(checked >= 35);
+}
+
+/// Every key `ios_config.zig` will decode: the three literal lists plus every
+/// `Feature`'s json key.
+///
+/// Built from the declarations rather than by searching the whole file, so a
+/// key that appears only in a doc comment does not count as mirrored. That
+/// distinction is the whole value of this scan: the header prose names most of
+/// these keys, so a whole-file search would pass for a key nothing decodes.
+fn collectZigRequiredKeys(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys" }) |decl| {
+        const at = std.mem.indexOf(u8, zig_config_source, decl) orelse return error.KeyListNotFound;
+        const line_end = std.mem.indexOfScalarPos(u8, zig_config_source, at, '\n').?;
+        const line = zig_config_source[at..line_end];
+
+        var search: usize = 0;
+        while (std.mem.indexOfScalarPos(u8, line, search, '"')) |open| {
+            const close = std.mem.indexOfScalarPos(u8, line, open + 1, '"') orelse break;
+            try set.put(line[open + 1 .. close], {});
+            search = close + 1;
+        }
+    }
+
+    const body_start = std.mem.indexOf(u8, zig_config_source, "pub fn jsonKey(") orelse
+        return error.JsonKeyFnNotFound;
+    const body = zig_config_source[body_start..];
+    const body_end = std.mem.indexOf(u8, body, "\n    }").?;
+    var it = std.mem.splitScalar(u8, body[0..body_end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, ".")) continue;
+        if (std.mem.indexOf(u8, trimmed, " => \"") == null) continue;
+        const open = std.mem.indexOfScalar(u8, trimmed, '"').?;
+        const close = std.mem.indexOfScalarPos(u8, trimmed, open + 1, '"').?;
+        try set.put(trimmed[open + 1 .. close], {});
+    }
+    return set;
+}
+
+test "Zig requires exactly the keys the spec's decoder requires" {
+    // The faithfulness the all-or-nothing rule depends on. Swift's synthesized
+    // `init(from:)` calls `decode` for every non-optional stored property and
+    // throws when one is missing, so the two runtimes agree about a given file
+    // only while they require the same set. When `CraftConfig` grows a key this
+    // fails until `ios_config.zig` grows it too — otherwise Swift refuses a
+    // config Zig accepts, in one process, from one file.
+    var zig_keys = try collectZigRequiredKeys(testing.allocator);
+    defer zig_keys.deinit();
+
+    const at = std.mem.indexOf(u8, swift_spec, "struct CraftConfig: Codable {").?;
+    const rest = swift_spec[at..];
+    const end = std.mem.indexOf(u8, rest, "\n}").?;
+
+    var required: usize = 0;
+    var optional_seen: usize = 0;
+    var it = std.mem.splitScalar(u8, rest[0..end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, "var ")) continue;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        const name = std.mem.trim(u8, trimmed["var ".len..colon], " \t\r");
+
+        const after_colon = trimmed[colon + 1 ..];
+        const type_end = std.mem.indexOf(u8, after_colon, " =") orelse after_colon.len;
+        const type_name = std.mem.trim(u8, after_colon[0..type_end], " \t\r");
+
+        // An optional is decoded with `decodeIfPresent`, so its absence is not
+        // a throw and Zig must NOT require it.
+        if (std.mem.endsWith(u8, type_name, "?")) {
+            optional_seen += 1;
+            if (zig_keys.contains(name)) {
+                std.debug.print(
+                    "ios_config requires '{s}', which is optional in the spec — Zig would " ++
+                        "refuse a config Swift accepts.\n",
+                    .{name},
+                );
+                return error.OptionalKeyTreatedAsRequired;
+            }
+            continue;
+        }
+
+        required += 1;
+        if (!zig_keys.contains(name)) {
+            std.debug.print(
+                "the spec's CraftConfig requires '{s}' and ios_config.zig does not decode it.\n" ++
+                    "  Swift throws on the missing key and falls back to every flag false; " ++
+                    "Zig would accept the same file.\n",
+                .{name},
+            );
+            return error.RequiredKeyNotMirrored;
+        }
+    }
+
+    // Both directions: a key Zig requires that the spec does not have would
+    // make Zig refuse every config the generator writes.
+    try testing.expectEqual(required, zig_keys.count());
+    try testing.expect(required >= 40);
+    try testing.expect(optional_seen >= 1);
 }

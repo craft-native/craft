@@ -68,6 +68,13 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
 
 cp "$FIXTURE/Info.plist" "$APP/Info.plist"
 
+# The capability configuration, bundled exactly where a generated app puts it:
+# `project.yml.template` copies craft.config.json into the app as a resource,
+# and both runtimes read it from `[NSBundle mainBundle]`. Without it every
+# capability is off — which is Swift's own fallback, and would take the
+# Keychain, SQLite and notification assertions below down with it.
+cp "$FIXTURE/craft.config.json" "$APP/craft.config.json"
+
 # Ad-hoc signature. The identity entitlements live in the __entitlements
 # section above; signing them in instead makes the launch be denied.
 codesign --force --sign - "$APP"
@@ -90,7 +97,8 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=18' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=22' "$LOG" 2>/dev/null && grep -q 'i=24' "$LOG" 2>/dev/null \
+       && grep -q 'i=20' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -180,5 +188,35 @@ C18="$(count 18)"
 # whoever reads it looking for a bug that is not there.
 [ "$C18" -ge 1 ] || { echo "FAIL: the refusal did not name its own cause"; exit 1; }
 echo "ok: unavailable hardware refused with a specific code (i=18 seen ${C18}x)"
+
+C80="$(count 80)"
+[ "$C80" -ge 1 ] || { echo "FAIL: the disabled-capability call never reached the dispatcher"; exit 1; }
+echo "ok: gated action reached the dispatcher (i=80 seen ${C80}x)"
+
+C20="$(count 20)"
+# The whole point of the capability gate. clipboardRead is served by Zig and
+# gated on enableClipboard, which this fixture's config sets to false. The
+# Swift spec drops the callback on 60 of its 65 gated cases, so the page would
+# wait out its timeout with nothing to show for it; here an answer comes back,
+# and its code names the configuration rather than a permission a user could
+# grant by answering a prompt.
+[ "$C20" -ge 1 ] || { echo "FAIL: a disabled capability hung instead of replying CAPABILITY_DISABLED"; exit 1; }
+echo "ok: disabled capability refused with CAPABILITY_DISABLED (i=20 seen ${C20}x)"
+
+# And the gate is not simply refusing everything: the Keychain, SQLite and
+# notification assertions above all ran through actions the same config
+# *enables*, so i=10, i=12 and i=14 passing is the other half of this check.
+echo "ok: enabled capabilities still served (i=10, i=12, i=14 above)"
+
+C22="$(count 22)"
+# i=22 requires the reply to have been a bare JSON string, carried the data URL
+# prefix, base64-decoded to the PNG signature, and exceeded a size floor. Only
+# a real render of the window layer satisfies all four.
+[ "$C22" -ge 1 ] || { echo "FAIL: takeScreenshot did not return a decodable PNG data URL"; exit 1; }
+echo "ok: screenshot rendered the live window to a real PNG (i=22 seen ${C22}x)"
+
+C24="$(count 24)"
+[ "$C24" -ge 1 ] || { echo "FAIL: the deep-link handshake did not reply Swift's bare true"; exit 1; }
+echo "ok: deep-link handshake replied true behind its own gate (i=24 seen ${C24}x)"
 
 echo "PASS"

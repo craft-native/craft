@@ -6,6 +6,7 @@ const bridge_error = @import("bridge_error.zig");
 pub const ios_async = @import("ios_async.zig");
 pub const ios_events = @import("ios_events.zig");
 pub const ios_delegate = @import("ios_delegate.zig");
+pub const ios_config = @import("ios_config.zig");
 const bridge_mobile = @import("bridge_mobile.zig");
 const bridge_mobile_clipboard = @import("bridge_mobile_clipboard.zig");
 const bridge_mobile_haptics = @import("bridge_mobile_haptics.zig");
@@ -183,6 +184,28 @@ fn payloadOf(root: std.json.ObjectMap) ![]const u8 {
 /// diagnostic a bridge can give.
 fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8, data: []const u8) !void {
     if (std.mem.eql(u8, msg_type, "mobile")) {
+        // The app's own configuration, before anything else. An action the
+        // spec gates on a `config.enable*` flag is refused here when that flag
+        // is off, rather than served — which is what every one of these did
+        // until `ios_config.zig` existed, because Zig had no way to read the
+        // flag.
+        //
+        // Only actions this file's modules serve are gated. `gateFor` returns
+        // null for the rest, so an action still on the shim keeps whatever
+        // answer the shim gives it: Zig refusing on Swift's behalf would mean
+        // deciding, from Zig's parse of the config, a question the arm that
+        // owns the action is about to decide from its own.
+        if (ios_config.gateFor(action)) |feature| {
+            if (!ios_config.isEnabled(feature)) {
+                std.log.info(
+                    "ios: refusing {s}; {s} is not enabled in craft.config.json",
+                    .{ action, feature.jsonKey() },
+                );
+                bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.CapabilityDisabled);
+                return bridge_error.BridgeError.CapabilityDisabled;
+            }
+        }
+
         // First module that recognises the action wins. UnknownAction means
         // "not mine, ask the next"; any other error means a handler ran and
         // failed, and its answer is final — retrying the same action against

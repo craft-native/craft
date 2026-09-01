@@ -1,59 +1,55 @@
-//! The `mobile` namespace's flashlight action — and the recorded decision that
-//! the other three actions scoped to this module (`getInitialURL`,
-//! `registerDeepLinkHandler`, `takeScreenshot`) stay *unserved*, so that
-//! `ios_dispatch.route` falls through to the Swift shim that answers them
-//! correctly today. See `deliberately_unserved`.
+//! The `mobile` namespace's odds and ends: the flashlight, a window
+//! screenshot, and the deep-link handshake — plus the recorded reason
+//! `getInitialURL` stays *unserved*, so `ios_dispatch.route` falls through to
+//! the Swift shim that answers it correctly today. See `deliberately_unserved`.
 //!
-//! ## Why `setFlashlight` is the only arm
+//! ## What changed, and what it unblocked
 //!
-//! It is the only one of the four with no `CraftConfig` gate in front of it:
-//! the Swift dispatcher calls `setFlashlight(enabled:)` unconditionally, and
-//! the injected capabilities blob hardcodes `flashlight: true`. Every step is
-//! a synchronous AVFoundation call — no completion handler, no `ios_async`
-//! ticket — so the whole exchange happens inside the dispatch frame that holds
-//! the request id, on the main thread WebKit delivered it on.
+//! Three of these four actions used to be unserved, and two of them for the
+//! same reason: their Swift arms are conditional on `CraftConfig` flags
+//! (`enableScreenCapture`, `enableDeepLinks`) that existed only as Swift
+//! properties. Serving them regardless would have switched on capabilities the
+//! app author turned off — fabricated authorization, the class of bug this
+//! migration exists to remove.
 //!
-//! The other three founder on one missing channel: their Swift arms are
-//! conditional on `CraftConfig` flags (`enableDeepLinks`,
-//! `enableScreenCapture`) that exist only as Swift properties. Nothing carries
-//! them to Zig — no export, no shared defaults, nothing to grep — so a Zig
-//! handler cannot know whether the app author enabled the feature. Each action
-//! adds its own reason on top:
+//! `ios_config.zig` is that missing channel. It reads the same bundled
+//! `craft.config.json` Swift decodes, and `ios_dispatch.route` refuses a gated
+//! action before this module runs, so neither handler below has to know a flag
+//! exists. Both are now exactly what Swift does once its own guard passes.
 //!
-//!  - **`getInitialURL`** cannot be answered from Zig at all. The value lives
-//!    in `DeepLinkManager.shared.initialURL` — a private property of a
-//!    pure-Swift class that derives from nothing and declares no `@objc`, so
+//! Each action's own shape:
+//!
+//!  - **`setFlashlight`** was always servable: no gate at all in the Swift
+//!    dispatcher, and every step a synchronous AVFoundation call — no
+//!    completion handler, no `ios_async` ticket — so the exchange happens
+//!    inside the dispatch frame that holds the request id.
+//!  - **`takeScreenshot`** renders the key window's layer into an image
+//!    context and answers a `data:` URL. Also synchronous: Swift wraps its
+//!    body in `DispatchQueue.main.async`, but `didReceiveScriptMessage`
+//!    already runs on the main thread, so the hop would defer the same work to
+//!    the next runloop turn and nothing else.
+//!  - **`registerDeepLinkHandler`** acknowledges and does nothing else,
+//!    because there is nothing native to register — Swift's whole arm is
+//!    `resolveCallback(callbackId, result: true)`, and the real registration
+//!    is the page's own `addEventListener('craftDeepLink', …)`. Worth stating
+//!    plainly: this action is a handshake, and porting it faithfully means
+//!    porting a handshake.
+//!  - **`getInitialURL`** cannot be answered from Zig at all, and the config
+//!    channel does not change that. The value lives in
+//!    `DeepLinkManager.shared.initialURL` — a private property of a pure-Swift
+//!    class that derives from nothing and declares no `@objc`, so
 //!    `objc_getClass("DeepLinkManager")` cannot find it and neither `shared`
 //!    nor `getInitialURL()` has an ObjC entry point. It is fed by SwiftUI's
 //!    `.onOpenURL`, which Zig has no path to, and the launch URL is not
 //!    re-derivable afterwards (not in the environment, not in NSUserDefaults).
-//!  - **`registerDeepLinkHandler`** does nothing but acknowledge: Swift
-//!    replies the bare boolean `true` iff `config.enableDeepLinks`; the real
-//!    registration is the page's own `addEventListener('craftDeepLink', …)`.
-//!    An unconditional `true` from Zig would report "registered" in apps where
-//!    the event can never fire. No JS anywhere in the repo posts the action —
-//!    the injected script, `test-bridges.html`, `craft-bridge.js` and the TS
-//!    SDK are all silent — so there is also nothing to migrate *for*.
-//!  - **`takeScreenshot`**'s capture is fully doable from Zig
-//!    (`UIGraphicsBeginImageContextWithOptions` and friends, then
-//!    `UIImagePNGRepresentation`), but `enableScreenCapture` defaults to
-//!    *false* and Swift's arm skips the handler entirely when it is off.
-//!    Serving it unconditionally would switch on a capability the app author
-//!    turned off — fabricated authorization, the exact class of bug this
-//!    migration exists to remove. It stays with the shim until a config
-//!    channel exists.
 //!
 //! ## Why unserved rather than `.unavailable`
 //!
 //! `ios_dispatch.route` hands an action to `CraftSwiftShim` only when every
 //! module answers `UnknownAction`. A declared-`.unavailable` action
 //! *dispatches and refuses* — `bridge_mobile_display.lockOrientation` is the
-//! precedent — so declaring these three would take them away from the shim,
-//! replacing answers that are correct today with rejections. In a Zig-only
-//! build with no shim, the fall-through degrades to an `UnknownAction` error
-//! at the page, which is still the honest outcome: absent the config, craft
-//! does not know whether these features are enabled, and an error a page can
-//! see beats a guess it cannot.
+//! precedent — so declaring `getInitialURL` would take it away from the arm
+//! that answers it correctly today.
 //!
 //! ## Build note
 //!
@@ -65,6 +61,11 @@
 //! check reports as "no flashlight", the same rejection Swift's guard gives a
 //! simulator. Honest either way, but the fixture needs the flag before the
 //! torch can actually light.
+//!
+//! `takeScreenshot` needs no such flag: UIKit is already linked there, and its
+//! five drawing entry points are resolved by `dlsym` at call time rather than
+//! declared `extern "c"`, so the host test binaries — which link Cocoa, not
+//! UIKit — get an honest refusal instead of a link error.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -98,6 +99,8 @@ const AVCaptureTorchModeOn: c_long = 1;
 /// is still the thing answering it.
 pub const A = struct {
     pub const set_flashlight = "setFlashlight";
+    pub const take_screenshot = "takeScreenshot";
+    pub const register_deep_link_handler = "registerDeepLinkHandler";
 };
 
 /// The actions this module was scoped to and, on purpose, does not serve.
@@ -109,8 +112,6 @@ pub const A = struct {
 /// its name from this list into `A` and updates the module comment.
 pub const deliberately_unserved = [_][]const u8{
     "getInitialURL",
-    "registerDeepLinkHandler",
-    "takeScreenshot",
 };
 
 /// `.result`: every Swift path terminates in `resolveCallback(…, true)` or a
@@ -120,6 +121,8 @@ pub const deliberately_unserved = [_][]const u8{
 /// device the call found, not of the action.
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.set_flashlight, .reply = .result },
+    .{ .name = A.take_screenshot, .reply = .result },
+    .{ .name = A.register_deep_link_handler, .reply = .result },
 };
 
 /// Swift resolves with `resolveCallback(callbackId, result: true)`, serialized
@@ -143,12 +146,55 @@ pub const MiscBridge = struct {
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, A.set_flashlight)) {
             try self.setFlashlight(data);
+        } else if (std.mem.eql(u8, action, A.take_screenshot)) {
+            try self.takeScreenshot();
+        } else if (std.mem.eql(u8, action, A.register_deep_link_handler)) {
+            try self.registerDeepLinkHandler();
         } else {
-            // `getInitialURL`, `registerDeepLinkHandler` and `takeScreenshot`
-            // land here on purpose: `UnknownAction` is what routes an action
-            // onward to the Swift shim. See the module comment.
+            // `getInitialURL` lands here on purpose: `UnknownAction` is what
+            // routes an action onward to the Swift shim. See the module
+            // comment.
             return BridgeError.UnknownAction;
         }
+    }
+
+    /// The key window's pixels, as a `data:` URL, exactly as Swift spells it.
+    ///
+    /// No `ios_async` ticket and no queue hop. Swift wraps its body in
+    /// `DispatchQueue.main.async`, but `didReceiveScriptMessage` already runs
+    /// on the main thread, so the hop would only defer the same work to the
+    /// next runloop turn — and doing it inline keeps the whole exchange inside
+    /// the dispatch frame that holds the request id, which is where a reply is
+    /// cheapest to correlate.
+    fn takeScreenshot(self: *Self) !void {
+        const png = try captureKeyWindowPng(self.allocator);
+        defer self.allocator.free(png);
+
+        // Swift resolves with a Swift `String` under `.fragmentsAllowed`, so
+        // the page receives a bare JSON string rather than an object. Base64
+        // and the prefix contain nothing JSON escapes, but the shared escaper
+        // runs anyway: a hand-argued "these bytes are safe" is how an escaping
+        // bug gets introduced later by someone changing the prefix.
+        const scratch = try self.allocator.alloc(u8, png.len * 2 + 2);
+        defer self.allocator.free(scratch);
+        const escaped = try bridge_error.escapeJsonString(scratch[1..], png);
+
+        scratch[0] = '"';
+        scratch[1 + escaped.len] = '"';
+        bridge_error.sendResultToJS(self.allocator, A.take_screenshot, scratch[0 .. escaped.len + 2]);
+    }
+
+    /// Acknowledge that the page may listen for `craftDeepLink`.
+    ///
+    /// Swift's whole arm is `resolveCallback(callbackId, result: true)` behind
+    /// the `enableDeepLinks` gate — the real registration is the page's own
+    /// `addEventListener`, and there is nothing native to register. What made
+    /// this unservable was that Zig could not see the gate, so its `true` would
+    /// have claimed a registration in apps that had deep links switched off;
+    /// `ios_config` now refuses the action before this runs, and the remaining
+    /// behaviour is Swift's, unchanged.
+    fn registerDeepLinkHandler(self: *Self) !void {
+        bridge_error.sendResultToJS(self.allocator, A.register_deep_link_handler, success_reply);
     }
 
     /// Turn the torch on or off, and say so with Swift's bare `true`.
@@ -292,13 +338,221 @@ fn setTorch(allocator: std.mem.Allocator, enabled: bool) !void {
 // shape — are pure functions above, and are pinned below.
 // =============================================================================
 
+/// The `data:` URL prefix Swift concatenates ahead of the base64.
+///
+/// Part of the wire contract, not decoration: `CraftApp.swift:4177` builds
+/// `"data:image/png;base64," + imageData.base64EncodedString()`, and a page
+/// that assigns the reply straight to `img.src` needs it.
+const png_data_url_prefix = "data:image/png;base64,";
+
+// UIKit's C drawing entry points. Chosen over `UIGraphicsImageRenderer`,
+// which is what Swift uses, for one reason: `imageWithActions:` takes an
+// Objective-C block, and a *global* block cannot capture the layer it has to
+// render. Reaching the layer would mean stashing it in a module-level var
+// across the call — real shared mutable state, on the main thread, to avoid a
+// pair of C calls that do the same thing.
+//
+// The pixels are the same. `UIGraphicsImageRenderer`'s default format is
+// opaque = false at the screen's scale, which is exactly
+// `UIGraphicsBeginImageContextWithOptions(size, NO, 0.0)` — 0.0 meaning "the
+// main screen's scale". These are deprecated as of iOS 17 and still present;
+// the deprecation is a compiler diagnostic for ObjC callers, and nothing here
+// compiles ObjC.
+// Resolved with `dlsym` rather than declared `extern "c"`, the route
+// `bridge_mobile_imagepicker.resolve` already takes for
+// `UIImageJPEGRepresentation`: the host test binaries link Cocoa and not
+// UIKit, and `refAllDecls` forces analysis of every declaration, so a direct
+// `extern` would be five undefined symbols at host link time.
+const BeginContextFn = *const fn (objc.CGSize, bool, objc.CGFloat) callconv(.c) void;
+const GetContextFn = *const fn () callconv(.c) ?*anyopaque;
+const GetImageFn = *const fn () callconv(.c) Id;
+const EndContextFn = *const fn () callconv(.c) void;
+const PngDataFn = *const fn (Id) callconv(.c) Id;
+
+/// The five UIKit drawing entry points, resolved together.
+///
+/// Together rather than one at a time so a UIKit that carries some but not all
+/// of them refuses before beginning an image context — the one call here with
+/// a cleanup obligation. Resolving `UIImagePNGRepresentation` lazily after
+/// `UIGraphicsBeginImageContextWithOptions` had already run would mean either
+/// leaking the context or unwinding it from an error path that exists only for
+/// this.
+const Graphics = struct {
+    begin: BeginContextFn,
+    current: GetContextFn,
+    image: GetImageFn,
+    end: EndContextFn,
+    png: PngDataFn,
+
+    fn resolve() !Graphics {
+        return .{
+            .begin = @ptrCast(@alignCast(try symbol("UIGraphicsBeginImageContextWithOptions"))),
+            .current = @ptrCast(@alignCast(try symbol("UIGraphicsGetCurrentContext"))),
+            .image = @ptrCast(@alignCast(try symbol("UIGraphicsGetImageFromCurrentImageContext"))),
+            .end = @ptrCast(@alignCast(try symbol("UIGraphicsEndImageContext"))),
+            .png = @ptrCast(@alignCast(try symbol("UIImagePNGRepresentation"))),
+        };
+    }
+
+    fn symbol(comptime name: [*:0]const u8) !*anyopaque {
+        return dlsym(RTLD_DEFAULT, name) orelse {
+            std.log.warn(
+                "takeScreenshot refused: {s} is not in this process, so the window " ++
+                    "could not be rendered",
+                .{name},
+            );
+            return BridgeError.PlatformNotSupported;
+        };
+    }
+};
+
+extern "c" fn dlsym(handle: ?*anyopaque, symbol: [*:0]const u8) ?*anyopaque;
+
+/// `RTLD_DEFAULT` — search every image already loaded into the process.
+const RTLD_DEFAULT: ?*anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
+
+/// `data:image/png;base64,…` for the key window, or the reason there is none.
+///
+/// Follows Swift step for step, including which window: `connectedScenes`
+/// is a `Set`, and Swift takes `.first` of it, which is an arbitrary element
+/// rather than a defined one. `anyObject` is the same choice made explicit.
+/// Apps with one scene — every app this template generates — cannot tell the
+/// difference.
+fn captureKeyWindowPng(allocator: std.mem.Allocator) ![]u8 {
+    if (!builtin.target.os.tag.isDarwin()) return BridgeError.PlatformNotSupported;
+
+    const gfx = try Graphics.resolve();
+    const window = try keyWindow();
+
+    const sel_bounds = objc.sel_registerName("bounds") orelse return BridgeError.NativeCallFailed;
+    const BoundsFn = *const fn (Id, objc.SEL) callconv(.c) objc.CGRect;
+    const boundsFn: BoundsFn = @ptrCast(&objc.objc_msgSend);
+    const bounds = boundsFn(window, sel_bounds);
+
+    // A zero-sized context yields a nil image rather than an empty PNG, and
+    // the nil would surface as "Failed to capture screenshot" several steps
+    // later. Refusing here names the actual condition.
+    if (bounds.size.width <= 0 or bounds.size.height <= 0) {
+        std.log.warn(
+            "takeScreenshot: the key window is {d}x{d}; there is nothing to capture",
+            .{ bounds.size.width, bounds.size.height },
+        );
+        return BridgeError.NativeCallFailed;
+    }
+
+    const sel_layer = objc.sel_registerName("layer") orelse return BridgeError.NativeCallFailed;
+    const layer = objc.msgSendId(window, sel_layer) orelse return BridgeError.NativeCallFailed;
+
+    // 0.0 scale means the main screen's, matching UIGraphicsImageRenderer's
+    // default format; `false` for opaque keeps the alpha channel Swift's
+    // renderer also keeps.
+    gfx.begin(bounds.size, false, 0.0);
+    // Paired with the Begin above on every path out of this block, including
+    // the error returns: leaving a context on the stack corrupts the next
+    // capture rather than this one, which is the hard kind of bug to trace
+    // back.
+    defer gfx.end();
+
+    const context = gfx.current() orelse {
+        std.log.warn("takeScreenshot: no image context after beginning one", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    const sel_render = objc.sel_registerName("renderInContext:") orelse
+        return BridgeError.NativeCallFailed;
+    objc.msgSendVoid1(layer, sel_render, context);
+
+    const image = gfx.image() orelse {
+        std.log.warn("takeScreenshot: the image context produced no image", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    const png = gfx.png(image) orelse {
+        // Swift's own failure branch: `image.pngData()` returning nil.
+        std.log.warn("takeScreenshot: the captured image has no PNG representation", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    const sel_base64 = objc.sel_registerName("base64EncodedStringWithOptions:") orelse
+        return BridgeError.NativeCallFailed;
+    const Base64Fn = *const fn (Id, objc.SEL, c_ulong) callconv(.c) Id;
+    const base64Fn: Base64Fn = @ptrCast(&objc.objc_msgSend);
+    const ns_base64 = base64Fn(png, sel_base64, 0) orelse return BridgeError.NativeCallFailed;
+
+    const utf8 = objc.getNSStringUTF8(ns_base64) orelse return BridgeError.NativeCallFailed;
+    const encoded = std.mem.span(utf8);
+
+    return std.mem.concat(allocator, u8, &.{ png_data_url_prefix, encoded });
+}
+
+/// The window Swift's `connectedScenes.first`/`windows.first` pair reaches.
+///
+/// Every step can legitimately be nil — an app in the background has scenes
+/// but no attached window, and a scene that is not a `UIWindowScene` has no
+/// `windows` at all. Swift collapses the lot into one "No window available"
+/// rejection; the log lines below keep them apart, because a missing scene and
+/// a scene with no windows are different states of the app.
+fn keyWindow() !Id {
+    const UIApplication = objc.objc_getClass("UIApplication") orelse
+        return BridgeError.NativeCallFailed;
+    const sel_shared = objc.sel_registerName("sharedApplication") orelse
+        return BridgeError.NativeCallFailed;
+    const app = objc.msgSendId(UIApplication, sel_shared) orelse {
+        std.log.warn("takeScreenshot: no UIApplication instance", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    const sel_scenes = objc.sel_registerName("connectedScenes") orelse
+        return BridgeError.NativeCallFailed;
+    const scenes = objc.msgSendId(app, sel_scenes) orelse {
+        std.log.warn("takeScreenshot: the application has no connected scenes", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    const sel_any = objc.sel_registerName("anyObject") orelse return BridgeError.NativeCallFailed;
+    const scene = objc.msgSendId(scenes, sel_any) orelse {
+        std.log.warn("takeScreenshot: the connected-scene set is empty", .{});
+        return BridgeError.NativeCallFailed;
+    };
+
+    // Swift's `as? UIWindowScene` is a conditional cast; sending `windows` to
+    // a scene that is not one would be an unrecognised selector, and that is a
+    // SIGABRT rather than an error this function could return.
+    const UIWindowScene = objc.objc_getClass("UIWindowScene") orelse
+        return BridgeError.NativeCallFailed;
+    const sel_is_kind = objc.sel_registerName("isKindOfClass:") orelse
+        return BridgeError.NativeCallFailed;
+    const IsKindFn = *const fn (Id, objc.SEL, objc.Class) callconv(.c) bool;
+    const isKind: IsKindFn = @ptrCast(&objc.objc_msgSend);
+    if (!isKind(scene, sel_is_kind, UIWindowScene)) {
+        std.log.warn("takeScreenshot: the connected scene is not a UIWindowScene", .{});
+        return BridgeError.NativeCallFailed;
+    }
+
+    const sel_windows = objc.sel_registerName("windows") orelse return BridgeError.NativeCallFailed;
+    const windows = objc.msgSendId(scene, sel_windows) orelse
+        return BridgeError.NativeCallFailed;
+
+    const sel_first = objc.sel_registerName("firstObject") orelse
+        return BridgeError.NativeCallFailed;
+    return objc.msgSendId(windows, sel_first) orelse {
+        std.log.warn("takeScreenshot: the window scene has no windows", .{});
+        return BridgeError.NativeCallFailed;
+    };
+}
+
 const testing = std.testing;
 
-test "the declared action is the one the handler serves" {
-    try testing.expectEqual(@as(usize, 1), capability_actions.len);
+test "the declared actions are the ones the handler serves" {
+    try testing.expectEqual(@as(usize, 3), capability_actions.len);
     try testing.expectEqualStrings(A.set_flashlight, capability_actions[0].name);
-    try testing.expectEqual(capabilities.Reply.result, capability_actions[0].reply);
-    try testing.expectEqual(capabilities.ActionStatus.live, capability_actions[0].status);
+    try testing.expectEqualStrings(A.take_screenshot, capability_actions[1].name);
+    try testing.expectEqualStrings(A.register_deep_link_handler, capability_actions[2].name);
+
+    for (capability_actions) |decl| {
+        try testing.expectEqual(capabilities.Reply.result, decl.reply);
+        try testing.expectEqual(capabilities.ActionStatus.live, decl.status);
+    }
 }
 
 test "the action name matches the Swift case label exactly" {
@@ -306,22 +560,50 @@ test "the action name matches the Swift case label exactly" {
     // labels in `CraftApp.swift`, in both directions; a prettier spelling
     // would register as Zig serving an action the spec does not have.
     try testing.expectEqualStrings("setFlashlight", A.set_flashlight);
+    try testing.expectEqualStrings("takeScreenshot", A.take_screenshot);
+    try testing.expectEqualStrings("registerDeepLinkHandler", A.register_deep_link_handler);
 }
 
 test "every declared action dispatches to something" {
-    // `{}` has no `enabled`, so validation fails *before* any AVFoundation
-    // call — which is what makes this safe on a host with a real camera. What
-    // it rules out is a name in the table `handleMessage` never compares
-    // against.
+    // What this rules out is a name in the table `handleMessage` never
+    // compares against — which would reach the shim as `UnknownAction` while
+    // the capability manifest claimed Zig served it.
+    //
+    // `UnknownAction` is the only forbidden outcome, not any error.
+    // `setFlashlight` fails validation on `{}` before touching AVFoundation,
+    // and `takeScreenshot` refuses on a host whose UIKit symbols `dlsym`
+    // cannot find; both are the handler running, which is what is being
+    // asserted.
     var bridge = MiscBridge.init(testing.allocator);
     defer bridge.deinit();
 
     for (capability_actions) |decl| {
-        try testing.expectError(
-            BridgeError.MissingData,
-            bridge.handleMessage(decl.name, "{}"),
-        );
+        bridge.handleMessage(decl.name, "{}") catch |err| {
+            try testing.expect(err != BridgeError.UnknownAction);
+            continue;
+        };
     }
+}
+
+test "the screenshot reply is a bare JSON string carrying a data URL" {
+    // Swift resolves with a `String` under `.fragmentsAllowed`, so the page
+    // gets `"data:image/png;base64,…"` and not `{"image":…}`. A page that
+    // assigns the reply to `img.src` depends on both the quoting and the
+    // prefix.
+    try testing.expectEqualStrings("data:image/png;base64,", png_data_url_prefix);
+}
+
+test "a screenshot on a host without UIKit refuses rather than inventing one" {
+    // The five drawing entry points are UIKit's, and the host test binaries
+    // link Cocoa. `dlsym` finding nothing has to be a refusal — a module that
+    // answered with an empty or placeholder PNG here would be fabricating the
+    // one thing this action exists to return.
+    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+
+    try testing.expectError(
+        BridgeError.PlatformNotSupported,
+        captureKeyWindowPng(testing.allocator),
+    );
 }
 
 test "the unserved actions stay unserved, which is what routes them to the shim" {
