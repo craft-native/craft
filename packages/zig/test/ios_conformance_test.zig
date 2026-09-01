@@ -100,7 +100,7 @@ const dispatch_end = "func webView(";
 /// 48 after calendar and contacts. Speech was researched in full and left
 /// with the shim: neither action replies, so unlike the earlier deferrals
 /// there is no promise to strand and falling through costs the page nothing.
-const max_not_yet_migrated: usize = 29;
+const max_not_yet_migrated: usize = 28;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";

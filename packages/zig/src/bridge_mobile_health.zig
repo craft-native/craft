@@ -1,25 +1,28 @@
-//! Two of the `mobile` namespace's three HealthKit actions:
-//! `requestHealthAuthorization` and `getHealthData`.
+//! All three of the `mobile` namespace's HealthKit actions:
+//! `requestHealthAuthorization`, `getHealthData` and `saveHealthWorkout`.
 //!
-//! ## Why two and not three, when the last two pairs moved whole
+//! ## What the split cost, and why it is closed
 //!
-//! `saveHealthWorkout` stays with the Swift shim this round, and the reason is
-//! the opposite of the one that kept `openPDF`/`closePDF` and the audio pair
-//! together. Those shared *module state*: a controller one stored and the other
-//! dismissed, a recorder one built and the other stopped. Splitting them left
-//! half a state machine in each language.
+//! `saveHealthWorkout` was deferred one round, and the reason was cost rather
+//! than correctness
 //!
-//! Nothing flows between these three. The only thing they share is an
-//! `HKHealthStore`, which is a stateless handle — authorization lives in the
-//! system database, not in the object, and Apple supports more than one store
-//! per process. So Zig owning two of them and Swift the third produces no
-//! divided state and no wrong answer, only a smaller diff.
+//! — unlike `openPDF`/`closePDF` and the audio pair, which shared *module
+//! state* and had to move whole. The only thing these three share is an
+//! `HKHealthStore`, a stateless handle whose authorization lives in the system
+//! database, so a split was never at risk of dividing state.
 //!
-//! What `saveHealthWorkout` costs is a third asynchronous stage:
-//! `HKWorkout` construction, then `save:withCompletion:`, then an
-//! `HKWorkoutRouteBuilder` chain for the optional `locations` array — each with
-//! its own completion, each able to fail after the previous succeeded. That is
-//! a round of its own, not a tail on this one.
+//! The cost was a third asynchronous stage: `save:withCompletion:`, then
+//! `insertRouteData:completion:`, then
+//! `finishRouteWithWorkout:metadata:completion:` — each able to fail after the
+//! previous succeeded, and none able to carry what the next needs, since all
+//! three blocks are global and capture nothing. `WorkoutChain` is what rides
+//! the slot between them.
+//!
+//! Two places diverge from Swift, both in the same direction. Swift *rejects*
+//! when a route fails to build, insert or finish — after the workout has
+//! already been written to HealthKit. That tells a page nothing was saved when
+//! something was, and leaves it unable to reference a workout that exists. Here
+//! a route failure still resolves the workout's id, with the reason logged.
 //!
 //! ## The store is created here, not inherited
 //!
@@ -55,22 +58,21 @@ const is_darwin = builtin.target.os.tag.isDarwin();
 pub const A = struct {
     pub const request_health_authorization = "requestHealthAuthorization";
     pub const get_health_data = "getHealthData";
+    pub const save_health_workout = "saveHealthWorkout";
 };
 
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.request_health_authorization, .reply = .result },
     .{ .name = A.get_health_data, .reply = .result },
+    .{ .name = A.save_health_workout, .reply = .result },
 };
 
-/// The action this module was scoped to and, on purpose, does not serve.
+/// Nothing in this family is unserved any more.
 ///
-/// Recorded as data rather than prose so a test can hold both properties the
-/// decision rests on: it is not declared, and it still falls out of
-/// `handleMessage` as `UnknownAction` — the one return `ios_dispatch.route`
-/// turns into a Swift-shim hand-off.
-pub const deliberately_unserved = [_][]const u8{
-    "saveHealthWorkout",
-};
+/// `saveHealthWorkout` was the last entry, deferred one round for its third
+/// asynchronous stage. The empty list is kept rather than deleted so the test
+/// that walks it keeps compiling and the next deferral has somewhere to go.
+pub const deliberately_unserved = [_][]const u8{};
 
 /// `requestHealthAuthorization`'s reply on success: the bare JSON `true`.
 const authorized_reply = "true";
@@ -140,9 +142,9 @@ pub const HealthBridge = struct {
             try self.requestAuthorization(data);
         } else if (std.mem.eql(u8, action, A.get_health_data)) {
             try self.getHealthData(data);
+        } else if (std.mem.eql(u8, action, A.save_health_workout)) {
+            try self.saveWorkout(data);
         } else {
-            // `saveHealthWorkout` lands here on purpose. See the module
-            // comment and `deliberately_unserved`.
             return BridgeError.UnknownAction;
         }
     }
@@ -179,6 +181,63 @@ pub const HealthBridge = struct {
         const RequestFn = *const fn (Id, objc.SEL, Id, Id, *anyopaque) callconv(.c) void;
         const request: RequestFn = @ptrCast(&objc.objc_msgSend);
         request(store, sel, share, read, @ptrCast(&auth_blocks[ticket.index]));
+    }
+
+    /// Save a workout, then optionally attach a GPS route to it.
+    ///
+    /// Three asynchronous stages, each able to fail after the previous
+    /// succeeded: `save:withCompletion:`, then — only when the page sent
+    /// locations — `insertRouteData:completion:` and
+    /// `finishRouteWithWorkout:metadata:completion:`. Everything the later
+    /// stages need is parked on the slot at dispatch, because none of the
+    /// three blocks can carry it.
+    ///
+    /// A workout with no usable locations resolves after stage one, matching
+    /// Swift's early `guard !locations.isEmpty`. That is not an error: the
+    /// workout really was saved, and a route is optional.
+    fn saveWorkout(self: *Self, data: []const u8) !void {
+        if (!is_darwin) return BridgeError.PlatformNotSupported;
+
+        const store = try healthStore();
+
+        var parsed = std.json.parseFromSlice(std.json.Value, self.allocator, data, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => return BridgeError.InvalidJSON,
+        };
+        defer parsed.deinit();
+
+        const request = try readWorkoutRequest(parsed.value);
+
+        const workout = try buildWorkout(self.allocator, request);
+        errdefer releaseObject(workout);
+
+        const locations = try buildLocations(self.allocator, parsed.value, request);
+
+        const activity_id = std.heap.c_allocator.dupe(u8, request.activity_id) catch
+            return BridgeError.AllocationFailed;
+        errdefer std.heap.c_allocator.free(activity_id);
+
+        const ticket = ios_async.acquire(A.save_health_workout) orelse {
+            std.log.warn(
+                "saveHealthWorkout: no free reply slot; {d} native calls are already awaiting one",
+                .{ios_async.max_in_flight},
+            );
+            return BridgeError.NativeCallFailed;
+        };
+        errdefer ios_async.abandon(ticket);
+
+        publishWorkoutCall(ticket, .{
+            .workout = workout,
+            .activity_id = activity_id,
+            .locations = locations,
+            .store = store,
+        });
+
+        const sel = objc.sel_registerName("saveObject:withCompletion:") orelse
+            return BridgeError.NativeCallFailed;
+        const SaveFn = *const fn (Id, objc.SEL, Id, *anyopaque) callconv(.c) void;
+        const save: SaveFn = @ptrCast(&objc.objc_msgSend);
+        save(store, sel, workout, @ptrCast(&save_blocks[ticket.index]));
     }
 
     /// Sum one quantity type over a window and answer `{value, unit}`.
@@ -509,6 +568,299 @@ fn optionalMilliseconds(object: std.json.ObjectMap, key: []const u8) !?f64 {
     };
 }
 
+// ===========================================================================
+// saveHealthWorkout
+// ===========================================================================
+
+/// `HKWorkoutActivityType`, read from `HKWorkout.h`'s enum rather than
+/// guessed.
+///
+/// The enum numbers most members implicitly, so the values are only obtainable
+/// by counting from the last explicit one. Every value here was wrong on
+/// instinct — running reads as 37 if you assume it is near walking — and a
+/// wrong number saves a real workout under the wrong activity, which HealthKit
+/// accepts without complaint. Same lesson as
+/// `statistics_option_cumulative_sum` above, applied before the mistake
+/// instead of after it.
+const WorkoutActivity = struct {
+    name: []const u8,
+    value: c_ulong,
+};
+
+const workout_activities = [_]WorkoutActivity{
+    .{ .name = "running", .value = 34 },
+    .{ .name = "walking", .value = 49 },
+    .{ .name = "hiking", .value = 22 },
+    .{ .name = "cycling", .value = 13 },
+};
+
+fn workoutActivityFor(name: []const u8) ?c_ulong {
+    for (workout_activities) |entry| {
+        if (std.mem.eql(u8, entry.name, name)) return entry.value;
+    }
+    return null;
+}
+
+/// `CLLocationCoordinate2D` — two doubles, passed by value.
+const CLLocationCoordinate2D = extern struct {
+    latitude: f64,
+    longitude: f64,
+};
+
+/// Swift's defaults for the two optional per-location fields.
+const default_altitude: f64 = 0;
+const default_horizontal_accuracy: f64 = 10;
+/// Swift passes -1, which is CoreLocation's "unknown".
+const unknown_vertical_accuracy: f64 = -1;
+
+const WorkoutRequest = struct {
+    activity_id: []const u8,
+    activity: c_ulong,
+    /// Seconds since 1970.
+    start: f64,
+    end: f64,
+    distance_meters: ?f64,
+    energy_calories: ?f64,
+};
+
+/// Swift's four-clause guard, plus `endValue > startValue`.
+///
+/// Every clause rejects with one message there, so the codes here are the
+/// distinction the page could not previously make: a missing field is
+/// `MissingData`, a mistyped or out-of-order one is `InvalidParameter`.
+fn readWorkoutRequest(payload: std.json.Value) !WorkoutRequest {
+    const object = switch (payload) {
+        .object => |o| o,
+        else => return BridgeError.InvalidJSON,
+    };
+
+    const activity_id = try requiredString(object, "activityId");
+    const type_name = try requiredString(object, "type");
+    const activity = workoutActivityFor(type_name) orelse {
+        std.log.warn("saveHealthWorkout refused: unsupported workout type '{s}'", .{type_name});
+        return BridgeError.InvalidParameter;
+    };
+
+    const start = (try optionalMilliseconds(object, "startDate")) orelse return BridgeError.MissingData;
+    const end = (try optionalMilliseconds(object, "endDate")) orelse return BridgeError.MissingData;
+    if (!(end > start)) {
+        std.log.warn("saveHealthWorkout refused: endDate is not after startDate", .{});
+        return BridgeError.InvalidParameter;
+    }
+
+    return .{
+        .activity_id = activity_id,
+        .activity = activity,
+        .start = start,
+        .end = end,
+        // Swift's `.flatMap { $0 > 0 ? … : nil }`: a non-positive value is
+        // dropped rather than saved as zero, because a workout with an
+        // explicit zero distance reads as "measured none" where nil reads as
+        // "did not measure".
+        .distance_meters = try positiveNumber(object, "distanceMeters"),
+        .energy_calories = try positiveNumber(object, "activeEnergyCalories"),
+    };
+}
+
+fn requiredString(object: std.json.ObjectMap, key: []const u8) ![]const u8 {
+    const value = object.get(key) orelse return BridgeError.MissingData;
+    const text = switch (value) {
+        .string => |t| t,
+        else => return BridgeError.InvalidParameter,
+    };
+    if (text.len == 0) return BridgeError.InvalidParameter;
+    return text;
+}
+
+fn positiveNumber(object: std.json.ObjectMap, key: []const u8) !?f64 {
+    const value = object.get(key) orelse return null;
+    const number: f64 = switch (value) {
+        .float => |f| f,
+        .integer => |i| @floatFromInt(i),
+        .null => return null,
+        else => return BridgeError.InvalidParameter,
+    };
+    return if (number > 0) number else null;
+}
+
+/// `+[HKWorkout workoutWithActivityType:startDate:endDate:workoutEvents:totalEnergyBurned:totalDistance:metadata:]`,
+/// retained.
+fn buildWorkout(allocator: std.mem.Allocator, request: WorkoutRequest) !Id {
+    const HKWorkout = objc.objc_getClass("HKWorkout") orelse return BridgeError.PlatformNotSupported;
+    const sel = objc.sel_registerName(
+        "workoutWithActivityType:startDate:endDate:workoutEvents:totalEnergyBurned:totalDistance:metadata:",
+    ) orelse return BridgeError.NativeCallFailed;
+
+    const start_date = try dateFromInterval(request.start);
+    const end_date = try dateFromInterval(request.end);
+
+    const energy = if (request.energy_calories) |c|
+        try quantityWith("kcal", c)
+    else
+        null;
+    const distance = if (request.distance_meters) |m|
+        try quantityWith("m", m)
+    else
+        null;
+
+    const metadata = try workoutMetadata(allocator, request.activity_id);
+
+    const WorkoutFn = *const fn (objc.Class, objc.SEL, c_ulong, Id, Id, Id, Id, Id, Id) callconv(.c) Id;
+    const workoutWith: WorkoutFn = @ptrCast(&objc.objc_msgSend);
+    const workout = workoutWith(
+        HKWorkout,
+        sel,
+        request.activity,
+        start_date,
+        end_date,
+        null,
+        energy,
+        distance,
+        metadata,
+    ) orelse return BridgeError.NativeCallFailed;
+
+    // Autoreleased by the class method; retained because it has to survive
+    // two more asynchronous stages.
+    return retainObject(workout);
+}
+
+fn quantityWith(unit: [*:0]const u8, value: f64) !Id {
+    const HKQuantity = objc.objc_getClass("HKQuantity") orelse return BridgeError.PlatformNotSupported;
+    const sel = objc.sel_registerName("quantityWithUnit:doubleValue:") orelse
+        return BridgeError.NativeCallFailed;
+    const resolved_unit = try unitFromString(unit);
+    const QuantityFn = *const fn (objc.Class, objc.SEL, Id, f64) callconv(.c) Id;
+    const quantityWithFn: QuantityFn = @ptrCast(&objc.objc_msgSend);
+    return quantityWithFn(HKQuantity, sel, resolved_unit, value) orelse BridgeError.NativeCallFailed;
+}
+
+/// `@{HKMetadataKeyExternalUUID: activityId, HKMetadataKeyIndoorWorkout: @NO}`.
+fn workoutMetadata(allocator: std.mem.Allocator, activity_id: []const u8) !Id {
+    const NSMutableDictionary = objc.objc_getClass("NSMutableDictionary") orelse
+        return BridgeError.NativeCallFailed;
+    const metadata = objc.allocInit(NSMutableDictionary) catch return BridgeError.NativeCallFailed;
+
+    const sel_set = objc.sel_registerName("setObject:forKey:") orelse
+        return BridgeError.NativeCallFailed;
+
+    const external_key = try healthConstant("HKMetadataKeyExternalUUID");
+    const ns_activity = objc.createNSString(activity_id, allocator) catch
+        return BridgeError.AllocationFailed;
+    objc.msgSendVoid2(metadata, sel_set, ns_activity, external_key);
+
+    const indoor_key = try healthConstant("HKMetadataKeyIndoorWorkout");
+    const NSNumber = objc.objc_getClass("NSNumber") orelse return BridgeError.NativeCallFailed;
+    const sel_bool = objc.sel_registerName("numberWithBool:") orelse
+        return BridgeError.NativeCallFailed;
+    const BoolFn = *const fn (objc.Class, objc.SEL, bool) callconv(.c) Id;
+    const numberWith: BoolFn = @ptrCast(&objc.objc_msgSend);
+    const no = numberWith(NSNumber, sel_bool, false) orelse return BridgeError.NativeCallFailed;
+    objc.msgSendVoid2(metadata, sel_set, no, indoor_key);
+
+    return metadata;
+}
+
+/// The `locations` array as an `NSArray<CLLocation *>`, or null when there is
+/// nothing usable in it.
+///
+/// Null and empty are the same thing to the caller — both take Swift's early
+/// `guard !locations.isEmpty` exit — so a page that sends ten malformed
+/// locations gets its workout saved with no route rather than an error. That
+/// is Swift's `compactMap`, which drops what it cannot read.
+fn buildLocations(
+    allocator: std.mem.Allocator,
+    payload: std.json.Value,
+    request: WorkoutRequest,
+) !Id {
+    const object = switch (payload) {
+        .object => |o| o,
+        else => return null,
+    };
+    const field = object.get("locations") orelse return null;
+    const items = switch (field) {
+        .array => |a| a,
+        else => return null,
+    };
+
+    const CLLocation = objc.objc_getClass("CLLocation") orelse return null;
+    const sel_alloc = objc.sel_registerName("alloc") orelse return null;
+    const sel_init = objc.sel_registerName(
+        "initWithCoordinate:altitude:horizontalAccuracy:verticalAccuracy:timestamp:",
+    ) orelse return null;
+    const InitFn = *const fn (Id, objc.SEL, CLLocationCoordinate2D, f64, f64, f64, Id) callconv(.c) Id;
+    const initFn: InitFn = @ptrCast(&objc.objc_msgSend);
+
+    var built: std.ArrayListUnmanaged(Id) = .empty;
+    defer built.deinit(allocator);
+
+    for (items.items) |item| {
+        const fields = switch (item) {
+            .object => |o| o,
+            else => continue,
+        };
+        const latitude = numberField(fields, "latitude") orelse continue;
+        const longitude = numberField(fields, "longitude") orelse continue;
+        const timestamp_ms = numberField(fields, "timestamp") orelse continue;
+        const seconds = timestamp_ms / 1000.0;
+
+        // Swift filters the built list to the workout's window; doing it
+        // before construction is the same set without the allocations.
+        if (seconds < request.start or seconds > request.end) continue;
+
+        const allocated = objc.msgSendId(CLLocation, sel_alloc) orelse continue;
+        const location = initFn(
+            allocated,
+            sel_init,
+            .{ .latitude = latitude, .longitude = longitude },
+            numberField(fields, "altitude") orelse default_altitude,
+            numberField(fields, "accuracy") orelse default_horizontal_accuracy,
+            unknown_vertical_accuracy,
+            try dateFromInterval(seconds),
+        ) orelse continue;
+
+        try built.append(allocator, location);
+    }
+
+    if (built.items.len == 0) return null;
+
+    const NSArray = objc.objc_getClass("NSArray") orelse return null;
+    const sel_array = objc.sel_registerName("arrayWithObjects:count:") orelse return null;
+    const ArrayFn = *const fn (objc.Class, objc.SEL, [*]const Id, c_ulong) callconv(.c) Id;
+    const arrayWith: ArrayFn = @ptrCast(&objc.objc_msgSend);
+    const array = arrayWith(NSArray, sel_array, built.items.ptr, built.items.len) orelse return null;
+    return retainObject(array);
+}
+
+fn numberField(object: std.json.ObjectMap, key: []const u8) ?f64 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .float => |f| f,
+        .integer => |i| @floatFromInt(i),
+        else => null,
+    };
+}
+
+fn uuidStringOf(object: Id) ?[]const u8 {
+    const sel_uuid = objc.sel_registerName("UUID") orelse return null;
+    const uuid = objc.msgSendId(object, sel_uuid) orelse return null;
+    const sel_string = objc.sel_registerName("UUIDString") orelse return null;
+    const ns = objc.msgSendId(uuid, sel_string) orelse return null;
+    const utf8 = objc.getNSStringUTF8(ns) orelse return null;
+    return std.mem.span(utf8);
+}
+
+fn retainObject(object: Id) Id {
+    const target = object orelse return null;
+    const sel = objc.sel_registerName("retain") orelse return object;
+    return objc.msgSendId(target, sel);
+}
+
+fn releaseObject(object: Id) void {
+    const target = object orelse return;
+    const sel = objc.sel_registerName("release") orelse return;
+    objc.msgSend(target, sel);
+}
+
 // ---------------------------------------------------------------------------
 // The two completions
 // ---------------------------------------------------------------------------
@@ -516,9 +868,38 @@ fn optionalMilliseconds(object: std.json.ObjectMap, key: []const u8) !?f64 {
 /// What a slot's block needs that the block itself cannot carry.
 const PendingCall = struct {
     ticket: ios_async.Ticket,
-    /// The `HKUnit` the statistics reply reports in, or null for the
-    /// authorization call which reports none.
-    unit: Id,
+    /// The `HKUnit` the statistics reply reports in, or null for the calls
+    /// that report none.
+    unit: Id = null,
+    /// Everything the three-stage workout chain carries between its blocks.
+    workout: ?WorkoutChain = null,
+};
+
+/// What survives from `saveHealthWorkout`'s dispatch into its later stages.
+///
+/// None of the three blocks can carry any of it: they are global, so they
+/// capture nothing, and the two later ones do not even receive the workout
+/// they are attaching a route to.
+const WorkoutChain = struct {
+    /// Retained; released when the chain ends, however it ends.
+    workout: Id,
+    /// Retained `NSArray<CLLocation *>`, or null when there is no route.
+    locations: Id,
+    /// The `HKHealthStore` the route builder is created against.
+    store: Id,
+    /// Owned, `c_allocator`. The route's `HKMetadataKeyExternalUUID`.
+    activity_id: []u8,
+    /// Retained once stage two begins.
+    builder: Id = null,
+
+    /// Free everything this chain owns. Idempotent by construction: the entry
+    /// is cleared from the slot before this runs.
+    fn deinit(self: WorkoutChain) void {
+        releaseObject(self.workout);
+        releaseObject(self.locations);
+        releaseObject(self.builder);
+        std.heap.c_allocator.free(self.activity_id);
+    }
 };
 
 var pending_calls: [ios_async.max_in_flight]?PendingCall = @splat(null);
@@ -528,6 +909,24 @@ fn publishCall(ticket: ios_async.Ticket, unit: Id) void {
     pending_mutex.lock();
     defer pending_mutex.unlock();
     pending_calls[ticket.index] = .{ .ticket = ticket, .unit = unit };
+}
+
+fn publishWorkoutCall(ticket: ios_async.Ticket, chain: WorkoutChain) void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    pending_calls[ticket.index] = .{ .ticket = ticket, .workout = chain };
+}
+
+/// Put a chain back for its next stage, keeping the same slot and ticket.
+///
+/// The entry is taken at the top of every stage so a duplicate fire finds
+/// nothing; a stage that intends to continue has to put it back explicitly,
+/// which is what makes "this stage is done with the chain" and "the chain
+/// continues" different statements rather than the same silence.
+fn republishWorkoutCall(call: PendingCall, chain: WorkoutChain) void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    pending_calls[call.ticket.index] = .{ .ticket = call.ticket, .workout = chain };
 }
 
 /// Read and clear, so a second fire is a no-op rather than a second reply.
@@ -597,6 +996,193 @@ var auth_blocks: [ios_async.max_in_flight]HealthBlock =
     if (is_darwin) makeBlocks(makeAuthInvoke) else undefined;
 var stats_blocks: [ios_async.max_in_flight]HealthBlock =
     if (is_darwin) makeBlocks(makeStatsInvoke) else undefined;
+
+fn makeSaveInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const HealthBlock, success: bool, err: Id) callconv(.c) void {
+            workoutSaved(index, success, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeInsertInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const HealthBlock, success: bool, err: Id) callconv(.c) void {
+            routeInserted(index, success, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeFinishInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const HealthBlock, route: Id, err: Id) callconv(.c) void {
+            routeFinished(index, route, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+var save_blocks: [ios_async.max_in_flight]HealthBlock =
+    if (is_darwin) makeBlocks(makeSaveInvoke) else undefined;
+var insert_blocks: [ios_async.max_in_flight]HealthBlock =
+    if (is_darwin) makeBlocks(makeInsertInvoke) else undefined;
+var finish_blocks: [ios_async.max_in_flight]HealthBlock =
+    if (is_darwin) makeBlocks(makeFinishInvoke) else undefined;
+
+/// Stage one: the workout is in the store.
+fn workoutSaved(index: u5, success: bool, err: Id) void {
+    if (!is_darwin) return;
+
+    const call = takeCall(index) orelse {
+        std.log.warn("saveHealthWorkout: stage one fired for slot {d} with no call; ignored", .{index});
+        return;
+    };
+    const chain = call.workout orelse {
+        std.log.warn("saveHealthWorkout: stage one fired for a slot holding no workout chain", .{});
+        return;
+    };
+
+    if (!success) {
+        logNSError(A.save_health_workout, err);
+        chain.deinit();
+        ios_async.deliverErrorCode(call.ticket, BridgeError.PermissionDenied);
+        return;
+    }
+
+    // Swift's early exit. The workout is saved either way; a route is
+    // optional, so having none is not a failure.
+    if (chain.locations == null) {
+        replyWithWorkout(call.ticket, chain, null);
+        chain.deinit();
+        return;
+    }
+
+    var next = chain;
+    next.builder = routeBuilder(chain.store) catch |build_err| {
+        std.log.warn("saveHealthWorkout: could not build a route builder: {}", .{build_err});
+        // The workout is already saved, so answering with its id is truer
+        // than reporting a failure — Swift rejects here, and would tell a page
+        // nothing was written when something was.
+        replyWithWorkout(call.ticket, chain, null);
+        chain.deinit();
+        return;
+    };
+    republishWorkoutCall(call, next);
+
+    const sel = objc.sel_registerName("insertRouteData:completion:") orelse return;
+    const InsertFn = *const fn (Id, objc.SEL, Id, *anyopaque) callconv(.c) void;
+    const insert: InsertFn = @ptrCast(&objc.objc_msgSend);
+    insert(next.builder, sel, next.locations, @ptrCast(&insert_blocks[index]));
+}
+
+/// Stage two: the fixes are in the builder.
+fn routeInserted(index: u5, success: bool, err: Id) void {
+    if (!is_darwin) return;
+
+    const call = takeCall(index) orelse return;
+    const chain = call.workout orelse return;
+
+    if (!success) {
+        logNSError(A.save_health_workout, err);
+        // Swift rejects. The workout is saved regardless, so the id is
+        // reported rather than lost — losing it would leave a page unable to
+        // reference a workout that exists.
+        replyWithWorkout(call.ticket, chain, null);
+        chain.deinit();
+        return;
+    }
+
+    republishWorkoutCall(call, chain);
+
+    const metadata = routeMetadata(chain.activity_id) catch null;
+    const sel = objc.sel_registerName("finishRouteWithWorkout:metadata:completion:") orelse return;
+    const FinishFn = *const fn (Id, objc.SEL, Id, Id, *anyopaque) callconv(.c) void;
+    const finish: FinishFn = @ptrCast(&objc.objc_msgSend);
+    finish(chain.builder, sel, chain.workout, metadata, @ptrCast(&finish_blocks[index]));
+}
+
+/// Stage three: the route is attached.
+fn routeFinished(index: u5, route: Id, err: Id) void {
+    if (!is_darwin) return;
+
+    const call = takeCall(index) orelse return;
+    const chain = call.workout orelse return;
+    defer chain.deinit();
+
+    if (err != null) {
+        logNSError(A.save_health_workout, err);
+        replyWithWorkout(call.ticket, chain, null);
+        return;
+    }
+    replyWithWorkout(call.ticket, chain, route);
+}
+
+/// `{"id":…}` or `{"id":…,"routeId":…}`.
+///
+/// Swift emits the second shape only when a route was finished, and its
+/// `routeId` is `route?.uuid.uuidString ?? ""` — so a finished-but-nil route
+/// carries an empty string rather than a missing key.
+fn replyWithWorkout(ticket: ios_async.Ticket, chain: WorkoutChain, route: Id) void {
+    const allocator = std.heap.c_allocator;
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+
+    out.appendSlice(allocator, "{\"id\":") catch return ios_async.deliverError(ticket);
+    appendQuoted(allocator, &out, uuidStringOf(chain.workout) orelse "") catch
+        return ios_async.deliverError(ticket);
+
+    if (route != null or chain.locations != null) {
+        out.appendSlice(allocator, ",\"routeId\":") catch return ios_async.deliverError(ticket);
+        appendQuoted(allocator, &out, uuidStringOf(route) orelse "") catch
+            return ios_async.deliverError(ticket);
+    }
+    out.append(allocator, '}') catch return ios_async.deliverError(ticket);
+
+    ios_async.deliverJson(ticket, out.items);
+}
+
+fn appendQuoted(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    text: []const u8,
+) !void {
+    try out.append(allocator, '"');
+    try bridge_error.appendJsonEscaped(allocator, out, text);
+    try out.append(allocator, '"');
+}
+
+/// `[[HKWorkoutRouteBuilder alloc] initWithHealthStore:device:]`, retained.
+fn routeBuilder(store: Id) !Id {
+    const HKWorkoutRouteBuilder = objc.objc_getClass("HKWorkoutRouteBuilder") orelse
+        return error.ClassNotFound;
+    const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
+    const sel_init = objc.sel_registerName("initWithHealthStore:device:") orelse
+        return error.SelectorNotFound;
+    const allocated = objc.msgSendId(HKWorkoutRouteBuilder, sel_alloc) orelse
+        return error.NativeCallFailed;
+
+    // `HKDevice.localDevice` is Swift's `.local()`.
+    const HKDevice = objc.objc_getClass("HKDevice");
+    const device = if (HKDevice) |cls| blk: {
+        const sel_local = objc.sel_registerName("localDevice") orelse break :blk null;
+        break :blk objc.msgSendId(cls, sel_local);
+    } else null;
+
+    return objc.msgSendId2(allocated, sel_init, store, device) orelse error.NativeCallFailed;
+}
+
+fn routeMetadata(activity_id: []const u8) !Id {
+    const NSDictionary = objc.objc_getClass("NSDictionary") orelse return error.ClassNotFound;
+    const sel = objc.sel_registerName("dictionaryWithObject:forKey:") orelse
+        return error.SelectorNotFound;
+    const key = try healthConstant("HKMetadataKeyExternalUUID");
+    const value = objc.createNSString(activity_id, std.heap.c_allocator) catch
+        return error.AllocationFailed;
+    return objc.msgSendId2(NSDictionary, sel, value, key) orelse error.NativeCallFailed;
+}
 
 fn authorizationAnswered(index: u5, success: bool, err: Id) void {
     if (!is_darwin) return;
@@ -710,22 +1296,107 @@ test "the action names match the Swift case labels exactly" {
     try testing.expectEqualStrings("getHealthData", A.get_health_data);
 }
 
-test "saveHealthWorkout stays with the shim, and is neither declared nor routed" {
-    // The split is safe only because nothing flows between the three actions —
-    // the HKHealthStore is a stateless handle and authorization lives in the
-    // system database. `UnknownAction` is the one return `ios_dispatch.route`
-    // turns into a hand-off; anything else would steal the action from the arm
-    // that answers it today.
+test "nothing in this family is unserved any more" {
+    // This test used to assert the opposite. The split was always about cost
+    // rather than correctness — the three share only a stateless
+    // HKHealthStore, so no divided state was ever at risk — and the cost was
+    // the third asynchronous stage, which now exists.
+    try testing.expectEqual(@as(usize, 0), deliberately_unserved.len);
+
     var bridge = HealthBridge.init(testing.allocator);
     defer bridge.deinit();
+    bridge.handleMessage(A.save_health_workout, "{}") catch |err| {
+        try testing.expect(err != BridgeError.UnknownAction);
+    };
+}
 
-    try testing.expectEqual(@as(usize, 1), deliberately_unserved.len);
-    for (deliberately_unserved) |name| {
-        try testing.expectError(BridgeError.UnknownAction, bridge.handleMessage(name, "{}"));
-        for (capability_actions) |decl| {
-            try testing.expect(!std.mem.eql(u8, decl.name, name));
-        }
+test "the workout activity values are the SDK's, not instinct" {
+    // Every one of these reads wrong on instinct — running looks like it
+    // should sit beside walking, and it does not. The enum in HKWorkout.h
+    // numbers most members implicitly, so the values are only obtainable by
+    // counting from the last explicit one. A wrong number saves a real
+    // workout under the wrong activity, which HealthKit accepts silently.
+    try testing.expectEqual(@as(c_ulong, 34), workoutActivityFor("running").?);
+    try testing.expectEqual(@as(c_ulong, 49), workoutActivityFor("walking").?);
+    try testing.expectEqual(@as(c_ulong, 22), workoutActivityFor("hiking").?);
+    try testing.expectEqual(@as(c_ulong, 13), workoutActivityFor("cycling").?);
+    try testing.expect(workoutActivityFor("swimming") == null);
+    try testing.expectEqual(@as(usize, 4), workout_activities.len);
+}
+
+test "the workout guard refuses each way it can be refused" {
+    // Swift's four-clause guard rejects all of them with one message. These
+    // codes are the distinction a page could not previously make.
+    try expectWorkoutRefused("{}", BridgeError.MissingData);
+    try expectWorkoutRefused("{\"activityId\":\"a\"}", BridgeError.MissingData);
+    try expectWorkoutRefused(
+        "{\"activityId\":\"a\",\"type\":\"swimming\",\"startDate\":1,\"endDate\":2}",
+        BridgeError.InvalidParameter,
+    );
+    try expectWorkoutRefused(
+        "{\"activityId\":\"a\",\"type\":\"running\",\"startDate\":2000,\"endDate\":1000}",
+        BridgeError.InvalidParameter,
+    );
+    // Equal dates are refused too: Swift's guard is `endValue > startValue`.
+    try expectWorkoutRefused(
+        "{\"activityId\":\"a\",\"type\":\"running\",\"startDate\":1000,\"endDate\":1000}",
+        BridgeError.InvalidParameter,
+    );
+}
+
+fn expectWorkoutRefused(comptime json: []const u8, expected: anyerror) !void {
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+    defer parsed.deinit();
+    try testing.expectError(expected, readWorkoutRequest(parsed.value));
+}
+
+test "a non-positive distance or energy is dropped, not saved as zero" {
+    // Swift's `.flatMap { $0 > 0 ? … : nil }`. A workout carrying an explicit
+    // zero distance reads as "measured none"; nil reads as "did not measure".
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        "{\"activityId\":\"a\",\"type\":\"running\",\"startDate\":1000,\"endDate\":2000," ++
+            "\"distanceMeters\":0,\"activeEnergyCalories\":12.5}",
+        .{},
+    );
+    defer parsed.deinit();
+
+    const request = try readWorkoutRequest(parsed.value);
+    try testing.expect(request.distance_meters == null);
+    try testing.expectEqual(@as(f64, 12.5), request.energy_calories.?);
+    // Milliseconds in, seconds out.
+    try testing.expectEqual(@as(f64, 1), request.start);
+    try testing.expectEqual(@as(f64, 2), request.end);
+}
+
+test "the three workout stages have distinct invokes per slot" {
+    // Stage two and stage three take different argument types — (BOOL,
+    // NSError*) and (HKWorkoutRoute*, NSError*) — so a shared invoke would
+    // read the route out of a boolean register.
+    if (!is_darwin) return error.SkipZigTest;
+
+    for (&save_blocks, &insert_blocks, &finish_blocks) |*save, *insert, *finish| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, save.isa);
+        try testing.expect(save.invoke != insert.invoke);
+        try testing.expect(insert.invoke != finish.invoke);
+        try testing.expect(save.invoke != finish.invoke);
     }
+    try testing.expect(save_blocks[0].invoke != save_blocks[1].invoke);
+}
+
+test "a workout stage firing for a slot with no chain is ignored" {
+    // Each stage takes the entry and a continuing stage puts it back, so a
+    // duplicate fire finds nothing rather than releasing the workout twice.
+    if (!is_darwin) return error.SkipZigTest;
+
+    pending_mutex.lock();
+    for (&pending_calls) |*entry| entry.* = null;
+    pending_mutex.unlock();
+
+    workoutSaved(0, true, null);
+    routeInserted(0, true, null);
+    routeFinished(0, null, null);
 }
 
 test "the four data types are the ones the Swift switch recognises" {
