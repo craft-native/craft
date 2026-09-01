@@ -63,7 +63,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
-    -framework Vision -framework LocalAuthentication \
+    -framework Vision -framework LocalAuthentication -framework PDFKit \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -101,6 +101,7 @@ for _ in $(seq 1 60); do
     if grep -q 'i=26' "$LOG" 2>/dev/null && grep -q 'i=28' "$LOG" 2>/dev/null \
        && grep -q 'i=32' "$LOG" 2>/dev/null && grep -q 'i=22' "$LOG" 2>/dev/null \
        && grep -q 'i=34' "$LOG" 2>/dev/null && grep -q 'i=38' "$LOG" 2>/dev/null \
+       && grep -q 'i=46' "$LOG" 2>/dev/null && grep -q 'i=44' "$LOG" 2>/dev/null \
        && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
@@ -282,5 +283,19 @@ C38="$(count 38)"
 # and the parked payload was delivered under the right request id.
 [ "$C38" -ge 1 ] || { echo "FAIL: the deletion completion never fired, or its reply was lost"; exit 1; }
 echo "ok: argument-free completion block delivered its parked reply (i=38 seen ${C38}x)"
+
+C46="$(count 46)"
+# pageCount is PDFKit's answer for the bytes the page sent, so it cannot be
+# produced without actually loading the document — and openPDF only replies
+# after presenting, so a viewer is on screen at this point.
+[ "$C46" -ge 1 ] || { echo "FAIL: openPDF did not load and present the document"; exit 1; }
+echo "ok: PDF parsed and presented full screen (i=46 seen ${C46}x)"
+
+C44="$(count 44)"
+# The half that cannot be split from the other: closePDF dismisses the
+# controller openPDF stored, so this passing is what proves both halves live
+# in the same language.
+[ "$C44" -ge 1 ] || { echo "FAIL: closePDF did not dismiss the viewer"; exit 1; }
+echo "ok: the same module that presented the viewer dismissed it (i=44 seen ${C44}x)"
 
 echo "PASS"
