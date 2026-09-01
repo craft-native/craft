@@ -49,6 +49,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_contactpicker.zig"),
     @embedFile("src/bridge_mobile_calendar.zig"),
     @embedFile("src/bridge_mobile_contacts.zig"),
+    @embedFile("src/bridge_mobile_vision.zig"),
     @embedFile("src/bridge_mobile_speech.zig"),
 };
 
@@ -93,7 +94,7 @@ const dispatch_end = "func webView(";
 /// 48 after calendar and contacts. Speech was researched in full and left
 /// with the shim: neither action replies, so unlike the earlier deferrals
 /// there is no promise to strand and falling through costs the page nothing.
-const max_not_yet_migrated: usize = 46;
+const max_not_yet_migrated: usize = 43;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
