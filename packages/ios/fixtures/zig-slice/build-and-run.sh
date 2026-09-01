@@ -64,7 +64,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
-    -framework WatchConnectivity -framework CoreBluetooth \
+    -framework WatchConnectivity -framework CoreBluetooth -framework AVFoundation \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -91,6 +91,13 @@ xcrun simctl bootstatus "$UDID" -b
 echo "==> installing and launching"
 xcrun simctl uninstall "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 xcrun simctl install "$UDID" "$APP"
+
+# Pre-grant the microphone. Unlike notifications — which simctl has no service
+# for — audio recording *can* be authorised without a human, which is the whole
+# reason this pair is verifiable end to end and scheduleNotification is not.
+# Granted before launch, because simctl terminates a running app on a
+# permission change.
+xcrun simctl privacy "$UDID" grant microphone "$BUNDLE_ID" 2>/dev/null || true
 
 LOG="$OUT/console.log"
 xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" > "$LOG" 2>&1 &
@@ -331,5 +338,16 @@ echo "ok: scan refused by the radio's own state, via a deferred ticket (i=56 see
 C58="$(count 58)"
 [ "$C58" -ge 1 ] || { echo "FAIL: stopBluetoothScan did not resolve"; exit 1; }
 echo "ok: stopping with nothing running still answers true (i=58 seen ${C58}x)"
+
+C62="$(count 62)"
+[ "$C62" -ge 1 ] || { echo "FAIL: startAudioRecording never started the recorder"; exit 1; }
+echo "ok: microphone granted and AVAudioRecorder running (i=62 seen ${C62}x)"
+
+C64="$(count 64)"
+# The reply base64-decodes to a file whose bytes 4..8 are 'ftyp' — the ISO base
+# media signature every M4A carries. AVAudioRecorder wrote those bytes from a
+# live capture; nothing short of the whole path produces them.
+[ "$C64" -ge 1 ] || { echo "FAIL: stopAudioRecording did not return a real M4A"; exit 1; }
+echo "ok: recording came back as a decodable M4A data URL (i=64 seen ${C64}x)"
 
 echo "PASS"
