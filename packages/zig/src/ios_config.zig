@@ -429,6 +429,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "saveFile", .file_download },
         .{ "scheduleBackgroundTask", .background_tasks },
         .{ "secureClear", .secure_storage },
+        .{ "startBluetoothScan", .bluetooth },
         .{ "secureGet", .secure_storage },
         .{ "secureRemove", .secure_storage },
         .{ "secureSet", .secure_storage },

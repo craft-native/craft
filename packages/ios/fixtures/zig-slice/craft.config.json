@@ -27,7 +27,7 @@
   "enableVideoRecording": false,
   "enableMotionSensors": true,
   "enableLocalDatabase": true,
-  "enableBluetooth": false,
+  "enableBluetooth": true,
   "enableNFC": false,
   "enableHealthKit": false,
   "enableLiveActivities": false,
