@@ -21,7 +21,7 @@
   "enableDeepLinks": true,
   "enableQRScanner": false,
   "enableFilePicker": false,
-  "enableFileDownload": false,
+  "enableFileDownload": true,
   "enableSocialAuth": false,
   "enableAudioRecording": false,
   "enableVideoRecording": false,

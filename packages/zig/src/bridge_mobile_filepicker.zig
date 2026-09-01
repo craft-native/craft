@@ -266,18 +266,16 @@ const Id = ?*anyopaque;
 pub const A = struct {
     pub const pick_file = "pickFile";
     pub const save_file = "saveFile";
+    pub const download_file = "downloadFile";
 };
 
-/// The third action of this family, and on purpose not served.
+/// Nothing in this family is unserved any more.
 ///
-/// `downloadFile` is out of scope for this round. Recorded as data rather than
-/// prose so a test can hold the two properties the decision rests on: it is not
-/// declared, and it still falls out of `handleMessage` as `UnknownAction` —
-/// the one return `ios_dispatch.route` converts into a Swift-shim hand-off.
-/// Whoever migrates it moves the name into `A` and updates the module comment.
-pub const deliberately_unserved = [_][]const u8{
-    "downloadFile",
-};
+/// `downloadFile` was the last entry, recorded as data so a test could hold
+/// that it was neither declared nor routed. It is declared now, and the empty
+/// list is kept rather than deleted so the test that walks it keeps compiling
+/// and the next deferral has somewhere to go.
+pub const deliberately_unserved = [_][]const u8{};
 
 /// Both `.result`: each Swift path terminates in exactly one `resolveCallback`
 /// or one `rejectCallback`, and the page awaits both. `.none` on either would
@@ -290,15 +288,17 @@ pub const deliberately_unserved = [_][]const u8{
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.pick_file, .reply = .result },
     .{ .name = A.save_file, .reply = .result },
+    .{ .name = A.download_file, .reply = .result },
 };
 
 /// Which handler an action selects, split out of `handleMessage` so the
 /// table-versus-dispatch agreement is assertable on a host without UIKit.
-const Route = enum { pick_file, save_file };
+const Route = enum { pick_file, save_file, download_file };
 
 fn routeFor(action: []const u8) ?Route {
     if (std.mem.eql(u8, action, A.pick_file)) return .pick_file;
     if (std.mem.eql(u8, action, A.save_file)) return .save_file;
+    if (std.mem.eql(u8, action, A.download_file)) return .download_file;
     return null;
 }
 
@@ -319,6 +319,7 @@ pub const FilePickerBridge = struct {
         return switch (route) {
             .pick_file => self.pickFile(data),
             .save_file => self.saveFile(data),
+            .download_file => self.downloadFile(data),
         };
     }
 
@@ -484,6 +485,79 @@ pub const FilePickerBridge = struct {
         defer self.allocator.free(json);
 
         bridge_error.sendResultToJS(self.allocator, A.save_file, json);
+    }
+
+    /// Fetch a URL and land it in Documents under `filename`.
+    ///
+    /// The third action of this family, and the last one it was missing. The
+    /// module recorded it as "out of scope for this round"; nothing structural
+    /// stood in the way, only a completion shape — `void (^)(NSURL *,
+    /// NSURLResponse *, NSError *)` — that no pooled block covers.
+    ///
+    /// Two divergences from Swift, both deliberate:
+    ///
+    ///  - **The filename is validated.** `saveFile` already refuses a name
+    ///    carrying `/` or a NUL, because `appendingPathComponent` on
+    ///    `"../Library/Preferences/x.plist"` escapes the container. Swift's
+    ///    `downloadFile` runs the same `appendingPathComponent` with no such
+    ///    check, so the same escape is available through the download path
+    ///    today. Guarding one entrance and not the other is not a guard.
+    ///  - **The error text is a code.** Swift rejects with
+    ///    `error.localizedDescription`; the protocol carries no message field,
+    ///    so the description goes to the log and the page gets
+    ///    `NATIVE_CALL_FAILED`.
+    fn downloadFile(self: *Self, data: []const u8) !void {
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, data, .{}) catch
+            return BridgeError.InvalidJSON;
+        defer parsed.deinit();
+
+        const root = switch (parsed.value) {
+            .object => |obj| obj,
+            else => return BridgeError.InvalidJSON,
+        };
+
+        const url_text = try downloadField(root, "url");
+        const filename = try downloadField(root, "filename");
+        try validateFilename(filename);
+
+        const url = objc.createNSURL(url_text, self.allocator) catch return BridgeError.AllocationFailed;
+        if (url == null) {
+            // Swift's `guard let downloadURL = URL(string: url)`.
+            std.log.warn("downloadFile refused: the url did not parse", .{});
+            return BridgeError.InvalidParameter;
+        }
+
+        const NSURLSession = objc.objc_getClass("NSURLSession") orelse return error.ClassNotFound;
+        const sel_shared = try selector("sharedSession");
+        const session = objc.msgSendId(NSURLSession, sel_shared) orelse return error.NativeCallFailed;
+
+        const owned_filename = std.heap.c_allocator.dupe(u8, filename) catch
+            return BridgeError.AllocationFailed;
+        errdefer std.heap.c_allocator.free(owned_filename);
+
+        const ticket = ios_async.acquire(A.download_file) orelse {
+            std.log.warn(
+                "downloadFile: no free reply slot; {d} native calls are already awaiting one",
+                .{ios_async.max_in_flight},
+            );
+            return BridgeError.NativeCallFailed;
+        };
+        errdefer ios_async.abandon(ticket);
+
+        publishDownload(ticket, owned_filename);
+
+        const sel_task = try selector("downloadTaskWithURL:completionHandler:");
+        const TaskFn = *const fn (Id, Id, Id, *anyopaque) callconv(.c) Id;
+        const taskFn: TaskFn = @ptrCast(&objc.objc_msgSend);
+        const task = taskFn(session, sel_task, url, @ptrCast(&download_blocks[ticket.index])) orelse {
+            _ = takeDownload(ticket.index);
+            return error.NativeCallFailed;
+        };
+
+        const sel_resume = try selector("resume");
+        objc.msgSend(task, sel_resume);
     }
 };
 
@@ -1447,12 +1521,224 @@ fn readNSString(object: Id, comptime name: [*:0]const u8) ?[]const u8 {
 // that a simulator fixture can drive end to end.
 // =============================================================================
 
+/// One required string field of `downloadFile`'s payload.
+///
+/// Swift's arm is a two-clause `if let … as? String` chain with no `else`, so
+/// a missing or mistyped field settles nothing and the page waits out its
+/// timeout. Every path here ends in a value or an error.
+fn downloadField(root: std.json.ObjectMap, comptime key: []const u8) ![]const u8 {
+    const value = root.get(key) orelse {
+        std.log.warn("downloadFile refused: no " ++ key ++ " field", .{});
+        return BridgeError.MissingData;
+    };
+    return switch (value) {
+        .string => |text| if (text.len == 0) {
+            std.log.warn("downloadFile refused: " ++ key ++ " is empty", .{});
+            return BridgeError.InvalidParameter;
+        } else text,
+        else => {
+            std.log.warn("downloadFile refused: " ++ key ++ " is not a string", .{});
+            return BridgeError.InvalidParameter;
+        },
+    };
+}
+
+// ===========================================================================
+// The download completion
+//
+// `void (^)(NSURL *location, NSURLResponse *response, NSError *error)` — three
+// object arguments, which no `ios_async` pooled block covers. Global, one
+// comptime invoke per slot, in the shape `bridge_mobile_notifications.zig`
+// established.
+//
+// The move happens inside the block, on whatever queue NSURLSession chose,
+// because that is the only window in which `location` is valid: the temporary
+// file is deleted the moment the handler returns. `NSFileManager` is safe to
+// use from any thread for this, and the reply goes out through
+// `ios_async.deliverJson`, which does its own hop to the main queue.
+// ===========================================================================
+
+/// The filename a slot's completion will move its download to.
+const PendingDownload = struct {
+    ticket: ios_async.Ticket,
+    /// Owned, `c_allocator`. Freed when the completion fires.
+    filename: []u8,
+};
+
+var pending_downloads: [ios_async.max_in_flight]?PendingDownload = @splat(null);
+var download_mutex: compat_mutex.Mutex = .{};
+
+fn publishDownload(ticket: ios_async.Ticket, filename: []u8) void {
+    download_mutex.lock();
+    defer download_mutex.unlock();
+    pending_downloads[ticket.index] = .{ .ticket = ticket, .filename = filename };
+}
+
+/// Read and clear, so a second fire is a no-op rather than a second reply and
+/// a double free.
+fn takeDownload(index: u5) ?PendingDownload {
+    download_mutex.lock();
+    defer download_mutex.unlock();
+    const call = pending_downloads[index];
+    pending_downloads[index] = null;
+    return call;
+}
+
+const DownloadBlockDescriptor = extern struct {
+    reserved: c_ulong = 0,
+    size: c_ulong,
+};
+
+const DownloadBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const DownloadBlockDescriptor,
+};
+
+/// 1 << 28 — a global block is never copied.
+const DOWNLOAD_BLOCK_IS_GLOBAL: c_int = 1 << 28;
+
+const download_block_descriptor = DownloadBlockDescriptor{ .size = @sizeOf(DownloadBlock) };
+
+extern var _NSConcreteGlobalBlock: anyopaque;
+
+fn makeDownloadInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const DownloadBlock, location: Id, _: Id, err: Id) callconv(.c) void {
+            downloadFinished(index, location, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeDownloadBlocks() [ios_async.max_in_flight]DownloadBlock {
+    var out: [ios_async.max_in_flight]DownloadBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = DOWNLOAD_BLOCK_IS_GLOBAL,
+            .invoke = makeDownloadInvoke(@intCast(i)),
+            .descriptor = &download_block_descriptor,
+        };
+    }
+    return out;
+}
+
+var download_blocks: [ios_async.max_in_flight]DownloadBlock =
+    if (is_darwin) makeDownloadBlocks() else undefined;
+
+fn downloadFinished(index: u5, location: Id, err: Id) void {
+    if (!is_darwin) return;
+
+    const call = takeDownload(index) orelse {
+        std.log.warn(
+            "downloadFile completion fired for slot {d} with no call recorded; ignored",
+            .{index},
+        );
+        return;
+    };
+    const allocator = std.heap.c_allocator;
+    defer allocator.free(call.filename);
+
+    if (err != null) {
+        logNSError("downloadFile", err);
+        ios_async.deliverErrorCode(call.ticket, BridgeError.NativeCallFailed);
+        return;
+    }
+    if (location == null) {
+        // Swift's `guard let localURL else { reject("Download failed") }`.
+        std.log.warn("downloadFile: the task reported neither a file nor an error", .{});
+        ios_async.deliverErrorCode(call.ticket, BridgeError.NativeCallFailed);
+        return;
+    }
+
+    const path = moveIntoDocuments(allocator, location, call.filename) catch |move_err| {
+        std.log.warn("downloadFile: could not move the download into place: {}", .{move_err});
+        ios_async.deliverErrorCode(call.ticket, BridgeError.NativeCallFailed);
+        return;
+    };
+    defer allocator.free(path);
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+    out.append(allocator, '"') catch {
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+    bridge_error.appendJsonEscaped(allocator, &out, path) catch {
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+    out.append(allocator, '"') catch {
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+
+    // Swift resolves `destinationURL.path` — a bare JSON string, not an object.
+    ios_async.deliverJson(call.ticket, out.items);
+}
+
+/// `Documents/<filename>`, replacing anything already there, and the path.
+fn moveIntoDocuments(allocator: std.mem.Allocator, location: Id, filename: []const u8) ![]u8 {
+    const documents = try documentsPath(allocator);
+    defer allocator.free(documents);
+
+    const destination = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ documents, filename });
+    errdefer allocator.free(destination);
+
+    const NSFileManager = objc.objc_getClass("NSFileManager") orelse return error.ClassNotFound;
+    const sel_default = try selector("defaultManager");
+    const manager = objc.msgSendId(NSFileManager, sel_default) orelse return error.NativeCallFailed;
+
+    const ns_destination = try objc.createNSString(destination, allocator);
+
+    // Swift removes an existing file first, because `moveItemAtURL:` fails
+    // rather than overwriting. A failure here is ignored exactly as Swift's
+    // `if fileExists` guard ignores the race between the two calls.
+    const sel_exists = try selector("fileExistsAtPath:");
+    const ExistsFn = *const fn (Id, Id, Id) callconv(.c) bool;
+    const exists: ExistsFn = @ptrCast(&objc.objc_msgSend);
+    if (exists(manager, sel_exists, ns_destination)) {
+        const sel_remove = try selector("removeItemAtPath:error:");
+        const RemoveFn = *const fn (Id, Id, Id, ?*Id) callconv(.c) bool;
+        const remove: RemoveFn = @ptrCast(&objc.objc_msgSend);
+        _ = remove(manager, sel_remove, ns_destination, null);
+    }
+
+    const NSURL = objc.objc_getClass("NSURL") orelse return error.ClassNotFound;
+    const sel_file_url = try selector("fileURLWithPath:");
+    const destination_url = objc.msgSendId1(NSURL, sel_file_url, ns_destination) orelse
+        return error.NativeCallFailed;
+
+    const sel_move = try selector("moveItemAtURL:toURL:error:");
+    const MoveFn = *const fn (Id, Id, Id, Id, ?*Id) callconv(.c) bool;
+    const move: MoveFn = @ptrCast(&objc.objc_msgSend);
+    var move_error: Id = null;
+    if (!move(manager, sel_move, location, destination_url, &move_error)) {
+        logNSError("downloadFile", move_error);
+        return error.NativeCallFailed;
+    }
+
+    return destination;
+}
+
+fn logNSError(action: []const u8, err: Id) void {
+    const ns_error = err orelse return;
+    const sel = objc.sel_registerName("localizedDescription") orelse return;
+    const ns_description = objc.msgSendId(ns_error, sel) orelse return;
+    const utf8 = objc.getNSStringUTF8(ns_description) orelse return;
+    std.log.warn("{s}: {s}", .{ action, std.mem.span(utf8) });
+}
+
 const testing = std.testing;
 
 test "the declared actions are the ones the handler serves" {
-    try testing.expectEqual(@as(usize, 2), capability_actions.len);
+    try testing.expectEqual(@as(usize, 3), capability_actions.len);
     try testing.expectEqualStrings(A.pick_file, capability_actions[0].name);
     try testing.expectEqualStrings(A.save_file, capability_actions[1].name);
+    try testing.expectEqualStrings(A.download_file, capability_actions[2].name);
 
     for (capability_actions) |decl| {
         // A `.result` whose handler never replies parks the caller until its
@@ -1947,4 +2233,66 @@ test "a callback with nothing pending is ignored rather than replying twice" {
     settlePick(.dismissed, null);
     settlePick(.picked, "{}");
     try testing.expect(takePendingPick() == null);
+}
+
+test "downloadFile guards the container the same way saveFile does" {
+    // Swift's downloadFile runs the same `appendingPathComponent` as saveFile
+    // and does *not* validate, so "../Library/Preferences/x.plist" escapes the
+    // container through the download path today. Guarding one entrance and not
+    // the other is not a guard.
+    try testing.expectError(BridgeError.InvalidParameter, validateFilename("../escape.plist"));
+    try testing.expectError(BridgeError.InvalidParameter, validateFilename("a/b.txt"));
+    try validateFilename("fine.txt");
+}
+
+test "downloadFile requires both fields and refuses empties" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        "{\"url\":\"https://a/b\",\"filename\":\"b.txt\"}",
+        .{},
+    );
+    defer parsed.deinit();
+    const root = parsed.value.object;
+    try testing.expectEqualStrings("https://a/b", try downloadField(root, "url"));
+    try testing.expectEqualStrings("b.txt", try downloadField(root, "filename"));
+
+    const empty = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        "{\"url\":\"\",\"filename\":7}",
+        .{},
+    );
+    defer empty.deinit();
+    try testing.expectError(BridgeError.InvalidParameter, downloadField(empty.value.object, "url"));
+    try testing.expectError(BridgeError.InvalidParameter, downloadField(empty.value.object, "filename"));
+    try testing.expectError(BridgeError.MissingData, downloadField(empty.value.object, "nope"));
+}
+
+test "each download block is global and has its own invoke" {
+    if (!is_darwin) return error.SkipZigTest;
+
+    for (&download_blocks) |*b| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, b.isa);
+        try testing.expectEqual(DOWNLOAD_BLOCK_IS_GLOBAL, b.flags);
+        try testing.expectEqual(@sizeOf(DownloadBlock), @as(usize, @intCast(b.descriptor.size)));
+    }
+    try testing.expect(download_blocks[0].invoke != download_blocks[1].invoke);
+}
+
+test "a download completion for a slot with no recorded call is ignored" {
+    // Otherwise a second fire double-frees the parked filename.
+    if (!is_darwin) return error.SkipZigTest;
+
+    download_mutex.lock();
+    for (&pending_downloads) |*entry| entry.* = null;
+    download_mutex.unlock();
+
+    downloadFinished(0, null, null);
+    downloadFinished(0, null, null);
+}
+
+test "nothing in this family is unserved any more" {
+    try testing.expectEqual(@as(usize, 0), deliberately_unserved.len);
+    try testing.expect(routeFor("downloadFile") != null);
 }
