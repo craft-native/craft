@@ -1,6 +1,6 @@
 {
   "name": "@craft-native/vue",
-  "version": "0.0.85",
+  "version": "0.0.86",
   "homepage": "https://github.com/craft-native/craft/tree/main/packages/vue#readme",
   "repository": {
     "type": "git",

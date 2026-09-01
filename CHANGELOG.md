@@ -1,5 +1,31 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.85...v0.0.86)
+
+## 🚀 Features
+
+- **ios**: the PDF viewer — ratchet 40 -> 38 (#95) ([bbee0c8](https://github.com/craft-native/craft/commit/bbee0c8)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#95](https://github.com/craft-native/craft/issues/95), [#95](https://github.com/craft-native/craft/issues/95))
+- **ios**: biometric prompt and Siri shortcuts — ratchet 43 -> 40 (#94) ([50dee21](https://github.com/craft-native/craft/commit/50dee21)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#94](https://github.com/craft-native/craft/issues/94), [#94](https://github.com/craft-native/craft/issues/94))
+- **ios**: the Vision tier — ratchet 46 -> 43 (#93) ([36382eb](https://github.com/craft-native/craft/commit/36382eb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#93](https://github.com/craft-native/craft/issues/93), [#93](https://github.com/craft-native/craft/issues/93))
+
+## 🐛 Bug Fixes
+
+- **chrome**: the host's chrome outlives the buttons in fullscreen ([057eda9](https://github.com/craft-native/craft/commit/057eda9)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **chrome**: reserve the room Craft's own chrome takes, not just the buttons ([f694324](https://github.com/craft-native/craft/commit/f694324)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.86 ([90af650](https://github.com/craft-native/craft/commit/90af650)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## iOS
+
+- the capability gate, and the two actions it unblocks — ratchet 48 → 46 (#92) ([881097f](https://github.com/craft-native/craft/commit/881097f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#92](https://github.com/craft-native/craft/issues/92), [#92](https://github.com/craft-native/craft/issues/92))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.84...v0.0.85)
 
 ## 🚀 Features
