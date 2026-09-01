@@ -34,6 +34,14 @@ pub const BridgeError = error{
     Timeout,
     /// Command contains unsafe shell metacharacters
     UnsafeCommand,
+    /// The app's configuration did not enable this capability.
+    ///
+    /// Distinct from `PermissionDenied`, which is the *user* or the system
+    /// refusing at request time. This one is decided before anything is
+    /// requested, by the `enable*` flag the app was generated with, and no
+    /// prompt the user could answer would change it — so a page that retries
+    /// on `PERMISSION_DENIED` must not retry on this.
+    CapabilityDisabled,
 };
 
 /// Result type for bridge operations that return data
@@ -152,6 +160,7 @@ pub fn errorCodeString(err: BridgeError) []const u8 {
         BridgeError.PermissionDenied => "PERMISSION_DENIED",
         BridgeError.Timeout => "TIMEOUT",
         BridgeError.UnsafeCommand => "UNSAFE_COMMAND",
+        BridgeError.CapabilityDisabled => "CAPABILITY_DISABLED",
     };
 }
 
@@ -173,6 +182,7 @@ pub fn errorMessage(err: BridgeError) []const u8 {
         BridgeError.PermissionDenied => "Permission denied",
         BridgeError.Timeout => "Operation timed out",
         BridgeError.UnsafeCommand => "Command contains unsafe shell metacharacters",
+        BridgeError.CapabilityDisabled => "Capability is disabled",
     };
 }
 
