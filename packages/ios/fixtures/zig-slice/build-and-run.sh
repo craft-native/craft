@@ -64,7 +64,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
-    -framework WatchConnectivity \
+    -framework WatchConnectivity -framework CoreBluetooth \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -319,5 +319,17 @@ C54="$(count 54)"
 # block can satisfy. Posted last, because it navigates to Settings.
 [ "$C54" -ge 1 ] || { echo "FAIL: openSettings did not reply with a boolean"; exit 1; }
 echo "ok: openSettings replied a real boolean, not \"granted\"/\"denied\" (i=54 seen ${C54}x)"
+
+C56="$(count 56)"
+# The refusal comes from centralManagerDidUpdateState, not from the handler:
+# startBluetoothScan returns having done nothing but create a manager, and the
+# radio answers later. So this passing proves the ticket survived the gap
+# between the call and the callback.
+[ "$C56" -ge 1 ] || { echo "FAIL: startBluetoothScan did not refuse from the state callback"; exit 1; }
+echo "ok: scan refused by the radio's own state, via a deferred ticket (i=56 seen ${C56}x)"
+
+C58="$(count 58)"
+[ "$C58" -ge 1 ] || { echo "FAIL: stopBluetoothScan did not resolve"; exit 1; }
+echo "ok: stopping with nothing running still answers true (i=58 seen ${C58}x)"
 
 echo "PASS"

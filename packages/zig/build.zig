@@ -413,6 +413,9 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_pdf.zig", .{
         .root_source_file = b.path("src/bridge_mobile_pdf.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_bluetooth.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_bluetooth.zig"),
+    });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile.zig", .{
         .root_source_file = b.path("src/bridge_mobile.zig"),
     });

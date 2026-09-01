@@ -12,5 +12,7 @@
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
     <array><string>UIInterfaceOrientationPortrait</string></array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>The slice fixture asks for Bluetooth so startBluetoothScan reaches CBCentralManager rather than stopping at the plist guard.</string>
 </dict>
 </plist>

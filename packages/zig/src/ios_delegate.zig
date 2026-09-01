@@ -50,6 +50,13 @@ pub const enc = struct {
     /// did-finish-picking pair and `userContentController:didReceiveScriptMessage:`
     /// are both this shape.
     pub const void_two_objects: [:0]const u8 = "v@:@@";
+    /// `- (void)m:(id)a :(id)b :(id)c :(id)d` — four object arguments.
+    /// `centralManager:didDiscoverPeripheral:advertisementData:RSSI:` is this
+    /// shape, and it is the widest one any delegate here uses. `RSSI:` is an
+    /// `NSNumber *`, not a primitive, so it counts as an object like the rest —
+    /// getting that wrong would read the signal strength from the wrong
+    /// register and report a plausible number.
+    pub const void_four_objects: [:0]const u8 = "v@:@@@@";
     /// `- (BOOL)m:(id)a :(id)b` — `application:didFinishLaunchingWithOptions:`.
     ///
     /// `B` is C99 `_Bool`: on 64-bit Apple platforms `__OBJC_BOOL_IS_BOOL` is
@@ -189,5 +196,6 @@ test "the encodings name the shapes these delegates actually use" {
     // them is the only defence available, so the names are pinned.
     try testing.expectEqualStrings("v@:@", enc.void_one_object);
     try testing.expectEqualStrings("v@:@@", enc.void_two_objects);
+    try testing.expectEqualStrings("v@:@@@@", enc.void_four_objects);
     try testing.expectEqualStrings("B@:@@", enc.bool_two_objects);
 }
