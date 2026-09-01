@@ -7,7 +7,7 @@
   "enableHaptics": false,
   "enableShare": false,
   "enableCamera": true,
-  "enableBiometric": false,
+  "enableBiometric": true,
   "enablePushNotifications": false,
   "enableSecureStorage": true,
   "enableGeolocation": false,

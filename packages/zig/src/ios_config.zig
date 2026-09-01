@@ -399,6 +399,7 @@ fn bundleResourcePath() ?[*:0]const u8 {
 pub fn gateFor(action: []const u8) ?Feature {
     const table = comptime [_]struct { []const u8, Feature }{
         .{ "addContact", .contacts },
+        .{ "authenticate", .biometric },
         .{ "cancelAllBackgroundTasks", .background_tasks },
         .{ "cancelAllNotifications", .local_notifications },
         .{ "cancelBackgroundTask", .background_tasks },

@@ -33,6 +33,8 @@ const bridge_mobile_contactpicker = @import("bridge_mobile_contactpicker.zig");
 const bridge_mobile_calendar = @import("bridge_mobile_calendar.zig");
 const bridge_mobile_contacts = @import("bridge_mobile_contacts.zig");
 const bridge_mobile_vision = @import("bridge_mobile_vision.zig");
+const bridge_mobile_auth = @import("bridge_mobile_auth.zig");
+const bridge_mobile_siri = @import("bridge_mobile_siri.zig");
 // `bridge_mobile_speech.zig` is deliberately NOT in the chain. Its
 // capability_actions table is empty — the two speech actions were researched
 // in full and left with the Swift shim — so a module here would iterate,
@@ -275,6 +277,8 @@ const mobile_bridges = .{
     bridge_mobile_calendar.CalendarBridge,
     bridge_mobile_contacts.ContactsBridge,
     bridge_mobile_vision.VisionBridge,
+    bridge_mobile_auth.AuthBridge,
+    bridge_mobile_siri.SiriBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.
