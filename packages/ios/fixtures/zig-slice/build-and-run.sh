@@ -64,7 +64,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
-    -framework WatchConnectivity -framework CoreBluetooth -framework AVFoundation \
+    -framework WatchConnectivity -framework CoreBluetooth -framework AVFoundation -framework HealthKit \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -349,5 +349,14 @@ C64="$(count 64)"
 # live capture; nothing short of the whole path produces them.
 [ "$C64" -ge 1 ] || { echo "FAIL: stopAudioRecording did not return a real M4A"; exit 1; }
 echo "ok: recording came back as a decodable M4A data URL (i=64 seen ${C64}x)"
+
+C66="$(count 66)"
+# HealthKit is linked and the store exists on an iPhone simulator, so this is
+# HKStatisticsQuery's own answer. What is asserted is that it ANSWERS: the
+# spec's arm has no else, so before this the promise simply stayed pending.
+# requestHealthAuthorization is not exercised — it presents a sheet, and
+# simctl has no HealthKit privacy service to pre-grant.
+[ "$C66" -ge 1 ] || { echo "FAIL: getHealthData neither answered nor failed — it hung"; exit 1; }
+echo "ok: health query answered rather than hanging (i=66 seen ${C66}x)"
 
 echo "PASS"

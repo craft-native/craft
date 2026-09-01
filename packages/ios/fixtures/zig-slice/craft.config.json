@@ -29,7 +29,7 @@
   "enableLocalDatabase": true,
   "enableBluetooth": true,
   "enableNFC": false,
-  "enableHealthKit": false,
+  "enableHealthKit": true,
   "enableLiveActivities": false,
   "enableWatchApp": false,
   "enableBackgroundLocation": false,
