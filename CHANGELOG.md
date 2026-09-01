@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.84...v0.0.85)
+
+## 🚀 Features
+
+- **window**: tell the page whether its window is the active one ([666e6a4](https://github.com/craft-native/craft/commit/666e6a4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **release**: notify the registry with the token we already have ([2315bdf](https://github.com/craft-native/craft/commit/2315bdf)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.85 ([7cfcec5](https://github.com/craft-native/craft/commit/7cfcec5)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.83...v0.0.84)
 
 ## 🚀 Features
