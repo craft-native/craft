@@ -67,6 +67,38 @@ pub fn install(window: objc.id) void {
     // the delegate weakly, so the global retain we did at init is what
     // keeps it alive across windows.
     _ = macos.msgSend1(window, "setDelegate:", delegate_instance);
+
+    syncActivation(window);
+}
+
+/// State the window's activation to the page, without calling it a transition.
+///
+/// The delegate above only ever reports *changes*, which leaves the page with
+/// no answer until the first one arrives. `craft-window-chrome.js` seeds itself
+/// from `document.hasFocus()` to cover that, but a document-start script can
+/// run before the window server has settled who is key, and on a window that
+/// was ordered in behind another the local answer can be confidently wrong.
+///
+/// So the host restates it here, where `isKeyWindow` is authoritative. Sent as
+/// a direct call rather than a focus/blur event because nothing has happened —
+/// an app listening for `craft:window:focus` should hear about focus changes,
+/// not about a window being attached to its delegate. `_applyWindowActive` is
+/// idempotent and stays silent when the answer has not moved.
+pub fn syncActivation(window: objc.id) void {
+    if (builtin.target.os.tag != .macos) return;
+    if (@intFromPtr(window) == 0) return;
+
+    const webview = macos.getGlobalWebView() orelse return;
+    const active = macos.msgSendBool(window, "isKeyWindow");
+
+    const script = if (active)
+        "if(window.craft&&window.craft._applyWindowActive)window.craft._applyWindowActive(true);"
+    else
+        "if(window.craft&&window.craft._applyWindowActive)window.craft._applyWindowActive(false);";
+
+    const NSString = macos.getClass("NSString");
+    const js_str = macos.msgSend1(NSString, "stringWithUTF8String:", @as([*:0]const u8, @ptrCast(script)));
+    _ = macos.msgSend2(webview, "evaluateJavaScript:completionHandler:", js_str, @as(?*anyopaque, null));
 }
 
 fn addMethod(cls: objc.Class, sel_name: [*:0]const u8, imp: *const anyopaque) void {

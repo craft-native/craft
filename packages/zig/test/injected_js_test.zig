@@ -1254,6 +1254,8 @@ const DOM_HOST =
     \\  _ready: [],
     \\  addEventListener: function (name, fn) { if (name === 'DOMContentLoaded') document._ready.push(fn) },
     \\  fireReady: function () { document._ready.slice().forEach(function (fn) { fn() }) },
+    \\  focused: true,
+    \\  hasFocus: function () { return document.focused },
     \\  documentElement: {
     \\    attributes: {},
     \\    setAttribute: function (name, value) { this.attributes[name] = value },
@@ -1450,4 +1452,104 @@ test "the client is installed once, however many times it is injected" {
 
     try testing.expectEqualStrings("0", try fx.text("String(changes)"));
     try testing.expectEqualStrings("overlay", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
+}
+
+// ============================================================================
+// craft-window-chrome.js — whether this is the window you are looking at
+// ============================================================================
+//
+// AppKit desaturates a background window's accent-coloured controls with no
+// help from the app. A web UI gets nothing, so a page keeps its buttons bright
+// blue while sitting behind another window — the only thing on screen claiming
+// to be focused when it is not. There is no CSS media feature for it, so the
+// answer arrives as an attribute, and these tests pin where it comes from.
+
+fn activationFixture(fx: *Fixture, focused: bool) !void {
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+    _ = try fx.ctx.evaluate(if (focused) "document.focused = true;" else "document.focused = false;");
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+}
+
+test "a window that starts in front says so before anything paints" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try activationFixture(&fx, true);
+
+    // Stated at document-start, not on the first focus change — there may never
+    // be one, and a page that renders before the answer arrives has already
+    // shown the wrong thing.
+    try testing.expectEqualStrings("true", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+    try testing.expectEqualStrings("true", try fx.text("String(window.craft.windowActive)"));
+}
+
+test "a window that loads behind another starts inactive" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try activationFixture(&fx, false);
+
+    // The case a transition-only design cannot express: nothing changed, so no
+    // focus or blur is coming, and the page still has to be styled correctly.
+    try testing.expectEqualStrings("false", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+}
+
+test "the host's focus and blur move the attribute" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try activationFixture(&fx, true);
+
+    _ = try fx.ctx.evaluate("window.dispatchEvent(new CustomEvent('craft:window:blur'))");
+    try testing.expectEqualStrings("false", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+    try testing.expectEqualStrings("false", try fx.text("String(window.craft.windowActive)"));
+
+    _ = try fx.ctx.evaluate("window.dispatchEvent(new CustomEvent('craft:window:focus'))");
+    try testing.expectEqualStrings("true", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+}
+
+test "the change event fires on a real change and never on the seed" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try activationFixture(&fx, true);
+    _ = try fx.ctx.evaluate("window.seen = []; window.addEventListener('craft:windowactive', function (e) { window.seen.push(e.detail.active) });");
+
+    // Restating the current answer must stay silent: the host syncs on every
+    // window attach, and a listener that recomputes layout should not run for
+    // an answer that did not move.
+    _ = try fx.ctx.evaluate("window.craft._applyWindowActive(true)");
+    try testing.expectEqualStrings("0", try fx.text("String(window.seen.length)"));
+
+    _ = try fx.ctx.evaluate("window.dispatchEvent(new CustomEvent('craft:window:blur'))");
+    try testing.expectEqualStrings("1", try fx.text("String(window.seen.length)"));
+    try testing.expectEqualStrings("false", try fx.text("String(window.seen[0])"));
+}
+
+test "DOMContentLoaded re-reads focus rather than repainting a stale answer" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    try activationFixture(&fx, false);
+    try testing.expectEqualStrings("false", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+
+    // A document-start script can run before the window server has settled who
+    // is key, so the local answer is consulted again once the document exists.
+    _ = try fx.ctx.evaluate("document.focused = true; document.fireReady();");
+    try testing.expectEqualStrings("true", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
+}
+
+test "a host with no hasFocus is assumed to be in front" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    _ = try fx.ctx.evaluate(WEBVIEW_HOST);
+    _ = try fx.ctx.evaluate(DOM_HOST);
+    _ = try fx.ctx.evaluate("delete document.hasFocus;");
+
+    var buffer: [640]u8 = undefined;
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, overlay_state));
+    _ = try fx.ctx.evaluate(WINDOW_CHROME);
+
+    // Active is the safe default: it is the ordinary state, and guessing
+    // inactive would grey out an app that is plainly in front.
+    try testing.expectEqualStrings("true", try fx.text("document.documentElement.attributes['data-craft-window-active']"));
 }

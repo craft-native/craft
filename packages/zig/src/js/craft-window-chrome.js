@@ -18,6 +18,21 @@
 //   <html data-craft-window-controls="...">  CSS that branches on the mode
 //   --craft-window-controls-*                CSS that just needs the numbers
 //
+// The same file also states whether the window is the active one, because that
+// is the other thing about the window's chrome a page cannot ask and gets
+// visibly wrong. AppKit desaturates a background window's accent-coloured
+// controls for free; every native app on the platform does it, so a web UI that
+// keeps its buttons saturated blue behind another window is the one thing on
+// screen insisting it is focused when it is not.
+//
+// `:focus-within` is not this — it is about the page's own focus and stays true
+// while the whole window sits in the background. There is no CSS media feature
+// for window activation, so the host has to say so:
+//
+//   <html data-craft-window-active="true|false">   CSS that restyles
+//   window.craft.windowActive                      JS that has to branch
+//   craft:windowactive                             work that must run on change
+//
 // The variables are the room to leave *inside the page*, so they are zero
 // whenever the buttons are not over it — a window with a titlebar of its own, a
 // window whose web content starts after a native sidebar, a fullscreen window
@@ -98,12 +113,79 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Window activation.
+  // ---------------------------------------------------------------------
+
+  let active = null
+
+  function paintActive(next) {
+    const root = document.documentElement
+    if (!root) return false
+
+    root.setAttribute('data-craft-window-active', next ? 'true' : 'false')
+    return true
+  }
+
+  // Called on every transition, and once to seed. Idempotent, so the host may
+  // restate the current answer without waking a single listener.
+  window.craft._applyWindowActive = function (next) {
+    next = !!next
+
+    const first = active === null
+    const changed = active !== next
+
+    active = next
+    window.craft.windowActive = next
+    paintActive(next)
+
+    if (!first && changed && typeof CustomEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('craft:windowactive', {
+        detail: { active: next },
+      }))
+    }
+  }
+
+  // The seed, and why it is not the host's to give.
+  //
+  // The document-start scripts are installed once, when the webview is built —
+  // before the window has been ordered in front, so at that moment no window is
+  // key and a seed baked in there would say "inactive" for every app that ever
+  // launches. It would also be a lie again after the first reload.
+  //
+  // `document.hasFocus()` is the same question asked at the only moment that
+  // can answer it: whenever this document actually starts. It is synchronous,
+  // so nothing paints before it, and it is re-read at DOMContentLoaded because
+  // a document-start script can run before the window server has settled who is
+  // key. The host's focus/blur events correct it from there.
+  window.craft._applyWindowActive(
+    typeof document !== 'undefined' && document.hasFocus ? document.hasFocus() : true,
+  )
+
+  // Dispatched by craft-bridge.js off the native NSWindowDelegate. Listening
+  // rather than being called keeps this file free of any load-order dependency
+  // on the bridge: the events cannot fire until long after both have run.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('craft:window:focus', function () {
+      window.craft._applyWindowActive(true)
+    })
+    window.addEventListener('craft:window:blur', function () {
+      window.craft._applyWindowActive(false)
+    })
+  }
+
   if (window.__craftWindowControls)
     window.craft._applyWindowControls(window.__craftWindowControls)
 
   if (typeof document !== 'undefined' && document.addEventListener) {
     document.addEventListener('DOMContentLoaded', function () {
       if (window.craft.windowControls) paint(window.craft.windowControls)
+
+      // Re-read rather than re-paint: between document-start and here the
+      // window may have become key, and unlike the controls state there is a
+      // truthful local answer to consult.
+      if (document.hasFocus) window.craft._applyWindowActive(document.hasFocus())
+      else paintActive(active)
     })
   }
 })()
