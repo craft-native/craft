@@ -429,6 +429,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "recognizeText", .ml_kit },
         .{ "registerDeepLinkHandler", .deep_links },
         .{ "saveFile", .file_download },
+        .{ "saveHealthWorkout", .health_kit },
         .{ "scheduleBackgroundTask", .background_tasks },
         .{ "secureClear", .secure_storage },
         .{ "startAudioRecording", .audio_recording },
