@@ -176,7 +176,7 @@ const phase1_user_script: [:0]const u8 =
 fn installWindowChromeScript(content_controller: objc.id) !void {
     var buffer: [window_chrome.seed_script_size + 1]u8 = undefined;
     const script = window_chrome.seedScript(
-        window_chrome.classify(.absent, null, .{}),
+        window_chrome.classify(.absent, null, null, .{}),
         buffer[0 .. buffer.len - 1],
     ) catch return error.WindowChromeScriptTooLong;
 

@@ -120,10 +120,18 @@ pub const State = struct {
     /// takes them into the auto-hiding titlebar.
     visible: bool,
     /// The block's true position relative to the viewport's top-left. Zeroed
-    /// when there is nothing to place.
+    /// when there is nothing to place. This is the buttons and nothing else,
+    /// so a page positioning against the real lights keeps a true number.
     buttons: Rect,
-    /// The room to leave inside the page: the block's far edge, or zero when it
-    /// does not reach into the page at all.
+    /// The room to leave inside the page: the far edge of everything the host
+    /// draws over it, or zero when none of it reaches into the page.
+    ///
+    /// Wider than `buttons` whenever the host draws chrome of its own beside
+    /// them. On a web-sidebar window that is a row of three — the sidebar
+    /// toggle and the two history arrows — reaching about 180pt past the close
+    /// button, and a page that reserved only the buttons put its own content
+    /// underneath them. They are real NSButtons on the theme frame, so
+    /// whatever lands there is not merely overlapped but unreachable.
     reserve: Size,
     /// Where the block starts inside the page. Zero unless it overlaps.
     inset: Size,
@@ -143,6 +151,19 @@ fn overlaps(block: Rect, viewport: Size) bool {
         block.x < viewport.width and block.y < viewport.height;
 }
 
+/// The smallest rect covering both, or whichever one exists.
+fn unite(a: Rect, b: ?Rect) Rect {
+    const other = b orelse return a;
+    const x = @min(a.x, other.x);
+    const y = @min(a.y, other.y);
+    return .{
+        .x = x,
+        .y = y,
+        .width = @max(a.right(), other.right()) - x,
+        .height = @max(a.bottom(), other.bottom()) - y,
+    };
+}
+
 fn clamp(value: f64, limit: f64) f64 {
     if (value < 0) return 0;
     if (value > limit) return limit;
@@ -152,8 +173,15 @@ fn clamp(value: f64, limit: f64) f64 {
 /// Decide what to publish.
 ///
 /// `block` is the union of the window buttons in viewport coordinates, or null
-/// when there are none on screen. `viewport` is the web content's size.
-pub fn classify(chrome: Chrome, block: ?Rect, viewport: Size) State {
+/// when there are none on screen. `host_chrome` is anything else the host draws
+/// over the page in the same band — null when it draws nothing. `viewport` is
+/// the web content's size.
+///
+/// The two are kept apart on purpose. `buttons` reports the first alone,
+/// because a page aligning to the real lights needs their true position;
+/// `reserve` spans both, because a page leaving room has to clear everything
+/// that is actually there.
+pub fn classify(chrome: Chrome, block: ?Rect, host_chrome: ?Rect, viewport: Size) State {
     switch (chrome) {
         .absent => return .{
             .style = .none,
@@ -194,15 +222,28 @@ pub fn classify(chrome: Chrome, block: ?Rect, viewport: Size) State {
         .hide_replicas = true,
     };
 
-    if (!overlaps(rect, viewport)) return .{
-        .style = .titlebar,
-        .native = true,
-        .visible = true,
-        .buttons = rect,
-        .reserve = .{},
-        .inset = .{},
-        .hide_replicas = true,
-    };
+    // Reserve spans the host's own chrome too; `buttons` deliberately does not.
+    const covered = unite(rect, host_chrome);
+
+    if (!overlaps(rect, viewport)) {
+        // The buttons sit outside the page. The host may still draw beside them
+        // into it, and that room is just as unusable, so it is still reserved —
+        // but the style stays `titlebar`, because the *buttons* are not over the
+        // page and `inset` describes where they start.
+        const host_reaches = if (host_chrome) |host| overlaps(host, viewport) else false;
+        return .{
+            .style = .titlebar,
+            .native = true,
+            .visible = true,
+            .buttons = rect,
+            .reserve = if (host_reaches) .{
+                .width = clamp(covered.right(), viewport.width),
+                .height = clamp(covered.bottom(), viewport.height),
+            } else .{},
+            .inset = .{},
+            .hide_replicas = true,
+        };
+    }
 
     return .{
         .style = .overlay,
@@ -210,8 +251,8 @@ pub fn classify(chrome: Chrome, block: ?Rect, viewport: Size) State {
         .visible = true,
         .buttons = rect,
         .reserve = .{
-            .width = clamp(rect.right(), viewport.width),
-            .height = clamp(rect.bottom(), viewport.height),
+            .width = clamp(covered.right(), viewport.width),
+            .height = clamp(covered.bottom(), viewport.height),
         },
         .inset = .{
             .width = clamp(rect.x, viewport.width),
@@ -308,7 +349,7 @@ const window = Size{ .width = 1200, .height = 800 };
 test "a plain titlebar window keeps its buttons above the page" {
     // Measured on a real window: the block sits above the web viewport,
     // because the titlebar is not part of it.
-    const state = classify(.platform, .{ .x = 10, .y = -20, .width = 52, .height = 12 }, window);
+    const state = classify(.platform, .{ .x = 10, .y = -20, .width = 52, .height = 12 }, null, window);
 
     try testing.expectEqual(Style.titlebar, state.style);
     try testing.expect(state.native and state.visible);
@@ -318,7 +359,7 @@ test "a plain titlebar window keeps its buttons above the page" {
 }
 
 test "a titlebar-hidden window asks the page for the corner" {
-    const state = classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, window);
+    const state = classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, null, window);
 
     try testing.expectEqual(Style.overlay, state.style);
     try testing.expectEqual(@as(f64, 62), state.reserve.width);
@@ -331,14 +372,14 @@ test "buttons over a native sidebar are not over the page" {
     // The web content starts after a native sidebar, so the block — measured
     // against the webview — is off its left edge entirely. Reserving room here
     // would indent the page away from buttons it never touches.
-    const state = classify(.platform, .{ .x = -240, .y = 8, .width = 52, .height = 12 }, window);
+    const state = classify(.platform, .{ .x = -240, .y = 8, .width = 52, .height = 12 }, null, window);
 
     try testing.expectEqual(Style.titlebar, state.style);
     try testing.expectEqual(@as(f64, 0), state.reserve.width);
 }
 
 test "fullscreen takes the buttons away without handing the page their job" {
-    const state = classify(.platform, null, window);
+    const state = classify(.platform, null, null, window);
 
     try testing.expectEqual(Style.titlebar, state.style);
     try testing.expect(state.native);
@@ -349,7 +390,7 @@ test "fullscreen takes the buttons away without handing the page their job" {
 }
 
 test "a frameless window is the one place a page draws its own" {
-    const state = classify(.page, null, window);
+    const state = classify(.page, null, null, window);
 
     try testing.expectEqual(Style.custom, state.style);
     try testing.expect(!state.native);
@@ -357,12 +398,88 @@ test "a frameless window is the one place a page draws its own" {
 }
 
 test "a phone has no window to control" {
-    const state = classify(.absent, null, window);
+    const state = classify(.absent, null, null, window);
 
     try testing.expectEqual(Style.none, state.style);
     try testing.expect(!state.native);
     // Not `custom`: there is no window chrome to stand in for.
     try testing.expect(state.hide_replicas);
+}
+
+test "the host's own chrome is reserved, and does not move the buttons" {
+    // A web-sidebar window: the buttons, then Craft's row of three beside them
+    // — sidebar toggle and two history arrows — reaching to 200.
+    const state = classify(
+        .platform,
+        .{ .x = 20, .y = 9, .width = 54, .height = 15 },
+        .{ .x = 88, .y = 8, .width = 112, .height = 28 },
+        window,
+    );
+
+    try testing.expectEqual(Style.overlay, state.style);
+    // Reserve clears everything drawn over the page, not just the lights.
+    try testing.expectEqual(@as(f64, 200), state.reserve.width);
+    try testing.expectEqual(@as(f64, 36), state.reserve.height);
+    // The buttons still report where the buttons are: a page aligning to the
+    // real lights would be thrown off by a widened block, which is why the two
+    // are separate numbers.
+    try testing.expectEqual(@as(f64, 20), state.buttons.x);
+    try testing.expectEqual(@as(f64, 54), state.buttons.width);
+    // Inset is about the buttons too.
+    try testing.expectEqual(@as(f64, 20), state.inset.width);
+}
+
+test "no host chrome leaves the reserve exactly as it was" {
+    const bare = classify(.platform, .{ .x = 20, .y = 9, .width = 54, .height = 15 }, null, window);
+
+    try testing.expectEqual(@as(f64, 74), bare.reserve.width);
+    try testing.expectEqual(@as(f64, 24), bare.reserve.height);
+}
+
+test "host chrome starting left of the buttons still reserves to its far edge" {
+    // The union is taken on both edges, so a row that began before the buttons
+    // would not shrink what is reserved past them.
+    const state = classify(
+        .platform,
+        .{ .x = 20, .y = 9, .width = 54, .height = 15 },
+        .{ .x = 4, .y = 8, .width = 30, .height = 28 },
+        window,
+    );
+
+    try testing.expectEqual(@as(f64, 74), state.reserve.width);
+    try testing.expectEqual(@as(f64, 36), state.reserve.height);
+}
+
+test "host chrome is bounded by the viewport like everything else" {
+    const state = classify(
+        .platform,
+        .{ .x = 10, .y = 8, .width = 52, .height = 12 },
+        .{ .x = 70, .y = 8, .width = 400, .height = 28 },
+        .{ .width = 120, .height = 30 },
+    );
+
+    try testing.expectEqual(@as(f64, 120), state.reserve.width);
+    try testing.expectEqual(@as(f64, 30), state.reserve.height);
+}
+
+test "buttons in a titlebar still reserve for host chrome that reaches the page" {
+    // Not a shape macOS produces today — the row only exists on a
+    // titlebar-hidden window — but the reserve is about what covers the page,
+    // and answering zero here would be a hole waiting for the first host that
+    // draws one.
+    const state = classify(
+        .platform,
+        .{ .x = 10, .y = -20, .width = 52, .height = 12 },
+        .{ .x = 80, .y = 4, .width = 100, .height = 24 },
+        window,
+    );
+
+    // The buttons are still above the page, so the style does not change.
+    try testing.expectEqual(Style.titlebar, state.style);
+    try testing.expectEqual(@as(f64, 180), state.reserve.width);
+    try testing.expectEqual(@as(f64, 28), state.reserve.height);
+    // Inset describes where the buttons start, and they do not overlap.
+    try testing.expectEqual(@as(f64, 0), state.inset.width);
 }
 
 test "the reserve never exceeds the viewport" {
@@ -372,6 +489,7 @@ test "the reserve never exceeds the viewport" {
     const state = classify(
         .platform,
         .{ .x = 10, .y = 8, .width = 52, .height = 12 },
+        null,
         .{ .width = 40, .height = 10 },
     );
 
@@ -383,7 +501,7 @@ test "the literal says none only where replicas are unwanted" {
     var buffer: [literal_size]u8 = undefined;
 
     const overlay = try literal(
-        classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, window),
+        classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, null, window),
         &buffer,
     );
     try testing.expect(std.mem.indexOf(u8, overlay, "replicas:'none'") != null);
@@ -391,14 +509,14 @@ test "the literal says none only where replicas are unwanted" {
     try testing.expect(std.mem.indexOf(u8, overlay, "reserveWidth:62") != null);
 
     var second: [literal_size]u8 = undefined;
-    const custom = try literal(classify(.page, null, window), &second);
+    const custom = try literal(classify(.page, null, null, window), &second);
     try testing.expect(std.mem.indexOf(u8, custom, "replicas:null") != null);
 }
 
 test "the seed carries the client and its starting values" {
     var buffer: [seed_script_size]u8 = undefined;
     const script = try seedScript(
-        classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, window),
+        classify(.platform, .{ .x = 10, .y = 8, .width = 52, .height = 12 }, null, window),
         &buffer,
     );
 
@@ -409,7 +527,7 @@ test "the seed carries the client and its starting values" {
 
 test "an update is a call, not a redefinition" {
     var buffer: [update_script_size]u8 = undefined;
-    const script = try updateScript(classify(.platform, null, window), &buffer);
+    const script = try updateScript(classify(.platform, null, null, window), &buffer);
 
     try testing.expect(std.mem.indexOf(u8, script, "_applyWindowControls({") != null);
     // The client is installed once, by the seed. Sending it again on every
@@ -419,6 +537,6 @@ test "an update is a call, not a redefinition" {
 
 test "equal states are recognised so an update can be skipped" {
     const block = Rect{ .x = 10, .y = 8, .width = 52, .height = 12 };
-    try testing.expect(classify(.platform, block, window).eql(classify(.platform, block, window)));
-    try testing.expect(!classify(.platform, block, window).eql(classify(.platform, null, window)));
+    try testing.expect(classify(.platform, block, null, window).eql(classify(.platform, block, null, window)));
+    try testing.expect(!classify(.platform, block, null, window).eql(classify(.platform, null, null, window)));
 }

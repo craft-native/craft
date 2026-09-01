@@ -1236,6 +1236,14 @@ var web_sidebar_material_view: objc.id = null;
 var web_sidebar_material_tint: objc.id = null;
 var web_sidebar_content_surface: objc.id = null;
 var web_sidebar_toggle_button: objc.id = null;
+/// The union of the chrome row Craft draws beside the window buttons on a
+/// web-sidebar window, in theme-frame coordinates, or null when there is none.
+///
+/// Recorded from the buttons' own frames as they are created rather than
+/// recomputed from the same constants in a second place: this module's whole
+/// contract with the page is that the numbers are measured, and a duplicate of
+/// the layout maths would be wrong the first time either copy moved.
+var web_sidebar_chrome_row: ?NSRect = null;
 var web_sidebar_width_stored: f64 = 286.0;
 
 fn updateWebSidebarToggleButton(collapsed: bool) void {
@@ -3071,14 +3079,27 @@ fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
         .{ .symbol = "chevron.right", .action = "goWebForward:", .tooltip = "Go Forward", .x = firstButtonX + (buttonGap * 2.0) },
     };
 
+    var row: ?NSRect = null;
+
     for (buttons) |button| {
+        const frame = NSRect{
+            .origin = .{ .x = button.x, .y = buttonY },
+            .size = buttonSize,
+        };
+        row = if (row) |sofar| NSRect{
+            .origin = .{ .x = @min(sofar.origin.x, frame.origin.x), .y = @min(sofar.origin.y, frame.origin.y) },
+            .size = .{
+                .width = @max(sofar.origin.x + sofar.size.width, frame.origin.x + frame.size.width) -
+                    @min(sofar.origin.x, frame.origin.x),
+                .height = @max(sofar.origin.y + sofar.size.height, frame.origin.y + frame.size.height) -
+                    @min(sofar.origin.y, frame.origin.y),
+            },
+        } else frame;
+
         const symbolName = createNSString(button.symbol);
         const image = msgSend2(NSImage, "imageWithSystemSymbolName:accessibilityDescription:", symbolName, @as(?*anyopaque, null));
         const btn_alloc = msgSend0(NSButton, "alloc");
-        const btn = msgSend1Rect(btn_alloc, "initWithFrame:", .{
-            .origin = .{ .x = button.x, .y = buttonY },
-            .size = buttonSize,
-        });
+        const btn = msgSend1Rect(btn_alloc, "initWithFrame:", frame);
         _ = msgSend1(btn, "setImage:", image);
         _ = msgSend1(btn, "setBezelStyle:", @as(c_long, 0));
         _ = msgSend1(btn, "setBordered:", @as(c_int, 0));
@@ -3091,6 +3112,9 @@ fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
             web_sidebar_toggle_button = btn;
         }
     }
+
+    // The page has to leave room for this row, not just for the window buttons.
+    web_sidebar_chrome_row = row;
 }
 
 /// Create a window with native sidebar loading a URL instead of inline HTML
@@ -4103,20 +4127,33 @@ fn webViewportRect(window: objc.id, webview: objc.id) NSRect {
 /// titlebar window report a negative `y` — the buttons really are above the
 /// page — rather than a made-up zero.
 pub fn measureWindowChrome(window: objc.id, webview: objc.id, frameless: bool) window_chrome.State {
-    if (frameless) return window_chrome.classify(.page, null, .{});
+    if (frameless) return window_chrome.classify(.page, null, null, .{});
 
     const viewport = webViewportRect(window, webview);
     const size = window_chrome.Size{ .width = viewport.size.width, .height = viewport.size.height };
 
+    // Craft's own chrome, in the same flipped coordinates. On a web-sidebar
+    // window this is the row of three beside the buttons — the sidebar toggle
+    // and the two history arrows — which reach far enough past them that a page
+    // reserving only the buttons put its own controls underneath. They are real
+    // NSButtons on the theme frame, so anything under them is unreachable, not
+    // merely overlapped.
+    const host_chrome: ?window_chrome.Rect = if (web_sidebar_chrome_row) |row| .{
+        .x = row.origin.x - viewport.origin.x,
+        .y = (viewport.origin.y + viewport.size.height) - (row.origin.y + row.size.height),
+        .width = row.size.width,
+        .height = row.size.height,
+    } else null;
+
     const block = windowButtonBlock(window) orelse
-        return window_chrome.classify(.platform, null, size);
+        return window_chrome.classify(.platform, null, host_chrome, size);
 
     return window_chrome.classify(.platform, .{
         .x = block.origin.x - viewport.origin.x,
         .y = (viewport.origin.y + viewport.size.height) - (block.origin.y + block.size.height),
         .width = block.size.width,
         .height = block.size.height,
-    }, size);
+    }, host_chrome, size);
 }
 
 /// One window's chrome bookkeeping: the last state published to it, so an

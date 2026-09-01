@@ -1286,6 +1286,7 @@ fn seedLine(buffer: []u8, state: window_chrome.State) ![]const u8 {
 const overlay_state = window_chrome.classify(
     .platform,
     .{ .x = 9, .y = 9, .width = 60, .height = 14 },
+    null,
     .{ .width = 1200, .height = 800 },
 );
 
@@ -1319,7 +1320,7 @@ test "a frameless window leaves the replica variable alone" {
     _ = try fx.ctx.evaluate(DOM_HOST);
 
     var buffer: [640]u8 = undefined;
-    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.page, null, .{})));
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.page, null, null, .{})));
     _ = try fx.ctx.evaluate(WINDOW_CHROME);
 
     try testing.expectEqualStrings("custom", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
@@ -1335,7 +1336,7 @@ test "a phone is told there is nothing to draw" {
     _ = try fx.ctx.evaluate(DOM_HOST);
 
     var buffer: [640]u8 = undefined;
-    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.absent, null, .{})));
+    _ = try fx.ctx.evaluate(try seedLine(&buffer, window_chrome.classify(.absent, null, null, .{})));
     _ = try fx.ctx.evaluate(WINDOW_CHROME);
 
     try testing.expectEqualStrings("none", try fx.text("document.documentElement.attributes['data-craft-window-controls']"));
@@ -1386,7 +1387,7 @@ test "entering fullscreen takes the reserved room back and says so once" {
     // fullscreen.
     var update: [1024]u8 = undefined;
     _ = try fx.ctx.evaluate(try window_chrome.updateScript(
-        window_chrome.classify(.platform, null, .{ .width = 1200, .height = 800 }),
+        window_chrome.classify(.platform, null, null, .{ .width = 1200, .height = 800 }),
         &update,
     ));
 
