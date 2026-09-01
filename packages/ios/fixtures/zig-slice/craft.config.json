@@ -23,7 +23,7 @@
   "enableFilePicker": false,
   "enableFileDownload": true,
   "enableSocialAuth": false,
-  "enableAudioRecording": false,
+  "enableAudioRecording": true,
   "enableVideoRecording": false,
   "enableMotionSensors": true,
   "enableLocalDatabase": true,
