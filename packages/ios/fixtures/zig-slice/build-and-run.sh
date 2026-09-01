@@ -97,7 +97,8 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=20' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=22' "$LOG" 2>/dev/null && grep -q 'i=24' "$LOG" 2>/dev/null \
+       && grep -q 'i=20' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -206,5 +207,16 @@ echo "ok: disabled capability refused with CAPABILITY_DISABLED (i=20 seen ${C20}
 # notification assertions above all ran through actions the same config
 # *enables*, so i=10, i=12 and i=14 passing is the other half of this check.
 echo "ok: enabled capabilities still served (i=10, i=12, i=14 above)"
+
+C22="$(count 22)"
+# i=22 requires the reply to have been a bare JSON string, carried the data URL
+# prefix, base64-decoded to the PNG signature, and exceeded a size floor. Only
+# a real render of the window layer satisfies all four.
+[ "$C22" -ge 1 ] || { echo "FAIL: takeScreenshot did not return a decodable PNG data URL"; exit 1; }
+echo "ok: screenshot rendered the live window to a real PNG (i=22 seen ${C22}x)"
+
+C24="$(count 24)"
+[ "$C24" -ge 1 ] || { echo "FAIL: the deep-link handshake did not reply Swift's bare true"; exit 1; }
+echo "ok: deep-link handshake replied true behind its own gate (i=24 seen ${C24}x)"
 
 echo "PASS"

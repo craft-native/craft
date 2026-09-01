@@ -419,6 +419,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "pickContact", .contacts },
         .{ "pickFile", .file_picker },
         .{ "pickImage", .camera },
+        .{ "registerDeepLinkHandler", .deep_links },
         .{ "saveFile", .file_download },
         .{ "scheduleBackgroundTask", .background_tasks },
         .{ "secureClear", .secure_storage },
@@ -428,6 +429,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "setKeepAwake", .keep_awake },
         .{ "share", .share },
         .{ "startMotionUpdates", .motion_sensors },
+        .{ "takeScreenshot", .screen_capture },
         .{ "unlockOrientation", .orientation_lock },
         .{ "watchPosition", .geolocation },
     };
