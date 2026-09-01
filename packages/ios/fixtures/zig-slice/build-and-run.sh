@@ -64,6 +64,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
+    -framework WatchConnectivity \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -297,5 +298,26 @@ C44="$(count 44)"
 # in the same language.
 [ "$C44" -ge 1 ] || { echo "FAIL: closePDF did not dismiss the viewer"; exit 1; }
 echo "ok: the same module that presented the viewer dismissed it (i=44 seen ${C44}x)"
+
+C48="$(count 48)"
+[ "$C48" -ge 1 ] || { echo "FAIL: downloadFile did not land a file in Documents"; exit 1; }
+echo "ok: URL fetched and moved into the app container (i=48 seen ${C48}x)"
+
+C52="$(count 52)"
+# NOT_FOUND rather than PLATFORM_NOT_SUPPORTED: WatchConnectivity is linked, so
+# WCSession itself reported no reachable watch. Before this phase the action
+# reached the shim instead, because ios_async had no way to deliver an error —
+# which is the common branch here, not the exotic one.
+[ "$C52" -ge 1 ] || { echo "FAIL: sendToWatch did not refuse through the error path"; exit 1; }
+echo "ok: watch refusal delivered through the async error path (i=52 seen ${C52}x)"
+
+C54="$(count 54)"
+# The exact trap this action was held back for: ios_async's pooled block would
+# have replied the STRING "denied", and "denied" is truthy — so a page's
+# `if (await openSettings())` would take the success branch on failure. The
+# page asserts `typeof payload === 'boolean'`, which only the module's own
+# block can satisfy. Posted last, because it navigates to Settings.
+[ "$C54" -ge 1 ] || { echo "FAIL: openSettings did not reply with a boolean"; exit 1; }
+echo "ok: openSettings replied a real boolean, not \"granted\"/\"denied\" (i=54 seen ${C54}x)"
 
 echo "PASS"

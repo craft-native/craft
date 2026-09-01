@@ -37,18 +37,23 @@
 //!    special case a BOOL cannot carry) and contacts/calendar/reminders
 //!    (need a store instance kept alive past the dispatch frame, plus an
 //!    iOS 17 availability fork) return `UnknownAction`.
-//!  - `openSettings` is not claimed at all — not in `A`, not in the table.
-//!    Its reply is a bare JSON *boolean* (`UIApplication.open`'s completion
-//!    BOOL, `true`/`false` on the wire), and `ios_async.boolBlock` replies
-//!    the strings `"granted"`/`"denied"`. That mismatch is not cosmetic:
-//!    `false` is falsy and `"denied"` is truthy, so
+//!  - `openSettings` **is** claimed now, and the reason it was not is worth
+//!    keeping. Its reply is a bare JSON *boolean* (`UIApplication.open`'s
+//!    completion BOOL, `true`/`false` on the wire) and `ios_async.boolBlock`
+//!    replies the strings `"granted"`/`"denied"`. That mismatch is not
+//!    cosmetic: `false` is falsy and `"denied"` is truthy, so
 //!    `if (await craft.permissions.openSettings())` would take its success
-//!    branch on failure. Hand-building a one-off block here is off the table
-//!    — the repo's last hand-rolled completion block was stack-allocated
-//!    with a doc comment asserting a lifetime async does not honour — so
-//!    claiming this action means first extending `ios_async` with a
-//!    bool-literal reply variant. Until then the Swift shim's answer is
-//!    correct and keeps flowing.
+//!    branch on failure. The old note concluded that claiming the action
+//!    meant first extending `ios_async` with a bool-literal reply variant.
+//!    It did not — a module-owned global block delivering through
+//!    `deliverJson` carries any literal, which is the shape
+//!    `bridge_mobile_auth.zig` and `bridge_mobile_siri.zig` established
+//!    afterwards. What the note was really objecting to remains true and is
+//!    still avoided: the repo's one hand-rolled *stack* block
+//!    (`bridge_mobile_system.zig:391`) is safe only because `openURL:`
+//!    chooses to copy an escaping handler, which is the callee's choice and
+//!    not a guarantee. Every block in this file is global, so `Block_copy` is
+//!    identity and the question does not arise.
 //!
 //! Returning `UnknownAction` for a payload value is what keeps this honest
 //! without regressing anything: `ios_dispatch.route` treats it as "not mine,
@@ -102,6 +107,7 @@ const capabilities = @import("capabilities.zig");
 const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
+const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
 const is_darwin = builtin.target.os.tag.isDarwin();
@@ -124,6 +130,7 @@ const Id = ?*anyopaque;
 pub const A = struct {
     pub const check_permission = "checkPermission";
     pub const request_permission = "requestPermission";
+    pub const open_settings = "openSettings";
 };
 
 /// Both `.result`: every Swift path for these two actions terminates in
@@ -137,16 +144,18 @@ pub const A = struct {
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.check_permission, .reply = .result },
     .{ .name = A.request_permission, .reply = .result },
+    .{ .name = A.open_settings, .reply = .result },
 };
 
 /// Which handler an action selects, or null for one this namespace does not
 /// serve. Split out from `handleMessage` so the table-versus-dispatch
 /// agreement is assertable on a host that has none of the frameworks.
-const Route = enum { check, request };
+const Route = enum { check, request, open_settings };
 
 fn routeFor(action: []const u8) ?Route {
     if (std.mem.eql(u8, action, A.check_permission)) return .check;
     if (std.mem.eql(u8, action, A.request_permission)) return .request;
+    if (std.mem.eql(u8, action, A.open_settings)) return .open_settings;
     return null;
 }
 
@@ -322,6 +331,7 @@ pub const PermissionsBridge = struct {
         return switch (route) {
             .check => self.checkPermission(data),
             .request => self.requestPermission(data),
+            .open_settings => self.openSettings(),
         };
     }
 
@@ -477,6 +487,62 @@ pub const PermissionsBridge = struct {
         const Fn = *const fn (Id, Id, c_ulong, *anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&objc.objc_msgSend);
         func(center, sel, un_options_alert_badge_sound, ios_async.boolErrorBlock(ticket));
+    }
+
+    /// Open the app's page in Settings and say whether iOS did.
+    ///
+    /// Ungated in the Swift dispatcher, so nothing above this refuses it, and
+    /// it is the one action in this file that takes no payload at all.
+    fn openSettings(self: *Self) !void {
+        if (!is_darwin) return bridge_error.BridgeError.PlatformNotSupported;
+
+        const url_string = settingsUrlString() orelse
+            return bridge_error.BridgeError.PlatformNotSupported;
+
+        const NSURL = objc.objc_getClass("NSURL") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        const sel_with_string = objc.sel_registerName("URLWithString:") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        const url = objc.msgSendId1(NSURL, sel_with_string, url_string) orelse {
+            // Swift's `guard let url = URL(string:)` else branch, which rejects
+            // with "Settings URL is unavailable".
+            std.log.warn("openSettings: the settings URL did not parse", .{});
+            return bridge_error.BridgeError.NativeCallFailed;
+        };
+
+        const UIApplication = objc.objc_getClass("UIApplication") orelse
+            return bridge_error.BridgeError.PlatformNotSupported;
+        const sel_shared = objc.sel_registerName("sharedApplication") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        const app = objc.msgSendId(UIApplication, sel_shared) orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+
+        const NSDictionary = objc.objc_getClass("NSDictionary") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        const sel_dictionary = objc.sel_registerName("dictionary") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        // `options:` is declared nonnull; an empty dictionary is the documented
+        // way to pass none.
+        const options = objc.msgSendId(NSDictionary, sel_dictionary) orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+
+        const ticket = ios_async.acquire(A.open_settings) orelse {
+            std.log.warn(
+                "openSettings: no free reply slot; {d} native calls are already awaiting one",
+                .{ios_async.max_in_flight},
+            );
+            return bridge_error.BridgeError.NativeCallFailed;
+        };
+        errdefer ios_async.abandon(ticket);
+        publishSettingsCall(ticket);
+
+        const sel_open = objc.sel_registerName("openURL:options:completionHandler:") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+        const OpenFn = *const fn (objc.id, objc.SEL, objc.id, objc.id, *anyopaque) callconv(.c) void;
+        const openFn: OpenFn = @ptrCast(&objc.objc_msgSend);
+        openFn(app, sel_open, url, options, @ptrCast(&settings_blocks[ticket.index]));
+
+        _ = self;
     }
 };
 
@@ -672,12 +738,144 @@ fn mediaTypeVideo(allocator: std.mem.Allocator) !Id {
 // someone's screen).
 // =============================================================================
 
+// ===========================================================================
+// openSettings
+//
+// Held back until now for a reason recorded at the top of this file: its reply
+// is a bare JSON *boolean*, and `ios_async.boolBlock` answers the strings
+// `"granted"`/`"denied"`. That mismatch is not cosmetic — `false` is falsy and
+// `"denied"` is truthy, so `if (await craft.permissions.openSettings())` would
+// take its success branch on failure.
+//
+// The note said claiming it meant first extending `ios_async` with a
+// bool-literal reply. It did not: the module-owned global block that
+// `bridge_mobile_auth.zig` and `bridge_mobile_siri.zig` now use answers through
+// `deliverJson`, which can carry any literal. What the note was really
+// objecting to is still true and still avoided here — "the repo's last
+// hand-rolled completion block was stack-allocated with a doc comment asserting
+// a lifetime async does not honour" (`bridge_mobile_system.zig:391`). That one
+// survives only because `openURL:` copies an escaping block, which is the
+// callee's choice to make and not a guarantee this file wants to depend on.
+// Every block below is global, so `Block_copy` is identity and the question
+// does not arise.
+// ===========================================================================
+
+/// `UIApplication.openSettingsURLString`.
+///
+/// An `extern NSString * const` in UIKit, read through its symbol rather than
+/// rebuilt from the literal `"app-settings:"`. The constant's *value* is not
+/// API — Apple has changed it before — and a hardcoded string that stops
+/// matching would open nothing while still reporting whatever `openURL:`
+/// said about a URL iOS does not recognise.
+fn settingsUrlString() ?objc.id {
+    const symbol = dlsym(RTLD_DEFAULT, "UIApplicationOpenSettingsURLString") orelse {
+        std.log.warn(
+            "openSettings: UIApplicationOpenSettingsURLString is not in this process",
+            .{},
+        );
+        return null;
+    };
+    const cell: *const objc.id = @ptrCast(@alignCast(symbol));
+    return cell.*;
+}
+
+/// The two literals the completion can put on the wire.
+///
+/// Swift's `resolveCallback(callbackId, result: opened)` under
+/// `.fragmentsAllowed`, so the page receives a bare boolean and not an object.
+const opened_reply = "true";
+const not_opened_reply = "false";
+
+const SettingsBlockDescriptor = extern struct {
+    reserved: c_ulong = 0,
+    size: c_ulong,
+};
+
+/// `void (^)(BOOL)`.
+const SettingsBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const SettingsBlockDescriptor,
+};
+
+/// 1 << 28. A global block is never copied, so it can be handed to an API that
+/// escapes it with no heap copy and no descriptor lifetime.
+const SETTINGS_BLOCK_IS_GLOBAL: c_int = 1 << 28;
+
+const settings_block_descriptor = SettingsBlockDescriptor{ .size = @sizeOf(SettingsBlock) };
+
+extern var _NSConcreteGlobalBlock: anyopaque;
+
+fn makeSettingsInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const SettingsBlock, opened: bool) callconv(.c) void {
+            settingsOpened(index, opened);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeSettingsBlocks() [ios_async.max_in_flight]SettingsBlock {
+    var out: [ios_async.max_in_flight]SettingsBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = SETTINGS_BLOCK_IS_GLOBAL,
+            .invoke = makeSettingsInvoke(@intCast(i)),
+            .descriptor = &settings_block_descriptor,
+        };
+    }
+    return out;
+}
+
+var settings_blocks: [ios_async.max_in_flight]SettingsBlock =
+    if (is_darwin) makeSettingsBlocks() else undefined;
+
+/// The ticket each slot's block will answer.
+var settings_calls: [ios_async.max_in_flight]?ios_async.Ticket = @splat(null);
+var settings_mutex: compat_mutex.Mutex = .{};
+
+fn publishSettingsCall(ticket: ios_async.Ticket) void {
+    settings_mutex.lock();
+    defer settings_mutex.unlock();
+    settings_calls[ticket.index] = ticket;
+}
+
+/// Read and clear, so a second fire is a no-op rather than a second reply.
+fn takeSettingsCall(index: u5) ?ios_async.Ticket {
+    settings_mutex.lock();
+    defer settings_mutex.unlock();
+    const ticket = settings_calls[index];
+    settings_calls[index] = null;
+    return ticket;
+}
+
+/// UIKit calls this on the main queue, but `ios_async` hops anyway — the reply
+/// path is the same one every other module uses and does not special-case its
+/// caller's queue.
+fn settingsOpened(index: u5, opened: bool) void {
+    if (!is_darwin) return;
+
+    const ticket = takeSettingsCall(index) orelse {
+        std.log.warn(
+            "openSettings completion fired for slot {d} with no call recorded; ignored",
+            .{index},
+        );
+        return;
+    };
+    // A bare literal, not "granted"/"denied": `false` has to stay falsy.
+    ios_async.deliverJson(ticket, if (opened) opened_reply else not_opened_reply);
+}
+
 const testing = std.testing;
 
 test "the declared actions are the ones the handler serves" {
-    try testing.expectEqual(@as(usize, 2), capability_actions.len);
+    try testing.expectEqual(@as(usize, 3), capability_actions.len);
     try testing.expectEqualStrings(A.check_permission, capability_actions[0].name);
     try testing.expectEqualStrings(A.request_permission, capability_actions[1].name);
+    try testing.expectEqualStrings(A.open_settings, capability_actions[2].name);
 
     for (capability_actions) |decl| {
         try testing.expectEqual(capabilities.Reply.result, decl.reply);
@@ -690,6 +888,7 @@ test "the action names are the ones the Swift dispatcher answers" {
     // spec lacks; it cannot catch both being renamed in step, which this holds.
     try testing.expectEqualStrings("checkPermission", A.check_permission);
     try testing.expectEqualStrings("requestPermission", A.request_permission);
+    try testing.expectEqualStrings("openSettings", A.open_settings);
 }
 
 test "every declared action is one the dispatcher routes" {
@@ -717,22 +916,45 @@ test "every route the dispatcher has is a declared action" {
     }
 }
 
-test "openSettings is left to the Swift shim on purpose" {
-    // The pin for the module comment's biggest decision. Its reply is a bare
-    // boolean, `ios_async.boolBlock` replies "granted"/"denied", and "denied"
-    // is truthy — a page's `if (await openSettings())` would take the success
-    // branch on failure. Whoever claims this action deletes this test
-    // *after* giving ios_async a boolean-literal reply, not before.
-    var bridge = PermissionsBridge.init(testing.allocator);
-    defer bridge.deinit();
+test "openSettings answers with a bare boolean, never granted/denied" {
+    // The pin for the decision this module used to record the other way. Its
+    // reply is a bare boolean, `ios_async.boolBlock` replies "granted"/"denied",
+    // and "denied" is truthy — a page's `if (await openSettings())` would take
+    // the success branch on failure. That is why the completion below is the
+    // module's own block delivering a literal, and why these two strings are
+    // pinned rather than left to whoever edits the handler next.
+    try testing.expectEqualStrings("true", opened_reply);
+    try testing.expectEqualStrings("false", not_opened_reply);
 
-    try testing.expectError(
-        bridge_error.BridgeError.UnknownAction,
-        bridge.handleMessage("openSettings", "{}"),
-    );
-    for (capability_actions) |decl| {
-        try testing.expect(!std.mem.eql(u8, decl.name, "openSettings"));
+    // And it is served here now, rather than handed to the shim.
+    try testing.expect(routeFor("openSettings") != null);
+}
+
+test "each openSettings block is global and has its own invoke" {
+    // Global, not the stack-allocated shape `bridge_mobile_system.zig:391`
+    // uses: a stack block is only safe because `openURL:` chooses to copy an
+    // escaping handler, and that is the callee's choice rather than a
+    // guarantee. `Block_copy` on a global block is identity, so the question
+    // does not arise.
+    if (!is_darwin) return error.SkipZigTest;
+
+    for (&settings_blocks) |*b| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, b.isa);
+        try testing.expectEqual(SETTINGS_BLOCK_IS_GLOBAL, b.flags);
+        try testing.expectEqual(@sizeOf(SettingsBlock), @as(usize, @intCast(b.descriptor.size)));
     }
+    try testing.expect(settings_blocks[0].invoke != settings_blocks[1].invoke);
+}
+
+test "an openSettings completion for a slot with no recorded call is ignored" {
+    if (!is_darwin) return error.SkipZigTest;
+
+    settings_mutex.lock();
+    for (&settings_calls) |*entry| entry.* = null;
+    settings_mutex.unlock();
+
+    settingsOpened(0, true);
+    settingsOpened(0, false);
 }
 
 test "an action the namespace does not serve is reported, not ignored" {
@@ -768,10 +990,14 @@ test "every declared action dispatches to something" {
     defer bridge.deinit();
 
     for (capability_actions) |decl| {
-        try testing.expectError(
-            bridge_error.BridgeError.MissingData,
-            bridge.handleMessage(decl.name, "{}"),
-        );
+        // `openSettings` takes no payload, so it gets past validation and
+        // refuses on the host's missing UIKit instead. `UnknownAction` is the
+        // only forbidden outcome — that would mean a declared name the
+        // handler never compares against.
+        bridge.handleMessage(decl.name, "{}") catch |err| {
+            try testing.expect(err != bridge_error.BridgeError.UnknownAction);
+            continue;
+        };
     }
 }
 

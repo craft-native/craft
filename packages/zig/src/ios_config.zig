@@ -412,6 +412,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "dbQuery", .local_database },
         .{ "deleteCalendarEvent", .calendar },
         .{ "detectObjects", .ml_kit },
+        .{ "downloadFile", .file_download },
         .{ "getCalendarEvents", .calendar },
         .{ "getContacts", .contacts },
         .{ "getCurrentPosition", .geolocation },

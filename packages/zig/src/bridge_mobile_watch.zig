@@ -133,57 +133,50 @@
 //! hypothetical Zig-only app it would not, and `isWatchReachable` would report
 //! `false` forever — honest, and worth knowing.
 //!
-//! ## Why `sendToWatch` is absent rather than `.unavailable`
+//! ## `sendToWatch`, and the condition that unblocked it
+//!
+//! This section used to explain why the action was absent. The explanation
+//! ended with a precise unblocking condition, and that condition has been met,
+//! so the reasoning is kept and the conclusion inverted.
 //!
 //! `-[WCSession sendMessage:replyHandler:errorHandler:]` takes two
-//! one-argument blocks, and `WCSession.h` guarantees that **exactly one of them
-//! is invoked** and that both fire on "a non-main serial queue". Zig can build
-//! the reply-handler half: a global block plus `ios_async.deliverJson` would
-//! resolve the watch's dictionary correctly.
+//! one-argument blocks and `WCSession.h` guarantees **exactly one of them is
+//! invoked**, both on a non-main serial queue. The reply half was always
+//! expressible — a global block plus `ios_async.deliverJson`. The error half
+//! was not: `ios_async.deliverOnMain` ended unconditionally in
+//! `sendResultToJS`, so every available move broke a rule. Resolving on the
+//! error path is fabricated success; `abandon` is silence on an untimed
+//! promise; `craft_ios_deliver_error` does not hop to the main queue and would
+//! reach `evaluateJavaScript` from WatchConnectivity's background queue.
 //!
-//! It cannot build the error half. `ios_async` has no error-delivery path —
-//! `deliverOnMain` ends unconditionally in `bridge_error.sendResultToJS`, and
-//! `sendErrorToJS` appears nowhere in that file. Every available move is a rule
-//! violation:
-//!
-//!  - resolve something on the error path → fabricated success;
-//!  - `ios_async.abandon` the ticket → silence on an untimed promise, the exact
-//!    bug `ios_async` exists to prevent;
-//!  - call `craft_ios_deliver_error` from the block → that export does not hop
-//!    to the main queue, so it would reach `evaluateJavaScript` from
-//!    WatchConnectivity's background delegate queue.
-//!
-//! And the error path is the *common* path here, not the exotic one: unpaired
-//! simulator, watch app not installed, not reachable, reply timed out. The
-//! bundled `CraftWatchApp.swift.template` implements only
+//! That mattered more than it sounds, because **the error path is the common
+//! one here**: unpaired simulator, watch app not installed, not reachable,
+//! reply timed out. The bundled `CraftWatchApp.swift.template` implements only
 //! `session(_:didReceiveMessage:)` — the no-reply variant — so against the
-//! shipped companion the reply handler never fires and the error handler always
-//! does.
+//! shipped companion the reply handler never fires and the error handler
+//! always does.
 //!
-//! The Swift shim serves all of this correctly today: its reply handler routes
-//! through `deliverResultIfHandOff` and its error handler through
-//! `deliverErrorIfHandOff`, rejecting the page's promise with the real
-//! `localizedDescription`. Declaring the action `.unavailable` would *steal* it
-//! from that shim and turn every call into a refusal, which is strictly worse
-//! than what ships now. So the action is omitted from `A` entirely and falls
-//! through.
+//! `ios_async.deliverError` and `deliverErrorCode` now exist, which is exactly
+//! the condition the old note named. What it also predicted is implemented
+//! here: the reply goes through `+[NSJSONSerialization isValidJSONObject:]`
+//! before serialising. Swift does not — `resolveCallback` hands the reply
+//! straight to `dataWithJSONObject:`, which *raises*
+//! `NSInvalidArgumentException` for the `NSDate`/`NSData` values `WCSession`
+//! permits, and Swift's `catch` cannot catch a raise. A watch replying
+//! `["at": Date()]` terminates the app today; this refuses instead.
 //!
-//! Unblocking condition, precisely: `sendToWatch` becomes migratable the moment
-//! `ios_async` gains a `deliverError(ticket, BridgeError)` — a slot field plus
-//! one branch in `deliverOnMain` — at which point it still costs the
-//! `localizedDescription` text, and must additionally call
-//! `+[NSJSONSerialization isValidJSONObject:]` before serialising the watch's
-//! reply. Swift does not: `resolveCallback` hands the reply straight to
-//! `dataWithJSONObject:`, which *raises* `NSInvalidArgumentException` for the
-//! `NSDate`/`NSData` values `WCSession` permits, and Swift's `catch` cannot
-//! catch that. A watch replying `["at": Date()]` aborts the app today; Zig must
-//! not reproduce it.
+//! The remaining divergence is the one every migrated action carries: Swift
+//! rejects with the error's `localizedDescription`, and the protocol has no
+//! message field, so the text goes to the log and the page gets a code.
+//!
 
 const std = @import("std");
 const builtin = @import("builtin");
 const capabilities = @import("capabilities.zig");
 const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
+const ios_async = @import("ios_async.zig");
+const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
 const is_darwin = builtin.target.os.tag.isDarwin();
@@ -208,6 +201,7 @@ const Id = ?*anyopaque;
 pub const A = struct {
     pub const update_watch_context = "updateWatchContext";
     pub const is_watch_reachable = "isWatchReachable";
+    pub const send_to_watch = "sendToWatch";
 };
 
 /// Both `.result`: each Swift path terminates in exactly one
@@ -222,6 +216,7 @@ pub const A = struct {
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.update_watch_context, .reply = .result },
     .{ .name = A.is_watch_reachable, .reply = .result },
+    .{ .name = A.send_to_watch, .reply = .result },
 };
 
 // -----------------------------------------------------------------------------
@@ -247,11 +242,12 @@ fn reachableFragment(reachable: bool) []const u8 {
 /// Which handler an action selects, split out from `handleMessage` so the
 /// table-versus-dispatch agreement is assertable on a host, where
 /// `WCSession` does not exist.
-const Route = enum { update_context, is_reachable };
+const Route = enum { update_context, is_reachable, send_message };
 
 fn routeFor(action: []const u8) ?Route {
     if (std.mem.eql(u8, action, A.update_watch_context)) return .update_context;
     if (std.mem.eql(u8, action, A.is_watch_reachable)) return .is_reachable;
+    if (std.mem.eql(u8, action, A.send_to_watch)) return .send_message;
     return null;
 }
 
@@ -272,7 +268,69 @@ pub const WatchBridge = struct {
         return switch (route) {
             .update_context => self.updateWatchContext(data),
             .is_reachable => self.isWatchReachable(),
+            .send_message => self.sendToWatch(data),
         };
+    }
+
+    /// Send a message to the paired watch and answer with its reply.
+    ///
+    /// The action this module recorded as unservable, with the unblocking
+    /// condition stated exactly: *"becomes migratable the moment `ios_async`
+    /// gains a `deliverError(ticket, BridgeError)`"*. It has one
+    /// (`ios_async.zig:337`, plus `deliverErrorCode` at `:318`), so the error
+    /// half of the pair is now expressible and the action moves.
+    ///
+    /// `WCSession.h` guarantees exactly one of the two handlers is invoked,
+    /// and that both fire on a non-main serial queue. Neither replies from
+    /// where it runs: `ios_async` does the hop.
+    fn sendToWatch(self: *Self, data: []const u8) !void {
+        var parsed = try parsePayload(self.allocator, data);
+        defer parsed.deinit();
+
+        const message = try parseMessage(parsed.value);
+
+        const session = switch (try resolveSession()) {
+            .active => |s| s,
+            .absent => |why| {
+                std.log.warn(
+                    "sendToWatch: no usable WCSession ({s}); refusing rather than reporting a message that was never sent",
+                    .{@tagName(why)},
+                );
+                return bridge_error.BridgeError.NotFound;
+            },
+        };
+
+        // Swift's `guard let session = wcSession, session.isReachable`. On a
+        // simulator with no paired watch this is the only branch reachable,
+        // which is also the only branch Swift can reach there.
+        if (!readIsReachable(session)) {
+            std.log.warn("sendToWatch: the watch is not reachable", .{});
+            return bridge_error.BridgeError.NotFound;
+        }
+
+        const dictionary = try toFoundationDictionary(self.allocator, message);
+
+        const ticket = ios_async.acquire(A.send_to_watch) orelse {
+            std.log.warn(
+                "sendToWatch: no free reply slot; {d} native calls are already awaiting one",
+                .{ios_async.max_in_flight},
+            );
+            return bridge_error.BridgeError.NativeCallFailed;
+        };
+        errdefer ios_async.abandon(ticket);
+        publishWatchCall(ticket);
+
+        const sel = objc.sel_registerName("sendMessage:replyHandler:errorHandler:") orelse
+            return error.SelectorNotFound;
+        const SendFn = *const fn (*anyopaque, objc.SEL, *anyopaque, *anyopaque, *anyopaque) callconv(.c) void;
+        const send: SendFn = @ptrCast(&objc.objc_msgSend);
+        send(
+            session,
+            sel,
+            dictionary,
+            @ptrCast(&watch_reply_blocks[ticket.index]),
+            @ptrCast(&watch_error_blocks[ticket.index]),
+        );
     }
 
     /// Push a new application context to the paired watch.
@@ -704,12 +762,212 @@ fn readNSInteger(object: Id, comptime selector: [*:0]const u8) c_long {
 // session, that would push a context to somebody's actual watch.
 // =============================================================================
 
+/// The `message` field of `sendToWatch`'s payload.
+///
+/// Swift's `body["message"] as? [String: Any]` with no `else` in the
+/// dispatcher: a missing or non-object message replies nothing and the page
+/// waits out its timeout. Refused here instead, and not coerced —
+/// `sendMessage:` takes a dictionary, and wrapping a string in one would send
+/// the watch a message the page never wrote.
+fn parseMessage(payload: std.json.Value) !std.json.Value {
+    const object = switch (payload) {
+        .object => |o| o,
+        else => return bridge_error.BridgeError.InvalidJSON,
+    };
+    const field = object.get("message") orelse return bridge_error.BridgeError.MissingData;
+    return switch (field) {
+        .object => field,
+        else => bridge_error.BridgeError.InvalidParameter,
+    };
+}
+
+// ===========================================================================
+// The two completion handlers
+//
+// `-[WCSession sendMessage:replyHandler:errorHandler:]` takes two
+// one-argument blocks and guarantees exactly one is invoked. Both are global
+// with one comptime invoke per slot, and both answer through `ios_async` —
+// which is what makes this action expressible at all. The module's own
+// unblocking note named the missing piece precisely, and `deliverErrorCode`
+// is it.
+// ===========================================================================
+
+/// The ticket each slot's pair of blocks will answer.
+var watch_calls: [ios_async.max_in_flight]?ios_async.Ticket = @splat(null);
+var watch_mutex: compat_mutex.Mutex = .{};
+
+fn publishWatchCall(ticket: ios_async.Ticket) void {
+    watch_mutex.lock();
+    defer watch_mutex.unlock();
+    watch_calls[ticket.index] = ticket;
+}
+
+/// Read and clear. Clearing is what makes the *other* half of the pair a
+/// no-op if WatchConnectivity ever broke its exactly-one guarantee — two
+/// replies for one call is worse than none.
+fn takeWatchCall(index: u5) ?ios_async.Ticket {
+    watch_mutex.lock();
+    defer watch_mutex.unlock();
+    const ticket = watch_calls[index];
+    watch_calls[index] = null;
+    return ticket;
+}
+
+const WatchBlockDescriptor = extern struct {
+    reserved: c_ulong = 0,
+    size: c_ulong,
+};
+
+/// `void (^)(id)` — a reply dictionary or an NSError, depending which half.
+const WatchBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const WatchBlockDescriptor,
+};
+
+/// 1 << 28 — a global block is never copied.
+const WATCH_BLOCK_IS_GLOBAL: c_int = 1 << 28;
+
+const watch_block_descriptor = WatchBlockDescriptor{ .size = @sizeOf(WatchBlock) };
+
+extern var _NSConcreteGlobalBlock: anyopaque;
+
+fn makeWatchReplyInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const WatchBlock, reply: ?*anyopaque) callconv(.c) void {
+            watchReplied(index, reply);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeWatchErrorInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const WatchBlock, err: ?*anyopaque) callconv(.c) void {
+            watchFailed(index, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeWatchBlocks(comptime maker: fn (comptime u5) *const anyopaque) [ios_async.max_in_flight]WatchBlock {
+    var out: [ios_async.max_in_flight]WatchBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = WATCH_BLOCK_IS_GLOBAL,
+            .invoke = maker(@intCast(i)),
+            .descriptor = &watch_block_descriptor,
+        };
+    }
+    return out;
+}
+
+var watch_reply_blocks: [ios_async.max_in_flight]WatchBlock =
+    if (is_darwin) makeWatchBlocks(makeWatchReplyInvoke) else undefined;
+var watch_error_blocks: [ios_async.max_in_flight]WatchBlock =
+    if (is_darwin) makeWatchBlocks(makeWatchErrorInvoke) else undefined;
+
+/// The watch answered. Serialise its dictionary and resolve.
+fn watchReplied(index: u5, reply: ?*anyopaque) void {
+    if (!is_darwin) return;
+
+    const ticket = takeWatchCall(index) orelse {
+        std.log.warn("sendToWatch reply fired for slot {d} with no call recorded; ignored", .{index});
+        return;
+    };
+
+    const allocator = std.heap.c_allocator;
+    const json = serialiseWatchReply(allocator, reply) catch |err| {
+        std.log.warn("sendToWatch: the watch's reply could not be serialised: {}", .{err});
+        ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
+        return;
+    };
+    defer allocator.free(json);
+
+    ios_async.deliverJson(ticket, json);
+}
+
+/// The watch, or WatchConnectivity, refused.
+fn watchFailed(index: u5, err: ?*anyopaque) void {
+    if (!is_darwin) return;
+
+    const ticket = takeWatchCall(index) orelse {
+        std.log.warn("sendToWatch error fired for slot {d} with no call recorded; ignored", .{index});
+        return;
+    };
+
+    // Swift rejects with `error.localizedDescription`. The protocol has no
+    // message field, so the description goes to the log — where "watch app not
+    // installed" and "reply timed out" are different enough to act on.
+    if (err) |ns_error| {
+        const sel = objc.sel_registerName("localizedDescription");
+        if (sel) |description_sel| {
+            if (objc.msgSendId(ns_error, description_sel)) |ns_description| {
+                if (objc.getNSStringUTF8(ns_description)) |utf8| {
+                    std.log.warn("sendToWatch: {s}", .{std.mem.span(utf8)});
+                }
+            }
+        }
+    }
+    ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
+}
+
+/// The watch's reply dictionary as JSON bytes.
+///
+/// `+[NSJSONSerialization isValidJSONObject:]` first, which Swift does not do.
+/// `resolveCallback` hands the reply straight to `dataWithJSONObject:`, and
+/// that *raises* `NSInvalidArgumentException` for the `NSDate` and `NSData`
+/// values `WCSession` explicitly permits in a message. An ObjC exception is an
+/// uncatchable abort from Zig and Swift's `catch` cannot catch it either, so a
+/// watch replying `["at": Date()]` terminates the app today. Asking first turns
+/// that into a refusal.
+fn serialiseWatchReply(allocator: std.mem.Allocator, reply: ?*anyopaque) ![]u8 {
+    const dictionary = reply orelse return error.NoReply;
+
+    const NSJSONSerialization = objc.objc_getClass("NSJSONSerialization") orelse
+        return error.ClassNotFound;
+
+    const sel_valid = objc.sel_registerName("isValidJSONObject:") orelse return error.SelectorNotFound;
+    const ValidFn = *const fn (objc.Class, objc.SEL, *anyopaque) callconv(.c) bool;
+    const isValid: ValidFn = @ptrCast(&objc.objc_msgSend);
+    if (!isValid(NSJSONSerialization, sel_valid, dictionary)) {
+        std.log.warn(
+            "sendToWatch: the watch replied a dictionary JSON cannot represent " ++
+                "(WCSession permits NSDate and NSData, which dataWithJSONObject: raises on)",
+            .{},
+        );
+        return error.UnrepresentableReply;
+    }
+
+    const sel_data = objc.sel_registerName("dataWithJSONObject:options:error:") orelse
+        return error.SelectorNotFound;
+    const DataFn = *const fn (objc.Class, objc.SEL, *anyopaque, c_ulong, ?*?*anyopaque) callconv(.c) ?*anyopaque;
+    const dataWith: DataFn = @ptrCast(&objc.objc_msgSend);
+    const ns_data = dataWith(NSJSONSerialization, sel_data, dictionary, 0, null) orelse
+        return error.NativeCallFailed;
+
+    const sel_bytes = objc.sel_registerName("bytes") orelse return error.SelectorNotFound;
+    const sel_length = objc.sel_registerName("length") orelse return error.SelectorNotFound;
+    const BytesFn = *const fn (*anyopaque, objc.SEL) callconv(.c) ?[*]const u8;
+    const LengthFn = *const fn (*anyopaque, objc.SEL) callconv(.c) c_ulong;
+    const bytesFn: BytesFn = @ptrCast(&objc.objc_msgSend);
+    const lengthFn: LengthFn = @ptrCast(&objc.objc_msgSend);
+
+    const length: usize = @intCast(lengthFn(ns_data, sel_length));
+    const bytes = bytesFn(ns_data, sel_bytes) orelse return error.NativeCallFailed;
+    return allocator.dupe(u8, bytes[0..length]);
+}
+
 const testing = std.testing;
 
 test "the declared actions are the ones the handler serves" {
-    try testing.expectEqual(@as(usize, 2), capability_actions.len);
+    try testing.expectEqual(@as(usize, 3), capability_actions.len);
     try testing.expectEqualStrings(A.update_watch_context, capability_actions[0].name);
     try testing.expectEqualStrings(A.is_watch_reachable, capability_actions[1].name);
+    try testing.expectEqualStrings(A.send_to_watch, capability_actions[2].name);
 
     for (capability_actions) |decl| {
         try testing.expectEqual(capabilities.Reply.result, decl.reply);
@@ -763,27 +1021,76 @@ test "every route the dispatcher has is a declared action" {
     }
 }
 
-test "sendToWatch is left to the Swift shim, not claimed and not refused" {
-    // The deliberate omission, asserted so it cannot be "fixed" by accident.
-    //
-    // `ios_dispatch`'s chain treats UnknownAction as "not mine, ask the next"
-    // and any other error as final. So the *only* spelling of "let the shim
-    // keep serving this" is: absent from `A`, absent from `routeFor`, and
-    // UnknownAction out of `handleMessage`. An `.unavailable` declaration
-    // would dispatch and refuse, stealing an action the shim answers correctly
-    // today — including the error path, which `ios_async` cannot yet deliver.
+test "sendToWatch is served now, and its unblocking condition really was met" {
+    // This test used to assert the opposite, and the module comment named the
+    // exact condition that would flip it: "becomes migratable the moment
+    // `ios_async` gains a `deliverError(ticket, BridgeError)`". Both halves of
+    // that now exist, so the claim is pinned here rather than trusted — a
+    // module that lost the error path again would go back to fabricating
+    // success on the error branch, which is the common branch for this action.
+    try testing.expect(@hasDecl(ios_async, "deliverError"));
+    try testing.expect(@hasDecl(ios_async, "deliverErrorCode"));
+
     var bridge = WatchBridge.init(testing.allocator);
     defer bridge.deinit();
+    try testing.expect(routeFor("sendToWatch") != null);
+}
 
-    try testing.expect(routeFor("sendToWatch") == null);
-    try testing.expectError(
-        bridge_error.BridgeError.UnknownAction,
-        bridge.handleMessage("sendToWatch", "{\"message\":{\"action\":\"ping\"}}"),
+test "a message is required, and is never coerced into one" {
+    // Swift's `body["message"] as? [String: Any]` with no else replies nothing
+    // at all. Wrapping a non-object would send the watch a message the page
+    // never wrote.
+    const object = try std.json.parseFromSlice(
+        std.json.Value,
+        testing.allocator,
+        "{\"message\":{\"action\":\"ping\"}}",
+        .{},
     );
+    defer object.deinit();
+    _ = try parseMessage(object.value);
 
-    for (capability_actions) |decl| {
-        try testing.expect(!std.mem.eql(u8, decl.name, "sendToWatch"));
+    try expectMessageRefused("{}", bridge_error.BridgeError.MissingData);
+    try expectMessageRefused("{\"message\":\"ping\"}", bridge_error.BridgeError.InvalidParameter);
+    try expectMessageRefused("{\"message\":[1]}", bridge_error.BridgeError.InvalidParameter);
+    try expectMessageRefused("{\"message\":null}", bridge_error.BridgeError.InvalidParameter);
+}
+
+/// Parse `json` and assert `parseMessage` refuses it with exactly `expected`.
+fn expectMessageRefused(comptime json: []const u8, expected: anyerror) !void {
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+    defer parsed.deinit();
+    try testing.expectError(expected, parseMessage(parsed.value));
+}
+
+test "both watch blocks are global, distinct per slot, and distinct from each other" {
+    if (!is_darwin) return error.SkipZigTest;
+
+    for (&watch_reply_blocks, &watch_error_blocks) |*reply, *fail| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, reply.isa);
+        try testing.expectEqual(&_NSConcreteGlobalBlock, fail.isa);
+        try testing.expectEqual(WATCH_BLOCK_IS_GLOBAL, reply.flags);
+        try testing.expectEqual(WATCH_BLOCK_IS_GLOBAL, fail.flags);
+        // The pair must not share an invoke: `sendMessage:` hands them to two
+        // different parameters, and one shared implementation would resolve
+        // the page's promise on the error path.
+        try testing.expect(reply.invoke != fail.invoke);
     }
+    try testing.expect(watch_reply_blocks[0].invoke != watch_reply_blocks[1].invoke);
+    try testing.expect(watch_error_blocks[0].invoke != watch_error_blocks[1].invoke);
+}
+
+test "only one of the pair can answer a call" {
+    // `WCSession.h` guarantees exactly one handler is invoked. Clearing the
+    // slot on take is what holds the line if that guarantee ever slipped: two
+    // replies for one page call is worse than none.
+    if (!is_darwin) return error.SkipZigTest;
+
+    watch_mutex.lock();
+    for (&watch_calls) |*entry| entry.* = null;
+    watch_mutex.unlock();
+
+    watchReplied(0, null);
+    watchFailed(0, null);
 }
 
 test "an action the namespace does not serve is reported, not ignored" {
