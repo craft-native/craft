@@ -37,6 +37,6 @@
   "enableScreenCapture": true,
   "enablePDFViewer": false,
   "enableAR": false,
-  "enableMLKit": false,
+  "enableMLKit": true,
   "trustedOrigins": []
 }

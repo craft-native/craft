@@ -63,6 +63,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     "$OUT/main.o" "$OUT/page.o" \
     "$ROOT/packages/zig/zig-out/lib/$LIB" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
+    -framework Vision \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -97,8 +98,9 @@ LAUNCH_PID=$!
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
 for _ in $(seq 1 60); do
-    if grep -q 'i=22' "$LOG" 2>/dev/null && grep -q 'i=24' "$LOG" 2>/dev/null \
-       && grep -q 'i=20' "$LOG" 2>/dev/null && grep -q 'i=14' "$LOG" 2>/dev/null; then sleep 1; break; fi
+    if grep -q 'i=26' "$LOG" 2>/dev/null && grep -q 'i=28' "$LOG" 2>/dev/null \
+       && grep -q 'i=32' "$LOG" 2>/dev/null && grep -q 'i=22' "$LOG" 2>/dev/null \
+       && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -106,7 +108,30 @@ kill "$LAUNCH_PID" 2>/dev/null || true
 echo "==> console"
 cat "$LOG" || true
 
-echo
+
+# Every id this file asserts on must be posted by exactly one action in
+# page.m. `count` matches `a=<anything> i=<n>`, so an id shared between a
+# marker and a real call makes the assertion pass on the wrong dispatch — which
+# is how i=30 briefly "proved" detectObjects answered while it was really
+# seeing secureSet. Checked here rather than trusted, because the failure is
+# silent and looks like a pass.
+echo "==> marker ids"
+python3 - "$FIXTURE/page.m" "${BASH_SOURCE[0]}" <<'COLLIDE'
+import re, sys, collections
+page, harness = open(sys.argv[1]).read(), open(sys.argv[2]).read()
+uses = collections.defaultdict(set)
+for line in page.split("\n"):
+    if "postMessage" not in line: continue
+    a, i = re.search(r"a:'(\w+)'", line), re.search(r"i:(\d+)", line)
+    if a and i: uses[int(i.group(1))].add(a.group(1))
+bad = [(i, sorted(uses[i])) for i in set(int(x) for x in re.findall(r'count (\d+)', harness))
+       if len(uses.get(i, ())) > 1]
+for i, acts in bad:
+    print(f"FAIL: asserted id {i} is posted by {len(acts)} actions: {' '.join(acts)}")
+sys.exit(1 if bad else 0)
+COLLIDE
+echo "ok: every asserted id belongs to exactly one action"
+
 echo "==> assertions"
 
 # Strip the log colouring before matching, so a grep failure means the line is
@@ -218,5 +243,28 @@ echo "ok: screenshot rendered the live window to a real PNG (i=22 seen ${C22}x)"
 C24="$(count 24)"
 [ "$C24" -ge 1 ] || { echo "FAIL: the deep-link handshake did not reply Swift's bare true"; exit 1; }
 echo "ok: deep-link handshake replied true behind its own gate (i=24 seen ${C24}x)"
+
+C26="$(count 26)"
+# The strongest assertion in this file. Vision read back the exact word the
+# page drew, through base64 -> NSData -> UIImage -> CGImage -> Vision, off the
+# main queue, with the request id carried across the hop by an ios_async
+# ticket. Nothing short of the whole path produces 'CRAFT'.
+[ "$C26" -ge 1 ] || { echo "FAIL: recognizeText did not read back the word the page drew"; exit 1; }
+echo "ok: OCR round-tripped a page-drawn word off the main queue (i=26 seen ${C26}x)"
+
+# classifyImage and detectObjects are Core ML backed. The simulator cannot
+# create an inference context for either ("Failed to create espresso context"),
+# while Vision's text recogniser above uses a different path and works. So what
+# is asserted here is the property this phase actually establishes: the call is
+# ANSWERED. Both were gated in Swift with no else, which left the page's
+# promise pending until its timeout; a real result and a named failure both
+# settle it, and the page accepts either.
+C28="$(count 28)"
+[ "$C28" -ge 1 ] || { echo "FAIL: classifyImage neither answered nor failed — it hung"; exit 1; }
+echo "ok: classifyImage answered rather than hanging (i=28 seen ${C28}x)"
+
+C32="$(count 32)"
+[ "$C32" -ge 1 ] || { echo "FAIL: detectObjects neither answered nor failed — it hung"; exit 1; }
+echo "ok: detectObjects answered rather than hanging (i=32 seen ${C32}x)"
 
 echo "PASS"

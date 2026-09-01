@@ -401,6 +401,9 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/ios_config.zig", .{
         .root_source_file = b.path("src/ios_config.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_vision.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_vision.zig"),
+    });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile.zig", .{
         .root_source_file = b.path("src/bridge_mobile.zig"),
     });
