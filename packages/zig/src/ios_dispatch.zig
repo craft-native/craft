@@ -39,13 +39,7 @@ const bridge_mobile_pdf = @import("bridge_mobile_pdf.zig");
 const bridge_mobile_bluetooth = @import("bridge_mobile_bluetooth.zig");
 const bridge_mobile_audiorec = @import("bridge_mobile_audiorec.zig");
 const bridge_mobile_health = @import("bridge_mobile_health.zig");
-// `bridge_mobile_speech.zig` is deliberately NOT in the chain. Its
-// capability_actions table is empty — the two speech actions were researched
-// in full and left with the Swift shim — so a module here would iterate,
-// return UnknownAction, and cost a comparison to serve nothing. Keeping it in
-// the chain would also read as coverage it does not provide, which is the
-// habit this migration exists to break. The file stays as the record of that
-// decision and of the Swift behaviour a future port has to match.
+const bridge_mobile_speech = @import("bridge_mobile_speech.zig");
 
 const objc = objc_runtime.objc;
 
@@ -287,6 +281,7 @@ const mobile_bridges = .{
     bridge_mobile_bluetooth.BluetoothBridge,
     bridge_mobile_audiorec.AudioRecordingBridge,
     bridge_mobile_health.HealthBridge,
+    bridge_mobile_speech.SpeechBridge,
 };
 
 /// Narrow an arbitrary handler error to one the page's error codes can express.

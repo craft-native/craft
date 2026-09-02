@@ -3,7 +3,7 @@
   "bundleId": "app.craft.slice",
   "darkMode": false,
   "backgroundColor": "#0b1712",
-  "enableSpeechRecognition": false,
+  "enableSpeechRecognition": true,
   "enableHaptics": false,
   "enableShare": false,
   "enableCamera": true,

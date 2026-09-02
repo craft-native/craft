@@ -100,7 +100,11 @@ const dispatch_end = "func webView(";
 /// 48 after calendar and contacts. Speech was researched in full and left
 /// with the shim: neither action replies, so unlike the earlier deferrals
 /// there is no promise to strand and falling through costs the page nothing.
-const max_not_yet_migrated: usize = 28;
+/// 26 once speech came back and took both. The deferral had listed five
+/// preconditions and four blockers; the load-bearing one was the realtime
+/// audio tap, which is the first callback in this migration that runs on a
+/// thread where a lock is a bug rather than a slowdown.
+const max_not_yet_migrated: usize = 26;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";

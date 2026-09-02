@@ -14,6 +14,8 @@
     <array><string>UIInterfaceOrientationPortrait</string></array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>The slice fixture asks for Bluetooth so startBluetoothScan reaches CBCentralManager rather than stopping at the plist guard.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>The slice fixture asks for speech recognition so startListening reaches SFSpeechRecognizer rather than stopping at the plist guard, which is the exact proxy this module reads for enableSpeechRecognition.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>The slice fixture asks for the microphone so startAudioRecording reaches AVAudioRecorder rather than stopping at the plist guard.</string>
 </dict>

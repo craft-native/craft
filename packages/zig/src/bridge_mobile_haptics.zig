@@ -259,7 +259,14 @@ fn schedulePattern(items: []const std.json.Value) !usize {
 /// "returned without error" means "UIKit accepted the call", never "the device
 /// buzzed", which is the other half of why `haptic` has no success reply to
 /// fabricate.
-fn triggerHapticChecked(haptic_type: HapticType) !void {
+///
+/// `pub` for one caller outside this file. `bridge_mobile_speech.zig` fires a
+/// light impact on start and on stop because `CraftApp.swift:2544` and `:2558`
+/// do — directly, bypassing the `config.enableHaptics` check the dispatcher
+/// applies to `case "haptic"` at `:537`. That bypass is the spec's, not a
+/// choice this module makes, and routing the speech path through the gated
+/// entry point would be the divergence rather than the fix.
+pub fn triggerHapticChecked(haptic_type: HapticType) !void {
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     switch (haptic_type) {
