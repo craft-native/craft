@@ -3,7 +3,7 @@
  * @module @craft-native/svelte
  */
 
-import { writable, derived, readable, get, type Writable, type Readable } from 'svelte/store';
+import { writable, derived, type Writable, type Readable } from 'svelte/store';
 import { onMount, onDestroy } from 'svelte';
 import { windowManager } from '../api/window.js';
 

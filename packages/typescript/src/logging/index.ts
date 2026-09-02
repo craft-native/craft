@@ -4,7 +4,7 @@
  */
 
 import { writeFileSync, appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
-import { join, dirname } from 'path'
+import { dirname } from 'path'
 import { hostname as osHostname } from 'os'
 
 // Types

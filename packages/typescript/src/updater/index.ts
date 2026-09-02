@@ -7,7 +7,6 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { join, basename, dirname } from 'path'
 import { execFileSync, spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { pipeline } from 'stream/promises'
 import { EventEmitter } from 'events'
 
 // Types
