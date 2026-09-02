@@ -469,6 +469,24 @@ export fn craft_ios_set_webview(webview: ?*anyopaque) callconv(.c) void {
     setWebView(webview);
 }
 
+/// Forget the webview, if it is still the one the caller installed.
+///
+/// The other half of `craft_ios_set_webview`, and the reason it is needed:
+/// Zig holds the webview unretained, so once SwiftUI tears the view down the
+/// pointer is dangling and every later reply is an `objc_msgSend` into freed
+/// memory. `UIViewRepresentable` has a `dismantleUIView` hook for exactly this
+/// moment, and this is what it calls.
+///
+/// Compare-and-clear, not an unconditional reset. SwiftUI is free to build the
+/// replacement view *before* dismantling the old one — during a state-driven
+/// rebuild it usually does — and a blind clear on dismantle would blank the
+/// pointer the new view had already installed, leaving a live app whose
+/// replies all reach `error.NoWebView`. Clearing only when the pointer still
+/// matches makes the two orders equivalent.
+export fn craft_ios_clear_webview(webview: ?*anyopaque) callconv(.c) void {
+    if (global_webview == webview) global_webview = null;
+}
+
 /// Offer one already-parsed page message to the Zig dispatcher.
 ///
 /// The entry point for a **Swift-hosted** app, where `WKScriptMessageHandler`
@@ -891,4 +909,22 @@ test "a live action is still claimed, unavailable is not a blanket hand-back" {
     try testing.expect(!hostServesItself("setKeepAwake"));
     try testing.expect(!hostServesItself("getDeviceInfo"));
     try testing.expect(!hostServesItself("noSuchAction"));
+}
+
+test "clearing the webview only forgets the one the caller named" {
+    // The rebuild order that makes a blind clear wrong: SwiftUI builds the
+    // replacement, then dismantles the original. If dismantling cleared
+    // unconditionally, the live view installed a moment earlier would be
+    // dropped and every reply after it would reach `error.NoWebView`.
+    const first: *anyopaque = @ptrFromInt(0x1000);
+    const second: *anyopaque = @ptrFromInt(0x2000);
+    defer setWebView(null);
+
+    craft_ios_set_webview(first);
+    craft_ios_set_webview(second); // the replacement arrives first
+    craft_ios_clear_webview(first); // then the original is dismantled
+    try testing.expect(getWebView() == second);
+
+    craft_ios_clear_webview(second);
+    try testing.expect(getWebView() == null);
 }

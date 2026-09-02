@@ -369,6 +369,13 @@ struct CraftWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
+    /// The teardown half of `CraftZigRuntime.attach`, called by SwiftUI when
+    /// this representable goes away. Without it Zig keeps an unretained
+    /// pointer to a deallocated webview and answers into freed memory.
+    static func dismantleUIView(_ uiView: WKWebView, coordinator: Coordinator) {
+        CraftZigRuntime.detach(uiView)
+    }
+
     func makeCoordinator() -> Coordinator {
         let coordinator = Coordinator(config: config)
         // The Zig dispatcher finds CraftSwiftShim by class name; the shim finds
@@ -5253,6 +5260,7 @@ extension CraftWebView.Coordinator: WCSessionDelegate {
 @objc(CraftZigRuntime)
 final class CraftZigRuntime: NSObject {
     private typealias SetWebViewFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
+    private typealias ClearWebViewFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
     private typealias HandleActionFn = @convention(c) (
         UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt, Int64
     ) -> Bool
@@ -5262,6 +5270,11 @@ final class CraftZigRuntime: NSObject {
     private static let setWebViewFn: SetWebViewFn? = {
         guard let sym = dlsym(image, "craft_ios_set_webview") else { return nil }
         return unsafeBitCast(sym, to: SetWebViewFn.self)
+    }()
+
+    private static let clearWebViewFn: ClearWebViewFn? = {
+        guard let sym = dlsym(image, "craft_ios_clear_webview") else { return nil }
+        return unsafeBitCast(sym, to: ClearWebViewFn.self)
     }()
 
     private static let handleActionFn: HandleActionFn? = {
@@ -5281,6 +5294,22 @@ final class CraftZigRuntime: NSObject {
     /// nothing to break it.
     static func attach(_ webView: WKWebView) {
         setWebViewFn?(Unmanaged.passUnretained(webView).toOpaque())
+    }
+
+    /// Forget this webview, if Zig is still holding it.
+    ///
+    /// `attach` hands over an unretained pointer, so the moment SwiftUI
+    /// deallocates the view Zig is holding freed memory and every later reply
+    /// is an `objc_msgSend` into it. Nothing called this before, and nothing
+    /// had to while the app had exactly one webview for its whole life — but
+    /// a `UIViewRepresentable` is rebuilt whenever its identity changes, and
+    /// the second rebuild is where that assumption stops holding.
+    ///
+    /// The webview is passed rather than implied: Zig clears only if this is
+    /// still the pointer it has, so a rebuild that makes the replacement
+    /// before dismantling the original cannot blank the live one.
+    static func detach(_ webView: WKWebView) {
+        clearWebViewFn?(Unmanaged.passUnretained(webView).toOpaque())
     }
 
     /// Offer one page message to the Zig dispatcher.
