@@ -8,7 +8,7 @@
  * @module @craft-native/styles/sidebar-templates
  */
 
-import { tahoeStyles, arcStyles, orbstackStyles, cx } from './sidebars.js'
+import { tahoeStyles, arcStyles, orbstackStyles } from './sidebars.js'
 
 // ============================================================================
 // Types

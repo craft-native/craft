@@ -1,4 +1,4 @@
-import { writable, derived, get } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 
 interface CraftAPI {
   getPlatform(): Promise<{ platform: string; version: string }>;

@@ -4,7 +4,7 @@
  */
 
 import { execFile, spawn } from 'child_process'
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, unlinkSync, writeFileSync } from 'fs'
 import { join, basename } from 'path'
 import { promisify } from 'util'
 

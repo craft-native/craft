@@ -6,7 +6,7 @@
 // NOTE: Use `win` alias (for windowManager) instead of `window`. `Platform` (value)
 // is exported from 'craft-native/components' to avoid a conflict with the
 // Platform type at the top level.
-import { db, http, win as window, haptics, secureStorage } from 'craft-native'
+import { db, win as window, haptics } from 'craft-native'
 import { Platform } from 'craft-native/components'
 
 // Types

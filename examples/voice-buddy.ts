@@ -17,7 +17,6 @@
 
 import { createApp } from '../packages/typescript/src/index.ts'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
 // Path to the STX file
 const stxPath = '/Users/glennmichaeltorregosa/Documents/Projects/stx/examples/voice-buddy.stx'
