@@ -434,6 +434,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "secureClear", .secure_storage },
         .{ "startAudioRecording", .audio_recording },
         .{ "startBluetoothScan", .bluetooth },
+        .{ "startListening", .speech_recognition },
         .{ "secureGet", .secure_storage },
         .{ "secureRemove", .secure_storage },
         .{ "secureSet", .secure_storage },

@@ -65,6 +65,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
     -framework WatchConnectivity -framework CoreBluetooth -framework AVFoundation -framework HealthKit \
+    -framework Speech \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -99,6 +100,21 @@ xcrun simctl install "$UDID" "$APP"
 # permission change.
 xcrun simctl privacy "$UDID" grant microphone "$BUNDLE_ID" 2>/dev/null || true
 
+# And speech recognition, which needs the raw TCC identifier.
+#
+# `simctl privacy` documents nine services and none of them is speech, but the
+# service argument is not validated against that list — it is passed through,
+# so the kTCCService* name Apple uses internally is accepted where the friendly
+# name is not. Verified rather than assumed: with only `microphone` granted,
+# startListening reached SFSpeechRecognizer and stopped dead at a
+# "would like to access Speech Recognition" alert that no script can answer,
+# and the fixture timed out with no event at all. With this line, the same
+# build emits craftSpeechStart.
+#
+# If a future Xcode starts validating the argument this fails silently and the
+# i=68 assertion below fails loudly, which is the right way round.
+xcrun simctl privacy "$UDID" grant kTCCServiceSpeechRecognition "$BUNDLE_ID" 2>/dev/null || true
+
 LOG="$OUT/console.log"
 xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" > "$LOG" 2>&1 &
 LAUNCH_PID=$!
@@ -110,7 +126,8 @@ for _ in $(seq 1 60); do
        && grep -q 'i=32' "$LOG" 2>/dev/null && grep -q 'i=22' "$LOG" 2>/dev/null \
        && grep -q 'i=34' "$LOG" 2>/dev/null && grep -q 'i=38' "$LOG" 2>/dev/null \
        && grep -q 'i=46' "$LOG" 2>/dev/null && grep -q 'i=44' "$LOG" 2>/dev/null \
-       && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null; then sleep 1; break; fi
+       && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null \
+       && grep -q 'i=72' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -318,12 +335,53 @@ C52="$(count 52)"
 [ "$C52" -ge 1 ] || { echo "FAIL: sendToWatch did not refuse through the error path"; exit 1; }
 echo "ok: watch refusal delivered through the async error path (i=52 seen ${C52}x)"
 
+# The speech pair. Neither action replies, so every assertion here is on the
+# event channel: the ids below are marker dispatches the page posts from inside
+# a `craftSpeech*` listener, and reaching one means the event arrived with a
+# detail the page could index into.
+C68="$(count 68)"; C74="$(count 74)"
+if [ "$C74" -ge 1 ]; then
+    # Not a pass, but the most useful thing to print before failing: the page
+    # only posts i=74 when the detail carried one of Swift's four messages, so
+    # the refusal names its own cause and the module clearly ran.
+    echo "note: startListening refused rather than started (i=74 seen ${C74}x)"
+fi
+# The strongest assertion this pair has. craftSpeechStart is emitted on the far
+# side of the whole chain: the plist guard, requestAuthorization:'s block on an
+# arbitrary queue, the hop to the main queue, the audio session, a live
+# SFSpeechRecognizer, a non-zero input format, the recognition task, the tap
+# installed on the audio I/O thread, and AVAudioEngine actually starting. Any
+# link short of the last one emits craftSpeechError instead.
+[ "$C68" -ge 1 ] || {
+    echo "FAIL: startListening never started the engine"
+    echo "       If i=74 is absent too, the authorization block never fired —"
+    echo "       check that the kTCCServiceSpeechRecognition grant above still"
+    echo "       takes, because an unanswerable system alert looks exactly"
+    echo "       like this."
+    exit 1
+}
+echo "ok: the audio engine started and craftSpeechStart reached the page (i=68 seen ${C68}x)"
+
+C72="$(count 72)"
+# The load-bearing one, and it holds whichever way the start went. Swift's
+# stopSpeechRecognition() has no early return, so a stop that stops nothing
+# still emits craftSpeechEnd — which is what a page's listening indicator
+# binds to. This is also the only assertion that proves the teardown ran
+# without taking the process down: the tap handoff, the bounded drain and the
+# release all happen on the way to this event.
+[ "$C72" -ge 1 ] || { echo "FAIL: stopListening did not emit craftSpeechEnd"; exit 1; }
+echo "ok: stopListening emitted craftSpeechEnd through the teardown (i=72 seen ${C72}x)"
+
 C54="$(count 54)"
 # The exact trap this action was held back for: ios_async's pooled block would
 # have replied the STRING "denied", and "denied" is truthy — so a page's
 # `if (await openSettings())` would take the success branch on failure. The
 # page asserts `typeof payload === 'boolean'`, which only the module's own
-# block can satisfy. Posted last, because it navigates to Settings.
+# block can satisfy. Posted last, because it navigates to Settings — and
+# "last" means from inside the craftSpeechEnd listener, so this assertion
+# depends on the speech pair above. That is why the speech block sits ahead of
+# it: a broken teardown would otherwise surface here, blaming openSettings for
+# an event that never arrived.
 [ "$C54" -ge 1 ] || { echo "FAIL: openSettings did not reply with a boolean"; exit 1; }
 echo "ok: openSettings replied a real boolean, not \"granted\"/\"denied\" (i=54 seen ${C54}x)"
 
