@@ -649,3 +649,51 @@ test "Zig requires exactly the keys the spec's decoder requires" {
     try testing.expect(required >= 40);
     try testing.expect(optional_seen >= 1);
 }
+
+test "getDeviceInfo answers every field the spec answers" {
+    // The regression that made this test necessary. Zig's `getDeviceInfo` is
+    // `.live`, so the Swift-hosted seam prefers it over the spec's arm — and
+    // it answered four of the spec's fourteen fields. A page reading
+    // `screenWidth` or `locale` got `undefined` from an action that reported
+    // success, which is the exact failure `.unavailable` exists to prevent and
+    // could not catch, because the action does work; it just works less.
+    //
+    // Keys are read out of the spec rather than listed here, so a field added
+    // to `CraftApp.swift` fails this test until Zig answers it too.
+    // Anchored to the function, not to `let info:` — the spec has more than
+    // one dictionary spelled that way (`getMemoryUsage` has another), and the
+    // first match is not this one.
+    const fn_start = std.mem.indexOf(u8, swift_spec, "private func getDeviceInfo(callbackId:") orelse
+        return error.SpecShapeChanged;
+    const body = swift_spec[fn_start..];
+    const start = std.mem.indexOf(u8, body, "let info: [String: Any] = [") orelse
+        return error.SpecShapeChanged;
+    const after = body[start..];
+    const end = std.mem.indexOf(u8, after, "\n            ]") orelse return error.SpecShapeChanged;
+    const block = after[0..end];
+
+    const zig_src = @embedFile("src/bridge_mobile.zig");
+
+    var it = std.mem.splitScalar(u8, block, '\n');
+    var checked: usize = 0;
+    while (it.next()) |line| {
+        const q1 = std.mem.indexOfScalar(u8, line, '"') orelse continue;
+        const rest = line[q1 + 1 ..];
+        const q2 = std.mem.indexOfScalar(u8, rest, '"') orelse continue;
+        const key = rest[0..q2];
+        if (key.len == 0) continue;
+
+        // Zig builds the reply as a format string, so the key appears in the
+        // source as the escaped `\"key\":` it will emit.
+        var needle_buf: [64]u8 = undefined;
+        const needle = try std.fmt.bufPrint(&needle_buf, "\\\"{s}\\\":", .{key});
+        if (std.mem.indexOf(u8, zig_src, needle) == null) {
+            std.debug.print("getDeviceInfo: the spec answers `{s}` and Zig does not\n", .{key});
+            return error.FieldMissingFromZig;
+        }
+        checked += 1;
+    }
+
+    // A shape change that silently matched nothing would otherwise pass.
+    try testing.expectEqual(@as(usize, 14), checked);
+}

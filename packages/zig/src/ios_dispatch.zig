@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const objc_runtime = @import("objc_runtime.zig");
 const request_context = @import("request_context.zig");
 const bridge_error = @import("bridge_error.zig");
+const capabilities = @import("capabilities.zig");
 pub const ios_async = @import("ios_async.zig");
 pub const ios_events = @import("ios_events.zig");
 pub const ios_delegate = @import("ios_delegate.zig");
@@ -319,6 +320,83 @@ const mobile_bridges = .{
     bridge_mobile_speech.SpeechBridge,
 };
 
+/// The same modules again, as their capability manifests.
+///
+/// A second spelling of `mobile_bridges` is not something to want, but the two
+/// cannot be one: `mobile_bridges` holds bridge *types* and `capability_actions`
+/// is declared at module scope, so there is no way to reach a module's manifest
+/// from its struct. The comptime length check below is what keeps them in step
+/// — a module added to one list and not the other fails the build.
+const mobile_manifests = [_][]const capabilities.ActionDecl{
+    &bridge_mobile.capability_actions,
+    &bridge_mobile_clipboard.capability_actions,
+    &bridge_mobile_haptics.capability_actions,
+    &bridge_mobile_device.capability_actions,
+    &bridge_mobile_system.capability_actions,
+    &bridge_mobile_display.capability_actions,
+    &bridge_mobile_storage.capability_actions,
+    &bridge_mobile_misc.capability_actions,
+    &bridge_mobile_shortcuts.capability_actions,
+    &bridge_mobile_securestore.capability_actions,
+    &bridge_mobile_biometric.capability_actions,
+    &bridge_mobile_permissions.capability_actions,
+    &bridge_mobile_db.capability_actions,
+    &bridge_mobile_notifcancel.capability_actions,
+    &bridge_mobile_notifications.capability_actions,
+    &bridge_mobile_bgtasks.capability_actions,
+    &bridge_mobile_watch.capability_actions,
+    &bridge_mobile_location.capability_actions,
+    &bridge_mobile_locrecording.capability_actions,
+    &bridge_mobile_motion.capability_actions,
+    &bridge_mobile_imagepicker.capability_actions,
+    &bridge_mobile_filepicker.capability_actions,
+    &bridge_mobile_contactpicker.capability_actions,
+    &bridge_mobile_calendar.capability_actions,
+    &bridge_mobile_contacts.capability_actions,
+    &bridge_mobile_vision.capability_actions,
+    &bridge_mobile_auth.capability_actions,
+    &bridge_mobile_siri.capability_actions,
+    &bridge_mobile_pdf.capability_actions,
+    &bridge_mobile_bluetooth.capability_actions,
+    &bridge_mobile_audiorec.capability_actions,
+    &bridge_mobile_health.capability_actions,
+    &bridge_mobile_speech.capability_actions,
+};
+
+comptime {
+    if (mobile_manifests.len != mobile_bridges.len) {
+        @compileError("mobile_manifests and mobile_bridges must list the same modules");
+    }
+}
+
+/// Whether a host that offered this action has to serve it itself.
+///
+/// `.status = .unavailable` in a module's manifest means the handler is
+/// reachable and refuses, deliberately, because Zig cannot do the thing
+/// correctly — `haptic` cannot see `config.enableHaptics`, and the rest say
+/// why in their own `reason`.
+///
+/// In the Zig-hosted app that refusal is the honest end of the line: `route`
+/// tries `handOffToHost` next, and the shim is what actually serves it. The
+/// host-offered path has no such fallback — `craft_ios_handle_action`
+/// deliberately does not consult `handOffToHost`, because there the host *is*
+/// the caller. So claiming one of these would not be a refusal instead of an
+/// answer, it would be a refusal instead of the *host's working answer*: an app
+/// that has haptics today would stop buzzing the moment the runtime was linked,
+/// and the page would get a rejection where it used to get silence-and-a-buzz.
+///
+/// `test/ios_conformance_test.zig` already treats falling through as better
+/// than `.unavailable`. This is that rule, applied to the one path that had no
+/// way to fall through.
+fn hostServesItself(action: []const u8) bool {
+    for (mobile_manifests) |manifest| {
+        for (manifest) |decl| {
+            if (decl.status == .unavailable and std.mem.eql(u8, decl.name, action)) return true;
+        }
+    }
+    return false;
+}
+
 /// Narrow an arbitrary handler error to one the page's error codes can express.
 ///
 /// A handler's error set is wider than `BridgeError` — it picks up allocation
@@ -443,6 +521,15 @@ export fn craft_ios_handle_action(
         action,
         request_context.current(),
     });
+
+    // Before the gate and the module chain, because this is not a question
+    // about what the config allows or what a handler would do — it is a
+    // question about which arm owns the action at all, and the answer is the
+    // caller's own.
+    if (hostServesItself(action)) {
+        std.log.info("ios: {s} is declared unavailable; leaving it to the host", .{action});
+        return false;
+    }
 
     const offer = offerToModules(std.heap.c_allocator, action, payload) catch {
         // A module ran and failed, and answered the page on its way out. That
@@ -760,4 +847,48 @@ test "setting the webview from a host is what makes replies reachable" {
     // rather than quietly addressing every reply to it.
     craft_ios_set_webview(null);
     try testing.expectError(error.NoWebView, evalJS("1"));
+}
+
+test "an action declared unavailable is left to the host, not claimed" {
+    // The regression this guards. Each of these has a working Swift arm and a
+    // Zig handler that refuses on purpose; before the host-offered path knew
+    // the difference, linking the runtime replaced the working answer with a
+    // rejection. `false` here is what sends the call back to Swift's switch.
+    const declared_unavailable = [_][]const u8{
+        "haptic",
+        "getNetworkStatus",
+        "lockOrientation",
+        "unlockOrientation",
+    };
+    for (declared_unavailable) |action| {
+        try testing.expect(hostServesItself(action));
+        try testing.expect(!craft_ios_handle_action(action.ptr, action.len, "{}", 2, 11));
+    }
+}
+
+test "the fall-through is read from the manifests, not from a list kept beside them" {
+    // `hostServesItself` must answer for exactly the actions the modules
+    // declare `.unavailable` — no more, or a working Zig action is handed away;
+    // no fewer, or the regression comes back for whichever one was missed. So
+    // count the declarations rather than trusting the test above's literals.
+    var declared: usize = 0;
+    for (mobile_manifests) |manifest| {
+        for (manifest) |decl| {
+            if (decl.status == .unavailable) {
+                declared += 1;
+                try testing.expect(hostServesItself(decl.name));
+            }
+        }
+    }
+    try testing.expectEqual(@as(usize, 4), declared);
+}
+
+test "a live action is still claimed, unavailable is not a blanket hand-back" {
+    // The other half: `vibrate` sits in the same module as `haptic` and is
+    // `.live`, so the seam must keep claiming it. A fall-through that widened
+    // to whole modules would silently un-migrate everything beside a refusal.
+    try testing.expect(!hostServesItself("vibrate"));
+    try testing.expect(!hostServesItself("setKeepAwake"));
+    try testing.expect(!hostServesItself("getDeviceInfo"));
+    try testing.expect(!hostServesItself("noSuchAction"));
 }
