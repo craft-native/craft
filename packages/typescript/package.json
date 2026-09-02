@@ -81,7 +81,7 @@
   "scripts": {
     "build": "bun build.ts && bun run build:types",
     "build:lib": "bun build src/index.ts --outdir dist --format esm --target bun && bun build src/index.ts --outfile dist/index.cjs --format cjs --target node",
-    "build:types": "bun run tsc -p tsconfig.build.json && cp dist/index.d.ts dist/index.d.cts",
+    "build:types": "bunx --bun tsc -p tsconfig.build.json && cp dist/index.d.ts dist/index.d.cts",
     "dev": "bun --watch src/index.ts",
     "lint": "bunx --bun pickier lint . --config ../../pickier.config.ts --max-warnings 9999",
     "lint:fix": "bunx --bun pickier lint . --fix --config ../../pickier.config.ts --max-warnings 9999",
