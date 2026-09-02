@@ -65,13 +65,24 @@ const objc = objc_runtime.objc;
 /// One slot, because iOS has one webview. When multi-window arrives this
 /// becomes a lookup keyed by the same request id the reply already carries —
 /// the id is threaded through `request_context` for exactly that reason.
-var global_webview: ?objc.id = null;
+/// `objc.id`, not `?objc.id`. The extra optional was a real defect, not
+/// redundancy: `objc.id` is already `?*anyopaque`, so a double optional made
+/// `setWebView(null)` store a *present* outer value wrapping a nil webview,
+/// and `global_webview orelse return error.NoWebView` below then unwrapped
+/// only the outer one and sailed past. Every reply after such a call went to
+/// `objc_msgSend(nil, …)`, which is a silent no-op — the action ran, it
+/// worked, and the page heard nothing, with no error anywhere to say so.
+///
+/// One optional means "no webview" has one spelling and `orelse` catches it.
+/// (`macos.zig:4075` still holds the two-level version. It is unreachable
+/// there today because nothing passes nil, but it is the same shape.)
+var global_webview: objc.id = null;
 
 pub fn setWebView(webview: objc.id) void {
     global_webview = webview;
 }
 
-pub fn getWebView() ?objc.id {
+pub fn getWebView() objc.id {
     return global_webview;
 }
 
@@ -184,62 +195,86 @@ fn payloadOf(root: std.json.ObjectMap) ![]const u8 {
 /// the page's timeout fires, and thirty seconds of nothing is the worst
 /// diagnostic a bridge can give.
 fn route(allocator: std.mem.Allocator, msg_type: []const u8, action: []const u8, data: []const u8) !void {
-    if (std.mem.eql(u8, msg_type, "mobile")) {
-        // The app's own configuration, before anything else. An action the
-        // spec gates on a `config.enable*` flag is refused here when that flag
-        // is off, rather than served — which is what every one of these did
-        // until `ios_config.zig` existed, because Zig had no way to read the
-        // flag.
-        //
-        // Only actions this file's modules serve are gated. `gateFor` returns
-        // null for the rest, so an action still on the shim keeps whatever
-        // answer the shim gives it: Zig refusing on Swift's behalf would mean
-        // deciding, from Zig's parse of the config, a question the arm that
-        // owns the action is about to decide from its own.
-        if (ios_config.gateFor(action)) |feature| {
-            if (!ios_config.isEnabled(feature)) {
-                std.log.info(
-                    "ios: refusing {s}; {s} is not enabled in craft.config.json",
-                    .{ action, feature.jsonKey() },
-                );
-                bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.CapabilityDisabled);
-                return bridge_error.BridgeError.CapabilityDisabled;
-            }
-        }
-
-        // First module that recognises the action wins. UnknownAction means
-        // "not mine, ask the next"; any other error means a handler ran and
-        // failed, and its answer is final — retrying the same action against
-        // another module (or the shim) would replace a specific failure with
-        // whatever the next thing happens to say.
-        //
-        // `test/ios_conformance_test.zig` fails the build if one action is
-        // declared by two modules, so first-match is deterministic rather than
-        // dependent on the order of this tuple. That check was claimed here
-        // before it existed; it exists now.
-        inline for (mobile_bridges) |Bridge| {
-            var bridge = Bridge.init(allocator);
-            defer bridge.deinit();
-
-            if (bridge.handleMessage(action, data)) |_| {
-                return;
-            } else |err| switch (err) {
-                bridge_error.BridgeError.UnknownAction => {},
-                else => {
-                    bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
-                    return err;
-                },
-            }
-        }
-
-        if (try handOffToHost(action, data)) return;
-
+    if (!std.mem.eql(u8, msg_type, "mobile")) {
         bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
-        return error.UnknownAction;
+        return error.UnknownNamespace;
     }
 
+    switch (try offerToModules(allocator, action, data)) {
+        .answered => return,
+        .not_ours => {},
+    }
+
+    if (try handOffToHost(action, data)) return;
+
     bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.UnknownAction);
-    return error.UnknownNamespace;
+    return error.UnknownAction;
+}
+
+/// Whether the Zig modules took responsibility for an action.
+///
+/// The distinction the hand-off is built on, and the one a Swift-hosted app
+/// needs too: `answered` means the page will hear back from Zig and nobody
+/// else may reply, `not_ours` means nothing here recognised the action and
+/// whoever asked must serve it themselves.
+///
+/// A refusal is `answered`. Every path that calls `sendErrorToJS` has settled
+/// the page's promise, so treating "refused" as "not mine" would let a second
+/// arm answer the same call — the double-reply this envelope exists to
+/// prevent.
+const Offer = enum { answered, not_ours };
+
+/// The capability gate, then the module chain. Shared by the two entry points
+/// so they cannot drift: `route` for a message Zig received itself, and
+/// `craft_ios_handle_action` for one a Swift host received and passed over.
+fn offerToModules(allocator: std.mem.Allocator, action: []const u8, data: []const u8) !Offer {
+    // The app's own configuration, before anything else. An action the spec
+    // gates on a `config.enable*` flag is refused here when that flag is off,
+    // rather than served — which is what every one of these did until
+    // `ios_config.zig` existed, because Zig had no way to read the flag.
+    //
+    // Only actions this file's modules serve are gated. `gateFor` returns null
+    // for the rest, so an action still on the shim keeps whatever answer the
+    // shim gives it: Zig refusing on Swift's behalf would mean deciding, from
+    // Zig's parse of the config, a question the arm that owns the action is
+    // about to decide from its own.
+    if (ios_config.gateFor(action)) |feature| {
+        if (!ios_config.isEnabled(feature)) {
+            std.log.info(
+                "ios: refusing {s}; {s} is not enabled in craft.config.json",
+                .{ action, feature.jsonKey() },
+            );
+            bridge_error.sendErrorToJS(allocator, action, bridge_error.BridgeError.CapabilityDisabled);
+            return bridge_error.BridgeError.CapabilityDisabled;
+        }
+    }
+
+    // First module that recognises the action wins. UnknownAction means
+    // "not mine, ask the next"; any other error means a handler ran and
+    // failed, and its answer is final — retrying the same action against
+    // another module (or the shim) would replace a specific failure with
+    // whatever the next thing happens to say.
+    //
+    // `test/ios_conformance_test.zig` fails the build if one action is
+    // declared by two modules, so first-match is deterministic rather than
+    // dependent on the order of this tuple. That check was claimed here
+    // before it existed; it exists now.
+    inline for (mobile_bridges) |Bridge| {
+        var bridge = Bridge.init(allocator);
+        defer bridge.deinit();
+
+        if (bridge.handleMessage(action, data)) |_| {
+            return .answered;
+        } else |err| switch (err) {
+            bridge_error.BridgeError.UnknownAction => {},
+            else => {
+                bridge_error.sendErrorToJS(allocator, action, asBridgeError(err));
+                return err;
+            },
+        }
+    }
+
+    return .not_ours;
 }
 
 /// Every Zig module serving the `mobile` namespace, in dispatch order.
@@ -338,6 +373,83 @@ fn handOffToHost(action: []const u8, data: []const u8) !bool {
     const Fn = *const fn (objc.id, objc.SEL, objc.id, objc.id, i64) callconv(.c) bool;
     const func: Fn = @ptrCast(&objc.objc_msgSend);
     return func(shim, sel, ns_action, ns_payload, request_id);
+}
+
+/// Hand the Zig runtime the webview its replies are evaluated against.
+///
+/// The one thing a Swift-hosted app must do before any message is offered
+/// below. In the Zig-hosted app `ios.zig` sets this itself while building the
+/// webview; when SwiftUI owns the `WKWebView`, Zig never sees it and every
+/// reply would reach `error.NoWebView` — an action that ran, worked, and told
+/// nobody.
+///
+/// Not retained. The caller owns the webview and outlives the runtime: it is
+/// the app's own root view. Retaining it here would create a cycle with
+/// nothing to break it, since this pointer is never cleared except by a second
+/// call.
+export fn craft_ios_set_webview(webview: ?*anyopaque) callconv(.c) void {
+    setWebView(webview);
+}
+
+/// Offer one already-parsed page message to the Zig dispatcher.
+///
+/// The entry point for a **Swift-hosted** app, where `WKScriptMessageHandler`
+/// belongs to SwiftUI and Zig is a library rather than the thing that owns
+/// `UIApplicationMain`. The caller has already parsed the page's message, so
+/// this takes the three fields routing needs directly instead of re-parsing an
+/// envelope Zig never saw.
+///
+/// Returns **true when Zig has taken responsibility** — the page will hear
+/// back from Zig and the caller must not answer. Returns **false only when no
+/// Zig module recognised the action**, which is the caller's signal to serve
+/// it themselves.
+///
+/// A refusal returns true. `offerToModules` calls `sendErrorToJS` before it
+/// reports a failure, so the promise is already settled; answering again from
+/// the Swift side would resolve a callback that has been deleted at best, and
+/// deliver two contradictory answers to one call at worst.
+///
+/// `handOffToHost` is deliberately **not** consulted here. In this direction
+/// the host is the caller, so handing back to `CraftSwiftShim` would take a
+/// round trip through the Objective-C runtime to reach the same `dispatch`
+/// method the caller is about to call anyway — and would do it under a
+/// synthetic `zig:` callback id, routing the reply back through Zig for no
+/// reason. `false` says the same thing in one word.
+///
+/// `request_id` is negative for a page message with no callback waiting on it,
+/// matching the null the `{t,a,d,i}` envelope carries in that case.
+export fn craft_ios_handle_action(
+    action_ptr: [*]const u8,
+    action_len: usize,
+    payload_ptr: [*]const u8,
+    payload_len: usize,
+    request_id: i64,
+) callconv(.c) bool {
+    const action = action_ptr[0..action_len];
+    const payload = payload_ptr[0..payload_len];
+
+    // Pushed for the whole call, exactly as `handleMessage` does: a reply
+    // formatted after this frame is gone reads `request_context.current()` and
+    // would stamp null, falling back to action-name correlation and handing
+    // one caller's answer to another.
+    request_context.push(if (request_id < 0) null else @intCast(request_id));
+    defer request_context.pop();
+
+    // The same line `handleMessage` logs, and for the same reason: on a device
+    // this is the only window into the bridge. `t=mobile` is spelled out
+    // rather than taken from an envelope, because a host-offered message has
+    // no envelope — this path is only ever the mobile namespace.
+    std.log.info("craft-bridge dispatch t=mobile a={s} i={?d}", .{
+        action,
+        request_context.current(),
+    });
+
+    const offer = offerToModules(std.heap.c_allocator, action, payload) catch {
+        // A module ran and failed, and answered the page on its way out. That
+        // is a served action with an unhappy result, not an unserved one.
+        return true;
+    };
+    return offer == .answered;
 }
 
 /// Deliver a result the host shim produced.
@@ -581,4 +693,71 @@ test "a shim error with no request id omits the id field entirely" {
 
     try buildShimError(testing.allocator, &out, "share", "m", "E", -1);
     try testing.expect(std.mem.indexOf(u8, out.items, "\"id\"") == null);
+}
+
+test "a host offer that no module recognises comes back as the host's problem" {
+    // The whole contract of `craft_ios_handle_action` in one assertion. A
+    // Swift-hosted app calls this first and serves the action itself when the
+    // answer is false; if an unrecognised action ever returned true, that
+    // action would silently stop working in every generated app — the page's
+    // promise would hang with nobody having agreed to answer it.
+    try testing.expect(!craft_ios_handle_action("noSuchAction", "noSuchAction".len, "{}", 2, 7));
+}
+
+test "a host offer for a served action is claimed, not handed back" {
+    // `getDeviceInfo` is served by `bridge_mobile_device.zig` on every
+    // platform this test runs on. The reply cannot arrive — there is no
+    // webview in a test binary, so `sendResultToJS` reaches
+    // `error.NoWebView` — but claiming is the half under test: true means Zig
+    // has taken responsibility, and a caller that also answered would be the
+    // double-reply this return value exists to prevent.
+    //
+    // Off Darwin the action still routes; it just fails inside the handler,
+    // which is `answered` too. Either way the answer is true, and that is the
+    // point: "claimed" is about ownership, never about success.
+    try testing.expect(craft_ios_handle_action("getDeviceInfo", "getDeviceInfo".len, "{}", 2, 1));
+}
+
+test "a host offer for a disabled capability is claimed and refused, not handed back" {
+    // The trap this return value is shaped around. `clipboardRead` is served
+    // by Zig and gated on `enableClipboard`; a test binary has no bundled
+    // craft.config.json, so `isEnabled` is false and the gate refuses.
+    //
+    // The refusal already called `sendErrorToJS`, so the page's promise is
+    // settled. Returning false here would invite the Swift arm to answer the
+    // same call a second time — and Swift's own arm for a disabled capability
+    // has no `else`, so the page would get one rejection and one silence.
+    try testing.expect(craft_ios_handle_action("clipboardRead", "clipboardRead".len, "{}", 2, 3));
+}
+
+test "a negative request id means no callback is waiting" {
+    // Mirrors `craft_ios_deliver_result`'s reading of the same sentinel. The
+    // id is pushed for the duration of the call and popped after, so a stack
+    // that leaked a frame would be visible here as a non-empty context once
+    // the call has returned.
+    try testing.expect(request_context.current() == null);
+    _ = craft_ios_handle_action("noSuchAction", "noSuchAction".len, "{}", 2, -1);
+    try testing.expect(request_context.current() == null);
+}
+
+test "setting the webview from a host is what makes replies reachable" {
+    // The one call a Swift-hosted app must make before offering anything.
+    // Without it every reply lands on `error.NoWebView`: the action runs, it
+    // works, and the page never hears. Restored afterwards so the ordering of
+    // tests in this file cannot matter.
+    const saved = getWebView();
+    defer setWebView(saved);
+
+    setWebView(null);
+    try testing.expectError(error.NoWebView, evalJS("1"));
+
+    var fake: u8 = 0;
+    craft_ios_set_webview(&fake);
+    try testing.expect(getWebView() == @as(objc.id, @ptrCast(&fake)));
+
+    // And clearing it is reachable again, which is the half that was broken:
+    // a host that hands over nil must leave the runtime saying "no webview"
+    // rather than quietly addressing every reply to it.
+    craft_ios_set_webview(null);
+    try testing.expectError(error.NoWebView, evalJS("1"));
 }

@@ -262,6 +262,36 @@ export function renderWatchEntitlements(config: CraftConfig): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${appGroups}</dict>\n</plist>\n`
 }
 
+/**
+ * The build settings that link the Zig runtime into the app target.
+ *
+ * Two things are load-bearing here:
+ *
+ * `LIBRARY_SEARCH_PATHS` is written twice, once per SDK, so `-lcraft-ios`
+ * resolves to the device archive for a device build and the simulator archive
+ * for a simulator one without the flag itself changing. Xcode applies the
+ * `[sdk=...]` condition; xcodegen passes these keys through verbatim.
+ *
+ * The four `-u` flags are the reason anything works at all. Nothing in the
+ * Swift source *references* these symbols — `CraftZigRuntime` and
+ * `CraftSwiftShim` both find them with `dlsym` at runtime — so a static
+ * archive contributes no objects for them and the linker drops the entire
+ * runtime as unreachable. `-u` names them as undefined so the objects are
+ * pulled in and the symbols end up in the binary for `dlsym` to find.
+ *
+ * `-u` rather than `-force_load`: forcing the whole archive would pull in
+ * every object whether reachable or not, and these four entry points already
+ * reach everything the bridge actually uses.
+ */
+export function renderRuntimeSettings(): string {
+  return [
+    '      LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: "$(PROJECT_DIR)/Runtime/device"',
+    '      LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: "$(PROJECT_DIR)/Runtime/simulator"',
+    '      OTHER_LDFLAGS: "-lcraft-ios -Wl,-u,_craft_ios_handle_action -Wl,-u,_craft_ios_set_webview '
+    + '-Wl,-u,_craft_ios_deliver_result -Wl,-u,_craft_ios_deliver_error"',
+  ].join('\n')
+}
+
 export function renderPrivacyManifest(config: CraftConfig): string {
   const privacy = config.privacy ?? {}
   const collected = privacy.collectedDataTypes ?? []
@@ -334,6 +364,81 @@ export function syncWebAssets(source: string, output: string): void {
 /**
  * Initialize a new iOS project
  */
+/**
+ * Where the Zig runtime archives live, or null when this build has none.
+ *
+ * `CRAFT_IOS_RUNTIME` points at a directory holding the archives `zig build
+ * build-ios-all` produces. It is opt-in and there is deliberately no fallback
+ * search: a generated project with no runtime is the shipping default today,
+ * and it works — `CraftZigRuntime.offer` is a `dlsym` miss, every action
+ * answers false, and the Swift switch serves the whole surface exactly as it
+ * always has. Guessing at a path would turn "no runtime" into "some runtime,
+ * from somewhere", which is the failure mode the pantry contract exists to
+ * rule out.
+ *
+ * This is the same shape as `CRAFT_BIN`: an explicit override for the monorepo
+ * dev loop, not a lookup path. Shipping the runtime to real apps means putting
+ * these archives in the pantry package beside the `craft` binary, which is a
+ * distribution decision this function does not make.
+ */
+export function resolveRuntimeDir(): string | null {
+  const dir = process.env.CRAFT_IOS_RUNTIME
+  if (!dir) return null
+  if (!existsSync(dir)) {
+    throw new Error(`CRAFT_IOS_RUNTIME points at ${dir}, which does not exist.`)
+  }
+  return dir
+}
+
+/** The archives a runtime directory must contain, by Xcode SDK. */
+const RUNTIME_ARCHIVES = {
+  device: ['libcraft-ios.a'],
+  // Both simulator slices, merged into one archive below. A Mac on Apple
+  // silicon runs arm64 simulators and an Intel one runs x86_64; shipping a
+  // single-slice archive makes the project build on one machine and fail to
+  // link on the other, which is the kind of break that only shows up on
+  // someone else's laptop.
+  simulator: ['libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a'],
+} as const
+
+/**
+ * Copy the Zig archives into the generated project as `Runtime/<sdk>/libcraft-ios.a`.
+ *
+ * One name for both SDKs, in two directories, because that is what lets a
+ * single `-lcraft-ios` in OTHER_LDFLAGS work for device and simulator builds:
+ * Xcode picks the directory by SDK and the flag never changes.
+ *
+ * Returns true when a runtime was installed.
+ */
+export async function installRuntime(output: string, runtimeDir: string): Promise<boolean> {
+  const dest = join(output, 'Runtime')
+  rmSync(dest, { recursive: true, force: true })
+
+  for (const [sdk, archives] of Object.entries(RUNTIME_ARCHIVES)) {
+    const present = archives.filter(a => existsSync(join(runtimeDir, a)))
+    if (present.length === 0) {
+      throw new Error(
+        `CRAFT_IOS_RUNTIME=${runtimeDir} has none of ${archives.join(', ')}. `
+        + `Run \`zig build build-ios-all\` in packages/zig and point at its zig-out/lib.`,
+      )
+    }
+
+    const sdkDir = join(dest, sdk)
+    mkdirSync(sdkDir, { recursive: true })
+    const target = join(sdkDir, 'libcraft-ios.a')
+
+    if (present.length === 1) {
+      cpSync(join(runtimeDir, present[0]!), target)
+    }
+    else {
+      // `lipo -create` rather than picking one slice: see RUNTIME_ARCHIVES.
+      await $`lipo -create ${present.map(a => join(runtimeDir, a))} -output ${target}`.quiet()
+    }
+  }
+
+  return true
+}
+
 export async function init(options: InitOptions): Promise<void> {
   const { name, bundleId, teamId, output } = options
 
@@ -426,7 +531,14 @@ export async function init(options: InitOptions): Promise<void> {
       SKIP_INSTALL: YES`)
   }
 
+  // The Zig runtime, when this build has one. Installed before the project is
+  // rendered because the settings below name the directories it creates.
+  const runtimeDir = resolveRuntimeDir()
+  const hasRuntime = runtimeDir ? await installRuntime(output, runtimeDir) : false
+  if (hasRuntime) console.log('   Linked the Zig runtime from', runtimeDir)
+
   const projectYml = projectYmlTemplate
+    .replace(/\{\{CRAFT_RUNTIME_SETTINGS\}\}/g, hasRuntime ? renderRuntimeSettings() : '')
     .replace(/\{\{APP_NAME\}\}/g, name)
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
     .replace(/\{\{BUNDLE_ID_PREFIX\}\}/g, bundleIdPrefix)

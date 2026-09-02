@@ -338,6 +338,12 @@ struct CraftWebView: UIViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
 
+        // Before any message can be offered. Zig evaluates every reply against
+        // this webview, and without it an action would run, succeed, and reach
+        // `error.NoWebView` on the way back — the page hearing nothing while
+        // the work happened.
+        CraftZigRuntime.attach(webView)
+
         // Register with DeepLinkManager
         DeepLinkManager.shared.setWebView(webView)
 
@@ -516,7 +522,24 @@ struct CraftWebView: UIViewRepresentable {
             guard let body = message.body as? [String: Any],
                   let action = body["action"] as? String else { return }
 
-            dispatch(action: action, body: body, callbackId: body["callbackId"] as? String)
+            let callbackId = body["callbackId"] as? String
+
+            // The Zig runtime first, when there is one.
+            //
+            // `offer` returns true when Zig has taken responsibility for the
+            // call — served it, or refused it and settled the page's promise
+            // on the way. Either way the answer is on its way and this method
+            // must not produce a second one. False means no Zig module
+            // recognised the action, which is every action still listed in the
+            // switch below and nothing else.
+            //
+            // In an app with no Zig runtime linked, `offer` is a `dlsym` miss
+            // that answers false for everything, and the switch serves the
+            // whole surface exactly as it did before. That is why this is one
+            // line and not a build flag.
+            if CraftZigRuntime.offer(action: action, body: body, callbackId: callbackId) { return }
+
+            dispatch(action: action, body: body, callbackId: callbackId)
         }
 
         /// The action switch, reachable from two directions: the
@@ -2420,6 +2443,27 @@ struct CraftWebView: UIViewRepresentable {
                     return {base64: base64, uri: 'data:image/jpeg;base64,' + base64, width: 0, height: 0, mimeType: 'image/jpeg'};
                 }
             })(window.craft);
+
+            // The reply route for actions the Zig runtime serves.
+            //
+            // Zig owns one wire format and calls these two functions by name;
+            // this page owns `_callbacks`, keyed by the 'cb_<n>' ids `_invoke`
+            // hands out. The whole adaptation is turning the numeric id Zig
+            // carries back into that key. Nothing else is translated, because
+            // nothing else differs: `craftSpeechStart` and friends already
+            // arrive as plain CustomEvents from both sides.
+            //
+            // A null id means the page sent no callback — the tray-style
+            // fire-and-forget posts — so there is nothing to settle and
+            // dropping it is correct rather than lossy.
+            window.__craftBridgeResult = function (action, result, id) {
+                if (id === null || id === undefined) return;
+                window.craft._resolveCallback('cb_' + id, result);
+            };
+            window.__craftBridgeError = function (ctx) {
+                if (!ctx || ctx.id === null || ctx.id === undefined) return;
+                window.craft._rejectCallback('cb_' + ctx.id, ctx.message, ctx.code);
+            };
 
             // Dispatch ready event
             window.dispatchEvent(new CustomEvent('craftReady', {detail: window.craft}));
@@ -5192,6 +5236,101 @@ extension CraftWebView.Coordinator: WCSessionDelegate {
 
 
 // MARK: - Zig hand-off shim
+
+/// The seam the page's messages reach the Zig runtime through.
+///
+/// The opposite direction from `CraftSwiftShim` below, and the two together
+/// are the whole hand-off: this class offers each message to Zig, Zig serves
+/// what it has migrated and declines the rest, and for anything Zig *did*
+/// take that needs Swift work, `CraftSwiftShim` is how it comes back.
+///
+/// Discovery is `dlsym`, exactly as the shim's is, and for the same reason:
+/// neither side links the other. An app built without the Zig static library
+/// finds nothing here, `offer` answers false for every action, and the
+/// coordinator's switch serves the entire surface as it always has. There is
+/// no build flag and no second code path — the absence of a symbol is the
+/// off switch.
+@objc(CraftZigRuntime)
+final class CraftZigRuntime: NSObject {
+    private typealias SetWebViewFn = @convention(c) (UnsafeMutableRawPointer?) -> Void
+    private typealias HandleActionFn = @convention(c) (
+        UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt, Int64
+    ) -> Bool
+
+    private static let image: UnsafeMutableRawPointer? = dlopen(nil, RTLD_NOW)
+
+    private static let setWebViewFn: SetWebViewFn? = {
+        guard let sym = dlsym(image, "craft_ios_set_webview") else { return nil }
+        return unsafeBitCast(sym, to: SetWebViewFn.self)
+    }()
+
+    private static let handleActionFn: HandleActionFn? = {
+        guard let sym = dlsym(image, "craft_ios_handle_action") else { return nil }
+        return unsafeBitCast(sym, to: HandleActionFn.self)
+    }()
+
+    /// Whether this build has a Zig runtime at all. Read by nothing here; kept
+    /// because "is Zig linked" is the first question to ask when an action
+    /// behaves like the Swift one after a migration was supposed to move it.
+    @objc static var isLinked: Bool { handleActionFn != nil }
+
+    /// Give Zig the webview its replies are evaluated against.
+    ///
+    /// Unretained on purpose, on both sides: this is the app's own root view
+    /// and it outlives the runtime. A retain here would be a cycle with
+    /// nothing to break it.
+    static func attach(_ webView: WKWebView) {
+        setWebViewFn?(Unmanaged.passUnretained(webView).toOpaque())
+    }
+
+    /// Offer one page message to the Zig dispatcher.
+    ///
+    /// Returns true when Zig has taken responsibility — the caller must not
+    /// answer as well. False when no Zig module recognised the action, or when
+    /// there is no runtime to ask.
+    static func offer(action: String, body: [String: Any], callbackId: String?) -> Bool {
+        guard let handleActionFn else { return false }
+
+        // `_invoke` flattens the payload into the message —
+        // `Object.assign({}, payload, {action, callbackId})` — so the payload
+        // Zig's handlers parse is the message minus the two envelope keys.
+        // This is the exact inverse of what `CraftSwiftShim.handleAction` does
+        // when a call travels the other way, and the two must stay inverses:
+        // leaving `action` in would put a key in the payload no handler
+        // expects, and dropping a real field would hand a handler defaults the
+        // page never asked for.
+        var payload = body
+        payload.removeValue(forKey: "action")
+        payload.removeValue(forKey: "callbackId")
+
+        // A payload that will not serialise is not offered. Falling through to
+        // the Swift switch is the safe direction: it reads `body` directly and
+        // never needs the round trip through JSON that just failed.
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8)
+        else { return false }
+
+        return action.withCString { a in
+            json.withCString { p in
+                handleActionFn(a, UInt(strlen(a)), p, UInt(strlen(p)), requestId(from: callbackId))
+            }
+        }
+    }
+
+    /// "cb_7" -> 7, and -1 for a message with no callback waiting on it.
+    ///
+    /// -1 rather than 0, matching what `craft_ios_deliver_result` already
+    /// treats as "no id": zero is a perfectly good callback number, and a
+    /// sentinel that collides with a real id would deliver one caller's answer
+    /// to another.
+    private static func requestId(from callbackId: String?) -> Int64 {
+        guard let callbackId, callbackId.hasPrefix("cb_"),
+              let n = Int64(callbackId.dropFirst(3))
+        else { return -1 }
+        return n
+    }
+}
 
 /// The seam the Zig dispatcher hands unmigrated actions through.
 ///
