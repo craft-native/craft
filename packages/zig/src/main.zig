@@ -209,8 +209,8 @@ pub const App = struct {
     pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .allocator = allocator,
-            .windows = .{ .items = &.{}, .capacity = 0 },
-            .system_trays = .{ .items = &.{}, .capacity = 0 },
+            .windows = .empty,
+            .system_trays = .empty,
             .bridge = null,
             .notifications = null,
         };

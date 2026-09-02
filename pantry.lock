@@ -13,7 +13,7 @@
       },
       "system": {
         "bun.sh": "1.3.14",
-        "ziglang.org": "0.17.0-dev.1509_bb296ab9b"
+        "ziglang.org": "0.17.0-dev.1963_e00c6c439"
       }
     },
     "benchmarks": {
@@ -418,11 +418,11 @@
         "typescript"
       ]
     },
-    "ziglang.org@0.17.0-dev.1509_bb296ab9b": {
+    "ziglang.org@0.17.0-dev.1963_e00c6c439": {
       "name": "ziglang.org",
-      "version": "0.17.0-dev.1509_bb296ab9b",
+      "version": "0.17.0-dev.1963_e00c6c439",
       "source": "pantry",
-      "resolved": "registry:ziglang.org@0.17.0-dev.1509_bb296ab9b"
+      "resolved": "registry:ziglang.org@0.17.0-dev.1963_e00c6c439"
     }
   }
 }

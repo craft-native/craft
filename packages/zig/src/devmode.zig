@@ -210,7 +210,7 @@ pub const ErrorDisplay = struct {
     color_output: bool = true,
 
     pub fn formatError(self: ErrorDisplay, allocator: std.mem.Allocator, err: anyerror, context: []const u8, file: []const u8, line: u32) ![]const u8 {
-        var buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
+        var buf = std.ArrayList(u8).empty;
         const writer = buf.writer(allocator);
 
         // Header with emoji for visibility

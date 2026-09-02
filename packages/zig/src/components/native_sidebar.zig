@@ -151,7 +151,7 @@ pub const NativeSidebar = struct {
         var new_section = OutlineViewDataSource.DataStore.Section{
             .id = try self.allocator.dupe(u8, section.id),
             .header = if (section.header) |h| try self.allocator.dupe(u8, h) else null,
-            .items = .{ .items = &.{}, .capacity = 0 },
+            .items = .empty,
             .is_expanded = true,
         };
 

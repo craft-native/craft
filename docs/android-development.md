@@ -488,7 +488,7 @@ Per `CLAUDE.md`'s distribution rule, the `.so` resolution lives here in the Andr
 | Phase A0 | pinned Zig only | ✅ works today |
 | Phase A1+ | Android SDK, NDK (pinned `26.1.10909125`), `adb`, `gradle` | ❌ none present |
 
-Zig is pinned at `0.17.0-dev.1509+bb296ab9b`.
+Zig is pinned at `0.17.0-dev.1963+e00c6c439`.
 
 ---
 

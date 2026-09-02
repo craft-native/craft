@@ -432,7 +432,7 @@ pub const DialogBridge = struct {
                     if (comptime builtin.mode == .debug)
                         std.debug.print("[DialogBridge] Selected file: {s}\n", .{path_str});
 
-                    var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                    var buf: std.ArrayList(u8) = .empty;
                     defer buf.deinit(self.allocator);
 
                     try buf.appendSlice(self.allocator, "{\"canceled\":false,\"filePaths\":[\"");
@@ -502,7 +502,7 @@ pub const DialogBridge = struct {
                 if (comptime builtin.mode == .debug)
                     std.debug.print("[DialogBridge] Selected {d} files\n", .{count});
 
-                var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                var buf: std.ArrayList(u8) = .empty;
                 defer buf.deinit(self.allocator);
 
                 try buf.appendSlice(self.allocator, "{\"canceled\":false,\"filePaths\":[");
@@ -581,7 +581,7 @@ pub const DialogBridge = struct {
                 if (comptime builtin.mode == .debug)
                     std.debug.print("[DialogBridge] Selected folder: {s}\n", .{path_str});
 
-                var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                var buf: std.ArrayList(u8) = .empty;
                 defer buf.deinit(self.allocator);
 
                 try buf.appendSlice(self.allocator, "{\"canceled\":false,\"filePaths\":[\"");
@@ -645,7 +645,7 @@ pub const DialogBridge = struct {
                 if (comptime builtin.mode == .debug)
                     std.debug.print("[DialogBridge] Save path: {s}\n", .{path_str});
 
-                var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                var buf: std.ArrayList(u8) = .empty;
                 defer buf.deinit(self.allocator);
 
                 try buf.appendSlice(self.allocator, "{\"canceled\":false,\"filePath\":\"");

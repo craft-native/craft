@@ -42,7 +42,7 @@ pub const MenuCallbackData = struct {
         data.* = .{
             .target_id = try allocator.dupe(u8, target_id),
             .target_type = try allocator.dupe(u8, target_type),
-            .item_ids = .{ .items = &.{}, .capacity = 0 },
+            .item_ids = .empty,
             .allocator = allocator,
         };
         return data;

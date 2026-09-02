@@ -228,7 +228,7 @@ pub const NativeUIBridge = struct {
     /// The returned slice borrows every string from `parsed`, so it must be
     /// consumed before the parse arena is freed — `SpaceList.append` copies.
     fn parseSpaces(allocator: std.mem.Allocator, value: std.json.Value) !std.ArrayList(space_switcher.Space) {
-        var spaces: std.ArrayList(space_switcher.Space) = .{ .items = &.{}, .capacity = 0 };
+        var spaces: std.ArrayList(space_switcher.Space) = .empty;
         errdefer spaces.deinit(allocator);
 
         for (value.array.items) |entry| {
@@ -270,7 +270,7 @@ pub const NativeUIBridge = struct {
         var spaces = if (root.get("spaces")) |v|
             try parseSpaces(self.allocator, v)
         else
-            std.ArrayList(space_switcher.Space){ .items = &.{}, .capacity = 0 };
+            std.ArrayList(space_switcher.Space).empty;
         defer spaces.deinit(self.allocator);
 
         const active = if (root.get("activeSpace")) |v| switch (v) {
@@ -366,7 +366,7 @@ pub const NativeUIBridge = struct {
                 const section_label = if (section_obj.get("label")) |v| v.string else if (section_obj.get("title")) |v| v.string else section_id;
                 const items_value = section_obj.get("items") orelse continue;
 
-                var items: std.ArrayList(NativeSidebar.SidebarItem) = .{ .items = &.{}, .capacity = 0 };
+                var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
                 defer items.deinit(self.allocator);
 
                 for (items_value.array.items) |item_value| {
@@ -481,7 +481,7 @@ pub const NativeUIBridge = struct {
         const items_json = section_data.get("items").?.array;
 
         // Build items array
-        var items: std.ArrayList(NativeSidebar.SidebarItem) = .{ .items = &.{}, .capacity = 0 };
+        var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
         defer items.deinit(self.allocator);
 
         for (items_json.items) |item_json| {
@@ -596,7 +596,7 @@ pub const NativeUIBridge = struct {
 
         const browser = self.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
-        var files: std.ArrayList(NativeFileBrowser.FileItem) = .{ .items = &.{}, .capacity = 0 };
+        var files: std.ArrayList(NativeFileBrowser.FileItem) = .empty;
         defer files.deinit(self.allocator);
 
         for (files_json.items) |file_json| {
@@ -766,7 +766,7 @@ pub const NativeUIBridge = struct {
 
         // Parse menu items
         const items_json = root.get("items").?.array;
-        var items: std.ArrayList(context_menu.MenuItem) = .{ .items = &.{}, .capacity = 0 };
+        var items: std.ArrayList(context_menu.MenuItem) = .empty;
         defer items.deinit(self.allocator);
 
         for (items_json.items) |item_json| {
@@ -785,7 +785,7 @@ pub const NativeUIBridge = struct {
             if (item_type == .submenu) {
                 if (item_obj.get("submenu")) |submenu_json| {
                     if (submenu_json == .array) {
-                        var submenu_list: std.ArrayList(context_menu.MenuItem) = .{ .items = &.{}, .capacity = 0 };
+                        var submenu_list: std.ArrayList(context_menu.MenuItem) = .empty;
                         for (submenu_json.array.items) |sub_item_json| {
                             if (sub_item_json == .object) {
                                 const sub_obj = sub_item_json.object;

@@ -454,7 +454,7 @@ pub const ReloadServer = struct {
     pub fn broadcast(self: *Self, message: []const u8) !void {
         if (!self.running) return;
 
-        var disconnected: std.ArrayList(usize) = .{ .items = &.{}, .capacity = 0 };
+        var disconnected: std.ArrayList(usize) = .empty;
         defer disconnected.deinit(self.allocator);
 
         // Send to all clients
