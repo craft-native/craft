@@ -258,6 +258,25 @@ room to leave *inside the page*, so all four are zero whenever the buttons are
 not over it — a window with its own titlebar, a window whose content starts
 after a native sidebar, a fullscreen window whose titlebar has slid away.
 
+The reserve spans the host's own chrome as well as the buttons: on a
+web-material window Craft draws a sidebar toggle and two history arrows beside
+them, and a page that cleared only the buttons put its content under real
+`NSButton`s. A page that is *under* the buttons but clear of that row — a
+narrow icon rail the row overhangs — wants the buttons alone, and gets them:
+
+```css
+.rail {
+  /* the buttons' own bottom edge, not the far edge of everything up there */
+  padding-top: calc(
+    var(--craft-window-buttons-y, 0px) + var(--craft-window-buttons-height, 0px) + 8px
+  );
+}
+```
+
+`--craft-window-buttons-x` and `--craft-window-buttons-width` complete the
+rectangle. Same coordinates and the same zero-when-not-over-the-page rule as
+the reserve.
+
 A UI shared between a Craft window and a browser — a component library, a page
 that is also a marketing demo — often wants mock traffic lights in the browser
 and must not draw them here. `--craft-window-controls-replicas` is the `display`

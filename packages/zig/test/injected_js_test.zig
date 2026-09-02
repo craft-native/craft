@@ -1290,7 +1290,7 @@ const overlay_state = window_chrome.classify(
     .{ .width = 1200, .height = 800 },
 );
 
-test "the seed reaches the document as an attribute and four variables" {
+test "the seed reaches the document as an attribute and its variables" {
     var fx = try Fixture.init();
     defer fx.deinit();
     _ = try fx.ctx.evaluate(WEBVIEW_HOST);
@@ -1311,6 +1311,14 @@ test "the seed reaches the document as an attribute and four variables" {
     try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-controls-inset-x')"));
     try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-controls-inset-y')"));
     try testing.expectEqualStrings("none", try fx.text("document.documentElement.style.value('--craft-window-controls-replicas')"));
+
+    // The buttons' own rectangle, beside the reserve. A page that sits under
+    // the buttons but clear of the host's chrome row beside them needs this
+    // one; the two agree here only because this fixture has no host chrome.
+    try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-buttons-x')"));
+    try testing.expectEqualStrings("9px", try fx.text("document.documentElement.style.value('--craft-window-buttons-y')"));
+    try testing.expectEqualStrings("60px", try fx.text("document.documentElement.style.value('--craft-window-buttons-width')"));
+    try testing.expectEqualStrings("14px", try fx.text("document.documentElement.style.value('--craft-window-buttons-height')"));
 }
 
 test "a frameless window leaves the replica variable alone" {

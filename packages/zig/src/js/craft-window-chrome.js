@@ -42,6 +42,17 @@
 //   .titlebar { padding-left: var(--craft-window-controls-width, 0px) }
 //   .replica  { display: var(--craft-window-controls-replicas, flex) }
 //
+// The reserve spans the host's own chrome row as well as the buttons, because
+// a page clearing one has to clear the other. A page that is only *under* the
+// buttons — a narrow icon rail, say, that the toolbar row beside them
+// overhangs — needs the buttons alone, so those are published too:
+//
+//   --craft-window-buttons-x / -y / -width / -height
+//
+// Same coordinates, same zero-when-not-over-the-page rule. Reserving the union
+// there would push the rail's first item down by the difference between a
+// 14pt button and a 30pt toolbar row, for a row that never reaches it.
+//
 // `--craft-window-controls-replicas` is the `display` a replica should take. It
 // is `none` wherever real buttons exist and wherever there is no window to
 // control at all, and it is *absent* in a frameless window — the one case where
@@ -57,6 +68,10 @@
     '--craft-window-controls-height', 'reserveHeight',
     '--craft-window-controls-inset-x', 'insetX',
     '--craft-window-controls-inset-y', 'insetY',
+    '--craft-window-buttons-x', 'x',
+    '--craft-window-buttons-y', 'y',
+    '--craft-window-buttons-width', 'width',
+    '--craft-window-buttons-height', 'height',
   ]
 
   let applied = null
