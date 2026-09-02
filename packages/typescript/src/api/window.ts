@@ -109,8 +109,10 @@ export interface WindowCreateOptions {
   webSidebarMaterial?: boolean
   /** Width of the native material backdrop behind a web-rendered sidebar */
   webSidebarWidth?: number
-  /** White/dark tint opacity over the native material backdrop */
+  /** White/dark tint opacity over the native material backdrop (sidebar span only) */
   webSidebarMaterialOpacity?: number
+  /** Draw that material behind the whole web view instead of a leading strip */
+  webWindowMaterial?: boolean
   /** Titlebar style (macOS) */
   titlebarStyle?: 'default' | 'hidden' | 'hiddenInset' | 'customButtonsOnHover'
   /** Vibrancy effect (macOS) */
@@ -564,6 +566,18 @@ export class Window {
   }
 
   /**
+   * Pin the window to light or dark, or hand it back to the OS (macOS).
+   *
+   * Everything native around the page — a material backdrop, a vibrancy view,
+   * the window buttons — resolves against the *window's* appearance. An app
+   * with its own light/dark control is the only thing that knows which it
+   * picked, so it has to say, or the page and its window disagree.
+   */
+  async setAppearance(appearance: 'light' | 'dark' | 'system'): Promise<void> {
+    await this._call('setAppearance', { appearance })
+  }
+
+  /**
    * Where the platform's window buttons are — read, not written.
    *
    * There was a `setTrafficLightPosition` here, and a `trafficLightPosition`
@@ -809,6 +823,9 @@ class WindowManager {
 
   /** Set current window vibrancy (macOS) */
   setVibrancy = (vibrancy: WindowCreateOptions['vibrancy'] | null): Promise<void> => this.current.setVibrancy(vibrancy)
+
+  /** Pin the current window to light or dark, or follow the OS (macOS) */
+  setAppearance = (appearance: 'light' | 'dark' | 'system'): Promise<void> => this.current.setAppearance(appearance)
 
   /** Set current window resizable */
   setResizable = (resizable: boolean): Promise<void> => this.current.setResizable(resizable)

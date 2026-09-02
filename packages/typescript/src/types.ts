@@ -224,9 +224,32 @@ export interface WindowOptions {
   /**
    * White/dark native tint opacity over the sidebar material.
    * Higher values reduce desktop bleed-through while keeping subtle vibrancy.
+   *
+   * `webSidebarMaterial` only — a `webWindowMaterial` window carries no native
+   * tint, because the page is the only thing that knows its colour scheme.
    * @default 0.78
    */
   webSidebarMaterialOpacity?: number
+
+  /**
+   * Draw that same material behind the *whole* web view rather than a leading
+   * strip, with nothing opaque beside it.
+   *
+   * Where `webSidebarMaterial` is Finder — vibrancy under the sidebar, a solid
+   * pane beside it — this is System Settings: one material behind everything,
+   * and the page's own cards are the only things with edges.
+   *
+   * Two differences follow, and both are the point rather than side effects:
+   * the window is not pinned to light (so `darkMode` and the system setting
+   * reach the material, and the page's `prefers-color-scheme` agrees with it),
+   * and no native tint is drawn (the page washes the material with its own
+   * translucent background, which is the only wash that knows whether the page
+   * is light or dark).
+   *
+   * Wins over `webSidebarMaterial` when both are set.
+   * @default false
+   */
+  webWindowMaterial?: boolean
 
   /**
    * Use native macOS sidebar (Finder-style with vibrancy)

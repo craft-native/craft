@@ -87,6 +87,25 @@ describe('Native Sidebar', () => {
       expect(args[args.indexOf('--web-sidebar-material-opacity') + 1]).toBe('0.9')
     })
 
+    it('sends the window span as its own flag, and never both spans at once', () => {
+      const app = new (CraftApp as unknown as { new(c: AppConfig): { buildArgs(): string[] } })({
+        url: 'http://localhost:3456/app',
+        window: {
+          titlebarHidden: true,
+          // Both asked for. The binary resolves this in favour of the window
+          // span; the SDK must not send a pair whose meaning depends on that.
+          webSidebarMaterial: true,
+          webWindowMaterial: true,
+          webSidebarMaterialOpacity: 0.9,
+        },
+      })
+
+      const args = app.buildArgs()
+      expect(args).toContain('--web-window-material')
+      expect(args).not.toContain('--web-sidebar-material')
+      expect(args).not.toContain('--web-sidebar-material-opacity')
+    })
+
     it('should work without sidebarConfig', () => {
       const app = createApp({
         url: 'http://localhost:3456/app',

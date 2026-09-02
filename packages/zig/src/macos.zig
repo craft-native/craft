@@ -75,6 +75,19 @@ pub const NSRange = extern struct {
 // Window style options
 const startup_timing = @import("startup_timing.zig");
 
+/// How far the native material behind a web-rendered UI reaches.
+///
+/// The two shapes are two different Mac windows, not two settings:
+///
+///   - `.sidebar` is Finder. Vibrancy under the leading strip, an opaque
+///     surface under everything else, and a visible seam where one becomes
+///     the other. The page draws a sidebar over the first and a content pane
+///     over the second.
+///   - `.window` is System Settings. One material behind the entire view and
+///     nothing opaque anywhere, so the page's own cards are the only things
+///     with edges and the desktop shows through everywhere between them.
+pub const WebMaterialSpan = enum { none, sidebar, window };
+
 pub const WindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
@@ -94,6 +107,9 @@ pub const WindowStyle = struct {
     dev_tools: bool = true, // Enable WebKit DevTools (inspector)
     native_sidebar: bool = false, // Enable native sidebar (injects sidebar UI script)
     web_sidebar_material: bool = false, // Draw a native sidebar material behind web-rendered sidebars
+    /// Draw that same material behind the *whole* web view rather than a
+    /// leading strip. See `WebMaterialSpan` for what the two shapes mean.
+    web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false, // Benchmark mode: skip bridge setup for fastest window creation
@@ -108,6 +124,23 @@ pub const WindowStyle = struct {
     /// Null leaves the window forgetting its geometry every time, which is
     /// what craft did until now.
     frame_autosave: ?[]const u8 = null,
+
+    /// Whether anything native is drawn behind the web view.
+    ///
+    /// Every decision the window makes about transparency — a clear window
+    /// background, a webview that stops at the window's edge rather than
+    /// below the titlebar, the sidebar bootstrap script — follows from this
+    /// and not from which of the two spans was asked for.
+    pub fn hasWebMaterial(self: WindowStyle) bool {
+        return self.web_sidebar_material or self.web_window_material;
+    }
+
+    /// The shape of that material.
+    pub fn webMaterialSpan(self: WindowStyle) WebMaterialSpan {
+        if (self.web_window_material) return .window;
+        if (self.web_sidebar_material) return .sidebar;
+        return .none;
+    }
 };
 
 // Helper functions for Objective-C runtime
@@ -289,7 +322,28 @@ fn createWebContentSurface(frame: NSRect, sidebar_width: u32) objc.id {
     return surface;
 }
 
-fn createWebSidebarMaterialBackdrop(frame: NSRect, sidebar_width: u32, material_opacity: f64) objc.id {
+/// The native surface a web-rendered UI sits on.
+///
+/// One construction, two shapes — see `WebMaterialSpan`. What differs is the
+/// material's frame, whether the rest of the view is painted opaque, and
+/// whether the material carries a tint:
+///
+///   - `.sidebar` covers a strip, paints the remainder opaque, and washes the
+///     strip with a fixed light tint. The tint is what holds the desktop back
+///     under a band the page draws nothing opaque over, and it is pinned light
+///     because the strip it covers is pinned light too.
+///   - `.window` covers everything and paints nothing. It carries no tint, and
+///     that is the point rather than an omission: a full-window material is
+///     behind the whole page, the page has a colour scheme, and the page is the
+///     only thing that knows which one it is in. It washes the material with
+///     its own translucent background — one wash, in the right colour, for
+///     free — where a native tint could only ever be one of the two.
+///
+/// The appearance follows from the same reasoning. A `.sidebar` material is
+/// pinned to vibrant light; a `.window` material inherits the window's
+/// appearance, so `--dark` and the system setting reach it and the page's
+/// `prefers-color-scheme` and the material agree.
+fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width: u32, material_opacity: f64) objc.id {
     const NSView = getClass("NSView");
     const container_alloc = msgSend0(NSView, "alloc");
     const container = msgSend1Rect(container_alloc, "initWithFrame:", frame);
@@ -298,38 +352,62 @@ fn createWebSidebarMaterialBackdrop(frame: NSRect, sidebar_width: u32, material_
     msgSendVoid1(container, "setAutoresizingMask:", @as(c_ulong, 2 | 16));
     makeViewLayerTransparent(container);
     web_sidebar_material_container = container;
+    web_material_span = span;
     web_sidebar_width_stored = @as(f64, @floatFromInt(sidebar_width));
 
-    const sidebarFrame = NSRect{
+    const full_window = span == .window;
+
+    const materialFrame = if (full_window) NSRect{
+        .origin = .{ .x = 0, .y = 0 },
+        .size = frame.size,
+    } else NSRect{
         .origin = .{ .x = 0, .y = 0 },
         .size = .{ .width = @as(f64, @floatFromInt(sidebar_width)), .height = frame.size.height },
     };
 
-    const contentSurface = createWebContentSurface(frame, sidebar_width);
-    if (contentSurface != null) {
-        web_sidebar_content_surface = contentSurface;
-        _ = msgSend1(container, "addSubview:", contentSurface);
+    // NSViewWidthSizable (2) only when the material spans the window; a strip
+    // keeps its width and grows in height alone.
+    const materialResize: c_ulong = if (full_window) 2 | 16 else 16;
+
+    if (!full_window) {
+        const contentSurface = createWebContentSurface(frame, sidebar_width);
+        if (contentSurface != null) {
+            web_sidebar_content_surface = contentSurface;
+            _ = msgSend1(container, "addSubview:", contentSurface);
+        }
     }
 
-    const material = createSidebarVisualEffectView(sidebarFrame, 0.0);
+    const material = createSidebarVisualEffectView(materialFrame, 0.0);
     if (material != null) {
-        setViewAppearance(material, "NSAppearanceNameVibrantLight");
-        msgSendVoid1(material, "setAutoresizingMask:", @as(c_ulong, 16));
+        if (!full_window) setViewAppearance(material, "NSAppearanceNameVibrantLight");
+        msgSendVoid1(material, "setAutoresizingMask:", materialResize);
         web_sidebar_material_view = material;
         _ = msgSend1(container, "addSubview:", material);
     }
 
-    const overlay = createLightSidebarMaterialTint(sidebarFrame, material_opacity);
-    if (overlay != null) {
-        web_sidebar_material_tint = overlay;
-        _ = msgSend1(container, "addSubview:", overlay);
+    if (!full_window) {
+        const overlay = createLightSidebarMaterialTint(materialFrame, material_opacity);
+        if (overlay != null) {
+            web_sidebar_material_tint = overlay;
+            _ = msgSend1(container, "addSubview:", overlay);
+        }
     }
 
     return container;
 }
 
+/// Collapse or restore the strip the sidebar material covers.
+///
+/// Only meaningful for a `.sidebar` backdrop. A `.window` one has no strip to
+/// take away — hiding its material would strip the vibrancy from the whole
+/// window — so the toggle moves the button and stops there, leaving the page
+/// to collapse whatever it draws.
 pub fn setWebSidebarCollapsed(collapsed: bool) void {
     if (web_sidebar_material_container == null) return;
+    if (web_material_span != .sidebar) {
+        updateWebSidebarToggleButton(collapsed);
+        return;
+    }
 
     updateWebSidebarToggleButton(collapsed);
 
@@ -682,7 +760,12 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     _ = msgSend1(window, "setTitle:", title_str);
     startup_timing.mark(.window_created);
 
-    if (style.web_sidebar_material) {
+    // A `.sidebar` material is drawn light and the strip beside it is opaque
+    // white, so the window is pinned light to match. A `.window` material is
+    // behind the entire page, which has a colour scheme of its own — pinning
+    // it here would leave a dark page on a light material and would also lie
+    // to `prefers-color-scheme`, which WebKit reads off this appearance.
+    if (style.webMaterialSpan() == .sidebar) {
         setViewAppearance(window, "NSAppearanceNameAqua");
     }
 
@@ -715,7 +798,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // `titlebar_hidden` the content view stops 32pt short of the top, so with
     // the non-opaque background craft sets further down there would be nothing
     // left to paint that strip: a see-through hole where the titlebar was.
-    if (style.web_sidebar_material and !style.titlebar_hidden) {
+    if (style.hasWebMaterial() and !style.titlebar_hidden) {
         _ = msgSend1(window, "setTitleVisibility:", @as(c_int, 1)); // NSWindowTitleHidden
     }
 
@@ -776,7 +859,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // window buttons, where macOS puts a toolbar's title and nobody else's. The
     // sidebar windows that do build a toolbar set their own style.
     const wants_translucent_surface = style.transparent or style.titlebar_hidden or
-        style.native_sidebar or style.web_sidebar_material;
+        style.native_sidebar or style.hasWebMaterial();
 
     if (!style.benchmark and wants_translucent_surface) {
         _ = msgSend1(window, "setOpaque:", @as(c_int, 0)); // NO — something shows through
@@ -823,7 +906,8 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // navigation, which the old HTML-splicing path did not.
         injectCraftScripts(userContentController, .{
             .full_bridge = style.system_tray,
-            .sidebar_bootstrap = style.web_sidebar_material,
+            .sidebar_bootstrap = style.hasWebMaterial(),
+            .web_material = style.webMaterialSpan(),
             // Also for a web-sidebar window, not only a native one.
             //
             // The surface used to be sidebar-only — createSidebar,
@@ -997,7 +1081,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         // Create the proper frame for the WebView - it should fill the content area
         // The origin should be (0, 0) relative to the content view
-        const webviewSize = if (style.titlebar_hidden or style.web_sidebar_material) frame.size else contentRect.size;
+        const webviewSize = if (style.titlebar_hidden or style.hasWebMaterial()) frame.size else contentRect.size;
         const webviewFrame = NSRect{
             .origin = .{ .x = 0, .y = 0 },
             .size = webviewSize,
@@ -1010,8 +1094,8 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // NSViewWidthSizable = 2, NSViewHeightSizable = 16
         msgSendVoid1(webview, "setAutoresizingMask:", @as(c_ulong, 2 | 16));
 
-        if (style.web_sidebar_material) {
-            const materialContainer = createWebSidebarMaterialBackdrop(webviewFrame, style.web_sidebar_width, style.web_sidebar_material_opacity);
+        if (style.hasWebMaterial()) {
+            const materialContainer = createWebMaterialBackdrop(webviewFrame, style.webMaterialSpan(), style.web_sidebar_width, style.web_sidebar_material_opacity);
             if (materialContainer != null) {
                 _ = msgSend1(materialContainer, "addSubview:", webview);
                 _ = msgSend1(window, "setContentView:", materialContainer);
@@ -1026,7 +1110,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // Store webview and window references globally
         if (webview) |wv| {
             setGlobalWebView(wv);
-            if (style.web_sidebar_material) {
+            if (style.hasWebMaterial()) {
                 addWebSidebarChromeControls(window, wv);
             }
             // Also set references for tray menu actions
@@ -1232,6 +1316,7 @@ var sidebar_material_opacity: f64 = 0.90;
 var sidebar_material_scheme: SidebarMaterialScheme = .system;
 var webChromeResponderClass: objc.Class = null;
 var web_sidebar_material_container: objc.id = null;
+var web_material_span: WebMaterialSpan = .none;
 var web_sidebar_material_view: objc.id = null;
 var web_sidebar_material_tint: objc.id = null;
 var web_sidebar_content_surface: objc.id = null;
@@ -3910,6 +3995,17 @@ pub fn startDownload(url: []const u8, destination: []const u8) !Download {
 }
 
 // Theme support (dark/light mode)
+/// Hand the window back to the system appearance.
+///
+/// `setAppearance:` with nil is how AppKit spells "inherit": the window
+/// resolves against `NSApp.effectiveAppearance` again, and follows the Mac
+/// through a sunset switch as it did before anything pinned it. Without this,
+/// a page that offers light/dark/system could reach the first two and never
+/// return to the third.
+pub fn clearAppearance(window: objc.id) void {
+    _ = msgSend1(window, "setAppearance:", @as(objc.id, null));
+}
+
 pub fn setAppearance(window: objc.id, dark_mode: bool) void {
     const NSAppearanceClass = getClass("NSAppearance");
     const NSString = getClass("NSString");
@@ -4410,6 +4506,9 @@ pub const CraftScripts = struct {
     /// Full bridge enables tray/menubar polling. Minimal otherwise.
     full_bridge: bool = false,
     sidebar_bootstrap: bool = false,
+    /// How far a `--web-sidebar-material` / `--web-window-material` backdrop
+    /// reaches, for the stylesheet that has to lay itself out over it.
+    web_material: WebMaterialSpan = .none,
     native_ui: bool = false,
     /// Install `window.craft.gestures` and the NSEvent scroll monitor behind
     /// it. On by default: the registry is inert until the host emits, and a
@@ -4484,6 +4583,12 @@ pub fn injectCraftScripts(userContentController: objc.id, scripts: CraftScripts)
 
     if (scripts.sidebar_bootstrap)
         addUserScriptSource(userContentController, getNativeSidebarBootstrapScript());
+
+    switch (scripts.web_material) {
+        .none => {},
+        .sidebar => addUserScriptSource(userContentController, native_sidebar_bootstrap.spanMarker(.sidebar)),
+        .window => addUserScriptSource(userContentController, native_sidebar_bootstrap.spanMarker(.window)),
+    }
 }
 
 /// Storage for bridge handlers (global state)

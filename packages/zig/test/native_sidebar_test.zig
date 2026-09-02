@@ -266,3 +266,28 @@ test "parseArgs - default sidebar-width when native-sidebar enabled" {
 
     allocator.free(options.url.?);
 }
+
+// ============================================
+// Web material span
+// ============================================
+
+test "WindowOptions - the web material spans a sidebar strip by default" {
+    const options = cli.WindowOptions{};
+    try testing.expect(!options.web_sidebar_material);
+    try testing.expect(!options.web_window_material);
+}
+
+test "the span marker names the shape the page has to lay itself out over" {
+    // A page cannot infer this. `data-craft-native-sidebar` is true of both
+    // spans, and the difference between them — whether there is an opaque
+    // content pane beside the material — decides whether the page paints its
+    // own background or leaves the material showing.
+    try testing.expectEqualStrings(
+        "document.documentElement.setAttribute('data-craft-web-material','sidebar');",
+        native_sidebar_bootstrap.spanMarker(.sidebar),
+    );
+    try testing.expectEqualStrings(
+        "document.documentElement.setAttribute('data-craft-web-material','window');",
+        native_sidebar_bootstrap.spanMarker(.window),
+    );
+}

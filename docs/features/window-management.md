@@ -331,6 +331,62 @@ const window = await createWindow(html, {
 </body>
 ```
 
+### Vibrant Window (macOS)
+
+A web UI can sit on a real `NSVisualEffectView` instead of on a flat fill, so
+the window has the same translucent surface as Finder or System Settings — and
+so the traffic lights, which AppKit draws over the page in a `titlebarHidden`
+window, rest on something rather than floating on a white rectangle.
+
+Two shapes, and they are two different Mac windows rather than two settings:
+
+```typescript
+// Finder: vibrancy under the leading strip, an opaque pane beside it.
+await createWindow(url, {
+  titlebarHidden: true,
+  webSidebarMaterial: true,
+  webSidebarWidth: 74,
+  webSidebarMaterialOpacity: 0.25,
+})
+
+// System Settings: one material behind everything, nothing opaque anywhere.
+await createWindow(url, {
+  titlebarHidden: true,
+  webWindowMaterial: true,
+})
+```
+
+Craft says which one it drew, at document start, so CSS can lay itself out over
+it on the first frame:
+
+```css
+/* <html data-craft-web-material="sidebar|window">, absent in a browser */
+:root[data-craft-web-material] body { background: transparent; }
+
+/* The window span has no opaque surface anywhere, so the page provides the
+   wash — and the page is the only thing that knows whether it is light or
+   dark, which is why this is not a native tint. */
+:root[data-craft-web-material='window'] body {
+  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
+}
+```
+
+`webSidebarMaterialOpacity` applies to the sidebar span only, for the same
+reason: it tints a strip the page paints nothing over, and it is drawn light,
+like the strip.
+
+A window-span material is *not* pinned to light. It resolves against the
+window's appearance, so `darkMode` and the Mac's own setting reach it — and so
+does the page's `prefers-color-scheme`, which WebKit reads off the same place.
+An app with its own light/dark control has to say which it picked:
+
+```typescript
+await window.setAppearance('dark')   // 'light' | 'dark' | 'system'
+```
+
+`'system'` is a real value rather than a synonym for light: it hands the window
+back to the OS, so it follows a sunset switch again.
+
 ### Always on Top
 
 ```typescript

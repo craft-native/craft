@@ -436,7 +436,13 @@ export class CraftApp {
       args.push('--keep-running')
     else if (window?.keepRunning === false)
       args.push('--quit-on-close')
-    if (window?.webSidebarMaterial) {
+    // The window span wins when both are asked for, which is what the binary
+    // does too — so the SDK never sends a pair the runtime would disambiguate
+    // differently from the types.
+    if (window?.webWindowMaterial) {
+      args.push('--web-window-material')
+    }
+    else if (window?.webSidebarMaterial) {
       args.push('--web-sidebar-material')
       if (window?.webSidebarWidth)
         args.push('--web-sidebar-width', String(window.webSidebarWidth))

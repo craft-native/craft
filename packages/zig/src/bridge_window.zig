@@ -82,6 +82,8 @@ pub const WindowBridge = struct {
             try self.setTitle(data);
         } else if (std.mem.eql(u8, action, "reload")) {
             try self.reload();
+        } else if (std.mem.eql(u8, action, "setAppearance")) {
+            try self.setAppearance(data);
         } else if (std.mem.eql(u8, action, "setVibrancy")) {
             try self.setVibrancy(data);
         } else if (std.mem.eql(u8, action, "setWebSidebarCollapsed")) {
@@ -318,6 +320,32 @@ pub const WindowBridge = struct {
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
             macos.reloadWindow(handle);
+        }
+    }
+
+    /// Pin this window to light or dark, or hand it back to the system.
+    ///
+    /// A page with its own appearance control is the only thing that knows
+    /// which mode it is in, and anything native drawn behind it — a vibrancy
+    /// view, a material backdrop, the window buttons — resolves against the
+    /// window's appearance rather than the page's. Without a way to say so,
+    /// choosing dark in an app left a dark page on a light material.
+    fn setAppearance(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle();
+        const json_data = data orelse return BridgeError.MissingData;
+        const mode = json_utils.getString(json_data, "appearance") orelse return BridgeError.InvalidJSON;
+
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            if (std.mem.eql(u8, mode, "system")) {
+                macos.clearAppearance(handle);
+            } else if (std.mem.eql(u8, mode, "dark")) {
+                macos.setAppearance(handle, true);
+            } else if (std.mem.eql(u8, mode, "light")) {
+                macos.setAppearance(handle, false);
+            } else {
+                return BridgeError.InvalidParameter;
+            }
         }
     }
 

@@ -370,3 +370,14 @@ test "parseArgs - a manifest can ask for headless" {
     defer freeOptions(&options);
     try testing.expect(options.headless);
 }
+
+test "parseArgs - the window span of the web material is its own flag" {
+    var sidebar = try parse(&.{ "craft", "--web-sidebar-material" });
+    defer freeOptions(&sidebar);
+    try testing.expect(sidebar.web_sidebar_material);
+    try testing.expect(!sidebar.web_window_material);
+
+    var window = try parse(&.{ "craft", "--web-window-material" });
+    defer freeOptions(&window);
+    try testing.expect(window.web_window_material);
+}

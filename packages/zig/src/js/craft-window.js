@@ -104,6 +104,17 @@ catch (error) {
   /** Set vibrancy effect (macOS) */
   async setVibrancy(vibrancy) { return this._send('setVibrancy', { vibrancy }); },
 
+  /**
+   * Pin the window to 'light' or 'dark', or hand it back to the OS with
+   * 'system' (macOS).
+   *
+   * Anything native drawn behind or around the page — a material backdrop,
+   * a vibrancy view, the window buttons — resolves against the window's
+   * appearance, not the page's. An app with its own light/dark control has to
+   * say which one it picked, or the two disagree.
+   */
+  async setAppearance(appearance) { return this._send('setAppearance', { appearance }); },
+
   /** Set traffic light position (macOS) */
   async setTrafficLightPosition(position) { return this._send('setTrafficLightPosition', position); },
 

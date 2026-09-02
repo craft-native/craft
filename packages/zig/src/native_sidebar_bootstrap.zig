@@ -28,3 +28,22 @@ pub const script =
     \\  window.dispatchEvent(new Event('craft:ready'));
     \\})();
 ;
+
+/// How far the native material behind this page reaches.
+///
+/// `data-craft-native-sidebar` says only that *something* native is back
+/// there. A stylesheet needs the shape as well: a `sidebar` window has an
+/// opaque content pane to paint on and a `window` one does not, so a page that
+/// guesses either paints over the material it asked for or leaves its content
+/// column see-through. Written at document-start on every navigation, like the
+/// marker above, so the first frame is already laid out correctly.
+pub fn spanMarker(span: enum { sidebar, window }) []const u8 {
+    return switch (span) {
+        .sidebar => marker("sidebar"),
+        .window => marker("window"),
+    };
+}
+
+fn marker(comptime span: []const u8) []const u8 {
+    return "document.documentElement.setAttribute('data-craft-web-material','" ++ span ++ "');";
+}

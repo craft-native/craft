@@ -116,6 +116,7 @@ pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else str
     dev_tools: bool = true,
     native_sidebar: bool = false,
     web_sidebar_material: bool = false,
+    web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false,

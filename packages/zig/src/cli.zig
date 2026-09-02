@@ -24,6 +24,10 @@ pub const WindowOptions = struct {
     native_sidebar: bool = false,
     sidebar_width: u32 = 220,
     web_sidebar_material: bool = false,
+    // The same material behind the whole web view rather than a leading strip,
+    // and with no opaque surface beside it. Wins over web_sidebar_material when
+    // both are given.
+    web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
     sidebar_config: ?[]const u8 = null,
@@ -541,6 +545,8 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.native_sidebar = true;
         } else if (std.mem.eql(u8, arg, "--web-sidebar-material")) {
             options.web_sidebar_material = true;
+        } else if (std.mem.eql(u8, arg, "--web-window-material")) {
+            options.web_window_material = true;
         } else if (std.mem.eql(u8, arg, "--web-sidebar-width")) {
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
@@ -654,11 +660,19 @@ fn printHelp() void {
         \\      --titlebar-hidden    Hide window titlebar
         \\      --native-sidebar     Use native macOS sidebar (Finder-style)
         \\      --web-sidebar-material
-        \\                          Draw native macOS sidebar material behind web UI
+        \\                          Draw native macOS sidebar material behind the
+        \\                          leading strip of the web view, and paint the
+        \\                          rest opaque. Finder's arrangement.
+        \\      --web-window-material
+        \\                          Draw that same material behind the whole web
+        \\                          view, with nothing opaque and no tint: the page
+        \\                          washes it with its own background, which is the
+        \\                          only wash that knows the page's colour scheme.
         \\      --web-sidebar-width <W>
         \\                          Web sidebar material width in pixels (default: 286)
         \\      --web-sidebar-material-opacity <N>
-        \\                          White/dark tint over web sidebar material, 0..1 (default: 0.78)
+        \\                          White/dark tint over web sidebar material, 0..1 (default: 0.78).
+        \\                          --web-sidebar-material only.
         \\      --sidebar-config <J> Sidebar JSON configuration
         \\      --sidebar-width <W>  Sidebar width in pixels (default: 220)
         \\      --icon <PATH>        Path to dock icon image (PNG/JPG/ICNS)
