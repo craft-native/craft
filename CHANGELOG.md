@@ -1,5 +1,26 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.86...v0.0.87)
+
+## 🚀 Features
+
+- **chrome**: publish the window buttons' own rectangle, beside the reserve ([695cca7](https://github.com/craft-native/craft/commit/695cca7)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **macos**: a material behind the whole window, not just a sidebar strip ([505334e](https://github.com/craft-native/craft/commit/505334e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ios**: saveHealthWorkout closes the health tier — ratchet 29 -> 28 (#100) ([d4e9930](https://github.com/craft-native/craft/commit/d4e9930)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#100](https://github.com/craft-native/craft/issues/100), [#100](https://github.com/craft-native/craft/issues/100))
+- **ios**: the health query pair — ratchet 31 -> 29 (#99) ([553708c](https://github.com/craft-native/craft/commit/553708c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#99](https://github.com/craft-native/craft/issues/99), [#99](https://github.com/craft-native/craft/issues/99))
+- **ios**: the audio recording pair — ratchet 33 -> 31 (#98) ([7ee78b9](https://github.com/craft-native/craft/commit/7ee78b9)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#98](https://github.com/craft-native/craft/issues/98), [#98](https://github.com/craft-native/craft/issues/98))
+- **ios**: the Bluetooth scan pair — ratchet 35 -> 33 (#97) ([59d75b2](https://github.com/craft-native/craft/commit/59d75b2)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#97](https://github.com/craft-native/craft/issues/97), [#97](https://github.com/craft-native/craft/issues/97))
+- **ios**: retire three stale refusals — ratchet 38 -> 35 (#96) ([bdfa2ae](https://github.com/craft-native/craft/commit/bdfa2ae)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#96](https://github.com/craft-native/craft/issues/96), [#96](https://github.com/craft-native/craft/issues/96))
+
+## 🧹 Chores
+
+- release v0.0.87 ([3905523](https://github.com/craft-native/craft/commit/3905523)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.85...v0.0.86)
 
 ## 🚀 Features
