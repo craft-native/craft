@@ -3,8 +3,12 @@ const builtin = @import("builtin");
 const capabilities = @import("capabilities.zig");
 const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
+const ios_async = @import("ios_async.zig");
+const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
+const Id = objc.id;
+const is_darwin = builtin.target.os.tag.isDarwin();
 
 /// The `mobile` display group: the app icon's badge, the idle timer, and the
 /// two orientation actions.
@@ -44,14 +48,16 @@ const objc = objc_runtime.objc;
 /// which WebKit delivers on the main thread. The hop is redundant, and there is
 /// no dispatch-block machinery in this repo to reproduce it with.
 ///
-/// **No badge authorization.** Swift calls
-/// `requestAuthorizationWithOptions:` and rejects with "Badge permission
-/// denied". Reporting that from Zig needs a *capturing* block — every block in
-/// this repo is static and non-capturing — so it is not attempted here. The
-/// consequence is stated rather than hidden: Zig sets the number and proves
-/// UIKit stored it, which is **not** proof that the springboard draws it. An
-/// unauthorized app gets `{"count":N}` and an invisible badge, and will never
-/// see "Badge permission denied" or the first-run prompt Swift triggers.
+/// **Badge authorization, as the spec does it.** `setBadge` and `clearBadge`
+/// call `requestAuthorizationWithOptions:` first and reject with
+/// `PERMISSION_DENIED` when iOS says no — the spec's "Badge permission denied".
+/// This used to be skipped with the note that it needed a *capturing* block,
+/// which no block in the repo was. That stopped being true when
+/// `bridge_mobile_auth.zig` shipped per-slot global blocks whose slot index is
+/// baked in at comptime; the same shape is used here. Without it Zig set the
+/// number, proved UIKit stored it, and answered `true` for a badge an
+/// unauthorised app never draws — a fabricated success, and the one this file
+/// was still producing after every other module had stopped.
 pub const A = struct {
     pub const set_badge = "setBadge";
     pub const clear_badge = "clearBadge";
@@ -119,7 +125,7 @@ pub const DisplayBridge = struct {
     /// so inventing one here would be a second divergence rather than a fix.
     fn setBadge(self: *Self, data: []const u8) !void {
         const requested = try badgeCountFrom(self.allocator, data);
-        try self.replyBadge(A.set_badge, try applyBadge(requested));
+        try requestBadgeAuthorization(self.allocator, A.set_badge, requested);
     }
 
     /// The same path as `setBadge` with a fixed 0, so the two cannot drift.
@@ -127,12 +133,7 @@ pub const DisplayBridge = struct {
     /// `clearBadge` sends no payload at all, so there is nothing to parse:
     /// `payloadOf` hands this `{}` and the count is not the caller's to choose.
     fn clearBadge(self: *Self) !void {
-        try self.replyBadge(A.clear_badge, try applyBadge(0));
-    }
-
-    fn replyBadge(self: *Self, action: []const u8, observed: i64) !void {
-        std.log.info("{s}: badge is now {d}", .{ action, observed });
-        bridge_error.sendResultToJS(self.allocator, action, badge_applied);
+        try requestBadgeAuthorization(self.allocator, A.clear_badge, 0);
     }
 
     /// `{"enabled":<bool>}` in, the bare observed boolean out.
@@ -196,6 +197,212 @@ pub const DisplayBridge = struct {
 /// These are the strings the page actually receives.
 /// What `setBadge` and `clearBadge` resolve. A bare `true`, matching the spec.
 const badge_applied = "true";
+
+// =============================================================================
+// Badge authorization: ask, then set, then answer — on the threads the spec
+// uses for each.
+// =============================================================================
+
+/// `UNAuthorizationOptionBadge`. `UNUserNotificationCenter.h:23` in the
+/// iPhoneSimulator 26.5 SDK: `UNAuthorizationOptionBadge = (1 << 0)`. Pinned
+/// by a test that cites the same line, after a neighbouring module once
+/// guessed a `1 << 2` that named a different option entirely.
+const un_authorization_option_badge: c_ulong = 1 << 0;
+
+/// Ask iOS for badge authorization, and set the badge only once it says yes.
+///
+/// The spec's order exactly: `requestAuthorization(options: .badge)`, then
+/// `applicationIconBadgeNumber = count` inside `DispatchQueue.main.async` on
+/// grant, or reject on refusal. The count is validated *before* anything is
+/// asked, so a malformed call fails as it always did without ever triggering
+/// the first-run prompt.
+///
+/// When UserNotifications is not in the process — the `zig-slice` fixture
+/// links only UIKit, WebKit and Foundation — there is nothing to ask, and the
+/// badge is set directly as before, with a warning saying so. That path cannot
+/// be reached by a generated app: `project.yml` links UserNotifications
+/// unconditionally.
+fn requestBadgeAuthorization(allocator: std.mem.Allocator, action: []const u8, count: i64) !void {
+    if (!is_darwin) return error.UnsupportedPlatform;
+    _ = std.math.cast(c_long, count) orelse return bridge_error.BridgeError.InvalidParameter;
+
+    const UNCenterClass = objc.objc_getClass("UNUserNotificationCenter") orelse {
+        std.log.warn(
+            "{s}: UserNotifications is not in this process, so authorization cannot be " ++
+                "requested; setting the badge directly, which an unauthorised app will not draw",
+            .{action},
+        );
+        const observed = try applyBadge(count);
+        std.log.info("{s}: badge is now {d}", .{ action, observed });
+        bridge_error.sendResultToJS(allocator, action, badge_applied);
+        return;
+    };
+
+    // `currentNotificationCenter` RAISES — not nil — in a process with no
+    // bundle identifier, which is every test runner. Same guard as
+    // `bridge_mobile_permissions.zig` and `bridge_mobile_notifcancel.zig`.
+    try requireBundleIdentifier();
+
+    const sel_current = objc.sel_registerName("currentNotificationCenter") orelse
+        return error.SelectorNotFound;
+    const center = objc.msgSendId(UNCenterClass, sel_current) orelse return error.NoNotificationCenter;
+    const sel = objc.sel_registerName("requestAuthorizationWithOptions:completionHandler:") orelse
+        return error.SelectorNotFound;
+
+    const ticket = ios_async.acquire(action) orelse return poolFull(action);
+    errdefer ios_async.abandon(ticket);
+    publishPendingCall(ticket, action, count);
+
+    const Fn = *const fn (Id, objc.SEL, c_ulong, *anyopaque) callconv(.c) void;
+    const func: Fn = @ptrCast(&objc.objc_msgSend);
+    func(center, sel, un_authorization_option_badge, replyBlock(ticket));
+}
+
+fn requireBundleIdentifier() !void {
+    const NSBundle = objc.objc_getClass("NSBundle") orelse return error.ClassNotFound;
+    const sel_main = objc.sel_registerName("mainBundle") orelse return error.SelectorNotFound;
+    const bundle = objc.msgSendId(NSBundle, sel_main) orelse return error.NoBundleIdentifier;
+    const sel_ident = objc.sel_registerName("bundleIdentifier") orelse return error.SelectorNotFound;
+    if (objc.msgSendId(bundle, sel_ident) == null) return error.NoBundleIdentifier;
+}
+
+fn poolFull(action: []const u8) bridge_error.BridgeError {
+    std.log.warn("{s} refused: all {d} async slots in flight", .{ action, ios_async.max_in_flight });
+    return bridge_error.BridgeError.InvalidParameter;
+}
+
+/// What a slot's block will answer. The ticket is stored, not rebuilt from the
+/// index: a ticket carries a generation, and inventing one at reply time would
+/// defeat the check that stops a late completion answering the slot's next
+/// occupant. `action` is one of the two static names in `A`, never allocated.
+const PendingBadge = struct {
+    ticket: ios_async.Ticket,
+    action: []const u8,
+    count: i64,
+};
+
+var pending_badges: [ios_async.max_in_flight]?PendingBadge = @splat(null);
+var pending_mutex: compat_mutex.Mutex = .{};
+
+fn publishPendingCall(ticket: ios_async.Ticket, action: []const u8, count: i64) void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    pending_badges[ticket.index] = .{ .ticket = ticket, .action = action, .count = count };
+}
+
+/// Read and clear. Clearing is what makes a second fire a no-op instead of a
+/// second reply.
+fn takePendingCall(index: u5) ?PendingBadge {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    const call = pending_badges[index];
+    pending_badges[index] = null;
+    return call;
+}
+
+const BlockDescriptor = extern struct {
+    reserved: c_ulong = 0,
+    size: c_ulong,
+};
+
+/// `void (^)(BOOL, NSError *)` — `requestAuthorizationWithOptions:`'s
+/// completion. Not `ios_async.boolErrorBlock`: that one answers the page
+/// `"granted"`/`"denied"`, and this one has a badge to set in between.
+const ReplyBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const BlockDescriptor,
+};
+
+/// 1 << 28. A global block is never copied, so it can be handed to an API that
+/// escapes it with no heap copy and no descriptor lifetime.
+const BLOCK_IS_GLOBAL: c_int = 1 << 28;
+const reply_block_descriptor = BlockDescriptor{ .size = @sizeOf(ReplyBlock) };
+
+extern var _NSConcreteGlobalBlock: anyopaque;
+
+fn makeReplyInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const ReplyBlock, granted: bool, err: Id) callconv(.c) void {
+            authorizationFired(index, granted, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeReplyBlocks() [ios_async.max_in_flight]ReplyBlock {
+    var out: [ios_async.max_in_flight]ReplyBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = BLOCK_IS_GLOBAL,
+            .invoke = makeReplyInvoke(@intCast(i)),
+            .descriptor = &reply_block_descriptor,
+        };
+    }
+    return out;
+}
+
+var reply_blocks: [ios_async.max_in_flight]ReplyBlock =
+    if (is_darwin) makeReplyBlocks() else undefined;
+
+fn replyBlock(ticket: ios_async.Ticket) *anyopaque {
+    return @ptrCast(&reply_blocks[ticket.index]);
+}
+
+extern "c" fn dispatch_async_f(
+    queue: *anyopaque,
+    context: ?*anyopaque,
+    work: *const fn (?*anyopaque) callconv(.c) void,
+) void;
+extern var _dispatch_main_q: anyopaque;
+
+/// Runs on whatever queue UserNotifications chose.
+///
+/// A refusal is answered from here — `ios_async` hops to the main queue
+/// itself. A grant is not: the badge has to be *set* on the main thread
+/// before the answer is true, which is what Swift's `DispatchQueue.main.async`
+/// is for in this position. So the grant path hops first and answers after.
+/// The pending entry survives the hop and is taken on the far side, which is
+/// what makes a double fire harmless: the second hop finds nothing.
+fn authorizationFired(index: u5, granted: bool, err: Id) void {
+    if (!is_darwin) return;
+
+    if (!granted) {
+        const call = takePendingCall(index) orelse {
+            std.log.warn("badge authorization fired for slot {d} with no call recorded; ignored", .{index});
+            return;
+        };
+        _ = err;
+        std.log.info("{s}: badge authorization denied", .{call.action});
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.PermissionDenied);
+        return;
+    }
+
+    // `index + 1`, never a null context: `ios_async` passes its slot the same
+    // way and for the same reason.
+    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, index) + 1), applyBadgeOnMain);
+}
+
+/// Main thread. Authorized, so set the badge and say so.
+fn applyBadgeOnMain(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+    const index: u5 = @intCast(@intFromPtr(context) - 1);
+    const call = takePendingCall(index) orelse {
+        std.log.warn("badge grant reached the main queue for slot {d} with no call recorded; ignored", .{index});
+        return;
+    };
+
+    const observed = applyBadge(call.count) catch |e| {
+        std.log.warn("{s}: authorised, but the badge could not be set: {s}", .{ call.action, @errorName(e) });
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
+        return;
+    };
+    std.log.info("{s}: badge is now {d}", .{ call.action, observed });
+    ios_async.deliverJson(call.ticket, badge_applied);
+}
 
 // =============================================================================
 // Payload parsing
@@ -659,4 +866,63 @@ test "UIKit work is refused off Darwin rather than attempted" {
     if (builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
     try testing.expectError(error.UnsupportedPlatform, applyBadge(1));
     try testing.expectError(error.UnsupportedPlatform, applyKeepAwake(true));
+}
+
+test "the badge authorization option is the header's bit, not a guess" {
+    // `UNUserNotificationCenter.h:23`: `UNAuthorizationOptionBadge = (1 << 0)`.
+    // A neighbouring module once pinned a guessed `1 << 2` for a HealthKit
+    // option and shipped a crash; this cites the line instead.
+    try testing.expectEqual(@as(c_ulong, 1), un_authorization_option_badge);
+    try testing.expect(un_authorization_option_badge != 1 << 1); // Sound
+    try testing.expect(un_authorization_option_badge != 1 << 2); // Alert
+}
+
+test "each badge slot's reply block is global and has its own invoke" {
+    if (!is_darwin) return error.SkipZigTest;
+    for (&reply_blocks) |*b| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, b.isa);
+        try testing.expectEqual(BLOCK_IS_GLOBAL, b.flags);
+        try testing.expectEqual(@sizeOf(ReplyBlock), @as(usize, @intCast(b.descriptor.size)));
+    }
+    try testing.expect(reply_blocks[0].invoke != reply_blocks[1].invoke);
+}
+
+test "a pending badge call is taken exactly once" {
+    // The property a double-fired completion relies on: the second `take`
+    // finds nothing, so it replies to nobody instead of answering twice.
+    const ticket = ios_async.Ticket{ .index = 3, .generation = 42 };
+    publishPendingCall(ticket, A.set_badge, 7);
+    const first = takePendingCall(3) orelse return error.TestUnexpectedResult;
+    try testing.expectEqual(@as(i64, 7), first.count);
+    try testing.expectEqualStrings(A.set_badge, first.action);
+    try testing.expectEqual(@as(u32, 42), first.ticket.generation);
+    try testing.expect(takePendingCall(3) == null);
+}
+
+test "a bad count is refused before any authorization is requested" {
+    // Ordering, not just parsing: the parse failure has to come first, on
+    // every platform, so a malformed call never triggers the first-run prompt.
+    var bridge = DisplayBridge.init(testing.allocator);
+    defer bridge.deinit();
+    try testing.expectError(
+        bridge_error.BridgeError.InvalidParameter,
+        bridge.handleMessage(A.set_badge, "{\"count\":\"three\"}"),
+    );
+}
+
+test "setBadge is refused on the host rather than resolved without asking" {
+    // There is no UIKit and no bundle identifier in a test binary, so the
+    // only correct outcome is a refusal. Which refusal depends on what the
+    // host has loaded — UserNotifications absent takes one path, present
+    // takes another — so this pins the shape (an error, never a reply) and
+    // not the name. A resolve here would be the exact fabricated success this
+    // change exists to remove.
+    var bridge = DisplayBridge.init(testing.allocator);
+    defer bridge.deinit();
+    if (bridge.handleMessage(A.set_badge, "{\"count\":3}")) |_| {
+        return error.TestUnexpectedResult;
+    } else |_| {}
+    if (bridge.handleMessage(A.clear_badge, "{}")) |_| {
+        return error.TestUnexpectedResult;
+    } else |_| {}
 }
