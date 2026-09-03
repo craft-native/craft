@@ -35,7 +35,7 @@ jobs:
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
 
       - name: Verify Zig installation
-        run: eval "$(pantry env | sed -n '/^export /,$p')" && zig version
+        run: zig version
 
       - name: Cache Zig artifacts
         uses: actions/cache@v5
@@ -58,14 +58,14 @@ jobs:
 
       - name: Build Zig core
         working-directory: packages/zig
-        run: eval "$(pantry env | sed -n '/^export /,$p')" && zig build
+        run: zig build
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
 
       - name: Test Zig core
         working-directory: packages/zig
-        run: eval "$(pantry env | sed -n '/^export /,$p')" && zig build test
+        run: zig build test
 
       - name: Check binary size
         if: runner.os == 'Linux'
@@ -163,7 +163,7 @@ jobs:
 
       - name: Check Zig formatting
         working-directory: packages/zig
-        run: eval "$(pantry env | sed -n '/^export /,$p')" && zig fmt --check src/ build.zig
+        run: zig fmt --check src/ build.zig
 
       - name: Audit Zig C imports
         run: bun run verify:cimports
@@ -194,7 +194,7 @@ jobs:
 
       - name: Build Zig core
         working-directory: packages/zig
-        run: eval "$(pantry env | sed -n '/^export /,$p')" && zig build
+        run: zig build
 
       - name: Build TypeScript SDK
         working-directory: packages/typescript

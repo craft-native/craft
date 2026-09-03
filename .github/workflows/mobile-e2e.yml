@@ -74,7 +74,7 @@ jobs:
         run: |
           # Build iOS simulator static libraries using dedicated build step
           # (not the default target which builds macOS executables)
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build build-ios-simulator -Doptimize=ReleaseSafe -Dmacos-sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+          zig build build-ios-simulator -Doptimize=ReleaseSafe -Dmacos-sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -85,7 +85,7 @@ jobs:
           # `zig build test` reports through its exit code. The old form piped
           # it to a file and grepped for "mobile"/"ios", which fails under
           # `set -e` whenever the run is clean and the file is therefore empty.
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build test
+          zig build test
 
       - name: Build iOS test app
         if: hashFiles('packages/ios/TestApp/TestApp.xcodeproj') != ''
@@ -176,7 +176,7 @@ jobs:
           # builds the desktop binaries — and since an android triple reports
           # os_tag == .linux, that links GTK3/WebKit2GTK against a sysroot that
           # does not exist for Android.
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build build-android -Doptimize=ReleaseSafe
+          zig build build-android -Doptimize=ReleaseSafe
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -187,7 +187,7 @@ jobs:
           # `zig build test` reports through its exit code. The old form piped
           # it to a file and grepped for "mobile"/"android", which fails under
           # `set -e` whenever the run is clean and the file is therefore empty.
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build test
+          zig build test
 
       - name: Enable KVM
         run: |

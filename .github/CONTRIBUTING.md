@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Craft! This document provides gui
 
 ### Prerequisites
 
-- **Pantry-managed stable Zig**: run `eval "$(pantry env | sed -n '/^export /,$p')"`, then invoke `zig`
+- **Pantry-managed stable Zig**: run `eval "$(pantry env | sed -n '/^export /,$p')"`, then invoke `zig` (locally only — CI does not: the pantry action already puts `zig` on PATH, and `pantry env` runs a workspace setup that re-installs JS deps with its own `--linker`, rewriting `node_modules` mid-job)
 - **Bun**: Install from [bun.sh](https://bun.sh)
 
 #### Platform-specific Dependencies

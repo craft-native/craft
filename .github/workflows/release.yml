@@ -74,7 +74,7 @@ jobs:
           mkdir -p zig-out/cross
 
           echo "::group::Cross-compile darwin-x64"
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$X64_TARGET" -Dmacos-sdk="$SDK_PATH"
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$X64_TARGET" -Dmacos-sdk="$SDK_PATH"
           mkdir -p zig-out/cross/darwin-x64 && cp zig-out/bin/craft zig-out/cross/darwin-x64/craft
           echo "::endgroup::"
 
@@ -87,7 +87,7 @@ jobs:
           # cross-compilation mode, where it stops looking for the system SDK
           # on its own and every `-framework Cocoa` fails to resolve.
           rm -rf zig-out/bin
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$ARM64_TARGET" -Dmacos-sdk="$SDK_PATH"
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$ARM64_TARGET" -Dmacos-sdk="$SDK_PATH"
 
       # AppKit decides how it draws a window's controls from the SDK recorded
       # in LC_BUILD_VERSION, so that it can restyle them without restyling
@@ -144,7 +144,6 @@ jobs:
             "x86_64-windows:windows-x64:craft.exe"; do
             IFS=: read -r zig_target dir_name bin_name <<< "$target_spec"
             echo "::group::Cross-compile $dir_name"
-            eval "$(pantry env | sed -n '/^export /,$p')"
             zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$zig_target"
             mkdir -p "zig-out/cross/$dir_name" && cp "zig-out/bin/$bin_name" "zig-out/cross/$dir_name/$bin_name"
             echo "Built $dir_name"
@@ -157,7 +156,7 @@ jobs:
           # so craft-linux-x64.zip shipped a Windows PE binary alongside the
           # Linux one.
           rm -rf zig-out/bin
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
 
       # ── macOS Code Signing & Notarization ──────────────────────────
       # The signing credentials live encrypted in `.env.production`, not as

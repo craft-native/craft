@@ -82,7 +82,7 @@ jobs:
       - name: Build binary
         working-directory: packages/zig
         run: |
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseFast
+          zig build -Doptimize=ReleaseFast
           mkdir -p "$RUNNER_TEMP/bench"
           cp zig-out/bin/craft "$RUNNER_TEMP/bench/craft-head"
 
