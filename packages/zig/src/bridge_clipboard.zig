@@ -193,7 +193,7 @@ pub const ClipboardBridge = struct {
                     log.debug("Read text from clipboard: {s}", .{text_str});
 
                     // Escape backslashes and quotes for safe JSON embedding
-                    var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                    var buf: std.ArrayList(u8) = .empty;
                     defer buf.deinit(self.allocator);
 
                     try buf.appendSlice(self.allocator, "{\"text\":\"");
@@ -306,7 +306,7 @@ pub const ClipboardBridge = struct {
                     const html_str = std.mem.span(@as([*:0]const u8, @ptrCast(html_cstr)));
                     log.debug("Read HTML from clipboard: {s}", .{html_str});
 
-                    var buf: std.ArrayList(u8) = .{ .items = &.{}, .capacity = 0 };
+                    var buf: std.ArrayList(u8) = .empty;
                     defer buf.deinit(self.allocator);
 
                     try buf.appendSlice(self.allocator, "{\"html\":\"");

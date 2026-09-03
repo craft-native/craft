@@ -22,7 +22,7 @@ pub const SpaceList = struct {
     active: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator) SpaceList {
-        return .{ .allocator = allocator, .spaces = .{ .items = &.{}, .capacity = 0 } };
+        return .{ .allocator = allocator, .spaces = .empty };
     }
 
     pub fn deinit(self: *SpaceList) void {

@@ -7,6 +7,6 @@
     "bun.sh": "1.3.14",
     // Pinned exactly — `^0.17.0-dev` floats on Zig's dev channel and swaps the
     // compiler out from under a build. Keep in step with deps.yaml.
-    "ziglang.org": "0.17.0-dev.1509_bb296ab9b"
+    "ziglang.org": "0.17.0-dev.1963_e00c6c439"
   }
 }

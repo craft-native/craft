@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-ZIG="${CRAFT_ZIG:-$HOME/.cache/craft-ci-local/zig-aarch64-macos-0.17.0-dev.1509+bb296ab9b/zig}"
+ZIG="${CRAFT_ZIG:-$HOME/.cache/craft-ci-local/zig-aarch64-macos-0.17.0-dev.1963+e00c6c439/zig}"
 FIXTURE="$ROOT/packages/ios/fixtures/zig-slice"
 OUT="${1:-$FIXTURE/build}"
 BUNDLE_ID="app.craft.slice"

@@ -385,7 +385,7 @@ gated on `hashFiles('packages/ios/TestApp/TestApp.xcodeproj')`, which has never 
 | Phase 0 | nothing beyond the pinned Zig | ✅ works today on Command Line Tools |
 | Phase 1+ | full Xcode — SDK, simulator runtime | ❌ install required |
 
-Zig is pinned at `0.17.0-dev.1509+bb296ab9b`. Clear `.zig-cache` between heavy rounds.
+Zig is pinned at `0.17.0-dev.1963+e00c6c439`. Clear `.zig-cache` between heavy rounds.
 
 ---
 

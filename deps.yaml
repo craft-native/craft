@@ -5,6 +5,13 @@ dependencies:
   bun.sh: 1.3.14
   # Also pinned exactly. `^0.17.0-dev` floats on Zig's *dev* channel, so any
   # `pantry install` can swap the compiler out from under a build — observed
-  # jumping 1509 -> 1606 unprompted. This is the version v0.0.58 was released
-  # with. Bump deliberately, and rebuild when you do.
-  ziglang.org: 0.17.0-dev.1509_bb296ab9b
+  # jumping 1509 -> 1606 unprompted. Bump deliberately, and rebuild when you do.
+  #
+  # The pin has a shelf life, which 1509 is how we found out. ziglang.org
+  # serves exactly one dev build — whatever master is now — plus the tagged
+  # releases, and prunes the rest. Every platform tarball for 1509 returned
+  # 404, so CI was running on cached toolchains and any uncached runner failed
+  # to provision at all: `darwin-x64` went red on a lockfile-free PR, and the
+  # next tagged release would have failed the same way. A pinned dev build is
+  # reproducible only for as long as it is master.
+  ziglang.org: 0.17.0-dev.1963_e00c6c439

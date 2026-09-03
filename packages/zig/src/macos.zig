@@ -5003,7 +5003,7 @@ pub fn tryEvalJS(js_code: []const u8) !void {
 /// Handle incoming messages from JavaScript bridge
 /// Convert a JSON Value to string
 fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]const u8 {
-    var buf: std.ArrayListUnmanaged(u8) = .{ .items = &.{}, .capacity = 0 };
+    var buf: std.ArrayListUnmanaged(u8) = .empty;
     errdefer buf.deinit(allocator);
 
     switch (value) {

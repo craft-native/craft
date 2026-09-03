@@ -276,7 +276,7 @@ pub const BenchmarkSuite = struct {
     }
 
     pub fn generateReport(self: *const BenchmarkSuite, allocator: std.mem.Allocator) ![]const u8 {
-        var buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
+        var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(allocator);
 
         const header = try std.fmt.allocPrint(allocator, "Benchmark Suite: {s}\n", .{self.name});
@@ -301,7 +301,7 @@ pub const BenchmarkSuite = struct {
     }
 
     pub fn generateJSON(self: *const BenchmarkSuite, allocator: std.mem.Allocator) ![]const u8 {
-        var buf = std.ArrayList(u8){ .items = &.{}, .capacity = 0 };
+        var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(allocator);
 
         try buf.appendSlice(allocator, "{");
@@ -422,7 +422,7 @@ pub fn benchmarkArrayListOperations(allocator: std.mem.Allocator, operations: us
 }
 
 fn arrayListOps(allocator: std.mem.Allocator, ops: usize) !void {
-    var list = std.ArrayList(usize){ .items = &.{}, .capacity = 0 };
+    var list = std.ArrayList(usize).empty;
     defer list.deinit(allocator);
 
     var i: usize = 0;
