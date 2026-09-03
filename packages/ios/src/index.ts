@@ -91,6 +91,20 @@ export interface InitOptions {
   teamId?: string
   output: string
   config?: Partial<CraftConfig>
+  /**
+   * Where the Zig runtime archives live, overriding `CRAFT_IOS_RUNTIME`.
+   *
+   * `null` means "no runtime, whatever the environment says" — the shape
+   * `AppConfig.craftPath` has for `CRAFT_BIN`, and the reason it exists here
+   * is the same: a caller that does not opt in should not be steered by an
+   * ambient variable. Without it this package's own tests inherited whatever
+   * the developer's shell exported, and went from 12 passing to 8 passing and
+   * 4 failing when `CRAFT_IOS_RUNTIME` happened to be set.
+   *
+   * Omitted (`undefined`) keeps the environment lookup, which is what the
+   * monorepo dev loop uses.
+   */
+  runtimeDir?: string | null
 }
 
 export interface BuildOptions {
@@ -98,6 +112,12 @@ export interface BuildOptions {
   devServer?: string
   output: string
   generateProject?: boolean
+  /**
+   * Where to re-read the Zig runtime archives from, overriding
+   * `CRAFT_IOS_RUNTIME`. Same meaning as `InitOptions.runtimeDir`; `null`
+   * leaves whatever `init` installed exactly as it is.
+   */
+  runtimeDir?: string | null
 }
 
 export interface OpenOptions {
@@ -380,12 +400,18 @@ export function syncWebAssets(source: string, output: string): void {
  * dev loop, not a lookup path. Shipping the runtime to real apps means putting
  * these archives in the pantry package beside the `craft` binary, which is a
  * distribution decision this function does not make.
+ *
+ * `override` is what `InitOptions.runtimeDir` passes: a path to use instead of
+ * the variable, or `null` to declare there is no runtime regardless of what the
+ * environment says. `undefined` falls through to `CRAFT_IOS_RUNTIME`.
  */
-export function resolveRuntimeDir(): string | null {
-  const dir = process.env.CRAFT_IOS_RUNTIME
+export function resolveRuntimeDir(override?: string | null): string | null {
+  if (override === null) return null
+  const dir = override ?? process.env.CRAFT_IOS_RUNTIME
   if (!dir) return null
   if (!existsSync(dir)) {
-    throw new Error(`CRAFT_IOS_RUNTIME points at ${dir}, which does not exist.`)
+    const source = override === undefined ? 'CRAFT_IOS_RUNTIME points at' : 'runtimeDir is'
+    throw new Error(`${source} ${dir}, which does not exist.`)
   }
   return dir
 }
@@ -411,23 +437,44 @@ const RUNTIME_ARCHIVES = {
  * Returns true when a runtime was installed.
  */
 export async function installRuntime(output: string, runtimeDir: string): Promise<boolean> {
-  const dest = join(output, 'Runtime')
-  rmSync(dest, { recursive: true, force: true })
-
-  for (const [sdk, archives] of Object.entries(RUNTIME_ARCHIVES)) {
+  // Every SDK resolved before anything is written, and long before the
+  // `rmSync` below. The check used to run per-SDK *after* the wipe, so a
+  // runtime directory missing an archive destroyed a working install on its
+  // way to throwing, and left `project.yml` linking `-lcraft-ios` against a
+  // `Runtime/` that no longer existed.
+  const resolved = Object.entries(RUNTIME_ARCHIVES).map(([sdk, archives]) => {
     const present = archives.filter(a => existsSync(join(runtimeDir, a)))
     if (present.length === 0) {
       throw new Error(
-        `CRAFT_IOS_RUNTIME=${runtimeDir} has none of ${archives.join(', ')}. `
+        `${runtimeDir} has none of ${archives.join(', ')}. `
         + `Run \`zig build build-ios-all\` in packages/zig and point at its zig-out/lib.`,
       )
     }
+    return { sdk, archives, present }
+  })
 
+  const dest = join(output, 'Runtime')
+  rmSync(dest, { recursive: true, force: true })
+
+  for (const { sdk, archives, present } of resolved) {
     const sdkDir = join(dest, sdk)
     mkdirSync(sdkDir, { recursive: true })
     const target = join(sdkDir, 'libcraft-ios.a')
 
     if (present.length === 1) {
+      // Said out loud, because the comment on RUNTIME_ARCHIVES describes this
+      // exact outcome as the thing to avoid: a single-slice simulator archive
+      // links on the machine that built it and fails on the other kind, which
+      // is a break that only ever shows up on someone else's laptop. Copying
+      // is still better than refusing — a one-arch dev loop is legitimate —
+      // but it should not happen silently.
+      const missing = archives.filter(a => !present.includes(a))
+      if (missing.length > 0) {
+        console.warn(
+          `   ⚠ ${sdk}: only ${present[0]} was found; ${missing.join(', ')} is missing. `
+          + `The generated project will not link on the other architecture.`,
+        )
+      }
       cpSync(join(runtimeDir, present[0]!), target)
     }
     else {
@@ -437,6 +484,37 @@ export async function installRuntime(output: string, runtimeDir: string): Promis
   }
 
   return true
+}
+
+/**
+ * Re-copy the Zig runtime into a project that already links one.
+ *
+ * The archives are *copied* by `init`, not symlinked, so without this a
+ * rebuilt runtime never reached the app: edit `packages/zig/src`, run `zig
+ * build build-ios-all`, then `craft ios run`, and xcodebuild happily relinks
+ * the archive that was copied when the project was first generated. The build
+ * succeeds, the app launches, and the change is simply absent — the worst
+ * shape a stale artefact can take, because there is no error to chase.
+ *
+ * Only refreshes; never installs and never removes. A project with no
+ * `Runtime/` was generated without a runtime and its `project.yml` carries no
+ * link settings, so copying archives in would leave them unreferenced — that
+ * decision belongs to `init`. And a project that *does* link one keeps working
+ * from the archives it already has when no runtime directory is configured,
+ * because a shell that forgot the variable should not quietly turn the runtime
+ * off.
+ */
+async function refreshRuntime(output: string, override?: string | null): Promise<void> {
+  if (!existsSync(join(output, 'Runtime'))) return
+
+  const dir = resolveRuntimeDir(override)
+  if (!dir) {
+    console.log('   Keeping the Zig runtime installed at init (no runtime directory configured)')
+    return
+  }
+
+  await installRuntime(output, dir)
+  console.log('   Refreshed the Zig runtime from', dir)
 }
 
 export async function init(options: InitOptions): Promise<void> {
@@ -533,9 +611,18 @@ export async function init(options: InitOptions): Promise<void> {
 
   // The Zig runtime, when this build has one. Installed before the project is
   // rendered because the settings below name the directories it creates.
-  const runtimeDir = resolveRuntimeDir()
+  const runtimeDir = resolveRuntimeDir(options.runtimeDir)
   const hasRuntime = runtimeDir ? await installRuntime(output, runtimeDir) : false
-  if (hasRuntime) console.log('   Linked the Zig runtime from', runtimeDir)
+  if (hasRuntime) {
+    console.log('   Linked the Zig runtime from', runtimeDir)
+  }
+  else {
+    // Re-running init without a runtime used to strip the link settings from
+    // project.yml and leave the archives behind, so the directory said one
+    // thing and the project said another. Whatever this run decides, the tree
+    // agrees with it.
+    rmSync(join(output, 'Runtime'), { recursive: true, force: true })
+  }
 
   const projectYml = projectYmlTemplate
     .replace(/\{\{CRAFT_RUNTIME_SETTINGS\}\}/g, hasRuntime ? renderRuntimeSettings() : '')
@@ -655,6 +742,8 @@ export async function build(options: BuildOptions): Promise<void> {
     syncWebAssets(htmlPath, output)
     console.log(`   Synced: ${htmlPath} → dist/`)
   }
+
+  await refreshRuntime(output, options.runtimeDir)
 
   if (!generateProject) return
 

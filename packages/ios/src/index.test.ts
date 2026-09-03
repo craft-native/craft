@@ -5,6 +5,9 @@ import { describe, expect, it } from 'bun:test'
 import {
   build,
   init,
+  installRuntime,
+  renderRuntimeSettings,
+  resolveRuntimeDir,
   orderSimulators,
   renderBackgroundModes,
   renderEntitlements,
@@ -83,6 +86,7 @@ describe('Craft iOS builder', () => {
   it('generates a production project whose bundled index lives under dist', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-project-'))
     await init({
+      runtimeDir: null,
       name: 'WildLoop',
       bundleId: 'org.wildloop.app',
       output,
@@ -127,7 +131,7 @@ describe('Craft iOS builder', () => {
     const output = join(root, 'ios')
     Bun.spawnSync(['mkdir', '-p', web])
     writeFileSync(join(web, 'index.html'), '<main>Available offline</main>')
-    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', output })
     await build({ htmlPath: web, devServer: 'https://wildloop.org', output, generateProject: false })
 
     const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
@@ -138,6 +142,7 @@ describe('Craft iOS builder', () => {
   it('generates a native Live Activity extension when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-live-activity-'))
     await init({
+      runtimeDir: null,
       name: 'WildLoop',
       bundleId: 'org.wildloop.app',
       output,
@@ -161,6 +166,7 @@ describe('Craft iOS builder', () => {
   it('generates an embedded watchOS companion when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-watch-'))
     await init({
+      runtimeDir: null,
       name: 'WildLoop',
       bundleId: 'org.wildloop.app',
       output,
@@ -241,5 +247,142 @@ describe('choosing a simulator', () => {
     orderSimulators(devices)
 
     expect(devices[0]?.name).toBe('iPad Air')
+  })
+})
+
+describe('Zig runtime installation', () => {
+  // A runtime directory holding *one* simulator slice, so `installRuntime`
+  // takes the `cpSync` branch. The two-slice branch shells out to `lipo`,
+  // which needs genuine Mach-O input and does not exist off macOS — it is
+  // covered by building a real generated app, not from here. What these do
+  // cover is everything around it: resolution, ordering, and the warning.
+  function fakeRuntime(archives = ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a']): string {
+    const dir = mkdtempSync(join(tmpdir(), 'craft-rt-'))
+    for (const a of archives) writeFileSync(join(dir, a), 'stand-in for an archive')
+    return dir
+  }
+
+  it('resolves an explicit directory, and null means no runtime whatever the environment says', () => {
+    const dir = fakeRuntime()
+    const saved = process.env.CRAFT_IOS_RUNTIME
+    process.env.CRAFT_IOS_RUNTIME = dir
+    try {
+      // The gap this closes: the suite used to inherit the developer's shell,
+      // and went from 12 passing to 8 passing and 4 failing when this variable
+      // happened to be set.
+      expect(resolveRuntimeDir(null)).toBeNull()
+      expect(resolveRuntimeDir(dir)).toBe(dir)
+      expect(resolveRuntimeDir()).toBe(dir)
+    }
+    finally {
+      if (saved === undefined) delete process.env.CRAFT_IOS_RUNTIME
+      else process.env.CRAFT_IOS_RUNTIME = saved
+    }
+  })
+
+  it('names the source in the error, so a bad path says which knob set it', () => {
+    expect(() => resolveRuntimeDir('/no/such/runtime')).toThrow(/runtimeDir is/)
+  })
+
+  it('writes one archive name per SDK, which is what a single -lcraft-ios needs', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-out-'))
+    expect(await installRuntime(output, fakeRuntime())).toBe(true)
+    expect(existsSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'))).toBe(true)
+    expect(existsSync(join(output, 'Runtime', 'simulator', 'libcraft-ios.a'))).toBe(true)
+  })
+
+  it('warns when only one simulator slice is present, rather than shipping it silently', async () => {
+    const warnings: string[] = []
+    const saved = console.warn
+    console.warn = (...args: unknown[]) => void warnings.push(args.join(' '))
+    try {
+      await installRuntime(mkdtempSync(join(tmpdir(), 'craft-out-')), fakeRuntime())
+    }
+    finally {
+      console.warn = saved
+    }
+    // RUNTIME_ARCHIVES' own comment calls this the failure that "only shows up
+    // on someone else's laptop", so it must not be silent.
+    expect(warnings.join('\n')).toContain('libcraft-ios-simulator-x64.a')
+  })
+
+  it('leaves a working install alone when the source directory is incomplete', async () => {
+    // The ordering bug: validation ran after the wipe, so a bad runtime dir
+    // destroyed the archives already in place and left project.yml linking
+    // against a Runtime/ that no longer existed.
+    const output = mkdtempSync(join(tmpdir(), 'craft-out-'))
+    await installRuntime(output, fakeRuntime())
+    const installed = join(output, 'Runtime', 'device', 'libcraft-ios.a')
+    expect(existsSync(installed)).toBe(true)
+
+    const empty = mkdtempSync(join(tmpdir(), 'craft-rt-empty-'))
+    await expect(installRuntime(output, empty)).rejects.toThrow(/has none of/)
+    expect(existsSync(installed)).toBe(true)
+  })
+
+  it('renders both SDK search paths and forces the four entry points', () => {
+    const settings = renderRuntimeSettings()
+    expect(settings).toContain('LIBRARY_SEARCH_PATHS[sdk=iphoneos*]')
+    expect(settings).toContain('LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]')
+    // Without -u the linker drops the whole archive as unreachable, because
+    // nothing in the Swift references these symbols — both seams use dlsym.
+    for (const sym of ['handle_action', 'set_webview', 'deliver_result', 'deliver_error']) {
+      expect(settings).toContain(`-Wl,-u,_craft_ios_${sym}`)
+    }
+    // Six-space indent: this is spliced into project.yml under `settings:`.
+    for (const line of settings.split('\n')) expect(line.startsWith('      ')).toBe(true)
+  })
+
+  it('generates a project whose settings match whether a runtime was installed', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: fakeRuntime(), name: 'HasRuntime', output })
+    expect(readFileSync(join(output, 'project.yml'), 'utf8')).toContain('-lcraft-ios')
+
+    // And re-running without one leaves no orphaned archives claiming otherwise.
+    await init({ runtimeDir: null, name: 'HasRuntime', output })
+    expect(readFileSync(join(output, 'project.yml'), 'utf8')).not.toContain('-lcraft-ios')
+    expect(existsSync(join(output, 'Runtime'))).toBe(false)
+  })
+})
+
+describe('runtime staleness', () => {
+  function runtimeWith(marker: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'craft-rt-'))
+    for (const a of ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a']) {
+      writeFileSync(join(dir, a), marker)
+    }
+    return dir
+  }
+
+  it('build picks up a rebuilt runtime instead of relinking the one init copied', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: runtimeWith('first build'), name: 'Stale', output })
+    const installed = join(output, 'Runtime', 'device', 'libcraft-ios.a')
+    expect(readFileSync(installed, 'utf8')).toBe('first build')
+
+    // The dev loop: edit Zig, rebuild the archives, run the app again. Before
+    // this, xcodebuild relinked the copy from init and the change was absent
+    // with no error anywhere.
+    await build({ output, runtimeDir: runtimeWith('second build'), generateProject: false })
+    expect(readFileSync(installed, 'utf8')).toBe('second build')
+  })
+
+  it('build leaves a runtimeless project alone rather than installing one behind init', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: null, name: 'NoRuntime', output })
+    expect(existsSync(join(output, 'Runtime'))).toBe(false)
+
+    // A runtime is available, but this project does not link one: its
+    // project.yml has no link settings, so archives here would be dead weight.
+    await build({ output, runtimeDir: runtimeWith('ignored'), generateProject: false })
+    expect(existsSync(join(output, 'Runtime'))).toBe(false)
+  })
+
+  it('build keeps the installed runtime when no runtime directory is configured', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: runtimeWith('from init'), name: 'Keep', output })
+    // A shell that forgot the variable must not quietly turn the runtime off.
+    await build({ output, runtimeDir: null, generateProject: false })
+    expect(readFileSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'), 'utf8')).toBe('from init')
   })
 })
