@@ -418,6 +418,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "getCurrentPosition", .geolocation },
         .{ "getHealthData", .health_kit },
         .{ "getPendingNotifications", .local_notifications },
+        .{ "scheduleNotification", .local_notifications },
         .{ "haptic", .haptics },
         .{ "lockOrientation", .orientation_lock },
         .{ "openCamera", .camera },

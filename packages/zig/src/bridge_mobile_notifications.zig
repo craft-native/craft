@@ -118,6 +118,7 @@ const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
 const compat_mutex = @import("compat_mutex.zig");
+const memory = @import("memory.zig");
 
 const objc = objc_runtime.objc;
 const is_darwin = builtin.target.os.tag.isDarwin();
@@ -147,6 +148,7 @@ const Id = ?*anyopaque;
 /// scheduleNotification is left to the shim rather than claimed and refused.
 pub const A = struct {
     pub const get_pending_notifications = "getPendingNotifications";
+    pub const schedule_notification = "scheduleNotification";
 };
 
 /// `.result`: Swift resolves the callback with the array, and the JS promise is
@@ -158,15 +160,20 @@ pub const A = struct {
 /// `.unavailable`.
 pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.get_pending_notifications, .reply = .result },
+    // `.result`: the spec resolves the identifier string, and the page's
+    // promise is the untimed legacy kind. `.live`, because the reason this was
+    // absent is gone — see the module comment.
+    .{ .name = A.schedule_notification, .reply = .result },
 };
 
 /// Which handler an action selects, split out from `handleMessage` so the
 /// table-versus-dispatch agreement is assertable on a host without issuing the
 /// Objective-C call the handler exists to make.
-const Route = enum { get_pending };
+const Route = enum { get_pending, schedule };
 
 fn routeFor(action: []const u8) ?Route {
     if (std.mem.eql(u8, action, A.get_pending_notifications)) return .get_pending;
+    if (std.mem.eql(u8, action, A.schedule_notification)) return .schedule;
     return null;
 }
 
@@ -186,6 +193,7 @@ pub const NotificationsBridge = struct {
         // Exhaustive, so a `Route` without a handler is a compile error.
         return switch (route) {
             .get_pending => self.getPendingNotifications(data),
+            .schedule => self.scheduleNotification(data),
         };
     }
 
@@ -226,6 +234,41 @@ pub const NotificationsBridge = struct {
         const Fn = *const fn (Id, Id, *anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&objc.objc_msgSend);
         func(center, sel_get, arrayBlock(ticket));
+    }
+
+    /// Schedule one local notification, and answer with its identifier.
+    ///
+    /// Two stages, exactly as the spec has them: ask for authorization, and
+    /// only on a grant build the request and add it. The content and the
+    /// request are built *inside* the authorization completion, which is where
+    /// the spec builds them — so the autoreleased request never has to survive
+    /// a completion boundary, and nothing needs retaining. What does survive is
+    /// the identifier, which the second stage answers with; it is owned heap
+    /// memory parked on the slot.
+    ///
+    /// Every fallible step runs before `ios_async.acquire`, per this file's
+    /// existing rule: no error path may sit between leasing a slot and handing
+    /// a block to the framework, because a failure there would have to release
+    /// the slot by hand and a missed release narrows the pool permanently.
+    fn scheduleNotification(self: *Self, data: []const u8) !void {
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        try requireBundleIdentifier();
+        const center = try notificationCenter();
+        const sels = try ScheduleSels.resolve();
+        const sel_request = objc.sel_registerName("requestAuthorizationWithOptions:completionHandler:") orelse
+            return error.SelectorNotFound;
+
+        var schedule = try parseSchedule(self.allocator, data);
+        errdefer schedule.deinit(self.allocator);
+
+        const ticket = ios_async.acquire(A.schedule_notification) orelse return poolFull();
+
+        publishScheduleCall(ticket, sels, schedule);
+
+        const Fn = *const fn (Id, Id, c_ulong, *anyopaque) callconv(.c) void;
+        const func: Fn = @ptrCast(&objc.objc_msgSend);
+        func(center, sel_request, un_options_alert_sound_badge, boolErrorBlock(ticket));
     }
 };
 
@@ -539,12 +582,10 @@ fn arrayBlock(ticket: ios_async.Ticket) *anyopaque {
 /// answers under the request id captured back at dispatch.
 ///
 /// The one path that cannot answer is a reply that will not shape: out of
-/// memory, a nil array, or a NUL-truncated string. `ios_async` can resolve and
-/// nothing else, so the honest options are a fabricated result or silence, and
-/// silence is the lesser wrong — the slot is released, the failure is logged
-/// with its cause, and the caller's untimed promise is left hanging rather than
-/// resolved with a lie. This is the second reason the module comment asks for
-/// `ios_async.deliverError`.
+/// memory, a nil array, or a NUL-truncated string. That is answered with
+/// `ios_async.deliverError`, which reports NATIVE_CALL_FAILED through this same
+/// slot and hop — so the caller learns the call failed instead of waiting out a
+/// promise nothing will settle.
 fn pendingCompletionFired(index: u5, requests: Id) void {
     if (!is_darwin) return;
 
@@ -558,16 +599,510 @@ fn pendingCompletionFired(index: u5, requests: Id) void {
 
     const allocator = std.heap.c_allocator;
     const json = shapePendingReply(allocator, requests, call.sels) catch |err| {
+        // Rejects rather than going silent. This abandoned the slot and left
+        // the caller's untimed promise hanging, on the reasoning that
+        // `ios_async` could resolve and nothing else, so the choice was
+        // between a fabricated result and silence. That stopped being true one
+        // day after it was written: `deliverError` reports NATIVE_CALL_FAILED
+        // through the same slot, the same `dispatch_async_f` hop to the main
+        // queue, and the same restored request id. Silence was the lesser
+        // wrong only while it was the only alternative to a lie.
         std.log.err(
-            "getPendingNotifications could not shape its reply ({}); slot released, caller unanswered",
+            "getPendingNotifications could not shape its reply ({}); rejecting",
             .{err},
         );
-        ios_async.abandon(call.ticket);
+        ios_async.deliverError(call.ticket);
         return;
     };
     defer allocator.free(json);
 
     ios_async.deliverJson(call.ticket, json);
+}
+
+// =============================================================================
+// scheduleNotification: parsing, selectors, and the two-stage completion chain.
+// =============================================================================
+
+/// `UNAuthorizationOptionAlert | Sound | Badge` = `(1<<2)|(1<<1)|(1<<0)`.
+/// `UNUserNotificationCenter.h:23-25`. Same value
+/// `bridge_mobile_permissions.zig` resolved independently, which is the
+/// cross-check that it is not a guess.
+const un_options_alert_sound_badge: c_ulong = 7;
+
+/// `NSCalendarUnitYear|Month|Day|Hour|Minute|Second`, the set the spec asks
+/// `Calendar.current.dateComponents` for. `NSCalendar.h:61-66` defines each as
+/// the matching `kCFCalendarUnit*`, and `CFCalendar.h:68-73` gives the bits:
+/// year `1<<2` through second `1<<7`, so the union is 252.
+const calendar_units_ymdhms: c_ulong = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7);
+
+/// When the notification fires.
+///
+/// `.now` is the spec's nil trigger — UserNotifications reads that as "deliver
+/// immediately". It is also where a non-positive `delay` lands, and that is a
+/// deliberate divergence: the spec passes `delay / 1000` to
+/// `UNTimeIntervalNotificationTrigger` unguarded, and an interval of zero or
+/// less raises an uncatchable Objective-C exception, so `{delay: 0}` SIGABRTs
+/// the app today. `bridge_notification.zig` documents the same trap and answers
+/// it the same way. Crashing the process is not a behaviour worth reproducing.
+const Trigger = union(enum) {
+    now,
+    /// Seconds, always > 0.
+    interval: f64,
+    /// Seconds since the epoch.
+    calendar: f64,
+};
+
+/// The parsed `notification` object, owning its strings.
+const Schedule = struct {
+    /// `null` means the page sent none and the spec's `UUID().uuidString`
+    /// applies. Generated in the Objective-C path so this stays pure.
+    id: ?[]u8,
+    title: []u8,
+    body: []u8,
+    subtitle: ?[]u8,
+    badge: ?i64,
+    trigger: Trigger,
+
+    fn deinit(self: *Schedule, allocator: std.mem.Allocator) void {
+        if (self.id) |v| allocator.free(v);
+        allocator.free(self.title);
+        allocator.free(self.body);
+        if (self.subtitle) |v| allocator.free(v);
+        self.* = undefined;
+    }
+};
+
+/// Read the page's `notification` object.
+///
+/// Follows the spec's coercions rather than tightening them: a non-string
+/// `title` or `body` becomes `""` because `as? String ?? ""` does, and a
+/// non-numeric `badge` is dropped because `as? Int` yields nil. The one place
+/// this refuses where the spec does not is a missing `notification` object —
+/// the spec's `case` has no `else`, so that call never reaches a
+/// `resolveCallback` and the page's promise hangs forever. A rejection is the
+/// only honest answer available.
+fn parseSchedule(allocator: std.mem.Allocator, data: []const u8) !Schedule {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, data, .{}) catch
+        return bridge_error.BridgeError.InvalidJSON;
+    defer parsed.deinit();
+
+    const root = switch (parsed.value) {
+        .object => |o| o,
+        else => return bridge_error.BridgeError.InvalidJSON,
+    };
+    const notification = switch (root.get("notification") orelse
+        return bridge_error.BridgeError.MissingData) {
+        .object => |o| o,
+        else => return bridge_error.BridgeError.MissingData,
+    };
+
+    // `as? String ?? ""`, field by field.
+    const title = try allocator.dupe(u8, stringOr(notification.get("title"), ""));
+    errdefer allocator.free(title);
+    const body = try allocator.dupe(u8, stringOr(notification.get("body"), ""));
+    errdefer allocator.free(body);
+
+    const subtitle: ?[]u8 = if (notification.get("subtitle")) |v| switch (v) {
+        .string => |str| try allocator.dupe(u8, str),
+        else => null,
+    } else null;
+    errdefer if (subtitle) |v| allocator.free(v);
+
+    const id: ?[]u8 = if (notification.get("id")) |v| switch (v) {
+        .string => |str| try allocator.dupe(u8, str),
+        else => null,
+    } else null;
+    errdefer if (id) |v| allocator.free(v);
+
+    return .{
+        .id = id,
+        .title = title,
+        .body = body,
+        .subtitle = subtitle,
+        .badge = numberOr(notification.get("badge")),
+        .trigger = triggerFrom(notification),
+    };
+}
+
+fn stringOr(value: ?std.json.Value, fallback: []const u8) []const u8 {
+    const v = value orelse return fallback;
+    return switch (v) {
+        .string => |s| s,
+        else => fallback,
+    };
+}
+
+/// `as? Int`: a JSON integer, or a float that is exactly one. Anything else is
+/// nil, and the badge is left unset.
+fn numberOr(value: ?std.json.Value) ?i64 {
+    const v = value orelse return null;
+    return switch (v) {
+        .integer => |i| i,
+        .float => |f| if (f == @trunc(f) and f >= -9.2e18 and f <= 9.2e18) @intFromFloat(f) else null,
+        else => null,
+    };
+}
+
+/// `timestamp` wins over `delay`, as it does in the spec's if/else-if.
+fn triggerFrom(notification: std.json.ObjectMap) Trigger {
+    if (millisFrom(notification.get("timestamp"))) |ms| return .{ .calendar = ms / 1000.0 };
+    if (millisFrom(notification.get("delay"))) |ms| {
+        const seconds = ms / 1000.0;
+        // See `Trigger`: the spec crashes here, this delivers now.
+        return if (seconds > 0) .{ .interval = seconds } else .now;
+    }
+    return .now;
+}
+
+fn millisFrom(value: ?std.json.Value) ?f64 {
+    const v = value orelse return null;
+    return switch (v) {
+        .float => |f| f,
+        .integer => |i| @floatFromInt(i),
+        else => null,
+    };
+}
+
+/// Selectors for the schedule path, all resolved before a slot is leased.
+const ScheduleSels = struct {
+    ns_string: Id,
+    number_with_ll: Id,
+    content_alloc_init: Id,
+    set_title: Id,
+    set_body: Id,
+    set_subtitle: Id,
+    set_badge: Id,
+    set_sound: Id,
+    default_sound: Id,
+    trigger_interval: Id,
+    trigger_calendar: Id,
+    current_calendar: Id,
+    components_from: Id,
+    date_with_since1970: Id,
+    request_with: Id,
+    add_request: Id,
+    uuid_string: Id,
+
+    fn resolve() !ScheduleSels {
+        if (!is_darwin) return error.UnsupportedPlatform;
+        return .{
+            .ns_string = try selector("stringWithUTF8String:"),
+            .number_with_ll = try selector("numberWithLongLong:"),
+            .content_alloc_init = try selector("init"),
+            .set_title = try selector("setTitle:"),
+            .set_body = try selector("setBody:"),
+            .set_subtitle = try selector("setSubtitle:"),
+            .set_badge = try selector("setBadge:"),
+            .set_sound = try selector("setSound:"),
+            .default_sound = try selector("defaultSound"),
+            .trigger_interval = try selector("triggerWithTimeInterval:repeats:"),
+            .trigger_calendar = try selector("triggerWithDateMatchingComponents:repeats:"),
+            .current_calendar = try selector("currentCalendar"),
+            .components_from = try selector("components:fromDate:"),
+            .date_with_since1970 = try selector("dateWithTimeIntervalSince1970:"),
+            .request_with = try selector("requestWithIdentifier:content:trigger:"),
+            .add_request = try selector("addNotificationRequest:withCompletionHandler:"),
+            .uuid_string = try selector("UUIDString"),
+        };
+    }
+};
+
+const ScheduleCall = struct {
+    ticket: ios_async.Ticket,
+    sels: ScheduleSels,
+    schedule: Schedule,
+};
+
+var schedule_calls: [ios_async.max_in_flight]?ScheduleCall = @splat(null);
+
+fn publishScheduleCall(ticket: ios_async.Ticket, sels: ScheduleSels, schedule: Schedule) void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    schedule_calls[ticket.index] = .{ .ticket = ticket, .sels = sels, .schedule = schedule };
+}
+
+fn takeScheduleCall(index: u5) ?ScheduleCall {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    const call = schedule_calls[index];
+    schedule_calls[index] = null;
+    return call;
+}
+
+/// `void (^)(BOOL, NSError *)` — the authorization completion.
+const BoolErrorBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const BlockDescriptor,
+};
+
+/// `void (^)(NSError *)` — `addNotificationRequest:`'s completion.
+const ErrorBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const BlockDescriptor,
+};
+
+const bool_error_block_descriptor = BlockDescriptor{ .size = @sizeOf(BoolErrorBlock) };
+const error_block_descriptor = BlockDescriptor{ .size = @sizeOf(ErrorBlock) };
+
+fn makeBoolErrorInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const BoolErrorBlock, granted: bool, _: Id) callconv(.c) void {
+            authorizationFired(index, granted);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeBoolErrorBlocks() [ios_async.max_in_flight]BoolErrorBlock {
+    var out: [ios_async.max_in_flight]BoolErrorBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = BLOCK_IS_GLOBAL,
+            .invoke = makeBoolErrorInvoke(@intCast(i)),
+            .descriptor = &bool_error_block_descriptor,
+        };
+    }
+    return out;
+}
+
+fn makeErrorInvoke(comptime index: u5) *const anyopaque {
+    const S = struct {
+        fn invoke(_: *const ErrorBlock, err: Id) callconv(.c) void {
+            addFired(index, err);
+        }
+    };
+    return @ptrCast(&S.invoke);
+}
+
+fn makeErrorBlocks() [ios_async.max_in_flight]ErrorBlock {
+    var out: [ios_async.max_in_flight]ErrorBlock = undefined;
+    for (&out, 0..) |*b, i| {
+        b.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = BLOCK_IS_GLOBAL,
+            .invoke = makeErrorInvoke(@intCast(i)),
+            .descriptor = &error_block_descriptor,
+        };
+    }
+    return out;
+}
+
+var bool_error_blocks: [ios_async.max_in_flight]BoolErrorBlock =
+    if (is_darwin) makeBoolErrorBlocks() else undefined;
+var error_blocks: [ios_async.max_in_flight]ErrorBlock =
+    if (is_darwin) makeErrorBlocks() else undefined;
+
+fn boolErrorBlock(ticket: ios_async.Ticket) *anyopaque {
+    return @ptrCast(&bool_error_blocks[ticket.index]);
+}
+
+fn errorBlock(ticket: ios_async.Ticket) *anyopaque {
+    return @ptrCast(&error_blocks[ticket.index]);
+}
+
+/// Stage one, on whatever queue UserNotifications chose.
+///
+/// A refusal answers `PERMISSION_DENIED`, where the spec rejects with the
+/// string "Permission denied" — the typed code every other migrated module
+/// uses, carrying the same meaning in a form a page can branch on.
+fn authorizationFired(index: u5, granted: bool) void {
+    if (!is_darwin) return;
+
+    var call = takeScheduleCall(index) orelse {
+        std.log.warn(
+            "scheduleNotification authorization fired for slot {d} with no call recorded; ignored",
+            .{index},
+        );
+        return;
+    };
+    const allocator = std.heap.c_allocator;
+
+    if (!granted) {
+        call.schedule.deinit(allocator);
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.PermissionDenied);
+        return;
+    }
+
+    const request = buildRequest(&call.schedule, call.sels) catch |err| {
+        std.log.err("scheduleNotification could not build its request ({}); rejecting", .{err});
+        call.schedule.deinit(allocator);
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+
+    const center = notificationCenter() catch {
+        call.schedule.deinit(allocator);
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+
+    // Republished before the add, for the reason the first publish exists: the
+    // completion can fire before `msgSend` returns.
+    publishScheduleCall(call.ticket, call.sels, call.schedule);
+
+    const Fn = *const fn (Id, Id, Id, *anyopaque) callconv(.c) void;
+    const func: Fn = @ptrCast(&objc.objc_msgSend);
+    func(center, call.sels.add_request, request, errorBlock(call.ticket));
+}
+
+/// Stage two. Answers the identifier the request was filed under, which is what
+/// the page needs to cancel it later.
+fn addFired(index: u5, err: Id) void {
+    if (!is_darwin) return;
+
+    var call = takeScheduleCall(index) orelse {
+        std.log.warn(
+            "scheduleNotification add fired for slot {d} with no call recorded; ignored",
+            .{index},
+        );
+        return;
+    };
+    const allocator = std.heap.c_allocator;
+    defer call.schedule.deinit(allocator);
+
+    if (err != null) {
+        std.log.warn("scheduleNotification: addNotificationRequest reported an error", .{});
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
+        return;
+    }
+
+    const id = call.schedule.id orelse {
+        // `buildRequest` fills this in from `NSUUID` before the add, so a null
+        // here means the request was filed under an identifier nothing kept.
+        // Answering anyway would hand the page a value it cannot cancel with.
+        std.log.err("scheduleNotification: the request was added with no identifier recorded", .{});
+        ios_async.deliverError(call.ticket);
+        return;
+    };
+
+    // A bare JSON string, which is what the spec resolves. Escaped, because a
+    // page-supplied identifier can contain a quote.
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(allocator);
+    out.append(allocator, '"') catch return ios_async.deliverError(call.ticket);
+    bridge_error.appendJsonEscaped(allocator, &out, id) catch
+        return ios_async.deliverError(call.ticket);
+    out.append(allocator, '"') catch return ios_async.deliverError(call.ticket);
+
+    ios_async.deliverJson(call.ticket, out.items);
+}
+
+/// Build `UNNotificationRequest` from the parsed schedule.
+///
+/// Runs inside the authorization completion, where the spec builds it, so the
+/// autoreleased result is handed straight to `addNotificationRequest:` without
+/// crossing a pool boundary.
+///
+/// Fills `schedule.id` when the page sent none, using `NSUUID` exactly as the
+/// spec's `UUID().uuidString` does — so the identifier answered to the page is
+/// the identifier the request was actually filed under.
+fn buildRequest(schedule: *Schedule, sels: ScheduleSels) !Id {
+    const allocator = std.heap.c_allocator;
+
+    const UNMutableNotificationContent = objc.objc_getClass("UNMutableNotificationContent") orelse
+        return error.ClassNotFound;
+    const sel_alloc = objc.sel_registerName("alloc") orelse return error.SelectorNotFound;
+    const content = objc.msgSendId(objc.msgSendId(UNMutableNotificationContent, sel_alloc), sels.content_alloc_init);
+    if (content == null) return error.NoContent;
+
+    try setStringField(content, sels.set_title, schedule.title, sels);
+    try setStringField(content, sels.set_body, schedule.body, sels);
+    if (schedule.subtitle) |sub| try setStringField(content, sels.set_subtitle, sub, sels);
+
+    if (schedule.badge) |badge| {
+        const NSNumber = objc.objc_getClass("NSNumber") orelse return error.ClassNotFound;
+        const NumFn = *const fn (Id, Id, c_longlong) callconv(.c) Id;
+        const num: NumFn = @ptrCast(&objc.objc_msgSend);
+        const boxed = num(NSNumber, sels.number_with_ll, @intCast(badge));
+        objc.msgSendVoid1(content, sels.set_badge, boxed);
+    }
+
+    // `content.sound = .default`, unconditional in the spec.
+    const UNNotificationSound = objc.objc_getClass("UNNotificationSound") orelse
+        return error.ClassNotFound;
+    objc.msgSendVoid1(content, sels.set_sound, objc.msgSendId(UNNotificationSound, sels.default_sound));
+
+    const trigger = try buildTrigger(schedule.trigger, sels);
+
+    if (schedule.id == null) schedule.id = try uuidString(allocator, sels);
+    const ns_id = try nsString(schedule.id.?, sels);
+
+    const UNNotificationRequest = objc.objc_getClass("UNNotificationRequest") orelse
+        return error.ClassNotFound;
+    const ReqFn = *const fn (Id, Id, Id, Id, Id) callconv(.c) Id;
+    const req: ReqFn = @ptrCast(&objc.objc_msgSend);
+    const request = req(UNNotificationRequest, sels.request_with, ns_id, content, trigger);
+    if (request == null) return error.NoRequest;
+    return request;
+}
+
+/// A nil trigger is legal and means "deliver now" — see `Trigger`.
+fn buildTrigger(trigger: Trigger, sels: ScheduleSels) !Id {
+    switch (trigger) {
+        .now => return null,
+        .interval => |seconds| {
+            const UNTimeIntervalNotificationTrigger =
+                objc.objc_getClass("UNTimeIntervalNotificationTrigger") orelse return error.ClassNotFound;
+            const Fn = *const fn (Id, Id, f64, bool) callconv(.c) Id;
+            const func: Fn = @ptrCast(&objc.objc_msgSend);
+            return func(UNTimeIntervalNotificationTrigger, sels.trigger_interval, seconds, false);
+        },
+        .calendar => |epoch_seconds| {
+            const NSDate = objc.objc_getClass("NSDate") orelse return error.ClassNotFound;
+            const DateFn = *const fn (Id, Id, f64) callconv(.c) Id;
+            const date_fn: DateFn = @ptrCast(&objc.objc_msgSend);
+            const date = date_fn(NSDate, sels.date_with_since1970, epoch_seconds);
+
+            const NSCalendar = objc.objc_getClass("NSCalendar") orelse return error.ClassNotFound;
+            const calendar = objc.msgSendId(NSCalendar, sels.current_calendar);
+            const CompFn = *const fn (Id, Id, c_ulong, Id) callconv(.c) Id;
+            const comp_fn: CompFn = @ptrCast(&objc.objc_msgSend);
+            const components = comp_fn(calendar, sels.components_from, calendar_units_ymdhms, date);
+
+            const UNCalendarNotificationTrigger =
+                objc.objc_getClass("UNCalendarNotificationTrigger") orelse return error.ClassNotFound;
+            const TrigFn = *const fn (Id, Id, Id, bool) callconv(.c) Id;
+            const trig_fn: TrigFn = @ptrCast(&objc.objc_msgSend);
+            return trig_fn(UNCalendarNotificationTrigger, sels.trigger_calendar, components, false);
+        },
+    }
+}
+
+fn nsString(text: []const u8, sels: ScheduleSels) !Id {
+    const allocator = std.heap.c_allocator;
+    // `memory.dupeZ`, not `allocator.dupeZ`: 0.17 dropped the method in some
+    // dev builds, which is the churn that helper exists to absorb.
+    const c_text = try memory.dupeZ(allocator, u8, text);
+    defer allocator.free(c_text);
+
+    const NSString = objc.objc_getClass("NSString") orelse return error.ClassNotFound;
+    const Fn = *const fn (Id, Id, [*:0]const u8) callconv(.c) Id;
+    const func: Fn = @ptrCast(&objc.objc_msgSend);
+    const ns = func(NSString, sels.ns_string, c_text.ptr);
+    if (ns == null) return error.NoString;
+    return ns;
+}
+
+fn setStringField(content: Id, sel: Id, text: []const u8, sels: ScheduleSels) !void {
+    objc.msgSendVoid1(content, sel, try nsString(text, sels));
+}
+
+fn uuidString(allocator: std.mem.Allocator, sels: ScheduleSels) ![]u8 {
+    const NSUUID = objc.objc_getClass("NSUUID") orelse return error.ClassNotFound;
+    const sel_uuid = objc.sel_registerName("UUID") orelse return error.SelectorNotFound;
+    const uuid = objc.msgSendId(NSUUID, sel_uuid);
+    if (uuid == null) return error.NoUUID;
+    const ns = objc.msgSendId(uuid, sels.uuid_string);
+    if (ns == null) return error.NoUUID;
+    const utf8 = objc.getNSStringUTF8(ns) orelse return error.NoUUID;
+    return allocator.dupe(u8, std.mem.span(utf8));
 }
 
 // =============================================================================
@@ -585,8 +1120,11 @@ fn pendingCompletionFired(index: u5, requests: Id) void {
 const testing = std.testing;
 
 test "the declared actions are the ones the handler serves" {
-    try testing.expectEqual(@as(usize, 1), capability_actions.len);
+    try testing.expectEqual(@as(usize, 2), capability_actions.len);
     try testing.expectEqualStrings(A.get_pending_notifications, capability_actions[0].name);
+    try testing.expectEqualStrings(A.schedule_notification, capability_actions[1].name);
+    try testing.expectEqual(capabilities.Reply.result, capability_actions[1].reply);
+    try testing.expectEqual(capabilities.ActionStatus.live, capability_actions[1].status);
 
     // A `.result` whose handler never replies parks the caller on an untimed
     // promise; a `.none` that is awaited resolves immediately and means
@@ -680,27 +1218,106 @@ test "an action the namespace does not serve is reported, not ignored" {
     );
 }
 
-test "scheduleNotification is left to the Swift shim, not claimed and refused" {
-    // This is the deliberate omission, asserted rather than left implicit.
-    // `UnknownAction` is what makes `ios_dispatch` fall through to the host
-    // shim, which schedules notifications correctly today. Declaring the action
-    // `.unavailable` instead would take it away from the shim in order to
-    // reject it, which is strictly worse for the page — see the module comment
-    // for what `ios_async` still owes before this can be served honestly.
+test "scheduleNotification is claimed now, and routes" {
+    // This asserted the opposite until the blocker went away. The module
+    // comment said `ios_async` could only resolve, so an action whose two
+    // failure paths are both rejections could not be served honestly and was
+    // left to the shim. `deliverErrorCode` landed the day after that was
+    // written; both refusals have a home now, and the action is served.
     var bridge = NotificationsBridge.init(testing.allocator);
     defer bridge.deinit();
 
-    try testing.expectError(
-        bridge_error.BridgeError.UnknownAction,
-        bridge.handleMessage("scheduleNotification", "{\"notification\":{\"title\":\"t\"}}"),
-    );
-    try testing.expect(routeFor("scheduleNotification") == null);
+    try testing.expect(routeFor(A.schedule_notification) == .schedule);
 
-    // And it must not be declared, or `capabilities` would tell an app craft
-    // serves it.
+    var declared = false;
     for (capability_actions) |decl| {
-        try testing.expect(!std.mem.eql(u8, decl.name, "scheduleNotification"));
+        if (std.mem.eql(u8, decl.name, A.schedule_notification)) declared = true;
     }
+    try testing.expect(declared);
+
+    // On the host there is no bundle identifier, so it refuses before touching
+    // the notification center — which is the guard, not a missing migration.
+    try testing.expectError(
+        error.NoBundleIdentifier,
+        bridge.handleMessage(A.schedule_notification, "{\"notification\":{\"title\":\"t\"}}"),
+    );
+}
+
+test "the payload is read the way the spec reads it" {
+    const allocator = testing.allocator;
+
+    // `as? String ?? ""` for title and body; a non-string is not an error.
+    var plain = try parseSchedule(allocator, "{\"notification\":{\"title\":7,\"body\":\"b\"}}");
+    defer plain.deinit(allocator);
+    try testing.expectEqualStrings("", plain.title);
+    try testing.expectEqualStrings("b", plain.body);
+    try testing.expect(plain.subtitle == null);
+    try testing.expect(plain.badge == null);
+    try testing.expect(plain.id == null);
+    try testing.expect(plain.trigger == .now);
+
+    // `timestamp` wins over `delay`, as the spec's if/else-if does.
+    var both = try parseSchedule(allocator, "{\"notification\":{\"timestamp\":2000,\"delay\":9000}}");
+    defer both.deinit(allocator);
+    try testing.expectEqual(@as(f64, 2.0), both.trigger.calendar);
+
+    var delayed = try parseSchedule(allocator, "{\"notification\":{\"delay\":1500}}");
+    defer delayed.deinit(allocator);
+    try testing.expectEqual(@as(f64, 1.5), delayed.trigger.interval);
+
+    // A missing `notification` hangs the page in the spec — its `case` has no
+    // `else` and never reaches a callback. Rejecting is the only honest answer.
+    try testing.expectError(
+        bridge_error.BridgeError.MissingData,
+        parseSchedule(allocator, "{}"),
+    );
+}
+
+test "a non-positive delay delivers now instead of raising" {
+    // The spec passes `delay / 1000` to `UNTimeIntervalNotificationTrigger`
+    // unguarded, and an interval of zero or less raises an uncatchable ObjC
+    // exception — so `{delay: 0}` SIGABRTs the app today. A nil trigger is how
+    // UserNotifications spells "now"; `bridge_notification.zig` answers the
+    // same trap the same way.
+    const allocator = testing.allocator;
+    for ([_][]const u8{
+        "{\"notification\":{\"delay\":0}}",
+        "{\"notification\":{\"delay\":-1}}",
+        "{\"notification\":{\"delay\":-0.5}}",
+    }) |payload| {
+        var s2 = try parseSchedule(allocator, payload);
+        defer s2.deinit(allocator);
+        try testing.expect(s2.trigger == .now);
+    }
+}
+
+test "the calendar unit mask is the header's, not a guess" {
+    // `NSCalendar.h:61-66` defines each unit as the matching `kCFCalendarUnit*`,
+    // and `CFCalendar.h:68-73` gives year `1<<2` through second `1<<7`. A
+    // sibling module once shipped a guessed HealthKit bit that named a
+    // different option and crashed, so this cites its source.
+    try testing.expectEqual(@as(c_ulong, 252), calendar_units_ymdhms);
+    try testing.expect(calendar_units_ymdhms & (1 << 1) == 0); // era, not asked for
+    try testing.expectEqual(@as(c_ulong, 7), un_options_alert_sound_badge);
+}
+
+test "each schedule slot has its own block, and a call is taken once" {
+    if (!is_darwin) return error.SkipZigTest;
+    for (&bool_error_blocks) |*b| {
+        try testing.expectEqual(&_NSConcreteGlobalBlock, b.isa);
+        try testing.expectEqual(BLOCK_IS_GLOBAL, b.flags);
+    }
+    try testing.expect(bool_error_blocks[0].invoke != bool_error_blocks[1].invoke);
+    try testing.expect(error_blocks[0].invoke != error_blocks[1].invoke);
+
+    // Take-and-clear is what makes a double-fired completion a no-op rather
+    // than a second reply.
+    const allocator = testing.allocator;
+    var schedule = try parseSchedule(allocator, "{\"notification\":{\"title\":\"t\"}}");
+    defer schedule.deinit(allocator);
+    publishScheduleCall(.{ .index = 2, .generation = 9 }, undefined, schedule);
+    try testing.expect(takeScheduleCall(2) != null);
+    try testing.expect(takeScheduleCall(2) == null);
 }
 
 test "the payload is ignored, not parsed" {
