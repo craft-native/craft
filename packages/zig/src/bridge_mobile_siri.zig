@@ -295,7 +295,10 @@ fn readFields(
         else => return BridgeError.InvalidJSON,
     };
 
-    const action = try requiredString(allocator, object, "action");
+    // `shortcutAction`, not `action`: the envelope's own `action` names the
+    // bridge action, and the page used to send both under that one key. See
+    // the wrapper in `CraftApp.swift`.
+    const action = try requiredString(allocator, object, "shortcutAction");
     errdefer allocator.free(action);
 
     const phrase = if (want.phrase) try requiredString(allocator, object, "phrase") else null;
@@ -459,7 +462,7 @@ test "both fields are required for a registration, and neither hangs" {
     // missing phrase replies nothing at all.
     var fields = try readFields(
         testing.allocator,
-        "{\"action\":\"openVault\",\"phrase\":\"open my vault\"}",
+        "{\"shortcutAction\":\"openVault\",\"phrase\":\"open my vault\"}",
         .{ .phrase = true },
     );
     defer fields.deinit(testing.allocator);
@@ -468,7 +471,7 @@ test "both fields are required for a registration, and neither hangs" {
 
     try testing.expectError(BridgeError.MissingData, readFields(
         testing.allocator,
-        "{\"action\":\"openVault\"}",
+        "{\"shortcutAction\":\"openVault\"}",
         .{ .phrase = true },
     ));
     try testing.expectError(BridgeError.MissingData, readFields(
@@ -478,18 +481,18 @@ test "both fields are required for a registration, and neither hangs" {
     ));
     try testing.expectError(BridgeError.InvalidParameter, readFields(
         testing.allocator,
-        "{\"action\":\"\",\"phrase\":\"p\"}",
+        "{\"shortcutAction\":\"\",\"phrase\":\"p\"}",
         .{ .phrase = true },
     ));
     try testing.expectError(BridgeError.InvalidParameter, readFields(
         testing.allocator,
-        "{\"action\":3,\"phrase\":\"p\"}",
+        "{\"shortcutAction\":3,\"phrase\":\"p\"}",
         .{ .phrase = true },
     ));
 }
 
 test "a removal needs only the action" {
-    var fields = try readFields(testing.allocator, "{\"action\":\"openVault\"}", .{ .phrase = false });
+    var fields = try readFields(testing.allocator, "{\"shortcutAction\":\"openVault\"}", .{ .phrase = false });
     defer fields.deinit(testing.allocator);
     try testing.expectEqualStrings("openVault", fields.action);
     try testing.expect(fields.phrase == null);

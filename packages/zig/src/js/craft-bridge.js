@@ -65,6 +65,15 @@
     }
   }
 
+  // `payload || {}` was wrong for every action whose answer is a bare boolean:
+  // it turned a truthful `false` into `{}`, which is truthy, so a page reading
+  // `if (await craft.share(...))` took the success branch on a cancelled share.
+  // Only genuinely absent payloads become `{}`; `false`, `0` and `""` are
+  // answers and survive.
+  function _orEmpty(payload) {
+    return payload === undefined || payload === null ? {} : payload
+  }
+
   // Native's answer to one call. `id` is the `i` we sent, echoed back; a reply
   // raised outside any dispatch has none and falls back to the action queue.
   window.__craftBridgeResult = function (action, payload, id) {
@@ -77,7 +86,7 @@
       // call's own, with nothing to indicate anything had gone wrong.
       if (!e) return
       _forget(e)
-      if (e.resolve) e.resolve(payload || {})
+      if (e.resolve) e.resolve(_orEmpty(payload))
       return
     }
 
@@ -87,7 +96,7 @@
     if (!q || q.length === 0) return
     const e = q[0]
     _forget(e)
-    if (e.resolve) e.resolve(payload || {})
+    if (e.resolve) e.resolve(_orEmpty(payload))
   }
 
   // Native calls this when an action fails.

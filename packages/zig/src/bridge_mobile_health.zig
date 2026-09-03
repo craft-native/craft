@@ -1085,11 +1085,20 @@ fn routeInserted(index: u5, success: bool, err: Id) void {
     const chain = call.workout orelse return;
 
     if (!success) {
+        // Rejects, as the spec does. Resolving here reported a workout with
+        // `"routeId":""`, which is the shape a *successful* finish with a nil
+        // route produces — so a page could not tell "the route saved and had no
+        // id" from "the route did not save at all", and would file the workout
+        // as complete with its locations silently missing.
+        //
+        // The id is not lost, it is logged: a fabricated success costs more
+        // than a rejection, and this module refuses one everywhere else.
         logNSError(A.save_health_workout, err);
-        // Swift rejects. The workout is saved regardless, so the id is
-        // reported rather than lost — losing it would leave a page unable to
-        // reference a workout that exists.
-        replyWithWorkout(call.ticket, chain, null);
+        std.log.info(
+            "saveHealthWorkout: route insert failed; the workout itself was saved as {s}",
+            .{uuidStringOf(chain.workout) orelse "<no uuid>"},
+        );
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
         chain.deinit();
         return;
     }
@@ -1112,8 +1121,15 @@ fn routeFinished(index: u5, route: Id, err: Id) void {
     defer chain.deinit();
 
     if (err != null) {
+        // Same reasoning as `routeInserted`: the spec rejects on a finish
+        // error, and resolving would be indistinguishable from the nil-route
+        // success below.
         logNSError(A.save_health_workout, err);
-        replyWithWorkout(call.ticket, chain, null);
+        std.log.info(
+            "saveHealthWorkout: route finish failed; the workout itself was saved as {s}",
+            .{uuidStringOf(chain.workout) orelse "<no uuid>"},
+        );
+        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
         return;
     }
     replyWithWorkout(call.ticket, chain, route);
@@ -1124,6 +1140,10 @@ fn routeFinished(index: u5, route: Id, err: Id) void {
 /// Swift emits the second shape only when a route was finished, and its
 /// `routeId` is `route?.uuid.uuidString ?? ""` — so a finished-but-nil route
 /// carries an empty string rather than a missing key.
+///
+/// Only reached on success now. The two failure stages reject instead, because
+/// an empty `routeId` here already means "finished, no id" and cannot also mean
+/// "did not finish".
 fn replyWithWorkout(ticket: ios_async.Ticket, chain: WorkoutChain, route: Id) void {
     const allocator = std.heap.c_allocator;
 

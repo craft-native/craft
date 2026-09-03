@@ -63,16 +63,23 @@ pub const capability_actions = [_]capabilities.ActionDecl{
 ///
 /// Named rather than written inline at each `sendResultToJS`, so the test that
 /// pins their shape reads the same bytes the handlers send instead of a copy
-/// of them that can drift. Every one is a JSON *object* carrying a boolean:
-/// `craft-bridge.js` resolves with `payload || {}`, so a bare `false` and an
-/// empty reply are the same value to the page — a fabricated success wearing
-/// the shape of an honest one.
+/// of them that can drift.
+///
+/// Bare booleans, because that is what the spec resolves — `openURL` and
+/// `requestReview` answer `true`, and `share` answers the `completed` flag
+/// from the activity handler. These were objects until now, and the reason is
+/// worth recording: `craft-bridge.js` settled with `payload || {}`, which
+/// turns a truthful `false` into a truthy `{}`, so a bare boolean could not
+/// carry a negative answer. Wrapping it was the workaround. The bug is fixed
+/// at its source (`_orEmpty`), so the wrapper is gone and a cancelled share
+/// reads as `false` again instead of `{completed:false}`, which every page
+/// written against the spec reads as success.
 const R = struct {
-    const opened = "{\"opened\":true}";
-    const not_opened = "{\"opened\":false}";
-    const completed = "{\"completed\":true}";
-    const not_completed = "{\"completed\":false}";
-    const requested = "{\"requested\":true}";
+    const opened = "true";
+    const not_opened = "false";
+    const completed = "true";
+    const not_completed = "false";
+    const requested = "true";
 
     const all = [_][]const u8{ opened, not_opened, completed, not_completed, requested };
 };
@@ -1031,19 +1038,26 @@ test "every reply is a JSON object naming what happened, never a bare boolean" {
     // `craft-bridge.js` resolves with `payload || {}`, so a bare `false` and an
     // empty reply are the same value to the page.
     for (R.all) |json| {
-        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{
+            // A bare `true` is a JSON fragment, not a document. The spec
+            // serialises with `.fragmentsAllowed` for the same reason.
+            .allocate = .alloc_if_needed,
+        });
         defer parsed.deinit();
-        try testing.expect(parsed.value == .object);
-        try testing.expectEqual(@as(usize, 1), parsed.value.object.count());
 
-        // And the member is a boolean the caller can branch on, not a string or
-        // a number that reads as truthy whatever it says.
-        var it = parsed.value.object.iterator();
-        try testing.expect(it.next().?.value_ptr.* == .bool);
+        // A boolean the caller can branch on — not a string, not a number, and
+        // not an object, which is what these were while `payload || {}` made a
+        // bare `false` unrepresentable.
+        try testing.expect(parsed.value == .bool);
     }
 
     // Non-vacuity: every assertion above is satisfied by an empty list.
     try testing.expectEqual(@as(usize, 5), R.all.len);
     try testing.expect(!std.mem.eql(u8, R.opened, R.not_opened));
     try testing.expect(!std.mem.eql(u8, R.completed, R.not_completed));
+
+    // The negative answers really are `false`, which is the whole point of the
+    // change: an object here read as success to every page that branched on it.
+    try testing.expectEqualStrings("false", R.not_opened);
+    try testing.expectEqualStrings("false", R.not_completed);
 }
