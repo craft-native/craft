@@ -112,6 +112,12 @@ export interface BuildOptions {
   devServer?: string
   output: string
   generateProject?: boolean
+  /**
+   * Where to re-read the Zig runtime archives from, overriding
+   * `CRAFT_IOS_RUNTIME`. Same meaning as `InitOptions.runtimeDir`; `null`
+   * leaves whatever `init` installed exactly as it is.
+   */
+  runtimeDir?: string | null
 }
 
 export interface OpenOptions {
@@ -480,6 +486,37 @@ export async function installRuntime(output: string, runtimeDir: string): Promis
   return true
 }
 
+/**
+ * Re-copy the Zig runtime into a project that already links one.
+ *
+ * The archives are *copied* by `init`, not symlinked, so without this a
+ * rebuilt runtime never reached the app: edit `packages/zig/src`, run `zig
+ * build build-ios-all`, then `craft ios run`, and xcodebuild happily relinks
+ * the archive that was copied when the project was first generated. The build
+ * succeeds, the app launches, and the change is simply absent — the worst
+ * shape a stale artefact can take, because there is no error to chase.
+ *
+ * Only refreshes; never installs and never removes. A project with no
+ * `Runtime/` was generated without a runtime and its `project.yml` carries no
+ * link settings, so copying archives in would leave them unreferenced — that
+ * decision belongs to `init`. And a project that *does* link one keeps working
+ * from the archives it already has when no runtime directory is configured,
+ * because a shell that forgot the variable should not quietly turn the runtime
+ * off.
+ */
+async function refreshRuntime(output: string, override?: string | null): Promise<void> {
+  if (!existsSync(join(output, 'Runtime'))) return
+
+  const dir = resolveRuntimeDir(override)
+  if (!dir) {
+    console.log('   Keeping the Zig runtime installed at init (no runtime directory configured)')
+    return
+  }
+
+  await installRuntime(output, dir)
+  console.log('   Refreshed the Zig runtime from', dir)
+}
+
 export async function init(options: InitOptions): Promise<void> {
   const { name, bundleId, teamId, output } = options
 
@@ -705,6 +742,8 @@ export async function build(options: BuildOptions): Promise<void> {
     syncWebAssets(htmlPath, output)
     console.log(`   Synced: ${htmlPath} → dist/`)
   }
+
+  await refreshRuntime(output, options.runtimeDir)
 
   if (!generateProject) return
 
