@@ -71,7 +71,7 @@ jobs:
       - name: Build release binary
         working-directory: packages/zig
         run: |
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe
+          zig build -Doptimize=ReleaseSafe
 
       - name: Measure binary size
         id: size
@@ -123,7 +123,7 @@ jobs:
           git checkout origin/main -- packages/zig
 
           cd packages/zig
-          eval "$(pantry env | sed -n '/^export /,$p')" && zig build -Doptimize=ReleaseSafe
+          zig build -Doptimize=ReleaseSafe
 
           if [ -f "zig-out/bin/craft" ]; then
             BASELINE=$(wc -c < "zig-out/bin/craft" | tr -d ' ')
