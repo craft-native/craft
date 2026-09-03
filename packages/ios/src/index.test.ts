@@ -344,3 +344,45 @@ describe('Zig runtime installation', () => {
     expect(existsSync(join(output, 'Runtime'))).toBe(false)
   })
 })
+
+describe('runtime staleness', () => {
+  function runtimeWith(marker: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'craft-rt-'))
+    for (const a of ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a']) {
+      writeFileSync(join(dir, a), marker)
+    }
+    return dir
+  }
+
+  it('build picks up a rebuilt runtime instead of relinking the one init copied', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: runtimeWith('first build'), name: 'Stale', output })
+    const installed = join(output, 'Runtime', 'device', 'libcraft-ios.a')
+    expect(readFileSync(installed, 'utf8')).toBe('first build')
+
+    // The dev loop: edit Zig, rebuild the archives, run the app again. Before
+    // this, xcodebuild relinked the copy from init and the change was absent
+    // with no error anywhere.
+    await build({ output, runtimeDir: runtimeWith('second build'), generateProject: false })
+    expect(readFileSync(installed, 'utf8')).toBe('second build')
+  })
+
+  it('build leaves a runtimeless project alone rather than installing one behind init', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: null, name: 'NoRuntime', output })
+    expect(existsSync(join(output, 'Runtime'))).toBe(false)
+
+    // A runtime is available, but this project does not link one: its
+    // project.yml has no link settings, so archives here would be dead weight.
+    await build({ output, runtimeDir: runtimeWith('ignored'), generateProject: false })
+    expect(existsSync(join(output, 'Runtime'))).toBe(false)
+  })
+
+  it('build keeps the installed runtime when no runtime directory is configured', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-app-'))
+    await init({ runtimeDir: runtimeWith('from init'), name: 'Keep', output })
+    // A shell that forgot the variable must not quietly turn the runtime off.
+    await build({ output, runtimeDir: null, generateProject: false })
+    expect(readFileSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'), 'utf8')).toBe('from init')
+  })
+})
