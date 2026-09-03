@@ -104,7 +104,14 @@ const dispatch_end = "func webView(";
 /// preconditions and four blockers; the load-bearing one was the realtime
 /// audio tap, which is the first callback in this migration that runs on a
 /// thread where a lock is a bug rather than a slowdown.
-const max_not_yet_migrated: usize = 26;
+/// 25 with scheduleNotification. Its deferral was the first to expire on its
+/// own: the blocker recorded in `bridge_mobile_notifications.zig` was that
+/// `ios_async` could only resolve, so an action whose two failure paths are
+/// both rejections could not be served without fabricating success —
+/// and `deliverErrorCode` landed the day after that was written. Worth
+/// re-reading the other deferrals for the same reason before assuming they
+/// still hold.
+const max_not_yet_migrated: usize = 25;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
