@@ -319,16 +319,46 @@ is SceneKit node-graph manipulation; through `objc_msgSend` it would be miserabl
 low-value. Zig-native is a means, not an end, and five actions of SceneKit glue is where it
 stops paying. Declare the boundary in `capability_registry.zig` with a `reason`.
 
-### What stays Swift, permanently
+### What stays Swift
 
-Thirteen actions have no usable Objective-C surface:
+Eight actions, not the thirteen this list used to claim. Five of the thirteen have
+since been migrated, and the list was not updated — which mattered, because it is
+the only recorded reason for most of these and it was being read as authoritative
+while 38% of it was false:
 
-- **StoreKit 2** — `getProducts`, `purchase`, `restorePurchases` (`Product.PurchaseResult` is Swift-only)
-- **ActivityKit** — `startLiveActivity`, `updateLiveActivity`, `endLiveActivity`
-- **WidgetKit** — `updateWidget`, `reloadWidgets`
-- **App Intents** — `registerSiriShortcut`, `removeSiriShortcut`
-- **WatchConnectivity** — `sendToWatch`, `updateWatchContext`, `isWatchReachable` (`WCSession`
-  *is* ObjC, but it is only useful paired with the Watch app template, so it stays with its peer)
+- **App Intents** — `registerSiriShortcut`, `removeSiriShortcut` were migrated in
+  `bridge_mobile_siri.zig`. Plain `NSUserActivity`; App Intents was never needed.
+- **WatchConnectivity** — `sendToWatch`, `updateWatchContext`, `isWatchReachable` were
+  migrated in `bridge_mobile_watch.zig`. The note conceded `WCSession` *is* ObjC and
+  kept them anyway "to stay with its peer", which is not a technical barrier.
+
+What actually has no usable Objective-C surface:
+
+- **StoreKit 2** — `getProducts`, `purchase`, `restorePurchases`. `Product.PurchaseResult`
+  is Swift-only. Note the narrower claim: StoreKit *1* is ObjC and this repo already
+  drives it from Zig in `bridge_iap.zig` for macOS, so "no ObjC surface" is true of the
+  API the spec uses, not of in-app purchase as such. Migrating would mean choosing
+  StoreKit 1 on iOS, which is a product decision rather than a mechanical one.
+- **ActivityKit** — `startLiveActivity`, `updateLiveActivity`, `endLiveActivity`. Swift-only,
+  no ObjC class to reach.
+- **WidgetKit** — `updateWidget`, `reloadWidgets`. `WidgetCenter` has no ObjC class; the
+  only route is Swift's own ABI symbols behind a `swiftself` trampoline, which is not
+  worth two actions.
+
+And two boundaries drawn by choice rather than by the SDK, recorded here because
+nothing in the code says so — `capability_registry.zig` was supposed to carry a
+`reason` for the first and never got one:
+
+- **ARKit / SceneKit** — `startAR`, `stopAR`, `getARPlanes`, `placeARObject`, `removeARObject`.
+  `CraftApp.swift` is SceneKit node-graph manipulation; through `objc_msgSend` it would
+  be miserable and low-value.
+- **`registerBackgroundTask`** — see `bridge_mobile_bgtasks.zig`'s header. Structural:
+  `BGTaskScheduler.register` must run before the app finishes launching, so a
+  page-triggered call is late by construction.
+
+A note here is the *only* record for most of these. When one is wrong it is not
+self-correcting — the `scheduleNotification` deferral outlived its blocker by a day
+and cost several passes, and the five entries above outlived theirs entirely.
 
 ---
 
