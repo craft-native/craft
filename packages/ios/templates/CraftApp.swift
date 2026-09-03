@@ -1093,11 +1093,11 @@ struct CraftWebView: UIViewRepresentable {
             // MARK: - Siri Shortcuts
             case "registerSiriShortcut":
                 if let phrase = body["phrase"] as? String,
-                   let action = body["action"] as? String {
+                   let action = body["shortcutAction"] as? String {
                     registerSiriShortcut(phrase: phrase, action: action, callbackId: callbackId)
                 }
             case "removeSiriShortcut":
-                if let action = body["action"] as? String {
+                if let action = body["shortcutAction"] as? String {
                     removeSiriShortcut(action: action, callbackId: callbackId)
                 }
 
@@ -2194,7 +2194,15 @@ struct CraftWebView: UIViewRepresentable {
                     register: function(phrase, action) {
                         var self = window.craft;
                         var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'registerSiriShortcut', phrase: phrase, action: action, callbackId: id});
+                        // `shortcutAction`, not `action`. This object had two
+                        // keys called `action` — the message's own, and the
+                        // shortcut's — and the later one wins, so every call
+                        // arrived labelled with the shortcut's identifier
+                        // instead of 'registerSiriShortcut'. No switch arm
+                        // matched, nothing answered, and these wrappers park in
+                        // `_callbacks` with no timeout: the promise never
+                        // settled at all.
+                        window.webkit.messageHandlers.craft.postMessage({action: 'registerSiriShortcut', phrase: phrase, shortcutAction: action, callbackId: id});
                         return new Promise(function(resolve, reject) {
                             self._callbacks[id] = {resolve: resolve, reject: reject};
                         });
@@ -2202,7 +2210,8 @@ struct CraftWebView: UIViewRepresentable {
                     remove: function(action) {
                         var self = window.craft;
                         var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'removeSiriShortcut', action: action, callbackId: id});
+                        // The same duplicate key as `register` above.
+                        window.webkit.messageHandlers.craft.postMessage({action: 'removeSiriShortcut', shortcutAction: action, callbackId: id});
                         return new Promise(function(resolve, reject) {
                             self._callbacks[id] = {resolve: resolve, reject: reject};
                         });

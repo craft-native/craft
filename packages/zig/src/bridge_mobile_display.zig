@@ -105,12 +105,18 @@ pub const DisplayBridge = struct {
         }
     }
 
-    /// `{"count":N}` in, `{"count":<what UIKit now reports>}` out.
+    /// `{"count":N}` in, bare `true` out — what the spec resolves.
     ///
-    /// The reply is an object, not the bare `true` Swift resolves:
-    /// `craft-bridge.js` settles with `payload || {}`, so any falsy scalar
-    /// arrives at the page as `{}` and carries nothing. An object also lets the
-    /// value be checked, which a `true` never could.
+    /// This answered `{"count":<observed>}` until now, to work around
+    /// `craft-bridge.js` settling with `payload || {}`: a falsy scalar reached
+    /// the page as `{}` and carried nothing. That is fixed at its source
+    /// (`_orEmpty`), so the wrapper is gone and pages reading `=== true` work
+    /// again.
+    ///
+    /// The observed count goes to the log rather than the page. It was the one
+    /// thing the object shape bought, and the spec never offered it — a page
+    /// that wants the badge back has no API for it in either implementation,
+    /// so inventing one here would be a second divergence rather than a fix.
     fn setBadge(self: *Self, data: []const u8) !void {
         const requested = try badgeCountFrom(self.allocator, data);
         try self.replyBadge(A.set_badge, try applyBadge(requested));
@@ -125,11 +131,15 @@ pub const DisplayBridge = struct {
     }
 
     fn replyBadge(self: *Self, action: []const u8, observed: i64) !void {
-        var buf: [48]u8 = undefined;
-        bridge_error.sendResultToJS(self.allocator, action, try renderBadgeReply(&buf, observed));
+        std.log.info("{s}: badge is now {d}", .{ action, observed });
+        bridge_error.sendResultToJS(self.allocator, action, badge_applied);
     }
 
-    /// `{"enabled":<bool>}` in, `{"enabled":<what UIKit now reports>}` out.
+    /// `{"enabled":<bool>}` in, the bare observed boolean out.
+    ///
+    /// The spec resolves the `enabled` the page sent; this resolves what UIKit
+    /// reports, which is the same value whenever the write took. Bare rather
+    /// than `{"enabled":…}` for the reason recorded on `replyBadge`.
     ///
     /// Swift also stores `isKeepingAwake`, which nothing in the template ever
     /// reads. It is not ported: a variable with no reader cannot be wrong, and
@@ -140,11 +150,10 @@ pub const DisplayBridge = struct {
         const requested = try keepAwakeFrom(self.allocator, data);
         const observed = try applyKeepAwake(requested);
 
-        var buf: [32]u8 = undefined;
         bridge_error.sendResultToJS(
             self.allocator,
             A.set_keep_awake,
-            try renderKeepAwakeReply(&buf, observed),
+            if (observed) "true" else "false",
         );
     }
 
@@ -185,13 +194,8 @@ pub const DisplayBridge = struct {
 /// Split out because a test that re-typed the format string would pass no
 /// matter what the handler sent — it would be asserting that `std.fmt` works.
 /// These are the strings the page actually receives.
-fn renderBadgeReply(buf: []u8, observed: i64) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{{\"count\":{d}}}", .{observed});
-}
-
-fn renderKeepAwakeReply(buf: []u8, observed: bool) ![]const u8 {
-    return std.fmt.bufPrint(buf, "{{\"enabled\":{}}}", .{observed});
-}
+/// What `setBadge` and `clearBadge` resolve. A bare `true`, matching the spec.
+const badge_applied = "true";
 
 // =============================================================================
 // Payload parsing
@@ -630,27 +634,25 @@ test "the orientation actions refuse, and say which kind of refusal it is" {
     );
 }
 
-test "replies are objects carrying a value, not bare scalars" {
-    // `craft-bridge.js` settles with `payload || {}`. A bare `false` — which
-    // `setKeepAwake(false)` would resolve, following Swift — arrives at the
-    // page as `{}` and loses the answer entirely.
+test "replies are the bare scalars the spec resolves" {
+    // These were objects — `{"count":N}` and `{"enabled":<bool>}` — to work
+    // around `craft-bridge.js` settling with `payload || {}`, which turned a
+    // bare `false` into a truthy `{}`. That is fixed at its source, so the
+    // wrapper is gone and the shapes match the spec again: a page doing
+    // `(await craft.setKeepAwake(false)) === false` gets `false`, and one doing
+    // `(await craft.clearBadge()) === true` gets `true`.
     //
-    // These call the same renderers the handlers do, so changing a key name or
-    // dropping the object wrapper fails here instead of reading as coverage.
-    var buf: [48]u8 = undefined;
+    // Pinned as the literal bytes the handlers send, so re-wrapping either
+    // reply fails here rather than reading as coverage.
+    try testing.expectEqualStrings("true", badge_applied);
 
-    try testing.expectEqualStrings("{\"count\":7}", try renderBadgeReply(&buf, 7));
-    try testing.expectEqualStrings("{\"count\":0}", try renderBadgeReply(&buf, 0));
-    try testing.expectEqualStrings("{\"enabled\":false}", try renderKeepAwakeReply(&buf, false));
-    try testing.expectEqualStrings("{\"enabled\":true}", try renderKeepAwakeReply(&buf, true));
-
-    // The stack buffers the handlers hand these are 48 and 32 bytes; the widest
-    // reply either can produce has to fit, or a legitimate count turns into a
-    // `NoSpaceLeft` the page reads as a native failure.
-    var badge_buf: [48]u8 = undefined;
-    try testing.expect((try renderBadgeReply(&badge_buf, std.math.minInt(i64))).len <= badge_buf.len);
-    var keep_buf: [32]u8 = undefined;
-    try testing.expect((try renderKeepAwakeReply(&keep_buf, false)).len <= keep_buf.len);
+    // Parsed, not just compared, so a literal that is not valid JSON — `True`,
+    // or a stray quote — cannot pass.
+    for ([_][]const u8{ badge_applied, "true", "false" }) |json| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        defer parsed.deinit();
+        try testing.expect(parsed.value == .bool);
+    }
 }
 
 test "UIKit work is refused off Darwin rather than attempted" {

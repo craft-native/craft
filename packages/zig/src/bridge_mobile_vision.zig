@@ -416,15 +416,33 @@ fn shapeResults(allocator: std.mem.Allocator, kind: Kind, request: Id) ![]u8 {
     const count = try arrayCount(results);
     const limit = if (kind == .classify) @min(count, max_classifications) else count;
 
+    // `written`, not `i`, decides the separator. A recognition observation with
+    // no candidate is skipped rather than emitted, exactly as the spec does, so
+    // the reply can be shorter than the observation list — and keying the comma
+    // off the loop index would then leave a leading or doubled one and hand the
+    // page invalid JSON.
+    var written: usize = 0;
     var i: usize = 0;
     while (i < limit) : (i += 1) {
         const observation = try arrayObjectAt(results, i);
-        if (i != 0) try out.append(allocator, ',');
+        const mark = out.items.len;
+        if (written != 0) try out.append(allocator, ',');
         switch (kind) {
             .classify => try appendClassification(allocator, &out, observation),
             .detect => try appendDetection(allocator, &out, observation),
-            .recognize => try appendRecognizedText(allocator, &out, observation),
+            // The one skippable case. Swift reads `topCandidates(1).first` and
+            // drops the observation when it is nil; rejecting the whole call
+            // instead loses every line that *did* recognise, which is the
+            // answer the page asked for.
+            .recognize => appendRecognizedText(allocator, &out, observation) catch |err| switch (err) {
+                error.NoCandidates => {
+                    out.shrinkRetainingCapacity(mark);
+                    continue;
+                },
+                else => return err,
+            },
         }
+        written += 1;
     }
 
     try out.append(allocator, ']');
