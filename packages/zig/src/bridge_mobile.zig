@@ -52,7 +52,7 @@ pub const MobileBridge = struct {
     }
 
     fn getDeviceInfo(self: *Self) !void {
-        var buf: [512]u8 = undefined;
+        var buf: [4096]u8 = undefined;
         const json = try describeDevice(&buf);
         bridge_error.sendResultToJS(self.allocator, A.get_device_info, json);
     }
@@ -88,12 +88,140 @@ fn describeDevice(buf: []u8) ![]const u8 {
     const system_name = try nsStringField(device, "systemName");
     const system_version = try nsStringField(device, "systemVersion");
     const model = try nsStringField(device, "model");
+    // The one field a user can set, so the one that can carry a quote or a
+    // backslash: "Glenn\"s iPhone" is a legal device name and an illegal JSON
+    // string. Everything here goes through `escapeJsonString` for that reason,
+    // not just this one — a locale identifier is tame today and the escaping
+    // costs nothing.
+    const device_name = try nsStringField(device, "name");
+
+    // `identifierForVendor` is nil before the device is unlocked once after
+    // boot. The spec answers `""` there (`device.identifierForVendor?.uuidString
+    // ?? ""`), so this does too: a missing id and an empty one are the same
+    // thing to a page, and inventing a UUID would be worse than either.
+    const vendor_id: []const u8 = blk: {
+        const sel_ifv = objc.sel_registerName("identifierForVendor") orelse break :blk "";
+        const uuid = objc.msgSendId(device, sel_ifv);
+        if (uuid == null) break :blk "";
+        break :blk nsStringField(uuid, "UUIDString") catch "";
+    };
+
+    // UIScreen, for the three screen fields. A nil mainScreen is not a case
+    // that happens in an app with a window, but reading `bounds` off nil would
+    // answer a zero rect rather than fail, and a page cannot tell a 0x0 screen
+    // from a broken one.
+    const UIScreen = objc.objc_getClass("UIScreen") orelse return error.ClassNotFound;
+    const sel_main = objc.sel_registerName("mainScreen") orelse return error.SelectorNotFound;
+    const screen = objc.msgSendId(UIScreen, sel_main);
+    if (screen == null) return error.NoMainScreen;
+
+    const bounds = try msgSendRect(screen, "bounds");
+    const scale = try msgSendCGFloat(screen, "scale");
+
+    // `batteryLevel` is -1 unless battery monitoring is enabled, and neither
+    // the spec nor this enables it. Reporting the same -1 is the parity that
+    // matters: a page that special-cases it keeps working, and turning
+    // monitoring on here would be a behaviour change the spec never made.
+    const battery_level = try msgSendFloat(device, "batteryLevel");
+    const battery_state = batteryStateName(try msgSendInteger(device, "batteryState"));
+
+    const NSLocale = objc.objc_getClass("NSLocale") orelse return error.ClassNotFound;
+    const sel_curloc = objc.sel_registerName("currentLocale") orelse return error.SelectorNotFound;
+    const locale_obj = objc.msgSendId(NSLocale, sel_curloc);
+    const locale = if (locale_obj != null) nsStringField(locale_obj, "localeIdentifier") catch "" else "";
+
+    const NSTimeZone = objc.objc_getClass("NSTimeZone") orelse return error.ClassNotFound;
+    const sel_localtz = objc.sel_registerName("localTimeZone") orelse return error.SelectorNotFound;
+    const tz_obj = objc.msgSendId(NSTimeZone, sel_localtz);
+    const timezone = if (tz_obj != null) nsStringField(tz_obj, "name") catch "" else "";
+
+    var esc: [5][512]u8 = undefined;
 
     return std.fmt.bufPrint(
         buf,
-        "{{\"systemName\":\"{s}\",\"systemVersion\":\"{s}\",\"model\":\"{s}\",\"isSimulator\":{}}}",
-        .{ system_name, system_version, model, isSimulator() },
+        "{{" ++
+            "\"platform\":\"ios\"," ++
+            "\"model\":\"{s}\"," ++
+            "\"name\":\"{s}\"," ++
+            "\"systemName\":\"{s}\"," ++
+            "\"systemVersion\":\"{s}\"," ++
+            "\"identifierForVendor\":\"{s}\"," ++
+            "\"isSimulator\":{}," ++
+            "\"screenWidth\":{d}," ++
+            "\"screenHeight\":{d}," ++
+            "\"screenScale\":{d}," ++
+            "\"batteryLevel\":{d}," ++
+            "\"batteryState\":\"{s}\"," ++
+            "\"locale\":\"{s}\"," ++
+            "\"timezone\":\"{s}\"" ++
+            "}}",
+        .{
+            try bridge_error.escapeJsonString(&esc[0], model),
+            try bridge_error.escapeJsonString(&esc[1], device_name),
+            system_name,
+            system_version,
+            vendor_id,
+            isSimulator(),
+            bounds.size.width,
+            bounds.size.height,
+            scale,
+            battery_level,
+            battery_state,
+            try bridge_error.escapeJsonString(&esc[2], locale),
+            try bridge_error.escapeJsonString(&esc[3], timezone),
+        },
     );
+}
+
+/// `UIDevice.BatteryState` as the spec spells it (`getBatteryState`,
+/// `CraftApp.swift:3204`). The raw values are UIKit's: unknown 0, unplugged 1,
+/// charging 2, full 3. Anything else is "unknown", matching the spec's
+/// `default` rather than inventing a fifth name for a value UIKit does not
+/// currently produce.
+fn batteryStateName(raw: isize) []const u8 {
+    return switch (raw) {
+        1 => "unplugged",
+        2 => "charging",
+        3 => "full",
+        else => "unknown",
+    };
+}
+
+/// A zero-argument selector returning `CGRect`.
+///
+/// A plain `objc_msgSend` cast, deliberately — **not**
+/// `objc_runtime.msgSendStret`, which picks `objc_msgSend_stret` for anything
+/// over 16 bytes. `CGRect` is 32, and `objc_msgSend_stret` does not exist on
+/// arm64: the struct return travels in x8 through ordinary `objc_msgSend`.
+/// `bridge_mobile_motion.zig:124` records the same trap, and `macos.zig`'s
+/// `msgSendRect` is the shape this copies.
+fn msgSendRect(target: objc.id, comptime selector: [:0]const u8) !objc.CGRect {
+    const sel = objc.sel_registerName(selector) orelse return error.SelectorNotFound;
+    const func: *const fn (objc.id, objc.SEL) callconv(.c) objc.CGRect = @ptrCast(&objc.objc_msgSend);
+    return func(target, sel);
+}
+
+/// A zero-argument selector returning `CGFloat` (`double` on 64-bit).
+fn msgSendCGFloat(target: objc.id, comptime selector: [:0]const u8) !objc.CGFloat {
+    const sel = objc.sel_registerName(selector) orelse return error.SelectorNotFound;
+    const func: *const fn (objc.id, objc.SEL) callconv(.c) objc.CGFloat = @ptrCast(&objc.objc_msgSend);
+    return func(target, sel);
+}
+
+/// A zero-argument selector returning `float`. `batteryLevel` is a `float`,
+/// not a `CGFloat` — reading it as a double returns garbage, because the two
+/// come back in different halves of the same register.
+fn msgSendFloat(target: objc.id, comptime selector: [:0]const u8) !f32 {
+    const sel = objc.sel_registerName(selector) orelse return error.SelectorNotFound;
+    const func: *const fn (objc.id, objc.SEL) callconv(.c) f32 = @ptrCast(&objc.objc_msgSend);
+    return func(target, sel);
+}
+
+/// A zero-argument selector returning `NSInteger`.
+fn msgSendInteger(target: objc.id, comptime selector: [:0]const u8) !isize {
+    const sel = objc.sel_registerName(selector) orelse return error.SelectorNotFound;
+    const func: *const fn (objc.id, objc.SEL) callconv(.c) isize = @ptrCast(&objc.objc_msgSend);
+    return func(target, sel);
 }
 
 /// Send a zero-argument selector that returns an NSString, and borrow its UTF-8.

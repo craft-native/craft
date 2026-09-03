@@ -670,9 +670,12 @@ pub const uikit = if (is_darwin) struct {
     /// "which is already presenting" and silently does nothing, so the
     /// completion handler never fires and the caller waits out its timeout.
     pub fn topmostViewController() !objc.id {
+        // One `orelse`, not an `orelse` plus a null check. `getWebView` used to
+        // answer a double optional, so the `orelse` unwrapped the outer level
+        // and the second line was the guard that actually ran; now the slot is
+        // a single `objc.id` and this catches both spellings of "no webview".
         const webview = ios_dispatch.getWebView() orelse
             return bridge_error.BridgeError.WebViewHandleNotSet;
-        if (webview == null) return bridge_error.BridgeError.WebViewHandleNotSet;
 
         const sel_window = objc.sel_registerName("window") orelse return error.SelectorNotFound;
         const window = objc.msgSendId(webview, sel_window);
@@ -703,9 +706,12 @@ pub const uikit = if (is_darwin) struct {
     /// pre-iOS-14 `+requestReview`, which is deprecated and may be gone, and it
     /// is certainly not a reason to reply success having done nothing.
     fn keyWindowScene() !objc.id {
+        // One `orelse`, not an `orelse` plus a null check. `getWebView` used to
+        // answer a double optional, so the `orelse` unwrapped the outer level
+        // and the second line was the guard that actually ran; now the slot is
+        // a single `objc.id` and this catches both spellings of "no webview".
         const webview = ios_dispatch.getWebView() orelse
             return bridge_error.BridgeError.WebViewHandleNotSet;
-        if (webview == null) return bridge_error.BridgeError.WebViewHandleNotSet;
 
         const sel_window = objc.sel_registerName("window") orelse return error.SelectorNotFound;
         const window = objc.msgSendId(webview, sel_window);
