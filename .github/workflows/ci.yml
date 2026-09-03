@@ -109,6 +109,34 @@ jobs:
         working-directory: packages/typescript
         run: bun run build
 
+  # `packages/ios` had a test suite that nothing ran. That is how its
+  # generator kept a defect nobody saw: `init()` read `CRAFT_IOS_RUNTIME`
+  # straight from the environment, so the suite passed 12/12 in a clean shell
+  # and 8/12 in a developer's, and CI never had an opinion either way.
+  ios-builder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: Install dependencies
+        run: bun install
+
+      # Unset deliberately. The suite must not depend on it, and this is the
+      # job that would notice if it started to again.
+      - name: Test iOS builder
+        working-directory: packages/ios
+        run: bun test
+        env:
+          CRAFT_IOS_RUNTIME: ''
+
+      - name: Build iOS builder
+        working-directory: packages/ios
+        run: bun run build
+
   create-craft:
     runs-on: ubuntu-latest
 
@@ -219,7 +247,7 @@ jobs:
         run: bun run verify
 
   publish-commit:
-    needs: [zig-core, typescript-sdk, create-craft, ts-maps, lint, integration]
+    needs: [zig-core, typescript-sdk, ios-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:
