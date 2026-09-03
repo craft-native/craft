@@ -600,9 +600,10 @@ fn applyBadge(count: i64) !i64 {
 /// what happened rather than swallowing it.
 ///
 /// The completion handler is `nullable` in the header, so nil is legal and no
-/// block is needed. Note that `requestAuthorizationWithOptions:`, which Swift
-/// also calls, is *not* nullable there — passing nil to that one crashes, which
-/// is part of why authorization is not attempted here.
+/// block is needed. `requestAuthorizationWithOptions:`, which the spec also
+/// calls, is *not* nullable there — passing nil to that one crashes, which is
+/// why it needs a real block. It has one now: `requestBadgeAuthorization`
+/// above asks before this writes, so this function no longer runs unasked.
 fn setBadgeThroughNotificationCenter(count: c_long) bool {
     const UNCenterClass = objc.objc_getClass("UNUserNotificationCenter") orelse return false;
     const sel_current = objc.sel_registerName("currentNotificationCenter") orelse return false;
