@@ -233,6 +233,106 @@ test "every action the page can call is one the spec handles" {
     try testing.expect(checked >= 50);
 }
 
+/// Every action deliberately left with the Swift shim, and why.
+///
+/// This exists because the reasons kept rotting. They lived in two places that
+/// nothing verified — a prose document and a module comment — and both drifted:
+/// `docs/ios-development.md` listed thirteen actions as permanently Swift while
+/// five of them had already been migrated, and
+/// `bridge_mobile_notifications.zig` explained that `scheduleNotification`
+/// could not be served for a day longer than that was true, which kept the
+/// action with the shim through several passes that each read the note and
+/// believed it.
+///
+/// A list is only load-bearing if something fails when it is wrong. The test
+/// below asserts each entry is a real spec action *and* still unmigrated, so
+/// migrating one of these breaks the build until its row is deleted. That is
+/// the property the doc never had.
+///
+/// Not exhaustive, and deliberately not: this records deferrals that have a
+/// *reason worth keeping*. An action absent from both this table and the Zig
+/// modules is simply not done yet, which is a different and honest state.
+const Deferral = struct { action: []const u8, reason: []const u8 };
+
+const deliberate_deferrals = [_]Deferral{
+    // ARKit / SceneKit. `docs/ios-development.md` asked for this boundary to be
+    // declared in `capability_registry.zig`; that registry is desktop-only —
+    // 51 namespaces, no `mobile`, and neither `ios.zig` nor `ios_dispatch.zig`
+    // reads it — so the boundary is recorded here instead, where the tooling
+    // that counts unmigrated actions can see it.
+    .{ .action = "startAR", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
+    .{ .action = "stopAR", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
+    .{ .action = "getARPlanes", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
+    .{ .action = "placeARObject", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
+    .{ .action = "removeARObject", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
+
+    // StoreKit 2. Narrower than "no ObjC surface": StoreKit *1* is ObjC and
+    // `bridge_iap.zig` already drives it from Zig on macOS, so this is a choice
+    // about which StoreKit iOS targets, not an impossibility.
+    .{ .action = "getProducts", .reason = "Product.PurchaseResult is Swift-only; StoreKit 1 would be a product decision" },
+    .{ .action = "purchase", .reason = "Product.PurchaseResult is Swift-only; StoreKit 1 would be a product decision" },
+    .{ .action = "restorePurchases", .reason = "Product.PurchaseResult is Swift-only; StoreKit 1 would be a product decision" },
+
+    .{ .action = "startLiveActivity", .reason = "ActivityKit is Swift-only; no ObjC class to reach" },
+    .{ .action = "updateLiveActivity", .reason = "ActivityKit is Swift-only; no ObjC class to reach" },
+    .{ .action = "endLiveActivity", .reason = "ActivityKit is Swift-only; no ObjC class to reach" },
+
+    .{ .action = "updateWidget", .reason = "WidgetCenter has no ObjC class; only a swiftself trampoline reaches it" },
+    .{ .action = "reloadWidgets", .reason = "WidgetCenter has no ObjC class; only a swiftself trampoline reaches it" },
+
+    // Structural, and checked again in the sweep that produced this table.
+    .{ .action = "registerBackgroundTask", .reason = "BGTaskScheduler.register must run before launch finishes; a page call is late by construction" },
+    .{ .action = "getInitialURL", .reason = "DeepLinkManager is pure Swift with no @objc; the launch URL is not re-derivable" },
+
+    // The recorder is a CLLocationManager plus two files that
+    // `CraftWebView.Coordinator.init` re-adopts at launch, so a Zig-owned stop
+    // cannot stop a recording Swift has already restored into its own state.
+    .{ .action = "startLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
+    .{ .action = "stopLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
+    .{ .action = "pauseLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
+    .{ .action = "resumeLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
+    .{ .action = "getLocationRecordingState", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
+
+    // Not a capability gap: the spec's own success path has never executed, so
+    // there is no working contract to port. See the tracking issue.
+    .{ .action = "startVideoRecording", .reason = "the spec reads info[.originalImage] for a movie pick, so its success path never runs" },
+};
+
+test "every recorded deferral is real, and still a deferral" {
+    // The anti-rot property. A deferral that has been migrated must fail here
+    // rather than sit in a list telling the next reader not to bother.
+    var spec = try collectCases(testing.allocator, dispatcherRegion());
+    defer spec.deinit();
+
+    var zig = try collectZigActions(testing.allocator);
+    defer zig.deinit();
+
+    for (deliberate_deferrals) |d| {
+        if (!spec.contains(d.action)) {
+            std.debug.print(
+                "deferral table names `{s}`, which the spec's dispatcher does not have — typo, or the action was renamed\n",
+                .{d.action},
+            );
+            return error.DeferralNamesNoSuchAction;
+        }
+        if (zig.contains(d.action)) {
+            std.debug.print(
+                "deferral table still lists `{s}`, but Zig serves it now — delete the row, its reason is spent\n",
+                .{d.action},
+            );
+            return error.DeferralAlreadyMigrated;
+        }
+        // A reason is the entire point of the row.
+        try testing.expect(d.reason.len > 0);
+    }
+
+    // Non-vacuity: the loop above is satisfied by an empty table.
+    try testing.expect(deliberate_deferrals.len >= 20);
+
+    // And the table cannot claim more than remain unmigrated.
+    try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
+}
+
 test "nothing has been dropped on the way from Swift to Zig" {
     // The migration guard. Every action the spec answers is either served by
     // Zig or explicitly still owed, and the number still owed only goes down.
