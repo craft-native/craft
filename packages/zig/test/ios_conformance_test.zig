@@ -294,6 +294,17 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "registerBackgroundTask", .reason = "BGTaskScheduler.register must run before launch finishes; a page call is late by construction" },
     .{ .action = "getInitialURL", .reason = "DeepLinkManager is pure Swift with no @objc; the launch URL is not re-derivable" },
 
+    // The device token is delivered to
+    // `didRegisterForRemoteNotificationsWithDeviceToken` on `CraftAppDelegate`,
+    // which SwiftUI instantiates and owns via
+    // `@UIApplicationDelegateAdaptor` — Zig cannot replace it or reliably graft
+    // a method onto it. The token then reaches the page through an
+    // `NSNotification` that Swift posts. Zig *can* observe that notification,
+    // so this is a coupling rather than a wall, and it is recorded as what it
+    // is: serving the action would mean depending on Swift to keep posting a
+    // name the spec is free to change.
+    .{ .action = "registerPush", .reason = "the device token lands on a SwiftUI-owned app delegate; Zig could only observe a notification Swift posts" },
+
     // The recorder is a CLLocationManager plus two files that
     // `CraftWebView.Coordinator.init` re-adopts at launch, so a Zig-owned stop
     // cannot stop a recording Swift has already restored into its own state.
@@ -345,7 +356,15 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 22);
+    try testing.expect(deliberate_deferrals.len >= 23);
+
+    // As of this commit the table happens to cover every unmigrated action,
+    // but that is not asserted. Pinning the exact count would make migrating a
+    // deferred action a three-edit chore — delete the row, lower the ratchet,
+    // fix the count — and would buy nothing the two checks above do not
+    // already catch. The table also stays deliberately non-exhaustive:
+    // "nobody has reached it yet" is an honest state for a newly-added action,
+    // and demanding a reason for one would only invite an invented reason.
 
     // And the table cannot claim more than remain unmigrated.
     try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
