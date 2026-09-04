@@ -419,6 +419,7 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "getHealthData", .health_kit },
         .{ "getPendingNotifications", .local_notifications },
         .{ "scanNFC", .nfc },
+        .{ "signInWithApple", .social_auth },
         .{ "scheduleNotification", .local_notifications },
         .{ "haptic", .haptics },
         .{ "lockOrientation", .orientation_lock },

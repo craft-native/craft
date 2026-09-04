@@ -58,6 +58,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_health.zig"),
     @embedFile("src/bridge_mobile_speech.zig"),
     @embedFile("src/bridge_mobile_nfc.zig"),
+    @embedFile("src/bridge_mobile_auth_apple.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -106,9 +107,13 @@ const dispatch_end = "func webView(";
 /// audio tap, which is the first callback in this migration that runs on a
 /// thread where a lock is a bug rather than a slowdown.
 /// 24 with scanNFC, which had no recorded reason at all — not a deferral that
-/// expired, just an action nobody had reached. One framework, one guard, one
-/// small delegate; the four remaining like it are registerPush, scanQRCode and
-/// signInWithApple.
+/// expired, just an action nobody had reached.
+/// 23 with signInWithApple, which needed the first object-returning delegate
+/// method in the migration (`presentationAnchorForAuthorizationController:`).
+/// Of the four that had no recorded reason, scanQRCode turned out to have a
+/// real one and is in the table below; `registerPush` is the last, and its
+/// device token arrives through a notification the Swift app delegate posts,
+/// which is a coupling to weigh rather than a wall.
 /// 25 with scheduleNotification. Its deferral was the first to expire on its
 /// own: the blocker recorded in `bridge_mobile_notifications.zig` was that
 /// `ios_async` could only resolve, so an action whose two failure paths are
@@ -116,7 +121,7 @@ const dispatch_end = "func webView(";
 /// and `deliverErrorCode` landed the day after that was written. Worth
 /// re-reading the other deferrals for the same reason before assuming they
 /// still hold.
-const max_not_yet_migrated: usize = 24;
+const max_not_yet_migrated: usize = 23;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -298,6 +303,14 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "resumeLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
     .{ .action = "getLocationRecordingState", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
 
+    // VisionKit's `DataScannerViewController` is Swift-only: the framework's
+    // Objective-C headers carry DocumentCamera and nothing else, and the
+    // delegate callback takes a `RecognizedItem`, a Swift enum with associated
+    // values that `objc_msgSend` cannot destructure. Same class of wall as
+    // ActivityKit, and checked against the iphonesimulator SDK rather than
+    // assumed.
+    .{ .action = "scanQRCode", .reason = "VisionKit's DataScanner is Swift-only; the delegate takes a Swift enum with associated values" },
+
     // Not a capability gap: the spec's own success path has never executed, so
     // there is no working contract to port. See the tracking issue.
     .{ .action = "startVideoRecording", .reason = "the spec reads info[.originalImage] for a movie pick, so its success path never runs" },
@@ -332,7 +345,7 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 20);
+    try testing.expect(deliberate_deferrals.len >= 22);
 
     // And the table cannot claim more than remain unmigrated.
     try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
