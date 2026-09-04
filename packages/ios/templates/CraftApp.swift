@@ -457,7 +457,12 @@ struct CraftWebView: UIViewRepresentable {
                 locationManager?.desiredAccuracy = kCLLocationAccuracyBest
                 locationManager?.activityType = .fitness
                 locationManager?.pausesLocationUpdatesAutomatically = false
-                restoreLocationRecordingState()
+                // Zig owns the recorder when it is linked, including the
+                // relaunch restore — see `CraftZigRuntime.adoptLocationRecording`.
+                // Running both would leave two managers appending to one track.
+                if !CraftZigRuntime.adoptLocationRecording() {
+                    restoreLocationRecordingState()
+                }
             }
             if config.enableContacts {
                 contactStore = CNContactStore()
@@ -5465,6 +5470,7 @@ final class CraftZigRuntime: NSObject {
     private typealias HandleActionFn = @convention(c) (
         UnsafePointer<CChar>, UInt, UnsafePointer<CChar>, UInt, Int64
     ) -> Bool
+    private typealias AdoptLocationRecordingFn = @convention(c) () -> Bool
 
     private static let image: UnsafeMutableRawPointer? = dlopen(nil, RTLD_NOW)
 
@@ -5483,6 +5489,11 @@ final class CraftZigRuntime: NSObject {
         return unsafeBitCast(sym, to: HandleActionFn.self)
     }()
 
+    private static let adoptLocationRecordingFn: AdoptLocationRecordingFn? = {
+        guard let sym = dlsym(image, "craft_ios_adopt_location_recording") else { return nil }
+        return unsafeBitCast(sym, to: AdoptLocationRecordingFn.self)
+    }()
+
     /// Whether this build has a Zig runtime at all. Read by nothing here; kept
     /// because "is Zig linked" is the first question to ask when an action
     /// behaves like the Swift one after a migration was supposed to move it.
@@ -5495,6 +5506,24 @@ final class CraftZigRuntime: NSObject {
     /// nothing to break it.
     static func attach(_ webView: WKWebView) {
         setWebViewFn?(Unmanaged.passUnretained(webView).toOpaque())
+    }
+
+    /// Hand a recording that outlived the last launch to whichever runtime owns
+    /// the recorder.
+    ///
+    /// Returns true when Zig took it, and the caller must then *not* run
+    /// `restoreLocationRecordingState()`. This is the one place the usual
+    /// "offer it to Zig, fall back on false" pattern cannot be used through
+    /// `handleAction`: there is no page message at launch, and the restore
+    /// happens in `Coordinator.init` — before `attach`, because SwiftUI builds
+    /// the coordinator before the view. Whoever restores first owns the
+    /// `CLLocationManager` for the rest of the launch, so the decision has to
+    /// be made here rather than at the first `stopLocationRecording`.
+    ///
+    /// False in a build with no Zig runtime, which is exactly when Swift's own
+    /// restore is still the right thing to run.
+    static func adoptLocationRecording() -> Bool {
+        adoptLocationRecordingFn?() ?? false
     }
 
     /// Forget this webview, if Zig is still holding it.
