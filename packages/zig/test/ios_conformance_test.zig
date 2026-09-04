@@ -57,6 +57,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_audiorec.zig"),
     @embedFile("src/bridge_mobile_health.zig"),
     @embedFile("src/bridge_mobile_speech.zig"),
+    @embedFile("src/bridge_mobile_nfc.zig"),
 };
 
 /// The action list lives in the `switch action` block, and nowhere else.
@@ -104,6 +105,10 @@ const dispatch_end = "func webView(";
 /// preconditions and four blockers; the load-bearing one was the realtime
 /// audio tap, which is the first callback in this migration that runs on a
 /// thread where a lock is a bug rather than a slowdown.
+/// 24 with scanNFC, which had no recorded reason at all — not a deferral that
+/// expired, just an action nobody had reached. One framework, one guard, one
+/// small delegate; the four remaining like it are registerPush, scanQRCode and
+/// signInWithApple.
 /// 25 with scheduleNotification. Its deferral was the first to expire on its
 /// own: the blocker recorded in `bridge_mobile_notifications.zig` was that
 /// `ios_async` could only resolve, so an action whose two failure paths are
@@ -111,7 +116,7 @@ const dispatch_end = "func webView(";
 /// and `deliverErrorCode` landed the day after that was written. Worth
 /// re-reading the other deferrals for the same reason before assuming they
 /// still hold.
-const max_not_yet_migrated: usize = 25;
+const max_not_yet_migrated: usize = 24;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
