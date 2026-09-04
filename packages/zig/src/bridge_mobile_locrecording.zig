@@ -589,6 +589,485 @@ fn readTrackBytes(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
 }
 
 // =============================================================================
+// The on-disk format of a recording.
+//
+// `bridge_mobile_location.zig` owns the `CLLocationManager`, the delegate and
+// the lifecycle; it calls in here for every byte that reaches the disk. The
+// dependency runs one way — nothing in this file imports that one — because a
+// recording really is what `CraftWebView.Coordinator` makes it: a flag on the
+// shared delegate plus two files. This is the half with a format to get wrong.
+//
+// Both files keep Swift's names, Swift's location and Swift's key spellings, so
+// a build with the Zig recorder removed reads back a recording this one wrote.
+// That is not hypothetical tidiness: `restoreLocationRecordingState` is still
+// in the template and still runs whenever the adoption export is absent.
+// =============================================================================
+
+/// The lifecycle mirror, beside the track. `CraftApp.swift:3156-3159`.
+const state_file_name = "craft-location-recording-state.json";
+
+/// The absolute path of `<AppSupport>/craft-location-recording-state.json`.
+fn stateFilePath(allocator: std.mem.Allocator) ![]u8 {
+    const directory = try applicationSupportPath(allocator);
+    defer allocator.free(directory);
+
+    return std.fmt.allocPrint(allocator, "{s}/" ++ state_file_name, .{directory});
+}
+
+/// The largest state file worth reading. The document is four scalars; anything
+/// approaching this is not a state file, and reading it into memory to discover
+/// that is the wrong order.
+const max_state_bytes: u64 = 64 * 1024;
+
+/// What `persistLocationRecordingState` writes and `restoreLocationRecordingState`
+/// reads back, with the same four keys and the same types.
+///
+/// `started_at` is milliseconds — `Date().timeIntervalSince1970 * 1000`
+/// (`CraftApp.swift:3222`) — and stays an `f64` the whole way, because that is
+/// what Swift wrote and rounding it to an integer here would change a value the
+/// page compares against its own `Date.now()`.
+pub const State = struct {
+    active: bool = false,
+    paused: bool = false,
+    /// Owned by the `State`. Null is `NSNull` on the wire, which is what a
+    /// recording that has never started has.
+    id: ?[]const u8 = null,
+    started_at: ?f64 = null,
+
+    pub fn deinit(self: *State, allocator: std.mem.Allocator) void {
+        if (self.id) |id| allocator.free(id);
+        self.id = null;
+    }
+};
+
+/// Read the persisted state, applying `restoreLocationRecordingState`'s own guard.
+///
+/// Swift opens with
+/// `guard … state["active"] as? Bool == true else { return }`
+/// (`CraftApp.swift:3197-3201`), and every `return` there leaves the four
+/// instance variables at their defaults. So a file that says `active:false` —
+/// which is exactly what a *stopped* recording leaves behind, `id` and
+/// `startedAt` still populated — restores as nothing at all.
+///
+/// That guard is the whole reason this returns a `State` rather than the file's
+/// contents. A reader that handed back the stopped recording's `id` would
+/// answer `{"id":"ABC-…"}` where Swift answers `{"id":null}`, which was one of
+/// the three blockers recorded against migrating this recorder (#124). It is a
+/// rule, and this is the rule, ported rather than approximated.
+///
+/// A missing file is `.{}`, not an error: there has never been a recording.
+pub fn readState(allocator: std.mem.Allocator) !State {
+    const path = try stateFilePath(allocator);
+    defer allocator.free(path);
+    return readStateFrom(allocator, path);
+}
+
+/// `readState` against a named file, so the guard above is testable without a
+/// test writing into `~/Library/Application Support`.
+fn readStateFrom(allocator: std.mem.Allocator, path: []const u8) !State {
+    const bytes = (try readSmallFile(allocator, path, max_state_bytes)) orelse return .{};
+    defer allocator.free(bytes);
+
+    // `JSONSerialization.jsonObject` throwing, or the cast to `[String: Any]`
+    // failing, both land on Swift's `else { return }`. Unreadable state is no
+    // state, not an error — the recording is gone either way, and saying so
+    // beats refusing every later call because one file is torn.
+    return decodeState(allocator, bytes) catch |err| {
+        std.log.warn(
+            "location recording: state file at '{s}' is unreadable ({}); treating it as no recording, exactly as restoreLocationRecordingState's guard does",
+            .{ path, err },
+        );
+        return .{};
+    };
+}
+
+/// The guard and the four reads, with no file anywhere near them.
+fn decodeState(allocator: std.mem.Allocator, bytes: []const u8) !State {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch {
+        return .{};
+    };
+    defer parsed.deinit();
+
+    const object = switch (parsed.value) {
+        .object => |o| o,
+        else => return .{},
+    };
+
+    // `as? Bool == true`: a missing key, a null, a number, a string all fail
+    // the cast and land on the same `return`.
+    const active = switch (object.get("active") orelse return .{}) {
+        .bool => |b| b,
+        else => return .{},
+    };
+    if (!active) return .{};
+
+    var state: State = .{ .active = true };
+    errdefer state.deinit(allocator);
+
+    // Past the guard, Swift's reads are `as? Bool ?? false` and `as? String` /
+    // `as? TimeInterval`, so a wrong type here is a default rather than a
+    // refusal.
+    if (object.get("paused")) |value| {
+        state.paused = switch (value) {
+            .bool => |b| b,
+            else => false,
+        };
+    }
+    if (object.get("id")) |value| {
+        switch (value) {
+            .string => |s| state.id = try allocator.dupe(u8, s),
+            else => {},
+        }
+    }
+    if (object.get("startedAt")) |value| {
+        state.started_at = switch (value) {
+            .float => |f| f,
+            .integer => |i| @floatFromInt(i),
+            else => null,
+        };
+    }
+
+    return state;
+}
+
+/// Mirror the lifecycle to disk, atomically, then protect the file.
+///
+/// `persistLocationRecordingState` (`CraftApp.swift:3179-3195`) writes all four
+/// keys every time, with `.atomic`, and then re-applies protection. Each of
+/// those three is load-bearing and each is done here.
+///
+/// Unlike Swift, a failure is **returned**. Swift catches and prints, so memory
+/// and file drift with nothing to signal it — a divergence its own recorder
+/// comment calls out. A caller here can refuse the action instead of reporting
+/// a recording that was never persisted.
+pub fn writeState(allocator: std.mem.Allocator, state: State) !void {
+    const path = try stateFilePath(allocator);
+    defer allocator.free(path);
+
+    const bytes = try encodeState(allocator, state);
+    defer allocator.free(bytes);
+
+    try writeFileAtomic(allocator, path, bytes);
+    protectFile(path);
+}
+
+/// The four keys, in `persistLocationRecordingState`'s spelling.
+fn encodeState(allocator: std.mem.Allocator, state: State) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(allocator);
+
+    try out.appendSlice(allocator, "{\"active\":");
+    try out.appendSlice(allocator, if (state.active) "true" else "false");
+    try out.appendSlice(allocator, ",\"paused\":");
+    try out.appendSlice(allocator, if (state.paused) "true" else "false");
+    try out.appendSlice(allocator, ",\"id\":");
+    if (state.id) |id| {
+        // `appendJsonEscaped` escapes the contents and writes no delimiters, so
+        // the quotes are this caller's job. Without them an id containing a
+        // quote does not merely look wrong — it tears the document, and the
+        // whole recording reads back as none.
+        try out.append(allocator, '"');
+        try bridge_error.appendJsonEscaped(allocator, &out, id);
+        try out.append(allocator, '"');
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, ",\"startedAt\":");
+    if (state.started_at) |started| {
+        // `allocPrint`, not a stack buffer: an `f64` rendered with `{d}` can
+        // need 347 bytes, and a `NoSpaceLeft` here would lose a live recording
+        // to a formatting detail. Growing the allocation cannot overflow.
+        const rendered = try std.fmt.allocPrint(allocator, "{d}", .{started});
+        defer allocator.free(rendered);
+        try out.appendSlice(allocator, rendered);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, "}");
+
+    return out.toOwnedSlice(allocator);
+}
+
+/// Start a fresh track, replacing whatever the last recording left.
+///
+/// `startLocationRecording` writes an empty `Data()` with `.atomic` before it
+/// touches any state (`CraftApp.swift:3213-3220`), so a new recording never
+/// inherits the previous route's samples, and a failure refuses the start
+/// rather than recording into the old file.
+pub fn resetTrack(allocator: std.mem.Allocator) !void {
+    const path = try trackFilePath(allocator);
+    defer allocator.free(path);
+
+    try writeFileAtomic(allocator, path, "");
+    protectFile(path);
+}
+
+/// Append one already-shaped sample object, with the newline that separates it.
+///
+/// `appendRecordedLocation` (`CraftApp.swift:3288-3302`) opens the track, seeks
+/// to the end and writes the JSON plus `0x0A`. `length` + `writePositionalAll`
+/// is that pair, and it is the reason this is not a read-modify-write: a route
+/// of 176,000 fixes rewritten once per second is not a recorder.
+///
+/// The sample arrives as bytes that `didUpdateLocations` already shaped for the
+/// page, so the track holds exactly what the event carried. Nothing is
+/// reparsed, and nothing can be rounded on the way in.
+pub fn appendSample(allocator: std.mem.Allocator, sample_json: []const u8) !void {
+    const path = try trackFilePath(allocator);
+    defer allocator.free(path);
+    return appendSampleTo(allocator, path, sample_json);
+}
+
+/// `appendSample` against a named track.
+fn appendSampleTo(allocator: std.mem.Allocator, path: []const u8, sample_json: []const u8) !void {
+    const io = io_context.get();
+
+    // Swift's `FileHandle(forWritingTo:)` throws when the file is not there,
+    // and its `catch` prints and drops the sample. Opening write-only without
+    // creating keeps that: a track that does not exist means no recording is
+    // running, and creating one here would start a route nobody asked for.
+    const file = std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only }) catch |err| {
+        std.log.warn(
+            "location recording: could not open the track at '{s}' to append a sample ({}); the fix is lost",
+            .{ path, err },
+        );
+        return bridge_error.BridgeError.NativeCallFailed;
+    };
+    defer file.close(io);
+
+    const end = file.length(io) catch |err| {
+        std.log.warn("location recording: could not measure the track at '{s}' ({})", .{ path, err });
+        return bridge_error.BridgeError.NativeCallFailed;
+    };
+
+    // One write, not two. A sample and its newline that reach the file
+    // separately can be torn apart by a kill between them, and a half-written
+    // line is the one thing the reader has to throw away.
+    const line = try std.fmt.allocPrint(allocator, "{s}\n", .{sample_json});
+    defer allocator.free(line);
+
+    file.writePositionalAll(io, line, end) catch |err| {
+        std.log.warn("location recording: could not append to the track at '{s}' ({})", .{ path, err });
+        return bridge_error.BridgeError.NativeCallFailed;
+    };
+}
+
+/// How many samples `readLocationRecording` would return.
+///
+/// `getLocationRecordingState` reports `loadRecordedLocations().count`
+/// (`CraftApp.swift:3274`), so this has to agree with the reader line for line
+/// — the same blank-line and non-object drops — or the page is told it has a
+/// number of fixes it cannot then read back.
+pub fn sampleCount(allocator: std.mem.Allocator) !usize {
+    const path = try trackFilePath(allocator);
+    defer allocator.free(path);
+    return countSamplesIn(allocator, path);
+}
+
+/// `sampleCount` against a named track.
+fn countSamplesIn(allocator: std.mem.Allocator, path: []const u8) !usize {
+    const bytes = (try readTrackBytes(allocator, path)) orelse return 0;
+    defer allocator.free(bytes);
+
+    var count: usize = 0;
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (try lineIsJsonObject(allocator, line)) count += 1;
+    }
+    return count;
+}
+
+/// Read a small file whole, or null when it is not there.
+fn readSmallFile(allocator: std.mem.Allocator, path: []const u8, ceiling: u64) !?[]u8 {
+    const io = io_context.get();
+
+    const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => {
+            std.log.warn("location recording: could not open '{s}': {}", .{ path, err });
+            return bridge_error.BridgeError.NativeCallFailed;
+        },
+    };
+    defer file.close(io);
+
+    const size = file.length(io) catch |err| {
+        std.log.warn("location recording: could not measure '{s}': {}", .{ path, err });
+        return bridge_error.BridgeError.NativeCallFailed;
+    };
+    if (size > ceiling) {
+        std.log.warn(
+            "location recording: '{s}' is {d} bytes, over the {d}-byte ceiling; refusing to read it",
+            .{ path, size, ceiling },
+        );
+        return bridge_error.BridgeError.NativeCallFailed;
+    }
+
+    const buf = try allocator.alloc(u8, @intCast(size));
+    errdefer allocator.free(buf);
+
+    var read: usize = 0;
+    while (read < buf.len) {
+        const n = file.readStreaming(io, &.{buf[read..]}) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => {
+                std.log.warn("location recording: could not read '{s}': {}", .{ path, err });
+                return bridge_error.BridgeError.NativeCallFailed;
+            },
+        };
+        if (n == 0) break;
+        read += n;
+    }
+
+    return buf[0..read];
+}
+
+/// Write `bytes` to `path` so that a reader sees either the old file or the
+/// whole new one, never a half-written document.
+///
+/// This is what `Data.write(options: .atomic)` does — a sibling temp file and a
+/// rename — and it matters for the same reason it does there: the state file is
+/// read at launch, and a launch that lands mid-write would restore a torn
+/// recording.
+fn writeFileAtomic(allocator: std.mem.Allocator, path: []const u8, bytes: []const u8) !void {
+    const io = io_context.get();
+
+    const temp_path = try std.fmt.allocPrint(allocator, "{s}.tmp", .{path});
+    defer allocator.free(temp_path);
+
+    {
+        const file = std.Io.Dir.cwd().createFile(io, temp_path, .{}) catch |err| {
+            std.log.warn("location recording: could not create '{s}': {}", .{ temp_path, err });
+            return bridge_error.BridgeError.NativeCallFailed;
+        };
+        defer file.close(io);
+
+        file.writeStreamingAll(io, bytes) catch |err| {
+            std.log.warn("location recording: could not write '{s}': {}", .{ temp_path, err });
+            return bridge_error.BridgeError.NativeCallFailed;
+        };
+    }
+
+    const dir = std.Io.Dir.cwd();
+    std.Io.Dir.rename(dir, temp_path, dir, path, io) catch |err| {
+        std.log.warn("location recording: could not move '{s}' into place at '{s}': {}", .{ temp_path, path, err });
+        // A temp file left behind is litter; a temp file left behind *and*
+        // reported as success is a recording nobody can find.
+        std.Io.Dir.deleteFile(dir, io, temp_path) catch {};
+        return bridge_error.BridgeError.NativeCallFailed;
+    };
+}
+
+/// Apply `protectLocationFile`'s two attributes: data protection, and exclusion
+/// from backup. `CraftApp.swift:3304-3311`.
+///
+/// Best effort, and deliberately so — Swift's are both `try?`. A route that
+/// records is better than a route refused because one attribute would not
+/// stick, and the two failures differ in kind: without protection the file is
+/// readable before first unlock, without the backup flag it leaves the device
+/// in an iCloud backup. Both are logged by name so neither is silent.
+///
+/// Off Darwin this does nothing and says nothing: there is no data protection
+/// to apply, and the host tests write their fixtures into the working
+/// directory.
+fn protectFile(path: []const u8) void {
+    if (!is_darwin) return;
+
+    const ns_path = makeNSString(path) orelse {
+        std.log.warn("location recording: could not make an NSString for '{s}'; file attributes not applied", .{path});
+        return;
+    };
+
+    setProtection(ns_path, path);
+    excludeFromBackup(ns_path, path);
+}
+
+/// `NSFileProtectionKey` → `NSFileProtectionCompleteUntilFirstUserAuthentication`.
+///
+/// Both names are `extern NSString * const`, so their values are not in any
+/// header and are read out of whatever loaded Foundation rather than spelled
+/// out here — the same `dlsym` route `bestAccuracy` takes in
+/// `bridge_mobile_location.zig`.
+fn setProtection(ns_path: Id, path: []const u8) void {
+    const key = nsStringConstant("NSFileProtectionKey") orelse {
+        std.log.warn("location recording: NSFileProtectionKey is not in this process; '{s}' is unprotected", .{path});
+        return;
+    };
+    const value = nsStringConstant("NSFileProtectionCompleteUntilFirstUserAuthentication") orelse {
+        std.log.warn("location recording: NSFileProtectionCompleteUntilFirstUserAuthentication is not in this process; '{s}' is unprotected", .{path});
+        return;
+    };
+
+    const NSDictionary = objc.objc_getClass("NSDictionary") orelse return;
+    const sel_dict = objc.sel_registerName("dictionaryWithObject:forKey:") orelse return;
+    const attributes = objc.msgSendId2(NSDictionary, sel_dict, value, key) orelse return;
+
+    const NSFileManager = objc.objc_getClass("NSFileManager") orelse return;
+    const sel_default = objc.sel_registerName("defaultManager") orelse return;
+    const manager = objc.msgSendId(NSFileManager, sel_default) orelse return;
+
+    const sel_set = objc.sel_registerName("setAttributes:ofItemAtPath:error:") orelse return;
+    const SetFn = *const fn (Id, Id, Id, Id, ?*anyopaque) callconv(.c) bool;
+    const set: SetFn = @ptrCast(&objc.objc_msgSend);
+
+    if (!set(manager, sel_set, attributes, ns_path, null)) {
+        std.log.warn("location recording: setAttributes: refused for '{s}'; the file is readable before first unlock", .{path});
+    }
+}
+
+/// `NSURLIsExcludedFromBackupKey` = YES, via `NSURL`.
+fn excludeFromBackup(ns_path: Id, path: []const u8) void {
+    const key = nsStringConstant("NSURLIsExcludedFromBackupKey") orelse {
+        std.log.warn("location recording: NSURLIsExcludedFromBackupKey is not in this process; '{s}' will be backed up", .{path});
+        return;
+    };
+
+    const NSURL = objc.objc_getClass("NSURL") orelse return;
+    const sel_file_url = objc.sel_registerName("fileURLWithPath:") orelse return;
+    const url = objc.msgSendId1(NSURL, sel_file_url, ns_path) orelse return;
+
+    const NSNumber = objc.objc_getClass("NSNumber") orelse return;
+    const sel_with_bool = objc.sel_registerName("numberWithBool:") orelse return;
+    const WithBoolFn = *const fn (Id, Id, bool) callconv(.c) Id;
+    const with_bool: WithBoolFn = @ptrCast(&objc.objc_msgSend);
+    const yes = with_bool(NSNumber, sel_with_bool, true) orelse return;
+
+    const sel_set = objc.sel_registerName("setResourceValue:forKey:error:") orelse return;
+    const SetFn = *const fn (Id, Id, Id, Id, ?*anyopaque) callconv(.c) bool;
+    const set: SetFn = @ptrCast(&objc.objc_msgSend);
+
+    if (!set(url, sel_set, yes, key, null)) {
+        std.log.warn("location recording: setResourceValue: refused for '{s}'; the recording will be included in backups", .{path});
+    }
+}
+
+/// Read an `extern NSString * const` out of the loaded frameworks.
+///
+/// The symbol is the *cell*, not the string: dereference it to get the object.
+fn nsStringConstant(name: [*:0]const u8) ?Id {
+    const symbol = dlsym(RTLD_DEFAULT, name) orelse return null;
+    const cell: *const Id = @ptrCast(@alignCast(symbol));
+    return cell.*;
+}
+
+extern "c" fn dlsym(handle: ?*anyopaque, symbol: [*:0]const u8) ?*anyopaque;
+
+/// dyld's "search every image" pseudo-handle, (void *)-2 on Darwin.
+const RTLD_DEFAULT: ?*anyopaque = @ptrFromInt(@as(usize, @bitCast(@as(isize, -2))));
+
+/// An autoreleased `NSString` for a Zig slice, via `stringWithUTF8String:`.
+fn makeNSString(text: []const u8) ?Id {
+    var buf: [std.fs.max_path_bytes + 1]u8 = undefined;
+    if (text.len >= buf.len) return null;
+    @memcpy(buf[0..text.len], text);
+    buf[text.len] = 0;
+
+    const NSString = objc.objc_getClass("NSString") orelse return null;
+    const sel = objc.sel_registerName("stringWithUTF8String:") orelse return null;
+    return objc.msgSendId1(NSString, sel, @as([*:0]const u8, @ptrCast(&buf)));
+}
+
+// =============================================================================
 // Tests.
 //
 // Everything that decides what the page sees is pure and pinned here: routing
@@ -1181,4 +1660,228 @@ test "with no recording on the host, the handler answers rather than failing" {
     defer bridge.deinit();
 
     try bridge.handleMessage(A.read_location_recording, "{}");
+}
+
+// =============================================================================
+// The on-disk format.
+//
+// The guard in `decodeState` is the one that closes the third of the three
+// blockers #124 lists, so it is pinned from both sides: a stopped recording's
+// leftovers must read back as nothing, and a live one must read back whole.
+// Everything here runs against bytes or against a file this test owns; nothing
+// touches `~/Library/Application Support`.
+// =============================================================================
+
+const test_state_name = "craft-locrecording-test-state.json";
+
+fn writeTestFile(name: []const u8, contents: []const u8) !void {
+    const io = io_context.get();
+    const file = try std.Io.Dir.cwd().createFile(io, name, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(io, contents);
+}
+
+fn removeTestFile(name: []const u8) void {
+    std.Io.Dir.cwd().deleteFile(io_context.get(), name) catch |err| {
+        std.log.debug("locrecording test file cleanup failed: {}", .{err});
+    };
+}
+
+test "a stopped recording's leftovers read back as no recording at all" {
+    // The exact divergence #124's third blocker names. `stopLocationRecording`
+    // sets `active:false` but leaves `id` and `startedAt` in the file, and
+    // Swift's `guard state["active"] as? Bool == true else { return }` means a
+    // relaunch after a stop restores nothing. A reader that handed back the id
+    // would answer `{"id":"ABC-123"}` where Swift answers `{"id":null}`.
+    var state = try decodeState(
+        testing.allocator,
+        \\{"active":false,"paused":false,"id":"ABC-123","startedAt":1756900000000}
+    );
+    defer state.deinit(testing.allocator);
+
+    try testing.expect(!state.active);
+    try testing.expect(!state.paused);
+    try testing.expect(state.id == null);
+    try testing.expect(state.started_at == null);
+}
+
+test "an active recording restores all four fields" {
+    var state = try decodeState(
+        testing.allocator,
+        \\{"active":true,"paused":true,"id":"ABC-123","startedAt":1756900000000}
+    );
+    defer state.deinit(testing.allocator);
+
+    try testing.expect(state.active);
+    try testing.expect(state.paused);
+    try testing.expectEqualStrings("ABC-123", state.id.?);
+    try testing.expectEqual(@as(f64, 1756900000000), state.started_at.?);
+}
+
+test "the active guard is a Bool cast, not a truthiness test" {
+    // `as? Bool` fails for each of these, and every failure lands on the same
+    // `return`. A JSON reader that coerced would restore a recording Swift
+    // does not.
+    const not_bools = [_][]const u8{
+        \\{"active":"true","id":"ABC","startedAt":1}
+        ,
+        \\{"active":1,"id":"ABC","startedAt":1}
+        ,
+        \\{"active":null,"id":"ABC","startedAt":1}
+        ,
+        \\{"paused":false,"id":"ABC","startedAt":1}
+        ,
+        \\["active",true]
+        ,
+        \\not json at all
+        ,
+    };
+
+    for (not_bools) |document| {
+        var state = try decodeState(testing.allocator, document);
+        defer state.deinit(testing.allocator);
+        try testing.expect(!state.active);
+        try testing.expect(state.id == null);
+        try testing.expect(state.started_at == null);
+    }
+}
+
+test "past the guard a wrong type is a default, not a refusal" {
+    // Swift's remaining reads are `as? Bool ?? false`, `as? String` and
+    // `as? TimeInterval`, all of which degrade rather than throw.
+    var state = try decodeState(
+        testing.allocator,
+        \\{"active":true,"paused":"yes","id":42,"startedAt":"soon"}
+    );
+    defer state.deinit(testing.allocator);
+
+    try testing.expect(state.active);
+    try testing.expect(!state.paused);
+    try testing.expect(state.id == null);
+    try testing.expect(state.started_at == null);
+}
+
+test "the encoded state carries the four keys Swift's decoder looks for" {
+    const encoded = try encodeState(testing.allocator, .{
+        .active = true,
+        .paused = false,
+        .id = "ABC-123",
+        .started_at = 1756900000000,
+    });
+    defer testing.allocator.free(encoded);
+
+    try testing.expectEqualStrings(
+        \\{"active":true,"paused":false,"id":"ABC-123","startedAt":1756900000000}
+    , encoded);
+}
+
+test "a recording that has never started encodes its nulls, not empty strings" {
+    const encoded = try encodeState(testing.allocator, .{});
+    defer testing.allocator.free(encoded);
+
+    try testing.expectEqualStrings(
+        \\{"active":false,"paused":false,"id":null,"startedAt":null}
+    , encoded);
+}
+
+test "state survives a round trip through the encoder and the guard" {
+    const encoded = try encodeState(testing.allocator, .{
+        .active = true,
+        .paused = true,
+        .id = "route-9",
+        .started_at = 1756900123456,
+    });
+    defer testing.allocator.free(encoded);
+
+    var state = try decodeState(testing.allocator, encoded);
+    defer state.deinit(testing.allocator);
+
+    try testing.expect(state.active);
+    try testing.expect(state.paused);
+    try testing.expectEqualStrings("route-9", state.id.?);
+    try testing.expectEqual(@as(f64, 1756900123456), state.started_at.?);
+}
+
+test "an id with quotes in it survives rather than tearing the document" {
+    const encoded = try encodeState(testing.allocator, .{
+        .active = true,
+        .id = "a\"b\\c",
+    });
+    defer testing.allocator.free(encoded);
+
+    var state = try decodeState(testing.allocator, encoded);
+    defer state.deinit(testing.allocator);
+
+    try testing.expectEqualStrings("a\"b\\c", state.id.?);
+}
+
+test "a missing state file is no recording, not an error" {
+    removeTestFile(test_state_name);
+
+    var state = try readStateFrom(testing.allocator, test_state_name);
+    defer state.deinit(testing.allocator);
+
+    try testing.expect(!state.active);
+}
+
+test "appended samples land one per line, byte for byte" {
+    removeTestFile(test_track_name);
+    defer removeTestFile(test_track_name);
+
+    // The track has to exist first: `FileHandle(forWritingTo:)` throws when it
+    // does not, and appending would otherwise start a route nobody asked for.
+    try writeTestFile(test_track_name, "");
+
+    try appendSampleTo(testing.allocator, test_track_name, "{\"latitude\":1.5}");
+    try appendSampleTo(testing.allocator, test_track_name, "{\"latitude\":2.5}");
+
+    const text = try readTrackBytes(testing.allocator, test_track_name) orelse
+        return error.TestExpectedTrack;
+    defer testing.allocator.free(text);
+
+    try testing.expectEqualStrings("{\"latitude\":1.5}\n{\"latitude\":2.5}\n", text);
+}
+
+test "appending to a track that is not there loses the sample rather than creating one" {
+    removeTestFile(test_track_name);
+
+    // No recording is running, so there is no route for this fix to join.
+    // Creating the file here would invent one.
+    try testing.expectError(
+        bridge_error.BridgeError.NativeCallFailed,
+        appendSampleTo(testing.allocator, test_track_name, "{\"latitude\":1.5}"),
+    );
+}
+
+test "the sample count agrees with the reader, drop for drop" {
+    removeTestFile(test_track_name);
+    defer removeTestFile(test_track_name);
+
+    // `getLocationRecordingState` reports `loadRecordedLocations().count`, so a
+    // blank line and a non-object have to be uncounted here exactly as they are
+    // unread there — otherwise the page is told it has fixes it cannot read.
+    try writeTestFile(test_track_name,
+        \\{"latitude":1}
+        \\
+        \\[1,2]
+        \\{"latitude":2}
+        \\torn-half-
+    );
+
+    try testing.expectEqual(@as(usize, 2), try countSamplesIn(testing.allocator, test_track_name));
+
+    const text = try readTrackBytes(testing.allocator, test_track_name) orelse
+        return error.TestExpectedTrack;
+    defer testing.allocator.free(text);
+
+    const shaped = try shapeRecording(testing.allocator, text);
+    defer testing.allocator.free(shaped);
+
+    // Two objects in, two objects out: the count is the reader's own answer.
+    try testing.expectEqualStrings("[{\"latitude\":1},{\"latitude\":2}]", shaped);
+}
+
+test "an absent track counts zero rather than refusing" {
+    removeTestFile(test_track_name);
+    try testing.expectEqual(@as(usize, 0), try countSamplesIn(testing.allocator, test_track_name));
 }
