@@ -62,6 +62,16 @@ pub const enc = struct {
     /// `B` is C99 `_Bool`: on 64-bit Apple platforms `__OBJC_BOOL_IS_BOOL` is
     /// defined, so `BOOL` is `bool` rather than `signed char`.
     pub const bool_two_objects: [:0]const u8 = "B@:@@";
+    /// `- (id)m:(id)a` — one object argument, **returning an object**.
+    /// `presentationAnchorForAuthorizationController:` is this shape: it hands
+    /// back the `UIWindow` the sheet is presented over.
+    ///
+    /// The first character is the return type, so this differs from
+    /// `void_one_object` only in that leading `@`. Getting it wrong is not a
+    /// compile error — the runtime would read a window pointer out of a
+    /// function declared to return nothing, and the sheet would come up over
+    /// garbage or not at all.
+    pub const object_one_object: [:0]const u8 = "@@:@";
 };
 
 /// One method to add to a class.
