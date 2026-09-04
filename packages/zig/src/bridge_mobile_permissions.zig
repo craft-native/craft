@@ -65,8 +65,10 @@
 //! those took actions *away* from the shim because the shim's answers were
 //! fabricated or broken; these shim answers are real, and taking them away
 //! would trade working behaviour for a tidier table. The cost is that the
-//! conformance ratchet keeps counting `openSettings` as not-yet-migrated —
-//! which is the truth.
+//! conformance ratchet keeps counting the payload values above — location,
+//! photos, contacts, calendar, reminders — against `requestPermission`, which
+//! is the truth. It no longer applies to `openSettings`: that one is claimed,
+//! and the ratchet counts it as migrated.
 //!
 //! ## What is carried across exactly
 //!
@@ -123,10 +125,12 @@ const Id = ?*anyopaque;
 
 /// The action names, spelled exactly as the Swift `case` labels spell them.
 ///
-/// `openSettings` is deliberately absent — see the module comment. Adding it
-/// here without first giving `ios_async` a boolean-literal reply would ship
-/// the truthy-`"denied"` bug, and the conformance scan would count the action
-/// as migrated while the shim was still the only honest server of it.
+/// All three are claimed. `openSettings` was not, and this comment said so
+/// long after it stopped being true — the module comment above records both
+/// the original objection and why a module-owned global block answered it.
+/// A doc comment that contradicts the `A` block three lines below it is worse
+/// than none: `scheduleNotification` sat with the shim for days after its
+/// blocker was fixed because nobody re-read the note that described it.
 pub const A = struct {
     pub const check_permission = "checkPermission";
     pub const request_permission = "requestPermission";
