@@ -43,6 +43,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_mobile_watch.zig"),
     @embedFile("src/bridge_mobile_location.zig"),
     @embedFile("src/bridge_mobile_locrecording.zig"),
+    @embedFile("src/bridge_mobile_ar.zig"),
     @embedFile("src/bridge_mobile_motion.zig"),
     @embedFile("src/bridge_mobile_imagepicker.zig"),
     @embedFile("src/bridge_mobile_filepicker.zig"),
@@ -121,7 +122,7 @@ const dispatch_end = "func webView(";
 /// and `deliverErrorCode` landed the day after that was written. Worth
 /// re-reading the other deferrals for the same reason before assuming they
 /// still hold.
-const max_not_yet_migrated: usize = 18;
+const max_not_yet_migrated: usize = 13;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -270,11 +271,6 @@ const deliberate_deferrals = [_]Deferral{
     // 51 namespaces, no `mobile`, and neither `ios.zig` nor `ios_dispatch.zig`
     // reads it — so the boundary is recorded here instead, where the tooling
     // that counts unmigrated actions can see it.
-    .{ .action = "startAR", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
-    .{ .action = "stopAR", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
-    .{ .action = "getARPlanes", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
-    .{ .action = "placeARObject", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
-    .{ .action = "removeARObject", .reason = "SceneKit node-graph glue; miserable and low-value through objc_msgSend" },
 
     // StoreKit 2. Narrower than "no ObjC surface": StoreKit *1* is ObjC and
     // `bridge_iap.zig` already drives it from Zig on macOS, so this is a choice
@@ -347,7 +343,7 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 18);
+    try testing.expect(deliberate_deferrals.len >= 13);
 
     // As of this commit the table happens to cover every unmigrated action,
     // but that is not asserted. Pinning the exact count would make migrating a

@@ -454,6 +454,14 @@ pub fn gateFor(action: []const u8) ?Feature {
         // and adding one here would strand a track on disk with no action able
         // to reach it.
         .{ "startLocationRecording", .geolocation },
+        // All five AR actions carry the same `config.enableAR` guard in the
+        // spec (`CraftApp.swift:1210-1249`), unlike the recorder where only
+        // the start is gated.
+        .{ "startAR", .ar },
+        .{ "stopAR", .ar },
+        .{ "placeARObject", .ar },
+        .{ "removeARObject", .ar },
+        .{ "getARPlanes", .ar },
     };
     inline for (table) |entry| {
         if (std.mem.eql(u8, action, entry[0])) return entry[1];
@@ -637,10 +645,12 @@ test "gateFor answers for a served action and stays quiet for the rest" {
     try testing.expectEqual(Feature.camera, gateFor("pickImage").?);
     try testing.expectEqual(Feature.secure_storage, gateFor("secureSet").?);
 
-    // `openURL` is served and ungated in the spec; `startAR` is gated but not
-    // served here, so the shim's own gate applies and this must not answer.
+    // `openURL` is served and ungated in the spec, so this must not answer for
+    // it. `startAR` used to be here for the opposite reason — gated but still on
+    // the shim — and now that Zig serves it, the gate has to come from here.
     try testing.expect(gateFor("openURL") == null);
-    try testing.expect(gateFor("startAR") == null);
+    try testing.expectEqual(Feature.ar, gateFor("startAR").?);
+    try testing.expectEqual(Feature.ar, gateFor("getARPlanes").?);
     try testing.expect(gateFor("") == null);
 }
 

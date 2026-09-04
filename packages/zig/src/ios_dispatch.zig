@@ -27,6 +27,7 @@ const bridge_mobile_bgtasks = @import("bridge_mobile_bgtasks.zig");
 const bridge_mobile_watch = @import("bridge_mobile_watch.zig");
 const bridge_mobile_location = @import("bridge_mobile_location.zig");
 const bridge_mobile_locrecording = @import("bridge_mobile_locrecording.zig");
+const bridge_mobile_ar = @import("bridge_mobile_ar.zig");
 const bridge_mobile_motion = @import("bridge_mobile_motion.zig");
 const bridge_mobile_imagepicker = @import("bridge_mobile_imagepicker.zig");
 const bridge_mobile_filepicker = @import("bridge_mobile_filepicker.zig");
@@ -306,6 +307,7 @@ const mobile_bridges = .{
     bridge_mobile_watch.WatchBridge,
     bridge_mobile_location.LocationBridge,
     bridge_mobile_locrecording.LocationRecordingBridge,
+    bridge_mobile_ar.ARBridge,
     bridge_mobile_motion.MotionBridge,
     bridge_mobile_imagepicker.ImagePickerBridge,
     bridge_mobile_filepicker.FilePickerBridge,
@@ -351,6 +353,7 @@ const mobile_manifests = [_][]const capabilities.ActionDecl{
     &bridge_mobile_watch.capability_actions,
     &bridge_mobile_location.capability_actions,
     &bridge_mobile_locrecording.capability_actions,
+    &bridge_mobile_ar.capability_actions,
     &bridge_mobile_motion.capability_actions,
     &bridge_mobile_imagepicker.capability_actions,
     &bridge_mobile_filepicker.capability_actions,

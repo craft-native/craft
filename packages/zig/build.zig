@@ -374,6 +374,10 @@ pub fn build(b: *std.Build) void {
         ios_module_tests.root_module.linkFramework("CoreGraphics", .{});
         ios_module_tests.root_module.linkFramework("CoreMIDI", .{});
         ios_module_tests.root_module.linkFramework("Security", .{});
+        // SceneKit is on macOS as well as iOS, which is the only reason
+        // `bridge_mobile_ar.zig`'s three struct-ABI tests can run on a host:
+        // ARKit is device-only, SCNNode and SCNBox are not.
+        ios_module_tests.root_module.linkFramework("SceneKit", .{});
         ios_module_tests.root_module.addCSourceFile(.{
             .file = b.path("vendor/sqlite/sqlite3.c"),
             .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
@@ -484,6 +488,9 @@ pub fn build(b: *std.Build) void {
     });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_locrecording.zig", .{
         .root_source_file = b.path("src/bridge_mobile_locrecording.zig"),
+    });
+    ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_ar.zig", .{
+        .root_source_file = b.path("src/bridge_mobile_ar.zig"),
     });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_motion.zig", .{
         .root_source_file = b.path("src/bridge_mobile_motion.zig"),
