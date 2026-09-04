@@ -475,6 +475,28 @@ export fn craft_ios_set_webview(webview: ?*anyopaque) callconv(.c) void {
     setWebView(webview);
 }
 
+/// Take over a location recording that outlived the last launch.
+///
+/// The one thing Zig has to do at launch rather than on a page message, and the
+/// reason it needs an export of its own: SwiftUI builds the coordinator before
+/// it builds the view, so `CraftWebView.Coordinator.init` runs — and
+/// `restoreLocationRecordingState()` with it — before `craft_ios_set_webview`
+/// has been called even once. Whichever runtime restores first owns the
+/// `CLLocationManager` for the rest of the launch.
+///
+/// Swift calls this *instead of* its own restore, inside the same
+/// `config.enableGeolocation` guard, and falls back to
+/// `restoreLocationRecordingState()` only when `dlsym` does not find this
+/// symbol — which is exactly the app that has no Zig recorder to take over.
+///
+/// Returns true when Zig has taken responsibility, so the caller must not also
+/// restore. That is not the same as "a recording was found": an app with no
+/// recording in progress still has a Zig-owned recorder for the next `start`,
+/// and a Swift restore under it would be a second owner of one file.
+export fn craft_ios_adopt_location_recording() callconv(.c) bool {
+    return bridge_mobile_location.adoptRecording();
+}
+
 /// Forget the webview, if it is still the one the caller installed.
 ///
 /// The other half of `craft_ios_set_webview`, and the reason it is needed:

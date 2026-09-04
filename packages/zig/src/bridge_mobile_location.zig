@@ -94,26 +94,26 @@
 //! running. A watch that hits an error has no reply left to reject — its
 //! `true` went out when it started — so the event is the only channel it has.
 //!
-//! **The recording side effect.** Swift's `didUpdateLocations` calls
+//! **The recording side effect, restored.** Swift's `didUpdateLocations` calls
 //! `appendRecordedLocation(data)` for *every* fix, including a one-shot
-//! `requestLocation`, so calling `getCurrentPosition` during an active
-//! recording appends one extra sample to the track that `readLocationRecording`
-//! later returns. This module has its own `CLLocationManager`, so that sample
-//! is no longer added. Arguably the more correct behaviour — a one-shot query
-//! is not part of a route — but it *is* a behaviour change, and a page counting
-//! samples will see one fewer.
+//! `requestLocation`, so a `getCurrentPosition` during an active recording
+//! appends one extra sample to the track. While the recorder was on the shim
+//! and this module had a manager of its own, that sample was no longer added —
+//! a behaviour change a page counting samples could see. The recorder now runs
+//! on this manager, so the one-shot's fix reaches the track again, exactly as
+//! it does in the spec.
 //!
-//! **One `craftLocationUpdate` per manager while a recording is running.** The
-//! six `*LocationRecording` actions stay with the shim
-//! (`bridge_mobile_locrecording.zig` serves only `readLocationRecording`), so a
-//! recording runs Swift's manager and Swift's `didUpdateLocations`, which fires
-//! `craftLocationUpdate` for every fix whenever `isRecordingLocation` is true —
-//! watch or no watch. A page that records *and* watches therefore has two
-//! managers feeding one event name, and its watch callback runs roughly twice
-//! as often as it did under a single shared manager. Every one of those events
-//! carries a real fix; none is fabricated and none is dropped. It is a
-//! duplication, it is visible to a page that counts samples, and it disappears
-//! when the recording actions migrate.
+//! **One `craftLocationUpdate` per fix, again.** A paragraph here used to
+//! record a duplication: the six `*LocationRecording` actions stayed with the
+//! shim, so a recording ran Swift's manager and Swift's `didUpdateLocations`,
+//! which fires `craftLocationUpdate` whenever `isRecordingLocation` is true —
+//! watch or no watch. A page that recorded *and* watched therefore had two
+//! managers feeding one event name and saw roughly two events per fix. It
+//! ended, as that paragraph predicted, when the recording actions migrated:
+//! five of the six now live in this file, on this manager, and the sixth reads
+//! a file. The emit guard below is Swift's own,
+//! `if isWatchingLocation || isRecordingLocation`, and one manager satisfies
+//! it once.
 //!
 //! The converse loss is gone rather than added to: a `getCurrentPosition`
 //! issued while *this* module's watch is running is broadcast to the watch
@@ -285,6 +285,8 @@ const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
 const ios_events = @import("ios_events.zig");
+const locrec = @import("bridge_mobile_locrecording.zig");
+const compat = @import("compat.zig");
 const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
@@ -310,6 +312,11 @@ pub const A = struct {
     pub const get_current_position = "getCurrentPosition";
     pub const watch_position = "watchPosition";
     pub const clear_watch = "clearWatch";
+    pub const start_location_recording = "startLocationRecording";
+    pub const pause_location_recording = "pauseLocationRecording";
+    pub const resume_location_recording = "resumeLocationRecording";
+    pub const stop_location_recording = "stopLocationRecording";
+    pub const get_location_recording_state = "getLocationRecordingState";
 };
 
 /// `.result`: the Swift path terminates in exactly one `resolveCallback` (from
@@ -332,6 +339,21 @@ pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.get_current_position, .reply = .result },
     .{ .name = A.watch_position, .reply = .result },
     .{ .name = A.clear_watch, .reply = .result },
+
+    // The recorder. Every one of the five ends in exactly one `resolveCallback`
+    // or one `rejectCallback`, so `.result` throughout; none of them is
+    // `.unavailable`, because each does the thing rather than refusing it.
+    //
+    // Only `startLocationRecording` is gated in the spec — `ios_config.gateFor`
+    // carries that one entry and not the other four, because `CraftApp.swift`
+    // guards that case alone. Stopping or reading a recording an app already
+    // made is not a geolocation capability, and refusing it would strand a
+    // route on disk with no action able to reach it.
+    .{ .name = A.start_location_recording, .reply = .result },
+    .{ .name = A.pause_location_recording, .reply = .result },
+    .{ .name = A.resume_location_recording, .reply = .result },
+    .{ .name = A.stop_location_recording, .reply = .result },
+    .{ .name = A.get_location_recording_state, .reply = .result },
 };
 
 /// The reply `watchPosition` and `clearWatch` send.
@@ -345,12 +367,26 @@ const true_fragment = "true";
 /// Which handler an action selects, split out from `handleMessage` so the
 /// table-versus-dispatch agreement is assertable on a host without touching
 /// CoreLocation.
-const Route = enum { current_position, watch_position, clear_watch };
+const Route = enum {
+    current_position,
+    watch_position,
+    clear_watch,
+    start_recording,
+    pause_recording,
+    resume_recording,
+    stop_recording,
+    recording_state,
+};
 
 fn routeFor(action: []const u8) ?Route {
     if (std.mem.eql(u8, action, A.get_current_position)) return .current_position;
     if (std.mem.eql(u8, action, A.watch_position)) return .watch_position;
     if (std.mem.eql(u8, action, A.clear_watch)) return .clear_watch;
+    if (std.mem.eql(u8, action, A.start_location_recording)) return .start_recording;
+    if (std.mem.eql(u8, action, A.pause_location_recording)) return .pause_recording;
+    if (std.mem.eql(u8, action, A.resume_location_recording)) return .resume_recording;
+    if (std.mem.eql(u8, action, A.stop_location_recording)) return .stop_recording;
+    if (std.mem.eql(u8, action, A.get_location_recording_state)) return .recording_state;
     return null;
 }
 
@@ -372,6 +408,11 @@ pub const LocationBridge = struct {
             .current_position => self.getCurrentPosition(data),
             .watch_position => self.watchPosition(data),
             .clear_watch => self.clearWatch(data),
+            .start_recording => self.startRecording(data),
+            .pause_recording => self.pauseRecording(data),
+            .resume_recording => self.resumeRecording(data),
+            .stop_recording => self.stopRecording(data),
+            .recording_state => self.recordingState(data),
         };
     }
 
@@ -457,42 +498,16 @@ pub const LocationBridge = struct {
 
         const authorization = try resolveAuthorization();
         const sels = try Sels.resolve();
+        const updates = try UpdateSelectors.resolve(authorization);
         const background = try backgroundLocationDeclared();
         const mgr = try ensureManager();
 
-        const auth_selector_name: [*:0]const u8 = switch (authorization) {
-            .always => "requestAlwaysAuthorization",
-            .when_in_use => "requestWhenInUseAuthorization",
-        };
-        const sel_authorize = try selector(auth_selector_name);
-        const sel_start = try selector("startUpdatingLocation");
-        const sel_responds = try selector("respondsToSelector:");
-        const sel_allows_background = try selector("setAllowsBackgroundLocationUpdates:");
-        const sel_shows_indicator = try selector("setShowsBackgroundLocationIndicator:");
-
         publishWatch(sels);
 
-        objc.msgSend(mgr, sel_authorize);
-
-        if (background) {
-            // `configureBackgroundLocationIfNeeded()`, under the guard that
-            // makes it safe. Both properties take the same value in Swift, and
-            // both are set to it here.
-            if (!setBoolIfSupported(mgr, sel_responds, sel_allows_background, true)) {
-                std.log.warn(
-                    "watchPosition: this CLLocationManager has no " ++
-                        "allowsBackgroundLocationUpdates; the watch will stop when the app " ++
-                        "is backgrounded even though UIBackgroundModes declares location",
-                    .{},
-                );
-            }
-            // Purely the status-bar indicator. A manager without it is an OS too
-            // old for the property, not a broken subscription, so it is not
-            // worth a warning of its own.
-            _ = setBoolIfSupported(mgr, sel_responds, sel_shows_indicator, true);
-        }
-
-        objc.msgSend(mgr, sel_start);
+        // The same lines `startLocationRecording` and `resumeLocationRecording`
+        // run. They share a manager, so they had better share the sequence that
+        // configures it.
+        applyUpdates(mgr, updates, background, .request);
 
         bridge_error.sendResultToJS(self.allocator, A.watch_position, true_fragment);
     }
@@ -558,6 +573,20 @@ pub const LocationBridge = struct {
             return bridge_error.BridgeError.NativeCallFailed;
         };
 
+        // `stopWatchingPosition()` is `isWatchingLocation = false` and then
+        // `if !isRecordingLocation { stopUpdatingLocation(); … }`. Before the
+        // recorder moved here that guard could never fail, because Swift owned
+        // every recording; now it can, and stopping the manager would silently
+        // end a route the page never asked to stop.
+        if (recordingHoldsTheManager()) {
+            std.log.info(
+                "clearWatch: the watch is stopped, but a recording is still using this manager; leaving it updating",
+                .{},
+            );
+            bridge_error.sendResultToJS(self.allocator, A.clear_watch, true_fragment);
+            return;
+        }
+
         objc.msgSend(mgr, sel_stop);
         // Mirrors `stopWatchingPosition()`'s `allowsBackgroundLocationUpdates =
         // false`. Setting it to NO is safe in any process — only YES can raise.
@@ -565,7 +594,514 @@ pub const LocationBridge = struct {
 
         bridge_error.sendResultToJS(self.allocator, A.clear_watch, true_fragment);
     }
+
+    // =========================================================================
+    // The recorder.
+    //
+    // Five actions over one flag and two files. They share the manager with the
+    // watch, which is the whole reason they belong in this file rather than
+    // beside the track reader: `CraftWebView.Coordinator` runs one
+    // `CLLocationManager` for all of `getCurrentPosition`, `watchPosition` and
+    // the recorder, and two managers feeding one event name is the duplication
+    // this migration removes.
+    //
+    // Swift keeps no guard against starting a recording while one is running —
+    // `startLocationRecording` overwrites the track and the id unconditionally
+    // — and neither does this. It is a restart, and the page asked for one.
+    // =========================================================================
+
+    /// Begin a route, replacing whatever the last one left behind.
+    ///
+    /// The order differs from Swift's in one place, deliberately. Swift sets its
+    /// four variables, then calls `persistLocationRecordingState()`, which
+    /// catches its own write failure and prints. Memory and disk can therefore
+    /// disagree from the first sample onward, with the page told the recording
+    /// started. Here the state reaches disk *first*, and a failure refuses the
+    /// start: a recording the page is told is running is one that will still be
+    /// there after a relaunch.
+    fn startRecording(self: *Self, data: []const u8) !void {
+        _ = data;
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        // Everything that can fail, resolved before the track is cleared. A
+        // refusal after `resetTrack` would have destroyed the previous route to
+        // serve a call that then answers an error.
+        const authorization = try resolveAuthorization();
+        const sels = try Sels.resolve();
+        const updates = try UpdateSelectors.resolve(authorization);
+        const background = try backgroundLocationDeclared();
+        const mgr = try ensureManager();
+
+        // `commitRecording` copies it, so this frame owns it either way.
+        const id = try newRecordingId(recording_allocator);
+        defer recording_allocator.free(id);
+
+        const started_at = nowMillis();
+        const next: locrec.State = .{
+            .active = true,
+            .paused = false,
+            .id = id,
+            .started_at = started_at,
+        };
+
+        // `try Data().write(to:…, options:.atomic)`: a fresh, empty track. A
+        // storage failure refuses the start rather than appending this route on
+        // to the last one — `RECORDING_STORAGE_ERROR` in Swift, and the nearest
+        // `BridgeError` here, with the cause logged by the writer.
+        try locrec.resetTrack(self.allocator);
+        try locrec.writeState(self.allocator, next);
+
+        try commitRecording(next, sels);
+        applyUpdates(mgr, updates, background, .request);
+
+        try self.replySummary(A.start_location_recording, .none);
+    }
+
+    /// Stop collecting without ending the route.
+    ///
+    /// `guard isRecordingLocation else { reject("No active location recording") }`.
+    /// Paused is a state of a live recording, so a paused one still answers
+    /// `pause` — Swift's guard is on `isRecordingLocation` alone, not on
+    /// `!isLocationRecordingPaused`, and pausing twice is not an error.
+    fn pauseRecording(self: *Self, data: []const u8) !void {
+        _ = data;
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        var snapshot = try snapshotRecording(self.allocator);
+        defer snapshot.deinit(self.allocator);
+
+        if (!snapshot.active) return noActiveRecording();
+
+        const next: locrec.State = .{
+            .active = true,
+            .paused = true,
+            .id = snapshot.id,
+            .started_at = snapshot.started_at,
+        };
+        try locrec.writeState(self.allocator, next);
+        try commitRecording(next, null);
+
+        // `if !isWatchingLocation { locationManager?.stopUpdatingLocation() }`.
+        // The watch keeps the manager alive when it is the other user of it.
+        stopUpdatesUnlessWatched("pauseLocationRecording", .keep_background);
+
+        try self.replySummary(A.pause_location_recording, .none);
+    }
+
+    /// Collect again on a route that was paused.
+    fn resumeRecording(self: *Self, data: []const u8) !void {
+        _ = data;
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        const authorization = try resolveAuthorization();
+        const sels = try Sels.resolve();
+        const updates = try UpdateSelectors.resolve(authorization);
+        const background = try backgroundLocationDeclared();
+        const mgr = try ensureManager();
+
+        var snapshot = try snapshotRecording(self.allocator);
+        defer snapshot.deinit(self.allocator);
+
+        if (!snapshot.active) return noActiveRecording();
+
+        const next: locrec.State = .{
+            .active = true,
+            .paused = false,
+            .id = snapshot.id,
+            .started_at = snapshot.started_at,
+        };
+        try locrec.writeState(self.allocator, next);
+        try commitRecording(next, sels);
+
+        applyUpdates(mgr, updates, background, .request);
+
+        try self.replySummary(A.resume_location_recording, .none);
+    }
+
+    /// End the route and hand back everything it collected.
+    ///
+    /// No guard: `stopLocationRecording` has none in Swift either, so stopping
+    /// a recording that is not running answers the summary of a stopped
+    /// recording rather than an error. "There is no recording" and "the
+    /// recording is now stopped" are the same state to a caller.
+    ///
+    /// `id` and `startedAt` are deliberately **not** cleared, matching Swift —
+    /// which is why a stop-then-read in one launch still reports them, and a
+    /// relaunch does not.
+    fn stopRecording(self: *Self, data: []const u8) !void {
+        _ = data;
+        if (!is_darwin) return error.UnsupportedPlatform;
+
+        var snapshot = try snapshotRecording(self.allocator);
+        defer snapshot.deinit(self.allocator);
+
+        const next: locrec.State = .{
+            .active = false,
+            .paused = false,
+            .id = snapshot.id,
+            .started_at = snapshot.started_at,
+        };
+        try locrec.writeState(self.allocator, next);
+        try commitRecording(next, null);
+
+        stopUpdatesUnlessWatched("stopLocationRecording", .drop_background);
+
+        try self.replySummary(A.stop_location_recording, .with_locations);
+    }
+
+    /// The summary, plus how many samples are on disk.
+    fn recordingState(self: *Self, data: []const u8) !void {
+        _ = data;
+        try self.replySummary(A.get_location_recording_state, .with_sample_count);
+    }
+
+    /// What the four summary actions reply, in Swift's key order.
+    ///
+    /// `locationRecordingSummary()` is `id`, `active`, `paused`, `startedAt`;
+    /// `stopLocationRecording` adds `locations` and `getLocationRecordingState`
+    /// adds `sampleCount`, and no other action carries either.
+    fn replySummary(self: *Self, comptime action: []const u8, extra: SummaryExtra) !void {
+        var snapshot = try snapshotRecording(self.allocator);
+        defer snapshot.deinit(self.allocator);
+
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(self.allocator);
+
+        try appendSummaryFields(self.allocator, &out, snapshot);
+
+        switch (extra) {
+            .none => {},
+            .with_locations => {
+                const locations = try locrec.readTrackArray(self.allocator);
+                defer self.allocator.free(locations);
+                try out.appendSlice(self.allocator, ",\"locations\":");
+                try out.appendSlice(self.allocator, locations);
+            },
+            .with_sample_count => {
+                const count = try locrec.sampleCount(self.allocator);
+                var buf: [32]u8 = undefined;
+                const rendered = try std.fmt.bufPrint(&buf, "{d}", .{count});
+                try out.appendSlice(self.allocator, ",\"sampleCount\":");
+                try out.appendSlice(self.allocator, rendered);
+            },
+        }
+
+        try out.append(self.allocator, '}');
+
+        bridge_error.sendResultToJS(self.allocator, action, out.items);
+    }
 };
+
+// =============================================================================
+// The recorder's shared machinery: the manager hand-off, the state commit, and
+// the two values Swift takes from Foundation.
+// =============================================================================
+
+/// Re-adopt a recording that outlived the last launch.
+///
+/// `restoreLocationRecordingState()`, moved to the runtime that owns the
+/// recorder. Swift calls this instead of its own restore, and the reason it has
+/// to is an ordering it cannot change: SwiftUI runs `makeCoordinator()` before
+/// `makeUIView`, so `Coordinator.init` — where the restore lives — happens
+/// before `CraftZigRuntime.attach` has told Zig anything at all. Whoever
+/// restores first owns the `CLLocationManager` for the rest of the launch, and
+/// a Zig-owned `stop` cannot stop a recording Swift restored into its own
+/// state. That ordering was the deferral's whole reason (#124); this is the
+/// hook that settles it.
+///
+/// Returns **true when Zig has taken responsibility for the recorder**, which
+/// is whenever this function ran at all — the caller's `dlsym` finding the
+/// symbol is itself the proof. It is deliberately not "a recording was found":
+/// a launch with no recording still leaves Zig owning the next `start`, and a
+/// Swift restore under it would be a second owner of the same file.
+///
+/// Not gated here. The call site is inside Swift's `if config.enableGeolocation`,
+/// exactly where `restoreLocationRecordingState()` was, so the flag is honoured
+/// by placement rather than by a second, drifting copy of the check.
+pub fn adoptRecording() bool {
+    if (!is_darwin) return false;
+
+    const allocator = recording_allocator;
+
+    var state = locrec.readState(allocator) catch |err| {
+        // The state file is the only record of a recording in progress, and
+        // Swift would be reading the same bytes. Reporting ownership anyway is
+        // the honest answer: falling back would not recover the route, it would
+        // just add a second reader of a file neither can parse.
+        std.log.warn(
+            "location recording: could not read the persisted state at launch ({}); no recording is adopted",
+            .{err},
+        );
+        return true;
+    };
+    defer state.deinit(allocator);
+
+    // `guard … state["active"] as? Bool == true else { return }` already
+    // applied by `readState`, so this is Swift's early return.
+    if (!state.active) return true;
+
+    const sels = Sels.resolve() catch |err| {
+        std.log.err("location recording: cannot adopt the recording at launch ({}); its samples will not resume", .{err});
+        return true;
+    };
+
+    commitRecording(state, sels) catch |err| {
+        std.log.err("location recording: cannot take the recording into memory at launch ({})", .{err});
+        return true;
+    };
+
+    // `if !isLocationRecordingPaused { … startUpdatingLocation() }`. A paused
+    // recording is restored into memory and left alone, so `resume` finds it.
+    if (state.paused) return true;
+
+    const authorization = resolveAuthorization() catch |err| {
+        std.log.err("location recording: adopted the recording but cannot resolve authorization ({}); it will not collect until resumed", .{err});
+        return true;
+    };
+    const updates = UpdateSelectors.resolve(authorization) catch |err| {
+        std.log.err("location recording: adopted the recording but cannot resolve its selectors ({})", .{err});
+        return true;
+    };
+    const background = backgroundLocationDeclared() catch false;
+    const mgr = ensureManager() catch |err| {
+        std.log.err("location recording: adopted the recording but cannot build a CLLocationManager ({})", .{err});
+        return true;
+    };
+
+    // `.skip`: Swift's restore does not re-request authorization, and a
+    // permission prompt at launch is not something the page asked for.
+    applyUpdates(mgr, updates, background, .skip);
+    return true;
+}
+
+/// `locationRecordingSummary()`: the four keys, in Swift's order.
+///
+/// Split out from the reply so the shape is pinnable without a
+/// `CLLocationManager` — the keys, their order, and the two that are `NSNull`
+/// on the wire rather than empty strings or zeroes.
+///
+/// Writes the opening brace and the four keys, and **leaves the object open**:
+/// `stopLocationRecording` and `getLocationRecordingState` each add one more
+/// key, and the caller closes it.
+fn appendSummaryFields(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    state: locrec.State,
+) !void {
+    try out.appendSlice(allocator, "{\"id\":");
+    if (state.id) |id| {
+        // `appendJsonEscaped` writes no delimiters; the quotes are the caller's.
+        try out.append(allocator, '"');
+        try bridge_error.appendJsonEscaped(allocator, out, id);
+        try out.append(allocator, '"');
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, ",\"active\":");
+    try out.appendSlice(allocator, if (state.active) "true" else "false");
+    try out.appendSlice(allocator, ",\"paused\":");
+    try out.appendSlice(allocator, if (state.paused) "true" else "false");
+    try out.appendSlice(allocator, ",\"startedAt\":");
+    if (state.started_at) |started| {
+        const rendered = try std.fmt.allocPrint(allocator, "{d}", .{started});
+        defer allocator.free(rendered);
+        try out.appendSlice(allocator, rendered);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+}
+
+/// What a summary reply carries beyond the four common keys.
+const SummaryExtra = enum { none, with_locations, with_sample_count };
+
+/// The selectors `startUpdatingLocation` needs, plus the authorization request
+/// that precedes it.
+///
+/// Resolved as a set before any state changes, so the sequence that actually
+/// turns GPS on cannot fail halfway. `watchPosition` and the two recorder
+/// actions that start collecting all run the same four lines; keeping one copy
+/// is how they stay the same four lines.
+const UpdateSelectors = struct {
+    authorize: Id,
+    start: Id,
+    responds: Id,
+    allows_background: Id,
+    shows_indicator: Id,
+
+    fn resolve(authorization: Authorization) !UpdateSelectors {
+        const auth_selector_name: [*:0]const u8 = switch (authorization) {
+            .always => "requestAlwaysAuthorization",
+            .when_in_use => "requestWhenInUseAuthorization",
+        };
+        return .{
+            .authorize = try selector(auth_selector_name),
+            .start = try selector("startUpdatingLocation"),
+            .responds = try selector("respondsToSelector:"),
+            .allows_background = try selector("setAllowsBackgroundLocationUpdates:"),
+            .shows_indicator = try selector("setShowsBackgroundLocationIndicator:"),
+        };
+    }
+};
+
+/// Request authorization, configure background updates, and start the stream.
+///
+/// Infallible by construction: every selector was resolved by
+/// `UpdateSelectors.resolve` while an error was still deliverable.
+/// Whether the authorization prompt is part of the sequence.
+///
+/// Every page-initiated start requests it; `restoreLocationRecordingState` does
+/// not, because a recording being re-adopted was authorized when it started and
+/// a prompt at launch would be one the page never asked for.
+const Authorize = enum { request, skip };
+
+fn applyUpdates(mgr: *anyopaque, sels: UpdateSelectors, background: bool, authorize: Authorize) void {
+    if (authorize == .request) objc.msgSend(mgr, sels.authorize);
+
+    if (background) {
+        // `configureBackgroundLocationIfNeeded()`, under the guard that makes
+        // it safe. Both properties take the same value in Swift, and both are
+        // set to it here.
+        if (!setBoolIfSupported(mgr, sels.responds, sels.allows_background, true)) {
+            std.log.warn(
+                "location: this CLLocationManager has no allowsBackgroundLocationUpdates; " ++
+                    "updates will stop when the app is backgrounded even though UIBackgroundModes declares location",
+                .{},
+            );
+        }
+        // Purely the status-bar indicator. A manager without it is an OS too
+        // old for the property, not a broken subscription, so it is not worth a
+        // warning of its own.
+        _ = setBoolIfSupported(mgr, sels.responds, sels.shows_indicator, true);
+    }
+
+    objc.msgSend(mgr, sels.start);
+}
+
+/// Whether `stopUpdatingLocation` also clears `allowsBackgroundLocationUpdates`.
+///
+/// `pauseLocationRecording` stops the stream and leaves the property alone;
+/// `stopLocationRecording` and `stopWatchingPosition` clear it. Swift makes the
+/// same distinction, and it matters: a pause that dropped the property would
+/// need the app to be foregrounded to resume.
+const BackgroundOnStop = enum { keep_background, drop_background };
+
+/// Stop the shared manager, unless the watch is still using it.
+///
+/// The recorder's half of the arbitration `clearWatch` does in the other
+/// direction. Swift writes it as `if !isWatchingLocation { … }` in both
+/// `pauseLocationRecording` and `stopLocationRecording`.
+fn stopUpdatesUnlessWatched(comptime who: []const u8, mode: BackgroundOnStop) void {
+    if (!is_darwin) return;
+
+    if (watchHoldsTheManager()) {
+        std.log.info(
+            who ++ ": a watch is still using this manager; leaving it updating",
+            .{},
+        );
+        return;
+    }
+
+    const mgr = manager orelse return;
+
+    const sel_stop = selector("stopUpdatingLocation") catch return;
+    objc.msgSend(mgr, sel_stop);
+
+    if (mode == .drop_background) {
+        const sel_responds = selector("respondsToSelector:") catch return;
+        const sel_allows_background = selector("setAllowsBackgroundLocationUpdates:") catch return;
+        // Setting it to NO is safe in any process — only YES can raise.
+        _ = setBoolIfSupported(mgr, sel_responds, sel_allows_background, false);
+    }
+}
+
+/// Replace the recorder's state and its subscription in one lock.
+///
+/// `next.id` is **copied**, not adopted: callers hold their own snapshot for
+/// the reply, and an ownership hand-off across a mutex is the kind of detail
+/// that reads fine and frees twice.
+///
+/// The subscription follows the state rather than being set separately —
+/// collecting is exactly `active and !paused`, which is
+/// `appendRecordedLocation`'s guard — so there is no arrangement of these two
+/// variables in which the track and the summary disagree.
+fn commitRecording(next: locrec.State, sels: ?Sels) !void {
+    const collecting = next.active and !next.paused;
+    std.debug.assert(!collecting or sels != null);
+
+    const copy: ?[]const u8 = if (next.id) |id| try recording_allocator.dupe(u8, id) else null;
+    errdefer if (copy) |c| recording_allocator.free(c);
+
+    state_mutex.lock();
+    defer state_mutex.unlock();
+
+    if (recording.id) |old| recording_allocator.free(old);
+    recording = .{
+        .active = next.active,
+        .paused = next.paused,
+        .id = copy,
+        .started_at = next.started_at,
+    };
+    recording_sels = if (collecting) sels else null;
+}
+
+/// A copy of the recorder's state that outlives the lock.
+fn snapshotRecording(allocator: std.mem.Allocator) !locrec.State {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+
+    return .{
+        .active = recording.active,
+        .paused = recording.paused,
+        .id = if (recording.id) |id| try allocator.dupe(u8, id) else null,
+        .started_at = recording.started_at,
+    };
+}
+
+/// `rejectCallback(callbackId, error: "No active location recording", code: "NO_ACTIVE_RECORDING")`.
+///
+/// The text and the code are both lost on the way through `BridgeError`, which
+/// carries an enum rather than a free-text channel — the same trade
+/// `bridge_mobile_misc.zig` and `bridge_mobile_watch.zig` document.
+/// `InvalidParameter` is the migration notes' designated stand-in, so the page
+/// gets `INVALID_PARAMETER` where Swift sent `NO_ACTIVE_RECORDING`. The
+/// rejection itself, which is the part a promise needs, is not lost.
+fn noActiveRecording() bridge_error.BridgeError {
+    std.log.warn(
+        "location recording: no active recording to pause or resume; rejecting, as Swift's NO_ACTIVE_RECORDING does",
+        .{},
+    );
+    return bridge_error.BridgeError.InvalidParameter;
+}
+
+/// `UUID().uuidString`, through `NSUUID` rather than a hand-rolled generator.
+///
+/// The id is opaque to the page — it is compared, not parsed — so what matters
+/// is that it is unique and that it comes from the same source Swift's does.
+/// Caller owns the result.
+fn newRecordingId(allocator: std.mem.Allocator) ![]u8 {
+    if (!is_darwin) return error.UnsupportedPlatform;
+
+    const NSUUID = objc.objc_getClass("NSUUID") orelse return error.ClassNotFound;
+    const sel_uuid = try selector("UUID");
+    const uuid = objc.msgSendId(NSUUID, sel_uuid) orelse return error.NativeCallFailed;
+
+    const text = readNSString(uuid, "UUIDString") orelse return error.NativeCallFailed;
+    return allocator.dupe(u8, text);
+}
+
+/// `Date().timeIntervalSince1970 * 1000`.
+///
+/// Milliseconds since the epoch as an `f64`, which is what the page compares
+/// against its own `Date.now()`. The wall clock, not the monotonic one, for the
+/// same reason Swift's is: it is a timestamp, not a duration.
+///
+/// `compat.milliTimestamp` rather than `std.time.milliTimestamp`, which 0.17
+/// removed — `bridge_mobile_biometric.zig` takes the same route. Swift's value
+/// carries sub-millisecond precision that this drops; the page compares it
+/// against `Date.now()`, whose resolution is coarser still.
+fn nowMillis() f64 {
+    return @floatFromInt(compat.milliTimestamp());
+}
 
 /// The answer for a full block pool, copied from `bridge_mobile_permissions`:
 /// `BridgeError` has no "Busy", INVALID_PARAMETER is the migration notes'
@@ -1116,6 +1652,32 @@ var watch_sels: ?Sels = null;
 /// not a guard.
 var state_mutex: compat_mutex.Mutex = .{};
 
+/// The recorder's four fields, kept where Swift keeps them.
+///
+/// `CraftWebView.Coordinator` holds `isRecordingLocation`,
+/// `isLocationRecordingPaused`, `locationRecordingId` and
+/// `locationRecordingStartedAt` in memory and mirrors them to disk on every
+/// transition; the file is read back only at launch. Answering
+/// `getLocationRecordingState` from memory rather than from the file is what
+/// makes a stop-then-read in one launch report the stopped recording's id,
+/// where a relaunch reports null — the divergence #124 records, reproduced here
+/// by keeping Swift's arrangement instead of improving on it.
+///
+/// `id` is owned, allocated from `std.heap.c_allocator`, and freed whenever it
+/// is replaced.
+var recording: locrec.State = .{};
+
+/// Non-null exactly while fixes belong in the track: active, and not paused.
+///
+/// The same shape `watch_sels` uses — the presence of the selectors *is* the
+/// subscription — so `didUpdateLocations` asks one question to learn both
+/// whether to append and which names to shape with.
+var recording_sels: ?Sels = null;
+
+/// The allocator behind `recording.id`. Module-level state outlives every
+/// dispatch frame, so it cannot borrow a bridge's allocator.
+const recording_allocator = std.heap.c_allocator;
+
 /// Record the call the delegate will answer, returning whatever it displaced so
 /// the caller can reject that one rather than drop it.
 fn publishPendingFix(ticket: ios_async.Ticket, sels: Sels) ?PendingFix {
@@ -1152,6 +1714,11 @@ const DelegateWork = struct {
     /// until `clearWatch` stops it. Clearing it here would deliver one event
     /// and then go silent with the page's callback still registered.
     watch: ?Sels,
+    /// Read and not cleared, for the same reason: a recording takes every fix
+    /// until it is paused or stopped. Null while paused, which is how
+    /// `appendRecordedLocation`'s `guard isRecordingLocation && !isLocationRecordingPaused`
+    /// is spelled here.
+    recording: ?Sels,
 };
 
 fn takeDelegateWork() DelegateWork {
@@ -1159,7 +1726,26 @@ fn takeDelegateWork() DelegateWork {
     defer state_mutex.unlock();
     const call = pending_fix;
     pending_fix = null;
-    return .{ .pending = call, .watch = watch_sels };
+    return .{ .pending = call, .watch = watch_sels, .recording = recording_sels };
+}
+
+/// Whether a recording is collecting right now.
+///
+/// `stopWatchingPosition`'s `if !isRecordingLocation` guard, which is the reason
+/// `clearWatch` cannot simply stop the manager any more: the recorder and the
+/// watch share one `CLLocationManager`, so whichever stops second is the one
+/// that stops it.
+fn recordingHoldsTheManager() bool {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    return recording_sels != null;
+}
+
+/// Whether a watch is running, for the recorder's half of the same guard.
+fn watchHoldsTheManager() bool {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    return watch_sels != null;
 }
 
 /// What `clearWatch` is stopping.
@@ -1219,9 +1805,11 @@ fn didUpdateLocations(_: Id, _: Id, _: Id, locations: Id) callconv(.c) void {
     const sels = blk: {
         if (work.pending) |call| break :blk call.sels;
         if (work.watch) |watching| break :blk watching;
+        if (work.recording) |collecting| break :blk collecting;
         // A fix for a call already answered, or one that arrived after the
-        // watch stopped. Nothing to reply to and nobody subscribed.
-        std.log.info("location: a fix arrived with no call waiting and no watch running; ignored", .{});
+        // watch stopped. Nothing to reply to, nobody subscribed, and no
+        // recording to write it to.
+        std.log.info("location: a fix arrived with no call waiting, no watch running and no recording; ignored", .{});
         return;
     };
 
@@ -1246,7 +1834,25 @@ fn didUpdateLocations(_: Id, _: Id, _: Id, locations: Id) callconv(.c) void {
     // to both. A page reading `e.detail.accuracy` and a page reading
     // `position.accuracy` are reading the same eight keys.
     if (work.pending) |call| ios_async.deliverJson(call.ticket, json);
-    if (work.watch != null) ios_events.emit(.location_update, json);
+
+    // Swift's order: `resolveCallback`, then `appendRecordedLocation(data)`,
+    // then the event. The track gets the same bytes the event carries, because
+    // Swift hands one dictionary to both — so a sample read back later is
+    // exactly the fix the page saw live.
+    //
+    // A failed append is logged inside and dropped here, which is
+    // `appendRecordedLocation`'s own `catch { print(…) }`. One lost sample must
+    // not cost the watch its event or the caller its reply.
+    if (work.recording != null) {
+        locrec.appendSample(allocator, json) catch {};
+    }
+
+    // `if isWatchingLocation || isRecordingLocation`, exactly. This is the
+    // guard that made a recording emit `craftLocationUpdate` even with no watch
+    // running — and, while the recorder lived in Swift and the watch lived
+    // here, the guard that fired *twice* for a page doing both. One manager
+    // again, one event per fix.
+    if (work.watch != null or work.recording != null) ios_events.emit(.location_update, json);
 }
 
 fn didFailWithError(_: Id, _: Id, _: Id, err_object: Id) callconv(.c) void {
@@ -1427,10 +2033,15 @@ fn readNSInteger(object: Id, comptime name: [*:0]const u8) c_long {
 const testing = std.testing;
 
 test "the declared actions are the ones the handler serves" {
-    try testing.expectEqual(@as(usize, 3), capability_actions.len);
+    try testing.expectEqual(@as(usize, 8), capability_actions.len);
     try testing.expectEqualStrings(A.get_current_position, capability_actions[0].name);
     try testing.expectEqualStrings(A.watch_position, capability_actions[1].name);
     try testing.expectEqualStrings(A.clear_watch, capability_actions[2].name);
+    try testing.expectEqualStrings(A.start_location_recording, capability_actions[3].name);
+    try testing.expectEqualStrings(A.pause_location_recording, capability_actions[4].name);
+    try testing.expectEqualStrings(A.resume_location_recording, capability_actions[5].name);
+    try testing.expectEqualStrings(A.stop_location_recording, capability_actions[6].name);
+    try testing.expectEqualStrings(A.get_location_recording_state, capability_actions[7].name);
 
     for (capability_actions) |decl| {
         // A `.result` whose handler never replies parks the caller on an untimed
@@ -1438,7 +2049,8 @@ test "the declared actions are the ones the handler serves" {
         // nothing. Both failure modes are invisible from the page. Swift
         // resolves all three of these, so all three are `.result` — including
         // `watchPosition`, whose `true` is about the subscribe having started,
-        // not about a fix having arrived.
+        // not about a fix having arrived, and the five recorder actions, each
+        // of which ends in exactly one `resolveCallback` or `rejectCallback`.
         try testing.expectEqual(capabilities.Reply.result, decl.reply);
         try testing.expectEqual(capabilities.ActionStatus.live, decl.status);
         // `.live` with a reason would be a contradiction the manifest shows to apps.
@@ -1561,15 +2173,12 @@ test "an action the namespace does not serve is reported, not ignored" {
         bridge_error.BridgeError.UnknownAction,
         bridge.handleMessage("getcurrentposition", "{}"),
     );
-    // The neighbouring recording actions belong to another module; two modules
-    // answering one action would make `ios_dispatch`'s first-match routing
-    // order-dependent.
+    // `readLocationRecording` is the one recording action that stays with
+    // `bridge_mobile_locrecording.zig`: it reads the track and touches neither
+    // the manager nor the lifecycle. Two modules answering one action would
+    // make `ios_dispatch`'s first-match routing order-dependent, so the split
+    // is asserted from this side as well as that one.
     for ([_][]const u8{
-        "startLocationRecording",
-        "pauseLocationRecording",
-        "resumeLocationRecording",
-        "stopLocationRecording",
-        "getLocationRecordingState",
         "readLocationRecording",
     }) |action| {
         try testing.expectError(
@@ -2265,4 +2874,139 @@ test "the delegate class registers under its own name, idempotently" {
     const sel_auth = objc.sel_registerName("locationManagerDidChangeAuthorization:") orelse
         return error.SelectorNotFound;
     try testing.expect(!responds(first, sel_responds, sel_auth));
+}
+
+// =============================================================================
+// The recorder.
+//
+// Two claims are worth pinning without a CLLocationManager: the summary's
+// shape, which is what every one of the five replies with, and the arbitration
+// between the watch and the recorder, which is the pair of guards that stop one
+// from ending the other's stream.
+// =============================================================================
+
+/// Leave the module-level recorder state as the tests found it.
+///
+/// These tests mutate process-wide state that the delegate also reads, so each
+/// one puts it back — an escaped `active` recording would make a later test's
+/// `didUpdateLocations` try to append to a track that is not there.
+fn resetRecordingForTest() void {
+    commitRecording(.{}, null) catch {};
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    watch_sels = null;
+}
+
+test "the summary is the four keys in Swift's order" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    try appendSummaryFields(testing.allocator, &out, .{
+        .active = true,
+        .paused = false,
+        .id = "ABC-123",
+        .started_at = 1756900000000,
+    });
+
+    // No closing brace: `stopLocationRecording` and `getLocationRecordingState`
+    // add a fifth key after these four, so the caller closes the object.
+    try testing.expectEqualStrings(
+        \\{"id":"ABC-123","active":true,"paused":false,"startedAt":1756900000000
+    , out.items);
+}
+
+test "a recording that never started reports nulls, not empty strings or zeroes" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    // `locationRecordingSummary()` puts `NSNull` in both slots, and
+    // `resolveCallback` serialises that as `null`. A page testing
+    // `state.id === null` has to keep working.
+    try appendSummaryFields(testing.allocator, &out, .{});
+
+    try testing.expectEqualStrings(
+        \\{"id":null,"active":false,"paused":false,"startedAt":null
+    , out.items);
+}
+
+test "the subscription follows the state, so the track and the summary cannot disagree" {
+    defer resetRecordingForTest();
+
+    // Collecting is exactly `active and !paused` — `appendRecordedLocation`'s
+    // own guard — and `recording_sels` is how `didUpdateLocations` reads it.
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+
+    try commitRecording(.{ .active = true, .paused = false, .id = "r1" }, sels);
+    try testing.expect(recordingHoldsTheManager());
+
+    try commitRecording(.{ .active = true, .paused = true, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+
+    try commitRecording(.{ .active = false, .paused = false, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+}
+
+test "a stop keeps the id and startedAt, which is why a relaunch differs from a stop" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+    try commitRecording(.{ .active = true, .id = "r1", .started_at = 42 }, sels);
+
+    // `stopLocationRecording` clears neither, so a read in the same launch
+    // still reports them. Only a relaunch — where `readState`'s guard runs —
+    // answers null. The two halves of #124's third blocker, from this side.
+    try commitRecording(.{ .active = false, .id = "r1", .started_at = 42 }, null);
+
+    var snapshot = try snapshotRecording(testing.allocator);
+    defer snapshot.deinit(testing.allocator);
+
+    try testing.expect(!snapshot.active);
+    try testing.expectEqualStrings("r1", snapshot.id.?);
+    try testing.expectEqual(@as(f64, 42), snapshot.started_at.?);
+}
+
+test "the watch and the recorder each hold the shared manager against the other" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+
+    // `stopWatchingPosition`'s `if !isRecordingLocation`, and its mirror in
+    // `pauseLocationRecording` / `stopLocationRecording`. Before the recorder
+    // moved here neither guard could fail, because the two runtimes owned
+    // different managers; now one manager serves both and whichever finishes
+    // second must not end the other's stream.
+    try testing.expect(!recordingHoldsTheManager());
+    try testing.expect(!watchHoldsTheManager());
+
+    try commitRecording(.{ .active = true, .id = "r1" }, sels);
+    publishWatch(sels);
+    try testing.expect(recordingHoldsTheManager());
+    try testing.expect(watchHoldsTheManager());
+
+    // The watch stops: the recorder is still collecting, so the manager stays.
+    _ = takeWatchAndPending();
+    try testing.expect(!watchHoldsTheManager());
+    try testing.expect(recordingHoldsTheManager());
+
+    // And the recorder stops last, with nothing left holding it.
+    try commitRecording(.{ .active = false, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+}
+
+test "a paused recording is not a consumer, so its fixes are not written" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+    try commitRecording(.{ .active = true, .paused = true, .id = "r1" }, null);
+
+    // `didUpdateLocations` reads one thing to decide both whether to append and
+    // which names to shape with. A paused recording must not appear in it.
+    const work = takeDelegateWork();
+    try testing.expect(work.recording == null);
+    try testing.expect(work.watch == null);
+    try testing.expect(work.pending == null);
+
+    // And resuming puts it back.
+    try commitRecording(.{ .active = true, .paused = false, .id = "r1" }, sels);
+    try testing.expect(takeDelegateWork().recording != null);
 }

@@ -121,7 +121,7 @@ const dispatch_end = "func webView(";
 /// and `deliverErrorCode` landed the day after that was written. Worth
 /// re-reading the other deferrals for the same reason before assuming they
 /// still hold.
-const max_not_yet_migrated: usize = 23;
+const max_not_yet_migrated: usize = 18;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
@@ -305,15 +305,6 @@ const deliberate_deferrals = [_]Deferral{
     // name the spec is free to change.
     .{ .action = "registerPush", .reason = "the device token lands on a SwiftUI-owned app delegate; Zig could only observe a notification Swift posts" },
 
-    // The recorder is a CLLocationManager plus two files that
-    // `CraftWebView.Coordinator.init` re-adopts at launch, so a Zig-owned stop
-    // cannot stop a recording Swift has already restored into its own state.
-    .{ .action = "startLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
-    .{ .action = "stopLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
-    .{ .action = "pauseLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
-    .{ .action = "resumeLocationRecording", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
-    .{ .action = "getLocationRecordingState", .reason = "Coordinator.init re-adopts recordings at launch; Zig cannot stop what Swift restored" },
-
     // VisionKit's `DataScannerViewController` is Swift-only: the framework's
     // Objective-C headers carry DocumentCamera and nothing else, and the
     // delegate callback takes a `RecognizedItem`, a Swift enum with associated
@@ -356,7 +347,7 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 23);
+    try testing.expect(deliberate_deferrals.len >= 18);
 
     // As of this commit the table happens to cover every unmigrated action,
     // but that is not asserted. Pinning the exact count would make migrating a
