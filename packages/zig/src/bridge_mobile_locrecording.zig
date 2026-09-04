@@ -852,6 +852,24 @@ fn appendSampleTo(allocator: std.mem.Allocator, path: []const u8, sample_json: [
     };
 }
 
+/// Every sample as the bare JSON array `readLocationRecording` resolves.
+///
+/// `stopLocationRecording` puts this same array under a `locations` key
+/// (`CraftApp.swift:3264-3267`), so the two actions cannot disagree about which
+/// lines survive: they call the same reader.
+///
+/// Caller owns the result. A missing track is `[]`.
+pub fn readTrackArray(allocator: std.mem.Allocator) ![]u8 {
+    const path = try trackFilePath(allocator);
+    defer allocator.free(path);
+
+    const text = try readTrackBytes(allocator, path) orelse
+        return allocator.dupe(u8, empty_array);
+    defer allocator.free(text);
+
+    return shapeRecording(allocator, text);
+}
+
 /// How many samples `readLocationRecording` would return.
 ///
 /// `getLocationRecordingState` reports `loadRecordedLocations().count`

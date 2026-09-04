@@ -448,6 +448,12 @@ pub fn gateFor(action: []const u8) ?Feature {
         .{ "takeScreenshot", .screen_capture },
         .{ "unlockOrientation", .orientation_lock },
         .{ "watchPosition", .geolocation },
+        // Only `startLocationRecording` of the six recording actions is gated
+        // in the spec (`CraftApp.swift:694-699`). Pausing, resuming, stopping
+        // and reading a route the app already recorded carry no guard there,
+        // and adding one here would strand a track on disk with no action able
+        // to reach it.
+        .{ "startLocationRecording", .geolocation },
     };
     inline for (table) |entry| {
         if (std.mem.eql(u8, action, entry[0])) return entry[1];
