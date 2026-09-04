@@ -41,6 +41,7 @@ const bridge_mobile_bluetooth = @import("bridge_mobile_bluetooth.zig");
 const bridge_mobile_audiorec = @import("bridge_mobile_audiorec.zig");
 const bridge_mobile_health = @import("bridge_mobile_health.zig");
 const bridge_mobile_speech = @import("bridge_mobile_speech.zig");
+const bridge_mobile_nfc = @import("bridge_mobile_nfc.zig");
 
 const objc = objc_runtime.objc;
 
@@ -318,6 +319,7 @@ const mobile_bridges = .{
     bridge_mobile_audiorec.AudioRecordingBridge,
     bridge_mobile_health.HealthBridge,
     bridge_mobile_speech.SpeechBridge,
+    bridge_mobile_nfc.NfcBridge,
 };
 
 /// The same modules again, as their capability manifests.
@@ -361,6 +363,7 @@ const mobile_manifests = [_][]const capabilities.ActionDecl{
     &bridge_mobile_audiorec.capability_actions,
     &bridge_mobile_health.capability_actions,
     &bridge_mobile_speech.capability_actions,
+    &bridge_mobile_nfc.capability_actions,
 };
 
 comptime {
