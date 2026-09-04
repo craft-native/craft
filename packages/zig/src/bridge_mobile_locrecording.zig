@@ -1,16 +1,15 @@
-//! The one location-recording action of the `mobile` namespace that Zig can
-//! serve honestly: `readLocationRecording`.
+//! The on-disk half of a location recording: the track, the state mirror, and
+//! the one action that only reads them — `readLocationRecording`.
 //!
-//! `startLocationRecording`, `pauseLocationRecording`, `resumeLocationRecording`,
-//! `stopLocationRecording` and `getLocationRecordingState` are deliberately
-//! **absent** from the `A` block — not `.unavailable`, absent — so
-//! `ios_dispatch`'s first-match chain falls through to the Swift shim that
-//! serves all five correctly today. The last two sections give the full
-//! argument; the short version is that the recorder is not a CLLocationManager
-//! plus a buffer, it is a CLLocationManager plus two files that
-//! `CraftWebView.Coordinator.init` re-adopts on every launch, and a Zig-owned
-//! `stop` cannot stop a recording Swift has already restored into its own
-//! process state.
+//! The other five live in `bridge_mobile_location.zig`, with the
+//! `CLLocationManager` they share. That split follows the spec rather than
+//! cutting across it: in `CraftWebView.Coordinator` a recording is not a device
+//! of its own, it is a flag on the one delegate plus these two files, and the
+//! flag belongs next to the delegate while the files belong here.
+//!
+//! This module keeps no manager, registers no Objective-C class and emits on no
+//! channel. It does now *write*, which it did not when it only read the track,
+//! so the format is stated once here and used from both sides.
 //!
 //! One JS surface reaches these six, `CraftApp.swift:2379-2384`:
 //!
@@ -127,86 +126,61 @@
 //!    recording, and the alternative — a track silently cut off at 32 MiB and
 //!    reported as the whole one — is the failure this module exists to avoid.
 //!
-//! ## Why the other five are absent rather than `.unavailable`
+//! ## What it took to move the other five, and what had gone stale
 //!
-//! `CraftWebView.makeCoordinator()` builds the `Coordinator` specifically so
-//! the shim has a host (`CraftSwiftShim.coordinator = coordinator`,
-//! `CraftApp.swift:371`), and `Coordinator.init` calls
-//! `restoreLocationRecordingState()` at line 447 whenever
-//! `config.enableGeolocation`. **That happens on every launch no matter who
-//! serves these actions.** So:
+//! This section used to argue that the five could not move. Two of its three
+//! blockers had already been removed by other work and nothing re-checked them;
+//! the audit is #124, and the short version is worth keeping because the shape
+//! of the mistake is more useful than the conclusion was.
 //!
-//!  - A Zig `start` must persist `{"active":true,…}` or the recording dies at
-//!    app termination while Swift's survives. Having persisted it, the next
-//!    launch has Swift restore it: its own `isRecordingLocation = true`, its
-//!    own manager, its own `startUpdatingLocation()`, appending to the same
-//!    `.jsonl`.
-//!  - A later Zig `stop` can flip the file to `active:false` and stop *Zig's*
-//!    manager. It cannot clear Swift's in-memory `isRecordingLocation` or stop
-//!    Swift's manager: `CraftSwiftShim.coordinator` is a Swift `static weak
-//!    var` with no `@objc` surface, and `ios_dispatch.route` only reaches the
-//!    shim for actions **no** module claims. The page's promise resolves
-//!    `active:false` while GPS keeps running and keeps writing fixes to disk —
-//!    fabricated success on a location-privacy operation, invisible from Zig.
-//!  - Refusing to persist `active:true` avoids the hijack and silently loses
-//!    the recording on termination instead, which is the exact failure the
-//!    feature exists to prevent.
+//!  - **"`enableGeolocation` has no mirror anywhere in `packages/zig/src`."**
+//!    True when written. `ios_config.zig` now reads the same
+//!    `craft.config.json` Swift decodes and exposes that flag, and its own
+//!    header names this note as one of the two it closes. Only
+//!    `startLocationRecording` is gated in the spec, so it is the only one of
+//!    the five in `ios_config.gateFor`.
+//!  - **"It needs an event channel that does not exist."** The paragraph
+//!    checked `capabilities.Channel`, where `.location_update` really is
+//!    `"craft:location:update"` and really is listened for by nothing on iOS.
+//!    But the iOS event path is `ios_events.Event`, whose `.location_update`
+//!    is `"craftLocationUpdate"` — the name the recorder needs — and
+//!    `bridge_mobile_location.zig` was already emitting on it for
+//!    `watchPosition`, one module away.
+//!  - **"`getLocationRecordingState` answers from memory, and a file-reading
+//!    Zig would diverge."** This one was correct, and it is the reason
+//!    `decodeState` exists in the shape it does. Swift's restore guard,
+//!    `state["active"] as? Bool == true`, means a *stopped* recording — whose
+//!    file still carries the old `id` and `startedAt` — restores as nothing at
+//!    all. Ported literally, so a stop-then-read in one launch still reports
+//!    the id and a relaunch still reports null.
 //!
-//! `getLocationRecordingState` has a second, independent blocker: Swift answers
-//! it from **memory**, and `restoreLocationRecordingState`'s
-//! `guard state["active"] as? Bool == true else { return }` leaves
-//! `locationRecordingId`/`startedAt` nil after any relaunch that follows a
-//! stop, while the state file still holds the stopped recording's `id` and
-//! `startedAt`. A file-reading Zig would answer `{"id":"ABC-…","startedAt":169…}`
-//! where Swift answers `{"id":null,"startedAt":null}` — a guaranteed,
-//! reproducible divergence, made worse by `persistLocationRecordingState`
-//! swallowing its own write failures so memory and file can drift with nothing
-//! to signal it.
-//!
-//! And `startLocationRecording` is the only one of the six behind
-//! `config.enableGeolocation` (`CraftApp.swift:635-640`), a flag with no mirror
-//! anywhere in `packages/zig/src` — `ios.zig`'s `AppConfig` has no such field,
-//! the precedent and its consequences being written out at
-//! `bridge_mobile_system.zig:39-43` for `enableShare`. Serving it ungated means
-//! turning on GPS and writing a location track to disk in an app that
-//! explicitly disabled geolocation, which is a materially larger divergence
-//! than an unexpected share sheet.
-//!
-//! Per the migration's standing rule, falling through beats `.unavailable`:
-//! `.unavailable` would make Zig dispatch and *refuse* five actions that work
-//! end-to-end today, including the capability gate, the authorization mode,
-//! background continuation, atomic persistence, file protection, backup
-//! exclusion and relaunch restore. Absence keeps them working.
-//!
-//! Migrating them honestly means deleting the recorder from `CraftApp.swift` in
-//! the same change — the six `case` arms (635-650), the six handlers
-//! (2960-3028), the file helpers (2904-2911, 2927-2958, 3039-3068), the four
-//! state vars (392-395) and the `restoreLocationRecordingState()` call at 447 —
-//! and untangling `isRecordingLocation` from `stopWatchingPosition` and from
-//! `didUpdateLocations`'s emit guard. It also needs an event channel that does
-//! not exist: the recorder's live samples go out as **`craftLocationUpdate`**
-//! (`CraftApp.swift:3090`, listeners at 1648 and 2362), and
-//! `capabilities.Channel` has no member for that name —
-//! `.location_update` is `"craft:location:update"`, which no iOS page listens
-//! for. Any partial split of this state across the two languages reintroduces
-//! the hijack above, so it is not an incremental move.
+//! The fourth obstacle was real and was never written down here: SwiftUI runs
+//! `makeCoordinator()` before `makeUIView`, so `Coordinator.init` — and
+//! `restoreLocationRecordingState()` inside it — ran before
+//! `craft_ios_set_webview` had been called even once. Whichever runtime
+//! restores first owns the manager for the rest of the launch. That is settled
+//! by `craft_ios_adopt_location_recording`, which Swift consults *instead of*
+//! its own restore and falls back from when `dlsym` finds no runtime.
 //!
 //! ## No delegate, no manager, no event, no async
 //!
-//! This module reads one file and replies. It registers no Objective-C class,
+//! This module reads and writes two files. It registers no Objective-C class,
 //! keeps no delegate alive, touches no `CLLocationManager`, emits on no
-//! channel, and takes no `ios_async` ticket: `loadRecordedLocations()` is
-//! synchronous and so is this. `ios_dispatch.handleMessage` runs from
+//! channel, and takes no `ios_async` ticket: every one of these operations is
+//! synchronous, as `loadRecordedLocations()` and
+//! `persistLocationRecordingState()` both are. `ios_dispatch.handleMessage` runs from
 //! `craftDidReceiveScriptMessage`, a `WKScriptMessageHandler` callback WebKit
 //! delivers on the main thread, so the reply is sent from the main thread with
 //! no hop — the reasoning is written out at `bridge_mobile_display.zig`.
 //!
 //! No mutex either, and that is not an oversight. The premise of a
 //! mutex-guarded in-memory buffer does not match this design: the writer is
-//! `appendRecordedLocation`, called from `locationManager(_:didUpdateLocations:)`,
-//! which CoreLocation delivers on the thread that created the manager — the
-//! main thread — and the reader is this dispatch, also on the main thread.
-//! The shared state is a file, and the two never run concurrently.
+//! `appendSample`, called from `didUpdateLocations`, which CoreLocation
+//! delivers on the thread that created the manager — the main thread — and the
+//! readers are dispatches, also on the main thread. The shared state is a file,
+//! and the two never run concurrently. The recorder's *in-memory* state does
+//! take a mutex, and it takes it where it lives, in
+//! `bridge_mobile_location.zig`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -231,10 +205,12 @@ const Id = ?*anyopaque;
 /// `test/ios_conformance_test.zig` matches the two lists by string in both
 /// directions.
 ///
-/// The other five recording actions are absent on purpose — the module
-/// comment's second-to-last section gives the full argument. An action listed
-/// here is an action this module takes away from the Swift shim, and that trade
-/// is only worth making when Zig's answer is at least as good.
+/// The other five are served by `bridge_mobile_location.zig`, which owns the
+/// `CLLocationManager` they share with the watch. They are not absent from the
+/// migration, only from this file — and `bridge_mobile_location.zig`'s own
+/// routing test asserts this module does not answer them, so the split cannot
+/// quietly become an overlap that makes `ios_dispatch`'s first-match order
+/// significant.
 pub const A = struct {
     pub const read_location_recording = "readLocationRecording";
 };
@@ -1159,18 +1135,15 @@ test "every route the dispatcher has is a declared action" {
     }
 }
 
-test "the five stateful recording actions are left to the Swift shim" {
-    // The deliberate omissions, asserted so they cannot be "fixed" by accident.
+test "the five stateful recording actions belong to the manager's module, not this one" {
+    // Not a deferral any more — an ownership boundary, asserted from this side
+    // so it cannot quietly become an overlap.
     //
-    // `ios_dispatch`'s chain treats UnknownAction as "not mine, ask the next"
-    // and any other error as final. So the *only* spelling of "let the shim
-    // keep serving this" is: absent from `A`, absent from `routeFor`, and
-    // UnknownAction out of `handleMessage`. An `.unavailable` declaration would
-    // dispatch and refuse five actions the shim answers correctly today —
-    // including the `enableGeolocation` gate, the authorization mode,
-    // background continuation, atomic persistence, file protection, backup
-    // exclusion and relaunch restore, none of which Zig can reproduce while
-    // `Coordinator.init` still re-adopts the recording on every launch.
+    // `ios_dispatch` routes first-match, so two modules answering one action
+    // would make the answer depend on the order of the module list. The five
+    // lifecycle actions need the `CLLocationManager` and the delegate, which
+    // live in `bridge_mobile_location.zig`; this file owns the two files they
+    // read and write. `bridge_mobile_location.zig` asserts the converse.
     const unserved = [_][]const u8{
         "startLocationRecording",
         "pauseLocationRecording",

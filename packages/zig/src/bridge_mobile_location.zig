@@ -94,26 +94,26 @@
 //! running. A watch that hits an error has no reply left to reject — its
 //! `true` went out when it started — so the event is the only channel it has.
 //!
-//! **The recording side effect.** Swift's `didUpdateLocations` calls
+//! **The recording side effect, restored.** Swift's `didUpdateLocations` calls
 //! `appendRecordedLocation(data)` for *every* fix, including a one-shot
-//! `requestLocation`, so calling `getCurrentPosition` during an active
-//! recording appends one extra sample to the track that `readLocationRecording`
-//! later returns. This module has its own `CLLocationManager`, so that sample
-//! is no longer added. Arguably the more correct behaviour — a one-shot query
-//! is not part of a route — but it *is* a behaviour change, and a page counting
-//! samples will see one fewer.
+//! `requestLocation`, so a `getCurrentPosition` during an active recording
+//! appends one extra sample to the track. While the recorder was on the shim
+//! and this module had a manager of its own, that sample was no longer added —
+//! a behaviour change a page counting samples could see. The recorder now runs
+//! on this manager, so the one-shot's fix reaches the track again, exactly as
+//! it does in the spec.
 //!
-//! **One `craftLocationUpdate` per manager while a recording is running.** The
-//! six `*LocationRecording` actions stay with the shim
-//! (`bridge_mobile_locrecording.zig` serves only `readLocationRecording`), so a
-//! recording runs Swift's manager and Swift's `didUpdateLocations`, which fires
-//! `craftLocationUpdate` for every fix whenever `isRecordingLocation` is true —
-//! watch or no watch. A page that records *and* watches therefore has two
-//! managers feeding one event name, and its watch callback runs roughly twice
-//! as often as it did under a single shared manager. Every one of those events
-//! carries a real fix; none is fabricated and none is dropped. It is a
-//! duplication, it is visible to a page that counts samples, and it disappears
-//! when the recording actions migrate.
+//! **One `craftLocationUpdate` per fix, again.** A paragraph here used to
+//! record a duplication: the six `*LocationRecording` actions stayed with the
+//! shim, so a recording ran Swift's manager and Swift's `didUpdateLocations`,
+//! which fires `craftLocationUpdate` whenever `isRecordingLocation` is true —
+//! watch or no watch. A page that recorded *and* watched therefore had two
+//! managers feeding one event name and saw roughly two events per fix. It
+//! ended, as that paragraph predicted, when the recording actions migrated:
+//! five of the six now live in this file, on this manager, and the sixth reads
+//! a file. The emit guard below is Swift's own,
+//! `if isWatchingLocation || isRecordingLocation`, and one manager satisfies
+//! it once.
 //!
 //! The converse loss is gone rather than added to: a `getCurrentPosition`
 //! issued while *this* module's watch is running is broadcast to the watch
@@ -767,26 +767,7 @@ pub const LocationBridge = struct {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         defer out.deinit(self.allocator);
 
-        try out.appendSlice(self.allocator, "{\"id\":");
-        if (snapshot.id) |id| {
-            try out.append(self.allocator, '"');
-            try bridge_error.appendJsonEscaped(self.allocator, &out, id);
-            try out.append(self.allocator, '"');
-        } else {
-            try out.appendSlice(self.allocator, "null");
-        }
-        try out.appendSlice(self.allocator, ",\"active\":");
-        try out.appendSlice(self.allocator, if (snapshot.active) "true" else "false");
-        try out.appendSlice(self.allocator, ",\"paused\":");
-        try out.appendSlice(self.allocator, if (snapshot.paused) "true" else "false");
-        try out.appendSlice(self.allocator, ",\"startedAt\":");
-        if (snapshot.started_at) |started| {
-            const rendered = try std.fmt.allocPrint(self.allocator, "{d}", .{started});
-            defer self.allocator.free(rendered);
-            try out.appendSlice(self.allocator, rendered);
-        } else {
-            try out.appendSlice(self.allocator, "null");
-        }
+        try appendSummaryFields(self.allocator, &out, snapshot);
 
         switch (extra) {
             .none => {},
@@ -892,6 +873,43 @@ pub fn adoptRecording() bool {
     // permission prompt at launch is not something the page asked for.
     applyUpdates(mgr, updates, background, .skip);
     return true;
+}
+
+/// `locationRecordingSummary()`: the four keys, in Swift's order.
+///
+/// Split out from the reply so the shape is pinnable without a
+/// `CLLocationManager` — the keys, their order, and the two that are `NSNull`
+/// on the wire rather than empty strings or zeroes.
+///
+/// Writes the opening brace and the four keys, and **leaves the object open**:
+/// `stopLocationRecording` and `getLocationRecordingState` each add one more
+/// key, and the caller closes it.
+fn appendSummaryFields(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    state: locrec.State,
+) !void {
+    try out.appendSlice(allocator, "{\"id\":");
+    if (state.id) |id| {
+        // `appendJsonEscaped` writes no delimiters; the quotes are the caller's.
+        try out.append(allocator, '"');
+        try bridge_error.appendJsonEscaped(allocator, out, id);
+        try out.append(allocator, '"');
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
+    try out.appendSlice(allocator, ",\"active\":");
+    try out.appendSlice(allocator, if (state.active) "true" else "false");
+    try out.appendSlice(allocator, ",\"paused\":");
+    try out.appendSlice(allocator, if (state.paused) "true" else "false");
+    try out.appendSlice(allocator, ",\"startedAt\":");
+    if (state.started_at) |started| {
+        const rendered = try std.fmt.allocPrint(allocator, "{d}", .{started});
+        defer allocator.free(rendered);
+        try out.appendSlice(allocator, rendered);
+    } else {
+        try out.appendSlice(allocator, "null");
+    }
 }
 
 /// What a summary reply carries beyond the four common keys.
@@ -2857,4 +2875,139 @@ test "the delegate class registers under its own name, idempotently" {
     const sel_auth = objc.sel_registerName("locationManagerDidChangeAuthorization:") orelse
         return error.SelectorNotFound;
     try testing.expect(!responds(first, sel_responds, sel_auth));
+}
+
+// =============================================================================
+// The recorder.
+//
+// Two claims are worth pinning without a CLLocationManager: the summary's
+// shape, which is what every one of the five replies with, and the arbitration
+// between the watch and the recorder, which is the pair of guards that stop one
+// from ending the other's stream.
+// =============================================================================
+
+/// Leave the module-level recorder state as the tests found it.
+///
+/// These tests mutate process-wide state that the delegate also reads, so each
+/// one puts it back — an escaped `active` recording would make a later test's
+/// `didUpdateLocations` try to append to a track that is not there.
+fn resetRecordingForTest() void {
+    commitRecording(.{}, null) catch {};
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    watch_sels = null;
+}
+
+test "the summary is the four keys in Swift's order" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    try appendSummaryFields(testing.allocator, &out, .{
+        .active = true,
+        .paused = false,
+        .id = "ABC-123",
+        .started_at = 1756900000000,
+    });
+
+    // No closing brace: `stopLocationRecording` and `getLocationRecordingState`
+    // add a fifth key after these four, so the caller closes the object.
+    try testing.expectEqualStrings(
+        \\{"id":"ABC-123","active":true,"paused":false,"startedAt":1756900000000
+    , out.items);
+}
+
+test "a recording that never started reports nulls, not empty strings or zeroes" {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    defer out.deinit(testing.allocator);
+
+    // `locationRecordingSummary()` puts `NSNull` in both slots, and
+    // `resolveCallback` serialises that as `null`. A page testing
+    // `state.id === null` has to keep working.
+    try appendSummaryFields(testing.allocator, &out, .{});
+
+    try testing.expectEqualStrings(
+        \\{"id":null,"active":false,"paused":false,"startedAt":null
+    , out.items);
+}
+
+test "the subscription follows the state, so the track and the summary cannot disagree" {
+    defer resetRecordingForTest();
+
+    // Collecting is exactly `active and !paused` — `appendRecordedLocation`'s
+    // own guard — and `recording_sels` is how `didUpdateLocations` reads it.
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+
+    try commitRecording(.{ .active = true, .paused = false, .id = "r1" }, sels);
+    try testing.expect(recordingHoldsTheManager());
+
+    try commitRecording(.{ .active = true, .paused = true, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+
+    try commitRecording(.{ .active = false, .paused = false, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+}
+
+test "a stop keeps the id and startedAt, which is why a relaunch differs from a stop" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+    try commitRecording(.{ .active = true, .id = "r1", .started_at = 42 }, sels);
+
+    // `stopLocationRecording` clears neither, so a read in the same launch
+    // still reports them. Only a relaunch — where `readState`'s guard runs —
+    // answers null. The two halves of #124's third blocker, from this side.
+    try commitRecording(.{ .active = false, .id = "r1", .started_at = 42 }, null);
+
+    var snapshot = try snapshotRecording(testing.allocator);
+    defer snapshot.deinit(testing.allocator);
+
+    try testing.expect(!snapshot.active);
+    try testing.expectEqualStrings("r1", snapshot.id.?);
+    try testing.expectEqual(@as(f64, 42), snapshot.started_at.?);
+}
+
+test "the watch and the recorder each hold the shared manager against the other" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+
+    // `stopWatchingPosition`'s `if !isRecordingLocation`, and its mirror in
+    // `pauseLocationRecording` / `stopLocationRecording`. Before the recorder
+    // moved here neither guard could fail, because the two runtimes owned
+    // different managers; now one manager serves both and whichever finishes
+    // second must not end the other's stream.
+    try testing.expect(!recordingHoldsTheManager());
+    try testing.expect(!watchHoldsTheManager());
+
+    try commitRecording(.{ .active = true, .id = "r1" }, sels);
+    publishWatch(sels);
+    try testing.expect(recordingHoldsTheManager());
+    try testing.expect(watchHoldsTheManager());
+
+    // The watch stops: the recorder is still collecting, so the manager stays.
+    _ = takeWatchAndPending();
+    try testing.expect(!watchHoldsTheManager());
+    try testing.expect(recordingHoldsTheManager());
+
+    // And the recorder stops last, with nothing left holding it.
+    try commitRecording(.{ .active = false, .id = "r1" }, null);
+    try testing.expect(!recordingHoldsTheManager());
+}
+
+test "a paused recording is not a consumer, so its fixes are not written" {
+    defer resetRecordingForTest();
+
+    const sels = Sels.resolve() catch return error.SkipZigTest;
+    try commitRecording(.{ .active = true, .paused = true, .id = "r1" }, null);
+
+    // `didUpdateLocations` reads one thing to decide both whether to append and
+    // which names to shape with. A paused recording must not appear in it.
+    const work = takeDelegateWork();
+    try testing.expect(work.recording == null);
+    try testing.expect(work.watch == null);
+    try testing.expect(work.pending == null);
+
+    // And resuming puts it back.
+    try commitRecording(.{ .active = true, .paused = false, .id = "r1" }, sels);
+    try testing.expect(takeDelegateWork().recording != null);
 }
