@@ -1684,8 +1684,7 @@ test "a stopped recording's leftovers read back as no recording at all" {
     // Swift's `guard state["active"] as? Bool == true else { return }` means a
     // relaunch after a stop restores nothing. A reader that handed back the id
     // would answer `{"id":"ABC-123"}` where Swift answers `{"id":null}`.
-    var state = try decodeState(
-        testing.allocator,
+    var state = try decodeState(testing.allocator,
         \\{"active":false,"paused":false,"id":"ABC-123","startedAt":1756900000000}
     );
     defer state.deinit(testing.allocator);
@@ -1697,8 +1696,7 @@ test "a stopped recording's leftovers read back as no recording at all" {
 }
 
 test "an active recording restores all four fields" {
-    var state = try decodeState(
-        testing.allocator,
+    var state = try decodeState(testing.allocator,
         \\{"active":true,"paused":true,"id":"ABC-123","startedAt":1756900000000}
     );
     defer state.deinit(testing.allocator);
@@ -1740,8 +1738,7 @@ test "the active guard is a Bool cast, not a truthiness test" {
 test "past the guard a wrong type is a default, not a refusal" {
     // Swift's remaining reads are `as? Bool ?? false`, `as? String` and
     // `as? TimeInterval`, all of which degrade rather than throw.
-    var state = try decodeState(
-        testing.allocator,
+    var state = try decodeState(testing.allocator,
         \\{"active":true,"paused":"yes","id":42,"startedAt":"soon"}
     );
     defer state.deinit(testing.allocator);

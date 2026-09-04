@@ -792,7 +792,6 @@ pub const LocationBridge = struct {
     }
 };
 
-
 // =============================================================================
 // The recorder's shared machinery: the manager hand-off, the state commit, and
 // the two values Swift takes from Foundation.
