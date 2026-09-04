@@ -858,9 +858,13 @@ fn addViewToKeyWindow(view: Id) void {
         return;
     };
 
+    // No retain here. `alloc`/`initWithFrame:` already gave this frame the one
+    // reference `ar_view` owns and `stopAR` releases; `addSubview:` gives the
+    // window a second one that `removeFromSuperview` drops. A third would
+    // outlive both, and it would take the whole SceneKit graph with it on every
+    // start/stop cycle.
     const sel_add = objc.sel_registerName("addSubview:") orelse return;
     objc.msgSendVoid1(window, sel_add, view);
-    retain(view);
 }
 
 /// The seven numbers `getARPlanes` reads off one anchor.
