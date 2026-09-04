@@ -568,6 +568,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableHaptics {
                     let style = body["style"] as? String ?? "medium"
                     triggerHaptic(style: style)
+                } else {
+                    rejectCallback(callbackId, error: "Haptics is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "share":
                 if config.enableShare {
@@ -585,20 +587,28 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableCamera {
                     pendingCallbackId = callbackId
                     openCamera()
+                } else {
+                    rejectCallback(callbackId, error: "Camera is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "pickImage":
                 if config.enableCamera {
                     pendingCallbackId = callbackId
                     pickImage()
+                } else {
+                    rejectCallback(callbackId, error: "Camera is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "authenticate":
                 if config.enableBiometric {
                     let reason = body["reason"] as? String ?? "Authenticate to continue"
                     authenticate(reason: reason, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Biometric authentication is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "registerPush":
                 if config.enablePushNotifications {
                     registerPushNotifications(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Push notifications are disabled", code: "CAPABILITY_DISABLED")
                 }
             case "secureSet":
                 if config.enableSecureStorage,
@@ -688,6 +698,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableClipboard {
                     let text = UIPasteboard.general.string ?? ""
                     resolveCallback(callbackId, result: text)
+                } else {
+                    rejectCallback(callbackId, error: "Clipboard is disabled", code: "CAPABILITY_DISABLED")
                 }
             // Device Info
             case "getDeviceInfo":
@@ -735,6 +747,8 @@ struct CraftWebView: UIViewRepresentable {
             case "getContacts":
                 if config.enableContacts {
                     getContacts(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "addContact":
                 if config.enableContacts,
@@ -748,6 +762,8 @@ struct CraftWebView: UIViewRepresentable {
                     let startDate = body["startDate"] as? Double
                     let endDate = body["endDate"] as? Double
                     getCalendarEvents(startDate: startDate, endDate: endDate, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "createCalendarEvent":
                 if config.enableCalendar,
@@ -774,10 +790,14 @@ struct CraftWebView: UIViewRepresentable {
             case "cancelAllNotifications":
                 if config.enableLocalNotifications {
                     cancelAllLocalNotifications(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Local notifications are disabled", code: "CAPABILITY_DISABLED")
                 }
             case "getPendingNotifications":
                 if config.enableLocalNotifications {
                     getPendingNotifications(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Local notifications are disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Deep Links
@@ -785,6 +805,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableDeepLinks {
                     // Handler is registered in JS
                     resolveCallback(callbackId, result: true)
+                } else {
+                    rejectCallback(callbackId, error: "Deep links are disabled", code: "CAPABILITY_DISABLED")
                 }
             case "getInitialURL":
                 if config.enableDeepLinks {
@@ -799,6 +821,8 @@ struct CraftWebView: UIViewRepresentable {
                     } else {
                         resolveCallback(callbackId, result: NSNull())
                     }
+                } else {
+                    rejectCallback(callbackId, error: "Deep links are disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - In-App Purchase
@@ -815,6 +839,8 @@ struct CraftWebView: UIViewRepresentable {
             case "restorePurchases":
                 if config.enableInAppPurchase {
                     restorePurchases(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "In-app purchase is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Keep Awake
@@ -833,12 +859,16 @@ struct CraftWebView: UIViewRepresentable {
             case "unlockOrientation":
                 if config.enableOrientationLock {
                     unlockOrientation(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Orientation lock is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - QR/Barcode Scanner
             case "scanQRCode":
                 if config.enableQRScanner {
                     scanQRCode(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "QR scanning is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - File Picker
@@ -846,6 +876,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableFilePicker {
                     let types = body["types"] as? [String]
                     pickFile(types: types, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "File picker is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - File Download
@@ -866,22 +898,30 @@ struct CraftWebView: UIViewRepresentable {
             case "signInWithApple":
                 if config.enableSocialAuth {
                     signInWithApple(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Social sign-in is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Audio Recording
             case "startAudioRecording":
                 if config.enableAudioRecording {
                     startAudioRecording(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Audio recording is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "stopAudioRecording":
                 if config.enableAudioRecording {
                     stopAudioRecording(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Audio recording is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Video Recording
             case "startVideoRecording":
                 if config.enableVideoRecording {
                     startVideoRecording(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Video recording is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Motion Sensors
@@ -889,6 +929,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableMotionSensors {
                     let interval = body["interval"] as? Double ?? 100
                     startMotionUpdates(interval: interval, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Motion sensors are disabled", code: "CAPABILITY_DISABLED")
                 }
             case "stopMotionUpdates":
                 stopMotionUpdates()
@@ -912,6 +954,8 @@ struct CraftWebView: UIViewRepresentable {
             case "startBluetoothScan":
                 if config.enableBluetooth {
                     startBluetoothScan(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Bluetooth is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "stopBluetoothScan":
                 stopBluetoothScan()
@@ -921,6 +965,8 @@ struct CraftWebView: UIViewRepresentable {
             case "scanNFC":
                 if config.enableNFC {
                     scanNFC(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "NFC is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Health
@@ -928,6 +974,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableHealthKit {
                     let types = body["types"] as? [String] ?? []
                     requestHealthAuthorization(types: types, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "getHealthData":
                 if config.enableHealthKit,
@@ -959,6 +1007,8 @@ struct CraftWebView: UIViewRepresentable {
             case "takeScreenshot":
                 if config.enableScreenCapture {
                     takeScreenshot(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Screen capture is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Background Tasks
@@ -983,6 +1033,8 @@ struct CraftWebView: UIViewRepresentable {
             case "cancelAllBackgroundTasks":
                 if config.enableBackgroundTasks {
                     cancelAllBackgroundTasks(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Background tasks are disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - PDF Viewer
@@ -1000,6 +1052,8 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableContacts {
                     let multiple = body["multiple"] as? Bool ?? false
                     pickContact(multiple: multiple, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - App Shortcuts
@@ -1044,10 +1098,14 @@ struct CraftWebView: UIViewRepresentable {
                 if config.enableAR {
                     let options = body["options"] as? [String: Any] ?? [:]
                     startAR(options: options, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "AR is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "stopAR":
                 if config.enableAR {
                     stopAR(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "AR is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "placeARObject":
                 if config.enableAR,
@@ -1063,6 +1121,8 @@ struct CraftWebView: UIViewRepresentable {
             case "getARPlanes":
                 if config.enableAR {
                     getARPlanes(callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "AR is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - ML (Core ML / Vision)
