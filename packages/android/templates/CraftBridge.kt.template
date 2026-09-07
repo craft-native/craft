@@ -18,6 +18,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
+import com.craft.runtime.CraftNative
 import android.os.Bundle
 import android.os.Looper
 import android.os.VibrationEffect
@@ -1807,6 +1808,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getDeviceInfo(): String {
+        // The Zig runtime first, the body below when it declines. Null means
+        // this build does not serve the action natively — a shim-only app, or
+        // one whose libcraft.so failed to bind — and is not an error.
+        CraftNative.getDeviceInfo(activity)?.let { return it }
+
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         activity.windowManager.defaultDisplay.getMetrics(metrics)
