@@ -399,6 +399,20 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    // The JNI layer, on its own artifact because nothing on the iOS side
+    // reaches it. It has no target gate: `JNIEnv` is a pointer to a table of
+    // pointers, so the tests build one out of Zig functions and run anywhere —
+    // no JVM, no emulator, no NDK. That is the whole reason the layer is shaped
+    // the way it is.
+    const jni_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/jni_runtime.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_jni_tests = b.addRunArtifact(jni_tests);
+
     ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
         .root_source_file = b.path("../ios/templates/CraftApp.swift"),
     });
@@ -1511,6 +1525,7 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_ios_module_tests.step);
     }
     test_step.dependOn(&run_ios_conformance_tests.step);
+    test_step.dependOn(&run_jni_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -2183,6 +2198,10 @@ pub fn build(b: *std.Build) void {
 
     const test_android_step = b.step("test:android", "Run Android tests");
     test_android_step.dependOn(&run_android_tests.step);
+    // The JNI layer rides the existing Android step rather than adding a
+    // second one: `jni_runtime.zig` is the only way anything here reaches Java,
+    // so a run that skipped it would not be an Android test run.
+    test_android_step.dependOn(&run_jni_tests.step);
 
     // Add Android tests to the main test step
     test_step.dependOn(&run_android_tests.step);
