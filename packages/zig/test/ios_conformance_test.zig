@@ -643,6 +643,113 @@ test "the gate table has no entry for an action Zig does not serve" {
     }
 }
 
+/// The `.reason` text of every `.status = .unavailable` entry, by action.
+///
+/// The reason is what a reader trusts, so it is what has to be checked. A
+/// declaration can be resolved two ways here: `.reason = "..."` inline, and
+/// `.reason = some_const` naming a constant elsewhere in the file — both are
+/// in use, and a scan that handled only the first would silently skip the
+/// second rather than fail.
+fn collectUnavailableReasons(allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+
+    for (zig_sources) |source| {
+        // Bounded to the manifest array, not the whole file: prose quotes
+        // `.status = .unavailable` — `bridge_mobile_haptics.zig`'s header does,
+        // describing the declaration it removed — and a scan that read comments
+        // would attribute that sentence to whichever entry preceded it.
+        const table_start = std.mem.indexOf(u8, source, "pub const capability_actions = [_]capabilities.ActionDecl{") orelse
+            continue;
+        const table_end = std.mem.indexOfPos(u8, source, table_start, "\n};") orelse continue;
+        const table = source[table_start..table_end];
+
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, table, search, ".status = .unavailable")) |at| {
+            search = at + 1;
+
+            // The entry names its action as `A.some_const`; resolve it back
+            // through the `A` block to the string the spec spells.
+            const name_at = std.mem.lastIndexOf(u8, table[0..at], ".name = A.") orelse continue;
+            const const_start = name_at + ".name = A.".len;
+            var const_end = const_start;
+            while (const_end < table.len and (std.ascii.isAlphanumeric(table[const_end]) or
+                table[const_end] == '_')) : (const_end += 1)
+            {}
+
+            var needle_buf: [96]u8 = undefined;
+            const member = table[const_start..const_end];
+            if (member.len + 16 > needle_buf.len) continue;
+            const decl = try std.fmt.bufPrint(&needle_buf, "const {s} = \"", .{member});
+            const decl_at = std.mem.indexOf(u8, source, decl) orelse continue;
+            const value_start = decl_at + decl.len;
+            const value_end = std.mem.indexOfScalarPos(u8, source, value_start, '"') orelse continue;
+            const action = source[value_start..value_end];
+
+            // The reason, inline or by name.
+            const reason_at = std.mem.indexOfPos(u8, table, at, ".reason = ") orelse continue;
+            const reason_start = reason_at + ".reason = ".len;
+            if (table[reason_start] == '"') {
+                const reason_end = std.mem.indexOfScalarPos(u8, table, reason_start + 1, '"') orelse continue;
+                try map.put(action, table[reason_start + 1 .. reason_end]);
+            } else {
+                var ident_end = reason_start;
+                while (ident_end < table.len and (std.ascii.isAlphanumeric(table[ident_end]) or
+                    table[ident_end] == '_')) : (ident_end += 1)
+                {}
+                var const_buf: [96]u8 = undefined;
+                const ident = table[reason_start..ident_end];
+                if (ident.len + 10 > const_buf.len) continue;
+                const const_decl = try std.fmt.bufPrint(&const_buf, "const {s} =", .{ident});
+                const body_at = std.mem.indexOf(u8, source, const_decl) orelse continue;
+                const body_end = std.mem.indexOfScalarPos(u8, source, body_at, ';') orelse continue;
+                // The whole initialiser, `++` concatenation included.
+                try map.put(action, source[body_at..body_end]);
+            }
+        }
+    }
+    return map;
+}
+
+test "no refusal blames a config flag Zig demonstrably reads" {
+    // The rot this exists to catch, in the exact shape it took. `haptic` was
+    // declared `.status = .unavailable` because `config.enableHaptics` "is not
+    // visible to Zig"; `gateFor`'s table said Zig reads that same flag and
+    // refuses the action when it is off. Both were written honestly, months
+    // apart, and nothing put them side by side — so the refusal outlived its
+    // reason and a working implementation sat unused two hundred lines below it.
+    //
+    // Deliberately narrower than "gated and unavailable", which is not a
+    // contradiction: `lockOrientation` is both, and its reason is about a root
+    // view controller rather than about reading a flag. What cannot stand is a
+    // refusal *naming* a flag the gate table proves Zig reads.
+    var gates = try collectZigGates(testing.allocator);
+    defer gates.deinit();
+
+    var reasons = try collectUnavailableReasons(testing.allocator);
+    defer reasons.deinit();
+
+    // Non-vacuity: the scan reads each manifest through two indirections — the
+    // `A.` constant and its declaration — and either could stop matching.
+    try testing.expect(reasons.count() >= 3);
+
+    var it = reasons.iterator();
+    while (it.next()) |entry| {
+        const flag = gates.get(entry.key_ptr.*) orelse continue;
+        if (std.mem.indexOf(u8, entry.value_ptr.*, flag) != null) {
+            std.debug.print(
+                "`{s}` is declared unavailable and its reason names `{s}`, which `gateFor` " ++
+                    "maps it to.\n" ++
+                    "  The manifest says Zig cannot read that flag; the gate table says it does " ++
+                    "and refuses the action when it is off.\n" ++
+                    "  One of them is out of date.\n",
+                .{ entry.key_ptr.*, flag },
+            );
+            return error.RefusalBlamesAFlagZigReads;
+        }
+    }
+}
+
 test "every flag Zig can read is a flag the spec's config actually has" {
     // A misspelled key is not a one-flag bug. A key that is not in the file
     // reads as missing, and one missing key makes the whole decode throw, so
