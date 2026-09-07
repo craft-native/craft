@@ -1471,6 +1471,29 @@ export interface CraftWatchUserInfoEvent extends CustomEvent {
   detail: Record<string, any>;
 }
 
+/**
+ * A registered voice action being spoken. **Android only** —
+ * `craft.voice.register()` has no iOS counterpart, and the iOS bridge never
+ * dispatches this.
+ */
+export interface CraftVoiceActionEvent extends CustomEvent {
+  detail: {
+    action: string;
+    data?: string;
+  };
+}
+
+/**
+ * Foreground/background transitions. **Android only** — dispatched by
+ * `startAppStateMonitoring`, which iOS answers through `getAppState` polling
+ * instead.
+ */
+export interface CraftAppStateChangeEvent extends CustomEvent {
+  detail: {
+    state: string;
+  };
+}
+
 export interface CraftErrorEvent extends CustomEvent {
   detail: CraftError;
 }
@@ -1499,6 +1522,10 @@ declare global {
     craftWatchReachability: CraftWatchReachabilityEvent;
     craftWatchContext: CraftWatchContextEvent;
     craftWatchUserInfo: CraftWatchUserInfoEvent;
+    // Android-only. This file is the cross-platform surface, so it carries the
+    // union of what either bridge dispatches, not one platform's set.
+    craftVoiceAction: CraftVoiceActionEvent;
+    craftAppStateChange: CraftAppStateChangeEvent;
     craftError: CraftErrorEvent;
     craftDeepLink: CraftDeepLinkEvent;
     // Kept, and kept last, because nothing dispatches either one: the app

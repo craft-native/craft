@@ -411,6 +411,9 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("craft.d.ts", .{
         .root_source_file = b.path("../typescript/types/craft.d.ts"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("CraftBridge.kt", .{
+        .root_source_file = b.path("../android/templates/CraftBridge.kt.template"),
+    });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_vision.zig", .{
         .root_source_file = b.path("src/bridge_mobile_vision.zig"),
     });
