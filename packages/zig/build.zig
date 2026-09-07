@@ -408,6 +408,9 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("src/ios_events.zig", .{
         .root_source_file = b.path("src/ios_events.zig"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("craft.d.ts", .{
+        .root_source_file = b.path("../typescript/types/craft.d.ts"),
+    });
     ios_conformance_tests.root_module.addAnonymousImport("src/bridge_mobile_vision.zig", .{
         .root_source_file = b.path("src/bridge_mobile_vision.zig"),
     });
