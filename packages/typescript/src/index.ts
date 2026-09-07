@@ -211,6 +211,30 @@ export type {
   PlatformUpdate,
 } from './updater/index.js'
 
+// The macOS bundle primitives the updater is built on. Verifying a signature,
+// unpacking a DMG and swapping a bundle atomically are wanted well outside an
+// update flow — by installers, by CI, and by any app that wants to prove it is
+// running the build it thinks it is.
+export {
+  canReplaceBundle,
+  clearQuarantine,
+  dittoBundle,
+  extractBundle,
+  extractBundleFromDmg,
+  extractBundleFromZip,
+  readBundleIdentity,
+  swapBundle,
+  verifyBundleTrust,
+} from './updater/index.js'
+export type {
+  BundleIdentity,
+  BundleTrustFailure,
+  BundleTrustPolicy,
+  BundleTrustResult,
+  StagedBundle,
+  SwapResult,
+} from './updater/index.js'
+
 /**
  * Decide whether to enable dev defaults (hot-reload + devtools). The
  * previous default keyed exclusively off `NODE_ENV === 'development'`,

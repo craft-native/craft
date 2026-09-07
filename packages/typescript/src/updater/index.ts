@@ -3,11 +3,29 @@
  * Automatic updates with delta/differential update support
  */
 
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { join, basename, dirname } from 'path'
+import { tmpdir } from 'os'
 import { execFileSync, spawn } from 'child_process'
 import { createHash } from 'crypto'
 import { EventEmitter } from 'events'
+import type { BundleTrustPolicy, BundleTrustResult } from './macos-bundle.js'
+import {
+  canReplaceBundle,
+  clearQuarantine,
+  extractBundle,
+  swapBundle,
+  verifyBundleTrust,
+} from './macos-bundle.js'
+
+/**
+ * How often download progress is reported, in milliseconds.
+ *
+ * Throttled by wallclock rather than per chunk: chunk size is the network's
+ * business, not the UI's, and an event per chunk means a few hundred renders
+ * of a bar that changes by a fraction of a percent each time.
+ */
+const PROGRESS_INTERVAL_MS = 100
 
 // Types
 export interface UpdateInfo {
@@ -62,6 +80,37 @@ export interface UpdaterConfig {
    * Must match how the build pipeline produced `PlatformUpdate.signature`.
    */
   signatureAlgorithm?: 'ed25519' | 'rsa-sha256'
+  /**
+   * What macOS itself has to say about the bundle before it is installed.
+   *
+   * This is a different question from the manifest's SHA-256, and a stronger
+   * one. The hash proves the download matches what the manifest asked for;
+   * whoever can rewrite the manifest can rewrite the hash with it. `codesign`
+   * and `spctl` ask whether Apple and *your* Developer ID account vouch for
+   * these bytes, which nobody can forge by controlling a JSON file.
+   *
+   * Pin `teamId` to your team. An updater that only checks notarization
+   * accepts a bundle from any Apple developer account in the world.
+   *
+   * Ignored off macOS.
+   */
+  /**
+   * Where to keep the downloaded archive until it is installed.
+   *
+   * Defaults to a per-app directory under the OS temp directory. Set it to
+   * keep partial downloads somewhere that survives a reboot.
+   */
+  downloadDir?: string
+  macos?: BundleTrustPolicy
+  /**
+   * How to start the new copy after an install, replacing `open -n <app>`.
+   *
+   * Needed wherever the process running the updater is not the process the
+   * user launched — an agent behind a window, a helper started by a launcher.
+   * Killing that one and opening the bundle relaunches a child while the real
+   * app carries on, so the host has to say what "restart" means for it.
+   */
+  relaunch?: (appPath: string) => void | Promise<void>
 }
 
 export interface UpdateProgress {
@@ -78,6 +127,7 @@ export type UpdaterEvent =
   | 'update-not-available'
   | 'download-progress'
   | 'update-downloaded'
+  | 'update-installed'
   | 'before-quit-for-update'
   | 'error'
 
@@ -105,10 +155,42 @@ export class AutoUpdater extends EventEmitter {
   private cachedEtag: string | null = null
   private cachedLastModified: string | null = null
   private cachedManifest: UpdateInfo | null = null
+  private lastError: Error | null = null
 
   private emitError(error: unknown): void {
+    this.lastError = error instanceof Error ? error : new Error(String(error))
     if (this.listenerCount('error') > 0) this.emit('error', error)
     else console.error('[Updater]', error)
+  }
+
+  /**
+   * Where the downloaded archive is kept until it is installed.
+   *
+   * The OS temp directory, not a hidden folder beside the app. The original
+   * `<appPath>/../.craft-updates` put a 40 MB disk image inside the user's
+   * Applications folder, and left the directory behind afterwards; it bought
+   * nothing, because the bundle is unpacked to a staging directory before the
+   * swap anyway, so the download never has to be on the destination volume.
+   */
+  private downloadDir(): string {
+    if (this.config.downloadDir)
+      return this.config.downloadDir
+    return join(tmpdir(), 'craft-updates', basename(this.config.appPath) || 'app')
+  }
+
+  /**
+   * The failure from the most recent check or download, or null.
+   *
+   * `checkForUpdates` returns null for two very different outcomes — there is
+   * no newer version, and we could not find out. A caller that cannot tell
+   * them apart reports "you are up to date" to a user whose network is down,
+   * which is the one wrong answer an update check can give: it is confident,
+   * it is false, and it stops them looking further.
+   *
+   * Cleared at the start of each attempt, so it always describes the last one.
+   */
+  getLastError(): Error | null {
+    return this.lastError
   }
 
   constructor(config: UpdaterConfig) {
@@ -162,6 +244,7 @@ export class AutoUpdater extends EventEmitter {
    */
   async checkForUpdates(): Promise<UpdateInfo | null> {
     this.emit('checking-for-update')
+    this.lastError = null
 
     try {
       const platform = this.getPlatform()
@@ -233,6 +316,8 @@ catch (error) {
       throw new Error('No update available')
     }
 
+    this.lastError = null
+
     const platform = this.getPlatform()
     const platformUpdate = this.updateInfo.platforms[platform]
 
@@ -240,18 +325,23 @@ catch (error) {
       throw new Error(`No update available for platform: ${platform}`)
     }
 
-    // Check for delta update
-    const deltaUpdate = platformUpdate.delta?.find(
-      (d) => d.fromVersion === this.config.currentVersion
-    )
+    // Check for delta update.
+    //
+    // Only if the machine can actually apply one. `bspatch` and `xdelta3` are
+    // neither installed on macOS nor present on a stock Linux, so a manifest
+    // that offers a delta used to send the app down a path that downloaded a
+    // patch, failed to apply it, and reported an update failure — when the
+    // full bundle it should have fetched was sitting in the same manifest.
+    const deltaUpdate = DeltaGenerator.isSupported()
+      ? platformUpdate.delta?.find(d => d.fromVersion === this.config.currentVersion)
+      : undefined
 
     const _updateSource = deltaUpdate || platformUpdate
     const url = deltaUpdate?.url || platformUpdate.url
     const expectedSize = deltaUpdate?.size || platformUpdate.size
     const expectedHash = deltaUpdate?.sha256 || platformUpdate.sha256
 
-    // Create download directory
-    const downloadDir = join(this.config.appPath, '..', '.craft-updates')
+    const downloadDir = this.downloadDir()
     mkdirSync(downloadDir, { recursive: true })
 
     const fileName = basename(url)
@@ -277,26 +367,53 @@ catch (error) {
         throw new Error('Failed to get response reader')
       }
 
+      // Hash as the bytes go past, rather than reading the file back
+      // afterwards. On a 40 MB bundle the second pass is another 40 MB off
+      // disk to learn something every byte already went through this process
+      // to tell us.
+      const digest = createHash('sha256')
+      let lastProgressAt = 0
+
       while (true) {
         const { done, value } = await reader.read()
 
         if (done) break
 
-        fileStream.write(value)
-        downloaded += value.length
+        digest.update(value)
 
-        const elapsed = (Date.now() - startTime) / 1000
-        const speed = downloaded / elapsed
-
-        const progress: UpdateProgress = {
-          phase: 'downloading',
-          percent: Math.round((downloaded / total) * 100),
-          bytesDownloaded: downloaded,
-          bytesTotal: total,
-          speed,
+        // `write` returning false means the kernel buffer is full and Node is
+        // queueing in memory. Ignoring it holds the whole download in RAM on
+        // any connection faster than the disk — which is most of them.
+        if (!fileStream.write(value)) {
+          await new Promise<void>((resolve, reject) => {
+            const onDrain = (): void => { fileStream.off('error', onError); resolve() }
+            const onError = (error: Error): void => { fileStream.off('drain', onDrain); reject(error) }
+            fileStream.once('drain', onDrain)
+            fileStream.once('error', onError)
+          })
         }
 
-        this.emit('download-progress', progress)
+        downloaded += value.length
+
+        // Throttled by wallclock: a 40 MB download arrives in ~600 chunks,
+        // and an event per chunk is 600 renders of a progress bar nobody can
+        // read that fast.
+        const now = Date.now()
+        if (now - lastProgressAt >= PROGRESS_INTERVAL_MS || downloaded === total) {
+          lastProgressAt = now
+          const elapsed = (now - startTime) / 1000
+          const speed = elapsed > 0 ? downloaded / elapsed : 0
+
+          const progress: UpdateProgress = {
+            phase: 'downloading',
+            percent: total > 0 ? Math.round((downloaded / total) * 100) : 0,
+            bytesDownloaded: downloaded,
+            bytesTotal: total,
+            speed,
+          }
+
+          this.emit('download-progress', progress)
+        }
       }
 
       fileStream.end()
@@ -306,7 +423,7 @@ catch (error) {
       })
 
       // Verify hash
-      const hash = await this.computeFileHash(this.downloadPath)
+      const hash = digest.digest('hex')
       if (hash !== expectedHash) {
         unlinkSync(this.downloadPath)
         throw new Error('Download verification failed: hash mismatch')
@@ -440,12 +557,19 @@ catch (error) {
         unlinkSync(this.downloadPath)
       }
 
+      // …and the directory it was in, so a successful update leaves no trace.
+      // `rmdirSync` rather than a recursive remove, deliberately: it fails on a
+      // non-empty directory, so a caller who pointed `downloadDir` at somewhere
+      // of their own keeps whatever else they had in it.
+      try { rmdirSync(this.downloadDir()) }
+      catch { /* not empty, or not ours to remove */ }
+
       progress.phase = 'done'
       progress.percent = 100
       this.emit('download-progress', progress)
 
       if (restartAfter) {
-        this.restartApp()
+        await this.restartApp()
       }
     }
 catch (error) {
@@ -455,74 +579,104 @@ catch (error) {
     }
   }
 
+  /**
+   * Replace the installed bundle on macOS.
+   *
+   * The order is the point. Unpack to a staging directory, ask macOS whether
+   * it trusts what came out, and only then touch the app the user launches —
+   * so a bundle that fails verification costs a download and nothing else.
+   *
+   * The previous implementation deleted the installed app and then copied the
+   * new one over its path with `fs.cpSync`. That is two separate faults: an
+   * interruption anywhere in the copy leaves no app at all, and `cpSync` does
+   * not preserve the extended attributes a code signature covers, so even a
+   * clean run produced a bundle that failed `codesign --verify`.
+   */
   private async installMacOSUpdate(): Promise<void> {
     const downloadPath = this.downloadPath!
     const appPath = this.config.appPath
 
-    // Determine update type by extension
-    if (downloadPath.endsWith('.zip')) {
-      // Extract zip to temp location
-      const tempDir = join(dirname(downloadPath), 'extracted')
-      mkdirSync(tempDir, { recursive: true })
-
-      execFileSync('unzip', ['-o', downloadPath, '-d', tempDir])
-
-      // Find the .app in extracted contents. `-print0` + null-byte split
-      // is required because macOS allows newlines in path names; the
-      // previous `\n`-split parse silently truncated such paths.
-      const extractedApp = findFirstByName(tempDir, '*.app', 'd')
-
-      if (extractedApp) {
-        // Replace current app
-        const { rmSync, renameSync } = await import('fs')
-        rmSync(appPath, { recursive: true, force: true })
-        renameSync(extractedApp, appPath)
-      }
-
-      // Clean up
-      const { rmSync } = await import('fs')
-      rmSync(tempDir, { recursive: true, force: true })
+    // A `.pkg` is an installer, not a bundle: it decides where its payload
+    // goes and needs root to put it there. Nothing below applies to it.
+    if (downloadPath.endsWith('.pkg')) {
+      await this.installMacOSPackage(downloadPath)
+      return
     }
-else if (downloadPath.endsWith('.dmg')) {
-      // Mount DMG
-      const mountOutput = execFileSync('hdiutil', ['attach', downloadPath, '-nobrowse']).toString()
-      const mountPoint = mountOutput.match(/\/Volumes\/[^\n]+/)?.[0]
 
-      if (mountPoint) {
-        // Find and copy the app
-        const dmgApp = findFirstByName(mountPoint, '*.app', 'd')
-
-        if (dmgApp) {
-          const { rmSync, cpSync } = await import('fs')
-          rmSync(appPath, { recursive: true, force: true })
-          cpSync(dmgApp, appPath, { recursive: true })
-        }
-
-        // Unmount
-        execFileSync('hdiutil', ['detach', mountPoint])
-      }
+    if (!canReplaceBundle(appPath)) {
+      throw new Error(
+        `Cannot replace ${appPath}: ${dirname(appPath)} is not writable by this user. `
+        + 'Install the update manually, or move the app somewhere you own.',
+      )
     }
-else if (downloadPath.endsWith('.pkg')) {
-      // Verify the .pkg's embedded signing chain BEFORE handing it to
-      // root. `pkgutil --check-signature` exits non-zero on an unsigned
-      // or revoked package; a clean exit means the chain is trusted by
-      // the system. This is independent of the SDK's own
-      // sha256/manifest-signature check (which already ran in
-      // `installUpdate`) — both layers must hold for us to call sudo.
-      try {
-        execFileSync('pkgutil', ['--check-signature', downloadPath], { stdio: 'pipe' })
-      }
-      catch (e) {
-        throw new Error(
-          `Refusing to install ${downloadPath}: pkgutil --check-signature failed. `
-          + 'The .pkg is not signed by a trusted Apple certificate chain. '
-          + `Underlying error: ${(e as Error).message}`,
-        )
-      }
-      // Install package. `installer` requires root, which we delegate to sudo —
-      // this will prompt the user via their sudo configuration (TouchID on macOS).
-      execFileSync('sudo', ['installer', '-pkg', downloadPath, '-target', '/'])
+
+    const staged = await extractBundle(downloadPath)
+
+    try {
+      const trust = await this.assertBundleTrusted(staged.appPath)
+
+      // Only now, with the signature and Gatekeeper both satisfied, is it
+      // right to drop the flag that would have made macOS ask the user the
+      // same question on first launch.
+      await clearQuarantine(staged.appPath)
+
+      const { previousPath } = await swapBundle(staged.appPath, appPath)
+      this.emit('update-installed', {
+        path: appPath,
+        version: this.updateInfo?.version,
+        identity: trust.identity,
+        leftoverPath: previousPath,
+      })
     }
+    finally {
+      // `swapBundle` renames the staged bundle out of here on success, so this
+      // is either cleaning up a failure or removing an empty directory.
+      try { rmSync(staged.stagingDir, { recursive: true, force: true }) }
+      catch { /* a temp directory we could not remove is not worth failing an update over */ }
+    }
+  }
+
+  /**
+   * Verify a staged bundle against the configured macOS trust policy.
+   *
+   * Throws rather than returning a verdict: every caller's only sensible
+   * response to "macOS does not trust this" is to stop, and a boolean invites
+   * a caller that forgets to check it.
+   */
+  private async assertBundleTrusted(bundlePath: string): Promise<BundleTrustResult> {
+    const policy = this.config.macos ?? {}
+    const trust = await verifyBundleTrust(bundlePath, policy)
+
+    if (!trust.ok) {
+      throw new Error(
+        `Refusing to install ${bundlePath}: ${trust.reason} (${trust.detail ?? 'no detail'}). `
+        + 'The downloaded bundle is not one macOS will run as this application.',
+      )
+    }
+
+    return trust
+  }
+
+  private async installMacOSPackage(downloadPath: string): Promise<void> {
+    // Verify the .pkg's embedded signing chain BEFORE handing it to root.
+    // `pkgutil --check-signature` exits non-zero on an unsigned or revoked
+    // package; a clean exit means the chain is trusted by the system. This is
+    // independent of the SDK's own sha256/manifest-signature check (which
+    // already ran in `installUpdate`) — both layers must hold for us to call
+    // sudo.
+    try {
+      execFileSync('pkgutil', ['--check-signature', downloadPath], { stdio: 'pipe' })
+    }
+    catch (e) {
+      throw new Error(
+        `Refusing to install ${downloadPath}: pkgutil --check-signature failed. `
+        + 'The .pkg is not signed by a trusted Apple certificate chain. '
+        + `Underlying error: ${(e as Error).message}`,
+      )
+    }
+    // `installer` requires root, which we delegate to sudo — this will prompt
+    // the user via their sudo configuration (TouchID on macOS).
+    execFileSync('sudo', ['installer', '-pkg', downloadPath, '-target', '/'])
   }
 
   private async installWindowsUpdate(): Promise<void> {
@@ -577,18 +731,28 @@ else if (downloadPath.endsWith('.tar.gz')) {
     }
   }
 
-  private restartApp(): void {
-    const platform = this.getPlatform()
+  /**
+   * Start the updated copy and stand down.
+   *
+   * `config.relaunch`, when given, replaces both halves — the spawn and the
+   * exit. That matters for any app whose updater does not run in the process
+   * the user launched: an agent behind a webview that calls `process.exit(0)`
+   * takes down a child, leaves the window open on a dead server, and never
+   * relaunches anything.
+   */
+  private async restartApp(): Promise<void> {
     const appPath = this.config.appPath
 
-    // Spawn new process and exit current
-    switch (platform) {
+    if (this.config.relaunch) {
+      await this.config.relaunch(appPath)
+      return
+    }
+
+    switch (this.getPlatform()) {
       case 'darwin':
         spawn('open', ['-n', appPath], { detached: true, stdio: 'ignore' })
         break
       case 'win32':
-        spawn(appPath, [], { detached: true, stdio: 'ignore' })
-        break
       case 'linux':
         spawn(appPath, [], { detached: true, stdio: 'ignore' })
         break
@@ -700,6 +864,33 @@ else if (downloadPath.endsWith('.tar.gz')) {
 
 // Delta Update Generator
 export class DeltaGenerator {
+  /** Cached because it shells out and the answer cannot change mid-process. */
+  private static supported: boolean | null = null
+
+  /**
+   * Whether this machine has a binary-diff tool to apply a patch with.
+   *
+   * Deltas are an optimisation, and an optimisation that throws is worse than
+   * no optimisation. Neither `bspatch` nor `xdelta3` ships with macOS or a
+   * default Linux install, so the honest default is "no" and the full bundle.
+   */
+  static isSupported(): boolean {
+    if (DeltaGenerator.supported !== null)
+      return DeltaGenerator.supported
+
+    DeltaGenerator.supported = ['bspatch', 'xdelta3'].some((tool) => {
+      try {
+        execFileSync('command', ['-v', tool], { stdio: 'ignore', shell: true })
+        return true
+      }
+      catch {
+        return false
+      }
+    })
+
+    return DeltaGenerator.supported
+  }
+
   /**
    * Generate a delta/patch file between two versions
    */
@@ -910,5 +1101,31 @@ Examples:
 `)
   }
 }
+
+/**
+ * macOS bundle mechanics, re-exported so an app can verify or swap a bundle
+ * without also adopting the whole update pipeline — installers, CI checks and
+ * "am I running the build I think I am?" all want the same primitives.
+ */
+export {
+  canReplaceBundle,
+  clearQuarantine,
+  dittoBundle,
+  extractBundle,
+  extractBundleFromDmg,
+  extractBundleFromZip,
+  isMacOS,
+  readBundleIdentity,
+  swapBundle,
+  verifyBundleTrust,
+} from './macos-bundle.js'
+export type {
+  BundleIdentity,
+  BundleTrustFailure,
+  BundleTrustPolicy,
+  BundleTrustResult,
+  StagedBundle,
+  SwapResult,
+} from './macos-bundle.js'
 
 export default AutoUpdater

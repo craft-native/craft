@@ -314,6 +314,77 @@ import { orbstackStyles, renderOrbStackSidebar, orbstackDemoData } from 'craft-n
 const html = renderOrbStackSidebar(orbstackDemoData)
 ```
 
+## Auto-Updating
+
+`AutoUpdater` fetches a manifest, verifies the download, replaces the app bundle,
+and relaunches.
+
+```ts
+import { AutoUpdater } from 'craft-native'
+
+const updater = new AutoUpdater({
+  updateUrl: 'https://github.com/you/app/releases/latest/download/update.json',
+  currentVersion: '1.0.0',
+  appPath: '/Applications/MyApp.app',
+  autoDownload: false,
+  macos: { teamId: 'ABCDE12345' },
+})
+
+updater.on('update-available', info => console.log('available:', info.version))
+updater.on('download-progress', p => console.log(`${p.percent}%`))
+
+if (await updater.checkForUpdates()) {
+  await updater.downloadUpdate()
+  await updater.installUpdate()
+}
+```
+
+### macOS trust
+
+The manifest's SHA-256 proves the download matches what the manifest asked for. It
+says nothing about *who published it* — whoever can rewrite the manifest can rewrite
+the hash with it. So on macOS the staged bundle is also put through the checks
+Gatekeeper runs at launch, before anything is swapped:
+
+- `codesign --verify --deep --strict` — the signature covers the bytes on disk
+- `spctl -a -t exec` — Apple has notarized this build
+- `TeamIdentifier` equals `macos.teamId` — *you* published it
+
+Pin `teamId`. Without it an updater accepts any notarized bundle, and notarization is
+available to every Apple developer account there is. `@stacksjs/desktop`'s
+`createSelfUpdater` fills it in from the signature on the running copy, which is the
+version most apps want.
+
+### Replacing the bundle
+
+The swap is deliberately not `rm -rf app && cp -R new app`:
+
+- **`ditto`, not `cp -R`.** `cp` and `fs.cpSync` drop the extended attributes and ACLs
+  a code signature is computed over, so a byte-identical copy fails `codesign --verify`.
+- **Two renames, not a delete.** The new bundle lands on the destination volume first,
+  then the old one is renamed aside and the new one renamed in. Both are atomic within
+  a directory, so there is no window in which an interrupted update leaves the user
+  with no app.
+- **Quarantine last.** The flag is cleared only after verification passes — clearing it
+  first is how an updater becomes a way to install anything at all.
+
+These are exported on their own for installers and CI: `verifyBundleTrust`,
+`readBundleIdentity`, `extractBundle`, `extractBundleFromDmg`, `extractBundleFromZip`,
+`swapBundle`, `dittoBundle`, `clearQuarantine`, `canReplaceBundle`.
+
+### Relaunching
+
+`restartApp` opens the bundle and exits. Pass `relaunch` when the updater does not run
+in the process the user launched — an agent behind a webview that calls
+`process.exit(0)` kills a child, leaves the window on a dead server, and relaunches
+nothing.
+
+### Deltas
+
+Delta updates are used only when `bspatch` or `xdelta3` is on the machine. Neither
+ships with macOS or a default Linux install, so a manifest that offers a delta falls
+back to the full bundle rather than failing.
+
 ## Examples
 
 See the [examples directory](../examples-ts) for more:
