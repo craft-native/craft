@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.89...v0.0.90)
+
+## 🐛 Bug Fixes
+
+- **window**: carry the new options on every platform's WindowStyle ([3f4980c](https://github.com/craft-native/craft/commit/3f4980c)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.90 ([de95502](https://github.com/craft-native/craft/commit/de95502)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.88...v0.0.89)
 
 ## 🚀 Features
