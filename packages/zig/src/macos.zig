@@ -5011,9 +5011,25 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
 }
 
 /// Try to evaluate JavaScript (may fail silently)
+/// Evaluate script in the webview a reply belongs to.
+///
+/// The webview that posted the message being served, when there is one — the
+/// dispatcher reads it off the `WKScriptMessage`. Otherwise the global one,
+/// which is what everything not driven by a page still means: a tray item, a
+/// menu action, a notification callback.
+///
+/// This is what makes two windows possible. `evaluateJavaScript` on the wrong
+/// webview does not fail; it resolves a promise in a page that never made the
+/// call, and leaves the page that did waiting for a reply that has already been
+/// delivered somewhere else.
 pub fn tryEvalJS(js_code: []const u8) !void {
     const tray_menu = @import("tray_menu.zig");
-    if (tray_menu.getGlobalWebView()) |webview| {
+    const target: ?*anyopaque = if (window_context.currentWebView()) |wv|
+        @as(?*anyopaque, @ptrFromInt(wv))
+    else
+        tray_menu.getGlobalWebView();
+
+    if (target) |webview| {
         const webview_id: objc.id = @ptrFromInt(@intFromPtr(webview));
         const js_str = createNSString(js_code);
         _ = msgSend2(webview_id, "evaluateJavaScript:completionHandler:", js_str, null);
@@ -5558,7 +5574,8 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
     //
     // Pushed unconditionally, including the zero a detached webview gives, so
     // an unknown sender shadows an enclosing frame instead of inheriting it.
-    window_context.push(sendingWindow(message));
+    const sender = sendingWebView(message);
+    window_context.push(sender.window, sender.webview);
     defer window_context.pop();
 
     // Get the message body (should be a dictionary/object from JavaScript)
@@ -5611,16 +5628,31 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
     msgSendVoid0(initialized_string, "release");
 }
 
-/// The window a `WKScriptMessage` was posted from, or 0 if it has none.
+/// The webview inside a window, or null if it holds none.
+///
+/// For everything that starts at a window — a delegate callback, an activation
+/// change — and has to reach the page in *that* window rather than the last one
+/// craft happened to build.
+pub fn webViewForWindow(window: objc.id) ?objc.id {
+    if (window == null) return null;
+    return findWebView(msgSend0(window, "contentView"));
+}
+
+/// Who posted a `WKScriptMessage`: the webview, and the window it is in.
 ///
 /// A webview that has been removed from its window — which happens during
 /// teardown, and to the offscreen views AppKit keeps — answers nil for
 /// `window`, and zero is the honest reading of that: unknown, not "the main
 /// one".
-fn sendingWindow(message: objc.id) window_context.Handle {
+const Sender = struct { window: window_context.Handle, webview: window_context.Handle };
+
+fn sendingWebView(message: objc.id) Sender {
     const webview = msgSend0(message, "webView");
-    if (webview == null) return 0;
-    return @intFromPtr(msgSend0(webview, "window"));
+    if (webview == null) return .{ .window = 0, .webview = 0 };
+    return .{
+        .window = @intFromPtr(msgSend0(webview, "window")),
+        .webview = @intFromPtr(webview),
+    };
 }
 
 /// Create and register the script message handler with WKUserContentController

@@ -88,7 +88,10 @@ pub fn syncActivation(window: objc.id) void {
     if (builtin.target.os.tag != .macos) return;
     if (@intFromPtr(window) == 0) return;
 
-    const webview = macos.getGlobalWebView() orelse return;
+    // This window's own webview, not the last one craft built: with two
+    // windows open, the global answer told the Settings window whether the
+    // *dashboard* was in front.
+    const webview = macos.webViewForWindow(window) orelse return;
     const active = macos.msgSendBool(window, "isKeyWindow");
 
     const script = if (active)
@@ -105,25 +108,25 @@ fn addMethod(cls: objc.Class, sel_name: [*:0]const u8, imp: *const anyopaque) vo
     _ = objc.class_addMethod(cls, macos.sel(sel_name), @ptrCast(@constCast(imp)), "v@:@");
 }
 
-export fn windowDidBecomeKey(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    fire("focus", "");
+export fn windowDidBecomeKey(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "focus", "");
 }
 
-export fn windowDidResignKey(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    fire("blur", "");
+export fn windowDidResignKey(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "blur", "");
 }
 
-export fn windowDidMiniaturize(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    fire("minimize", "");
+export fn windowDidMiniaturize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "minimize", "");
 }
 
-export fn windowDidDeminiaturize(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    fire("restore", "");
+export fn windowDidDeminiaturize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "restore", "");
 }
 
 export fn windowDidResize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
     const window = macos.msgSend0(notification, "object");
-    if (@intFromPtr(window) == 0) return fire("resize", "");
+    if (@intFromPtr(window) == 0) return fire(notification, "resize", "");
     const frame = macos.msgSendRect(window, "frame");
     var buf: [192]u8 = undefined;
     // Include the window's ObjC pointer as a stable identifier so multi-
@@ -132,31 +135,37 @@ export fn windowDidResize(_: objc.id, _: objc.SEL, notification: objc.id) callco
     const wid: usize = @intFromPtr(window);
     const detail = std.fmt.bufPrint(&buf, "{{\"id\":\"w{x}\",\"width\":{d},\"height\":{d}}}", .{
         wid, frame.size.width, frame.size.height,
-    }) catch return fire("resize", "");
-    fire("resize", detail);
+    }) catch return fire(notification, "resize", "");
+    fire(notification, "resize", detail);
 }
 
 export fn windowDidMove(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
     const window = macos.msgSend0(notification, "object");
-    if (@intFromPtr(window) == 0) return fire("move", "");
+    if (@intFromPtr(window) == 0) return fire(notification, "move", "");
     const frame = macos.msgSendRect(window, "frame");
     var buf: [192]u8 = undefined;
     const wid: usize = @intFromPtr(window);
     const detail = std.fmt.bufPrint(&buf, "{{\"id\":\"w{x}\",\"x\":{d},\"y\":{d}}}", .{
         wid, frame.origin.x, frame.origin.y,
-    }) catch return fire("move", "");
-    fire("move", detail);
+    }) catch return fire(notification, "move", "");
+    fire(notification, "move", detail);
 }
 
-export fn windowWillClose(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    fire("close", "");
+export fn windowWillClose(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "close", "");
 }
 
 /// Build `window.__craftDeliverWindowEvent('<name>', <detailJSON or {}>)`
-/// and dispatch it on the WKWebView's window. JS turns it into a
-/// `craft:window:<name>` CustomEvent.
-fn fire(name: []const u8, detail_json: []const u8) void {
-    const webview = macos.getGlobalWebView() orelse return;
+/// and dispatch it into the page of the window the notification is about. JS
+/// turns it into a `craft:window:<name>` CustomEvent.
+///
+/// The notification's `object` is that window, which matters as soon as an app
+/// has two: delivering every window's focus, resize and close into whichever
+/// webview craft built last told the Settings page that the *dashboard* had
+/// been closed, and told the dashboard nothing at all.
+fn fire(notification: objc.id, name: []const u8, detail_json: []const u8) void {
+    const window = macos.msgSend0(notification, "object");
+    const webview = macos.webViewForWindow(window) orelse macos.getGlobalWebView() orelse return;
 
     var script: std.ArrayListUnmanaged(u8) = .empty;
     defer script.deinit(std.heap.c_allocator);
