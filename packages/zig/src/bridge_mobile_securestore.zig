@@ -40,18 +40,27 @@
 //! **Swift's silent hang.** The set/get/remove dispatcher arms are `if let`s
 //! with no `else`: a missing `key`, a non-string `value`, or a disabled
 //! `enableSecureStorage` config replies nothing at all, and the legacy promise
-//! never settles. Malformed input errors here instead. The capability gate has
-//! no Zig mirror (`enableSecureStorage` appears nowhere in `packages/zig/src`),
-//! so the actions are served unconditionally. For set/get/remove that grants a
-//! page nothing new: the *ungated* sharedItems actions next door already
-//! read and write the same items (one namespace — see above). The two gated
-//! modules that came before chose differently — clipboard kept its gate
-//! plumbable (`craft_ios_set_clipboard_enabled`, rejecting `PermissionDenied`
-//! when off) and haptics declared its gated action `.unavailable` — and
-//! `secureClear` is where the difference is real: under Swift's default-false
-//! gate a page got CAPABILITY_DISABLED instead of a wipe, and here the wipe is
-//! always live. If that gate is wanted back, clipboard's hook is the pattern;
-//! what must not come back is Swift's silent hang on the other three.
+//! never settles. Malformed input errors here instead, and the gate is read
+//! rather than skipped: `ios_config.gateFor` maps all four actions to
+//! `.secure_storage`, so `ios_dispatch.offerToModules` answers
+//! `CAPABILITY_DISABLED` before this module is asked. A settled rejection
+//! rather than a hang is the divergence, and it is the whole of it.
+//!
+//! This paragraph argued the opposite case at length — that
+//! `enableSecureStorage` "appears nowhere in `packages/zig/src`", that the
+//! actions were therefore served unconditionally, and that `secureClear` was
+//! where it mattered because a page got a wipe where Swift's default-false
+//! gate would have refused. Every sentence of it was true when written and
+//! none of it survived `ios_config.zig`, which read the flags out of
+//! `craft.config.json` and closed the gap for thirty-odd actions at once.
+//! Worth knowing while reading any other module's account of a missing gate:
+//! the same paragraph was written in eight other files.
+//!
+//! What has not changed is that `secureClear` is the one action where the gate
+//! is load-bearing. The *ungated* sharedItems actions next door read and write
+//! the same items (one namespace — see above), so set/get/remove being gated
+//! grants a page nothing it could not reach anyway; a wipe has no such
+//! equivalent.
 //!
 //! **`get`'s collapse of every failure into `null`.** Swift returns `nil` for
 //! *any* non-success status, so a page cannot tell "nothing stored" from "the

@@ -74,11 +74,12 @@
 //! Info.plist key to read instead: `renderUsageDescriptions`
 //! (`packages/ios/src/index.ts:183-199`) writes nothing from either flag.
 //!
-//! Both are therefore served unconditionally, and an app that set
-//! `enableFilePicker: false` or `enableFileDownload: false` now gets the
-//! behaviour anyway. Restoring the gate means adding the fields to
-//! `AppConfig`, not adding a guess here — the same trade
-//! `bridge_mobile_system.zig` records word for word for `share`.
+//! Both flags are read directly now: `ios_config.gateFor` maps `pickFile` to
+//! `.file_picker` and `saveFile` to `.file_download`, so
+//! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
+//! module is asked. This used to say both were served unconditionally and that
+//! restoring the gate meant adding fields to `AppConfig` — true when written,
+//! and answered by `ios_config.zig` reading `craft.config.json` instead.
 //!
 //! Falling through to the shim is not the safe option it was for
 //! `takeScreenshot`, because the shim does not answer these correctly today:

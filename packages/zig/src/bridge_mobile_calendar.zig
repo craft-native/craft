@@ -139,10 +139,17 @@
 //! `deleteCalendarEvent` — which requests nothing (3350) — the key is only
 //! evidence of `config.enableCalendar`, and it is checked for that reason.
 //!
-//! **`config.enableCalendar` has no Zig mirror**, the same gap
-//! `bridge_mobile_contactpicker.zig` records for `enableContacts`. The plist key
-//! `packages/ios/src/index.ts:190` writes iff that flag is the stand-in, and the
-//! mapping is exact — nothing else writes or shares it.
+//! **`config.enableCalendar` is read directly now.** `ios_config.gateFor` maps
+//! all three actions to `.calendar`, so `ios_dispatch.offerToModules` answers
+//! `CAPABILITY_DISABLED` before this module is asked. This used to say the flag
+//! had no Zig mirror, which was true until `ios_config.zig` read
+//! `craft.config.json`.
+//!
+//! The plist key `packages/ios/src/index.ts:190` writes iff that flag was the
+//! stand-in, and on the one path where it is *only* evidence of the flag rather
+//! than a precondition of the API it is now redundant with the real gate.
+//! Tracked in issue #131; the paths where the key is a genuine precondition are
+//! separated below and stay.
 //!
 //! **Behaviour changes on every disabled or malformed path, in Zig's favour.**
 //! Swift's three cases have no `else` (717-731): an app with

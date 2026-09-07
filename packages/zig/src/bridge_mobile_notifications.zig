@@ -40,11 +40,10 @@
 //! **Swift's silent hang.** The dispatcher arm is
 //! `if config.enableLocalNotifications { … }` with no `else`, and the gate
 //! defaults to `false` — so with notifications disabled the untimed promise
-//! never settles. `enableLocalNotifications` has no mirror anywhere in
-//! `packages/zig/src`, so this action is served unconditionally, the same call
-//! `bridge_mobile_securestore.zig` and `bridge_mobile_notifcancel.zig` made.
-//! Listing an app's *own* pending notifications grants a page strictly less
-//! than the cancel-everything that precedent already serves ungated.
+//! never settles. Here the flag is read: `ios_config.gateFor` maps this action
+//! to `.local_notifications` and `ios_dispatch.offerToModules` answers
+//! `CAPABILITY_DISABLED` before this module is asked. A settled rejection
+//! rather than a hang is the divergence, and it is the whole of it.
 //!
 //! **A truncated string reported as the whole one.** `-[NSString UTF8String]`
 //! is NUL-terminated, so a stored title carrying an embedded U+0000 — which

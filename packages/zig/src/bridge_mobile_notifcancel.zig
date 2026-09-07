@@ -43,11 +43,11 @@
 //! with no `else`: a missing `id`, a non-string `id`, or the gate at its
 //! default `false` replies nothing at all, and the untimed promise never
 //! settles. Malformed input errors here instead (`MissingData` /
-//! `InvalidParameter`). The `enableLocalNotifications` gate has no Zig mirror
-//! (it appears nowhere in `packages/zig/src`), so the actions are served
-//! unconditionally — the securestore module documents the same choice, and
-//! cancelling notifications grants a page strictly less than the wipe that
-//! precedent already serves ungated.
+//! `InvalidParameter`), and the gate itself is read rather than skipped:
+//! `ios_config.gateFor` maps all three actions to `.local_notifications`, so
+//! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
+//! module is asked. A settled rejection rather than a hang is the divergence,
+//! and it is the whole of it.
 //!
 //! **An `id` with an embedded NUL.** `\u0000` is a legal JSON escape and a
 //! page can send it; the route to the UN center is `stringWithUTF8String:`,
