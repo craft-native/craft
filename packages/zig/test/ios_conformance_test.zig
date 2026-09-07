@@ -803,7 +803,9 @@ test "getDeviceInfo answers every field the spec answers" {
     const end = std.mem.indexOf(u8, after, "\n            ]") orelse return error.SpecShapeChanged;
     const block = after[0..end];
 
-    const zig_src = @embedFile("src/bridge_mobile.zig");
+    // Narrowed to the implementation for the reason `implementationOf`
+    // documents: `bridge_mobile.zig`'s own tests quote these keys back.
+    const zig_src = implementationOf(@embedFile("src/bridge_mobile.zig"));
 
     var it = std.mem.splitScalar(u8, block, '\n');
     var checked: usize = 0;
@@ -1088,4 +1090,375 @@ test "every recorded dead subscription is real, and still dead" {
 
     // Non-vacuity: the loop above is satisfied by an empty table.
     try testing.expect(dead_subscriptions.len >= 4);
+}
+
+// ---------------------------------------------------------------------------
+// Reply shape
+//
+// `getDeviceInfo answers every field the spec answers` exists because Zig's
+// `getDeviceInfo` once answered four of the spec's fourteen fields. The action
+// was `.live`, so the seam preferred it; it reported success; a page reading
+// `screenWidth` or `locale` got `undefined`. Nothing else in the repo could
+// catch that, because from every other angle the action works — it just works
+// less.
+//
+// That test was written for one action, by hand, and the same hazard applies
+// to every action whose reply carries more than one field. This generalises
+// it: the spec's reply dictionaries are read out of `CraftApp.swift`, matched
+// to the action whose case arm produces them, and every key is required of the
+// Zig module that declares that action.
+//
+// Attribution is the whole difficulty, and it is worth doing properly rather
+// than checking keys against the union of all Zig sources. Half these keys are
+// words like `value`, `key`, `id` and `success` that appear in a dozen
+// modules; a union check would pass for every one of them no matter which
+// module dropped which field, which is the shape of a test that is green
+// because it is vacuous.
+// ---------------------------------------------------------------------------
+
+/// The Swift function enclosing `offset`, by name.
+///
+/// Anchored on ` func <name>(` so a `private func` matches at the `func` and a
+/// word merely ending in "func" does not. The last one before the offset is
+/// the enclosing one — Swift's functions here are flat, not nested.
+fn enclosingFunc(offset: usize) ?[]const u8 {
+    var best: ?[]const u8 = null;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, swift_spec, search, "func ")) |at| {
+        if (at >= offset) break;
+        search = at + "func ".len;
+        if (at == 0 or (swift_spec[at - 1] != ' ' and swift_spec[at - 1] != '\n')) continue;
+
+        const paren = std.mem.indexOfScalarPos(u8, swift_spec, search, '(') orelse continue;
+        const name = swift_spec[search..paren];
+        if (name.len == 0) continue;
+        var ok = true;
+        for (name) |c| {
+            if (!std.ascii.isAlphanumeric(c) and c != '_') ok = false;
+        }
+        if (ok) best = name;
+    }
+    return best;
+}
+
+/// The bracket-balanced literal beginning at `start`, which must be a `[`.
+///
+/// A string value containing a bracket would run this long. That fails in the
+/// safe direction — a block that swallows the next statement contributes keys
+/// Zig was never asked for, and the test says so loudly — rather than quietly
+/// checking nothing.
+fn balancedBracket(start: usize) ?[]const u8 {
+    var depth: i32 = 0;
+    var i = start;
+    while (i < swift_spec.len) : (i += 1) {
+        switch (swift_spec[i]) {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if (depth == 0) return swift_spec[start .. i + 1];
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+/// The next `"key":` in `block` at or after `from`, and where to resume.
+fn nextDictKey(block: []const u8, from: usize) ?struct { key: []const u8, next: usize } {
+    var search = from;
+    while (std.mem.indexOfScalarPos(u8, block, search, '"')) |open| {
+        const close = std.mem.indexOfScalarPos(u8, block, open + 1, '"') orelse return null;
+        search = close + 1;
+
+        var after = close + 1;
+        while (after < block.len and (block[after] == ' ' or block[after] == '\n')) : (after += 1) {}
+        if (after < block.len and block[after] == ':') {
+            return .{ .key = block[open + 1 .. close], .next = search };
+        }
+    }
+    return null;
+}
+
+/// The part of a module that is its implementation, not its tests.
+///
+/// The needle these checks use is the emitted JSON key — `\\"residentSize\\":` —
+/// and a module's own test literals are full of exactly that. Searching the
+/// whole file lets a module keep passing on the strength of a test asserting a
+/// field the implementation has stopped emitting, which is the one arrangement
+/// worse than no check: the assertion and the bug live in the same file and
+/// agree with each other.
+///
+/// Verified against the mutation it exists for — deleting `residentSize` from
+/// `getMemoryUsage`'s format string passes a whole-file search and fails this
+/// one.
+fn implementationOf(source: []const u8) []const u8 {
+    const at = std.mem.indexOf(u8, source, "\ntest \"") orelse return source;
+    return source[0..at];
+}
+
+/// Does `source` declare `action` in its `A` block?
+fn declaresAction(source: []const u8, action: []const u8) bool {
+    const block_start = std.mem.indexOf(u8, source, "pub const A = struct {") orelse return false;
+    var it = std.mem.splitScalar(u8, source[block_start..], '\n');
+    _ = it.next();
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (std.mem.eql(u8, trimmed, "};")) break;
+        const open = std.mem.indexOfScalar(u8, trimmed, '"') orelse continue;
+        const close = std.mem.indexOfScalarPos(u8, trimmed, open + 1, '"') orelse continue;
+        if (std.mem.eql(u8, trimmed[open + 1 .. close], action)) return true;
+    }
+    return false;
+}
+
+/// The module that serves `action`, or null for one no module declares.
+fn zigSourceFor(action: []const u8) ?[]const u8 {
+    for (zig_sources) |source| {
+        if (declaresAction(source, action)) return source;
+    }
+    return null;
+}
+
+/// The action whose dispatcher case arm calls `func_name`, or reaches `offset`.
+///
+/// Two shapes to cover: most replies are built inside a private helper the
+/// case arm calls, and a few are built inline in the arm itself. The inline
+/// ones have `userContentController` as their enclosing function, which no
+/// case calls, so they are attributed by position instead.
+fn actionProducing(func_name: []const u8, offset: usize) ?[]const u8 {
+    const region = dispatcherRegion();
+    const region_start = @intFromPtr(region.ptr) - @intFromPtr(swift_spec.ptr);
+
+    var found: ?[]const u8 = null;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, region, search, "case \"")) |at| {
+        const name_start = at + "case \"".len;
+        const name_end = std.mem.indexOfScalarPos(u8, region, name_start, '"') orelse break;
+        const action = region[name_start..name_end];
+        search = name_end;
+
+        const block_end = std.mem.indexOfPos(u8, region, name_end, "case \"") orelse region.len;
+
+        // Inline: the dictionary itself sits in this arm.
+        if (offset >= region_start + name_end and offset < region_start + block_end) return action;
+
+        // Delegated: the arm calls the helper that builds the dictionary.
+        var call_buf: [96]u8 = undefined;
+        if (func_name.len + 1 > call_buf.len) continue;
+        const call = std.fmt.bufPrint(&call_buf, "{s}(", .{func_name}) catch continue;
+        if (std.mem.indexOf(u8, region[name_end..block_end], call) != null) {
+            if (found == null) found = action;
+        }
+    }
+    return found;
+}
+
+const ReplyDivergence = struct {
+    action: []const u8,
+    key: []const u8,
+    reason: []const u8,
+};
+
+/// Keys the spec's reply carries that Zig deliberately does not answer.
+///
+/// A reply that drops a field is a bug by default — that is what the check
+/// below is for — so a row here has to argue that Zig is *right* and the spec
+/// is wrong, not merely that they differ.
+const deliberate_reply_divergences = [_]ReplyDivergence{
+    // Swift's failure arm resolves with `["usedMB": 0, "error": ...]`, which
+    // settles the page's promise carrying a fabricated zero: a caller cannot
+    // tell "this app uses no memory" from "the reading could not be taken".
+    // Zig returns `NativeCallFailed`, so there is no success reply for an
+    // `error` key to live in. Documented at the `task_info` call site.
+    .{ .action = "getMemoryUsage", .key = "error", .reason = "Swift resolves the failure with a fabricated usedMB: 0; Zig rejects, so there is no reply to carry it" },
+
+    // Declared `.status = .unavailable`: Zig names the action so the seam can
+    // refuse it explicitly, and the Swift shim answers. There is no Zig reply
+    // to compare, and the shim's own `isConnected` is hardcoded `true` — which
+    // is why Zig refuses rather than reproducing it.
+    .{ .action = "getNetworkStatus", .key = "isConnected", .reason = "Zig declares it .status = .unavailable; the shim answers, and answers it wrong" },
+    .{ .action = "getNetworkStatus", .key = "type", .reason = "Zig declares it .status = .unavailable; the shim answers, and answers it wrong" },
+};
+
+fn divergenceRecorded(action: []const u8, key: []const u8) bool {
+    for (deliberate_reply_divergences) |d| {
+        if (std.mem.eql(u8, d.action, action) and std.mem.eql(u8, d.key, key)) return true;
+    }
+    return false;
+}
+
+/// Walk every multi-key reply dictionary in the spec, calling `visit` with the
+/// action it belongs to and each of its keys.
+///
+/// Shared by the check and its own anti-rot test so the two cannot disagree
+/// about what the scan found.
+fn forEachReplyKey(
+    context: anytype,
+    comptime visit: fn (@TypeOf(context), action: []const u8, key: []const u8) anyerror!void,
+) !void {
+    const anchors = [_][]const u8{
+        "resolveCallback(callbackId, result: [",
+        "resolveCallbackJSON(callbackId, json: [",
+        ": [String: Any] = [",
+    };
+
+    for (anchors) |anchor| {
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, swift_spec, search, anchor)) |at| {
+            const bracket = at + anchor.len - 1;
+            search = at + anchor.len;
+
+            const block = balancedBracket(bracket) orelse continue;
+
+            // One key is a single-field reply — `["reachable": x]` — which the
+            // action's own module test already pins and which cannot lose a
+            // field without losing the whole reply.
+            var count: usize = 0;
+            var at_key: usize = 0;
+            while (nextDictKey(block, at_key)) |k| : (at_key = k.next) count += 1;
+            if (count < 2) continue;
+
+            const func = enclosingFunc(at) orelse continue;
+            const action = actionProducing(func, at) orelse continue;
+
+            at_key = 0;
+            while (nextDictKey(block, at_key)) |k| : (at_key = k.next) {
+                try visit(context, action, k.key);
+            }
+        }
+    }
+}
+
+const ReplyCounter = struct {
+    checked: usize = 0,
+    actions_seen: usize = 0,
+};
+
+/// Does `source` emit `key` as a JSON key?
+///
+/// Two spellings, because modules legitimately use both. Most build the reply
+/// as a format string and the key appears as the escaped `\\"key\\":` it will
+/// emit. `bridge_mobile_bgtasks.zig` instead names it — `const scheduled_key =
+/// "scheduled";` — and passes it to a shared `taskReply` helper, so the
+/// literal never appears beside a colon. Demanding the first spelling would
+/// fail a module that is correct, which is the failure that gets a check
+/// deleted rather than fixed.
+fn emitsJsonKey(source: []const u8, key: []const u8) !bool {
+    var buf: [96]u8 = undefined;
+    if (key.len + 8 > buf.len) return true;
+
+    const escaped = try std.fmt.bufPrint(&buf, "\\\"{s}\\\":", .{key});
+    if (std.mem.indexOf(u8, source, escaped) != null) return true;
+
+    var buf2: [96]u8 = undefined;
+    const named = try std.fmt.bufPrint(&buf2, "= \"{s}\";", .{key});
+    return std.mem.indexOf(u8, source, named) != null;
+}
+
+fn checkReplyKey(counter: *ReplyCounter, action: []const u8, key: []const u8) !void {
+    if (divergenceRecorded(action, key)) return;
+
+    // An action no Zig module declares is still owed, not broken — the ratchet
+    // above is what tracks those.
+    const source = implementationOf(zigSourceFor(action) orelse return);
+
+    if (!try emitsJsonKey(source, key)) {
+        std.debug.print(
+            "{s}: the spec's reply carries `{s}` and the Zig module serving it never emits that key.\n" ++
+                "  The action reports success and the page reads undefined.\n",
+            .{ action, key },
+        );
+        return error.ReplyDropsAFieldTheSpecAnswers;
+    }
+    counter.checked += 1;
+}
+
+test "every field the spec's replies carry is one Zig's reply carries" {
+    // The generalisation of the `getDeviceInfo` check, which found exactly this
+    // and could only ever find it for one action.
+    var counter = ReplyCounter{};
+    try forEachReplyKey(&counter, checkReplyKey);
+
+    // Non-vacuity, and a real floor rather than a token one: the scan finds
+    // twenty-odd multi-key replies today across device info, the keychain,
+    // biometric persistence, background tasks, PDF, SQLite, health, Siri and
+    // AR. A parsing change that dropped it to a handful would otherwise leave
+    // this test green and checking almost nothing.
+    //
+    // 52 keys reach this check as of this commit, out of the 64 the scan
+    // attributes — the gap is actions Zig does not serve yet, whose absence is
+    // the ratchet's business rather than this test's. The floor is set below
+    // that with room for the spec to lose a field honestly, and well above
+    // what any broken sub-parser would leave behind.
+    try testing.expect(counter.checked >= 40);
+}
+
+fn countReplyKey(counter: *ReplyCounter, action: []const u8, key: []const u8) !void {
+    _ = key;
+    _ = action;
+    counter.checked += 1;
+}
+
+test "the reply scan attributes dictionaries to actions, not to nothing" {
+    // The scan has three failure modes that all look like success: an anchor
+    // that stops matching, a bracket walk that returns null, and an
+    // attribution that never resolves. Each would leave the check above
+    // iterating an empty set.
+    var counter = ReplyCounter{};
+    try forEachReplyKey(&counter, countReplyKey);
+    try testing.expect(counter.checked >= 50); // 64 today
+
+    // And the attribution has to reach the two shapes it was written for: a
+    // reply built in a private helper, and one built inline in the case arm.
+    const helper = actionProducing("getDeviceInfo", 0) orelse return error.AttributionLostTheHelperShape;
+    try testing.expectEqualStrings("getDeviceInfo", helper);
+
+    const inline_at = std.mem.indexOf(u8, swift_spec, "\"isConnected\": isConnected") orelse
+        return error.SpecShapeChanged;
+    const inline_action = actionProducing("userContentController", inline_at) orelse
+        return error.AttributionLostTheInlineShape;
+    try testing.expectEqualStrings("getNetworkStatus", inline_action);
+}
+
+const PairProbe = struct {
+    action: []const u8,
+    key: []const u8,
+    found: bool = false,
+};
+
+fn probePair(probe: *PairProbe, action: []const u8, key: []const u8) !void {
+    if (std.mem.eql(u8, probe.action, action) and std.mem.eql(u8, probe.key, key)) probe.found = true;
+}
+
+test "every recorded reply divergence is real, and still a divergence" {
+    // The anti-rot half, in both directions the deferral table checks. A row
+    // whose key Zig has started answering argues against code that no longer
+    // exists; a row naming a key the spec stopped answering argues against
+    // nothing at all, and the next reader has no way to tell which.
+    for (deliberate_reply_divergences) |d| {
+        try testing.expect(d.reason.len > 0);
+
+        var probe = PairProbe{ .action = d.action, .key = d.key };
+        try forEachReplyKey(&probe, probePair);
+        if (!probe.found) {
+            std.debug.print(
+                "the divergence table says {s} deliberately drops `{s}`, and the spec's reply " ++
+                    "does not carry that key — delete the row.\n",
+                .{ d.action, d.key },
+            );
+            return error.ReplyDivergenceNamesNoSuchKey;
+        }
+
+        const source = implementationOf(zigSourceFor(d.action) orelse continue);
+        if (try emitsJsonKey(source, d.key)) {
+            std.debug.print(
+                "{s} is recorded as deliberately not answering `{s}`, and it answers it now — " ++
+                    "delete the row.\n",
+                .{ d.action, d.key },
+            );
+            return error.ReplyDivergenceIsSpent;
+        }
+    }
+
+    try testing.expect(deliberate_reply_divergences.len >= 3);
 }
