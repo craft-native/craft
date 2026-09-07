@@ -1579,18 +1579,73 @@ test "every recorded reply divergence is real, and still a divergence" {
 // the spec's `sendToWeb` calls and `ios_events.Event`, and it was the only one
 // nothing checked — so it had drifted in both directions at once.
 //
-// It declared `craftVoiceAction`, which appears nowhere else in the repository:
-// no dispatch, no subscription, no implementation. A listener written against
-// it type-checks and never fires.
-//
 // It omitted six events that do fire — `craftLocationUpdate`,
 // `craftLocationError`, `craftNetworkChange`, `craftPushToken`,
 // `craftNotificationResponse` and `craftWatchUserInfo` — so the most-used
 // stream in the whole surface reached a page as an untyped `Event` whose
 // `detail` was `any`.
+//
+// ## This file is cross-platform, and the first version of this check was not
+//
+// `craft.d.ts` is the SDK's whole type surface, not iOS's. Checking it against
+// the iOS spec alone got a live type deleted: `craftVoiceAction` is dispatched
+// by `CraftBridge.kt`, and a scan that never opened a `.kt.template` reported
+// it as fiction. The check that replaced it would then have rejected the fix,
+// because a correct Android-only entry fails an iOS-only rule — a guard whose
+// own error message argues for the bug.
+//
+// So the vocabulary here is the union of what either bridge dispatches. The
+// Android scan below is the same shape as the Swift one: `sendEvent("craftX"`
+// for the helper, plus the `CustomEvent('craftX'` literals the injected JS
+// emits directly. Android's `window._craftXResolve` handles are deliberately
+// not matched — those are promise plumbing, not events.
 // ---------------------------------------------------------------------------
 
 const sdk_types = @embedFile("craft.d.ts");
+const android_spec = @embedFile("CraftBridge.kt");
+
+/// Every event `CraftBridge.kt` dispatches to the page.
+fn collectAndroidDispatchedEvents(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    const Needle = struct { text: []const u8, quote: u8 };
+    const needles = [_]Needle{
+        .{ .text = "sendEvent(\"", .quote = '"' },
+        .{ .text = "CustomEvent('", .quote = '\'' },
+    };
+
+    for (needles) |needle| {
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, android_spec, search, needle.text)) |at| {
+            const start = at + needle.text.len;
+            const end = std.mem.indexOfScalarPos(u8, android_spec, start, needle.quote) orelse break;
+            search = end;
+
+            const name = android_spec[start..end];
+            if (!std.mem.startsWith(u8, name, "craft")) continue;
+            var ok = true;
+            for (name) |c| {
+                if (!std.ascii.isAlphanumeric(c)) ok = false;
+            }
+            if (ok) try set.put(name, {});
+        }
+    }
+    return set;
+}
+
+/// What either bridge dispatches — the vocabulary `craft.d.ts` describes.
+fn collectAllDispatchedEvents(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = try collectSpecDispatchedEvents(allocator);
+    errdefer set.deinit();
+
+    var android = try collectAndroidDispatchedEvents(allocator);
+    defer android.deinit();
+
+    var it = android.keyIterator();
+    while (it.next()) |name| try set.put(name.*, {});
+    return set;
+}
 
 /// The keys of `interface WindowEventMap { … }`.
 fn collectSdkEventMap(allocator: std.mem.Allocator) !std.StringHashMap(void) {
@@ -1613,17 +1668,16 @@ fn collectSdkEventMap(allocator: std.mem.Allocator) !std.StringHashMap(void) {
 }
 
 test "the SDK's event map declares nothing that never fires" {
-    // `craftVoiceAction` was the case: a name in this map and nowhere else in
-    // the repository. The map is the most authoritative-looking of the three
-    // statements of the vocabulary — it is what an editor autocompletes from —
-    // and it was the one with no check behind it.
+    // The map is the most authoritative-looking statement of the vocabulary —
+    // it is what an editor autocompletes from — and it was the one with no
+    // check behind it.
     var map = try collectSdkEventMap(testing.allocator);
     defer map.deinit();
 
     // Non-vacuity: a renamed interface would empty this set.
-    try testing.expect(map.count() >= 19);
+    try testing.expect(map.count() >= 21);
 
-    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    var dispatched = try collectAllDispatchedEvents(testing.allocator);
     defer dispatched.deinit();
 
     var it = map.keyIterator();
@@ -1658,9 +1712,9 @@ test "the SDK's event map declares everything that does fire" {
     var map = try collectSdkEventMap(testing.allocator);
     defer map.deinit();
 
-    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    var dispatched = try collectAllDispatchedEvents(testing.allocator);
     defer dispatched.deinit();
-    try testing.expect(dispatched.count() >= 17);
+    try testing.expect(dispatched.count() >= 20);
 
     var it = dispatched.keyIterator();
     while (it.next()) |name| {
