@@ -113,6 +113,16 @@ pub const WindowStyle = struct {
     web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
+    /// Whether Craft draws its own row of controls beside the window buttons —
+    /// the sidebar toggle and the two history arrows.
+    ///
+    /// On by default, because a web-sidebar window with a hidden titlebar has
+    /// nothing else up there and no way to collapse its own sidebar. A page
+    /// that draws that row itself — a Settings window, which puts its history
+    /// in the content pane and has no collapsible sidebar — turns it off, or it
+    /// ends up with two sets of arrows and one of them belongs to somebody
+    /// else's navigation model.
+    web_chrome_controls: bool = true,
     benchmark: bool = false, // Benchmark mode: skip bridge setup for fastest window creation
     /// Build the window and never put it on screen.
     ///
@@ -1111,7 +1121,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // Store webview and window references globally
         if (webview) |wv| {
             setGlobalWebView(wv);
-            if (style.hasWebMaterial()) {
+            if (style.hasWebMaterial() and style.web_chrome_controls) {
                 addWebSidebarChromeControls(window, wv);
             }
             // Also set references for tray menu actions
@@ -1329,7 +1339,18 @@ var web_sidebar_toggle_button: objc.id = null;
 /// recomputed from the same constants in a second place: this module's whole
 /// contract with the page is that the numbers are measured, and a duplicate of
 /// the layout maths would be wrong the first time either copy moved.
-var web_sidebar_chrome_row: ?NSRect = null;
+///
+/// Per window, because two windows can want different answers: a Settings
+/// window that draws its own history row has no Craft chrome to leave room
+/// for, and reading one window's row while measuring another reserved a strip
+/// of the page for buttons that were not on it.
+fn setWebChromeRow(window: objc.id, row: ?NSRect) void {
+    if (chromeSlot(window)) |slot| slot.host_row = row;
+}
+
+fn webChromeRow(window: objc.id) ?NSRect {
+    return if (chromeSlot(window)) |slot| slot.host_row else null;
+}
 var web_sidebar_width_stored: f64 = 286.0;
 
 fn updateWebSidebarToggleButton(collapsed: bool) void {
@@ -3200,7 +3221,7 @@ fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
     }
 
     // The page has to leave room for this row, not just for the window buttons.
-    web_sidebar_chrome_row = row;
+    setWebChromeRow(window, row);
 }
 
 /// Create a window with native sidebar loading a URL instead of inline HTML
@@ -4235,7 +4256,7 @@ pub fn measureWindowChrome(window: objc.id, webview: objc.id, frameless: bool) w
     // reserving only the buttons put its own controls underneath. They are real
     // NSButtons on the theme frame, so anything under them is unreachable, not
     // merely overlapped.
-    const host_chrome: ?window_chrome.Rect = if (web_sidebar_chrome_row) |row| .{
+    const host_chrome: ?window_chrome.Rect = if (webChromeRow(window)) |row| .{
         .x = row.origin.x - viewport.origin.x,
         .y = (viewport.origin.y + viewport.size.height) - (row.origin.y + row.size.height),
         .width = row.size.width,
@@ -4260,6 +4281,8 @@ const ChromeSlot = struct {
     window: usize = 0,
     published: ?window_chrome.State = null,
     observed: bool = false,
+    /// Craft's own control row on this window, if it drew one.
+    host_row: ?NSRect = null,
 };
 
 var chrome_slots: [window_registry.capacity]ChromeSlot = @splat(.{});

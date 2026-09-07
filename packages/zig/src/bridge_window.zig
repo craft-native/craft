@@ -187,6 +187,10 @@ pub const WindowBridge = struct {
             .web_window_material = json_utils.getBool(json_data, "webWindowMaterial") orelse false,
             .web_sidebar_width = json_utils.getInt(u32, json_data, "webSidebarWidth") orelse 286,
             .web_sidebar_material_opacity = json_utils.getFloat(f64, json_data, "webSidebarMaterialOpacity") orelse 0.78,
+            // Craft's own row beside the window buttons — the sidebar toggle
+            // and two history arrows. A page with its own history row turns it
+            // off rather than showing two sets of arrows that disagree.
+            .web_chrome_controls = json_utils.getBool(json_data, "chromeControls") orelse true,
             // The inspector follows the window that opened it: an app built
             // with `--no-devtools` should not grow a right-click Inspect
             // Element by opening its own Settings.

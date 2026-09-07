@@ -30,6 +30,9 @@ pub const WindowOptions = struct {
     web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
+    /// Whether Craft draws the sidebar toggle and history arrows itself. Off
+    /// for a page that draws its own.
+    web_chrome_controls: bool = true,
     sidebar_config: ?[]const u8 = null,
     quiet: bool = false,
     benchmark: bool = false,
@@ -551,6 +554,8 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
             options.web_sidebar_width = std.fmt.parseInt(u32, args[i], 10) catch return CliError.InvalidNumber;
+        } else if (std.mem.eql(u8, arg, "--no-web-chrome-controls")) {
+            options.web_chrome_controls = false;
         } else if (std.mem.eql(u8, arg, "--web-sidebar-material-opacity")) {
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
@@ -670,6 +675,9 @@ fn printHelp() void {
         \\                          only wash that knows the page's colour scheme.
         \\      --web-sidebar-width <W>
         \\                          Web sidebar material width in pixels (default: 286)
+        \\      --no-web-chrome-controls
+        \\                          Do not draw Craft's sidebar toggle and history
+        \\                          arrows beside the window buttons.
         \\      --web-sidebar-material-opacity <N>
         \\                          White/dark tint over web sidebar material, 0..1 (default: 0.78).
         \\                          --web-sidebar-material only.

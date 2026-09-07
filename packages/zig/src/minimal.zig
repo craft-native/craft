@@ -273,6 +273,7 @@ pub fn main(init: std.process.Init) !void {
                 .web_window_material = options.web_window_material,
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
+                .web_chrome_controls = options.web_chrome_controls,
             },
         );
     } else if (options.html) |html| {
@@ -309,6 +310,7 @@ pub fn main(init: std.process.Init) !void {
                 .web_window_material = options.web_window_material,
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
+                .web_chrome_controls = options.web_chrome_controls,
             },
         );
     } else {

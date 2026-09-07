@@ -130,6 +130,13 @@ export interface WindowCreateOptions {
   webSidebarMaterialOpacity?: number
   /** Draw that material behind the whole web view instead of a leading strip */
   webWindowMaterial?: boolean
+  /**
+   * Whether Craft draws its own controls beside the window buttons — the
+   * sidebar toggle and two history arrows. Defaults to on for a window with a
+   * web material behind it, which otherwise has nothing up there at all. Turn
+   * it off in a page that draws its own history row.
+   */
+  chromeControls?: boolean
   /** Titlebar style (macOS) */
   titlebarStyle?: 'default' | 'hidden' | 'hiddenInset' | 'customButtonsOnHover'
   /** Vibrancy effect (macOS) */

@@ -625,6 +625,7 @@ await window.craft.window.open({
 | `webSidebarWidth` | `286` | How wide that strip is. |
 | `webSidebarMaterialOpacity` | `0.78` | Tint over the material, `0`–`1`. |
 | `webWindowMaterial` | `false` | That material behind the whole web view instead. |
+| `chromeControls` | `true` | Craft's own sidebar toggle and history arrows beside the window buttons. |
 | `devTools` | `false` | Web Inspector in this window. |
 
 ### `window.craft.window.show(): Promise<void>`
