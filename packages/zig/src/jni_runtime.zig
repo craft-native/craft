@@ -80,6 +80,23 @@ pub const jthrowable = jobject;
 pub const jmethodID = ?*anyopaque;
 pub const jfieldID = ?*anyopaque;
 
+/// One Java argument, as the `A`-form calls take them.
+///
+/// A C union of every primitive plus a reference, eight bytes wide. Arguments
+/// are passed as an array of these rather than variadically — see
+/// `Jni.callObjectMethodA` for why that is the only form offered.
+pub const jvalue = extern union {
+    z: jboolean,
+    b: jbyte,
+    c: jchar,
+    s: jshort,
+    i: jint,
+    j: jlong,
+    f: jfloat,
+    d: jdouble,
+    l: jobject,
+};
+
 /// `JNIEnv*` as the JVM passes it to a native method.
 pub const JNIEnv = *const *const JNINativeInterface;
 
@@ -445,6 +462,104 @@ pub const Jni = struct {
         return result;
     }
 
+    // --- The argument-taking forms -------------------------------------
+    //
+    // Every one of these is the `A` variant, taking a `[]const jvalue`. The
+    // bare `CallObjectMethod` is variadic in C, and calling a variadic
+    // function through a `callconv(.c)` pointer means reproducing the
+    // platform's argument-passing rules exactly — which arm64 and x86-64
+    // Android do not share. The `A` form takes an array instead, so there is
+    // no ABI to reproduce and one implementation is right on both.
+    //
+    // `args.ptr` is passed even when the slice is empty; a zero-argument call
+    // never reads it, and a null there would be a second thing to reason about.
+
+    pub fn callObjectMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!jobject {
+        const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) jobject =
+            @ptrCast(self.table().CallObjectMethodA orelse return JniError.NotFound);
+        const result = call(self.env, obj, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
+    pub fn callVoidMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!void {
+        const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) void =
+            @ptrCast(self.table().CallVoidMethodA orelse return JniError.NotFound);
+        call(self.env, obj, id, args.ptr);
+        try self.check();
+    }
+
+    /// `new <cls>(args)`. `id` must be the `<init>` method id.
+    pub fn newObjectA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jobject {
+        const new: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jobject =
+            @ptrCast(self.table().NewObjectA orelse return JniError.NotFound);
+        const obj = new(self.env, cls, id, args.ptr);
+        try self.check();
+        return obj orelse JniError.NotFound;
+    }
+
+    // --- Instance fields -------------------------------------------------
+    //
+    // Needed because Android exposes plain public fields on several of the
+    // classes this bridge reads — `DisplayMetrics.widthPixels`,
+    // `PackageInfo.versionName` — with no getter to call.
+
+    pub fn fieldId(self: Self, cls: jclass, name: [*:0]const u8, sig: [*:0]const u8) JniError!jfieldID {
+        const get: *const fn (JNIEnv, jclass, [*:0]const u8, [*:0]const u8) callconv(.c) jfieldID =
+            @ptrCast(self.table().GetFieldID orelse return JniError.NotFound);
+        const id = get(self.env, cls, name, sig);
+        try self.check();
+        return id orelse JniError.NotFound;
+    }
+
+    pub fn objectField(self: Self, obj: jobject, id: jfieldID) JniError!jobject {
+        const get: *const fn (JNIEnv, jobject, jfieldID) callconv(.c) jobject =
+            @ptrCast(self.table().GetObjectField orelse return JniError.NotFound);
+        const value = get(self.env, obj, id);
+        try self.check();
+        return value;
+    }
+
+    pub fn intField(self: Self, obj: jobject, id: jfieldID) JniError!jint {
+        const get: *const fn (JNIEnv, jobject, jfieldID) callconv(.c) jint =
+            @ptrCast(self.table().GetIntField orelse return JniError.NotFound);
+        const value = get(self.env, obj, id);
+        try self.check();
+        return value;
+    }
+
+    pub fn longField(self: Self, obj: jobject, id: jfieldID) JniError!jlong {
+        const get: *const fn (JNIEnv, jobject, jfieldID) callconv(.c) jlong =
+            @ptrCast(self.table().GetLongField orelse return JniError.NotFound);
+        const value = get(self.env, obj, id);
+        try self.check();
+        return value;
+    }
+
+    pub fn floatField(self: Self, obj: jobject, id: jfieldID) JniError!jfloat {
+        const get: *const fn (JNIEnv, jobject, jfieldID) callconv(.c) jfloat =
+            @ptrCast(self.table().GetFloatField orelse return JniError.NotFound);
+        const value = get(self.env, obj, id);
+        try self.check();
+        return value;
+    }
+
+    /// Make a Java `String` from UTF-8.
+    ///
+    /// The JVM wants *modified* UTF-8 here, the same encoding `stringToUtf8`
+    /// decodes on the way back — so a string carrying a NUL or an astral
+    /// character has to be re-encoded rather than handed over. Callers pass
+    /// NUL-terminated literals and ASCII package names today, which are
+    /// identical in both encodings; `encodeModifiedUtf8` is the function to
+    /// add when that stops being true, and this is where it goes.
+    pub fn newStringUtf(self: Self, text: [*:0]const u8) JniError!jstring {
+        const new: *const fn (JNIEnv, [*:0]const u8) callconv(.c) jstring =
+            @ptrCast(self.table().NewStringUTF orelse return JniError.NotFound);
+        const str = new(self.env, text);
+        try self.check();
+        return str orelse JniError.OutOfMemory;
+    }
+
     pub fn callIntMethod(self: Self, obj: jobject, id: jmethodID) JniError!jint {
         const call: *const fn (JNIEnv, jobject, jmethodID) callconv(.c) jint =
             @ptrCast(self.table().CallIntMethod orelse return JniError.NotFound);
@@ -457,6 +572,31 @@ pub const Jni = struct {
         const get: *const fn (JNIEnv, jobject) callconv(.c) jclass =
             @ptrCast(self.table().GetObjectClass orelse return JniError.NotFound);
         return get(self.env, obj) orelse JniError.NotFound;
+    }
+
+    /// Open a scope that owns every local reference created inside it.
+    ///
+    /// The JVM only guarantees sixteen local reference slots. A function that
+    /// walks a few objects — an Activity to a WindowManager to a Display to a
+    /// DisplayMetrics — spends them without ever looking like it is
+    /// allocating, and overflowing aborts the process rather than failing a
+    /// call. `popLocalFrame` frees the whole scope in one go, which is both
+    /// less code than a `defer` per reference and impossible to get half-right.
+    pub fn pushLocalFrame(self: Self, capacity: jint) JniError!void {
+        const push: *const fn (JNIEnv, jint) callconv(.c) jint =
+            @ptrCast(self.table().PushLocalFrame orelse return JniError.NotFound);
+        if (push(self.env, capacity) != 0) {
+            try self.check();
+            return JniError.OutOfMemory;
+        }
+    }
+
+    /// Close the scope. `keep` is the one reference to survive it, promoted
+    /// into the enclosing frame — null when nothing needs to.
+    pub fn popLocalFrame(self: Self, keep: jobject) jobject {
+        const pop: *const fn (JNIEnv, jobject) callconv(.c) jobject =
+            @ptrCast(self.table().PopLocalFrame orelse return null);
+        return pop(self.env, keep);
     }
 
     pub fn deleteLocalRef(self: Self, obj: jobject) void {
@@ -842,4 +982,123 @@ test "modified UTF-8 decodes to the standard encoding" {
     // Truncated input is refused rather than read past the end.
     try testing.expectError(JniError.MalformedString, decodeModifiedUtf8(alloc, "\xE6\x97"));
     try testing.expectError(JniError.MalformedString, decodeModifiedUtf8(alloc, "\xFF"));
+}
+
+// --- Argument passing ------------------------------------------------------
+
+var fake_seen_args: [4]jvalue = undefined;
+var fake_arg_count: usize = 0;
+var fake_called_obj: jobject = null;
+var fake_called_id: jmethodID = null;
+
+var fake_returned: u8 = 0;
+fn fakeCallObjectMethodA(_: JNIEnv, obj: jobject, id: jmethodID, args: [*]const jvalue) callconv(.c) jobject {
+    fake_called_obj = obj;
+    fake_called_id = id;
+    // The fake knows its own arity; a real one is told by the signature.
+    fake_seen_args[0] = args[0];
+    fake_seen_args[1] = args[1];
+    fake_arg_count = 2;
+    return @ptrCast(&fake_returned);
+}
+
+fn fakeIntField(_: JNIEnv, _: jobject, _: jfieldID) callconv(.c) jint {
+    return 1080;
+}
+fn fakeFloatField(_: JNIEnv, _: jobject, _: jfieldID) callconv(.c) jfloat {
+    return 2.75;
+}
+fn fakeLongField(_: JNIEnv, _: jobject, _: jfieldID) callconv(.c) jlong {
+    return 4_000_000_123;
+}
+fn fakeFieldId(_: JNIEnv, _: jclass, _: [*:0]const u8, _: [*:0]const u8) callconv(.c) jfieldID {
+    return @ptrCast(&fake_field);
+}
+
+test "jvalue is the eight-byte union the A-form calls expect" {
+    // Wrong size here would misalign every argument after the first, and the
+    // call would still run — the classic JNI failure that looks like garbage
+    // data rather than a crash.
+    try testing.expectEqual(@as(usize, 8), @sizeOf(jvalue));
+    try testing.expectEqual(@as(usize, 8), @alignOf(jvalue));
+
+    // Each member reads back what was written, which is what says the union is
+    // laid out rather than merely sized.
+    var v = jvalue{ .i = -7 };
+    try testing.expectEqual(@as(jint, -7), v.i);
+    v = jvalue{ .j = 4_000_000_123 };
+    try testing.expectEqual(@as(jlong, 4_000_000_123), v.j);
+    v = jvalue{ .d = 0.5 };
+    try testing.expectEqual(@as(jdouble, 0.5), v.d);
+}
+
+test "arguments arrive in the array, in order, undamaged" {
+    resetFakes();
+    var table = emptyTable();
+    table.CallObjectMethodA = @ptrCast(&fakeCallObjectMethodA);
+    table.ExceptionOccurred = @ptrCast(&fakeExceptionOccurred);
+
+    const ptr: *const JNINativeInterface = &table;
+    const jni = Jni.init(&ptr);
+
+    var receiver: u8 = 0;
+    var name_string: u8 = 0;
+    var method: u8 = 0;
+
+    // `getPackageInfo(String, int)` — the exact shape getDeviceInfo needs, and
+    // the one a variadic call would be most likely to get wrong: a reference
+    // and an int, which travel in different register files.
+    const args = [_]jvalue{
+        .{ .l = @ptrCast(&name_string) },
+        .{ .i = 0 },
+    };
+    const result = try jni.callObjectMethodA(@ptrCast(&receiver), @ptrCast(&method), &args);
+
+    try testing.expect(result != null);
+    try testing.expectEqual(@as(jobject, @ptrCast(&receiver)), fake_called_obj);
+    try testing.expectEqual(@as(usize, 2), fake_arg_count);
+    try testing.expectEqual(@as(jobject, @ptrCast(&name_string)), fake_seen_args[0].l);
+    try testing.expectEqual(@as(jint, 0), fake_seen_args[1].i);
+}
+
+test "instance fields read through the slots they name" {
+    resetFakes();
+    var table = emptyTable();
+    table.FindClass = @ptrCast(&fakeFindClass);
+    table.GetFieldID = @ptrCast(&fakeFieldId);
+    table.GetIntField = @ptrCast(&fakeIntField);
+    table.GetFloatField = @ptrCast(&fakeFloatField);
+    table.GetLongField = @ptrCast(&fakeLongField);
+    table.ExceptionOccurred = @ptrCast(&fakeExceptionOccurred);
+
+    const ptr: *const JNINativeInterface = &table;
+    const jni = Jni.init(&ptr);
+
+    const cls = try jni.findClass("android/util/DisplayMetrics");
+    var obj: u8 = 0;
+    const metrics: jobject = @ptrCast(&obj);
+
+    // Three different widths off three adjacent table slots — an off-by-one in
+    // the transcription would read the wrong one and still return a number.
+    try testing.expectEqual(@as(jint, 1080), try jni.intField(metrics, try jni.fieldId(cls, "widthPixels", "I")));
+    try testing.expectEqual(@as(jfloat, 2.75), try jni.floatField(metrics, try jni.fieldId(cls, "density", "F")));
+    try testing.expectEqual(@as(jlong, 4_000_000_123), try jni.longField(metrics, try jni.fieldId(cls, "longVersionCode", "J")));
+}
+
+test "a field read that throws reports the exception, not the value" {
+    resetFakes();
+    var table = emptyTable();
+    table.GetIntField = @ptrCast(&fakeIntField);
+    table.ExceptionOccurred = @ptrCast(&fakeExceptionOccurred);
+    table.ExceptionDescribe = @ptrCast(&fakeExceptionDescribe);
+    table.ExceptionClear = @ptrCast(&fakeExceptionClear);
+    table.DeleteLocalRef = @ptrCast(&fakeDeleteLocalRef);
+
+    const ptr: *const JNINativeInterface = &table;
+    const jni = Jni.init(&ptr);
+
+    var throwable: u8 = 0;
+    fake_pending_exception = @ptrCast(&throwable);
+    var obj: u8 = 0;
+    try testing.expectError(JniError.JavaException, jni.intField(@ptrCast(&obj), null));
 }

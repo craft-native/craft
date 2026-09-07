@@ -413,6 +413,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_jni_tests = b.addRunArtifact(jni_tests);
 
+    // The Android bridge modules. Rooted at the device module because it is
+    // the only one so far; a second joins by being imported from here, the way
+    // `ios.zig` gathers the iOS ones.
+    const android_bridge_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_android_device.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_android_bridge_tests = b.addRunArtifact(android_bridge_tests);
+
     ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
         .root_source_file = b.path("../ios/templates/CraftApp.swift"),
     });
@@ -1526,6 +1538,7 @@ pub fn build(b: *std.Build) void {
     }
     test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_jni_tests.step);
+    test_step.dependOn(&run_android_bridge_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -2202,6 +2215,7 @@ pub fn build(b: *std.Build) void {
     // second one: `jni_runtime.zig` is the only way anything here reaches Java,
     // so a run that skipped it would not be an Android test run.
     test_android_step.dependOn(&run_jni_tests.step);
+    test_android_step.dependOn(&run_android_bridge_tests.step);
 
     // Add Android tests to the main test step
     test_step.dependOn(&run_android_tests.step);
