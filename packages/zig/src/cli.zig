@@ -33,6 +33,9 @@ pub const WindowOptions = struct {
     /// Whether Craft draws the sidebar toggle and history arrows itself. Off
     /// for a page that draws its own.
     web_chrome_controls: bool = true,
+    /// Whether the page's storage survives a quit and is shared between the
+    /// app's windows. Off by default; see `WindowStyle.persistent_storage`.
+    persistent_storage: bool = false,
     sidebar_config: ?[]const u8 = null,
     quiet: bool = false,
     benchmark: bool = false,
@@ -554,6 +557,8 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
             options.web_sidebar_width = std.fmt.parseInt(u32, args[i], 10) catch return CliError.InvalidNumber;
+        } else if (std.mem.eql(u8, arg, "--persistent-storage")) {
+            options.persistent_storage = true;
         } else if (std.mem.eql(u8, arg, "--no-web-chrome-controls")) {
             options.web_chrome_controls = false;
         } else if (std.mem.eql(u8, arg, "--web-sidebar-material-opacity")) {
@@ -675,6 +680,9 @@ fn printHelp() void {
         \\                          only wash that knows the page's colour scheme.
         \\      --web-sidebar-width <W>
         \\                          Web sidebar material width in pixels (default: 286)
+        \\      --persistent-storage
+        \\                          Keep localStorage, IndexedDB and cookies across
+        \\                          launches, and share them between windows.
         \\      --no-web-chrome-controls
         \\                          Do not draw Craft's sidebar toggle and history
         \\                          arrows beside the window buttons.

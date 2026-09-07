@@ -626,6 +626,7 @@ await window.craft.window.open({
 | `webSidebarMaterialOpacity` | `0.78` | Tint over the material, `0`–`1`. |
 | `webWindowMaterial` | `false` | That material behind the whole web view instead. |
 | `chromeControls` | `true` | Craft's own sidebar toggle and history arrows beside the window buttons. |
+| `persistentStorage` | `false` | Keep `localStorage`/IndexedDB/cookies across launches, and share them with the app's other windows. |
 | `devTools` | `false` | Web Inspector in this window. |
 
 ### `window.craft.window.show(): Promise<void>`

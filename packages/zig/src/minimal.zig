@@ -274,6 +274,7 @@ pub fn main(init: std.process.Init) !void {
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
                 .web_chrome_controls = options.web_chrome_controls,
+                .persistent_storage = options.persistent_storage,
             },
         );
     } else if (options.html) |html| {
@@ -311,6 +312,7 @@ pub fn main(init: std.process.Init) !void {
                 .web_sidebar_width = options.web_sidebar_width,
                 .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
                 .web_chrome_controls = options.web_chrome_controls,
+                .persistent_storage = options.persistent_storage,
             },
         );
     } else {

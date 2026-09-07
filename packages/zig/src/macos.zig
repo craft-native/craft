@@ -113,6 +113,13 @@ pub const WindowStyle = struct {
     web_window_material: bool = false,
     web_sidebar_width: u32 = 286,
     web_sidebar_material_opacity: f64 = 0.78,
+    /// Whether the page's storage — `localStorage`, IndexedDB, cookies —
+    /// survives a quit and is shared with the app's other windows.
+    ///
+    /// Off by default: the ephemeral store costs no disk I/O at startup, and a
+    /// window that only renders needs nothing else. On for any app that keeps
+    /// a preference.
+    persistent_storage: bool = false,
     /// Whether Craft draws its own row of controls beside the window buttons —
     /// the sidebar toggle and the two history arrows.
     ///
@@ -959,10 +966,25 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         _ = msgSend1(config, "setUserContentController:", userContentController);
 
-        // Use non-persistent data store to avoid disk I/O overhead at startup
+        // Where the page's own storage lives.
+        //
+        // Non-persistent by default, which costs nothing at startup and is
+        // right for a window that only renders. It is wrong for an app that
+        // keeps anything: `localStorage` in an ephemeral store is emptied when
+        // the app quits, and — because each window gets its *own* ephemeral
+        // store — is invisible to every other window while it runs. An app
+        // whose Settings window writes a preference the main window cannot
+        // read, and which forgets it on quit, has no way to tell that anything
+        // went wrong; nothing fails, the value is simply not there.
+        //
+        // `--persistent-storage` opts into the default store, which is shared
+        // between every window in the process and survives a relaunch.
         const WKWebsiteDataStore = getClass("WKWebsiteDataStore");
-        const nonPersistentStore = msgSend0(WKWebsiteDataStore, "nonPersistentDataStore");
-        _ = msgSend1(config, "setWebsiteDataStore:", nonPersistentStore);
+        const store = if (style.persistent_storage)
+            msgSend0(WKWebsiteDataStore, "defaultDataStore")
+        else
+            msgSend0(WKWebsiteDataStore, "nonPersistentDataStore");
+        _ = msgSend1(config, "setWebsiteDataStore:", store);
 
         // Suppress incremental rendering to reduce peak memory during page load
         msgSendVoid1(config, "setSuppressesIncrementalRendering:", true);

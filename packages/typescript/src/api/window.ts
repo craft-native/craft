@@ -137,6 +137,15 @@ export interface WindowCreateOptions {
    * it off in a page that draws its own history row.
    */
   chromeControls?: boolean
+  /**
+   * Whether the page's storage — `localStorage`, IndexedDB, cookies — survives
+   * a quit and is shared with the app's other windows.
+   *
+   * Off by default: the ephemeral store costs no disk I/O at startup. Any app
+   * that keeps a preference wants it on, and a *second* window that keeps one
+   * must have it on, or it writes where the first window cannot read.
+   */
+  persistentStorage?: boolean
   /** Titlebar style (macOS) */
   titlebarStyle?: 'default' | 'hidden' | 'hiddenInset' | 'customButtonsOnHover'
   /** Vibrancy effect (macOS) */

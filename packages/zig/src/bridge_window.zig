@@ -191,6 +191,10 @@ pub const WindowBridge = struct {
             // and two history arrows. A page with its own history row turns it
             // off rather than showing two sets of arrows that disagree.
             .web_chrome_controls = json_utils.getBool(json_data, "chromeControls") orelse true,
+            // A second window that keeps preferences has to share the first
+            // window's store, or it writes them where nothing else can read
+            // them.
+            .persistent_storage = json_utils.getBool(json_data, "persistentStorage") orelse false,
             // The inspector follows the window that opened it: an app built
             // with `--no-devtools` should not grow a right-click Inspect
             // Element by opening its own Settings.
