@@ -1,10 +1,34 @@
 //! The haptics half of the `mobile` namespace: `haptic` and `vibrate`.
 //!
 //! Split out of `bridge_mobile.zig` because the two actions have opposite
-//! contracts — `haptic` is fire-and-forget and gated on a config flag, while
-//! `vibrate` replies and is gated on nothing — and because one of them cannot
-//! be served honestly from Zig yet. Keeping that admission next to the working
-//! action, rather than folded into the namespace's main file, is the point.
+//! contracts: `haptic` is fire-and-forget and gated on `config.enableHaptics`,
+//! `vibrate` replies and is gated on nothing.
+//!
+//! ## The refusal that used to live here
+//!
+//! `haptic` was declared `.status = .unavailable` for one reason, quoted from
+//! the manifest it carried: the flag "is not visible to Zig; serving it here
+//! would enable haptics for every app that never opted in". That was exactly
+//! right when it was written. The Taptic Engine has no readback, so a flip
+//! would have been invisible in CI and obvious on a device — and the default
+//! config has `enableHaptics` false, so the blast radius was every app that
+//! had not opted in.
+//!
+//! The condition that reason set for itself has since been met, by work that
+//! was not looking at this file. `ios_config.zig` reads `craft.config.json`
+//! out of the bundle, `gateFor("haptic")` maps the action to `.haptics`, and
+//! `ios_dispatch.zig` refuses any gated action whose flag is off *before* the
+//! module chain runs. The precise hazard the refusal was protecting against —
+//! an app on the default config buzzing on `craft.haptics.impact()` — is now
+//! the one case that cannot happen: the gate rejects it with
+//! `CAPABILITY_DISABLED`, which is what the spec's `else` arm sends too.
+//!
+//! Nothing re-checked that. The reason sat here, correct on the day it was
+//! written and wrong for every day after `ios_config.zig` landed, and the only
+//! way it surfaced was someone reading it again. `ios_conformance_test.zig`
+//! now fails the build for a gated action declared `.unavailable`, because a
+//! module claiming both "Zig can enforce this gate" and "Zig cannot read this
+//! gate" is stating a contradiction that a test can see.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -25,53 +49,46 @@ pub const A = struct {
     pub const vibrate = "vibrate";
 };
 
-/// `haptic` is declared `unavailable`, and that is a decision, not an oversight.
+/// The whole of `haptic`'s decision: `body["style"] as? String ?? "medium"`,
+/// then the spec's switch.
 ///
-/// The Swift it replaces does not run `triggerHaptic` unconditionally — it runs
-/// it `if config.enableHaptics` (`CraftApp.swift:537`), and that flag defaults
-/// to **false** in both the template (`CraftApp.swift:190`) and the SDK
-/// (`packages/ios/src/index.ts:118`). It reaches Zig through nothing: no
-/// `craft_ios_*` export carries it, no build option encodes it. So serving
-/// `haptic` from here means serving a *different action* from the one the spec
-/// defines — every app on the default config would start buzzing on
-/// `craft.haptics.impact()`, which is the entire shipped haptics surface, and
-/// no test in this repo could see it because the Taptic Engine has no readback.
-///
-/// The three ways to make that go away are all worse than saying so:
-///   - fire anyway → a behaviour change that is invisible in CI and obvious on
-///     a device;
-///   - hardcode the gate false → a permanent no-op that reports nothing, which
-///     is the shape of the nine Android handlers that were deleted;
-///   - reply `{"success":true}` → fabricated success, the thing this migration
-///     exists to stop.
-///
-/// So the handler refuses and the manifest says why. Unblocking it is small and
-/// deliberate: plumb the flag in (a `craft_ios_set_capabilities` export or a
-/// build option), then swap the refusal in `haptic()` for the mapping and the
-/// trigger below, both of which are written and pinned by the tests at the
-/// bottom of this file. What must not happen is the flip happening silently.
-///
-/// Note the inconsistency this preserves: `case "vibrate"` has no
-/// `enableHaptics` gate in the spec either, so `craft.vibrate([100])` already
-/// fires impacts on an app with haptics "disabled". `vibrate` stays ungated to
-/// match; the asymmetry is the spec's, not ours.
-const haptic_unavailable_reason =
-    "iOS gates haptic on config.enableHaptics, which defaults to false and is " ++
-    "not visible to Zig; serving it here would enable haptics for every app " ++
-    "that never opted in";
+/// Split out from `haptic` so it can be asserted on a host. The trigger cannot
+/// — `UIImpactFeedbackGenerator` is not in a test runner's process — so a test
+/// calling `haptic` end-to-end can only observe `ClassNotFound`, which says
+/// nothing about whether the right style was chosen. This is the half where a
+/// mistake would be silent on a device too: the Taptic Engine has no readback,
+/// so a `heavy` served as `medium` feels like a device being a device.
+fn hapticTypeIn(allocator: std.mem.Allocator, data: []const u8) !HapticType {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, data, .{}) catch
+        return bridge_error.BridgeError.InvalidJSON;
+    defer parsed.deinit();
 
+    const root = switch (parsed.value) {
+        .object => |obj| obj,
+        else => return bridge_error.BridgeError.InvalidJSON,
+    };
+
+    // Swift's `as? String` fails for every non-string, and `?? "medium"` sends
+    // all of them to the same place: absent, null, number, bool, array, object.
+    const style = switch (root.get("style") orelse std.json.Value{ .null = {} }) {
+        .string => |text| text,
+        else => "medium",
+    };
+    return hapticTypeForStyle(style);
+}
+
+/// `vibrate` stays ungated, and that is the spec's asymmetry rather than ours.
+///
+/// `case "vibrate"` has no `enableHaptics` check in the spec, so
+/// `craft.vibrate([100])` fires impacts on an app with haptics "disabled".
+/// Adding a gate here would be a divergence dressed as a tidy-up.
 pub const capability_actions = [_]capabilities.ActionDecl{
-    // `.none` is the action's contract regardless of status: the page's
-    // `craft.haptic()` returns undefined and the spec's `case "haptic"` never
-    // touches `resolveCallback`. An error still reaches the page — with no
-    // pending entry to settle, `craft-bridge.js` reports it to the console —
-    // so a refusal is logged rather than swallowed.
-    .{
-        .name = A.haptic,
-        .reply = .none,
-        .status = .unavailable,
-        .reason = haptic_unavailable_reason,
-    },
+    // `.none` is the contract: the page's `craft.haptic()` returns undefined
+    // and the spec's `case "haptic"` never touches `resolveCallback`. An error
+    // still reaches the page — with no pending entry to settle,
+    // `craft-bridge.js` reports it to the console — so a refusal is logged
+    // rather than swallowed.
+    .{ .name = A.haptic, .reply = .none },
     // `.result` carrying the JSON literal `true`. Not a shape worth improving:
     // the hand-off path already delivers exactly this today, and `.none` would
     // park any `_req`-based caller for the full 30s timeout.
@@ -104,19 +121,27 @@ pub const HapticsBridge = struct {
         return bridge_error.BridgeError.UnknownAction;
     }
 
-    /// Refuses, for the reason recorded on `haptic_unavailable_reason`.
+    /// `case "haptic"` (`CraftApp.swift:576-582`).
     ///
-    /// The payload is not parsed first. Reporting a malformed `style` would
-    /// imply the style was going to be used, and it is not — a refusal that
-    /// sometimes reports a different cause is harder to act on than one that
-    /// always says the same thing.
+    /// The gate is not checked here. `ios_dispatch.route` refuses every gated
+    /// action whose flag is off before any module is asked, so reaching this
+    /// function already means `enableHaptics` is true — and checking twice
+    /// would put a second copy of the rule where the two could disagree.
     ///
-    /// The error name is what lands in the device log; the page sees
-    /// `NATIVE_CALL_FAILED`, `ios_dispatch.asBridgeError`'s catch-all, because
-    /// the wire protocol has no code for "declared unavailable". The manifest
-    /// is where an app reads the actual reason.
-    fn haptic(_: *Self, _: []const u8) !void {
-        return error.HapticsGateNotVisibleToZig;
+    /// `style` is read the way Swift reads it: `body["style"] as? String ??
+    /// "medium"`. A missing key, a number, an object — every failed cast takes
+    /// the same default, so this reads the string when there is one and hands
+    /// `hapticTypeForStyle` the literal `"medium"` otherwise. That is one
+    /// spelling of the default rather than two: `hapticTypeForStyle` maps an
+    /// unrecognised style to `.impact_medium` as well, matching the spec's
+    /// `default:` arm, and this path exercises the same branch.
+    ///
+    /// No reply on success, matching `.none` and the spec. The error from
+    /// `triggerHapticChecked` is the one thing that can come back, and it means
+    /// UIKit was not there to accept the call — never that the device stayed
+    /// still, which no iOS API reports.
+    fn haptic(self: *Self, data: []const u8) !void {
+        try triggerHapticChecked(try hapticTypeIn(self.allocator, data));
     }
 
     /// `case "vibrate"` (`CraftApp.swift:685-691`).
@@ -472,7 +497,9 @@ test "an unavailable action carries the reason with it" {
         try testing.expect(decl.reason != null);
         try testing.expect(decl.reason.?.len > 0);
     }
-    try testing.expectEqual(capabilities.ActionStatus.unavailable, capability_actions[0].status);
+    // Both live now. `haptic` was `.unavailable` until `ios_config.zig` made
+    // the flag its reason blamed readable; see the module header.
+    try testing.expectEqual(capabilities.ActionStatus.live, capability_actions[0].status);
     try testing.expectEqual(capabilities.ActionStatus.live, capability_actions[1].status);
 }
 
@@ -508,18 +535,36 @@ test "an action the namespace does not serve is reported, not ignored" {
     );
 }
 
-test "haptic refuses rather than firing an ungated haptic" {
-    // The refusal is the migration's honest answer while `config.enableHaptics`
-    // has no Zig representation. If this test starts failing because someone
-    // implemented the action, the flag has to have been plumbed through first —
-    // that is the conversation this assertion exists to force.
-    var bridge = HapticsBridge.init(testing.allocator);
-    defer bridge.deinit();
+test "haptic reads the style the way the spec's cast reads it" {
+    // What replaced the refusal. The old test asserted
+    // `error.HapticsGateNotVisibleToZig` and existed to force a conversation if
+    // anyone implemented the action; the flag is readable now
+    // (`ios_config.gateFor("haptic")`), the conversation happened, and this is
+    // what the action actually decides.
+    const alloc = testing.allocator;
 
-    try testing.expectError(
-        error.HapticsGateNotVisibleToZig,
-        bridge.handleMessage(A.haptic, "{\"style\":\"medium\"}"),
-    );
+    try testing.expectEqual(HapticType.impact_heavy, try hapticTypeIn(alloc, "{\"style\":\"heavy\"}"));
+    try testing.expectEqual(HapticType.selection, try hapticTypeIn(alloc, "{\"style\":\"selection\"}"));
+
+    // `as? String` fails for each of these, and `?? "medium"` catches them all.
+    // A page posting `{style: 2}` gets a medium impact, not an error — matching
+    // the spec, which cannot report one either: `case "haptic"` has no reply.
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{}"));
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":null}"));
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":2}"));
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":true}"));
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":[\"heavy\"]}"));
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":{\"v\":\"heavy\"}}"));
+
+    // And an unrecognised string takes the spec's `default:` arm rather than
+    // failing — `craft.haptics.selection()` posts 'soft'.
+    try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":\"soft\"}"));
+
+    // Malformed input is the one thing that is not a style: there is no
+    // dictionary for Swift's subscript to read, so this cannot take the
+    // default and call itself faithful.
+    try testing.expectError(bridge_error.BridgeError.InvalidJSON, hapticTypeIn(alloc, "not json"));
+    try testing.expectError(bridge_error.BridgeError.InvalidJSON, hapticTypeIn(alloc, "[1,2]"));
 }
 
 test "every style the shipped surface posts maps the way the spec's switch does" {

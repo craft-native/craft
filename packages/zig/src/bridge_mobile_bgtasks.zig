@@ -103,10 +103,13 @@
 //! posting); a field that is **present with the wrong type** is refused, never
 //! coerced.
 //!
-//! **The `config.enableBackgroundTasks` gate has no Zig mirror.** It appears
-//! nowhere in `packages/zig/src`, so the three actions here are served
-//! unconditionally — the securestore and notifcancel modules document the same
-//! choice. In an app that left the gate at its default `false` this changes a
+//! **The `config.enableBackgroundTasks` gate is read, not skipped.**
+//! `ios_config.gateFor` maps all three actions to `.background_tasks`, so
+//! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
+//! module is asked. This paragraph used to say the flag "appears nowhere in
+//! `packages/zig/src`" and that the actions were served unconditionally — true
+//! when written, false since `ios_config.zig`, and repeated in eight other
+//! module headers that were equally true and are equally false. In an app that left the gate at its default `false` this changes a
 //! hang into an answer: `schedule` now reaches the scheduler and reports
 //! whatever it says (a rejection, until the plist gains
 //! `BGTaskSchedulerPermittedIdentifiers`), and the cancels report the no-op

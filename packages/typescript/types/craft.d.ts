@@ -1145,13 +1145,33 @@ export interface PickedFile {
   mimeType?: string;
 }
 
+/**
+ * A location fix, exactly as the bridge sends it.
+ *
+ * All eight fields are always present. The native dictionary is built
+ * unconditionally from `CLLocation`'s non-optional properties, so there is no
+ * path that omits one — and this type previously declared six of them, three
+ * of those optional, which left `altitudeAccuracy` and `timestamp` unreachable
+ * from TypeScript even though every fix carries them.
+ *
+ * `heading` and `speed` are `-1` when the device has no fix for them, which is
+ * CoreLocation's own sentinel rather than an absent key. Android has no
+ * geolocation surface, so nothing else fills this in.
+ */
 export interface Position {
   latitude: number;
   longitude: number;
+  /** Horizontal accuracy in metres. */
   accuracy: number;
-  altitude?: number;
-  speed?: number;
-  heading?: number;
+  altitude: number;
+  /** Vertical accuracy in metres. */
+  altitudeAccuracy: number;
+  /** Course over ground in degrees, or `-1` when unavailable. */
+  heading: number;
+  /** Metres per second, or `-1` when unavailable. */
+  speed: number;
+  /** Milliseconds since the Unix epoch. */
+  timestamp: number;
 }
 
 export interface Contact {
@@ -1378,12 +1398,29 @@ export interface CraftARPlaneEvent extends CustomEvent {
   detail: ARPlaneEvent;
 }
 
+/**
+ * A home-screen quick action being tapped.
+ *
+ * **Never dispatched today.** `craft.shortcuts.set()` really does install the
+ * items and they appear in the long-press menu, but no template implements
+ * `application(_:performActionFor:completionHandler:)` or a scene-delegate
+ * equivalent, so a tap launches the app and stops there. A listener registered
+ * for this is never called.
+ */
 export interface CraftShortcutEvent extends CustomEvent {
   detail: {
     type: string;
   };
 }
 
+/**
+ * A donated Siri shortcut being invoked.
+ *
+ * **Never dispatched today.** `craft.siri.register()` donates an
+ * `NSUserActivity`, but the only `onContinueUserActivity` in the template is
+ * bound to `NSUserActivityTypeBrowsingWeb` and routes to the deep-link
+ * handler, so invoking a donated shortcut relaunches the app and is dropped.
+ */
 export interface CraftSiriShortcutEvent extends CustomEvent {
   detail: SiriInvocationEvent;
 }
@@ -1402,11 +1439,36 @@ export interface CraftWatchContextEvent extends CustomEvent {
   detail: Record<string, any>;
 }
 
-export interface CraftVoiceActionEvent extends CustomEvent {
+export interface CraftLocationUpdateEvent extends CustomEvent {
+  detail: Position;
+}
+
+export interface CraftLocationErrorEvent extends CustomEvent {
   detail: {
-    action: string;
-    data?: string;
+    message: string;
   };
+}
+
+export interface CraftNetworkChangeEvent extends CustomEvent {
+  detail: NetworkStatus;
+}
+
+export interface CraftPushTokenEvent extends CustomEvent {
+  detail: {
+    token: string;
+  };
+}
+
+/**
+ * The `userInfo` of the notification the user acted on, forwarded verbatim.
+ * The bridge does not reshape it, so its keys are whatever was scheduled.
+ */
+export interface CraftNotificationResponseEvent extends CustomEvent {
+  detail: Record<string, any>;
+}
+
+export interface CraftWatchUserInfoEvent extends CustomEvent {
+  detail: Record<string, any>;
 }
 
 export interface CraftErrorEvent extends CustomEvent {
@@ -1428,14 +1490,24 @@ declare global {
     craftMotionUpdate: CraftMotionUpdateEvent;
     craftBluetoothDevice: CraftBluetoothDeviceEvent;
     craftARPlane: CraftARPlaneEvent;
-    craftShortcut: CraftShortcutEvent;
-    craftSiriShortcut: CraftSiriShortcutEvent;
+    craftLocationUpdate: CraftLocationUpdateEvent;
+    craftLocationError: CraftLocationErrorEvent;
+    craftNetworkChange: CraftNetworkChangeEvent;
+    craftPushToken: CraftPushTokenEvent;
+    craftNotificationResponse: CraftNotificationResponseEvent;
     craftWatchMessage: CraftWatchMessageEvent;
     craftWatchReachability: CraftWatchReachabilityEvent;
     craftWatchContext: CraftWatchContextEvent;
-    craftVoiceAction: CraftVoiceActionEvent;
+    craftWatchUserInfo: CraftWatchUserInfoEvent;
     craftError: CraftErrorEvent;
     craftDeepLink: CraftDeepLinkEvent;
+    // Kept, and kept last, because nothing dispatches either one: the app
+    // installs the shortcuts and donates the activities, and no template
+    // implements the callback that would deliver a tap. Typed so the listener
+    // an app writes today compiles against the shape it will receive if that
+    // lands; see the note on each interface.
+    craftShortcut: CraftShortcutEvent;
+    craftSiriShortcut: CraftSiriShortcutEvent;
   }
 }
 

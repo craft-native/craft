@@ -643,6 +643,113 @@ test "the gate table has no entry for an action Zig does not serve" {
     }
 }
 
+/// The `.reason` text of every `.status = .unavailable` entry, by action.
+///
+/// The reason is what a reader trusts, so it is what has to be checked. A
+/// declaration can be resolved two ways here: `.reason = "..."` inline, and
+/// `.reason = some_const` naming a constant elsewhere in the file — both are
+/// in use, and a scan that handled only the first would silently skip the
+/// second rather than fail.
+fn collectUnavailableReasons(allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+
+    for (zig_sources) |source| {
+        // Bounded to the manifest array, not the whole file: prose quotes
+        // `.status = .unavailable` — `bridge_mobile_haptics.zig`'s header does,
+        // describing the declaration it removed — and a scan that read comments
+        // would attribute that sentence to whichever entry preceded it.
+        const table_start = std.mem.indexOf(u8, source, "pub const capability_actions = [_]capabilities.ActionDecl{") orelse
+            continue;
+        const table_end = std.mem.indexOfPos(u8, source, table_start, "\n};") orelse continue;
+        const table = source[table_start..table_end];
+
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, table, search, ".status = .unavailable")) |at| {
+            search = at + 1;
+
+            // The entry names its action as `A.some_const`; resolve it back
+            // through the `A` block to the string the spec spells.
+            const name_at = std.mem.lastIndexOf(u8, table[0..at], ".name = A.") orelse continue;
+            const const_start = name_at + ".name = A.".len;
+            var const_end = const_start;
+            while (const_end < table.len and (std.ascii.isAlphanumeric(table[const_end]) or
+                table[const_end] == '_')) : (const_end += 1)
+            {}
+
+            var needle_buf: [96]u8 = undefined;
+            const member = table[const_start..const_end];
+            if (member.len + 16 > needle_buf.len) continue;
+            const decl = try std.fmt.bufPrint(&needle_buf, "const {s} = \"", .{member});
+            const decl_at = std.mem.indexOf(u8, source, decl) orelse continue;
+            const value_start = decl_at + decl.len;
+            const value_end = std.mem.indexOfScalarPos(u8, source, value_start, '"') orelse continue;
+            const action = source[value_start..value_end];
+
+            // The reason, inline or by name.
+            const reason_at = std.mem.indexOfPos(u8, table, at, ".reason = ") orelse continue;
+            const reason_start = reason_at + ".reason = ".len;
+            if (table[reason_start] == '"') {
+                const reason_end = std.mem.indexOfScalarPos(u8, table, reason_start + 1, '"') orelse continue;
+                try map.put(action, table[reason_start + 1 .. reason_end]);
+            } else {
+                var ident_end = reason_start;
+                while (ident_end < table.len and (std.ascii.isAlphanumeric(table[ident_end]) or
+                    table[ident_end] == '_')) : (ident_end += 1)
+                {}
+                var const_buf: [96]u8 = undefined;
+                const ident = table[reason_start..ident_end];
+                if (ident.len + 10 > const_buf.len) continue;
+                const const_decl = try std.fmt.bufPrint(&const_buf, "const {s} =", .{ident});
+                const body_at = std.mem.indexOf(u8, source, const_decl) orelse continue;
+                const body_end = std.mem.indexOfScalarPos(u8, source, body_at, ';') orelse continue;
+                // The whole initialiser, `++` concatenation included.
+                try map.put(action, source[body_at..body_end]);
+            }
+        }
+    }
+    return map;
+}
+
+test "no refusal blames a config flag Zig demonstrably reads" {
+    // The rot this exists to catch, in the exact shape it took. `haptic` was
+    // declared `.status = .unavailable` because `config.enableHaptics` "is not
+    // visible to Zig"; `gateFor`'s table said Zig reads that same flag and
+    // refuses the action when it is off. Both were written honestly, months
+    // apart, and nothing put them side by side — so the refusal outlived its
+    // reason and a working implementation sat unused two hundred lines below it.
+    //
+    // Deliberately narrower than "gated and unavailable", which is not a
+    // contradiction: `lockOrientation` is both, and its reason is about a root
+    // view controller rather than about reading a flag. What cannot stand is a
+    // refusal *naming* a flag the gate table proves Zig reads.
+    var gates = try collectZigGates(testing.allocator);
+    defer gates.deinit();
+
+    var reasons = try collectUnavailableReasons(testing.allocator);
+    defer reasons.deinit();
+
+    // Non-vacuity: the scan reads each manifest through two indirections — the
+    // `A.` constant and its declaration — and either could stop matching.
+    try testing.expect(reasons.count() >= 3);
+
+    var it = reasons.iterator();
+    while (it.next()) |entry| {
+        const flag = gates.get(entry.key_ptr.*) orelse continue;
+        if (std.mem.indexOf(u8, entry.value_ptr.*, flag) != null) {
+            std.debug.print(
+                "`{s}` is declared unavailable and its reason names `{s}`, which `gateFor` " ++
+                    "maps it to.\n" ++
+                    "  The manifest says Zig cannot read that flag; the gate table says it does " ++
+                    "and refuses the action when it is off.\n" ++
+                    "  One of them is out of date.\n",
+                .{ entry.key_ptr.*, flag },
+            );
+            return error.RefusalBlamesAFlagZigReads;
+        }
+    }
+}
+
 test "every flag Zig can read is a flag the spec's config actually has" {
     // A misspelled key is not a one-flag bug. A key that is not in the file
     // reads as missing, and one missing key makes the whole decode throw, so
@@ -1461,4 +1568,109 @@ test "every recorded reply divergence is real, and still a divergence" {
     }
 
     try testing.expect(deliberate_reply_divergences.len >= 3);
+}
+
+// ---------------------------------------------------------------------------
+// The SDK's event map
+//
+// `craft.d.ts` augments `WindowEventMap`, which is what gives
+// `window.addEventListener('craftLocationUpdate', …)` a typed `detail` instead
+// of a bare `Event`. It is a third statement of the event vocabulary, after
+// the spec's `sendToWeb` calls and `ios_events.Event`, and it was the only one
+// nothing checked — so it had drifted in both directions at once.
+//
+// It declared `craftVoiceAction`, which appears nowhere else in the repository:
+// no dispatch, no subscription, no implementation. A listener written against
+// it type-checks and never fires.
+//
+// It omitted six events that do fire — `craftLocationUpdate`,
+// `craftLocationError`, `craftNetworkChange`, `craftPushToken`,
+// `craftNotificationResponse` and `craftWatchUserInfo` — so the most-used
+// stream in the whole surface reached a page as an untyped `Event` whose
+// `detail` was `any`.
+// ---------------------------------------------------------------------------
+
+const sdk_types = @embedFile("craft.d.ts");
+
+/// The keys of `interface WindowEventMap { … }`.
+fn collectSdkEventMap(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    const start = std.mem.indexOf(u8, sdk_types, "interface WindowEventMap {") orelse
+        return error.EventMapNotFound;
+    const body = sdk_types[start..];
+    const end = std.mem.indexOf(u8, body, "\n  }") orelse return error.EventMapNotFound;
+
+    var it = std.mem.splitScalar(u8, body[0..end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, "craft")) continue;
+        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
+        try set.put(trimmed[0..colon], {});
+    }
+    return set;
+}
+
+test "the SDK's event map declares nothing that never fires" {
+    // `craftVoiceAction` was the case: a name in this map and nowhere else in
+    // the repository. The map is the most authoritative-looking of the three
+    // statements of the vocabulary — it is what an editor autocompletes from —
+    // and it was the one with no check behind it.
+    var map = try collectSdkEventMap(testing.allocator);
+    defer map.deinit();
+
+    // Non-vacuity: a renamed interface would empty this set.
+    try testing.expect(map.count() >= 19);
+
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+
+    var it = map.keyIterator();
+    while (it.next()) |name| {
+        if (dispatched.contains(name.*)) continue;
+
+        // The two recorded dead subscriptions are typed on purpose: the page
+        // subscribes to them today, and a listener written now should compile
+        // against the shape it will receive when the missing half lands. Any
+        // other name here is a type with nothing behind it.
+        var recorded = false;
+        for (dead_subscriptions) |d| {
+            if (std.mem.eql(u8, d.event, name.*)) recorded = true;
+        }
+        if (recorded) continue;
+
+        std.debug.print(
+            "craft.d.ts types `{s}` in WindowEventMap, and nothing dispatches it.\n" ++
+                "  A listener written against it type-checks and is never called.\n",
+            .{name.*},
+        );
+        return error.SdkTypesAnEventNothingEmits;
+    }
+}
+
+test "the SDK's event map declares everything that does fire" {
+    // The other direction, and the one that had six holes in it. An event
+    // missing from the map is not a compile error for the page — the
+    // `addEventListener` overload falls back to `Event`, whose `detail` is
+    // `any` — so the cost is silent: no autocomplete, no shape, no check that
+    // the field being read exists.
+    var map = try collectSdkEventMap(testing.allocator);
+    defer map.deinit();
+
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+    try testing.expect(dispatched.count() >= 17);
+
+    var it = dispatched.keyIterator();
+    while (it.next()) |name| {
+        if (!map.contains(name.*)) {
+            std.debug.print(
+                "the spec dispatches `{s}` and craft.d.ts does not type it.\n" ++
+                    "  A page listening for it gets a bare Event and a `detail` of any.\n",
+                .{name.*},
+            );
+            return error.SdkDoesNotTypeAnEventThatFires;
+        }
+    }
 }

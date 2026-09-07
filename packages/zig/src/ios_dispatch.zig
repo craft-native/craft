@@ -382,8 +382,10 @@ comptime {
 ///
 /// `.status = .unavailable` in a module's manifest means the handler is
 /// reachable and refuses, deliberately, because Zig cannot do the thing
-/// correctly — `haptic` cannot see `config.enableHaptics`, and the rest say
-/// why in their own `reason`.
+/// correctly; each one says why in its own `reason`. `haptic` was the example
+/// this comment used to give, and is now the example of a reason expiring:
+/// `ios_config.zig` made `config.enableHaptics` readable and the refusal
+/// outlived it.
 ///
 /// In the Zig-hosted app that refusal is the honest end of the line: `route`
 /// tries `handOffToHost` next, and the shim is what actually serves it. The
@@ -391,8 +393,9 @@ comptime {
 /// deliberately does not consult `handOffToHost`, because there the host *is*
 /// the caller. So claiming one of these would not be a refusal instead of an
 /// answer, it would be a refusal instead of the *host's working answer*: an app
-/// that has haptics today would stop buzzing the moment the runtime was linked,
-/// and the page would get a rejection where it used to get silence-and-a-buzz.
+/// that had haptics would have stopped buzzing the moment the runtime was
+/// linked, and the page would have got a rejection where it used to get
+/// silence-and-a-buzz.
 ///
 /// `test/ios_conformance_test.zig` already treats falling through as better
 /// than `.unavailable`. This is that rule, applied to the one path that had no
@@ -904,7 +907,6 @@ test "an action declared unavailable is left to the host, not claimed" {
     // the difference, linking the runtime replaced the working answer with a
     // rejection. `false` here is what sends the call back to Swift's switch.
     const declared_unavailable = [_][]const u8{
-        "haptic",
         "getNetworkStatus",
         "lockOrientation",
         "unlockOrientation",
@@ -929,7 +931,7 @@ test "the fall-through is read from the manifests, not from a list kept beside t
             }
         }
     }
-    try testing.expectEqual(@as(usize, 4), declared);
+    try testing.expectEqual(@as(usize, 3), declared);
 }
 
 test "a live action is still claimed, unavailable is not a blanket hand-back" {
@@ -937,6 +939,10 @@ test "a live action is still claimed, unavailable is not a blanket hand-back" {
     // `.live`, so the seam must keep claiming it. A fall-through that widened
     // to whole modules would silently un-migrate everything beside a refusal.
     try testing.expect(!hostServesItself("vibrate"));
+    // `haptic` was the fourth entry above until `ios_config.zig` made the gate
+    // it could not read readable. It is served here now, so handing it back
+    // would hand back a working action.
+    try testing.expect(!hostServesItself("haptic"));
     try testing.expect(!hostServesItself("setKeepAwake"));
     try testing.expect(!hostServesItself("getDeviceInfo"));
     try testing.expect(!hostServesItself("noSuchAction"));

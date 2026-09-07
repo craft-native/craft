@@ -56,12 +56,23 @@
 //! **The plist guard replaces the nil-recognizer guard.** Swift builds its
 //! `SFSpeechRecognizer` only when `config.enableSpeechRecognition` is on
 //! (`:439-440`), and `beginRecording`'s `guard let speechRecognizer` then
-//! emits `"Speech recognizer unavailable"` when it is off. Zig cannot see the
-//! ivar, but `packages/ios/src/index.ts:183` writes
+//! emits `"Speech recognizer unavailable"` when it is off. Zig cannot see that
+//! ivar — still true — but `packages/ios/src/index.ts:183` writes
 //! `NSSpeechRecognitionUsageDescription` from that flag **and nothing else,
-//! with no `||`** — the exact-proxy shape `bridge_mobile_motion.zig` already
+//! with no `||`** — the exact-proxy shape `bridge_mobile_motion.zig` also
 //! reads. So a missing key means the flag was off, and the message emitted is
 //! the one Swift would have emitted for the same configuration.
+//!
+//! The flag itself is no longer out of reach: `ios_config.gateFor` maps
+//! `startListening` to `.speech_recognition`, so `ios_dispatch` answers
+//! `CAPABILITY_DISABLED` before this module is asked. That does **not** make
+//! the plist read redundant, and it is worth being precise about why, because
+//! the four other modules reading a key as a flag proxy *are* now redundant
+//! (#131) and this one looks identical at a glance. Here the key is also a
+//! precondition: `requestAuthorization:` without it does not fail, iOS
+//! terminates the process — so the check has to happen whatever the config
+//! says. The gate takes over the reason for refusing a disabled app; the key
+//! still owns not being killed, and the message.
 //!
 //! The check has to run *before* `requestAuthorization:`, where Swift's runs
 //! after, because asking for speech authorization without the key does not

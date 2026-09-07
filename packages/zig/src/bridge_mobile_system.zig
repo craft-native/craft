@@ -36,11 +36,13 @@ const is_darwin = builtin.target.os.tag.isDarwin();
 /// custom app schemes are its main use. Filtering here would silently break
 /// them.
 ///
-/// **`share` is served unconditionally.** Swift gates it on
-/// `config.enableShare` and replies `CAPABILITY_DISABLED`; `ios.zig`'s
-/// `AppConfig` has no such field, so Zig cannot reproduce the gate. An app that
-/// set `enableShare: false` will now get a share sheet. Restoring the gate
-/// means adding the field to `AppConfig`, not adding a guess here.
+/// **`share` is gated, and not here.** Swift replies `CAPABILITY_DISABLED`
+/// when `config.enableShare` is off, and `ios_dispatch.offerToModules` sends
+/// the same code before this module is asked — `ios_config.gateFor("share")`
+/// maps it. This paragraph used to say the opposite, that `AppConfig` had no
+/// such field and an app setting `enableShare: false` would get a share sheet
+/// anyway; that was true until `ios_config.zig` read the flags out of
+/// `craft.config.json`, and false from then on with nothing to notice.
 pub const A = struct {
     pub const open_url = "openURL";
     pub const share = "share";

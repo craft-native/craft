@@ -78,23 +78,30 @@
 //! **false** (`CraftApp.swift:192`, `packages/ios/src/index.ts:120`). When it
 //! is false the `case` falls off the end and replies *nothing at all*, while
 //! `CraftSwiftShim.handleAction` still returns `true` (`:5247`) so Zig
-//! believes the hand-off succeeded. The injected promise is the hand-built
-//! kind with no timeout. **In a default-config app, `openCamera` and
-//! `pickImage` hang the page forever today.** The "working Swift shim" is
-//! only working for an app that set `enableCamera: true`.
+//! believes the hand-off succeeded, and the injected promise is the hand-built
+//! kind with no timeout — so on the shim a default-config app hangs the page
+//! forever. `ios_config.gateFor` maps both actions to `.camera` now, so
+//! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` first and that
+//! hang is unreachable while Zig is linked. This paragraph asserted the hang
+//! in the present tense until then, and the next one said `enableCamera` had
+//! no Zig-reachable channel at all.
 //!
-//! `enableCamera` has no Zig-reachable channel, so this module gates on the
-//! Info.plist keys `packages/ios/src/index.ts:185-186` writes:
+//! The Info.plist keys `packages/ios/src/index.ts:185-186` writes are still
+//! read, for two different reasons:
 //!
 //!  - **`NSCameraUsageDescription` is an extra gate on `openCamera` only, and
 //!    it is a crash guard rather than a config proxy.** Presenting a `.camera` picker in a
 //!    process without that key is a TCC termination, not an error anything
 //!    could be told about. It is written for
 //!    `enableCamera || enableVideoRecording || enableQRScanner || enableAR`.
-//!  - **`NSPhotoLibraryUsageDescription` stands in for `config.enableCamera`,
+//!  - **`NSPhotoLibraryUsageDescription` stood in for `config.enableCamera`,
 //!    and it is over-broad by `enableVideoRecording`** — it is written for
-//!    `enableCamera || enableVideoRecording`, which is the closest proxy
-//!    available. It is emphatically **not** a photo-library permission gate:
+//!    `enableCamera || enableVideoRecording`, which was the closest proxy
+//!    available while the flag could not be read. It is now a second, weaker
+//!    gate behind the real one, and the only one of these proxies inexact even
+//!    in an SDK-generated app. Tracked in issue #131 with three more.
+//!
+//!    It is emphatically **not** a photo-library permission gate:
 //!    `UIImagePickerController` with `.photoLibrary` has run out-of-process
 //!    since iOS 11 and neither prompts nor requires the key. Refusing on it is
 //!    a statement about how the app was configured, never about what the

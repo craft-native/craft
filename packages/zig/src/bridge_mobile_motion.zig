@@ -79,15 +79,21 @@
 //! `else`**, so on the Swift path with the flag off `startMotionUpdates`
 //! replies nothing at all while `CraftSwiftShim.handleAction` still returns
 //! true: the page's promise never settles. The flag defaults to `false`
-//! (`packages/ios/src/index.ts:139`) and has no mirror anywhere under
-//! `packages/zig/src`.
+//! (`packages/ios/src/index.ts:139`). It is read directly now:
+//! `ios_config.gateFor` maps `startMotionUpdates` to `.motion_sensors`, so
+//! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
+//! module is asked. Until `ios_config.zig` read `craft.config.json` the flag
+//! had no mirror anywhere under `packages/zig/src`, and the paragraph below is
+//! what this module did about that.
 //!
 //! `NSMotionUsageDescription` is an *exact* proxy for it —
 //! `packages/ios/src/index.ts:192` writes that Info.plist key from
 //! `config.enableMotionSensors` and from nothing else, with no `||` (unlike the
 //! location keys, where `bridge_mobile_location.zig` had to document a residual
 //! gap). So `requireMotionConfigured` reads the key and refuses when it is
-//! absent. Two things that buys, and one it costs:
+//! absent — now a second, weaker gate behind the real one, which can only
+//! differ by refusing an action the config allows. Tracked in issue #131 with
+//! three more of the same shape. Two things it bought, and one it cost:
 //!
 //!  - a hang becomes a nameable refusal, which is strictly better than the
 //!    shim's silence;
@@ -249,8 +255,9 @@ pub const default_interval_ms: f64 = 100;
 const reply_true = "true";
 
 /// Emitted into Info.plist by `packages/ios/src/index.ts:192` iff
-/// `config.enableMotionSensors` — the flag with no Zig mirror. See the module
-/// comment for what this proxy claims and what it does not.
+/// `config.enableMotionSensors`, which `ios_config.gateFor` now reads directly.
+/// See the module comment for what this proxy claims, what it does not, and why
+/// it is redundant with the real gate.
 const key_motion_usage = "NSMotionUsageDescription";
 
 /// Which handler an action selects, split out from `handleMessage` so the

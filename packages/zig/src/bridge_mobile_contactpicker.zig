@@ -83,12 +83,20 @@
 //! Until then, "the native call failed" is what a cancel says, and saying so
 //! here is the point.
 //!
-//! **`config.enableContacts` has no Zig mirror.** `ios.zig`'s `AppConfig` has
-//! no such field — the same gap `bridge_mobile_system.zig` records for
-//! `enableShare`. The Info.plist is read instead, and for this flag the mapping
-//! is exact: `packages/ios/src/index.ts:189` writes `NSContactsUsageDescription`
-//! if and only if `config.enableContacts`, with none of the sharing that made
-//! the location keys ambiguous.
+//! **`config.enableContacts` is read directly now, and the plist proxy below
+//! is what is left over.** `ios_config.gateFor` maps this action to
+//! `.contacts`, so `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED`
+//! before this module is asked. The paragraph here used to say the flag had no
+//! Zig mirror, which was true until `ios_config.zig` read
+//! `craft.config.json`.
+//!
+//! The `NSContactsUsageDescription` check further down was the stand-in for
+//! that flag — `packages/ios/src/index.ts:189` writes the key if and only if
+//! `config.enableContacts`, with none of the sharing that made the location
+//! keys ambiguous. It is now a second, weaker gate behind the real one, and it
+//! can only differ in the direction that refuses an action the config allows:
+//! an app whose Info.plist was not written by the SDK. Tracked in issue #131
+//! along with three more of the same shape.
 //!
 //! Two things about that gate have to be said plainly. First, the key is **not
 //! a precondition of the API**: `CNContactPickerViewController` runs out of

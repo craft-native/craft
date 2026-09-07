@@ -76,10 +76,13 @@
 //! `localizedDescription` are all logged before the enum is chosen.
 //!
 //! **The `enableWatchApp` config gate.** Swift only ever calls
-//! `setupWatchConnectivity` under `if config.enableWatchApp`, and that flag has
-//! no Zig mirror — it appears nowhere in `packages/zig/src`. Both actions are
-//! therefore served unconditionally, exactly as `securestore` and `notifcancel`
-//! document for their own gates. This grants a page nothing it should not have:
+//! `setupWatchConnectivity` under `if config.enableWatchApp` — a setup-time
+//! gate rather than a per-action one, so no `case` arm here carries an
+//! `if config.` and `ios_config.gateFor` correctly maps none of these actions.
+//! Both are therefore served unconditionally, and this is the one module whose
+//! version of that sentence is still true: `securestore` and `notifcancel` said
+//! the same until `ios_config.zig` read the flags their arms *do* carry.
+//! Serving these ungated grants a page nothing it should not have:
 //! with the gate off Swift never activated a session, so `defaultSession`'s
 //! `activationState` is `NotActivated` and both actions answer honestly —
 //! `{"reachable":false}` and a refusal to update.

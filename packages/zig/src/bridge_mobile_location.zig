@@ -1236,16 +1236,20 @@ const key_always = "NSLocationAlwaysAndWhenInUseUsageDescription";
 /// Decide, from evidence in the running process, whether geolocation was
 /// configured and which prompt to ask for.
 ///
-/// Neither `config.enableGeolocation` nor `config.enableBackgroundLocation` has
-/// a Zig mirror — they appear nowhere in `packages/zig/src` outside a comment —
-/// which is the same gap `bridge_mobile_watch.zig` documents for
-/// `enableWatchApp`. Rather than guess, this reads the Info.plist keys the
-/// generator writes from exactly those flags. Apple requires the usage
-/// description before authorization may be requested at all, so its absence is
-/// both the honest signal that the app was never built for location and the
-/// condition under which requesting would be illegitimate; the refusal happens
+/// Both `config.enableGeolocation` and `config.enableBackgroundLocation` are
+/// read directly now — `ios_config.gateFor` maps `getCurrentPosition`,
+/// `watchPosition` and `startLocationRecording` to `.geolocation`, and
+/// `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
+/// module is asked. This used to say neither had a Zig mirror and that they
+/// appeared nowhere in `packages/zig/src`; `ios_config.zig`'s own header names
+/// this file as one of the workarounds it replaced.
+///
+/// The plist read below stays, and not as a config proxy. Apple requires the
+/// usage description before authorization may be requested at all, so its
+/// absence is the condition under which requesting would be illegitimate — a
+/// precondition of the API rather than evidence of a flag. The refusal happens
 /// before any request is made, so what the system would otherwise do never
-/// arises.
+/// arises, and which of the two keys is present still selects the prompt.
 ///
 /// Two divergences, both real and neither hideable:
 ///
