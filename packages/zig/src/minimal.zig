@@ -8,6 +8,35 @@ const io_context = craft.io_context;
 // `craft`, and macos.zig already owns it there.
 const timing = craft.startup_timing;
 
+// Every option this file assigns has to exist on every platform's style.
+//
+// `craft.WindowStyle` is `macos.WindowStyle` on a Mac and
+// `craft.PortableWindowStyle` everywhere else, and this file builds one with a
+// single struct literal. So a field added to the macOS struct and not to the
+// portable one compiles here on macOS and fails on Linux and Windows — a green
+// local build and a broken release, discovered in CI at the end of a
+// twelve-minute job.
+//
+// This is that check, made where it can be seen. It lives here rather than in
+// `main.zig` because a `comptime` block there is evaluated by every file that
+// imports it: naming `macos.WindowStyle` would force `macos.zig` to be
+// analysed in test targets that never touch a window, and drag its
+// CoreFoundation externs into steps that do not link them.
+comptime {
+    for (@typeInfo(craft.WindowStyle).@"struct".field_names) |name| {
+        if (!@hasField(craft.PortableWindowStyle, name)) {
+            @compileError(
+                "craft.WindowStyle has the field '" ++ name ++ "', which " ++
+                    "PortableWindowStyle does not. This file assigns every " ++
+                    "option on every platform, so the missing one breaks the " ++
+                    "Linux and Windows builds and nothing else. Add it to " ++
+                    "PortableWindowStyle in main.zig, accepted and ignored, " ++
+                    "with a comment saying why it has no meaning there.",
+            );
+        }
+    }
+}
+
 /// Craft's log handler.
 ///
 /// One declaration in the executable's root, and every `std.log` call in the

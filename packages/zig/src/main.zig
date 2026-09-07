@@ -96,8 +96,19 @@ pub const Slider = components.Slider;
 pub const Autocomplete = components.Autocomplete;
 pub const ColorPicker = components.ColorPicker;
 
-// Re-export platform types
-pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else struct {
+/// The window options every platform understands.
+///
+/// `minimal.zig` builds one `WindowStyle` from the parsed CLI options and
+/// passes it on every platform, so this has to carry a field for everything
+/// `macos.WindowStyle` carries — including the macOS-only ones, which are
+/// accepted and ignored here. A field added to one and not the other is a
+/// compile error on the *other* platform only, which on a Mac means a green
+/// local build and a broken Linux release. `windowStyleFieldsMatch` below is
+/// the check that makes it fail where it can be seen.
+///
+/// Named rather than anonymous so `minimal.zig` can name it on macOS, where
+/// this branch of the `if` is not the one taken, and check the two agree.
+pub const PortableWindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
     always_on_top: bool = false,
@@ -121,6 +132,14 @@ pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else str
     web_sidebar_material_opacity: f64 = 0.78,
     benchmark: bool = false,
     /// Accepted so `minimal.zig` can pass one `WindowStyle` on every platform,
+    /// and ignored: the row of controls it turns off is drawn on the AppKit
+    /// theme frame, which GTK and Win32 have no counterpart for.
+    web_chrome_controls: bool = true,
+    /// Same: choosing a `WKWebsiteDataStore` is a WebKit-on-macOS decision.
+    /// WebKit2GTK and WebView2 each have their own way of saying where a page's
+    /// storage lives, and neither is wired up here yet.
+    persistent_storage: bool = false,
+    /// Accepted so `minimal.zig` can pass one `WindowStyle` on every platform,
     /// and ignored: remembering a window frame is `setFrameAutosaveName:`, an
     /// AppKit facility with no counterpart wired up on GTK or Win32 yet.
     frame_autosave: ?[]const u8 = null,
@@ -128,6 +147,9 @@ pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else str
     /// activation, and GTK and Win32 have their own.
     headless: bool = false,
 };
+
+// Re-export platform types
+pub const WindowStyle = if (builtin.os.tag == .macos) macos.WindowStyle else PortableWindowStyle;
 
 pub const Window = struct {
     title: []const u8,
