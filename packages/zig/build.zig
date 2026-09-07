@@ -989,6 +989,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Which window a bridge message came from — pure, and testable without a
+    // second window to send one.
+    const window_context_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/window_context.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The shell bridge's argv construction: what a `spawn` actually runs.
     // Untested until now, which is how it shipped parsing an `args` array and
     // throwing it away.
@@ -1425,6 +1435,7 @@ pub fn build(b: *std.Build) void {
     const run_bridge_shell_tests = b.addRunArtifact(bridge_shell_tests);
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
+    const run_window_context_tests = b.addRunArtifact(window_context_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
@@ -1568,6 +1579,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_bridge_shell_tests.step);
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
+    test_step.dependOn(&run_window_context_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);

@@ -501,6 +501,22 @@
     setBackgroundColor: function (c)  { return _send('window', 'setBackgroundColor', _stringify({ color: String(c) })) },
     setVibrancy:  function (mat)      { return _send('window', 'setVibrancy', _stringify({ material: String(mat || '') })) },
     setWebSidebarCollapsed: function (on) { return _send('window', 'setWebSidebarCollapsed', _stringify({ collapsed: !!on })) },
+
+    // Open a second window, or bring forward the one already open under this
+    // name. `_req`, not `_send`: what a caller does next — focus it, close it,
+    // send it a message — depends on it being there, and the answer carries
+    // the name back so the page can hold onto it.
+    //
+    // Everything but `name` and one of `url` / `html` is optional and mirrors
+    // the CLI's window flags, so a window opened from the page can be the same
+    // kind of window the app itself is.
+    open: function (opts) {
+      const o = opts || {}
+      const name = String(o.name || o.id || '')
+      if (!name) return Promise.reject(new Error('craft.window.open needs a name'))
+      if (!o.url && !o.html) return Promise.reject(new Error('craft.window.open needs a url or html'))
+      return _req('window', 'open', _stringify(Object.assign({}, o, { name: name })))
+    },
   }
 
   // -------------------------------------------------------------------------

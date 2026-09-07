@@ -61,6 +61,15 @@ export interface WindowState {
  * Window creation options
  */
 export interface WindowCreateOptions {
+  /**
+   * A stable name for this window, so opening it twice reaches the same one.
+   *
+   * Without it every `create()` gets a fresh generated id and the host has no
+   * way to tell "open Settings" from "open a second Settings" — which is what
+   * Cmd+, pressed twice looks like from here. Name the window and the second
+   * call brings the first forward instead.
+   */
+  id?: string
   /** Window title */
   title?: string
   /** Window width */
@@ -105,6 +114,14 @@ export interface WindowCreateOptions {
   skipTaskbar?: boolean
   /** Whether titlebar is hidden */
   titlebarHidden?: boolean
+  /**
+   * Whether the Web Inspector is available in this window.
+   *
+   * Defaults to off for a window opened from the page: an app built with
+   * `--no-devtools` should not grow a right-click Inspect Element by opening
+   * its own Settings.
+   */
+  devTools?: boolean
   /** Draw native macOS sidebar material behind a web-rendered sidebar */
   webSidebarMaterial?: boolean
   /** Width of the native material backdrop behind a web-rendered sidebar */
@@ -743,10 +760,17 @@ class WindowManager {
    * Create a new window
    */
   async create(options: WindowCreateOptions = {}): Promise<Window> {
-    const id = `window_${++this._idCounter}_${Date.now()}`
+    // A caller-supplied name wins, and asking for the same one twice returns
+    // the same `Window` — the host brings the existing window forward rather
+    // than opening a twin, so handing back a second wrapper for it would be a
+    // lie about how many windows there are.
+    const id = options.id || `window_${++this._idCounter}_${Date.now()}`
+    const existing = this._windows.get(id)
 
     const bridge = getBridge()
-    await bridge.request('window.create', { id, ...options })
+    await bridge.request('window.create', { ...options, id })
+
+    if (existing) return existing
 
     const win = new Window(id)
     this._windows.set(id, win)

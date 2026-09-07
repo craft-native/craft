@@ -4,6 +4,8 @@ const color_parse = @import("color.zig");
 const bridge_error = @import("bridge_error.zig");
 const logging = @import("logging.zig");
 const json_utils = @import("json_utils.zig");
+const window_context = @import("window_context.zig");
+const window_registry = @import("window_registry.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.window;
@@ -112,19 +114,116 @@ pub const WindowBridge = struct {
             try self.flashFrame(data);
         } else if (std.mem.eql(u8, action, "setProgressBar")) {
             try self.setProgressBar(data);
+        } else if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create")) {
+            // `create` is what the TypeScript SDK's `windows.create()` has
+            // always sent, to a host that had no handler for it. Same action.
+            try self.open(data);
         } else {
             return BridgeError.UnknownAction;
         }
     }
 
-    /// Get window handle or return error
+    /// The window this action applies to.
+    ///
+    /// The window the message came from, when there is one — the dispatcher
+    /// reads it off the `WKScriptMessage`, so it is the sender's own window
+    /// and not something the page asserts. `self.window_handle` is the window
+    /// craft was started with, and stays the answer for everything that does
+    /// not arrive as a message: a menu item, a native callback, an app that
+    /// only ever has one window.
+    ///
+    /// Before this, every action used that one handle. With a second window
+    /// open, `craft.window.close()` from the Settings page closed the main
+    /// window — the bridge had no way of knowing who was asking.
     fn requireWindowHandle(self: *Self) BridgeError!*anyopaque {
+        if (window_context.current()) |sender| {
+            return @ptrFromInt(sender);
+        }
         return self.window_handle orelse BridgeError.WindowHandleNotSet;
     }
 
     /// Get webview handle or return error
     fn requireWebViewHandle(self: *Self) BridgeError!*anyopaque {
         return self.webview_handle orelse BridgeError.WebViewHandleNotSet;
+    }
+
+    /// Open a second window, or bring forward the one already open by that name.
+    ///
+    /// The name is the argument that matters. Craft's window actions have
+    /// always addressed "the" window, which is why this action did not exist:
+    /// a page could not have said which of two windows it meant. Naming the
+    /// window at the moment it is opened answers that for the only caller that
+    /// needs to — the one that opens it — and makes a second `open` idempotent
+    /// rather than a second window, which is what every Mac app's Cmd+, does.
+    ///
+    /// Style is the same vocabulary the CLI takes, so a window opened from the
+    /// page can be the same kind of window as the one craft was started with:
+    /// hidden titlebar, a native material behind the sidebar span or the whole
+    /// view. Without that a Settings window would be the one surface in the
+    /// app sitting on plain white.
+    fn open(self: *Self, data: ?[]const u8) !void {
+        const json_data = data orelse return BridgeError.MissingData;
+
+        // `id` is what the TypeScript SDK calls it; `name` is what it is.
+        const name = json_utils.getString(json_data, "name") orelse
+            json_utils.getString(json_data, "id") orelse
+            return BridgeError.InvalidParameter;
+
+        const url = json_utils.getString(json_data, "url");
+        const html = json_utils.getString(json_data, "html");
+        if (url == null and html == null) return BridgeError.InvalidParameter;
+
+        if (builtin.os.tag != .macos) return BridgeError.NativeCallFailed;
+
+        const macos = @import("macos.zig");
+
+        const style: macos.WindowStyle = .{
+            .resizable = json_utils.getBool(json_data, "resizable") orelse true,
+            .closable = json_utils.getBool(json_data, "closable") orelse true,
+            .miniaturizable = json_utils.getBool(json_data, "minimizable") orelse true,
+            .always_on_top = json_utils.getBool(json_data, "alwaysOnTop") orelse false,
+            .titlebar_hidden = json_utils.getBool(json_data, "titlebarHidden") orelse false,
+            .web_sidebar_material = json_utils.getBool(json_data, "webSidebarMaterial") orelse false,
+            .web_window_material = json_utils.getBool(json_data, "webWindowMaterial") orelse false,
+            .web_sidebar_width = json_utils.getInt(u32, json_data, "webSidebarWidth") orelse 286,
+            .web_sidebar_material_opacity = json_utils.getFloat(f64, json_data, "webSidebarMaterialOpacity") orelse 0.78,
+            // The inspector follows the window that opened it: an app built
+            // with `--no-devtools` should not grow a right-click Inspect
+            // Element by opening its own Settings.
+            .dev_tools = json_utils.getBool(json_data, "devTools") orelse false,
+            .x = json_utils.getInt(i32, json_data, "x"),
+            .y = json_utils.getInt(i32, json_data, "y"),
+        };
+
+        const window = macos.openNamedWindow(.{
+            .name = name,
+            .title = json_utils.getString(json_data, "title") orelse name,
+            .url = url,
+            .html = html,
+            .width = json_utils.getInt(u32, json_data, "width") orelse 800,
+            .height = json_utils.getInt(u32, json_data, "height") orelse 600,
+            .style = style,
+        }) catch return BridgeError.NativeCallFailed;
+
+        // A floor on the size, so a window with a fixed-width sidebar cannot be
+        // dragged narrower than the sidebar it contains.
+        const min_width = json_utils.getInt(u32, json_data, "minWidth");
+        const min_height = json_utils.getInt(u32, json_data, "minHeight");
+        if (min_width != null or min_height != null) {
+            const size = macos.NSSize{
+                .width = @floatFromInt(min_width orelse 0),
+                .height = @floatFromInt(min_height orelse 0),
+            };
+            const msg = @as(*const fn (macos.objc.id, macos.objc.SEL, macos.NSSize) callconv(.c) void, @ptrCast(&macos.objc.objc_msgSend));
+            msg(window, macos.sel("setMinSize:"), size);
+        }
+
+        // Answer with the name rather than nothing: `open` is the one window
+        // action a page waits on, because what it does next — focus it, close
+        // it — needs to know it exists.
+        var buf: [window_registry.max_name + 32]u8 = undefined;
+        const json = std.fmt.bufPrint(&buf, "{{\"name\":\"{s}\"}}", .{name}) catch return;
+        bridge_error.sendResultToJS(self.allocator, "open", json);
     }
 
     fn show(self: *Self) !void {

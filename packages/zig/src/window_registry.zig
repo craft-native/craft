@@ -36,7 +36,33 @@ pub const Handle = usize;
 /// fixed so registration needs no allocator on the window-creation path.
 pub const capacity = 16;
 
-var windows: [capacity]Handle = @splat(0);
+/// How long a window's name may be.
+///
+/// A name is an app-chosen identifier — "settings", "inspector" — not a
+/// title, so it is short by nature. Fixed rather than allocated for the same
+/// reason the table is: naming happens on the window-creation path, which has
+/// no allocator to hand.
+pub const max_name = 64;
+
+/// One row: the window, and what the app that opened it calls it.
+///
+/// The name is what makes "open the settings window" idempotent. Without it
+/// the page can only ask for *a* window, so a second Cmd+, opens a second
+/// settings window — and the app has no way to find the first one to focus
+/// instead.
+const Entry = struct {
+    handle: Handle = 0,
+    name: [max_name]u8 = @splat(0),
+    name_len: usize = 0,
+
+    /// By pointer, not by value: a by-value `self` is a copy that dies at the
+    /// return, and the slice would point into it.
+    fn named(self: *const Entry) ?[]const u8 {
+        return if (self.name_len == 0) null else self.name[0..self.name_len];
+    }
+};
+
+var windows: [capacity]Entry = @splat(.{});
 
 /// Record a window craft created. Idempotent.
 ///
@@ -44,22 +70,77 @@ var windows: [capacity]Handle = @splat(0);
 /// caller is expected to say so rather than let a window silently become
 /// unreopenable.
 pub fn remember(handle: Handle) bool {
+    return rememberNamed(handle, null);
+}
+
+/// Record a window under a name the app can find it by again.
+///
+/// A name longer than `max_name`, or one already held by a *different* live
+/// window, is refused rather than truncated or duplicated: both would hand
+/// back a window that is not the one asked for, and the caller's next act is
+/// to show it to somebody.
+///
+/// Two passes, not one. A single pass that took the first free slot would
+/// insert a duplicate whenever `forget` had opened a gap ahead of an existing
+/// entry — the window would then be recorded twice and `forget` would clear
+/// only one of them.
+pub fn rememberNamed(handle: Handle, name: ?[]const u8) bool {
     if (handle == 0) return false;
+    if (name) |n| {
+        if (n.len == 0 or n.len > max_name) return false;
+        if (byName(n)) |owner| {
+            if (owner != handle) return false;
+        }
+    }
+
     for (&windows) |*slot| {
-        if (slot.* == handle) return true;
-        if (slot.* == 0) {
-            slot.* = handle;
+        if (slot.handle == handle) {
+            if (name) |n| setName(slot, n);
             return true;
         }
     }
+
+    for (&windows) |*slot| {
+        if (slot.handle == 0) {
+            slot.handle = handle;
+            if (name) |n| setName(slot, n) else slot.name_len = 0;
+            return true;
+        }
+    }
+
     return false;
+}
+
+fn setName(slot: *Entry, name: []const u8) void {
+    @memcpy(slot.name[0..name.len], name);
+    slot.name_len = name.len;
+}
+
+/// The window recorded under this name, if one still is.
+pub fn byName(name: []const u8) ?Handle {
+    if (name.len == 0 or name.len > max_name) return null;
+    for (&windows) |*entry| {
+        if (entry.handle == 0) continue;
+        const known = entry.named() orelse continue;
+        if (std.mem.eql(u8, known, name)) return entry.handle;
+    }
+    return null;
+}
+
+/// What this window was opened as, if it was opened under a name.
+pub fn nameOf(handle: Handle) ?[]const u8 {
+    if (handle == 0) return null;
+    for (&windows) |*entry| {
+        if (entry.handle == handle) return entry.named();
+    }
+    return null;
 }
 
 /// Whether craft opened this window.
 pub fn isKnown(handle: Handle) bool {
     if (handle == 0) return false;
-    for (windows) |known| {
-        if (known == handle) return true;
+    for (windows) |entry| {
+        if (entry.handle == handle) return true;
     }
     return false;
 }
@@ -67,20 +148,20 @@ pub fn isKnown(handle: Handle) bool {
 /// Drop a window. For real teardown, whenever #67 introduces some.
 pub fn forget(handle: Handle) void {
     for (&windows) |*slot| {
-        if (slot.* == handle) slot.* = 0;
+        if (slot.handle == handle) slot.* = .{};
     }
 }
 
 pub fn count() usize {
     var n: usize = 0;
-    for (windows) |w| {
-        if (w != 0) n += 1;
+    for (windows) |entry| {
+        if (entry.handle != 0) n += 1;
     }
     return n;
 }
 
 pub fn resetForTesting() void {
-    windows = @splat(0);
+    windows = @splat(.{});
 }
 
 const testing = std.testing;
@@ -157,4 +238,88 @@ test "forgetting a window that was never known changes nothing" {
     forget(0x2000);
     try testing.expect(isKnown(0x1000));
     try testing.expectEqual(@as(usize, 1), count());
+}
+
+test "a window opened under a name is found by it" {
+    resetForTesting();
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    try testing.expectEqual(@as(?Handle, 0x1000), byName("settings"));
+    try testing.expectEqualStrings("settings", nameOf(0x1000).?);
+}
+
+test "an unnamed window has no name to find it by" {
+    resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(nameOf(0x1000) == null);
+    try testing.expect(byName("settings") == null);
+}
+
+test "a name is not handed to a second window" {
+    // The whole point of the name is that asking for "settings" twice reaches
+    // the same window. Letting a second one take the name would leave the
+    // first unreachable and two settings windows on screen.
+    resetForTesting();
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    try testing.expect(!rememberNamed(0x2000, "settings"));
+    try testing.expectEqual(@as(?Handle, 0x1000), byName("settings"));
+}
+
+test "naming the same window again is idempotent" {
+    resetForTesting();
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    try testing.expectEqual(@as(usize, 1), count());
+}
+
+test "a window already recorded can be named afterwards" {
+    // `keepWindowAfterClose` records every window craft creates, so by the
+    // time the opener names it there is already a row.
+    resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    try testing.expectEqual(@as(usize, 1), count());
+    try testing.expectEqual(@as(?Handle, 0x1000), byName("settings"));
+}
+
+test "forgetting a window releases its name" {
+    resetForTesting();
+    try testing.expect(rememberNamed(0x1000, "settings"));
+    forget(0x1000);
+    try testing.expect(byName("settings") == null);
+    try testing.expect(rememberNamed(0x2000, "settings"));
+}
+
+test "a name longer than the field is refused, not truncated" {
+    // Truncating would silently merge two different windows under one name.
+    resetForTesting();
+    const too_long: [max_name + 1]u8 = @splat('n');
+    try testing.expect(!rememberNamed(0x1000, &too_long));
+    try testing.expectEqual(@as(usize, 0), count());
+}
+
+test "an empty name is refused" {
+    resetForTesting();
+    try testing.expect(!rememberNamed(0x1000, ""));
+    try testing.expect(byName("") == null);
+}
+
+test "a name that fills the field exactly is kept whole" {
+    resetForTesting();
+    const exact: [max_name]u8 = @splat('n');
+    try testing.expect(rememberNamed(0x1000, &exact));
+    try testing.expectEqualStrings(&exact, nameOf(0x1000).?);
+}
+
+test "a freed slot ahead of a live one does not duplicate it" {
+    // A single-pass insert took the first free slot without finishing the
+    // scan, so re-recording a window that sat behind a gap added a second row
+    // for it — and `forget` then cleared only one.
+    resetForTesting();
+    _ = remember(0x1000);
+    _ = remember(0x2000);
+    forget(0x1000);
+    try testing.expect(remember(0x2000));
+    try testing.expectEqual(@as(usize, 1), count());
+    forget(0x2000);
+    try testing.expect(!isKnown(0x2000));
 }

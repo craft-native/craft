@@ -8,6 +8,7 @@ const external_link = @import("external_link.zig");
 const webview_recovery = @import("webview_recovery.zig");
 const window_registry = @import("window_registry.zig");
 const request_context = @import("request_context.zig");
+const window_context = @import("window_context.zig");
 const window_chrome = @import("window_chrome.zig");
 
 // Objective-C runtime types and functions (manual declarations to avoid @cImport issues)
@@ -5523,6 +5524,20 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
     _ = self;
     _ = userContentController;
 
+    // Which window this came from, before anything is dispatched.
+    //
+    // A `WKScriptMessage` carries the webview that posted it, and a webview
+    // knows its window, so the sender is already in the message — the page
+    // neither has to say nor gets to choose. Every window action then acts on
+    // the window that asked for it rather than on whichever handle the global
+    // bridge was built with, which is the difference between a Settings window
+    // closing itself and closing the main window.
+    //
+    // Pushed unconditionally, including the zero a detached webview gives, so
+    // an unknown sender shadows an enclosing frame instead of inheriting it.
+    window_context.push(sendingWindow(message));
+    defer window_context.pop();
+
     // Get the message body (should be a dictionary/object from JavaScript)
     const body = msgSend0(message, "body");
 
@@ -5571,6 +5586,18 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
 
     // Release the NSString
     msgSendVoid0(initialized_string, "release");
+}
+
+/// The window a `WKScriptMessage` was posted from, or 0 if it has none.
+///
+/// A webview that has been removed from its window — which happens during
+/// teardown, and to the offscreen views AppKit keeps — answers nil for
+/// `window`, and zero is the honest reading of that: unknown, not "the main
+/// one".
+fn sendingWindow(message: objc.id) window_context.Handle {
+    const webview = msgSend0(message, "webView");
+    if (webview == null) return 0;
+    return @intFromPtr(msgSend0(webview, "window"));
 }
 
 /// Create and register the script message handler with WKUserContentController
@@ -6954,6 +6981,72 @@ fn rememberCraftWindow(window: objc.id) void {
         "more than {d} windows open; the newest will not be restored by a Dock click",
         .{window_registry.capacity},
     );
+}
+
+/// What a second window is asked for.
+///
+/// `name` is the app's own identifier for it — "settings", "inspector" — and
+/// is what makes opening one idempotent: a window already open under that name
+/// is brought forward rather than joined by a twin. It is the whole reason
+/// this takes a struct instead of the seven positional arguments
+/// `createWindowWithStyle` takes.
+pub const SecondaryWindow = struct {
+    name: []const u8,
+    title: []const u8,
+    /// Exactly one of these. A URL for an app served over loopback, HTML for
+    /// one that carries its own markup.
+    url: ?[]const u8 = null,
+    html: ?[]const u8 = null,
+    width: u32 = 800,
+    height: u32 = 600,
+    style: WindowStyle = .{},
+};
+
+/// The window open under this name, if one is.
+pub fn findNamedWindow(name: []const u8) ?objc.id {
+    const handle = window_registry.byName(name) orelse return null;
+    return @as(objc.id, @ptrFromInt(handle));
+}
+
+/// Open a second window, or bring forward the one already open under this name.
+///
+/// Bringing the existing one forward is the behaviour, not a shortcut around
+/// creating another: pressing Cmd+, twice opens one Settings window in every
+/// Mac app there is, and an app that stacked a second identical window on the
+/// first would be the odd one out. It is also the only thing the caller can do
+/// with the answer — the name is how it finds the window again.
+///
+/// A closed window is *not* gone: `keepWindowAfterClose` leaves the object
+/// alive, so closing Settings and pressing Cmd+, again shows the same window
+/// with its page still loaded, which is both faster and where the user left it.
+pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
+    if (findNamedWindow(spec.name)) |existing| {
+        showWindow(existing);
+        return existing;
+    }
+
+    if (spec.url == null and spec.html == null) return error.NoContent;
+
+    const window = if (spec.url) |url|
+        try createWindowWithURL(spec.title, spec.width, spec.height, url, spec.style)
+    else
+        try createWindowWithHTML(spec.title, spec.width, spec.height, spec.html.?, spec.style);
+
+    // `createWindowWithStyle` has already recorded it through
+    // `keepWindowAfterClose`; this only attaches the name, which is why a full
+    // table is not fatal here — the window exists and works, it just cannot be
+    // found by name again.
+    if (!window_registry.rememberNamed(@intFromPtr(window), spec.name)) {
+        std.log.warn("window \"{s}\" could not be named; a later open will make a second one", .{spec.name});
+    }
+
+    // Focus, blur, move, resize and close events, the same as the first window
+    // gets when the bridges are set up. Without this the page in the new window
+    // never hears `craft:window:close`.
+    @import("macos_window_events.zig").install(window);
+
+    showWindow(window);
+    return window;
 }
 
 /// Whether the app should quit when its last window closes.

@@ -581,6 +581,52 @@ namespace — answers `false`.
 
 Control the application window from JavaScript.
 
+Every action below applies to **the window it was called from**. Craft reads
+the sender off the `WKScriptMessage`, so a page in a second window closes,
+moves and re-themes its own window without having to identify itself — and
+cannot reach another window by accident.
+
+### `window.craft.window.open(options): Promise<{ name: string }>`
+
+Open a second window, or bring forward the one already open under this name.
+
+`name` is what makes it idempotent: a Settings window opened on Cmd+, is the
+same window the second time, which is what every Mac app does. A closed window
+is kept, not destroyed, so reopening shows it with its page where the user left
+it.
+
+```javascript
+await window.craft.window.open({
+  name: 'settings',
+  title: 'Settings',
+  url: 'http://127.0.0.1:8471/app/settings',
+  width: 715,
+  height: 640,
+  minWidth: 640,
+  minHeight: 480,
+  titlebarHidden: true,
+  webSidebarMaterial: true,
+  webSidebarWidth: 260,
+});
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `name` (or `id`) | — | Required. The window's identity, up to 64 bytes. |
+| `url` / `html` | — | One of the two is required. |
+| `title` | `name` | Window title. |
+| `width`, `height` | `800`, `600` | Content size. |
+| `x`, `y` | centered | Screen position. |
+| `minWidth`, `minHeight` | none | A floor on the size a drag can reach. |
+| `resizable`, `closable`, `minimizable` | `true` | Style mask. |
+| `alwaysOnTop` | `false` | Floating window level. |
+| `titlebarHidden` | `false` | Full-size content view; window buttons sit over the page. |
+| `webSidebarMaterial` | `false` | Native sidebar material behind a leading strip. |
+| `webSidebarWidth` | `286` | How wide that strip is. |
+| `webSidebarMaterialOpacity` | `0.78` | Tint over the material, `0`–`1`. |
+| `webWindowMaterial` | `false` | That material behind the whole web view instead. |
+| `devTools` | `false` | Web Inspector in this window. |
+
 ### `window.craft.window.show(): Promise<void>`
 
 Show the window.
