@@ -1,5 +1,54 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.87...v0.0.88)
+
+## 🚀 Features
+
+- **updater**: verify with codesign before swapping, and swap atomically ([80bbb26](https://github.com/craft-native/craft/commit/80bbb26)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **android**: getDeviceInfo in Zig, and the JNI calls it needed (#137) ([b89d4b6](https://github.com/craft-native/craft/commit/b89d4b6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#137](https://github.com/craft-native/craft/issues/137), [#137](https://github.com/craft-native/craft/issues/137))
+- **android**: a JNI runtime layer, and the discipline it has to carry (#136) ([c073afa](https://github.com/craft-native/craft/commit/c073afa)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#136](https://github.com/craft-native/craft/issues/136), [#136](https://github.com/craft-native/craft/issues/136))
+- **ios**: haptic, whose reason expired when ios_config landed (#134) ([d92a01b](https://github.com/craft-native/craft/commit/d92a01b)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#134](https://github.com/craft-native/craft/issues/134), [#134](https://github.com/craft-native/craft/issues/134))
+- **ios**: AR moves to Zig — ratchet 18 -> 13 (#126) ([87752aa](https://github.com/craft-native/craft/commit/87752aa)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#126](https://github.com/craft-native/craft/issues/126), [#126](https://github.com/craft-native/craft/issues/126))
+- **ios**: location recording moves to the manager it always shared — ratchet 23 -> 18 (#125) ([a8a516a](https://github.com/craft-native/craft/commit/a8a516a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#125](https://github.com/craft-native/craft/issues/125), [#125](https://github.com/craft-native/craft/issues/125))
+- **ios**: signInWithApple, and scanQRCode's real reason — ratchet 25 -> 23 (#122) ([f503c4a](https://github.com/craft-native/craft/commit/f503c4a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#122](https://github.com/craft-native/craft/issues/122), [#122](https://github.com/craft-native/craft/issues/122))
+- **ios**: scanNFC — the first migration with no blocker to expire, ratchet 25 -> 24 (#121) ([fbbc041](https://github.com/craft-native/craft/commit/fbbc041)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#121](https://github.com/craft-native/craft/issues/121), [#121](https://github.com/craft-native/craft/issues/121))
+- **ios**: scheduleNotification — the deferral that expired on its own, ratchet 26 → 25 (#110) ([f5d28af](https://github.com/craft-native/craft/commit/f5d28af)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#110](https://github.com/craft-native/craft/issues/110), [#110](https://github.com/craft-native/craft/issues/110))
+- **ios**: the Zig runtime, offered to a Swift-hosted app (#103) ([b5c609e](https://github.com/craft-native/craft/commit/b5c609e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#103](https://github.com/craft-native/craft/issues/103), [#103](https://github.com/craft-native/craft/issues/103))
+- **ios**: the speech pair closes the last deferral — ratchet 28 -> 26 (#101) ([14fe431](https://github.com/craft-native/craft/commit/14fe431)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#101](https://github.com/craft-native/craft/issues/101), [#101](https://github.com/craft-native/craft/issues/101))
+
+## 🐛 Bug Fixes
+
+- **sdk**: restore craftVoiceAction — the event map is cross-platform (#135) ([848da1d](https://github.com/craft-native/craft/commit/848da1d)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#135](https://github.com/craft-native/craft/issues/135), [#135](https://github.com/craft-native/craft/issues/135))
+- **ios**: no gated dispatcher arm can hang the page any more (58 → 0) (#120) ([f2c0fba](https://github.com/craft-native/craft/commit/f2c0fba)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#120](https://github.com/craft-native/craft/issues/120), [#120](https://github.com/craft-native/craft/issues/120))
+- **ios**: give the generator a runtimeDir option, and run its tests in CI (#108) ([50badb6](https://github.com/craft-native/craft/commit/50badb6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#108](https://github.com/craft-native/craft/issues/108), [#108](https://github.com/craft-native/craft/issues/108))
+- **ci**: guard the pantry-env evals in package.json too, which #107 missed (#111) ([47858a1](https://github.com/craft-native/craft/commit/47858a1)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#107](https://github.com/craft-native/craft/issues/107), [#111](https://github.com/craft-native/craft/issues/111), [#107](https://github.com/craft-native/craft/issues/107), [#111](https://github.com/craft-native/craft/issues/111))
+- **ci**: stop evaluating `pantry env`, which re-installs JS deps mid-job (#107) ([dbbe0af](https://github.com/craft-native/craft/commit/dbbe0af)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#107](https://github.com/craft-native/craft/issues/107), [#107](https://github.com/craft-native/craft/issues/107))
+- **ios**: answer the shapes the spec answers, now that a bare false survives (#105) ([7d3e6b7](https://github.com/craft-native/craft/commit/7d3e6b7)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#105](https://github.com/craft-native/craft/issues/105), [#105](https://github.com/craft-native/craft/issues/105))
+- **ci**: build the SDK types with the repo's own tsc (and pin the pantry action) (#104) ([d4c214e](https://github.com/craft-native/craft/commit/d4c214e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#104](https://github.com/craft-native/craft/issues/104), [#104](https://github.com/craft-native/craft/issues/104))
+- **lint**: drop fourteen unused imports that pickier now errors on (#102) ([b693fb0](https://github.com/craft-native/craft/commit/b693fb0)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#102](https://github.com/craft-native/craft/issues/102), [#102](https://github.com/craft-native/craft/issues/102))
+
+## 📚 Documentation
+
+- **ios**: correct the permanently-Swift list, 5 of whose 13 entries were migrated (#114) ([3653cf5](https://github.com/craft-native/craft/commit/3653cf5)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#114](https://github.com/craft-native/craft/issues/114), [#114](https://github.com/craft-native/craft/issues/114))
+- **ios**: retire three refusal notes that outlived their refusals (#113) ([7567765](https://github.com/craft-native/craft/commit/7567765)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#113](https://github.com/craft-native/craft/issues/113), [#113](https://github.com/craft-native/craft/issues/113))
+
+## 🧪 Tests
+
+- **ios**: every field the spec's replies carry, not just getDeviceInfo's (#129) ([9e5bf0a](https://github.com/craft-native/craft/commit/9e5bf0a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#129](https://github.com/craft-native/craft/issues/129), [#129](https://github.com/craft-native/craft/issues/129))
+- **ios**: check the event channel, the half nothing was checking (#128) ([4a1be4a](https://github.com/craft-native/craft/commit/4a1be4a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#128](https://github.com/craft-native/craft/issues/128), [#128](https://github.com/craft-native/craft/issues/128))
+- **ios**: record registerPush, so every unmigrated action now has a checked reason (#123) ([a7e15e0](https://github.com/craft-native/craft/commit/a7e15e0)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#123](https://github.com/craft-native/craft/issues/123), [#123](https://github.com/craft-native/craft/issues/123))
+- **ios**: record every deliberate deferral where something checks it (#119) ([1f7ab69](https://github.com/craft-native/craft/commit/1f7ab69)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#119](https://github.com/craft-native/craft/issues/119), [#119](https://github.com/craft-native/craft/issues/119))
+
+## 🧹 Chores
+
+- release v0.0.88 ([c64c7d5](https://github.com/craft-native/craft/commit/c64c7d5)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ci**: pin zig-js at #876, the first revision that builds on Zig 1963 (#106) ([b6e3fd4](https://github.com/craft-native/craft/commit/b6e3fd4)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#876](https://github.com/craft-native/craft/issues/876), [#106](https://github.com/craft-native/craft/issues/106), [#876](https://github.com/craft-native/craft/issues/876), [#106](https://github.com/craft-native/craft/issues/106))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.86...v0.0.87)
 
 ## 🚀 Features
