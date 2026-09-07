@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.88...v0.0.89)
+
+## 🚀 Features
+
+- **window**: let an app keep what its page stores ([d978eb3](https://github.com/craft-native/craft/commit/d978eb3)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: let a page turn off the chrome Craft draws for it ([c35ad4e](https://github.com/craft-native/craft/commit/c35ad4e)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **window**: a second window, and the window that asked ([69d65b4](https://github.com/craft-native/craft/commit/69d65b4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **window**: answer the window that asked, not the one built last ([e26c90b](https://github.com/craft-native/craft/commit/e26c90b)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.89 ([9d8f130](https://github.com/craft-native/craft/commit/9d8f130)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.87...v0.0.88)
 
 ## 🚀 Features
