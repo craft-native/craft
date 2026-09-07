@@ -828,3 +828,264 @@ test "getDeviceInfo answers every field the spec answers" {
     // A shape change that silently matched nothing would otherwise pass.
     try testing.expectEqual(@as(usize, 14), checked);
 }
+
+// ---------------------------------------------------------------------------
+// The event channel
+//
+// Everything above this line is about the *call* channel: the page asks, native
+// answers. The other half of the contract runs the other way — native talks
+// first, and the page hears it as a `CustomEvent` on `window`. Nothing checked
+// that half, and it carries the same two failure modes the action scans exist
+// to catch, in a form that is quieter still:
+//
+//   * A name Zig emits that nothing subscribes to. `craftLocationUpate` for
+//     `craftLocationUpdate` compiles, dispatches, and reaches no one. There is
+//     no promise to hang and no error to log — the stream simply never starts,
+//     which is indistinguishable from a device that has nothing to report.
+//     `ios_events.zig`'s own header records this hazard and calls the names
+//     "copied from a `sendToWeb` call"; copied, and then never re-checked.
+//
+//   * A name the page subscribes to that nothing dispatches. This is exactly
+//     the `ota*` bug — a surface that reads as implemented and is not — and
+//     the OTA surface is where it still lives: when the five unhandled
+//     `ota*` methods were fixed to reject through `_unavailable`, the two
+//     *subscription* methods beside them were left as they were, because the
+//     scan that found them only knew about actions.
+//
+// Both scans are textual and carry the usual hazard, so both have floors.
+// ---------------------------------------------------------------------------
+
+const zig_events_source = @embedFile("src/ios_events.zig");
+
+/// Extract single-or-double-quoted event names following `needle`, keeping
+/// only the `craft`-prefixed identifiers.
+///
+/// The filter is doing real work rather than tidying. `sendToWeb` is also
+/// called through an interpolation — `CustomEvent('\(event)'` in the sink
+/// itself — and `addEventListener` is used for `loadend` and
+/// `visibilitychange`, neither of which is a bridge event. Restricting to
+/// `craft`-prefixed identifiers drops all three, and the prefix is not an
+/// assumption: the test below asserts every dispatched name has it.
+fn collectQuotedEvents(
+    allocator: std.mem.Allocator,
+    needle: []const u8,
+    quote: u8,
+) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, swift_spec, search, needle)) |at| {
+        const start = at + needle.len;
+        const end = std.mem.indexOfScalarPos(u8, swift_spec, start, quote) orelse break;
+        search = end;
+
+        const name = swift_spec[start..end];
+        if (!std.mem.startsWith(u8, name, "craft")) continue;
+        var ok = true;
+        for (name) |c| {
+            if (!std.ascii.isAlphanumeric(c)) ok = false;
+        }
+        if (ok) try set.put(name, {});
+    }
+    return set;
+}
+
+/// Every event the spec dispatches: `sendToWeb("craftX", ...)` from native,
+/// plus the `CustomEvent('craftX'` literals — one in Swift's deep-link path
+/// and two inside the injected JavaScript, which dispatches `craftError` and
+/// `craftReady` itself.
+fn collectSpecDispatchedEvents(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = try collectQuotedEvents(allocator, "sendToWeb(\"", '"');
+    errdefer set.deinit();
+
+    var literal = try collectQuotedEvents(allocator, "CustomEvent('", '\'');
+    defer literal.deinit();
+
+    var it = literal.keyIterator();
+    while (it.next()) |name| try set.put(name.*, {});
+    return set;
+}
+
+/// Every event the injected JavaScript subscribes to on the page's behalf.
+fn collectSpecSubscribedEvents(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    return collectQuotedEvents(allocator, "addEventListener('", '\'');
+}
+
+/// The `.member => "craftX",` arms of `ios_events.Event.eventName`.
+fn collectZigEventNames(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    const start = std.mem.indexOf(u8, zig_events_source, "pub fn eventName(") orelse
+        return error.EventNameFnNotFound;
+    const body = zig_events_source[start..];
+    // `eventName` is a method on the enum, so it closes at four-space indent.
+    const end = std.mem.indexOf(u8, body, "\n    }") orelse return error.EventNameFnNotFound;
+
+    var it = std.mem.splitScalar(u8, body[0..end], '\n');
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, ".")) continue;
+        const arrow = std.mem.indexOf(u8, trimmed, " => \"") orelse continue;
+        const name_start = arrow + " => \"".len;
+        const name_end = std.mem.indexOfScalarPos(u8, trimmed, name_start, '"') orelse continue;
+        try set.put(trimmed[name_start..name_end], {});
+    }
+    return set;
+}
+
+const DeadSubscription = struct {
+    event: []const u8,
+    reason: []const u8,
+};
+
+/// Events the injected JavaScript subscribes to that nothing in this repository
+/// ever dispatches — so the callback a page hands to the method beside them is
+/// registered, retained, and never called.
+///
+/// Recorded here for the reason the deferral table above exists: a gap nothing
+/// checks is a gap that outlives its own explanation. All four are the same
+/// shape — the *sending* half of a surface whose receiving half shipped — and
+/// none is fixable from Zig alone, which is why they are a table rather than a
+/// commit. Tracked in issue #127.
+const dead_subscriptions = [_]DeadSubscription{
+    // `setShortcuts` really does install home-screen items; tapping one
+    // launches the app and stops there. No template implements
+    // `application(_:performActionFor:completionHandler:)` or a scene-delegate
+    // equivalent, so the `UIApplicationShortcutItem` never reaches the page.
+    // `bridge_mobile_shortcuts.zig` documents this from the other side.
+    .{ .event = "craftShortcut", .reason = "nothing implements performActionFor:, so a tapped shortcut only launches the app" },
+
+    // `donateSiriShortcut` donates an `NSUserActivity` typed
+    // `{{BUNDLE_ID}}.<action>`. The only `onContinueUserActivity` in the
+    // template is bound to `NSUserActivityTypeBrowsingWeb` and routes to
+    // `DeepLinkManager`, so an invocation of a donated shortcut relaunches the
+    // app and is dropped.
+    .{ .event = "craftSiriShortcut", .reason = "the only onContinueUserActivity handles browsing-web activities, so a donated shortcut's invocation is dropped" },
+
+    // The `ota*` half-fix. `checkForUpdate`, `downloadUpdate`, `applyUpdate`
+    // and `rollback` were changed to reject through `_unavailable`; these two
+    // register a callback against a name no OTA implementation exists to
+    // dispatch, and were missed because the scan that found the others only
+    // looked at actions.
+    .{ .event = "craftOTAProgress", .reason = "the OTA surface is _unavailable; its two subscription methods were left behind" },
+    .{ .event = "craftOTAStatus", .reason = "the OTA surface is _unavailable; its two subscription methods were left behind" },
+};
+
+test "the event scans find both halves of the channel" {
+    // Non-vacuity. Every assertion below is a membership check, and a needle
+    // that stopped matching would satisfy all of them at once.
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+    try testing.expect(dispatched.count() >= 17);
+
+    var subscribed = try collectSpecSubscribedEvents(testing.allocator);
+    defer subscribed.deinit();
+    try testing.expect(subscribed.count() >= 10);
+
+    var zig = try collectZigEventNames(testing.allocator);
+    defer zig.deinit();
+    try testing.expect(zig.count() >= 13);
+
+    // The prefix the two filters rely on, checked rather than assumed.
+    var it = dispatched.keyIterator();
+    while (it.next()) |name| try testing.expect(std.mem.startsWith(u8, name.*, "craft"));
+}
+
+test "every event Zig emits is one the spec dispatches" {
+    // The typo guard, and the direction that matters most: `ios_events.Event`
+    // is a fixed vocabulary transcribed by hand from the spec's `sendToWeb`
+    // call sites, and a single wrong character produces a `CustomEvent` with
+    // no subscriber. Nothing fails, nothing logs; the page just never hears
+    // from the device.
+    //
+    // The spec is never edited to remove an arm a Zig module has taken over —
+    // `CraftApp.swift` stays the specification and the shim — so Zig's
+    // vocabulary being a subset of the spec's is a property that holds for as
+    // long as this migration runs.
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+
+    var zig = try collectZigEventNames(testing.allocator);
+    defer zig.deinit();
+
+    var it = zig.keyIterator();
+    while (it.next()) |name| {
+        if (!dispatched.contains(name.*)) {
+            std.debug.print(
+                "ios_events.Event spells '{s}', which the spec never dispatches.\n" ++
+                    "  A page written against the Swift app is listening for a different name.\n",
+                .{name.*},
+            );
+            return error.ZigEmitsAnEventTheSpecDoesNotHave;
+        }
+    }
+}
+
+test "every event the page subscribes to is one something dispatches" {
+    // The `ota*` check, on the other channel. A subscription with no emitter
+    // is quieter than a promise with no handler — there is nothing to await,
+    // so the page reports no error and simply behaves as if the device were
+    // idle — which makes it likelier to ship and likelier to survive.
+    //
+    // Zig's emitters are not consulted here on purpose: the test above pins
+    // `ios_events.Event` as a subset of what the spec dispatches, so a union
+    // with it could not admit a name this set lacks. Adding one anyway would
+    // read as though Zig could rescue a dead subscription, and it cannot.
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+
+    var subscribed = try collectSpecSubscribedEvents(testing.allocator);
+    defer subscribed.deinit();
+
+    var recorded = std.StringHashMap(void).init(testing.allocator);
+    defer recorded.deinit();
+    for (dead_subscriptions) |d| try recorded.put(d.event, {});
+
+    var it = subscribed.keyIterator();
+    while (it.next()) |name| {
+        if (dispatched.contains(name.*)) continue;
+        if (recorded.contains(name.*)) continue;
+        std.debug.print(
+            "the injected JS subscribes to '{s}', which nothing dispatches.\n" ++
+                "  The callback a page registers for it can never be called.\n",
+            .{name.*},
+        );
+        return error.PageSubscribesToAnEventNothingEmits;
+    }
+}
+
+test "every recorded dead subscription is real, and still dead" {
+    // The anti-rot half, in the shape the deferral table already uses. A row
+    // that has grown an emitter must fail here rather than sit in a list
+    // telling the next reader the surface is broken when it works.
+    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+
+    var subscribed = try collectSpecSubscribedEvents(testing.allocator);
+    defer subscribed.deinit();
+
+    for (dead_subscriptions) |d| {
+        if (!subscribed.contains(d.event)) {
+            std.debug.print(
+                "'{s}' is recorded as a dead subscription, but the injected JS no longer subscribes to it — " ++
+                    "delete the row.\n",
+                .{d.event},
+            );
+            return error.DeadSubscriptionNoLongerSubscribed;
+        }
+        if (dispatched.contains(d.event)) {
+            std.debug.print(
+                "'{s}' is recorded as having no emitter, and something dispatches it now — " ++
+                    "delete the row, its reason is spent.\n",
+                .{d.event},
+            );
+            return error.DeadSubscriptionIsAliveNow;
+        }
+        try testing.expect(d.reason.len > 0);
+    }
+
+    // Non-vacuity: the loop above is satisfied by an empty table.
+    try testing.expect(dead_subscriptions.len >= 4);
+}

@@ -67,6 +67,13 @@
 //! equivalent, so nothing ever dispatches that event. Tapping launches or
 //! foregrounds the app and stops there. Pre-existing, identical under the
 //! Swift shim, and outside these two actions' scope.
+//!
+//! That paragraph was the only record of it for several phases, which is the
+//! problem with recording a gap in the header of the one module that noticed:
+//! nothing else can see it and nothing re-checks it. `craftShortcut` is now a
+//! row in `ios_conformance_test.zig`'s `dead_subscriptions`, alongside three
+//! more of the same shape found by looking — the build fails if it quietly
+//! gains an emitter, and fails if a fifth appears. Tracked in issue #127.
 
 const std = @import("std");
 const builtin = @import("builtin");

@@ -45,6 +45,15 @@ const compat_mutex = @import("compat_mutex.zig");
 /// `packages/ios/templates/CraftApp.swift` — that is the contract, and a page
 /// written against the Swift app must keep working when Zig serves the same
 /// action. `eventName` is what lands in the `CustomEvent` constructor.
+///
+/// "Copied" was the whole of the guarantee until
+/// `ios_conformance_test.zig`'s event scans landed. A wrong character here
+/// costs nothing at compile time and produces a `CustomEvent` no page is
+/// listening for: no rejected promise, no timeout, no log line — the stream
+/// simply never starts, which from the page's side is what a device with
+/// nothing to report looks like. That test now reads these arms and fails
+/// the build for a name the spec does not dispatch, so the list is checked
+/// against its source rather than trusted to have been transcribed once.
 pub const Event = enum {
     location_update,
     location_error,
