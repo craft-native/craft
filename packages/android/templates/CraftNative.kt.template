@@ -59,6 +59,8 @@ object CraftNative {
     private external fun nativeGetDeviceInfo(activity: Activity): String?
     private external fun nativeGetMemoryUsage(): String?
     private external fun nativeLog(message: String): Boolean
+    private external fun nativeClipboardRead(activity: Activity): String?
+    private external fun nativeClipboardWrite(activity: Activity, text: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -101,6 +103,33 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeLog(message)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * The clipboard's text, or null to use the Kotlin implementation.
+     *
+     * Null and `""` are different answers and both are normal: null means Zig
+     * did not serve this call, `""` means the clipboard is empty — which since
+     * Android 10 is what an app without focus sees every time. Collapsing them
+     * would make an empty clipboard fall through and be read twice.
+     */
+    fun clipboardRead(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeClipboardRead(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    /** Returns whether Zig wrote the clipboard; false falls through. */
+    fun clipboardWrite(activity: Activity, text: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeClipboardWrite(activity, text)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
