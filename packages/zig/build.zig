@@ -411,6 +411,28 @@ pub fn build(b: *std.Build) void {
     // pointers, so the tests build one out of Zig functions and run anywhere —
     // no JVM, no emulator, no NDK. That is the whole reason the layer is shaped
     // the way it is.
+    // The page surface, across both bridges. Not folded into the iOS
+    // conformance gate: it embeds three files and is about what `window.craft`
+    // offers rather than about iOS, and the iOS gate is already the largest
+    // test in the tree.
+    const bridge_surface_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/bridge_surface_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    bridge_surface_tests.root_module.addAnonymousImport("CraftApp.swift", .{
+        .root_source_file = b.path("../ios/templates/CraftApp.swift"),
+    });
+    bridge_surface_tests.root_module.addAnonymousImport("CraftBridge.kt", .{
+        .root_source_file = b.path("../android/templates/CraftBridge.kt.template"),
+    });
+    bridge_surface_tests.root_module.addAnonymousImport("craft.d.ts", .{
+        .root_source_file = b.path("../typescript/types/craft.d.ts"),
+    });
+    const run_bridge_surface_tests = b.addRunArtifact(bridge_surface_tests);
+
     const jni_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/jni_runtime.zig"),
@@ -1574,6 +1596,7 @@ pub fn build(b: *std.Build) void {
     }
     test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_jni_tests.step);
+    test_step.dependOn(&run_bridge_surface_tests.step);
     test_step.dependOn(&run_android_bridge_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
@@ -1660,6 +1683,7 @@ pub fn build(b: *std.Build) void {
         test_ios_step.dependOn(&run_ios_module_tests.step);
     }
     test_ios_step.dependOn(&run_ios_conformance_tests.step);
+    test_ios_step.dependOn(&run_bridge_surface_tests.step);
 
     const test_menubar_step = b.step("test:menubar", "Run Menubar tests");
     test_menubar_step.dependOn(&run_menubar_tests.step);
@@ -2300,6 +2324,7 @@ pub fn build(b: *std.Build) void {
     // second one: `jni_runtime.zig` is the only way anything here reaches Java,
     // so a run that skipped it would not be an Android test run.
     test_android_step.dependOn(&run_jni_tests.step);
+    test_android_step.dependOn(&run_bridge_surface_tests.step);
     test_android_step.dependOn(&run_android_bridge_tests.step);
 
     // Add Android tests to the main test step
