@@ -41,6 +41,7 @@ const dispatch_source = @embedFile("src/android_dispatch.zig");
 const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_device.zig"),
     @embedFile("src/bridge_android_system.zig"),
+    @embedFile("src/bridge_android_clipboard.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -50,8 +51,9 @@ const zig_sources = [_][]const u8{
 /// Kotlin, and that is the conversation this constant exists to force.
 ///
 /// History: 103 at the seam; 102 with getDeviceInfo; 100 with getMemoryUsage
-/// and log — the first two that need no Activity at all.
-const max_not_yet_migrated: usize = 100;
+/// and log — the first two that need no Activity at all; 98 with the
+/// clipboard pair, the first that do.
+const max_not_yet_migrated: usize = 98;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

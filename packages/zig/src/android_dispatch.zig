@@ -38,6 +38,7 @@ const builtin = @import("builtin");
 const jni = @import("jni_runtime.zig");
 const device = @import("bridge_android_device.zig");
 const system = @import("bridge_android_system.zig");
+const clipboard = @import("bridge_android_clipboard.zig");
 
 const Jni = jni.Jni;
 
@@ -136,6 +137,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeLog",
         .signature = "(Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeLog),
+    },
+    .{
+        .name = "nativeClipboardRead",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeClipboardRead),
+    },
+    .{
+        .name = "nativeClipboardWrite",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeClipboardWrite),
     },
 };
 
@@ -237,6 +248,52 @@ fn nativeLog(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c)
 
     system.writeLog(j, owned.ptr) catch |err| {
         std.log.warn("craft: log fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeClipboardRead(activity)`.
+///
+/// Null here means "ask the shim", and an empty *string* means "the clipboard
+/// is empty" — two different answers that a nullable String is exactly able to
+/// carry, and that a plain String would collapse into one.
+fn nativeClipboardRead(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = clipboard.read(allocator, j, activity) catch |err| {
+        std.log.warn("craft: clipboardRead fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const owned = allocator.allocSentinel(u8, text.len, 0) catch return null;
+    @memcpy(owned, text);
+    return j.newStringUtf(owned.ptr) catch null;
+}
+
+/// `nativeClipboardWrite(activity, text)`.
+fn nativeClipboardWrite(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    text: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const value = j.stringToUtf8(allocator, text) catch return jni.JNI_FALSE;
+    const owned = allocator.allocSentinel(u8, value.len, 0) catch return jni.JNI_FALSE;
+    @memcpy(owned, value);
+
+    clipboard.write(j, activity, owned.ptr) catch |err| {
+        std.log.warn("craft: clipboardWrite fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
@@ -353,7 +410,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 3), natives.len);
+    try testing.expectEqual(@as(usize, 5), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
