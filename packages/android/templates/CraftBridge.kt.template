@@ -2350,6 +2350,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun deleteCalendarEvent(eventId: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.deleteCalendarEvent(activity, eventId)) return
+
         try {
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId.toLong())
             activity.contentResolver.delete(uri, null, null)
