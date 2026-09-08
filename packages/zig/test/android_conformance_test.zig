@@ -40,6 +40,7 @@ const dispatch_source = @embedFile("src/android_dispatch.zig");
 /// migrated actions the scan cannot see read as "still owed".
 const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_device.zig"),
+    @embedFile("src/bridge_android_system.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -48,8 +49,9 @@ const zig_sources = [_][]const u8{
 /// costs. If it ever needs raising, something has left Zig without leaving the
 /// Kotlin, and that is the conversation this constant exists to force.
 ///
-/// History: 103 at the seam; 102 with getDeviceInfo.
-const max_not_yet_migrated: usize = 102;
+/// History: 103 at the seam; 102 with getDeviceInfo; 100 with getMemoryUsage
+/// and log — the first two that need no Activity at all.
+const max_not_yet_migrated: usize = 100;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
