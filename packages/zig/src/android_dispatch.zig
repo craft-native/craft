@@ -43,6 +43,7 @@ const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
+const notifcancel = @import("bridge_android_notifcancel.zig");
 
 const Jni = jni.Jni;
 
@@ -200,6 +201,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeVibrate",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeVibrate),
+    },
+    .{
+        .name = "nativeCancelNotification",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeCancelNotification),
+    },
+    .{
+        .name = "nativeCancelAllNotifications",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeCancelAllNotifications),
     },
 };
 
@@ -545,6 +556,32 @@ fn nativeVibrate(
     return jni.JNI_TRUE;
 }
 
+/// The jstring goes through untouched — the id is hashed by Java, and
+/// converting to UTF-8 first would throw away the representation the hash is
+/// defined over. See bridge_android_notifcancel.
+fn nativeCancelNotification(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    id: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    notifcancel.cancel(j, activity, id) catch |err| {
+        std.log.warn("craft: cancelNotification fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativeCancelAllNotifications(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    notifcancel.cancelAll(j, activity) catch |err| {
+        std.log.warn("craft: cancelAllNotifications fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -656,7 +693,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 14), natives.len);
+    try testing.expectEqual(@as(usize, 16), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

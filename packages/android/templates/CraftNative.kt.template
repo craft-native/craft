@@ -72,6 +72,8 @@ object CraftNative {
     private external fun nativeSecureClear(prefs: SharedPreferences): Boolean
     private external fun nativeHaptic(activity: Activity, style: String): Boolean
     private external fun nativeVibrate(activity: Activity, patternJson: String): Boolean
+    private external fun nativeCancelNotification(activity: Activity, id: String): Boolean
+    private external fun nativeCancelAllNotifications(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -274,6 +276,26 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeVibrate(activity, patternJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Returns whether Zig cancelled it; false falls through. */
+    fun cancelNotification(activity: Activity, id: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeCancelNotification(activity, id)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Returns whether Zig cancelled them all; false falls through. */
+    fun cancelAllNotifications(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeCancelAllNotifications(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
