@@ -63,8 +63,10 @@ const zig_sources = [_][]const u8{
 /// 91 with the secure-storage quartet, the first to take a Kotlin-held object
 /// rather than the Activity; 89 with haptic and vibrate; 87 with the
 /// notification cancels; 86 with deleteCalendarEvent, the first to answer
-/// through the reply channel rather than by returning.
-const max_not_yet_migrated: usize = 86;
+/// through the reply channel rather than by returning; 85 with
+/// getCalendarEvents, the first to send the page a payload it built rather
+/// than a constant.
+const max_not_yet_migrated: usize = 85;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

@@ -642,6 +642,14 @@ pub const Jni = struct {
         return result != JNI_FALSE;
     }
 
+    pub fn callLongMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!jlong {
+        const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) jlong =
+            @ptrCast(self.table().CallLongMethodA orelse return JniError.NotFound);
+        const result = call(self.env, obj, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
     pub fn callVoidMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!void {
         const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) void =
             @ptrCast(self.table().CallVoidMethodA orelse return JniError.NotFound);
@@ -706,10 +714,14 @@ pub const Jni = struct {
 
     // --- Arrays -----------------------------------------------------------
     //
-    // Only `long[]` so far, because only `VibrationEffect.createWaveform`
-    // needs one. `SetLongArrayRegion` copies from a Zig slice in one call
-    // rather than element by element, which is both faster and the only form
-    // that cannot leave a partially-filled array behind on an error.
+    // `long[]` for `VibrationEffect.createWaveform`, and `String[]` for the
+    // projection and selection arguments a `ContentResolver.query` takes.
+    //
+    // The two are shaped differently because JNI is: a primitive array can be
+    // filled from a Zig slice in one `SetLongArrayRegion` call, which is both
+    // faster and the only form that cannot leave a partially-filled array
+    // behind on an error. An object array has no region form and has to be
+    // written a slot at a time.
 
     pub fn newLongArray(self: Self, values: []const jlong) JniError!jobject {
         const new: *const fn (JNIEnv, jsize) callconv(.c) jobject =
@@ -726,6 +738,29 @@ pub const Jni = struct {
         set(self.env, array, 0, @intCast(values.len), values.ptr);
         try self.check();
         return array;
+    }
+
+    /// `new <element_class>[len]`, every slot null.
+    ///
+    /// `NewObjectArray` takes an initial element for every slot; null is what
+    /// the Kotlin's `arrayOf(...)` starts from before its entries are written,
+    /// and every caller here fills the array immediately.
+    pub fn newObjectArray(self: Self, len: usize, element_class: jclass) JniError!jobject {
+        const new: *const fn (JNIEnv, jsize, jclass, jobject) callconv(.c) jobject =
+            @ptrCast(self.table().NewObjectArray orelse return JniError.NotFound);
+        const array = new(self.env, @intCast(len), element_class, null) orelse {
+            try self.check();
+            return JniError.OutOfMemory;
+        };
+        try self.check();
+        return array;
+    }
+
+    pub fn setObjectArrayElement(self: Self, array: jobject, index: usize, value: jobject) JniError!void {
+        const set: *const fn (JNIEnv, jobject, jsize, jobject) callconv(.c) void =
+            @ptrCast(self.table().SetObjectArrayElement orelse return JniError.NotFound);
+        set(self.env, array, @intCast(index), value);
+        try self.check();
     }
 
     /// Make a Java `String` from UTF-8.
@@ -778,6 +813,14 @@ pub const Jni = struct {
     pub fn callStaticObjectMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jobject {
         const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jobject =
             @ptrCast(self.table().CallStaticObjectMethodA orelse return JniError.NotFound);
+        const result = call(self.env, cls, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
+    pub fn callStaticLongMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jlong {
+        const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jlong =
+            @ptrCast(self.table().CallStaticLongMethodA orelse return JniError.NotFound);
         const result = call(self.env, cls, id, args.ptr);
         try self.check();
         return result;

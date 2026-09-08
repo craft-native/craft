@@ -1,5 +1,5 @@
-//! `deleteCalendarEvent` on Android — the first action here that answers
-//! through the reply channel rather than by returning.
+//! The calendar actions on Android, both of which answer through the reply
+//! channel rather than by returning.
 //!
 //! ## What the shim does
 //!
@@ -40,11 +40,18 @@ const jobject = jni.jobject;
 
 pub const A = struct {
     pub const delete_calendar_event = "deleteCalendarEvent";
+    pub const get_calendar_events = "getCalendarEvents";
 };
 
-/// The globals the injected JS assigns for this action.
+/// The globals the injected JS assigns for each action.
+///
+/// `getCalendarEvents` uses `_craftCalendar*` rather than a name of its own,
+/// which is worth noticing rather than tidying: the injected JS assigns them,
+/// and renaming one side is a promise that never settles.
 pub const resolve_global = "_craftDeleteEventResolve";
 pub const reject_global = "_craftDeleteEventReject";
+pub const list_resolve_global = "_craftCalendarResolve";
+pub const list_reject_global = "_craftCalendarReject";
 
 /// `Long.parseLong(text)`, or null where Java would throw.
 ///
@@ -140,6 +147,276 @@ pub fn rejectPayload(allocator: std.mem.Allocator, message: []const u8) ![]u8 {
 }
 
 // =============================================================================
+// getCalendarEvents
+// =============================================================================
+//
+// The column names are literals rather than static field reads, and that is
+// the faithful choice rather than the lazy one: `CalendarContract.Events.TITLE`
+// is `public static final String TITLE = "title"`, a compile-time constant, so
+// javac folds it into the shim's DEX. The shim never reads those fields at
+// runtime either. `CONTENT_URI` is a `Uri` object and so is read through JNI,
+// the way `deleteEvent` reads it.
+
+const col_id = "_id";
+const col_title = "title";
+const col_description = "description";
+const col_dtstart = "dtstart";
+const col_dtend = "dtend";
+const col_event_location = "eventLocation";
+const col_all_day = "allDay";
+
+/// The projection, in the order the shim lists it — which is also the order
+/// the cursor indices below depend on.
+const projection = [_][:0]const u8{
+    col_id,
+    col_title,
+    col_description,
+    col_dtstart,
+    col_dtend,
+    col_event_location,
+    col_all_day,
+};
+
+const selection = "(" ++ col_dtstart ++ " >= ?) AND (" ++ col_dtstart ++ " <= ?)";
+const sort_order = col_dtstart ++ " ASC";
+
+/// Thirty days, the shim's default window: `30L * 24 * 60 * 60 * 1000`.
+const thirty_days_ms: i64 = 30 * 24 * 60 * 60 * 1000;
+
+pub const Window = struct { start: i64, end: i64 };
+
+/// The shim's defaulting, including the arithmetic that can wrap.
+///
+/// `startTime + (30L * 24 * 60 * 60 * 1000)` is Kotlin `Long` addition, which
+/// wraps silently rather than throwing — so `+%` is the faithful operator and
+/// `+` would panic in a debug build where the shim quietly returns nothing.
+pub fn windowFor(start_ms: i64, end_ms: i64, now_ms: i64) Window {
+    const start = if (start_ms > 0) start_ms else now_ms;
+    return .{
+        .start = start,
+        // A caller passing an end before the start gets an empty result rather
+        // than an error, because that is what the query does. Not corrected
+        // here: the shim does not correct it either.
+        .end = if (end_ms > 0) end_ms else start +% thirty_days_ms,
+    };
+}
+
+/// One row, as the cursor gives it.
+///
+/// The strings are optional because `Cursor.getString` returns null for a null
+/// column, and the shim treats that differently per field — `?: ""` for five of
+/// them, and nothing at all for the id.
+pub const Event = struct {
+    id: ?[]const u8,
+    title: ?[]const u8,
+    notes: ?[]const u8,
+    start_date: i64,
+    end_date: i64,
+    location: ?[]const u8,
+    all_day: i32,
+};
+
+/// One event as the shim's `JSONObject` would print it.
+///
+/// Two behaviours here are `org.json`'s rather than anything chosen:
+///
+///  - `put(name, null)` **removes** the mapping, so a null id leaves the key
+///    out of the object entirely rather than emitting `"id":null`;
+///  - insertion order is preserved, because `JSONObject` is backed by a
+///    `LinkedHashMap` — so the key order is the order of the shim's `apply`
+///    block and not alphabetical.
+pub fn appendEvent(allocator: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), event: Event) !void {
+    try out.append(allocator, '{');
+
+    if (event.id) |id| {
+        try appendStringMember(allocator, out, "id", id);
+        try out.append(allocator, ',');
+    }
+    try appendStringMember(allocator, out, "title", event.title orelse "");
+    try out.append(allocator, ',');
+    try appendStringMember(allocator, out, "notes", event.notes orelse "");
+    try out.append(allocator, ',');
+    try out.appendSlice(allocator, "\"startDate\":");
+    try appendInt(allocator, out, event.start_date);
+    try out.appendSlice(allocator, ",\"endDate\":");
+    try appendInt(allocator, out, event.end_date);
+    try out.append(allocator, ',');
+    try appendStringMember(allocator, out, "location", event.location orelse "");
+
+    // `it.getInt(6) == 1`, so 0 and 2 are both false. Reproduced rather than
+    // relaxed to `!= 0`: `allDay` is only ever 0 or 1, and a bridge that
+    // disagreed with the shim about a third value would disagree silently.
+    try out.appendSlice(allocator, ",\"isAllDay\":");
+    try out.appendSlice(allocator, if (event.all_day == 1) "true" else "false");
+
+    try out.append(allocator, '}');
+}
+
+fn appendStringMember(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    name: []const u8,
+    value: []const u8,
+) !void {
+    try out.append(allocator, '"');
+    try out.appendSlice(allocator, name);
+    try out.appendSlice(allocator, "\":\"");
+    try bridge_error.appendJsonEscaped(allocator, out, value);
+    try out.append(allocator, '"');
+}
+
+fn appendInt(allocator: std.mem.Allocator, out: *std.ArrayListUnmanaged(u8), value: i64) !void {
+    var buf: [32]u8 = undefined;
+    try out.appendSlice(allocator, try std.fmt.bufPrint(&buf, "{d}", .{value}));
+}
+
+/// `Long.toString(value)` as a NUL-terminated string, for `NewStringUTF`.
+///
+/// Decimal with a leading `-` and nothing else, which is what `Long.toString`
+/// produces and what the provider parses back out of a selection argument.
+fn decimalZ(buf: []u8, value: i64) ![*:0]const u8 {
+    const text = try std.fmt.bufPrint(buf[0 .. buf.len - 1], "{d}", .{value});
+    buf[text.len] = 0;
+    return @ptrCast(text.ptr);
+}
+
+/// `System.currentTimeMillis()`.
+///
+/// Through JNI rather than a host clock, because it is what the shim's default
+/// window is measured from — and because `std.time` on this toolchain has no
+/// wall-clock call that works without libc. Belongs in a shared Android helper
+/// the moment a second action needs it.
+pub fn currentTimeMillis(j: Jni) !i64 {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const system_cls = try j.findClass("java/lang/System");
+    return j.callStaticLongMethodA(
+        system_cls,
+        try j.staticMethodId(system_cls, "currentTimeMillis", "()J"),
+        &.{},
+    );
+}
+
+/// `contentResolver.query(...)`, every row appended to `out` as JSON.
+///
+/// `out` receives the array including its brackets, so a query returning no
+/// cursor at all produces `[]` — which is what `cursor?.use` does in the shim
+/// when the provider hands back null.
+pub fn queryEvents(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    activity: jobject,
+    window: Window,
+    out: *std.ArrayListUnmanaged(u8),
+) !void {
+    try j.pushLocalFrame(24);
+    defer _ = j.popLocalFrame(null);
+
+    const string_cls = try j.findClass("java/lang/String");
+
+    const projection_array = try j.newObjectArray(projection.len, string_cls);
+    inline for (projection, 0..) |name, i| {
+        try j.setObjectArrayElement(projection_array, i, try j.newStringUtf(name));
+    }
+
+    // `startTime.toString()` — `Long.toString`, which is decimal with a
+    // leading `-` and nothing else, so `bufPrintIntToSlice` matches it.
+    var start_buf: [24]u8 = undefined;
+    var end_buf: [24]u8 = undefined;
+    const args_array = try j.newObjectArray(2, string_cls);
+    try j.setObjectArrayElement(args_array, 0, try j.newStringUtf(try decimalZ(&start_buf, window.start)));
+    try j.setObjectArrayElement(args_array, 1, try j.newStringUtf(try decimalZ(&end_buf, window.end)));
+
+    const events_cls = try j.findClass("android/provider/CalendarContract$Events");
+    const content_uri = try j.staticObjectField(
+        events_cls,
+        try j.staticFieldId(events_cls, "CONTENT_URI", "Landroid/net/Uri;"),
+    );
+
+    const activity_cls = try j.objectClass(activity);
+    const resolver = try j.callObjectMethod(
+        activity,
+        try j.methodId(activity_cls, "getContentResolver", "()Landroid/content/ContentResolver;"),
+    );
+
+    const resolver_cls = try j.objectClass(resolver);
+    const cursor = try j.callObjectMethodA(
+        resolver,
+        try j.methodId(
+            resolver_cls,
+            "query",
+            "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+        ),
+        &.{
+            .{ .l = content_uri },
+            .{ .l = projection_array },
+            .{ .l = try j.newStringUtf(selection) },
+            .{ .l = args_array },
+            .{ .l = try j.newStringUtf(sort_order) },
+        },
+    );
+
+    try out.append(allocator, '[');
+    defer out.append(allocator, ']') catch {};
+
+    // A provider that cannot answer returns null rather than an empty cursor,
+    // and `cursor?.use` skips the loop. An empty array is the honest reply:
+    // the shim resolves with one too.
+    if (cursor == null) return;
+
+    const cursor_cls = try j.objectClass(cursor);
+    const move_to_next = try j.methodId(cursor_cls, "moveToNext", "()Z");
+    const get_string = try j.methodId(cursor_cls, "getString", "(I)Ljava/lang/String;");
+    const get_long = try j.methodId(cursor_cls, "getLong", "(I)J");
+    const get_int = try j.methodId(cursor_cls, "getInt", "(I)I");
+    const close = try j.methodId(cursor_cls, "close", "()V");
+
+    // `use` closes the cursor however the block leaves — including on the way
+    // out of an error, which is what leaks a provider connection otherwise.
+    defer j.callVoidMethodA(cursor, close, &.{}) catch {};
+
+    var count: usize = 0;
+    while (try j.callBooleanMethodA(cursor, move_to_next, &.{})) {
+        // Each row's strings are local references, and the JVM guarantees only
+        // sixteen slots. A frame per row is what keeps a long calendar from
+        // overflowing the table, which aborts the process rather than throwing.
+        try j.pushLocalFrame(8);
+        defer _ = j.popLocalFrame(null);
+
+        const event: Event = .{
+            .id = try columnText(j, allocator, cursor, get_string, 0),
+            .title = try columnText(j, allocator, cursor, get_string, 1),
+            .notes = try columnText(j, allocator, cursor, get_string, 2),
+            .start_date = try j.callLongMethodA(cursor, get_long, &.{.{ .i = 3 }}),
+            .end_date = try j.callLongMethodA(cursor, get_long, &.{.{ .i = 4 }}),
+            .location = try columnText(j, allocator, cursor, get_string, 5),
+            .all_day = try j.callIntMethodA(cursor, get_int, &.{.{ .i = 6 }}),
+        };
+
+        if (count != 0) try out.append(allocator, ',');
+        try appendEvent(allocator, out, event);
+        count += 1;
+    }
+}
+
+/// `cursor.getString(index)`, null included.
+///
+/// The allocation outlives the row's local frame because `stringToUtf8` copies
+/// into `allocator` — the `jstring` itself does not.
+fn columnText(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    cursor: jobject,
+    get_string: jni.jmethodID,
+    index: i32,
+) !?[]const u8 {
+    const value = try j.callObjectMethodA(cursor, get_string, &.{.{ .i = index }});
+    if (value == null) return null;
+    return try j.stringToUtf8(allocator, value);
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -192,4 +469,157 @@ test "the action name and its globals match the shim exactly" {
     try testing.expectEqualStrings("deleteCalendarEvent", A.delete_calendar_event);
     try testing.expectEqualStrings("_craftDeleteEventResolve", resolve_global);
     try testing.expectEqualStrings("_craftDeleteEventReject", reject_global);
+}
+
+test "an absent window falls back the way the shim's does" {
+    const now: i64 = 1_700_000_000_000;
+
+    // Both supplied: used as given, including an end before the start. The
+    // shim does not correct that and neither does this.
+    try testing.expectEqual(Window{ .start = 10, .end = 20 }, windowFor(10, 20, now));
+    try testing.expectEqual(Window{ .start = 30, .end = 20 }, windowFor(30, 20, now));
+
+    // `if (startDateMs > 0)` — zero and negative both mean "now", which is why
+    // this is not `>= 0`.
+    try testing.expectEqual(now, windowFor(0, 20, now).start);
+    try testing.expectEqual(now, windowFor(-1, 20, now).start);
+
+    // Thirty days, in milliseconds.
+    try testing.expectEqual(now + 2_592_000_000, windowFor(0, 0, now).end);
+    try testing.expectEqual(@as(i64, 10 + 2_592_000_000), windowFor(10, 0, now).end);
+}
+
+test "a window whose default end overflows wraps rather than trapping" {
+    // Kotlin `Long` addition wraps. A page passing a start near Long.MAX_VALUE
+    // gets a nonsensical window and an empty result from the shim; a `+` here
+    // would instead panic in a debug build, which is a different bug.
+    const near_max: i64 = std.math.maxInt(i64) - 5;
+    try testing.expectEqual(near_max +% 2_592_000_000, windowFor(near_max, 0, 0).end);
+}
+
+fn renderEvents(events_in: []const Event) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(testing.allocator);
+    try out.append(testing.allocator, '[');
+    for (events_in, 0..) |event, i| {
+        if (i != 0) try out.append(testing.allocator, ',');
+        try appendEvent(testing.allocator, &out, event);
+    }
+    try out.append(testing.allocator, ']');
+    return out.toOwnedSlice(testing.allocator);
+}
+
+const sample: Event = .{
+    .id = "17",
+    .title = "Standup",
+    .notes = "",
+    .start_date = 1_700_000_000_000,
+    .end_date = 1_700_000_900_000,
+    .location = "Room 2",
+    .all_day = 0,
+};
+
+test "an event prints the keys the shim's JSONObject prints, in that order" {
+    const json = try renderEvents(&.{sample});
+    defer testing.allocator.free(json);
+
+    // JSONObject is a LinkedHashMap, so the shim emits insertion order — the
+    // order of its `apply` block. Asserted as a whole string rather than key
+    // by key, because the order is the part that a rewrite would lose.
+    try testing.expectEqualStrings(
+        \\[{"id":"17","title":"Standup","notes":"","startDate":1700000000000,"endDate":1700000900000,"location":"Room 2","isAllDay":false}]
+    , json);
+}
+
+test "a null id leaves the key out, and null text becomes empty" {
+    // `put(name, null)` removes the mapping rather than storing JSON null, so
+    // the shim's object has no `id` at all. The other five columns are read
+    // with `?: ""`, which is a different answer to the same null.
+    const json = try renderEvents(&.{.{
+        .id = null,
+        .title = null,
+        .notes = null,
+        .start_date = 0,
+        .end_date = 0,
+        .location = null,
+        .all_day = 1,
+    }});
+    defer testing.allocator.free(json);
+
+    try testing.expectEqualStrings(
+        \\[{"title":"","notes":"","startDate":0,"endDate":0,"location":"","isAllDay":true}]
+    , json);
+}
+
+test "isAllDay is the shim's == 1 and not a truthiness test" {
+    for ([_]struct { value: i32, expected: []const u8 }{
+        .{ .value = 0, .expected = "\"isAllDay\":false" },
+        .{ .value = 1, .expected = "\"isAllDay\":true" },
+        // `getInt(6) == 1` says false here, and a `!= 0` would say true. The
+        // column only ever holds 0 or 1, so this row is the one that would go
+        // unnoticed — which is why it is written down.
+        .{ .value = 2, .expected = "\"isAllDay\":false" },
+        .{ .value = -1, .expected = "\"isAllDay\":false" },
+    }) |case| {
+        var event = sample;
+        event.all_day = case.value;
+        const json = try renderEvents(&.{event});
+        defer testing.allocator.free(json);
+
+        try testing.expect(std.mem.indexOf(u8, json, case.expected) != null);
+    }
+}
+
+test "a title carrying a quote survives as JSON rather than breaking the reply" {
+    // The payload goes to `events.settle`, which sends it as written. An event
+    // called `Bob's "1:1"` is ordinary, and it is exactly what an unescaped
+    // build would turn into a script that does not parse.
+    var event = sample;
+    event.title = "Bob's \"1:1\"";
+    event.location = "line\nbreak";
+
+    const json = try renderEvents(&.{event});
+    defer testing.allocator.free(json);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+    defer parsed.deinit();
+
+    const first = parsed.value.array.items[0].object;
+    try testing.expectEqualStrings("Bob's \"1:1\"", first.get("title").?.string);
+    try testing.expectEqualStrings("line\nbreak", first.get("location").?.string);
+    try testing.expect(first.get("id") != null);
+}
+
+test "an empty calendar and a full one both parse" {
+    const empty = try renderEvents(&.{});
+    defer testing.allocator.free(empty);
+    try testing.expectEqualStrings("[]", empty);
+
+    var second = sample;
+    second.id = "18";
+    const two = try renderEvents(&.{ sample, second });
+    defer testing.allocator.free(two);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, two, .{});
+    defer parsed.deinit();
+    try testing.expectEqual(@as(usize, 2), parsed.value.array.items.len);
+}
+
+test "the query strings are the shim's, character for character" {
+    // The selection and sort order are built from the same column constants
+    // the projection uses, so a typo would have to be in one place. Asserted
+    // against literals anyway: these are what the provider parses, and the
+    // constants they are built from are not independently checked.
+    try testing.expectEqualStrings("(dtstart >= ?) AND (dtstart <= ?)", selection);
+    try testing.expectEqualStrings("dtstart ASC", sort_order);
+    try testing.expectEqual(@as(usize, 7), projection.len);
+    try testing.expectEqualStrings("_id", projection[0]);
+    try testing.expectEqualStrings("eventLocation", projection[5]);
+    try testing.expectEqualStrings("allDay", projection[6]);
+}
+
+test "getCalendarEvents names its action and globals as the shim does" {
+    try testing.expectEqualStrings("getCalendarEvents", A.get_calendar_events);
+    try testing.expectEqualStrings("_craftCalendarResolve", list_resolve_global);
+    try testing.expectEqualStrings("_craftCalendarReject", list_reject_global);
 }

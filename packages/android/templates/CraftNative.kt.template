@@ -108,6 +108,7 @@ object CraftNative {
     private external fun nativeCancelNotification(activity: Activity, id: String): Boolean
     private external fun nativeCancelAllNotifications(activity: Activity): Boolean
     private external fun nativeDeleteCalendarEvent(activity: Activity, eventId: String): Boolean
+    private external fun nativeGetCalendarEvents(activity: Activity, startDateMs: Long, endDateMs: Long): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -346,6 +347,22 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeDeleteCalendarEvent(activity, eventId)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig took the action, not whether the read found anything.
+     *
+     * An empty calendar still answers — with `[]`, through the reply channel —
+     * so a false here means Zig did not run, never that there was nothing to
+     * report.
+     */
+    fun getCalendarEvents(activity: Activity, startDateMs: Long, endDateMs: Long): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeGetCalendarEvents(activity, startDateMs, endDateMs)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
