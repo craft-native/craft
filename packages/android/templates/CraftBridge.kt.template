@@ -1583,6 +1583,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun log(message: String) {
+        if (CraftNative.log(message)) return
         android.util.Log.d("CraftBridge", message)
     }
 
@@ -3845,6 +3846,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getMemoryUsage(): String {
+        CraftNative.getMemoryUsage()?.let { return it }
+
         val runtime = Runtime.getRuntime()
         val usedMemory = runtime.totalMemory() - runtime.freeMemory()
         val maxMemory = runtime.maxMemory()

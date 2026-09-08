@@ -37,6 +37,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const jni = @import("jni_runtime.zig");
 const device = @import("bridge_android_device.zig");
+const system = @import("bridge_android_system.zig");
 
 const Jni = jni.Jni;
 
@@ -122,6 +123,20 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
         .fnPtr = @ptrCast(&nativeGetDeviceInfo),
     },
+    // No Activity parameter: `Runtime` and `Log` are static, so neither of
+    // these needs anything the app hands over. The signature says so, and a
+    // signature that asked for one would fail registration rather than be
+    // quietly ignored.
+    .{
+        .name = "nativeGetMemoryUsage",
+        .signature = "()Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeGetMemoryUsage),
+    },
+    .{
+        .name = "nativeLog",
+        .signature = "(Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeLog),
+    },
 };
 
 /// How binding went. A value rather than a log line, so every path is
@@ -182,6 +197,49 @@ fn nativeGetDeviceInfo(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
     @memcpy(owned, json);
 
     return j.newStringUtf(owned.ptr) catch null;
+}
+
+/// `nativeGetMemoryUsage()` — the JVM heap, as JSON.
+fn nativeGetMemoryUsage(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const usage = system.readMemory(j) catch |err| {
+        std.log.warn("craft: getMemoryUsage fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const json = system.renderMemory(allocator, usage) catch return null;
+    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
+    @memcpy(owned, json);
+
+    return j.newStringUtf(owned.ptr) catch null;
+}
+
+/// `nativeLog(message)` — returns whether Zig wrote the line.
+///
+/// A boolean rather than void, because "not mine" has to be expressible.
+/// `void` would leave the Kotlin unable to tell a successful native log from a
+/// runtime that declined, and it would log the message twice or not at all.
+fn nativeLog(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, message) catch return jni.JNI_FALSE;
+    const owned = allocator.allocSentinel(u8, text.len, 0) catch return jni.JNI_FALSE;
+    @memcpy(owned, text);
+
+    system.writeLog(j, owned.ptr) catch |err| {
+        std.log.warn("craft: log fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
 }
 
 // =============================================================================
@@ -295,7 +353,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 1), natives.len);
+    try testing.expectEqual(@as(usize, 3), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

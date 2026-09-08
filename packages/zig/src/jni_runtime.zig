@@ -710,6 +710,45 @@ pub const Jni = struct {
         return result;
     }
 
+    pub fn callLongMethod(self: Self, obj: jobject, id: jmethodID) JniError!jlong {
+        const call: *const fn (JNIEnv, jobject, jmethodID) callconv(.c) jlong =
+            @ptrCast(self.table().CallLongMethod orelse return JniError.NotFound);
+        const result = call(self.env, obj, id);
+        try self.check();
+        return result;
+    }
+
+    // --- Static methods ---------------------------------------------------
+    //
+    // `Runtime.getRuntime()` and `Log.d(tag, msg)` are both static, and a
+    // static call is a different table entry from an instance one taking the
+    // class rather than the receiver. Passing a jclass to CallObjectMethod
+    // compiles and is undefined at runtime.
+
+    pub fn staticMethodId(self: Self, cls: jclass, name: [*:0]const u8, sig: [*:0]const u8) JniError!jmethodID {
+        const get: *const fn (JNIEnv, jclass, [*:0]const u8, [*:0]const u8) callconv(.c) jmethodID =
+            @ptrCast(self.table().GetStaticMethodID orelse return JniError.NotFound);
+        const id = get(self.env, cls, name, sig);
+        try self.check();
+        return id orelse JniError.NotFound;
+    }
+
+    pub fn callStaticObjectMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jobject {
+        const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jobject =
+            @ptrCast(self.table().CallStaticObjectMethodA orelse return JniError.NotFound);
+        const result = call(self.env, cls, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
+    pub fn callStaticIntMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jint {
+        const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jint =
+            @ptrCast(self.table().CallStaticIntMethodA orelse return JniError.NotFound);
+        const result = call(self.env, cls, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
     pub fn objectClass(self: Self, obj: jobject) JniError!jclass {
         const get: *const fn (JNIEnv, jobject) callconv(.c) jclass =
             @ptrCast(self.table().GetObjectClass orelse return JniError.NotFound);

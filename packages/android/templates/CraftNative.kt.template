@@ -57,6 +57,8 @@ object CraftNative {
     }
 
     private external fun nativeGetDeviceInfo(activity: Activity): String?
+    private external fun nativeGetMemoryUsage(): String?
+    private external fun nativeLog(message: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -74,6 +76,33 @@ object CraftNative {
             nativeGetDeviceInfo(activity)
         } catch (e: UnsatisfiedLinkError) {
             null
+        }
+    }
+
+    /** The JVM heap as JSON, or null to use the Kotlin implementation. */
+    fun getMemoryUsage(): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeGetMemoryUsage()
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    /**
+     * Write a log line, reporting whether it was written.
+     *
+     * The only native here that answers with a boolean rather than a nullable
+     * result, because there is no value to return and "not mine" still has to
+     * be sayable — a void native would leave the caller unable to tell a
+     * written line from a declined one, and it would log twice or not at all.
+     */
+    fun log(message: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeLog(message)
+        } catch (e: UnsatisfiedLinkError) {
+            false
         }
     }
 }
