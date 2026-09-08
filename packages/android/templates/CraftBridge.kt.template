@@ -167,6 +167,11 @@ class CraftBridge(
     }
 
     fun injectBridge() {
+        // Before the script, so a native callback arriving while the page is
+        // still loading has somewhere to go rather than being counted as
+        // dropped.
+        installNativeDeliverer()
+
         val script = """
             window.craft = {
                 platform: 'android',
@@ -3897,6 +3902,22 @@ class CraftBridge(
     }
 
     // ==================== Helpers ====================
+
+    /**
+     * Give Zig a way to reach the page.
+     *
+     * The lambda is this class's own `runOnUiThread`/`evaluateJavascript`
+     * pair, which is what `sendEvent` below already does — so Zig and Kotlin
+     * deliver through exactly one implementation rather than two that have to
+     * agree about threading.
+     */
+    private fun installNativeDeliverer() {
+        CraftNative.setDeliverer { script ->
+            activity.runOnUiThread {
+                webView.evaluateJavascript(script, null)
+            }
+        }
+    }
 
     private fun sendEvent(event: String, data: Map<String, Any>) {
         val json = JSONObject(data).toString()
