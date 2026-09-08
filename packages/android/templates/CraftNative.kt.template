@@ -113,6 +113,9 @@ object CraftNative {
     private external fun nativeCreateCalendarEvent(activity: Activity, eventJson: String): Boolean
     private external fun nativeDbExecute(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean
     private external fun nativeDbQuery(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean
+    private external fun nativeSetSharedItem(activity: Activity, key: String, value: String, group: String): Boolean
+    private external fun nativeGetSharedItem(activity: Activity, key: String, group: String): Boolean
+    private external fun nativeRemoveSharedItem(activity: Activity, key: String, group: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -411,6 +414,38 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeDbQuery(database, sql, paramsJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * The shared-preferences trio behind the page's `_craftSharedKeychain*`
+     * globals. Each returns whether Zig took the action; the outcome reaches
+     * the page through the reply channel.
+     */
+    fun setSharedItem(activity: Activity, key: String, value: String, group: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSetSharedItem(activity, key, value, group)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun getSharedItem(activity: Activity, key: String, group: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeGetSharedItem(activity, key, group)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun removeSharedItem(activity: Activity, key: String, group: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeRemoveSharedItem(activity, key, group)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
