@@ -170,15 +170,20 @@ class CraftBridge(
      * Quote a value for interpolation into JavaScript.
      *
      * The result carries its own quotes, so write `f($payload)` — leaving the
-     * surrounding `'...'` in place would quote it twice. A Kotlin null renders as
-     * the string "null", which is what plain interpolation produced before; whether
-     * that should instead be a JS null is a separate question from escaping.
+     * surrounding `'...'` in place would quote it twice.
      *
      * Without this, a value containing an apostrophe ends the JS string early, the
      * script fails to parse, and `evaluateJavascript` runs nothing at all — so a
      * hand-built promise with no timeout never settles.
+     *
+     * `Any?` rather than `String?`, because these call sites replaced string
+     * interpolation and interpolation accepts anything: `contactId` is the `Long`
+     * from `ContentUris.parseId`, `downloadId` the `Long` from
+     * `DownloadManager.enqueue`, and `errString` the `CharSequence` a
+     * `BiometricPrompt` error arrives as. `Any?.toString()` is exactly what `$x`
+     * did, null included — it renders as the string "null", the way it always has.
      */
-    private fun jsQuote(value: String?): String = JSONObject.quote(value ?: "null")
+    private fun jsQuote(value: Any?): String = JSONObject.quote(value.toString())
 
     fun injectBridge() {
         // Before the script, so a native callback arriving while the page is

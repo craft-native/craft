@@ -143,6 +143,14 @@ test "the templates that answer the page are actually in the scanned set" {
 
     // And the fix is present rather than the sites merely being deleted.
     const bridge = sourceOf("CraftBridge.kt.template").?;
-    try testing.expect(std.mem.indexOf(u8, bridge, "private fun jsQuote(") != null);
     try testing.expect(std.mem.count(u8, bridge, "jsQuote(") >= 50);
+
+    // `Any?`, not `String?`. The call sites replaced string interpolation,
+    // which accepts anything — `contactId` is a Long, `downloadId` is a Long,
+    // `errString` is a CharSequence — and narrowing the parameter back makes
+    // those three sites stop compiling. Nothing in CI compiles Kotlin, so this
+    // is the only thing that would say so. See #163.
+    try testing.expect(
+        std.mem.indexOf(u8, bridge, "private fun jsQuote(value: Any?): String") != null,
+    );
 }
