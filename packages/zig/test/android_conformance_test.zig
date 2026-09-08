@@ -141,9 +141,8 @@ const Deferral = struct {
 /// the tenth, and the two guards below are the whole point: a row Zig starts
 /// serving fails, and so does a row naming an action the Kotlin no longer has.
 ///
-/// Deliberately non-exhaustive. Ninety-one actions are unmigrated and almost
-/// all of them are simply not reached yet, which is an honest state that needs
-/// no row. A reason is owed only where someone would otherwise try and find
+/// Deliberately non-exhaustive. Most unmigrated actions are simply not reached
+/// yet, which is an honest state that needs no row. A reason is owed only where someone would otherwise try and find
 /// out the hard way — and demanding one for the rest would invite an invented
 /// reason, which is worse than silence.
 const deliberate_deferrals = [_]Deferral{
@@ -172,6 +171,47 @@ const deliberate_deferrals = [_]Deferral{
     // and that is a change to the shim rather than a migration away from it.
     .{ .action = "setFlashlight", .reason = "writes isFlashlightOn, which toggleFlashlight reads; Zig cannot reach the field" },
     .{ .action = "toggleFlashlight", .reason = "reads isFlashlightOn, which only the Kotlin setFlashlight maintains" },
+
+    // ---- Actions whose whole implementation is a refusal --------------
+    //
+    // These eight reject with a message and do nothing else. They are the
+    // easiest actions in the file to "migrate" — the body is one string — and
+    // migrating one would be a way of making this ratchet lie.
+    //
+    // The number counts actions Zig *serves*, meaning actions a page gets an
+    // answer from Zig for. Moving a refusal across changes which language
+    // holds the string and nothing a page can observe, so it would lower the
+    // count without serving anything. That is worth recording explicitly,
+    // because the incentive runs the other way: eleven rows here are eleven
+    // easy decrements left on the table.
+    //
+    // Each is also honest as it stands, which is the other half of the reason.
+    // Unlike `setBadge`, a page calling these is told plainly that the feature
+    // is not there.
+    .{ .action = "purchase", .reason = "the Kotlin rejects with 'Purchase flow not fully implemented'; porting a refusal serves nothing" },
+    .{ .action = "scanQRCode", .reason = "the Kotlin rejects; ML Kit scanning was never wired up" },
+    .{ .action = "signInWithGoogle", .reason = "the Kotlin rejects; Google Sign In needs build.gradle configuration" },
+    .{ .action = "startAR", .reason = "the Kotlin rejects; ARCore needs Activity integration that does not exist" },
+    .{ .action = "placeARObject", .reason = "the Kotlin rejects, for the same missing ARCore integration" },
+    .{ .action = "removeARObject", .reason = "the Kotlin rejects, for the same missing ARCore integration" },
+    .{ .action = "sendToWatch", .reason = "the Kotlin rejects; Wear OS needs a companion app" },
+    .{ .action = "updateWatchContext", .reason = "the Kotlin rejects, for the same missing companion app" },
+
+    // ---- And three that answer successfully instead ------------------
+    //
+    // Same shape, opposite honesty. `startAR` refuses to begin a session, and
+    // then these two report success for operations on the session it refused
+    // to create: `stopAR` resolves `{stopped: true}` and `getARPlanes`
+    // resolves `[]`.
+    //
+    // The empty array is the one that costs something. A page cannot tell it
+    // from "AR is running and has found no planes yet", so the honest failure
+    // `startAR` already gave is undone by the next call. Recorded rather than
+    // migrated for the same reason as `setBadge`: there is no working
+    // behaviour to carry across, and porting the fabrication would spread it.
+    .{ .action = "stopAR", .reason = "resolves {stopped:true} for a session startAR always refuses to open" },
+    .{ .action = "getARPlanes", .reason = "resolves [], which a page cannot tell from AR running with no planes found" },
+    .{ .action = "closePDF", .reason = "resolves true and does nothing; the Kotlin says PDFs open in an external viewer" },
 };
 
 test "every recorded deferral is real, and still a deferral" {
@@ -205,7 +245,7 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 4);
+    try testing.expect(deliberate_deferrals.len >= 15);
 
     // And the table cannot claim more than remain unmigrated.
     try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
