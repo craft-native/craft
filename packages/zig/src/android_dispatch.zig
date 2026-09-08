@@ -44,6 +44,7 @@ const network = @import("bridge_android_network.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
 const notifcancel = @import("bridge_android_notifcancel.zig");
+const events = @import("android_events.zig");
 
 const Jni = jni.Jni;
 
@@ -96,6 +97,10 @@ pub const holder_class = "com/craft/runtime/CraftNative";
 /// linked.
 pub export fn JNI_OnLoad(vm_handle: jni.JavaVM, _: ?*anyopaque) callconv(.c) jni.jint {
     java_vm = vm_handle;
+    // The reply channel needs the same handle, and needs it before any action
+    // runs: a callback that fires between load and the first native call has
+    // nowhere to deliver otherwise.
+    events.setVm(vm_handle);
 
     switch (bindNatives(vm_handle)) {
         .registered => {},

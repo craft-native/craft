@@ -58,6 +58,39 @@ object CraftNative {
         false
     }
 
+    /**
+     * How Zig reaches the page.
+     *
+     * Zig cannot make a `Runnable`, and `evaluateJavascript` is main-thread
+     * only — JNI can only produce a `Runnable` by registering natives on a
+     * class that already exists in the APK, which means shipping Kotlin to
+     * avoid writing Kotlin. So the hop stays here: Zig owns what to say, this
+     * owns which thread says it.
+     *
+     * Installed by `CraftBridge` once its WebView exists, and `@Volatile`
+     * because Zig calls `deliver` from whatever thread a device callback
+     * arrives on.
+     */
+    @Volatile
+    private var deliverer: ((String) -> Unit)? = null
+
+    fun setDeliverer(deliver: ((String) -> Unit)?) {
+        deliverer = deliver
+    }
+
+    /**
+     * Run `script` in the page. Called from Zig, on any thread.
+     *
+     * Silent when no deliverer is installed — which is every moment before the
+     * WebView exists, and after it is torn down. A throw here would cross back
+     * into Zig as a pending exception on a thread that has nowhere to report
+     * it, and the caller already counts what it could not deliver.
+     */
+    @JvmStatic
+    fun deliver(script: String) {
+        deliverer?.invoke(script)
+    }
+
     private external fun nativeGetDeviceInfo(activity: Activity): String?
     private external fun nativeGetMemoryUsage(): String?
     private external fun nativeLog(message: String): Boolean

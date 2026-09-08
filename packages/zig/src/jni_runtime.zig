@@ -775,6 +775,13 @@ pub const Jni = struct {
         return result;
     }
 
+    pub fn callStaticVoidMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!void {
+        const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) void =
+            @ptrCast(self.table().CallStaticVoidMethodA orelse return JniError.NotFound);
+        call(self.env, cls, id, args.ptr);
+        try self.check();
+    }
+
     pub fn callStaticIntMethodA(self: Self, cls: jclass, id: jmethodID, args: []const jvalue) JniError!jint {
         const call: *const fn (JNIEnv, jclass, jmethodID, [*]const jvalue) callconv(.c) jint =
             @ptrCast(self.table().CallStaticIntMethodA orelse return JniError.NotFound);
