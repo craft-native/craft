@@ -1544,6 +1544,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun secureSet(key: String, value: String): Boolean {
+        if (CraftNative.secureSet(securePrefs, key, value)) return true
+
         return try {
             securePrefs.edit().putString(key, value).apply()
             true
@@ -1554,6 +1556,14 @@ class CraftBridge(
 
     @JavascriptInterface
     fun secureGet(key: String): String? {
+        // Three answers, not two: Declined falls through, NotFound is a real
+        // null, Found is a real value that may be the empty string.
+        when (val read = CraftNative.secureGet(securePrefs, key)) {
+            is CraftNative.SecureRead.Found -> return read.value
+            CraftNative.SecureRead.NotFound -> return null
+            CraftNative.SecureRead.Declined -> Unit
+        }
+
         return try {
             securePrefs.getString(key, null)
         } catch (e: Exception) {
@@ -1563,6 +1573,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun secureRemove(key: String): Boolean {
+        if (CraftNative.secureRemove(securePrefs, key)) return true
+
         return try {
             securePrefs.edit().remove(key).apply()
             true
@@ -1573,6 +1585,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun secureClear(): Boolean {
+        if (CraftNative.secureClear(securePrefs)) return true
+
         return try {
             securePrefs.edit().clear().apply()
             true

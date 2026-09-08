@@ -41,6 +41,7 @@ const system = @import("bridge_android_system.zig");
 const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
+const securestore = @import("bridge_android_securestore.zig");
 
 const Jni = jni.Jni;
 
@@ -164,6 +165,30 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeGetNetworkStatus",
         .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
         .fnPtr = @ptrCast(&nativeGetNetworkStatus),
+    },
+    // These four take the SharedPreferences rather than the Activity: the
+    // store is EncryptedSharedPreferences over a MasterKey the Kotlin already
+    // built, and rebuilding it here would be a second implementation of a
+    // security-sensitive construction that has to agree exactly.
+    .{
+        .name = "nativeSecureSet",
+        .signature = "(Landroid/content/SharedPreferences;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeSecureSet),
+    },
+    .{
+        .name = "nativeSecureGet",
+        .signature = "(Landroid/content/SharedPreferences;Ljava/lang/String;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeSecureGet),
+    },
+    .{
+        .name = "nativeSecureRemove",
+        .signature = "(Landroid/content/SharedPreferences;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeSecureRemove),
+    },
+    .{
+        .name = "nativeSecureClear",
+        .signature = "(Landroid/content/SharedPreferences;)Z",
+        .fnPtr = @ptrCast(&nativeSecureClear),
     },
 };
 
@@ -388,6 +413,83 @@ fn nativeGetNetworkStatus(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject
     return j.newStringUtf(owned.ptr) catch null;
 }
 
+fn nativeSecureSet(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    prefs: jni.jobject,
+    key: jni.jstring,
+    value: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const k = ownedUtf8(j, allocator, key) orelse return jni.JNI_FALSE;
+    const v = ownedUtf8(j, allocator, value) orelse return jni.JNI_FALSE;
+
+    securestore.set(j, prefs, k.ptr, v.ptr) catch |err| {
+        std.log.warn("craft: secureSet fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// Returns the `{"found":…}` envelope, or null when Zig did not serve the call.
+///
+/// Null cannot mean "no such key" here — the Kotlin already uses null for
+/// that, and the seam needs a third answer. See the module comment on
+/// `bridge_android_securestore.zig`.
+fn nativeSecureGet(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    prefs: jni.jobject,
+    key: jni.jstring,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const k = ownedUtf8(j, allocator, key) orelse return null;
+    const value = securestore.get(allocator, j, prefs, k.ptr) catch |err| {
+        std.log.warn("craft: secureGet fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const json = securestore.renderRead(allocator, value) catch return null;
+    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
+    @memcpy(owned, json);
+    return j.newStringUtf(owned.ptr) catch null;
+}
+
+fn nativeSecureRemove(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    prefs: jni.jobject,
+    key: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+
+    const k = ownedUtf8(j, arena.allocator(), key) orelse return jni.JNI_FALSE;
+    securestore.remove(j, prefs, k.ptr) catch |err| {
+        std.log.warn("craft: secureRemove fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativeSecureClear(env: jni.JNIEnv, _: jni.jobject, prefs: jni.jobject) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    securestore.clear(j, prefs) catch |err| {
+        std.log.warn("craft: secureClear fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -499,7 +601,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 8), natives.len);
+    try testing.expectEqual(@as(usize, 12), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
