@@ -61,6 +61,8 @@ object CraftNative {
     private external fun nativeLog(message: String): Boolean
     private external fun nativeClipboardRead(activity: Activity): String?
     private external fun nativeClipboardWrite(activity: Activity, text: String): Boolean
+    private external fun nativeOpenUrl(activity: Activity, url: String): Boolean
+    private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -130,6 +132,35 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeClipboardWrite(activity, text)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig opened the URL.
+     *
+     * False is ambiguous here in a way it is not elsewhere: it covers both
+     * "Zig did not serve this" and "nothing on the device handles that
+     * scheme". Both lead to the same place — the Kotlin runs its own
+     * implementation and answers false for the second reason itself — so the
+     * ambiguity costs nothing and a richer return would have to be unpacked
+     * at every call site to reach the same outcome.
+     */
+    fun openURL(activity: Activity, url: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeOpenUrl(activity, url)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Returns whether Zig launched the share sheet; false falls through. */
+    fun share(activity: Activity, text: String, title: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeShare(activity, text, title)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

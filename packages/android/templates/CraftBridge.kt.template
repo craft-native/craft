@@ -1412,6 +1412,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun share(text: String, title: String) {
+        if (CraftNative.share(activity, text, title)) return
+
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
@@ -2011,6 +2013,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun openURL(url: String): Boolean {
+        if (CraftNative.openURL(activity, url)) return true
+
         return try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             activity.startActivity(intent)
