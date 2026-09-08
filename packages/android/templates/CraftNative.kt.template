@@ -2,6 +2,7 @@ package com.craft.runtime
 
 import android.app.Activity
 import android.content.SharedPreferences
+import android.database.sqlite.SQLiteDatabase
 import org.json.JSONObject
 
 /**
@@ -110,6 +111,8 @@ object CraftNative {
     private external fun nativeDeleteCalendarEvent(activity: Activity, eventId: String): Boolean
     private external fun nativeGetCalendarEvents(activity: Activity, startDateMs: Long, endDateMs: Long): Boolean
     private external fun nativeCreateCalendarEvent(activity: Activity, eventJson: String): Boolean
+    private external fun nativeDbExecute(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean
+    private external fun nativeDbQuery(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -381,6 +384,33 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeCreateCalendarEvent(activity, eventJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig took the statement.
+     *
+     * The connection is passed in rather than opened: the Kotlin caches one
+     * `SQLiteDatabase` so that a BEGIN in one call and a COMMIT in the next
+     * reach the same connection, and a second one opened by Zig would take
+     * locks against the first for no visible reason.
+     */
+    fun dbExecute(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeDbExecute(database, sql, paramsJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** The same, for a statement that returns rows. */
+    fun dbQuery(database: SQLiteDatabase, sql: String, paramsJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeDbQuery(database, sql, paramsJson)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

@@ -47,6 +47,7 @@ const haptics = @import("bridge_android_haptics.zig");
 const notifcancel = @import("bridge_android_notifcancel.zig");
 const events = @import("android_events.zig");
 const calendar = @import("bridge_android_calendar.zig");
+const db = @import("bridge_android_db.zig");
 
 const Jni = jni.Jni;
 
@@ -247,6 +248,19 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeCreateCalendarEvent",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeCreateCalendarEvent),
+    },
+    // The database arrives as an argument rather than being opened here, so
+    // one connection serves both languages — the same shape the secure store
+    // uses for its SharedPreferences.
+    .{
+        .name = "nativeDbExecute",
+        .signature = "(Landroid/database/sqlite/SQLiteDatabase;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeDbExecute),
+    },
+    .{
+        .name = "nativeDbQuery",
+        .signature = "(Landroid/database/sqlite/SQLiteDatabase;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeDbQuery),
     },
 };
 
@@ -789,6 +803,85 @@ fn nativeCreateCalendarEvent(
     return jni.JNI_TRUE;
 }
 
+/// The parameters and SQL both actions start from, or null to decline.
+///
+/// Declining costs nothing here because it happens before any JNI call that
+/// could change the database — the shim then runs the whole method, including
+/// its own parse.
+fn dbCall(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    sql: jni.jstring,
+    params_json: jni.jstring,
+    parsed: *std.json.Parsed(std.json.Value),
+) !?struct { sql: []const u8, args: [][]const u8 } {
+    const sql_text = try j.stringToUtf8(allocator, sql);
+    const params_text = try j.stringToUtf8(allocator, params_json);
+
+    parsed.* = std.json.parseFromSlice(std.json.Value, allocator, params_text, .{}) catch
+        return null;
+
+    const args = (try db.bindArgs(allocator, parsed.value)) orelse return null;
+    return .{ .sql = sql_text, .args = args };
+}
+
+/// `nativeDbExecute(database, sql, paramsJson)`.
+fn nativeDbExecute(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    database: jni.jobject,
+    sql: jni.jstring,
+    params_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parsed: std.json.Parsed(std.json.Value) = undefined;
+    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch return jni.JNI_FALSE) orelse
+        return jni.JNI_FALSE;
+
+    db.execute(j, allocator, database, call.sql, call.args) catch |err| {
+        // The shim catches and rejects with the exception's message; the
+        // throwable was described to logcat and cleared by `Jni.check` before
+        // this point, so the error name is what is left to say.
+        calendar.rejectOn(allocator, db.exec_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    events.settle(allocator, db.exec_resolve_global, db.exec_result) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeDbQuery(database, sql, paramsJson)`.
+fn nativeDbQuery(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    database: jni.jobject,
+    sql: jni.jstring,
+    params_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var parsed: std.json.Parsed(std.json.Value) = undefined;
+    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch return jni.JNI_FALSE) orelse
+        return jni.JNI_FALSE;
+
+    var payload: std.ArrayListUnmanaged(u8) = .empty;
+    defer payload.deinit(allocator);
+    db.query(j, allocator, database, call.sql, call.args, &payload) catch |err| {
+        calendar.rejectOn(allocator, db.query_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    events.settle(allocator, db.query_resolve_global, payload.items) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -900,7 +993,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 19), natives.len);
+    try testing.expectEqual(@as(usize, 21), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

@@ -756,6 +756,22 @@ pub const Jni = struct {
         return array;
     }
 
+    pub fn arrayLength(self: Self, array: jobject) JniError!usize {
+        const len: *const fn (JNIEnv, jobject) callconv(.c) jsize =
+            @ptrCast(self.table().GetArrayLength orelse return JniError.NotFound);
+        const result = len(self.env, array);
+        try self.check();
+        return @intCast(result);
+    }
+
+    pub fn objectArrayElement(self: Self, array: jobject, index: usize) JniError!jobject {
+        const get: *const fn (JNIEnv, jobject, jsize) callconv(.c) jobject =
+            @ptrCast(self.table().GetObjectArrayElement orelse return JniError.NotFound);
+        const value = get(self.env, array, @intCast(index));
+        try self.check();
+        return value;
+    }
+
     pub fn setObjectArrayElement(self: Self, array: jobject, index: usize, value: jobject) JniError!void {
         const set: *const fn (JNIEnv, jobject, jsize, jobject) callconv(.c) void =
             @ptrCast(self.table().SetObjectArrayElement orelse return JniError.NotFound);
