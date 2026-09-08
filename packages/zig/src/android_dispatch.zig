@@ -36,6 +36,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const jni = @import("jni_runtime.zig");
+const permissions = @import("android_permissions.zig");
 const device = @import("bridge_android_device.zig");
 const system = @import("bridge_android_system.zig");
 const clipboard = @import("bridge_android_clipboard.zig");
@@ -62,6 +63,17 @@ const Jni = jni.Jni;
 /// page per call rather than one per allocation, and nothing has to be freed
 /// individually on the way out.
 const backing = std.heap.page_allocator;
+
+/// `CraftBridge.REQUEST_CALENDAR`, the request code the shim passes.
+///
+/// It has to match, because it is the only thing that would tell an
+/// `onRequestPermissionsResult` which request it is answering — and if the
+/// shim ever grows one, a code Zig invented would arrive as a request nothing
+/// asked for.
+const request_calendar: i32 = 1005;
+
+/// The shim's default event length: `System.currentTimeMillis() + 3600000`.
+const one_hour_ms: i64 = 60 * 60 * 1000;
 
 /// The VM, captured at load so a later callback on a framework thread can ask
 /// it for that thread's `JNIEnv`.
@@ -225,6 +237,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeDeleteCalendarEvent",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeDeleteCalendarEvent),
+    },
+    .{
+        .name = "nativeGetCalendarEvents",
+        .signature = "(Landroid/app/Activity;JJ)Z",
+        .fnPtr = @ptrCast(&nativeGetCalendarEvents),
+    },
+    .{
+        .name = "nativeCreateCalendarEvent",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeCreateCalendarEvent),
     },
 };
 
@@ -642,6 +664,131 @@ fn nativeDeleteCalendarEvent(
     return jni.JNI_TRUE;
 }
 
+/// `nativeGetCalendarEvents(activity, startDateMs, endDateMs)`.
+///
+/// Reads the calendar and settles `_craftCalendarResolve` with the array.
+///
+/// ## Where this returns false
+///
+/// Only before anything has been sent. A failure after the reply channel has
+/// been used would settle the page's promise twice, since a false sends the
+/// shim down the same path — so the JNI work runs to completion or reports
+/// nothing at all, and the shim answers instead.
+///
+/// That includes the case where the query itself throws. The shim wraps none
+/// of `getCalendarEvents` in a try/catch, so a `SecurityException` from a
+/// permission revoked between the check and the query propagates out of the
+/// `@JavascriptInterface` method and the promise hangs. Rejecting here would
+/// be kinder and would also be a divergence nothing records, so this falls
+/// through and lets the shim behave as it does. See #157.
+fn nativeGetCalendarEvents(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    start_date_ms: jni.jlong,
+    end_date_ms: jni.jlong,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.read_calendar) catch |err| {
+        std.log.warn("craft: getCalendarEvents fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (!granted) {
+        // The shim asks and rejects in the same breath: the answer arrives at
+        // `onRequestPermissionsResult`, which nothing here implements, so the
+        // request is what makes a *later* call work rather than this one.
+        permissions.request(j, activity, permissions.read_calendar, request_calendar) catch |err| {
+            std.log.warn("craft: getCalendarEvents fell through to the shim ({s})", .{@errorName(err)});
+            return jni.JNI_FALSE;
+        };
+        events.settle(allocator, calendar.list_reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    const now = calendar.currentTimeMillis(j) catch |err| {
+        std.log.warn("craft: getCalendarEvents fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    const window = calendar.windowFor(start_date_ms, end_date_ms, now);
+
+    var payload: std.ArrayListUnmanaged(u8) = .empty;
+    defer payload.deinit(allocator);
+    calendar.queryEvents(j, allocator, activity, window, &payload) catch |err| {
+        std.log.warn("craft: getCalendarEvents fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    events.settle(allocator, calendar.list_resolve_global, payload.items) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeCreateCalendarEvent(activity, eventJson)`.
+///
+/// Returns false — leaving the shim to serve it — for any payload outside the
+/// shape `NewCalendarEvent` declares. `org.json` coerces a `startDate` sent as
+/// a string and a `title` sent as a number, and the string forms it produces
+/// for a `Double` are not something to reproduce from memory. Declining is
+/// cheap here because nothing has been sent yet.
+fn nativeCreateCalendarEvent(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    event_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.write_calendar) catch |err| {
+        std.log.warn("craft: createCalendarEvent fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (!granted) {
+        permissions.request(j, activity, permissions.write_calendar, request_calendar) catch |err| {
+            std.log.warn("craft: createCalendarEvent fell through to the shim ({s})", .{@errorName(err)});
+            return jni.JNI_FALSE;
+        };
+        events.settle(allocator, calendar.create_reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    const text = j.stringToUtf8(allocator, event_json) catch return jni.JNI_FALSE;
+
+    // `JSONTokener` is lenient where `std.json` is strict — unquoted keys,
+    // single quotes, a trailing comma. Everything strict JSON accepts it
+    // accepts too, so the difference only ever sends work back to the shim.
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
+        return jni.JNI_FALSE;
+    defer parsed.deinit();
+
+    const start_default = calendar.currentTimeMillis(j) catch return jni.JNI_FALSE;
+    const end_default = calendar.currentTimeMillis(j) catch return jni.JNI_FALSE;
+    const event = calendar.parseNewEvent(
+        parsed.value,
+        start_default,
+        end_default +% one_hour_ms,
+    ) orelse return jni.JNI_FALSE;
+
+    const id = calendar.insertEvent(j, allocator, activity, event) catch |err| {
+        // The shim catches here and rejects with the exception's message. The
+        // throwable was described to logcat and cleared by `Jni.check` before
+        // this point, so the error name is what is left to say.
+        calendar.rejectOn(allocator, calendar.create_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    const payload = calendar.jsonString(allocator, id) catch return jni.JNI_FALSE;
+    events.settle(allocator, calendar.create_resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -753,7 +900,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 17), natives.len);
+    try testing.expectEqual(@as(usize, 19), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
