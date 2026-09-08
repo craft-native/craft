@@ -696,6 +696,30 @@ pub const Jni = struct {
         return value;
     }
 
+    // --- Arrays -----------------------------------------------------------
+    //
+    // Only `long[]` so far, because only `VibrationEffect.createWaveform`
+    // needs one. `SetLongArrayRegion` copies from a Zig slice in one call
+    // rather than element by element, which is both faster and the only form
+    // that cannot leave a partially-filled array behind on an error.
+
+    pub fn newLongArray(self: Self, values: []const jlong) JniError!jobject {
+        const new: *const fn (JNIEnv, jsize) callconv(.c) jobject =
+            @ptrCast(self.table().NewLongArray orelse return JniError.NotFound);
+        const array = new(self.env, @intCast(values.len)) orelse {
+            try self.check();
+            return JniError.OutOfMemory;
+        };
+
+        if (values.len == 0) return array;
+
+        const set: *const fn (JNIEnv, jobject, jsize, jsize, [*]const jlong) callconv(.c) void =
+            @ptrCast(self.table().SetLongArrayRegion orelse return JniError.NotFound);
+        set(self.env, array, 0, @intCast(values.len), values.ptr);
+        try self.check();
+        return array;
+    }
+
     /// Make a Java `String` from UTF-8.
     ///
     /// The JVM wants *modified* UTF-8 here, the same encoding `stringToUtf8`

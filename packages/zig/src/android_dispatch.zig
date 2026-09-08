@@ -42,6 +42,7 @@ const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
 const securestore = @import("bridge_android_securestore.zig");
+const haptics = @import("bridge_android_haptics.zig");
 
 const Jni = jni.Jni;
 
@@ -189,6 +190,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeSecureClear",
         .signature = "(Landroid/content/SharedPreferences;)Z",
         .fnPtr = @ptrCast(&nativeSecureClear),
+    },
+    .{
+        .name = "nativeHaptic",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeHaptic),
+    },
+    .{
+        .name = "nativeVibrate",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeVibrate),
     },
 };
 
@@ -490,6 +501,50 @@ fn nativeSecureClear(env: jni.JNIEnv, _: jni.jobject, prefs: jni.jobject) callco
     return jni.JNI_TRUE;
 }
 
+fn nativeHaptic(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    style: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+
+    const text = j.stringToUtf8(arena.allocator(), style) catch return jni.JNI_FALSE;
+    haptics.play(j, activity, haptics.effectForStyle(text)) catch |err| {
+        std.log.warn("craft: haptic fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativeVibrate(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    pattern_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const json = j.stringToUtf8(allocator, pattern_json) catch return jni.JNI_FALSE;
+
+    // Null is a pattern the shim would throw on. Declining lets it throw, log
+    // "Vibration error", and vibrate nothing — the same outcome with the log
+    // kept. See bridge_android_haptics.parsePattern.
+    const timings = haptics.parsePattern(allocator, json) catch return jni.JNI_FALSE;
+    if (timings == null) return jni.JNI_FALSE;
+
+    haptics.play(j, activity, .{ .waveform = timings.? }) catch |err| {
+        std.log.warn("craft: vibrate fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -601,7 +656,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 12), natives.len);
+    try testing.expectEqual(@as(usize, 14), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

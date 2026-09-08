@@ -45,6 +45,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_intents.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
+    @embedFile("src/bridge_android_haptics.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -58,8 +59,8 @@ const zig_sources = [_][]const u8{
 /// clipboard pair, the first that do; 96 with openURL and share; 95 with
 /// getNetworkStatus, which iOS declares unavailable and Android can answer;
 /// 91 with the secure-storage quartet, the first to take a Kotlin-held object
-/// rather than the Activity.
-const max_not_yet_migrated: usize = 91;
+/// rather than the Activity; 89 with haptic and vibrate.
+const max_not_yet_migrated: usize = 89;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

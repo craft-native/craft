@@ -1296,6 +1296,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun haptic(style: String) {
+        if (CraftNative.haptic(activity, style)) return
+
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             vibratorManager.defaultVibrator
@@ -2044,6 +2046,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun vibrate(patternJson: String) {
+        if (CraftNative.vibrate(activity, patternJson)) return
+
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
             vibratorManager.defaultVibrator

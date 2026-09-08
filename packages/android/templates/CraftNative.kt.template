@@ -70,6 +70,8 @@ object CraftNative {
     private external fun nativeSecureGet(prefs: SharedPreferences, key: String): String?
     private external fun nativeSecureRemove(prefs: SharedPreferences, key: String): Boolean
     private external fun nativeSecureClear(prefs: SharedPreferences): Boolean
+    private external fun nativeHaptic(activity: Activity, style: String): Boolean
+    private external fun nativeVibrate(activity: Activity, patternJson: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -245,6 +247,33 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeSecureClear(prefs)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Returns whether Zig played the haptic; false falls through. */
+    fun haptic(activity: Activity, style: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeHaptic(activity, style)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig played the pattern.
+     *
+     * False also covers a pattern Zig could not parse — deliberately, so the
+     * Kotlin runs, throws the JSONException it would have thrown anyway, and
+     * writes its "Vibration error" line. Handling it here would reach the same
+     * silence and lose the log.
+     */
+    fun vibrate(activity: Activity, patternJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeVibrate(activity, patternJson)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
