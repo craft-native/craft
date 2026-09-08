@@ -2843,6 +2843,12 @@ class CraftBridge(
                 database = activity.openOrCreateDatabase("craft.db", Context.MODE_PRIVATE, null)
             }
 
+            // After the open, so Zig borrows this connection rather than
+            // starting a second one against the same file. Zig answers through
+            // the reply channel, so returning is what stops the promise being
+            // settled twice.
+            database?.let { if (CraftNative.dbExecute(it, sql, paramsJson)) return }
+
             val params = JSONArray(paramsJson)
             val args = Array(params.length()) { params.getString(it) }
 
@@ -2870,6 +2876,8 @@ class CraftBridge(
             if (database == null) {
                 database = activity.openOrCreateDatabase("craft.db", Context.MODE_PRIVATE, null)
             }
+
+            database?.let { if (CraftNative.dbQuery(it, sql, paramsJson)) return }
 
             val params = JSONArray(paramsJson)
             val args = Array(params.length()) { params.getString(it) }
