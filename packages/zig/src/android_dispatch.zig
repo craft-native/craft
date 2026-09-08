@@ -45,6 +45,7 @@ const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
 const notifcancel = @import("bridge_android_notifcancel.zig");
 const events = @import("android_events.zig");
+const calendar = @import("bridge_android_calendar.zig");
 
 const Jni = jni.Jni;
 
@@ -216,6 +217,14 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeCancelAllNotifications",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeCancelAllNotifications),
+    },
+    // The first action that answers through the reply channel rather than by
+    // returning. The boolean still means "Zig served it" — the *result* goes
+    // to the page separately, which is exactly the shape iOS's seam has.
+    .{
+        .name = "nativeDeleteCalendarEvent",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeDeleteCalendarEvent),
     },
 };
 
@@ -587,6 +596,52 @@ fn nativeCancelAllNotifications(env: jni.JNIEnv, _: jni.jobject, activity: jni.j
     return jni.JNI_TRUE;
 }
 
+/// `nativeDeleteCalendarEvent(activity, eventId)`.
+///
+/// Returns whether Zig took the action, not whether the delete succeeded. The
+/// outcome reaches the page through the reply channel, so a `true` here means
+/// "do not also run the Kotlin" and nothing more — the same distinction
+/// `ios_dispatch` draws between claiming an action and answering it.
+fn nativeDeleteCalendarEvent(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    event_id: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, event_id) catch return jni.JNI_FALSE;
+
+    const id = calendar.parseEventId(text) orelse {
+        // What the shim's NumberFormatException produces, with the message it
+        // produces — but escaped, so an id containing a quote rejects instead
+        // of hanging the promise. See #154.
+        var message: std.ArrayListUnmanaged(u8) = .empty;
+        defer message.deinit(allocator);
+        message.appendSlice(allocator, "For input string: \"") catch return jni.JNI_FALSE;
+        message.appendSlice(allocator, text) catch return jni.JNI_FALSE;
+        message.append(allocator, '"') catch return jni.JNI_FALSE;
+
+        calendar.rejectWith(allocator, message.items) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    };
+
+    calendar.deleteEvent(j, activity, id) catch |err| {
+        // A SecurityException for a missing WRITE_CALENDAR permission lands
+        // here, as it lands in the shim's catch. The error name rather than
+        // the Java message: the throwable was already described to logcat and
+        // cleared by `Jni.check`, so its text is gone by now.
+        calendar.rejectWith(allocator, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    events.settle(allocator, calendar.resolve_global, "true") catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -698,7 +753,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 16), natives.len);
+    try testing.expectEqual(@as(usize, 17), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

@@ -47,6 +47,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
     @embedFile("src/bridge_android_notifcancel.zig"),
+    @embedFile("src/bridge_android_calendar.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -61,8 +62,9 @@ const zig_sources = [_][]const u8{
 /// getNetworkStatus, which iOS declares unavailable and Android can answer;
 /// 91 with the secure-storage quartet, the first to take a Kotlin-held object
 /// rather than the Activity; 89 with haptic and vibrate; 87 with the
-/// notification cancels.
-const max_not_yet_migrated: usize = 87;
+/// notification cancels; 86 with deleteCalendarEvent, the first to answer
+/// through the reply channel rather than by returning.
+const max_not_yet_migrated: usize = 86;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

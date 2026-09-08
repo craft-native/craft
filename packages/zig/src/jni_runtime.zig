@@ -624,6 +624,14 @@ pub const Jni = struct {
         return result;
     }
 
+    pub fn callIntMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!jint {
+        const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) jint =
+            @ptrCast(self.table().CallIntMethodA orelse return JniError.NotFound);
+        const result = call(self.env, obj, id, args.ptr);
+        try self.check();
+        return result;
+    }
+
     pub fn callBooleanMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!bool {
         const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) jboolean =
             @ptrCast(self.table().CallBooleanMethodA orelse return JniError.NotFound);

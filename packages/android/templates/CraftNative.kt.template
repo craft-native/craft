@@ -107,6 +107,7 @@ object CraftNative {
     private external fun nativeVibrate(activity: Activity, patternJson: String): Boolean
     private external fun nativeCancelNotification(activity: Activity, id: String): Boolean
     private external fun nativeCancelAllNotifications(activity: Activity): Boolean
+    private external fun nativeDeleteCalendarEvent(activity: Activity, eventId: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -329,6 +330,22 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeCancelAllNotifications(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig *took* the action, not whether the delete worked.
+     *
+     * The first native here that answers asynchronously: the outcome reaches
+     * the page through the reply channel, so true means "do not also run the
+     * Kotlin" and nothing more. Running both would settle the promise twice.
+     */
+    fun deleteCalendarEvent(activity: Activity, eventId: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeDeleteCalendarEvent(activity, eventId)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
