@@ -1878,6 +1878,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getNetworkStatus(): String {
+        CraftNative.getNetworkStatus(activity)?.let { return it }
+
         val connectivityManager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = connectivityManager.activeNetwork
         val capabilities = connectivityManager.getNetworkCapabilities(network)

@@ -63,6 +63,7 @@ object CraftNative {
     private external fun nativeClipboardWrite(activity: Activity, text: String): Boolean
     private external fun nativeOpenUrl(activity: Activity, url: String): Boolean
     private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
+    private external fun nativeGetNetworkStatus(activity: Activity): String?
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -163,6 +164,16 @@ object CraftNative {
             nativeShare(activity, text, title)
         } catch (e: UnsatisfiedLinkError) {
             false
+        }
+    }
+
+    /** The active network as JSON, or null to use the Kotlin implementation. */
+    fun getNetworkStatus(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeGetNetworkStatus(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
         }
     }
 }

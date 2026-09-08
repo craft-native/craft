@@ -624,6 +624,16 @@ pub const Jni = struct {
         return result;
     }
 
+    pub fn callBooleanMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!bool {
+        const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) jboolean =
+            @ptrCast(self.table().CallBooleanMethodA orelse return JniError.NotFound);
+        const result = call(self.env, obj, id, args.ptr);
+        try self.check();
+        // `jboolean` is a `u8` and the JVM only ever sets it to 0 or 1, but a
+        // `!= 0` rather than `== 1` is what the spec licenses.
+        return result != JNI_FALSE;
+    }
+
     pub fn callVoidMethodA(self: Self, obj: jobject, id: jmethodID, args: []const jvalue) JniError!void {
         const call: *const fn (JNIEnv, jobject, jmethodID, [*]const jvalue) callconv(.c) void =
             @ptrCast(self.table().CallVoidMethodA orelse return JniError.NotFound);
