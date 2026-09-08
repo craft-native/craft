@@ -166,6 +166,20 @@ class CraftBridge(
         )
     }
 
+    /**
+     * Quote a value for interpolation into JavaScript.
+     *
+     * The result carries its own quotes, so write `f($payload)` — leaving the
+     * surrounding `'...'` in place would quote it twice. A Kotlin null renders as
+     * the string "null", which is what plain interpolation produced before; whether
+     * that should instead be a JS null is a separate question from escaping.
+     *
+     * Without this, a value containing an apostrophe ends the JS string early, the
+     * script fails to parse, and `evaluateJavascript` runs nothing at all — so a
+     * hand-built promise with no timeout never settles.
+     */
+    private fun jsQuote(value: String?): String = JSONObject.quote(value ?: "null")
+
     fun injectBridge() {
         // Before the script, so a native callback arriving while the page is
         // still loading has somewhere to go rather than being counted as
@@ -1474,7 +1488,7 @@ class CraftBridge(
 
         val event = if (requestCode == REQUEST_CAMERA) "_craftCameraResolve" else "_craftGalleryResolve"
         activity.runOnUiThread {
-            webView.evaluateJavascript("window.$event && window.$event('$imageUri')", null)
+            webView.evaluateJavascript("window.$event && window.$event(${jsQuote(imageUri)})", null)
         }
     }
 
@@ -1525,7 +1539,7 @@ class CraftBridge(
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                         webView.evaluateJavascript(
-                            "window._craftBiometricReject && window._craftBiometricReject('$errString')",
+                            "window._craftBiometricReject && window._craftBiometricReject(${jsQuote(errString)})",
                             null
                         )
                     }
@@ -1655,7 +1669,7 @@ class CraftBridge(
         }?.addOnFailureListener { e ->
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftLocationReject && window._craftLocationReject({code: 2, message: '${e.message}'})",
+                    "window._craftLocationReject && window._craftLocationReject({code: 2, message: ${jsQuote(e.message)}})",
                     null
                 )
             }
@@ -2110,7 +2124,7 @@ class CraftBridge(
             currentAppState = newState
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftAppStateCallback && window._craftAppStateCallback('$currentAppState')",
+                    "window._craftAppStateCallback && window._craftAppStateCallback(${jsQuote(currentAppState)})",
                     null
                 )
             }
@@ -2247,11 +2261,11 @@ class CraftBridge(
             val contactId = ContentUris.parseId(results[0].uri!!)
 
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAddContactResolve && window._craftAddContactResolve('$contactId')", null)
+                webView.evaluateJavascript("window._craftAddContactResolve && window._craftAddContactResolve(${jsQuote(contactId)})", null)
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAddContactReject && window._craftAddContactReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftAddContactReject && window._craftAddContactReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2339,11 +2353,11 @@ class CraftBridge(
             val eventId = uri?.lastPathSegment ?: ""
 
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCreateEventResolve && window._craftCreateEventResolve('$eventId')", null)
+                webView.evaluateJavascript("window._craftCreateEventResolve && window._craftCreateEventResolve(${jsQuote(eventId)})", null)
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCreateEventReject && window._craftCreateEventReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftCreateEventReject && window._craftCreateEventReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2362,7 +2376,7 @@ class CraftBridge(
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftDeleteEventReject && window._craftDeleteEventReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftDeleteEventReject && window._craftDeleteEventReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2399,11 +2413,11 @@ class CraftBridge(
             }
 
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftNotifResolve && window._craftNotifResolve('$id')", null)
+                webView.evaluateJavascript("window._craftNotifResolve && window._craftNotifResolve(${jsQuote(id)})", null)
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftNotifReject && window._craftNotifReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftNotifReject && window._craftNotifReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2496,7 +2510,7 @@ class CraftBridge(
             })
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftProductsReject && window._craftProductsReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftProductsReject && window._craftProductsReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2625,14 +2639,14 @@ class CraftBridge(
 
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftDownloadResolve && window._craftDownloadResolve('$downloadId')",
+                    "window._craftDownloadResolve && window._craftDownloadResolve(${jsQuote(downloadId)})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftDownloadReject && window._craftDownloadReject('${e.message}')",
+                    "window._craftDownloadReject && window._craftDownloadReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -2658,14 +2672,14 @@ class CraftBridge(
 
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSaveResolve && window._craftSaveResolve('${file.absolutePath}')",
+                    "window._craftSaveResolve && window._craftSaveResolve(${jsQuote(file.absolutePath)})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSaveReject && window._craftSaveReject('${e.message}')",
+                    "window._craftSaveReject && window._craftSaveReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -2723,7 +2737,7 @@ class CraftBridge(
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioReject && window._craftAudioReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftAudioReject && window._craftAudioReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2739,7 +2753,7 @@ class CraftBridge(
                 val bytes = file.readBytes()
                 val base64 = "data:audio/m4a;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
                 activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftAudioStopResolve && window._craftAudioStopResolve('$base64')", null)
+                    webView.evaluateJavascript("window._craftAudioStopResolve && window._craftAudioStopResolve(${jsQuote(base64)})", null)
                 }
             } ?: run {
                 activity.runOnUiThread {
@@ -2748,7 +2762,7 @@ class CraftBridge(
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioStopReject && window._craftAudioStopReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftAudioStopReject && window._craftAudioStopReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2835,7 +2849,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftDbExecReject && window._craftDbExecReject('${e.message}')",
+                    "window._craftDbExecReject && window._craftDbExecReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -2875,7 +2889,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftDbQueryReject && window._craftDbQueryReject('${e.message}')",
+                    "window._craftDbQueryReject && window._craftDbQueryReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -2980,9 +2994,9 @@ class CraftBridge(
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
                 val base64 = "data:image/png;base64," + Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
-                webView.evaluateJavascript("window._craftScreenshotResolve && window._craftScreenshotResolve('$base64')", null)
+                webView.evaluateJavascript("window._craftScreenshotResolve && window._craftScreenshotResolve(${jsQuote(base64)})", null)
             } catch (e: Exception) {
-                webView.evaluateJavascript("window._craftScreenshotReject && window._craftScreenshotReject('${e.message}')", null)
+                webView.evaluateJavascript("window._craftScreenshotReject && window._craftScreenshotReject(${jsQuote(e.message)})", null)
             }
         }
     }
@@ -2995,14 +3009,14 @@ class CraftBridge(
             // WorkManager tasks don't require explicit registration, just track them
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: '$taskId', registered: true})",
+                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, registered: true})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject('${e.message}')",
+                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3017,14 +3031,14 @@ class CraftBridge(
             // This is a placeholder that shows the API structure
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: '$taskId', scheduled: true, delay: $delay})",
+                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, scheduled: true, delay: $delay})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject('${e.message}')",
+                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3036,14 +3050,14 @@ class CraftBridge(
         try {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: '$taskId', cancelled: true})",
+                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, cancelled: true})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject('${e.message}')",
+                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3062,7 +3076,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject('${e.message}')",
+                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3099,7 +3113,7 @@ class CraftBridge(
                 )
             } catch (e: Exception) {
                 webView.evaluateJavascript(
-                    "window._craftPDFReject && window._craftPDFReject('${e.message}')",
+                    "window._craftPDFReject && window._craftPDFReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3204,7 +3218,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftPickContactReject && window._craftPickContactReject('${e.message}')",
+                    "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3261,7 +3275,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftShortcutsReject && window._craftShortcutsReject('${e.message}')",
+                    "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3284,7 +3298,7 @@ class CraftBridge(
             } catch (e: Exception) {
                 activity.runOnUiThread {
                     webView.evaluateJavascript(
-                        "window._craftShortcutsReject && window._craftShortcutsReject('${e.message}')",
+                        "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message)})",
                         null
                     )
                 }
@@ -3310,14 +3324,14 @@ class CraftBridge(
 
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: '$key'})",
+                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject('${e.message}')",
+                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3334,12 +3348,12 @@ class CraftBridge(
             activity.runOnUiThread {
                 if (value != null) {
                     webView.evaluateJavascript(
-                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: '$value', key: '$key'})",
+                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: ${jsQuote(value)}, key: ${jsQuote(key)}})",
                         null
                     )
                 } else {
                     webView.evaluateJavascript(
-                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: null, key: '$key'})",
+                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: null, key: ${jsQuote(key)}})",
                         null
                     )
                 }
@@ -3347,7 +3361,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject('${e.message}')",
+                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3363,14 +3377,14 @@ class CraftBridge(
 
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: '$key'})",
+                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})",
                     null
                 )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject('${e.message}')",
+                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3404,7 +3418,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject('${e.message}')",
+                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3428,7 +3442,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject('${e.message}')",
+                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3448,7 +3462,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject('${e.message}')",
+                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3540,7 +3554,7 @@ class CraftBridge(
                 .addOnFailureListener { e ->
                     activity.runOnUiThread {
                         webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject('${e.message}')",
+                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                             null
                         )
                     }
@@ -3548,7 +3562,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject('${e.message}')",
+                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3607,7 +3621,7 @@ class CraftBridge(
                 .addOnFailureListener { e ->
                     activity.runOnUiThread {
                         webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject('${e.message}')",
+                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                             null
                         )
                     }
@@ -3615,7 +3629,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject('${e.message}')",
+                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3662,7 +3676,7 @@ class CraftBridge(
                 .addOnFailureListener { e ->
                     activity.runOnUiThread {
                         webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject('${e.message}')",
+                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                             null
                         )
                     }
@@ -3670,7 +3684,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject('${e.message}')",
+                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3718,7 +3732,7 @@ class CraftBridge(
         } catch (e: Exception) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftWidgetReject && window._craftWidgetReject('${e.message}')",
+                    "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(e.message)})",
                     null
                 )
             }
@@ -3750,7 +3764,7 @@ class CraftBridge(
 
         activity.runOnUiThread {
             webView.evaluateJavascript(
-                "window._craftVoiceResolve && window._craftVoiceResolve({registered: true, action: '$action', phrase: '$phrase'})",
+                "window._craftVoiceResolve && window._craftVoiceResolve({registered: true, action: ${jsQuote(action)}, phrase: ${jsQuote(phrase)}})",
                 null
             )
         }
@@ -3763,7 +3777,7 @@ class CraftBridge(
 
         activity.runOnUiThread {
             webView.evaluateJavascript(
-                "window._craftVoiceResolve && window._craftVoiceResolve({removed: true, action: '$action'})",
+                "window._craftVoiceResolve && window._craftVoiceResolve({removed: true, action: ${jsQuote(action)}})",
                 null
             )
         }
@@ -3778,7 +3792,7 @@ class CraftBridge(
             if (action != null) {
                 activity.runOnUiThread {
                     webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('craftVoiceAction', {detail: {action: '$action', data: '$data'}}));",
+                        "window.dispatchEvent(new CustomEvent('craftVoiceAction', {detail: {action: ${jsQuote(action)}, data: ${jsQuote(data)}}}));",
                         null
                     )
                 }
@@ -3927,7 +3941,7 @@ class CraftBridge(
         val json = JSONObject(data).toString()
         activity.runOnUiThread {
             webView.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent('$event', {detail: $json}));",
+                "window.dispatchEvent(new CustomEvent(${jsQuote(event)}, {detail: $json}));",
                 null
             )
         }

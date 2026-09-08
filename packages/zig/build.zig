@@ -505,6 +505,49 @@ pub fn build(b: *std.Build) void {
     });
     const run_android_bridge_tests = b.addRunArtifact(android_bridge_tests);
 
+    // The reply channel's escaping, across every Kotlin template.
+    //
+    // Every template is imported, not just the four that talk to the WebView
+    // today, so a file starting to emit JavaScript is already covered.
+    //
+    // The list is hand-written. Generating it by reading the directory here was
+    // tried and removed: `zig build` caches this script's evaluation against its
+    // own contents, so the generated list did not change when a template was
+    // added — the completeness check passed by reading a stale list, which is
+    // the exact failure it existed to prevent.
+    const android_escaping_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/android_reply_escaping_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftBridge.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftBridge.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftBridgeExtensions.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftBridgeExtensions.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftHealthConnect.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftHealthConnect.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftHealthConnectStub.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftHealthConnectStub.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftNative.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftNative.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("CraftWidgetProvider.kt.template", .{
+        .root_source_file = b.path("../android/templates/CraftWidgetProvider.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("LocationRecordingService.kt.template", .{
+        .root_source_file = b.path("../android/templates/LocationRecordingService.kt.template"),
+    });
+    android_escaping_tests.root_module.addAnonymousImport("MainActivity.kt.template", .{
+        .root_source_file = b.path("../android/templates/MainActivity.kt.template"),
+    });
+    const run_android_escaping_tests = b.addRunArtifact(android_escaping_tests);
+
     ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
         .root_source_file = b.path("../ios/templates/CraftApp.swift"),
     });
@@ -1648,6 +1691,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_bridge_surface_tests.step);
     test_step.dependOn(&run_android_conformance_tests.step);
     test_step.dependOn(&run_android_bridge_tests.step);
+    test_step.dependOn(&run_android_escaping_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -2377,6 +2421,7 @@ pub fn build(b: *std.Build) void {
     test_android_step.dependOn(&run_bridge_surface_tests.step);
     test_android_step.dependOn(&run_android_conformance_tests.step);
     test_android_step.dependOn(&run_android_bridge_tests.step);
+    test_android_step.dependOn(&run_android_escaping_tests.step);
 
     // Add Android tests to the main test step
     test_step.dependOn(&run_android_tests.step);
