@@ -90,18 +90,21 @@ pub const holder_class = "com/craft/runtime/CraftNative";
 pub export fn JNI_OnLoad(vm_handle: jni.JavaVM, _: ?*anyopaque) callconv(.c) jni.jint {
     java_vm = vm_handle;
 
-    if (jni.envForThisThread(vm_handle)) |env| {
-        const j = Jni.init(env);
-        if (j.findClass(holder_class)) |cls| {
-            _ = registerFrom(env, cls);
-        } else |err| {
-            std.log.err(
-                "craft: {s} not found ({s}); every action stays on the Kotlin shim",
-                .{ holder_class, @errorName(err) },
-            );
-        }
-    } else {
-        std.log.err("craft: no JNIEnv at load; every action stays on the Kotlin shim", .{});
+    switch (bindNatives(vm_handle)) {
+        .registered => {},
+        .no_env => std.log.err(
+            "craft: no JNIEnv at load; every action stays on the Kotlin shim",
+            .{},
+        ),
+        .class_not_found => std.log.err(
+            "craft: {s} not on the class path; every action stays on the Kotlin shim",
+            .{holder_class},
+        ),
+        .register_failed => std.log.err(
+            "craft: RegisterNatives refused a method on {s}; check the descriptors " ++
+                "against CraftNative.kt. Every action stays on the Kotlin shim",
+            .{holder_class},
+        ),
     }
 
     return jni.JNI_VERSION_1_6;
@@ -121,17 +124,31 @@ const natives = [_]jni.JNINativeMethod{
     },
 };
 
-/// Bind the natives onto `cls`. Called from Kotlin with its own class, because
-/// the class name is templated and `JNI_OnLoad` cannot know it.
+/// How binding went. A value rather than a log line, so every path is
+/// assertable: the test runner treats an error-level log as a failed test, so
+/// a function that reported by logging could only ever be tested on the path
+/// that succeeds — which is the one path that does not need testing.
+pub const LoadOutcome = enum {
+    registered,
+    /// The VM would not give this thread a `JNIEnv`.
+    no_env,
+    /// `CraftNative` was not on the class path.
+    class_not_found,
+    /// The class was found and `RegisterNatives` refused it — almost always a
+    /// method name or descriptor that does not match what Kotlin declares.
+    register_failed,
+};
+
+/// Find the holder and bind the natives to it. No logging; see `LoadOutcome`.
 ///
 /// Idempotent by JNI's own rule: registering a method that is already
 /// registered replaces it, so a second call after a hot reload is not an error.
-pub fn registerFrom(env: jni.JNIEnv, cls: jni.jclass) bool {
-    jni.registerNatives(env, cls, &natives) catch |err| {
-        std.log.err("craft: RegisterNatives failed ({s}); Zig serves no actions this run", .{@errorName(err)});
-        return false;
-    };
-    return true;
+pub fn bindNatives(vm_handle: jni.JavaVM) LoadOutcome {
+    const env = jni.envForThisThread(vm_handle) orelse return .no_env;
+    const j = Jni.init(env);
+    const cls = j.findClass(holder_class) catch return .class_not_found;
+    jni.registerNatives(env, cls, &natives) catch return .register_failed;
+    return .registered;
 }
 
 /// `nativeGetDeviceInfo(activity)` — the first action served from Zig.
@@ -173,15 +190,103 @@ fn nativeGetDeviceInfo(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
 
 const testing = std.testing;
 
-test "JNI_OnLoad asks for the version Android actually provides" {
+// --- A fake JVM, enough to drive the whole load path ----------------------
+//
+// `JNI_OnLoad` is handed a JavaVM and has to reach a JNIEnv, a class and
+// RegisterNatives before it has bound anything. All three are table entries,
+// so all three can be Zig functions.
+
+var fake_env_table: jni.JNINativeInterface = undefined;
+var fake_env_ptr: *const jni.JNINativeInterface = undefined;
+var fake_class_storage: u8 = 0;
+var fake_registered_count: jni.jint = -1;
+var fake_register_result: jni.jint = jni.JNI_OK;
+var fake_find_class_succeeds = true;
+var fake_get_env_succeeds = true;
+
+fn fakeGetEnv(_: jni.JavaVM, out: *?*anyopaque, _: jni.jint) callconv(.c) jni.jint {
+    if (!fake_get_env_succeeds) return jni.JNI_EDETACHED;
+    out.* = @ptrCast(@constCast(&fake_env_ptr));
+    return jni.JNI_OK;
+}
+
+fn fakeFindClass(_: jni.JNIEnv, _: [*:0]const u8) callconv(.c) jni.jclass {
+    if (!fake_find_class_succeeds) return null;
+    return @ptrCast(&fake_class_storage);
+}
+
+fn fakeExceptionOccurred(_: jni.JNIEnv) callconv(.c) jni.jobject {
+    return null;
+}
+
+fn fakeRegisterNatives(
+    _: jni.JNIEnv,
+    _: jni.jclass,
+    _: [*]const jni.JNINativeMethod,
+    count: jni.jint,
+) callconv(.c) jni.jint {
+    fake_registered_count = count;
+    return fake_register_result;
+}
+
+fn fakeVm() jni.JNIInvokeInterface {
+    var invoke = std.mem.zeroes(jni.JNIInvokeInterface);
+    invoke.GetEnv = @ptrCast(&fakeGetEnv);
+
+    fake_env_table = std.mem.zeroes(jni.JNINativeInterface);
+    fake_env_table.FindClass = @ptrCast(&fakeFindClass);
+    fake_env_table.ExceptionOccurred = @ptrCast(&fakeExceptionOccurred);
+    fake_env_table.RegisterNatives = @ptrCast(&fakeRegisterNatives);
+    fake_env_ptr = &fake_env_table;
+
+    fake_registered_count = -1;
+    fake_register_result = jni.JNI_OK;
+    fake_find_class_succeeds = true;
+    fake_get_env_succeeds = true;
+    return invoke;
+}
+
+test "the load path finds the holder and binds every native to it" {
+    var invoke = fakeVm();
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
+
+    try testing.expectEqual(LoadOutcome.registered, bindNatives(&ptr));
+
+    // Every declared method was handed to RegisterNatives in one call — a
+    // partial registration would leave some actions bound and others throwing
+    // UnsatisfiedLinkError at their first use.
+    try testing.expectEqual(@as(jni.jint, @intCast(natives.len)), fake_registered_count);
+}
+
+test "each way the load can fail is reported as itself" {
+    // These are the three states an app can actually be in, and telling them
+    // apart is the difference between a one-line log and an afternoon: no
+    // runtime linked, a stale Kotlin holder, a descriptor that stopped
+    // matching.
+    var invoke = fakeVm();
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
+
+    fake_get_env_succeeds = false;
+    try testing.expectEqual(LoadOutcome.no_env, bindNatives(&ptr));
+
+    fake_get_env_succeeds = true;
+    fake_find_class_succeeds = false;
+    try testing.expectEqual(LoadOutcome.class_not_found, bindNatives(&ptr));
+
+    fake_find_class_succeeds = true;
+    fake_register_result = -1;
+    try testing.expectEqual(LoadOutcome.register_failed, bindNatives(&ptr));
+}
+
+test "JNI_OnLoad asks for the version Android actually provides, and captures the VM" {
     // Returning a version ART does not offer fails the whole library load, and
-    // the failure surfaces as an UnsatisfiedLinkError with no useful cause.
-    var table = std.mem.zeroes(jni.JNIInvokeInterface);
-    const ptr: *const jni.JNIInvokeInterface = &table;
+    // surfaces as an UnsatisfiedLinkError with no useful cause.
+    var invoke = fakeVm();
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
     try testing.expectEqual(jni.JNI_VERSION_1_6, JNI_OnLoad(&ptr, null));
 
-    // And it captured the VM, which is the handle a later off-thread callback
-    // has to go through.
+    // The VM is the one handle that may be cached across threads, and a later
+    // callback on a framework thread has nothing else to ask for its env.
     try testing.expect(vm() != null);
     java_vm = null;
 }
