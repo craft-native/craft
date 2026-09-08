@@ -2414,12 +2414,16 @@ class CraftBridge(
 
     @JavascriptInterface
     fun cancelNotification(id: String) {
+        if (CraftNative.cancelNotification(activity, id)) return
+
         val notificationManager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(id.hashCode())
     }
 
     @JavascriptInterface
     fun cancelAllNotifications() {
+        if (CraftNative.cancelAllNotifications(activity)) return
+
         val notificationManager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancelAll()
     }

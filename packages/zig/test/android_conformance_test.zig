@@ -46,6 +46,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
+    @embedFile("src/bridge_android_notifcancel.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -59,8 +60,9 @@ const zig_sources = [_][]const u8{
 /// clipboard pair, the first that do; 96 with openURL and share; 95 with
 /// getNetworkStatus, which iOS declares unavailable and Android can answer;
 /// 91 with the secure-storage quartet, the first to take a Kotlin-held object
-/// rather than the Activity; 89 with haptic and vibrate.
-const max_not_yet_migrated: usize = 89;
+/// rather than the Activity; 89 with haptic and vibrate; 87 with the
+/// notification cancels.
+const max_not_yet_migrated: usize = 87;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -156,6 +158,20 @@ const deliberate_deferrals = [_]Deferral{
     // page cannot tell, because the same call works on iOS. Tracked in #148.
     .{ .action = "setBadge", .reason = "the Kotlin discards the manager it builds and never reads count; there is no working contract to port" },
     .{ .action = "clearBadge", .reason = "delegates to setBadge, which does nothing" },
+
+    // Kotlin-held state, not a missing API. `setFlashlight` writes
+    // `isFlashlightOn` (`CraftBridge.kt:2011`) and `toggleFlashlight` reads it
+    // to decide what to flip to (`:2026`). Serving `setFlashlight` from Zig
+    // means the Kotlin's body never runs, so the field stops tracking the
+    // torch — and the next `toggleFlashlight` inverts a stale value and turns
+    // the light on when it is already on.
+    //
+    // Zig cannot update the field either: the natives are registered on
+    // `CraftNative`, which has no reference to the `CraftBridge` instance that
+    // owns it. Migrating the pair together would need the state to move too,
+    // and that is a change to the shim rather than a migration away from it.
+    .{ .action = "setFlashlight", .reason = "writes isFlashlightOn, which toggleFlashlight reads; Zig cannot reach the field" },
+    .{ .action = "toggleFlashlight", .reason = "reads isFlashlightOn, which only the Kotlin setFlashlight maintains" },
 };
 
 test "every recorded deferral is real, and still a deferral" {
@@ -189,7 +205,7 @@ test "every recorded deferral is real, and still a deferral" {
     }
 
     // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(deliberate_deferrals.len >= 2);
+    try testing.expect(deliberate_deferrals.len >= 4);
 
     // And the table cannot claim more than remain unmigrated.
     try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
