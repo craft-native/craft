@@ -124,6 +124,76 @@ fn collectZigActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     return set;
 }
 
+const Deferral = struct {
+    action: []const u8,
+    reason: []const u8,
+};
+
+/// Actions deliberately left on the Kotlin, with the reason each is left.
+///
+/// The iOS table this mirrors exists because three of its reasons had expired
+/// and nothing re-checked them — a migration is where prose goes stale fastest,
+/// since the thing a reason describes is exactly what the next commit changes.
+/// So the table arrives here with the first row that needs it rather than after
+/// the tenth, and the two guards below are the whole point: a row Zig starts
+/// serving fails, and so does a row naming an action the Kotlin no longer has.
+///
+/// Deliberately non-exhaustive. Ninety-one actions are unmigrated and almost
+/// all of them are simply not reached yet, which is an honest state that needs
+/// no row. A reason is owed only where someone would otherwise try and find
+/// out the hard way — and demanding one for the rest would invite an invented
+/// reason, which is worse than silence.
+const deliberate_deferrals = [_]Deferral{
+    // Not a capability gap: the Kotlin builds a `NotificationManagerCompat`,
+    // discards it, never reads `count`, and returns. The real work is left as
+    // two comments. Migrating it would mean porting a no-op — the same reason
+    // the iOS table refuses `startVideoRecording`, whose success path has never
+    // run.
+    //
+    // Android has no first-party badge API and the Kotlin's comment is right
+    // about that; launchers implement it through vendor broadcasts. But the
+    // page cannot tell, because the same call works on iOS. Tracked in #148.
+    .{ .action = "setBadge", .reason = "the Kotlin discards the manager it builds and never reads count; there is no working contract to port" },
+    .{ .action = "clearBadge", .reason = "delegates to setBadge, which does nothing" },
+};
+
+test "every recorded deferral is real, and still a deferral" {
+    // The anti-rot property. A deferral that has been migrated must fail here
+    // rather than sit in a list telling the next reader not to bother.
+    var spec = try collectSpecActions(testing.allocator);
+    defer spec.deinit();
+
+    var zig = try collectZigActions(testing.allocator);
+    defer zig.deinit();
+
+    for (deliberate_deferrals) |d| {
+        if (!spec.contains(d.action)) {
+            std.debug.print(
+                "the deferral table names `{s}`, which CraftBridge.kt does not expose — " ++
+                    "typo, or the method was renamed.\n",
+                .{d.action},
+            );
+            return error.DeferralNamesNoSuchAction;
+        }
+        if (zig.contains(d.action)) {
+            std.debug.print(
+                "the deferral table still lists `{s}`, but Zig serves it now — " ++
+                    "delete the row, its reason is spent.\n",
+                .{d.action},
+            );
+            return error.DeferralAlreadyMigrated;
+        }
+        // A reason is the entire point of the row.
+        try testing.expect(d.reason.len > 0);
+    }
+
+    // Non-vacuity: the loop above is satisfied by an empty table.
+    try testing.expect(deliberate_deferrals.len >= 2);
+
+    // And the table cannot claim more than remain unmigrated.
+    try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
+}
+
 test "the spec scan finds the bridge, and finds methods in it" {
     // Non-vacuity, first. Every assertion below is a membership check, and a
     // scan that silently matched nothing would satisfy all of them.
