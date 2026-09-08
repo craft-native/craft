@@ -342,6 +342,13 @@ pub fn build(b: *std.Build) void {
         // The storage module is Keychain: SecItemAdd and the kSec* constants
         // live in Security.framework.
         ios_surface_tests.root_module.linkFramework("Security", .{});
+        // And Carbon, for the same reason as the paragraph above rather than a
+        // new one: the desktop arm this drags in reaches `bridge_shortcuts.zig`,
+        // which imports `macos_hotkey.zig` and its `RegisterEventHotKey`
+        // externs. Nothing in the iOS surface names a hotkey — the dependency
+        // arrives through the reply path, which is precisely the code this gate
+        // exists to compile.
+        ios_surface_tests.root_module.linkFramework("Carbon", .{});
         ios_surface_tests.root_module.addCSourceFile(.{
             .file = b.path("vendor/sqlite/sqlite3.c"),
             .flags = &.{ "-DSQLITE_THREADSAFE=1", "-DSQLITE_ENABLE_FTS5", "-DSQLITE_ENABLE_JSON1" },
@@ -1353,6 +1360,14 @@ pub fn build(b: *std.Build) void {
             system_tray_tests.root_module.linkFramework("Cocoa", .{});
             system_tray_tests.root_module.linkFramework("WebKit", .{});
             system_tray_tests.root_module.linkFramework("CoreMIDI", .{});
+            // Carbon, because `tray.zig` reaches it: tray.zig imports
+            // macos.zig, which imports bridge_shortcuts.zig, which imports
+            // macos_hotkey.zig and its `RegisterEventHotKey` externs. Nothing
+            // in tray.zig names a hotkey, so the dependency is four files away
+            // and invisible from here — which is how both of these artifacts
+            // came to list Cocoa, WebKit and CoreMIDI by hand and miss the one
+            // framework they actually could not link without.
+            system_tray_tests.root_module.linkFramework("Carbon", .{});
             applySdkPaths(b, system_tray_tests.root_module, macos_sdk);
         },
         .linux => {
@@ -1378,6 +1393,14 @@ pub fn build(b: *std.Build) void {
             system_tray_benchmark.root_module.linkFramework("Cocoa", .{});
             system_tray_benchmark.root_module.linkFramework("WebKit", .{});
             system_tray_benchmark.root_module.linkFramework("CoreMIDI", .{});
+            // Carbon, because `tray.zig` reaches it: tray.zig imports
+            // macos.zig, which imports bridge_shortcuts.zig, which imports
+            // macos_hotkey.zig and its `RegisterEventHotKey` externs. Nothing
+            // in tray.zig names a hotkey, so the dependency is four files away
+            // and invisible from here — which is how both of these artifacts
+            // came to list Cocoa, WebKit and CoreMIDI by hand and miss the one
+            // framework they actually could not link without.
+            system_tray_benchmark.root_module.linkFramework("Carbon", .{});
             applySdkPaths(b, system_tray_benchmark.root_module, macos_sdk);
         },
         .linux => {
