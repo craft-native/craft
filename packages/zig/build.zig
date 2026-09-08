@@ -411,6 +411,31 @@ pub fn build(b: *std.Build) void {
     // pointers, so the tests build one out of Zig functions and run anywhere —
     // no JVM, no emulator, no NDK. That is the whole reason the layer is shaped
     // the way it is.
+    // The Android action ratchet, and the JNI binding contract. Separate from
+    // the iOS gate for the obvious reason and from the surface gate for a
+    // subtler one: this is about what Zig owes Kotlin, not about what either
+    // owes the page.
+    const android_conformance_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/android_conformance_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    android_conformance_tests.root_module.addAnonymousImport("CraftBridge.kt", .{
+        .root_source_file = b.path("../android/templates/CraftBridge.kt.template"),
+    });
+    android_conformance_tests.root_module.addAnonymousImport("CraftNative.kt", .{
+        .root_source_file = b.path("../android/templates/CraftNative.kt.template"),
+    });
+    android_conformance_tests.root_module.addAnonymousImport("src/android_dispatch.zig", .{
+        .root_source_file = b.path("src/android_dispatch.zig"),
+    });
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_device.zig", .{
+        .root_source_file = b.path("src/bridge_android_device.zig"),
+    });
+    const run_android_conformance_tests = b.addRunArtifact(android_conformance_tests);
+
     // The page surface, across both bridges. Not folded into the iOS
     // conformance gate: it embeds three files and is about what `window.craft`
     // offers rather than about iOS, and the iOS gate is already the largest
@@ -1597,6 +1622,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ios_conformance_tests.step);
     test_step.dependOn(&run_jni_tests.step);
     test_step.dependOn(&run_bridge_surface_tests.step);
+    test_step.dependOn(&run_android_conformance_tests.step);
     test_step.dependOn(&run_android_bridge_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
@@ -2325,6 +2351,7 @@ pub fn build(b: *std.Build) void {
     // so a run that skipped it would not be an Android test run.
     test_android_step.dependOn(&run_jni_tests.step);
     test_android_step.dependOn(&run_bridge_surface_tests.step);
+    test_android_step.dependOn(&run_android_conformance_tests.step);
     test_android_step.dependOn(&run_android_bridge_tests.step);
 
     // Add Android tests to the main test step
