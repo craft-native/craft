@@ -40,6 +40,7 @@ const device = @import("bridge_android_device.zig");
 const system = @import("bridge_android_system.zig");
 const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
+const network = @import("bridge_android_network.zig");
 
 const Jni = jni.Jni;
 
@@ -158,6 +159,11 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeShare",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeShare),
+    },
+    .{
+        .name = "nativeGetNetworkStatus",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeGetNetworkStatus),
     },
 };
 
@@ -365,6 +371,23 @@ fn nativeShare(
     return jni.JNI_TRUE;
 }
 
+fn nativeGetNetworkStatus(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const status = network.read(j, activity) catch |err| {
+        std.log.warn("craft: getNetworkStatus fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const json = network.render(allocator, status) catch return null;
+    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
+    @memcpy(owned, json);
+    return j.newStringUtf(owned.ptr) catch null;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -476,7 +499,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 7), natives.len);
+    try testing.expectEqual(@as(usize, 8), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
