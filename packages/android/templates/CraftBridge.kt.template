@@ -3333,6 +3333,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun setSharedItem(key: String, value: String, group: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.setSharedItem(activity, key, value, group)) return
+
         try {
             val prefsName = if (group.isNotEmpty()) "craft_shared_$group" else "craft_shared"
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
@@ -3356,6 +3360,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getSharedItem(key: String, group: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.getSharedItem(activity, key, group)) return
+
         try {
             val prefsName = if (group.isNotEmpty()) "craft_shared_$group" else "craft_shared"
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
@@ -3386,6 +3394,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun removeSharedItem(key: String, group: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.removeSharedItem(activity, key, group)) return
+
         try {
             val prefsName = if (group.isNotEmpty()) "craft_shared_$group" else "craft_shared"
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)

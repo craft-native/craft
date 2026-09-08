@@ -48,6 +48,7 @@ const notifcancel = @import("bridge_android_notifcancel.zig");
 const events = @import("android_events.zig");
 const calendar = @import("bridge_android_calendar.zig");
 const db = @import("bridge_android_db.zig");
+const shareditem = @import("bridge_android_shareditem.zig");
 
 const Jni = jni.Jni;
 
@@ -261,6 +262,21 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeDbQuery",
         .signature = "(Landroid/database/sqlite/SQLiteDatabase;Ljava/lang/String;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeDbQuery),
+    },
+    .{
+        .name = "nativeSetSharedItem",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeSetSharedItem),
+    },
+    .{
+        .name = "nativeGetSharedItem",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeGetSharedItem),
+    },
+    .{
+        .name = "nativeRemoveSharedItem",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeRemoveSharedItem),
     },
 };
 
@@ -882,6 +898,90 @@ fn nativeDbQuery(
     return jni.JNI_TRUE;
 }
 
+/// `nativeSetSharedItem(activity, key, value, group)`.
+fn nativeSetSharedItem(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    key: jni.jstring,
+    value: jni.jstring,
+    group: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
+    const value_text = j.stringToUtf8(allocator, value) catch return jni.JNI_FALSE;
+    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+
+    shareditem.set(j, allocator, activity, group_text, key_text, value_text) catch |err| {
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    const payload = shareditem.successPayload(allocator, key_text) catch return jni.JNI_FALSE;
+    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeGetSharedItem(activity, key, group)`.
+///
+/// An absent key resolves with `{value: null}` rather than rejecting, which is
+/// the shim's answer: a page reading a key it never wrote has done nothing
+/// wrong.
+fn nativeGetSharedItem(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    key: jni.jstring,
+    group: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
+    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+
+    const value = shareditem.get(j, allocator, activity, group_text, key_text) catch |err| {
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    const payload = shareditem.valuePayload(allocator, key_text, value) catch return jni.JNI_FALSE;
+    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeRemoveSharedItem(activity, key, group)`.
+fn nativeRemoveSharedItem(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    key: jni.jstring,
+    group: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
+    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+
+    shareditem.remove(j, allocator, activity, group_text, key_text) catch |err| {
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    const payload = shareditem.successPayload(allocator, key_text) catch return jni.JNI_FALSE;
+    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -993,7 +1093,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 21), natives.len);
+    try testing.expectEqual(@as(usize, 24), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
