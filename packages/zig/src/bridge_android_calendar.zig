@@ -41,6 +41,7 @@ const jobject = jni.jobject;
 pub const A = struct {
     pub const delete_calendar_event = "deleteCalendarEvent";
     pub const get_calendar_events = "getCalendarEvents";
+    pub const create_calendar_event = "createCalendarEvent";
 };
 
 /// The globals the injected JS assigns for each action.
@@ -52,6 +53,8 @@ pub const resolve_global = "_craftDeleteEventResolve";
 pub const reject_global = "_craftDeleteEventReject";
 pub const list_resolve_global = "_craftCalendarResolve";
 pub const list_reject_global = "_craftCalendarReject";
+pub const create_resolve_global = "_craftCreateEventResolve";
+pub const create_reject_global = "_craftCreateEventReject";
 
 /// `Long.parseLong(text)`, or null where Java would throw.
 ///
@@ -122,25 +125,26 @@ pub fn deleteEvent(j: Jni, activity: jobject, id: i64) !void {
 /// call being inline — `events.settle` sends the payload as written, so a raw
 /// message would emit a script that does not parse. See the module comment.
 pub fn rejectWith(allocator: std.mem.Allocator, message: []const u8) !void {
-    const payload = try rejectPayload(allocator, message);
-    defer allocator.free(payload);
-    try events.settle(allocator, reject_global, payload);
+    try rejectOn(allocator, reject_global, message);
 }
 
-/// `message` as a JSON string, quotes included.
+/// `text` as a JSON string, quotes included.
+///
+/// Used for a rejection message and for the id `createCalendarEvent` resolves
+/// with, both of which are page-visible text that has to survive a quote.
 ///
 /// Split out so the test exercises this rather than a copy of it. An earlier
-/// version inlined the escaping here and asserted on the same three lines
-/// rewritten in the test — which passed happily when the escaping was removed
-/// from the code, because the test was not calling the code.
-pub fn rejectPayload(allocator: std.mem.Allocator, message: []const u8) ![]u8 {
+/// version inlined the escaping at the call site and asserted on the same
+/// three lines rewritten in the test — which passed happily when the escaping
+/// was removed from the code, because the test was not calling the code.
+pub fn jsonString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
     var payload: std.ArrayListUnmanaged(u8) = .empty;
     errdefer payload.deinit(allocator);
 
     // The quotes are this caller's job: `appendJsonEscaped` escapes the
     // contents and writes no delimiters.
     try payload.append(allocator, '"');
-    try bridge_error.appendJsonEscaped(allocator, &payload, message);
+    try bridge_error.appendJsonEscaped(allocator, &payload, text);
     try payload.append(allocator, '"');
 
     return payload.toOwnedSlice(allocator);
@@ -417,6 +421,243 @@ fn columnText(
 }
 
 // =============================================================================
+// createCalendarEvent
+// =============================================================================
+//
+// ## Which payloads this serves, and which it hands back
+//
+// The shim reads the event through `org.json`, whose accessors coerce: a
+// `startDate` sent as the string "1700000000000" is a number to `optLong`, a
+// `title` sent as `1.5` is the string "1.5" to `optString`, and reproducing
+// `Double.toString` exactly is not something to guess at.
+//
+// So the rule here is narrow and stated rather than approximated: Zig serves
+// the shape `NewCalendarEvent` declares — strings for the text, numbers for
+// the dates, a boolean for the flag — plus absent keys and explicit nulls. A
+// payload of any other shape makes `parseNewEvent` return null, the native
+// returns false, and the shim reads it with the coercions it already has. The
+// page sees no difference; nothing has been settled at that point.
+//
+// The one coercion that *is* reproduced is the surprising one. `optString` on
+// an explicit JSON null returns the four characters "null", because
+// `JSONObject.NULL.toString()` is "null" and `JSON.toString` reaches for
+// `toString` on anything that is not already a String. `{"location":null}` is
+// an ordinary thing for `JSON.stringify` to produce, so this is a live path
+// and not a curiosity.
+
+/// `CalendarContract.Events.CALENDAR_ID`, `EVENT_TIMEZONE` — the two columns
+/// the shim fills without being asked.
+const col_calendar_id = "calendar_id";
+const col_event_timezone = "eventTimezone";
+
+/// The shim writes calendar 1 unconditionally.
+///
+/// Not the primary calendar, not the first visible one — the row whose `_id`
+/// is 1, whatever that happens to be on the device. Reproduced because it is
+/// what the shim does, and because an event landing in a different calendar
+/// than before would be a behaviour change nobody asked for.
+const default_calendar_id: i32 = 1;
+
+/// The event to insert, in the shape `NewCalendarEvent` declares.
+pub const NewEvent = struct {
+    title: []const u8,
+    notes: []const u8,
+    location: []const u8,
+    start_date: i64,
+    end_date: i64,
+    all_day: bool,
+};
+
+/// Read the declared shape, or null where only `org.json`'s coercions would.
+///
+/// `default_start` and `default_end` are the shim's two separate
+/// `System.currentTimeMillis()` calls — separate because Kotlin evaluates each
+/// argument as its `put` runs, so the default end really can be a millisecond
+/// more than `start + 3600000`.
+pub fn parseNewEvent(value: std.json.Value, default_start: i64, default_end: i64) ?NewEvent {
+    const object = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    return .{
+        .title = optString(object, "title") orelse return null,
+        .notes = optString(object, "notes") orelse return null,
+        .location = optString(object, "location") orelse return null,
+        .start_date = optLong(object, "startDate", default_start) orelse return null,
+        .end_date = optLong(object, "endDate", default_end) orelse return null,
+        .all_day = optBoolean(object, "isAllDay") orelse return null,
+    };
+}
+
+/// `event.optString(name, "")`, for the shapes this serves.
+///
+/// Outer null means "a shape the shim would coerce and this will not".
+fn optString(object: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const value = object.get(name) orelse return "";
+    return switch (value) {
+        .string => |text| text,
+        // `JSONObject.NULL.toString()`. Not a typo and not a fallback: the
+        // shim really does store the four characters.
+        .null => "null",
+        else => null,
+    };
+}
+
+/// `event.optLong(name, fallback)`, for the shapes this serves.
+fn optLong(object: std.json.ObjectMap, name: []const u8, fallback: i64) ?i64 {
+    const value = object.get(name) orelse return fallback;
+    return switch (value) {
+        .integer => |n| n,
+        // `JSON.toLong(NULL)` is null, so the fallback wins — unlike
+        // `optString`, where the same null becomes text.
+        .null => fallback,
+        else => null,
+    };
+}
+
+/// `event.optBoolean(name, false)`, for the shapes this serves.
+fn optBoolean(object: std.json.ObjectMap, name: []const u8) ?bool {
+    const value = object.get(name) orelse return false;
+    return switch (value) {
+        .bool => |b| b,
+        .null => false,
+        else => null,
+    };
+}
+
+/// `contentResolver.insert(Events.CONTENT_URI, values)`, and the id it lands at.
+///
+/// Returns `uri?.lastPathSegment ?: ""` — so a provider that refuses the insert
+/// resolves the page's promise with an empty string rather than rejecting,
+/// which is the shim's answer and not an improvement on it.
+pub fn insertEvent(j: Jni, allocator: std.mem.Allocator, activity: jobject, event: NewEvent) ![]u8 {
+    try j.pushLocalFrame(32);
+    defer _ = j.popLocalFrame(null);
+
+    const values_cls = try j.findClass("android/content/ContentValues");
+    const values = try j.newObjectA(values_cls, try j.methodId(values_cls, "<init>", "()V"), &.{});
+
+    // `ContentValues.put` is overloaded on the *boxed* types, so each number
+    // has to be boxed before it can be put.
+    const put_string = try j.methodId(values_cls, "put", "(Ljava/lang/String;Ljava/lang/String;)V");
+    const put_long = try j.methodId(values_cls, "put", "(Ljava/lang/String;Ljava/lang/Long;)V");
+    const put_int = try j.methodId(values_cls, "put", "(Ljava/lang/String;Ljava/lang/Integer;)V");
+
+    try putString(j, allocator, values, put_string, col_title, event.title);
+    try putString(j, allocator, values, put_string, col_description, event.notes);
+    try putString(j, allocator, values, put_string, col_event_location, event.location);
+    try putLong(j, values, put_long, col_dtstart, event.start_date);
+    try putLong(j, values, put_long, col_dtend, event.end_date);
+    try putInt(j, values, put_int, col_all_day, if (event.all_day) 1 else 0);
+    try putInt(j, values, put_int, col_calendar_id, default_calendar_id);
+
+    // `TimeZone.getDefault().id`. The provider needs one, and an event
+    // inserted without it reads back at the wrong hour.
+    const timezone_cls = try j.findClass("java/util/TimeZone");
+    const timezone = try j.callStaticObjectMethodA(
+        timezone_cls,
+        try j.staticMethodId(timezone_cls, "getDefault", "()Ljava/util/TimeZone;"),
+        &.{},
+    );
+    const timezone_id = try j.callObjectMethod(
+        timezone,
+        try j.methodId(try j.objectClass(timezone), "getID", "()Ljava/lang/String;"),
+    );
+    try j.callVoidMethodA(values, put_string, &.{
+        .{ .l = try j.newStringUtf(col_event_timezone) },
+        .{ .l = timezone_id },
+    });
+
+    const events_cls = try j.findClass("android/provider/CalendarContract$Events");
+    const content_uri = try j.staticObjectField(
+        events_cls,
+        try j.staticFieldId(events_cls, "CONTENT_URI", "Landroid/net/Uri;"),
+    );
+
+    const activity_cls = try j.objectClass(activity);
+    const resolver = try j.callObjectMethod(
+        activity,
+        try j.methodId(activity_cls, "getContentResolver", "()Landroid/content/ContentResolver;"),
+    );
+
+    const uri = try j.callObjectMethodA(
+        resolver,
+        try j.methodId(
+            try j.objectClass(resolver),
+            "insert",
+            "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;",
+        ),
+        &.{ .{ .l = content_uri }, .{ .l = values } },
+    );
+
+    if (uri == null) return allocator.dupe(u8, "");
+
+    const segment = try j.callObjectMethod(
+        uri,
+        try j.methodId(try j.objectClass(uri), "getLastPathSegment", "()Ljava/lang/String;"),
+    );
+    if (segment == null) return allocator.dupe(u8, "");
+    return j.stringToUtf8(allocator, segment);
+}
+
+fn putString(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    values: jobject,
+    put: jni.jmethodID,
+    column: [:0]const u8,
+    text: []const u8,
+) !void {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    // `NewStringUTF` needs a NUL terminator, and a title is arbitrary page
+    // text — so it is copied rather than pointed at.
+    const terminated = try allocator.allocSentinel(u8, text.len, 0);
+    defer allocator.free(terminated);
+    @memcpy(terminated, text);
+
+    try j.callVoidMethodA(values, put, &.{
+        .{ .l = try j.newStringUtf(column) },
+        .{ .l = try j.newStringUtf(terminated.ptr) },
+    });
+}
+
+fn putLong(j: Jni, values: jobject, put: jni.jmethodID, column: [:0]const u8, value: i64) !void {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const long_cls = try j.findClass("java/lang/Long");
+    const boxed = try j.callStaticObjectMethodA(
+        long_cls,
+        try j.staticMethodId(long_cls, "valueOf", "(J)Ljava/lang/Long;"),
+        &.{.{ .j = value }},
+    );
+    try j.callVoidMethodA(values, put, &.{ .{ .l = try j.newStringUtf(column) }, .{ .l = boxed } });
+}
+
+fn putInt(j: Jni, values: jobject, put: jni.jmethodID, column: [:0]const u8, value: i32) !void {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const integer_cls = try j.findClass("java/lang/Integer");
+    const boxed = try j.callStaticObjectMethodA(
+        integer_cls,
+        try j.staticMethodId(integer_cls, "valueOf", "(I)Ljava/lang/Integer;"),
+        &.{.{ .i = value }},
+    );
+    try j.callVoidMethodA(values, put, &.{ .{ .l = try j.newStringUtf(column) }, .{ .l = boxed } });
+}
+
+/// `message` as a JSON string, for whichever reject global the caller owns.
+pub fn rejectOn(allocator: std.mem.Allocator, global: []const u8, message: []const u8) !void {
+    const payload = try jsonString(allocator, message);
+    defer allocator.free(payload);
+    try events.settle(allocator, global, payload);
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -450,7 +691,7 @@ test "a rejection message with a quote is escaped rather than emitted raw" {
     // The bug that used to be one line away. Before #154 the shim turned an id
     // of `1'x` into `…Reject('For input string: "1'x"')`, which does not parse
     // — so evaluateJavascript ran nothing and the promise never settled.
-    const payload = try rejectPayload(testing.allocator, "For input string: \"1'x\"");
+    const payload = try jsonString(testing.allocator, "For input string: \"1'x\"");
     defer testing.allocator.free(payload);
 
     // Valid JSON, and it round-trips to exactly the original message.
@@ -622,4 +863,147 @@ test "getCalendarEvents names its action and globals as the shim does" {
     try testing.expectEqualStrings("getCalendarEvents", A.get_calendar_events);
     try testing.expectEqualStrings("_craftCalendarResolve", list_resolve_global);
     try testing.expectEqualStrings("_craftCalendarReject", list_reject_global);
+}
+
+// --- createCalendarEvent ---------------------------------------------------
+
+fn parseEvent(json: []const u8, default_start: i64, default_end: i64) !?NewEvent {
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+    defer parsed.deinit();
+
+    // The strings borrow from `parsed`, so anything a caller keeps has to be
+    // read before this returns. Every test below asserts inside its own call.
+    const event = parseNewEvent(parsed.value, default_start, default_end) orelse return null;
+    return NewEvent{
+        .title = try testing.allocator.dupe(u8, event.title),
+        .notes = try testing.allocator.dupe(u8, event.notes),
+        .location = try testing.allocator.dupe(u8, event.location),
+        .start_date = event.start_date,
+        .end_date = event.end_date,
+        .all_day = event.all_day,
+    };
+}
+
+fn freeEvent(event: NewEvent) void {
+    testing.allocator.free(event.title);
+    testing.allocator.free(event.notes);
+    testing.allocator.free(event.location);
+}
+
+test "the declared shape reads straight through" {
+    const event = (try parseEvent(
+        \\{"title":"Standup","notes":"daily","location":"Room 2",
+        \\ "startDate":1700000000000,"endDate":1700000900000,"isAllDay":false}
+    , 1, 2)).?;
+    defer freeEvent(event);
+
+    try testing.expectEqualStrings("Standup", event.title);
+    try testing.expectEqualStrings("daily", event.notes);
+    try testing.expectEqualStrings("Room 2", event.location);
+    try testing.expectEqual(@as(i64, 1700000000000), event.start_date);
+    try testing.expectEqual(@as(i64, 1700000900000), event.end_date);
+    try testing.expect(!event.all_day);
+}
+
+test "absent keys take the shim's defaults" {
+    // `optString(name, "")`, `optLong(name, now)`, `optBoolean(name, false)`.
+    // The two date defaults are separate arguments because the shim calls
+    // System.currentTimeMillis() twice, once per put.
+    const event = (try parseEvent("{}", 111, 222)).?;
+    defer freeEvent(event);
+
+    try testing.expectEqualStrings("", event.title);
+    try testing.expectEqualStrings("", event.notes);
+    try testing.expectEqualStrings("", event.location);
+    try testing.expectEqual(@as(i64, 111), event.start_date);
+    try testing.expectEqual(@as(i64, 222), event.end_date);
+    try testing.expect(!event.all_day);
+}
+
+test "an explicit null is text to optString and a fallback to optLong" {
+    // The org.json quirk, and the reason it is worth a test rather than a
+    // comment: `JSONObject.NULL.toString()` is "null", so `optString` hands
+    // back four characters where every other accessor hands back the default.
+    // `JSON.stringify({location: null})` produces this every day.
+    const event = (try parseEvent(
+        \\{"title":null,"notes":null,"location":null,"startDate":null,"endDate":null,"isAllDay":null}
+    , 111, 222)).?;
+    defer freeEvent(event);
+
+    try testing.expectEqualStrings("null", event.title);
+    try testing.expectEqualStrings("null", event.notes);
+    try testing.expectEqualStrings("null", event.location);
+    try testing.expectEqual(@as(i64, 111), event.start_date);
+    try testing.expectEqual(@as(i64, 222), event.end_date);
+    try testing.expect(!event.all_day);
+}
+
+test "a shape only org.json would coerce is handed back rather than guessed at" {
+    // Each of these is something `optString`/`optLong`/`optBoolean` reads
+    // happily and this does not. Returning null sends the native down its
+    // false path, the shim reads it, and the page cannot tell — which is the
+    // whole reason the rule can be this narrow.
+    for ([_][]const u8{
+        // A number where NewCalendarEvent declares a string: optString would
+        // give "1.5", and reproducing Double.toString is not a guess to make.
+        \\{"title":1.5}
+        ,
+        \\{"title":7}
+        ,
+        \\{"location":true}
+        ,
+        // A string where it declares a number: optLong parses it as a double
+        // and truncates, so "1.9" is 1.
+        \\{"startDate":"1700000000000"}
+        ,
+        \\{"endDate":"1.9"}
+        ,
+        // A float where it declares a number: optLong truncates toward zero.
+        \\{"startDate":1.9}
+        ,
+        // optBoolean reads "true" and "false" case-insensitively.
+        \\{"isAllDay":"true"}
+        ,
+        \\{"isAllDay":1}
+        ,
+        // Not an object at all.
+        \\[]
+        ,
+        \\"title"
+        ,
+    }) |payload| {
+        const event = try parseEvent(payload, 1, 2);
+        if (event) |kept| {
+            freeEvent(kept);
+            std.debug.print("payload was served rather than handed back: {s}\n", .{payload});
+            return error.CoercedShapeAccepted;
+        }
+    }
+}
+
+test "the columns createCalendarEvent fills are the shim's" {
+    try testing.expectEqualStrings("calendar_id", col_calendar_id);
+    try testing.expectEqualStrings("eventTimezone", col_event_timezone);
+
+    // The shim writes calendar 1 unconditionally — not the primary calendar,
+    // the row whose _id is 1. Written down because it looks like a bug and is
+    // instead a faithful port of one.
+    try testing.expectEqual(@as(i32, 1), default_calendar_id);
+}
+
+test "createCalendarEvent names its action and globals as the shim does" {
+    try testing.expectEqualStrings("createCalendarEvent", A.create_calendar_event);
+    try testing.expectEqualStrings("_craftCreateEventResolve", create_resolve_global);
+    try testing.expectEqualStrings("_craftCreateEventReject", create_reject_global);
+}
+
+test "an id carrying a quote resolves as JSON rather than breaking the reply" {
+    // `uri.lastPathSegment` is provider-controlled text, and it goes to the
+    // page through the same channel a rejection does.
+    const payload = try jsonString(testing.allocator, "17'x");
+    defer testing.allocator.free(payload);
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings("17'x", parsed.value.string);
 }

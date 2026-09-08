@@ -2331,6 +2331,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun createCalendarEvent(eventJson: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.createCalendarEvent(activity, eventJson)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_CALENDAR), REQUEST_CALENDAR)

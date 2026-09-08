@@ -65,8 +65,8 @@ const zig_sources = [_][]const u8{
 /// notification cancels; 86 with deleteCalendarEvent, the first to answer
 /// through the reply channel rather than by returning; 85 with
 /// getCalendarEvents, the first to send the page a payload it built rather
-/// than a constant.
-const max_not_yet_migrated: usize = 85;
+/// than a constant; 84 with createCalendarEvent, the first to read one.
+const max_not_yet_migrated: usize = 84;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

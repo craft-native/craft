@@ -109,6 +109,7 @@ object CraftNative {
     private external fun nativeCancelAllNotifications(activity: Activity): Boolean
     private external fun nativeDeleteCalendarEvent(activity: Activity, eventId: String): Boolean
     private external fun nativeGetCalendarEvents(activity: Activity, startDateMs: Long, endDateMs: Long): Boolean
+    private external fun nativeCreateCalendarEvent(activity: Activity, eventJson: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -363,6 +364,23 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeGetCalendarEvents(activity, startDateMs, endDateMs)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig took the action.
+     *
+     * A false here is routine rather than exceptional: Zig serves the shape
+     * `NewCalendarEvent` declares and hands anything else back, because
+     * `org.json` coerces where a strict parser refuses. The Kotlin below is
+     * what answers those.
+     */
+    fun createCalendarEvent(activity: Activity, eventJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeCreateCalendarEvent(activity, eventJson)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
