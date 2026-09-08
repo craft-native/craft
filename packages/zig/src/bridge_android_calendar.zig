@@ -1,28 +1,26 @@
 //! `deleteCalendarEvent` on Android — the first action here that answers
 //! through the reply channel rather than by returning.
 //!
-//! ## What the shim does, and the one thing this does not reproduce
+//! ## What the shim does
 //!
 //! The Kotlin builds a content URI from the event id, deletes through the
 //! `ContentResolver`, and resolves `true`; on any exception it rejects with
 //! the message. That is all ported.
 //!
-//! What is not ported is how it *sends* the rejection:
+//! The rejection is built as JSON through `bridge_error.appendJsonEscaped`
+//! rather than pasted into a quoted string. When this module was written the
+//! shim did the latter —
 //!
 //!     "window._craftDeleteEventReject && window._craftDeleteEventReject('${e.message}')"
 //!
-//! The message goes into a single-quoted JavaScript string with no escaping,
-//! and `eventId.toLong()` puts the caller's own text in that message —
-//! `NumberFormatException: For input string: "1'x"`. A `'` in the id therefore
-//! produces a script that does not parse, `evaluateJavascript` runs nothing,
-//! and **neither the resolve nor the reject fires**. The promise never
-//! settles, and the injected JS builds it by hand with no timeout, so the page
-//! waits forever with nothing in the console.
-//!
-//! Here the payload is built as JSON through `bridge_error.appendJsonEscaped`,
-//! so the same id rejects normally. That is a divergence in the page's favour
-//! and it is deliberate; the shim keeps the bug on the twenty other paths
-//! until #154 is fixed.
+//! — and `eventId.toLong()` puts the caller's own text in that message, so
+//! `craft.calendar.delete("1'x")` produced a script that did not parse:
+//! `evaluateJavascript` ran nothing, neither the resolve nor the reject fired,
+//! and the hand-built promise had no timeout to notice. #154 fixed all
+//! fifty-eight such emissions, and `android_reply_escaping_test` now keeps
+//! them fixed, so this is no longer a divergence — but the escaping stays
+//! here, because `events.settle` takes a payload that is already JSON and this
+//! module is what has to produce it.
 //!
 //! ## `toLong()` is reproduced exactly, including what it refuses
 //!
@@ -114,7 +112,8 @@ pub fn deleteEvent(j: Jni, activity: jobject, id: i64) !void {
 /// Reject with `message`, escaped.
 ///
 /// The escaping is the whole point of this function existing rather than the
-/// call being inline — see the module comment and #154.
+/// call being inline — `events.settle` sends the payload as written, so a raw
+/// message would emit a script that does not parse. See the module comment.
 pub fn rejectWith(allocator: std.mem.Allocator, message: []const u8) !void {
     const payload = try rejectPayload(allocator, message);
     defer allocator.free(payload);
@@ -171,9 +170,9 @@ test "an id Java would refuse is refused here too" {
 }
 
 test "a rejection message with a quote is escaped rather than emitted raw" {
-    // The bug this action does not reproduce. On the shim, an id of `1'x`
-    // produces `…Reject('For input string: "1'x"')`, which does not parse — so
-    // evaluateJavascript runs nothing and the promise never settles.
+    // The bug that used to be one line away. Before #154 the shim turned an id
+    // of `1'x` into `…Reject('For input string: "1'x"')`, which does not parse
+    // — so evaluateJavascript ran nothing and the promise never settled.
     const payload = try rejectPayload(testing.allocator, "For input string: \"1'x\"");
     defer testing.allocator.free(payload);
 
