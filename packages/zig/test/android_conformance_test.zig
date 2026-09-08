@@ -44,6 +44,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_clipboard.zig"),
     @embedFile("src/bridge_android_intents.zig"),
     @embedFile("src/bridge_android_network.zig"),
+    @embedFile("src/bridge_android_securestore.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -55,8 +56,10 @@ const zig_sources = [_][]const u8{
 /// History: 103 at the seam; 102 with getDeviceInfo; 100 with getMemoryUsage
 /// and log — the first two that need no Activity at all; 98 with the
 /// clipboard pair, the first that do; 96 with openURL and share; 95 with
-/// getNetworkStatus, which iOS declares unavailable and Android can answer.
-const max_not_yet_migrated: usize = 95;
+/// getNetworkStatus, which iOS declares unavailable and Android can answer;
+/// 91 with the secure-storage quartet, the first to take a Kotlin-held object
+/// rather than the Activity.
+const max_not_yet_migrated: usize = 91;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

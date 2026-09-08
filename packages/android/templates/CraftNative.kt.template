@@ -1,6 +1,8 @@
 package com.craft.runtime
 
 import android.app.Activity
+import android.content.SharedPreferences
+import org.json.JSONObject
 
 /**
  * The Zig runtime's native methods.
@@ -64,6 +66,10 @@ object CraftNative {
     private external fun nativeOpenUrl(activity: Activity, url: String): Boolean
     private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
     private external fun nativeGetNetworkStatus(activity: Activity): String?
+    private external fun nativeSecureSet(prefs: SharedPreferences, key: String, value: String): Boolean
+    private external fun nativeSecureGet(prefs: SharedPreferences, key: String): String?
+    private external fun nativeSecureRemove(prefs: SharedPreferences, key: String): Boolean
+    private external fun nativeSecureClear(prefs: SharedPreferences): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -174,6 +180,73 @@ object CraftNative {
             nativeGetNetworkStatus(activity)
         } catch (e: UnsatisfiedLinkError) {
             null
+        }
+    }
+
+    /**
+     * The three answers a secure read can give.
+     *
+     * `secureGet` returns `String?` to the page, where null means "no such
+     * key". The seam needs to say "Zig did not serve this" as well, and a
+     * nullable String cannot carry both — an absent key and a declined call
+     * lead to different code. There is no spare value to steal either: `""` is
+     * a legitimate stored value, and so is any sentinel a caller could have
+     * saved.
+     */
+    sealed class SecureRead {
+        /** Zig did not serve the call; run the Kotlin implementation. */
+        object Declined : SecureRead()
+
+        /** Zig served it and the key is not present. */
+        object NotFound : SecureRead()
+
+        /** Zig served it and the key holds [value], which may be empty. */
+        data class Found(val value: String) : SecureRead()
+    }
+
+    fun secureSet(prefs: SharedPreferences, key: String, value: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSecureSet(prefs, key, value)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun secureGet(prefs: SharedPreferences, key: String): SecureRead {
+        if (!isAvailable) return SecureRead.Declined
+        val envelope = try {
+            nativeSecureGet(prefs, key)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        } ?: return SecureRead.Declined
+
+        // A malformed envelope is Zig's bug, and declining is the safe answer:
+        // the Kotlin then reads the store itself and the page sees the truth.
+        return try {
+            val json = JSONObject(envelope)
+            if (json.getBoolean("found")) SecureRead.Found(json.getString("value"))
+            else SecureRead.NotFound
+        } catch (e: Exception) {
+            SecureRead.Declined
+        }
+    }
+
+    fun secureRemove(prefs: SharedPreferences, key: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSecureRemove(prefs, key)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun secureClear(prefs: SharedPreferences): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSecureClear(prefs)
+        } catch (e: UnsatisfiedLinkError) {
+            false
         }
     }
 }
