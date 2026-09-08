@@ -241,6 +241,15 @@ export async function init(options: InitOptions): Promise<void> {
             )
         }`)
   writeFileSync(join(output, 'app/src/main/java', packagePath, 'CraftBridge.kt'), craftBridge)
+
+  // CraftNative goes to a fixed package, not the app's. The prebuilt
+  // libcraft.so binds its natives by class name in JNI_OnLoad, and it cannot
+  // know a name chosen here — so this one file is deliberately not templated
+  // and deliberately not under packagePath.
+  const craftNative = readFileSync(join(TEMPLATES_DIR, 'CraftNative.kt.template'), 'utf-8')
+  const nativeDir = join(output, 'app/src/main/java/com/craft/runtime')
+  mkdirSync(nativeDir, { recursive: true })
+  writeFileSync(join(nativeDir, 'CraftNative.kt'), craftNative)
   const healthTemplate = readFileSync(join(
     TEMPLATES_DIR,
     config.enableHealthConnect ? 'CraftHealthConnect.kt.template' : 'CraftHealthConnectStub.kt.template',

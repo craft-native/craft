@@ -24,13 +24,18 @@
 //! the transcription by counting rather than by trusting it, and
 //! `jniIndexOf` + the offset test at the bottom assert it.
 //!
-//! ## Why the struct stops at 170
+//! ## Why the struct stops at 215
 //!
-//! It is deliberately truncated after `ReleaseStringUTFChars`. Zig never
-//! *allocates* one of these — the table always belongs to the JVM — so
-//! reading a field at offset ≤ 170 out of the real, longer table is correct,
-//! and every entry not declared is one that cannot be transcribed wrongly.
-//! Adding a call means extending the list in order, from the header.
+//! It is deliberately truncated after `RegisterNatives`. Zig never *allocates*
+//! one of these — the table always belongs to the JVM — so reading a field at
+//! a lower offset out of the real, longer table is correct, and every entry
+//! not declared is one that cannot be transcribed wrongly. Adding a call means
+//! extending the list in order, from the header.
+//!
+//! Forty-four of the declared entries are the array functions at 171-214, and
+//! none of them is called. They are there because `RegisterNatives` sits
+//! behind them: a member's position is its offset, so there is no way to reach
+//! 215 without transcribing every step to it.
 //!
 //! ## Every field is an opaque pointer, on purpose
 //!
@@ -307,7 +312,61 @@ pub const JNINativeInterface = extern struct {
     GetStringUTFLength: JniFn, // 168
     GetStringUTFChars: JniFn, // 169
 
-    ReleaseStringUTFChars: JniFn, // 170 — the table is cut here
+    ReleaseStringUTFChars: JniFn, // 170
+
+    // 171-214 are the array functions. None is called: nothing in this bridge
+    // passes a Java array yet. They are declared anyway because `RegisterNatives`
+    // sits behind them and a member's position is its offset — there is no way
+    // to reach 215 without transcribing every step to it.
+    GetArrayLength: JniFn, // 171
+    NewObjectArray: JniFn,
+    GetObjectArrayElement: JniFn,
+    SetObjectArrayElement: JniFn,
+    NewBooleanArray: JniFn,
+    NewByteArray: JniFn,
+    NewCharArray: JniFn,
+    NewShortArray: JniFn,
+    NewIntArray: JniFn,
+    NewLongArray: JniFn,
+
+    NewFloatArray: JniFn, // 181
+    NewDoubleArray: JniFn,
+    GetBooleanArrayElements: JniFn,
+    GetByteArrayElements: JniFn,
+    GetCharArrayElements: JniFn,
+    GetShortArrayElements: JniFn,
+    GetIntArrayElements: JniFn,
+    GetLongArrayElements: JniFn,
+    GetFloatArrayElements: JniFn,
+    GetDoubleArrayElements: JniFn,
+
+    ReleaseBooleanArrayElements: JniFn, // 191
+    ReleaseByteArrayElements: JniFn,
+    ReleaseCharArrayElements: JniFn,
+    ReleaseShortArrayElements: JniFn,
+    ReleaseIntArrayElements: JniFn,
+    ReleaseLongArrayElements: JniFn,
+    ReleaseFloatArrayElements: JniFn,
+    ReleaseDoubleArrayElements: JniFn,
+    GetBooleanArrayRegion: JniFn,
+    GetByteArrayRegion: JniFn,
+
+    GetCharArrayRegion: JniFn, // 201
+    GetShortArrayRegion: JniFn,
+    GetIntArrayRegion: JniFn,
+    GetLongArrayRegion: JniFn,
+    GetFloatArrayRegion: JniFn,
+    GetDoubleArrayRegion: JniFn,
+    SetBooleanArrayRegion: JniFn,
+    SetByteArrayRegion: JniFn,
+    SetCharArrayRegion: JniFn,
+    SetShortArrayRegion: JniFn,
+
+    SetIntArrayRegion: JniFn, // 211
+    SetLongArrayRegion: JniFn,
+    SetFloatArrayRegion: JniFn,
+    SetDoubleArrayRegion: JniFn,
+    RegisterNatives: JniFn, // 215 — the table is cut here
 };
 
 /// The declared index of a member, for the offset audit below.
@@ -316,6 +375,89 @@ pub const JNINativeInterface = extern struct {
 /// member is one pointer wide — which is the reason they are all opaque.
 pub fn jniIndexOf(comptime name: []const u8) usize {
     return @offsetOf(JNINativeInterface, name) / @sizeOf(JniFn);
+}
+
+// =============================================================================
+// The JavaVM, and binding native methods
+//
+// A second, much smaller table. `JNI_OnLoad` is handed a `JavaVM*` rather than
+// a `JNIEnv*` — the VM is process-wide and thread-independent, the env is
+// per-thread — so reaching Java from `JNI_OnLoad` means asking the VM for this
+// thread's env first.
+// =============================================================================
+
+/// `JavaVM`'s function table. Eight entries, and the layout is from the same
+/// header as the big one.
+pub const JNIInvokeInterface = extern struct {
+    reserved0: JniFn, // 0
+    reserved1: JniFn,
+    reserved2: JniFn,
+    DestroyJavaVM: JniFn, // 3
+    AttachCurrentThread: JniFn, // 4
+    DetachCurrentThread: JniFn, // 5
+    GetEnv: JniFn, // 6
+    AttachCurrentThreadAsDaemon: JniFn, // 7
+};
+
+pub const JavaVM = *const *const JNIInvokeInterface;
+
+/// The JNI version this library asks for and `JNI_OnLoad` returns.
+///
+/// 1.6 is what every Android runtime provides and the floor Android documents;
+/// asking for 1.8 gets `JNI_EVERSION` from ART and the library fails to load.
+pub const JNI_VERSION_1_6: jint = 0x00010006;
+pub const JNI_OK: jint = 0;
+pub const JNI_EDETACHED: jint = -2;
+
+/// One `name`/`signature`/`function` triple for `RegisterNatives`.
+///
+/// `name` and `signature` are `char*` in the header rather than `const char*`;
+/// the JVM does not write through them, and matching the declared type avoids
+/// a cast at every call site.
+pub const JNINativeMethod = extern struct {
+    name: [*:0]const u8,
+    signature: [*:0]const u8,
+    fnPtr: *const anyopaque,
+};
+
+/// This thread's `JNIEnv`, or null when the thread is not attached.
+///
+/// `GetEnv` is the only correct way to get one. A `JNIEnv` belongs to a single
+/// thread and caching one across threads is the classic JNI crash — so a
+/// callback arriving on a framework thread asks here rather than reusing the
+/// env it was registered with. This is the same hazard `ios_events.zig` solves
+/// by hopping to the main queue, in a form where the runtime will not tell you
+/// you got it wrong.
+pub fn envForThisThread(vm: JavaVM) ?JNIEnv {
+    const get: *const fn (JavaVM, *?*anyopaque, jint) callconv(.c) jint =
+        @ptrCast(vm.*.GetEnv orelse return null);
+
+    var env: ?*anyopaque = null;
+    if (get(vm, &env, JNI_VERSION_1_6) != JNI_OK) return null;
+    return @ptrCast(@alignCast(env orelse return null));
+}
+
+/// Bind native implementations to a Java class's `external`/`native` methods.
+///
+/// The alternative is exporting a symbol named
+/// `Java_<package>_<class>_<method>`, which the JVM finds by mangling. That
+/// cannot work here: craft templates the package name per app, so a mangled
+/// export would bind for exactly one package and silently fail to resolve for
+/// every other — an `UnsatisfiedLinkError` at first call, long after build.
+/// Registering by name at load time is independent of the package.
+pub fn registerNatives(
+    env: JNIEnv,
+    cls: jclass,
+    methods: []const JNINativeMethod,
+) JniError!void {
+    const j = Jni.init(env);
+    const register: *const fn (JNIEnv, jclass, [*]const JNINativeMethod, jint) callconv(.c) jint =
+        @ptrCast(env.*.RegisterNatives orelse return JniError.NotFound);
+
+    if (register(env, cls, methods.ptr, @intCast(methods.len)) != JNI_OK) {
+        try j.check();
+        return JniError.NotFound;
+    }
 }
 
 // =============================================================================
@@ -764,12 +906,15 @@ test "the transcribed table puts every member at the index the header gives it" 
     try testing.expectEqual(@as(usize, 167), jniIndexOf("NewStringUTF"));
     try testing.expectEqual(@as(usize, 169), jniIndexOf("GetStringUTFChars"));
     try testing.expectEqual(@as(usize, 170), jniIndexOf("ReleaseStringUTFChars"));
+    try testing.expectEqual(@as(usize, 171), jniIndexOf("GetArrayLength"));
+    try testing.expectEqual(@as(usize, 199), jniIndexOf("GetBooleanArrayRegion"));
+    try testing.expectEqual(@as(usize, 215), jniIndexOf("RegisterNatives"));
 
-    // And the table is exactly as long as it claims — 171 entries, cut after
-    // ReleaseStringUTFChars. A member appended without a reason would make the
+    // And the table is exactly as long as it claims — 216 entries, cut after
+    // RegisterNatives. A member appended without a reason would make the
     // truncation comment a lie.
     try testing.expectEqual(
-        @as(usize, 171 * @sizeOf(JniFn)),
+        @as(usize, 216 * @sizeOf(JniFn)),
         @sizeOf(JNINativeInterface),
     );
 }

@@ -1,0 +1,79 @@
+package com.craft.runtime
+
+import android.app.Activity
+
+/**
+ * The Zig runtime's native methods.
+ *
+ * This class exists for one reason: its package is fixed. `CraftBridge` is
+ * generated with a templated package declaration, so its name differs per app,
+ * and the prebuilt `libcraft.so` cannot know it — neither JNI's
+ * `Java_<package>_...` symbol mangling nor a `FindClass` inside `JNI_OnLoad`
+ * can name a class chosen at generation time. Binding to
+ * `com.craft.runtime.CraftNative` instead lets one library serve every app
+ * unchanged.
+ *
+ * Nothing in this file is substituted. A template marker appearing here would
+ * make the library app-specific and the registration in `android_dispatch.zig`
+ * would stop finding this class.
+ *
+ * ## Every method may answer "not mine"
+ *
+ * A null return means Zig does not serve that action in this build, and the
+ * caller falls through to `CraftBridge`'s own Kotlin. That is the same
+ * hand-back the iOS seam performs, and it is what makes the migration
+ * incremental: an app on a build where Zig serves one action behaves exactly
+ * like one where it serves none.
+ *
+ * ## Why the natives are not `@JvmStatic`
+ *
+ * In a Kotlin `object`, `@JvmStatic` generates a static bridge alongside the
+ * instance method, and which of the two carries the `native` flag is a detail
+ * of the compiler rather than something this can rely on. `RegisterNatives`
+ * binds one specific method, and a static native takes `(JNIEnv*, jclass)`
+ * where an instance native takes `(JNIEnv*, jobject)` — so guessing wrong is
+ * a signature mismatch at load. Declaring them as ordinary instance methods on
+ * the singleton removes the question.
+ */
+object CraftNative {
+
+    /**
+     * True when `libcraft.so` loaded.
+     *
+     * The library is genuinely optional: an app can be built with no Zig
+     * runtime in `jniLibs`, and that is the shim-only configuration rather
+     * than an error. So the failure is caught and remembered — an
+     * `UnsatisfiedLinkError` escaping a static initialiser would take the
+     * whole class down and turn "no native runtime" into a crash on the first
+     * bridge call.
+     */
+    val isAvailable: Boolean = try {
+        System.loadLibrary("craft")
+        true
+    } catch (e: UnsatisfiedLinkError) {
+        false
+    } catch (e: SecurityException) {
+        false
+    }
+
+    private external fun nativeGetDeviceInfo(activity: Activity): String?
+
+    /**
+     * `getDeviceInfo`, or null to use the Kotlin implementation.
+     *
+     * The catch is not belt-and-braces. The library can load while
+     * `JNI_OnLoad` still fails to bind — a missing class, a signature that
+     * does not match — and an unbound `external fun` throws
+     * `UnsatisfiedLinkError` at the call rather than at load. Turning that
+     * into null is what keeps a half-registered runtime behaving like no
+     * runtime at all.
+     */
+    fun getDeviceInfo(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeGetDeviceInfo(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+}

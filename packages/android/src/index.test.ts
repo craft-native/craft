@@ -32,6 +32,34 @@ describe('Craft Android builder', () => {
     })).toBe('')
   })
 
+  it('emits the native holder to a fixed package, whatever the app is called', async () => {
+    // The prebuilt libcraft.so binds its natives by class name in JNI_OnLoad
+    // and cannot know a package chosen here. So CraftNative lives at a path
+    // that does not depend on the app, and CraftBridge — which does — reaches
+    // it by import. If this file ever moves under packagePath, registration
+    // stops finding the class and every action silently stays on the shim.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-native-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const holder = join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt')
+    expect(existsSync(holder)).toBe(true)
+
+    const source = readFileSync(holder, 'utf-8')
+    expect(source).toContain('package com.craft.runtime')
+    // Nothing here is substituted, and an unreplaced marker would mean it was
+    // routed through the templating that rewrites CraftBridge.
+    expect(source).not.toContain('{{')
+    expect(source).not.toContain('org.wildloop.app')
+
+    // And the generated bridge actually reaches it.
+    const bridge = readFileSync(
+      join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'),
+      'utf-8',
+    )
+    expect(bridge).toContain('import com.craft.runtime.CraftNative')
+    expect(bridge).toContain('CraftNative.getDeviceInfo(activity)?.let { return it }')
+  })
+
   it('copies a complete web distribution while preserving native configuration', async () => {
     const root = mkdtempSync(join(tmpdir(), 'craft-android-assets-'))
     const web = join(root, 'web')

@@ -420,12 +420,14 @@ pub fn build(b: *std.Build) void {
     });
     const run_jni_tests = b.addRunArtifact(jni_tests);
 
-    // The Android bridge modules. Rooted at the device module because it is
-    // the only one so far; a second joins by being imported from here, the way
-    // `ios.zig` gathers the iOS ones.
+    // The Android bridge modules. Rooted at the dispatch seam, which imports
+    // every module it can route to — so a module joins these tests by being
+    // reachable from the thing that serves it, the way `ios.zig` gathers the
+    // iOS ones. A module nothing dispatches to is untested here, which is the
+    // right signal.
     const android_bridge_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/bridge_android_device.zig"),
+            .root_source_file = b.path("src/android_dispatch.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -2197,12 +2199,60 @@ pub fn build(b: *std.Build) void {
     build_android.dependOn(&android_arm64_install.step);
     build_android_all.dependOn(&android_arm64_install.step);
 
+    // The JNI library, and it has to be shared where the one above is static.
+    // `System.loadLibrary("craft")` resolves `libcraft.so` through the dynamic
+    // loader; a `.a` is not loadable at runtime at all, so a static build of
+    // this would produce an artifact no Kotlin could ever call into.
+    //
+    // Rooted at `android_dispatch.zig` rather than `android.zig`: the seam is
+    // the library's entry point — it owns `JNI_OnLoad` and reaches every
+    // module it can route to — while `android.zig` is the CraftActivity API,
+    // a different thing that happens to target the same OS.
+    //
+    // The name is what Kotlin passes to loadLibrary, so it is `craft` and not
+    // the arch-suffixed name beside it: the loader picks the ABI directory,
+    // and a per-arch name would make the Kotlin need to know its own
+    // architecture.
+    const android_arm64_jni = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "craft",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/android_dispatch.zig"),
+            .target = android_arm64_target,
+            .optimize = optimize,
+        }),
+    });
+
+    const android_arm64_jni_install = b.addInstallArtifact(android_arm64_jni, .{
+        .dest_dir = .{ .override = .{ .custom = "android/arm64-v8a" } },
+    });
+    build_android.dependOn(&android_arm64_jni_install.step);
+    build_android_all.dependOn(&android_arm64_jni_install.step);
+
     // Android Emulator (x86_64)
     const android_x86_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .linux,
         .abi = .android,
     });
+
+    const android_x86_jni = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "craft",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/android_dispatch.zig"),
+            .target = android_x86_target,
+            .optimize = optimize,
+        }),
+    });
+
+    // `x86_64`, matching the jniLibs directory the loader looks in — not
+    // `x86`, which is the 32-bit ABI and would be silently ignored.
+    const android_x86_jni_install = b.addInstallArtifact(android_x86_jni, .{
+        .dest_dir = .{ .override = .{ .custom = "android/x86_64" } },
+    });
+    build_android_x86.dependOn(&android_x86_jni_install.step);
+    build_android_all.dependOn(&android_x86_jni_install.step);
 
     const android_x86_lib = b.addLibrary(.{
         .linkage = .static,
