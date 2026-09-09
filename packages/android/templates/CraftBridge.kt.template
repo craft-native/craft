@@ -2663,6 +2663,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun downloadFile(url: String, filename: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.downloadFile(activity, url, filename)) return
+
         try {
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 setTitle(filename)
@@ -2692,6 +2696,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun saveFile(data: String, filename: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.saveFile(activity, data, filename)) return
+
         try {
             val documentsDir = activity.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS)
             val file = File(documentsDir, filename)
