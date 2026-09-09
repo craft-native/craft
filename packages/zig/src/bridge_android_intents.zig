@@ -66,12 +66,12 @@ fn startActivity(j: Jni, activity: jobject, intent: jobject) !void {
 /// produces a Uri with a null scheme for nonsense. The failure that matters
 /// comes later, from `startActivity` finding nothing to handle the result, and
 /// that arrives here as `JavaException` from the `check` after the call.
-pub fn openUrl(j: Jni, activity: jobject, url: [*:0]const u8) !void {
+pub fn openUrl(j: Jni, allocator: std.mem.Allocator, activity: jobject, url: []const u8) !void {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
     const uri_cls = try j.findClass("android/net/Uri");
-    const url_string = try j.newStringUtf(url);
+    const url_string = try j.newStringUtf8(allocator, url);
     const uri = try j.callStaticObjectMethodA(
         uri_cls,
         try j.staticMethodId(uri_cls, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"),
@@ -93,7 +93,7 @@ pub fn openUrl(j: Jni, activity: jobject, url: [*:0]const u8) !void {
 ///
 /// An empty `title` skips `EXTRA_SUBJECT` entirely rather than setting it to
 /// the empty string — see the module comment.
-pub fn share(j: Jni, activity: jobject, text: [*:0]const u8, title: [*:0]const u8) !void {
+pub fn share(j: Jni, allocator: std.mem.Allocator, activity: jobject, text: []const u8, title: []const u8) !void {
     try j.pushLocalFrame(24);
     defer _ = j.popLocalFrame(null);
 
@@ -122,12 +122,12 @@ pub fn share(j: Jni, activity: jobject, text: [*:0]const u8, title: [*:0]const u
     );
 
     const extra_text = try intentConstant(j, intent_cls, "EXTRA_TEXT");
-    const body = try j.newStringUtf(text);
+    const body = try j.newStringUtf8(allocator, text);
     _ = try j.callObjectMethodA(intent, put_extra, &.{ .{ .l = extra_text }, .{ .l = body } });
 
-    if (title[0] != 0) {
+    if (title.len != 0) {
         const extra_subject = try intentConstant(j, intent_cls, "EXTRA_SUBJECT");
-        const subject = try j.newStringUtf(title);
+        const subject = try j.newStringUtf8(allocator, title);
         _ = try j.callObjectMethodA(intent, put_extra, &.{ .{ .l = extra_subject }, .{ .l = subject } });
     }
 
@@ -188,7 +188,12 @@ fn fStaticObjectField(_: jni.JNIEnv, _: jni.jclass, _: jni.jfieldID) callconv(.c
     return obj(2);
 }
 fn fNewStringUTF(_: jni.JNIEnv, text: [*:0]const u8) callconv(.c) jni.jstring {
-    fake_strings.append(testing.allocator, std.mem.span(text)) catch {};
+    // Copied, not borrowed. The caller re-encodes into a scratch buffer and
+    // frees it as soon as the JVM has the string — which is what a real
+    // `NewStringUTF` licenses, and what made this fake read freed memory when
+    // it held the pointer.
+    const copy = testing.allocator.dupe(u8, std.mem.span(text)) catch return obj(3);
+    fake_strings.append(testing.allocator, copy) catch testing.allocator.free(copy);
     return obj(3);
 }
 fn fCallStaticObjectMethodA(_: jni.JNIEnv, _: jni.jclass, id: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) jobject {
@@ -246,6 +251,7 @@ fn fakeEnv(table: *jni.JNINativeInterface) void {
 fn resetFakes() void {
     fake_calls.clearRetainingCapacity();
     fake_field_names.clearRetainingCapacity();
+    for (fake_strings.items) |text| testing.allocator.free(text);
     fake_strings.clearRetainingCapacity();
     fake_throw_on_start = false;
     fake_pending = null;
@@ -254,6 +260,7 @@ fn resetFakes() void {
 fn freeFakes() void {
     fake_calls.deinit(testing.allocator);
     fake_field_names.deinit(testing.allocator);
+    for (fake_strings.items) |text| testing.allocator.free(text);
     fake_strings.deinit(testing.allocator);
     fake_calls = .empty;
     fake_field_names = .empty;
@@ -280,7 +287,7 @@ test "openURL parses the url and hands the intent to the activity" {
     fakeEnv(&table);
     const ptr: *const jni.JNINativeInterface = &table;
 
-    try openUrl(Jni.init(&ptr), obj(8), "https://example.com/x?y=1");
+    try openUrl(Jni.init(&ptr), testing.allocator, obj(8), "https://example.com/x?y=1");
 
     try testing.expect(sawCall("parse"));
     try testing.expect(sawCall("<init>"));
@@ -303,7 +310,7 @@ test "a URL nothing can open reports the exception rather than success" {
     fake_throw_on_start = true;
     try testing.expectError(
         jni.JniError.JavaException,
-        openUrl(Jni.init(&ptr), obj(8), "definitely-not-a-scheme://x"),
+        openUrl(Jni.init(&ptr), testing.allocator, obj(8), "definitely-not-a-scheme://x"),
     );
 }
 
@@ -314,7 +321,7 @@ test "share sets the text extra and the chooser" {
     fakeEnv(&table);
     const ptr: *const jni.JNINativeInterface = &table;
 
-    try share(Jni.init(&ptr), obj(8), "hello", "Subject");
+    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "Subject");
 
     try testing.expect(sawField("ACTION_SEND"));
     try testing.expect(sawField("EXTRA_TEXT"));
@@ -337,7 +344,7 @@ test "an empty title omits the subject rather than setting it empty" {
     fakeEnv(&table);
     const ptr: *const jni.JNINativeInterface = &table;
 
-    try share(Jni.init(&ptr), obj(8), "hello", "");
+    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "");
 
     try testing.expect(sawField("EXTRA_TEXT"));
     try testing.expect(!sawField("EXTRA_SUBJECT"));

@@ -106,7 +106,7 @@ fn openPrefs(j: Jni, allocator: std.mem.Allocator, activity: jobject, group: []c
             "getSharedPreferences",
             "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
         ),
-        &.{ .{ .l = try j.newStringUtf(name.ptr) }, .{ .i = mode_private } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, name) }, .{ .i = mode_private } },
     );
 }
 
@@ -134,8 +134,8 @@ pub fn set(
             "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
         ),
         &.{
-            .{ .l = try javaString(j, allocator, key) },
-            .{ .l = try javaString(j, allocator, value) },
+            .{ .l = try j.newStringUtf8(allocator, key) },
+            .{ .l = try j.newStringUtf8(allocator, value) },
         },
     );
 
@@ -167,7 +167,7 @@ pub fn remove(
             "remove",
             "(Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
         ),
-        &.{.{ .l = try javaString(j, allocator, key) }},
+        &.{.{ .l = try j.newStringUtf8(allocator, key) }},
     );
     try j.callVoidMethodA(editor, try j.methodId(editor_cls, "apply", "()V"), &.{});
 }
@@ -194,7 +194,7 @@ pub fn get(
             "getString",
             "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
         ),
-        &.{ .{ .l = try javaString(j, allocator, key) }, .{ .l = null } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .l = null } },
     );
 
     if (value == null) return null;
@@ -210,13 +210,6 @@ fn editorFor(j: Jni, prefs: jobject) !jobject {
             "()Landroid/content/SharedPreferences$Editor;",
         ),
     );
-}
-
-fn javaString(j: Jni, allocator: std.mem.Allocator, text: []const u8) !jni.jstring {
-    const terminated = try allocator.allocSentinel(u8, text.len, 0);
-    defer allocator.free(terminated);
-    @memcpy(terminated, text);
-    return j.newStringUtf(terminated.ptr);
 }
 
 // =============================================================================

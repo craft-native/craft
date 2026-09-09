@@ -477,6 +477,9 @@ pub const JniError = error{
     StringUnavailable,
     /// The JVM handed back bytes that are not well-formed modified UTF-8.
     MalformedString,
+    /// Text on its way *to* the JVM that is not well-formed UTF-8. A bug in
+    /// whatever built it, rather than something a device did.
+    InvalidUtf8,
     OutOfMemory,
 };
 
@@ -779,20 +782,36 @@ pub const Jni = struct {
         try self.check();
     }
 
-    /// Make a Java `String` from UTF-8.
+    /// Make a Java `String` from text already in *modified* UTF-8.
     ///
-    /// The JVM wants *modified* UTF-8 here, the same encoding `stringToUtf8`
-    /// decodes on the way back — so a string carrying a NUL or an astral
-    /// character has to be re-encoded rather than handed over. Callers pass
-    /// NUL-terminated literals and ASCII package names today, which are
-    /// identical in both encodings; `encodeModifiedUtf8` is the function to
-    /// add when that stops being true, and this is where it goes.
+    /// Use this only for ASCII the source file holds as a literal — a class
+    /// name, a column name, a preference key. Anything that came from the page
+    /// or from the device goes through `newStringUtf8`, which re-encodes:
+    /// standard UTF-8 and modified UTF-8 agree on ASCII and disagree on a NUL
+    /// and on every character outside the BMP, and `NewStringUTF` given a
+    /// four-byte sequence does not produce the string that was meant.
     pub fn newStringUtf(self: Self, text: [*:0]const u8) JniError!jstring {
         const new: *const fn (JNIEnv, [*:0]const u8) callconv(.c) jstring =
             @ptrCast(self.table().NewStringUTF orelse return JniError.NotFound);
         const str = new(self.env, text);
         try self.check();
         return str orelse JniError.OutOfMemory;
+    }
+
+    /// Make a Java `String` from arbitrary UTF-8.
+    ///
+    /// This is the one to reach for whenever the text is not a literal in this
+    /// repository: a contact's name, a widget's title, a SQL statement, a
+    /// preference value. `NewStringUTF` reads *modified* UTF-8, so an emoji —
+    /// four bytes in the standard encoding, two three-byte halves in Java's —
+    /// has to be re-encoded rather than handed over, and a NUL has to become
+    /// `C0 80` or the string ends early.
+    ///
+    /// The allocation is freed before returning; the `jstring` is the JVM's.
+    pub fn newStringUtf8(self: Self, allocator: std.mem.Allocator, text: []const u8) JniError!jstring {
+        const encoded = try encodeModifiedUtf8(allocator, text);
+        defer allocator.free(encoded);
+        return self.newStringUtf(encoded.ptr);
     }
 
     pub fn callIntMethod(self: Self, obj: jobject, id: jmethodID) JniError!jint {
@@ -964,6 +983,81 @@ fn decodeThreeByte(bytes: *const [3]u8) u32 {
     return (@as(u32, bytes[0] & 0x0F) << 12) |
         (@as(u32, bytes[1] & 0x3F) << 6) |
         @as(u32, bytes[2] & 0x3F);
+}
+
+/// Convert standard UTF-8 to Java's modified UTF-8, NUL-terminated.
+///
+/// The inverse of `decodeModifiedUtf8`, and needed for the same two reasons in
+/// the other direction:
+///
+///  - **U+0000 becomes `C0 80`**, so the result can be NUL-terminated without
+///    the terminator being ambiguous. `NewStringUTF` takes a C string, so a
+///    text carrying a NUL would otherwise be truncated at it silently.
+///  - **A character outside the BMP becomes two three-byte sequences**, one
+///    per UTF-16 surrogate. Handing `NewStringUTF` the standard four-byte form
+///    does not produce the character that was meant — an emoji in a contact's
+///    name is the everyday case.
+///
+/// Invalid UTF-8 is an error rather than something to pass through. Every
+/// caller's text either came from `stringToUtf8`, which produces valid UTF-8,
+/// or was built here — so invalid input means a bug upstream, and quietly
+/// writing malformed bytes into the JVM would hide it.
+pub fn encodeModifiedUtf8(allocator: std.mem.Allocator, input: []const u8) JniError![:0]u8 {
+    // Validated once rather than per sequence, so the loop below can copy the
+    // two- and three-byte forms without re-deciding whether they are legal.
+    // This is also what refuses a lone surrogate: valid CESU-8, and not UTF-8,
+    // so it can only have come from something already confused about which
+    // encoding it holds.
+    if (!std.unicode.utf8ValidateSlice(input)) return JniError.InvalidUtf8;
+
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    var i: usize = 0;
+    while (i < input.len) {
+        const len = std.unicode.utf8ByteSequenceLength(input[i]) catch return JniError.InvalidUtf8;
+        const bytes = input[i .. i + len];
+        i += len;
+
+        switch (len) {
+            1 => {
+                if (bytes[0] == 0) {
+                    // The overlong form Java uses, and standard UTF-8 forbids.
+                    out.appendSlice(allocator, &.{ 0xC0, 0x80 }) catch return JniError.OutOfMemory;
+                } else {
+                    out.append(allocator, bytes[0]) catch return JniError.OutOfMemory;
+                }
+            },
+            2, 3 => out.appendSlice(allocator, bytes) catch return JniError.OutOfMemory,
+            4 => {
+                const codepoint = std.unicode.utf8Decode(bytes) catch return JniError.InvalidUtf8;
+                const offset = codepoint - 0x10000;
+                const high: u32 = 0xD800 + (offset >> 10);
+                const low: u32 = 0xDC00 + (offset & 0x3FF);
+                appendThreeByte(allocator, &out, high) catch return JniError.OutOfMemory;
+                appendThreeByte(allocator, &out, low) catch return JniError.OutOfMemory;
+            },
+            else => return JniError.InvalidUtf8,
+        }
+    }
+
+    return out.toOwnedSliceSentinel(allocator, 0) catch JniError.OutOfMemory;
+}
+
+/// One UTF-16 code unit as the three-byte form, surrogates included.
+///
+/// `std.unicode.utf8Encode` refuses a lone surrogate, which is precisely what
+/// each half of a CESU-8 pair is — so the bytes are written directly.
+fn appendThreeByte(
+    allocator: std.mem.Allocator,
+    out: *std.ArrayListUnmanaged(u8),
+    unit: u32,
+) !void {
+    try out.appendSlice(allocator, &.{
+        @intCast(0xE0 | (unit >> 12)),
+        @intCast(0x80 | ((unit >> 6) & 0x3F)),
+        @intCast(0x80 | (unit & 0x3F)),
+    });
 }
 
 pub fn decodeModifiedUtf8(allocator: std.mem.Allocator, input: []const u8) JniError![]u8 {
@@ -1393,4 +1487,93 @@ test "a field read that throws reports the exception, not the value" {
     fake_pending_exception = @ptrCast(&throwable);
     var obj: u8 = 0;
     try testing.expectError(JniError.JavaException, jni.intField(@ptrCast(&obj), null));
+}
+
+test "encoding is the exact inverse of decoding" {
+    // The property that matters: whatever goes to the JVM comes back the same.
+    // Written as a round trip rather than as byte assertions, because the two
+    // functions are the pair that has to agree — and a shared misunderstanding
+    // of the format would survive either one being tested alone.
+    for ([_][]const u8{
+        "",
+        "plain ascii",
+        "café",
+        "日本語",
+        "🙂",
+        "a🙂b",
+        "🙂🙂",
+        // The astral range's ends.
+        "\u{10000}",
+        "\u{10FFFF}",
+        // BMP characters either side of the surrogate block, which must pass
+        // through as three bytes rather than being re-paired.
+        "\u{D7FF}\u{E000}",
+        "mixed café 🙂 日本語 x",
+    }) |original| {
+        const encoded = try encodeModifiedUtf8(testing.allocator, original);
+        defer testing.allocator.free(encoded);
+
+        const decoded = try decodeModifiedUtf8(testing.allocator, encoded);
+        defer testing.allocator.free(decoded);
+
+        try testing.expectEqualStrings(original, decoded);
+    }
+}
+
+test "a NUL becomes C0 80, so the terminator stays unambiguous" {
+    // `NewStringUTF` takes a C string. A text carrying a NUL encoded as one
+    // byte would be truncated there and nothing would say so.
+    const encoded = try encodeModifiedUtf8(testing.allocator, "a\x00b");
+    defer testing.allocator.free(encoded);
+
+    try testing.expectEqualSlices(u8, &.{ 'a', 0xC0, 0x80, 'b' }, encoded);
+    try testing.expectEqual(@as(usize, 4), encoded.len);
+    try testing.expectEqual(@as(u8, 0), encoded.ptr[encoded.len]);
+
+    // And the NUL survives the round trip rather than ending the string.
+    const decoded = try decodeModifiedUtf8(testing.allocator, encoded);
+    defer testing.allocator.free(decoded);
+    try testing.expectEqualSlices(u8, &.{ 'a', 0, 'b' }, decoded);
+}
+
+test "an astral character becomes two three-byte halves" {
+    // U+1F642, which JSON.stringify hands over as four bytes and Java holds as
+    // a surrogate pair. Asserted as bytes here because this is the case where
+    // handing NewStringUTF the standard form produces the wrong string, and a
+    // round trip through both of our own functions could not tell.
+    const encoded = try encodeModifiedUtf8(testing.allocator, "🙂");
+    defer testing.allocator.free(encoded);
+
+    // U+1F642 - 0x10000 = 0xF642; high = D800 + (F642 >> 10) = D83D,
+    // low = DC00 + (F642 & 3FF) = DE42.
+    try testing.expectEqualSlices(u8, &.{
+        0xED, 0xA0, 0xBD, // D83D
+        0xED, 0xB9, 0x82, // DE42
+    }, encoded);
+    try testing.expectEqual(@as(usize, 6), encoded.len);
+}
+
+test "ASCII and BMP text pass through unchanged" {
+    // The reason `newStringUtf` on a literal is still correct: the two
+    // encodings agree everywhere except a NUL and the astral planes.
+    for ([_][]const u8{ "SELECT 1", "craft_widget_prefs", "café", "日本語" }) |text| {
+        const encoded = try encodeModifiedUtf8(testing.allocator, text);
+        defer testing.allocator.free(encoded);
+        try testing.expectEqualStrings(text, encoded);
+    }
+}
+
+test "invalid UTF-8 is refused rather than written into the JVM" {
+    // Every caller's text either came from `stringToUtf8` or was built here,
+    // so this means a bug upstream — and malformed bytes reaching the JVM
+    // would hide it somewhere much harder to read.
+    for ([_][]const u8{
+        &.{0x80}, // a continuation byte with nothing to continue
+        &.{0xC3}, // a two-byte lead with no second byte
+        &.{ 0xE2, 0x82 }, // a three-byte sequence cut short
+        &.{0xF8}, // a five-byte lead, which UTF-8 does not have
+        &.{ 0xED, 0xA0, 0xBD }, // a lone surrogate, valid CESU-8 and not UTF-8
+    }) |bad| {
+        try testing.expectError(JniError.InvalidUtf8, encodeModifiedUtf8(testing.allocator, bad));
+    }
 }

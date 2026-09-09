@@ -136,7 +136,7 @@ pub fn execute(j: Jni, allocator: std.mem.Allocator, db: jobject, sql: []const u
     try j.callVoidMethodA(
         db,
         try j.methodId(db_cls, "execSQL", "(Ljava/lang/String;[Ljava/lang/Object;)V"),
-        &.{ .{ .l = try javaString(j, allocator, sql) }, .{ .l = bind } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, sql) }, .{ .l = bind } },
     );
 }
 
@@ -161,7 +161,7 @@ pub fn query(
             "rawQuery",
             "(Ljava/lang/String;[Ljava/lang/String;)Landroid/database/Cursor;",
         ),
-        &.{ .{ .l = try javaString(j, allocator, sql) }, .{ .l = bind } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, sql) }, .{ .l = bind } },
     );
 
     try out.append(allocator, '[');
@@ -212,20 +212,13 @@ pub fn query(
     }
 }
 
-fn javaString(j: Jni, allocator: std.mem.Allocator, text: []const u8) !jni.jstring {
-    const terminated = try allocator.allocSentinel(u8, text.len, 0);
-    defer allocator.free(terminated);
-    @memcpy(terminated, text);
-    return j.newStringUtf(terminated.ptr);
-}
-
 fn stringArray(j: Jni, allocator: std.mem.Allocator, values: []const []const u8) !jobject {
     const string_cls = try j.findClass("java/lang/String");
     const array = try j.newObjectArray(values.len, string_cls);
     for (values, 0..) |value, i| {
         try j.pushLocalFrame(4);
         defer _ = j.popLocalFrame(null);
-        try j.setObjectArrayElement(array, i, try javaString(j, allocator, value));
+        try j.setObjectArrayElement(array, i, try j.newStringUtf8(allocator, value));
     }
     return array;
 }
