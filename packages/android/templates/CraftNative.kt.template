@@ -1,6 +1,12 @@
 package com.craft.runtime
 
 import android.app.Activity
+import androidx.core.app.ActivityCompat
+import android.os.Build
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.BluetoothLeScanner
+import android.bluetooth.BluetoothManager
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.LifecycleEventObserver
 import android.net.NetworkRequest
@@ -153,6 +159,9 @@ object CraftNative {
     private external fun nativeStartAppStateMonitoring(activity: Activity): Boolean
     private external fun nativeStopAppStateMonitoring(activity: Activity): Boolean
     private external fun nativeGetAppState(): String?
+    private external fun nativeBluetoothDevice(address: String, name: String?, rssi: Int)
+    private external fun nativeStartBluetoothScan(activity: Activity): Boolean
+    private external fun nativeStopBluetoothScan(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -915,6 +924,97 @@ object CraftNative {
             nativeGetAppState()
         } catch (e: UnsatisfiedLinkError) {
             null
+        }
+    }
+
+    // ==================== Bluetooth scanning ====================
+    //
+    // The third listener shim. `ScanCallback` is an abstract Java class, so
+    // the object is here and every result forwards to Zig — with the device
+    // name still nullable, so the "Unknown" default stays one decision in one
+    // place rather than two that have to agree.
+
+    private var bleScanner: BluetoothLeScanner? = null
+    private var bleScanCallback: ScanCallback? = null
+
+    /**
+     * Start scanning, including the part that does nothing.
+     *
+     * `bleScanner` is null when the device has no adapter or Bluetooth is off,
+     * and the `?.` then skips the scan — while the caller resolves true
+     * regardless, exactly as `CraftBridge` does. Reproduced rather than
+     * guarded, because the reply is what a page acts on. See #185.
+     */
+    @JvmStatic
+    fun startBluetoothWatch(activity: Activity) {
+        val manager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        bleScanner = manager.adapter?.bluetoothLeScanner
+
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                try {
+                    nativeBluetoothDevice(
+                        result.device.address,
+                        result.device.name,
+                        result.rssi
+                    )
+                } catch (e: UnsatisfiedLinkError) {
+                    // The library went away. Nothing is waiting on this.
+                } catch (e: SecurityException) {
+                    // `device.name` needs BLUETOOTH_CONNECT on API 31+, which
+                    // this scan does not require. The shim would throw out of
+                    // the callback here; dropping the result is the smaller
+                    // difference, and it is the only one.
+                }
+            }
+        }
+
+        bleScanner?.startScan(callback)
+        bleScanCallback = callback
+    }
+
+    @JvmStatic
+    fun stopBluetoothWatch(activity: Activity) {
+        bleScanCallback?.let { bleScanner?.stopScan(it) }
+        bleScanCallback = null
+    }
+
+    /**
+     * Ask for BLUETOOTH_SCAN, but only where it exists.
+     *
+     * The permission arrived in API 31. Below that the shim does not ask at
+     * all — it rejects and leaves it — so the version check lives here, next
+     * to the call that would throw without it.
+     */
+    @JvmStatic
+    fun requestBluetoothScanPermission(activity: Activity) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(
+                activity,
+                arrayOf(android.Manifest.permission.BLUETOOTH_SCAN),
+                REQUEST_BLUETOOTH
+            )
+        }
+    }
+
+    /** `CraftBridge.REQUEST_BLUETOOTH`, which this has to match. */
+    private const val REQUEST_BLUETOOTH = 1009
+
+    fun startBluetoothScan(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartBluetoothScan(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopBluetoothScan(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopBluetoothScan(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
         }
     }
 }

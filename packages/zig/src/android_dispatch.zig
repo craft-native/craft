@@ -43,6 +43,7 @@ const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
+const bluetooth = @import("bridge_android_bluetooth.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
 const notifications = @import("bridge_android_notifications.zig");
@@ -430,6 +431,23 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeGetAppState",
         .signature = "()Ljava/lang/String;",
         .fnPtr = @ptrCast(&nativeGetAppState),
+    },
+    // Not an action: the other end of the ScanCallback the holder owns. The
+    // name arrives nullable, so the "Unknown" default stays a Zig decision.
+    .{
+        .name = "nativeBluetoothDevice",
+        .signature = "(Ljava/lang/String;Ljava/lang/String;I)V",
+        .fnPtr = @ptrCast(&nativeBluetoothDevice),
+    },
+    .{
+        .name = "nativeStartBluetoothScan",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStartBluetoothScan),
+    },
+    .{
+        .name = "nativeStopBluetoothScan",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopBluetoothScan),
     },
 };
 
@@ -1872,6 +1890,91 @@ fn nativeGetAppState(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstring {
     return j.newStringUtf8(arena.allocator(), appstate.state().name()) catch null;
 }
 
+/// `nativeBluetoothDevice(address, name, rssi)` — one scan result.
+fn nativeBluetoothDevice(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    address: jni.jstring,
+    name: jni.jstring,
+    rssi: jni.jint,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const address_text = j.stringToUtf8(allocator, address) catch return;
+
+    // Null is a device advertising no name, which is the common case rather
+    // than the edge one — `bluetooth.announce` applies the shim's "Unknown".
+    const name_text: ?[]const u8 = if (name == null)
+        null
+    else
+        j.stringToUtf8(allocator, name) catch return;
+
+    bluetooth.announce(allocator, address_text, name_text, rssi) catch {};
+}
+
+/// `nativeStartBluetoothScan(activity)`.
+///
+/// Resolves `true` whether or not a scan actually started, because the shim
+/// does: `bluetoothScanner?.startScan(...)` is skipped when there is no
+/// adapter or Bluetooth is off, and the resolve fires regardless. See #185.
+fn nativeStartBluetoothScan(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.bluetooth_scan) catch |err| {
+        std.log.warn("craft: startBluetoothScan fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (!granted) {
+        // The shim only asks on API 31+, where the permission exists at all;
+        // the holder makes that check, because it is the one that knows how to
+        // ask without throwing on older releases.
+        callHolderVoid(j, "requestBluetoothScanPermission", activity) catch |err| {
+            std.log.warn("craft: startBluetoothScan fell through to the shim ({s})", .{@errorName(err)});
+            return jni.JNI_FALSE;
+        };
+        calendar.rejectOn(allocator, bluetooth.reject_global, "Permission denied") catch {};
+        return jni.JNI_TRUE;
+    }
+
+    callHolderVoid(j, "startBluetoothWatch", activity) catch |err| {
+        std.log.warn("craft: startBluetoothScan fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    events.settle(allocator, bluetooth.resolve_global, "true") catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeStopBluetoothScan(activity)`.
+///
+/// Cannot decline after a successful start, for the reason the network watch
+/// cannot: the shim's own `bleScanCallback` is null, so its stop finds nothing
+/// to hand to `stopScan`.
+fn nativeStopBluetoothScan(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "stopBluetoothWatch", activity) catch |err| {
+        std.log.warn("craft: stopBluetoothScan failed ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1983,7 +2086,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 50), natives.len);
+    try testing.expectEqual(@as(usize, 53), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

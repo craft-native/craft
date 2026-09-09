@@ -2993,6 +2993,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startBluetoothScan() {
+        // The ScanCallback object is CraftNative's, and so are the scanner and
+        // callback fields — which is why stopBluetoothScan has to reach the
+        // same way, or its own fields stay null and stopScan is never called.
+        if (CraftNative.startBluetoothScan(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.BLUETOOTH_SCAN)
             != PackageManager.PERMISSION_GRANTED) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -3026,6 +3031,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopBluetoothScan() {
+        if (CraftNative.stopBluetoothScan(activity)) return
+
         bleScanCallback?.let { bluetoothScanner?.stopScan(it) }
         bleScanCallback = null
     }

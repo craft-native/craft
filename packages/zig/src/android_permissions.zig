@@ -42,6 +42,10 @@ pub const read_contacts = "android.permission.READ_CONTACTS";
 pub const write_contacts = "android.permission.WRITE_CONTACTS";
 pub const access_fine_location = "android.permission.ACCESS_FINE_LOCATION";
 
+/// API 31 and later only — see `CraftNative.requestBluetoothScanPermission`,
+/// which is where the version check lives.
+pub const bluetooth_scan = "android.permission.BLUETOOTH_SCAN";
+
 /// `activity.checkSelfPermission(permission) == PERMISSION_GRANTED`.
 pub fn isGranted(j: Jni, activity: jobject, permission: [*:0]const u8) !bool {
     try j.pushLocalFrame(8);
@@ -94,6 +98,7 @@ test "the permission names match Manifest.permission exactly" {
     try testing.expectEqualStrings("android.permission.READ_CONTACTS", read_contacts);
     try testing.expectEqualStrings("android.permission.WRITE_CONTACTS", write_contacts);
     try testing.expectEqualStrings("android.permission.ACCESS_FINE_LOCATION", access_fine_location);
+    try testing.expectEqualStrings("android.permission.BLUETOOTH_SCAN", bluetooth_scan);
 }
 
 test "PERMISSION_GRANTED is zero, and PERMISSION_DENIED is not" {
