@@ -84,6 +84,53 @@ pub fn putString(
     );
 }
 
+/// `editor.putBoolean(key, value)`.
+pub fn putBoolean(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    editor: jobject,
+    key: []const u8,
+    value: bool,
+) !void {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    _ = try j.callObjectMethodA(
+        editor,
+        try j.methodId(
+            try j.objectClass(editor),
+            "putBoolean",
+            "(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;",
+        ),
+        &.{
+            .{ .l = try j.newStringUtf8(allocator, key) },
+            .{ .z = if (value) jni.JNI_TRUE else jni.JNI_FALSE },
+        },
+    );
+}
+
+/// `editor.putLong(key, value)`.
+pub fn putLong(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    editor: jobject,
+    key: []const u8,
+    value: i64,
+) !void {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    _ = try j.callObjectMethodA(
+        editor,
+        try j.methodId(
+            try j.objectClass(editor),
+            "putLong",
+            "(Ljava/lang/String;J)Landroid/content/SharedPreferences$Editor;",
+        ),
+        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .j = value } },
+    );
+}
+
 /// `editor.remove(key)`.
 pub fn remove(j: Jni, allocator: std.mem.Allocator, editor: jobject, key: []const u8) !void {
     try j.pushLocalFrame(4);

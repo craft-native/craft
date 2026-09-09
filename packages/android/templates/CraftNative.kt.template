@@ -1,6 +1,8 @@
 package com.craft.runtime
 
 import android.app.Activity
+import androidx.core.content.ContextCompat
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.content.SharedPreferences
@@ -133,6 +135,10 @@ object CraftNative {
     private external fun nativeSaveFile(activity: Activity, data: String, filename: String): Boolean
     private external fun nativeGetLocationRecordingState(activity: Activity): String?
     private external fun nativeReadLocationRecording(activity: Activity): String?
+    private external fun nativeStartLocationRecording(activity: Activity): String?
+    private external fun nativeStopLocationRecording(activity: Activity): String?
+    private external fun nativePauseLocationRecording(activity: Activity): String?
+    private external fun nativeResumeLocationRecording(activity: Activity): String?
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -673,5 +679,72 @@ object CraftNative {
         } catch (e: UnsatisfiedLinkError) {
             null
         }
+    }
+
+    /**
+     * The four controls. Each returns the store's state as JSON, or null when
+     * Zig declined and the Kotlin below should answer instead.
+     */
+    fun startLocationRecording(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeStartLocationRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    fun stopLocationRecording(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeStopLocationRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    fun pauseLocationRecording(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativePauseLocationRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    fun resumeLocationRecording(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeResumeLocationRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    /**
+     * Start and stop the recording service.
+     *
+     * Called from Zig, and here rather than there because
+     * `LocationRecordingService::class.java` names a class whose package is
+     * templated per app — `FindClass` on the native side has no name to look
+     * up, and assembling one from `getPackageName()` is the trap the widget
+     * broadcast action already documents: an `applicationIdSuffix` moves the
+     * runtime package and leaves the class where it was.
+     */
+    @JvmStatic
+    fun startRecordingService(activity: Activity) {
+        ContextCompat.startForegroundService(
+            activity,
+            Intent(activity, LocationRecordingService::class.java)
+                .setAction(LocationRecordingService.ACTION_START)
+        )
+    }
+
+    @JvmStatic
+    fun stopRecordingService(activity: Activity) {
+        activity.stopService(
+            Intent(activity, LocationRecordingService::class.java)
+                .setAction(LocationRecordingService.ACTION_STOP)
+        )
     }
 }

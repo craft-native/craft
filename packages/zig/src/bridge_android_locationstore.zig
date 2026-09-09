@@ -1,12 +1,26 @@
-//! `getLocationRecordingState` and `readLocationRecording` on Android.
+//! The location-recording actions on Android: the two reads and the four
+//! controls.
 //!
-//! Both are the *read* side of `CraftLocationRecordingStore`, which a
-//! foreground service writes while a recording runs. Neither starts, stops or
-//! samples anything — those need the service, and the service needs a
-//! `LocationCallback`, which is a Java interface Zig cannot implement.
+//! `CraftLocationRecordingStore` is a preferences file and a JSONL file, and
+//! everything here is one or both of those — plus, for two of the controls, a
+//! foreground service that has to be started or stopped.
 //!
-//! So this migrates the half that is a file and a preferences read, and leaves
-//! the half that is a service alone.
+//! What stays with the shim is the *sampling*: the service holds a
+//! `LocationCallback`, a Java interface Zig cannot implement. So Zig owns the
+//! record of a recording and Kotlin owns the thing that fills it.
+//!
+//! ## The service Intent is built by Kotlin
+//!
+//! `Intent(activity, LocationRecordingService::class.java)` names a class
+//! whose package is `{{PACKAGE_NAME}}` — templated per app, so `FindClass`
+//! here has no name to look up. Zig could assemble one from
+//! `getPackageName()`, and that is the same trap the widget broadcast action
+//! sits in: an `applicationIdSuffix` moves the runtime package and leaves the
+//! class where it was.
+//!
+//! So `CraftNative` starts and stops the service with its own class
+//! reference, the way it passes its own broadcast constant across. One side
+//! decides.
 //!
 //! ## Both return a String rather than answering through the channel
 //!
@@ -45,6 +59,10 @@ const jobject = jni.jobject;
 pub const A = struct {
     pub const get_location_recording_state = "getLocationRecordingState";
     pub const read_location_recording = "readLocationRecording";
+    pub const start_location_recording = "startLocationRecording";
+    pub const stop_location_recording = "stopLocationRecording";
+    pub const pause_location_recording = "pauseLocationRecording";
+    pub const resume_location_recording = "resumeLocationRecording";
 };
 
 /// `CraftLocationRecordingStore.PREFS` and `FILE`.
@@ -71,6 +89,19 @@ pub const State = struct {
 /// function with a test rather than a format string: a missing `id` has no
 /// key at all, and a missing `startedAt` is present and null.
 pub fn renderState(allocator: std.mem.Allocator, state: State) ![]u8 {
+    return renderStateWith(allocator, state, null);
+}
+
+/// The same, with `includeLocations = true`.
+///
+/// `stopLocationRecording` is the only caller that asks for it, and it asks
+/// *before* stopping the service — so the array it returns is the recording
+/// as it stood at the moment of the call.
+pub fn renderStateWith(
+    allocator: std.mem.Allocator,
+    state: State,
+    locations_json: ?[]const u8,
+) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
 
@@ -92,8 +123,28 @@ pub fn renderState(allocator: std.mem.Allocator, state: State) ![]u8 {
         try out.appendSlice(allocator, "null");
     }
 
-    try out.print(allocator, ",\"sampleCount\":{d}}}", .{state.sample_count});
+    try out.print(allocator, ",\"sampleCount\":{d}", .{state.sample_count});
+    if (locations_json) |locations| {
+        try out.appendSlice(allocator, ",\"locations\":");
+        try out.appendSlice(allocator, locations);
+    }
+    try out.append(allocator, '}');
     return out.toOwnedSlice(allocator);
+}
+
+/// What `startLocationRecording` returns when the permission is not granted.
+///
+/// Not `renderState` with everything empty, and the difference is the point:
+/// this path builds a fresh `JSONObject` with `put("id", JSONObject.NULL)`, an
+/// **explicit** null whose key stays — while `state()` uses
+/// `put("id", getString("id", null))`, a Kotlin null that *removes* the key.
+///
+/// So "permission denied" and "never recorded" are two different objects, and
+/// a page can tell them apart only by whether `id` is present at all.
+pub fn renderDenied(allocator: std.mem.Allocator) ![]u8 {
+    return allocator.dupe(u8,
+        \\{"id":null,"active":false,"paused":false,"startedAt":null,"sampleCount":0}
+    );
 }
 
 /// The array and how many samples are in it.
@@ -145,17 +196,8 @@ pub fn readFile(j: Jni, allocator: std.mem.Allocator, activity: jobject) ![]u8 {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
-    const files_dir = try j.callObjectMethod(
-        activity,
-        try j.methodId(try j.objectClass(activity), "getFilesDir", "()Ljava/io/File;"),
-    );
-
-    const file_cls = try j.findClass("java/io/File");
-    const file = try j.newObjectA(
-        file_cls,
-        try j.methodId(file_cls, "<init>", "(Ljava/io/File;Ljava/lang/String;)V"),
-        &.{ .{ .l = files_dir }, .{ .l = try j.newStringUtf(file_name) } },
-    );
+    const file = try recordingFile(j, activity);
+    const file_cls = try j.objectClass(file);
 
     // `if (!source.exists()) return result` — an empty array rather than an
     // error, because a recording that never started has no file.
@@ -213,6 +255,132 @@ pub fn readState(
         .started_at = if (started_at > 0) started_at else null,
         .sample_count = sample_count,
     };
+}
+
+/// `CraftLocationRecordingStore.start(context, id, startedAt)`.
+///
+/// Truncates the sample file first, as the store does — a new recording does
+/// not inherit the last one's points. Opening a `FileOutputStream` without the
+/// append flag is `writeText("")`: it creates or truncates and writes nothing.
+pub fn startStore(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    activity: jobject,
+    id: []const u8,
+    started_at: i64,
+) !void {
+    try j.pushLocalFrame(24);
+    defer _ = j.popLocalFrame(null);
+
+    try truncateFile(j, activity);
+
+    const prefs = try prefs_api.open(j, allocator, activity, prefs_name);
+    const editor = try prefs_api.edit(j, prefs);
+    try prefs_api.putString(j, allocator, editor, "id", id);
+    try prefs_api.putBoolean(j, allocator, editor, "active", true);
+    try prefs_api.putBoolean(j, allocator, editor, "paused", false);
+    try prefs_api.putLong(j, allocator, editor, "startedAt", started_at);
+    try prefs_api.apply(j, editor);
+}
+
+/// `CraftLocationRecordingStore.setPaused(context, paused)`.
+pub fn setPaused(j: Jni, allocator: std.mem.Allocator, activity: jobject, paused: bool) !void {
+    try j.pushLocalFrame(16);
+    defer _ = j.popLocalFrame(null);
+
+    const prefs = try prefs_api.open(j, allocator, activity, prefs_name);
+    const editor = try prefs_api.edit(j, prefs);
+    try prefs_api.putBoolean(j, allocator, editor, "paused", paused);
+    try prefs_api.apply(j, editor);
+}
+
+/// `CraftLocationRecordingStore.stop(context)`.
+///
+/// Clears `paused` as well as `active`, so a recording stopped while paused
+/// does not come back paused. The sample file is left alone — `stop` is what
+/// makes the points readable, not what discards them.
+pub fn stopStore(j: Jni, allocator: std.mem.Allocator, activity: jobject) !void {
+    try j.pushLocalFrame(16);
+    defer _ = j.popLocalFrame(null);
+
+    const prefs = try prefs_api.open(j, allocator, activity, prefs_name);
+    const editor = try prefs_api.edit(j, prefs);
+    try prefs_api.putBoolean(j, allocator, editor, "active", false);
+    try prefs_api.putBoolean(j, allocator, editor, "paused", false);
+    try prefs_api.apply(j, editor);
+}
+
+/// `UUID.randomUUID().toString()`.
+///
+/// Through Java rather than from a Zig random source: the id is the shim's to
+/// define, and `UUID.toString` is a specific hyphenated format a page may well
+/// be matching on.
+pub fn newRecordingId(j: Jni, allocator: std.mem.Allocator) ![]u8 {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const uuid_cls = try j.findClass("java/util/UUID");
+    const uuid = try j.callStaticObjectMethodA(
+        uuid_cls,
+        try j.staticMethodId(uuid_cls, "randomUUID", "()Ljava/util/UUID;"),
+        &.{},
+    );
+    const text = try j.callObjectMethod(
+        uuid,
+        try j.methodId(uuid_cls, "toString", "()Ljava/lang/String;"),
+    );
+    return j.stringToUtf8(allocator, text);
+}
+
+/// `System.currentTimeMillis()`.
+pub fn nowMillis(j: Jni) !i64 {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const system_cls = try j.findClass("java/lang/System");
+    return j.callStaticLongMethodA(
+        system_cls,
+        try j.staticMethodId(system_cls, "currentTimeMillis", "()J"),
+        &.{},
+    );
+}
+
+/// `prefs.getBoolean("active", false)` — what `resumeLocationRecording` asks
+/// before restarting the service.
+pub fn isActive(j: Jni, allocator: std.mem.Allocator, activity: jobject) !bool {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const prefs = try prefs_api.open(j, allocator, activity, prefs_name);
+    return prefs_api.getBoolean(j, allocator, prefs, "active", false);
+}
+
+fn recordingFile(j: Jni, activity: jobject) !jobject {
+    const files_dir = try j.callObjectMethod(
+        activity,
+        try j.methodId(try j.objectClass(activity), "getFilesDir", "()Ljava/io/File;"),
+    );
+
+    const file_cls = try j.findClass("java/io/File");
+    return j.newObjectA(
+        file_cls,
+        try j.methodId(file_cls, "<init>", "(Ljava/io/File;Ljava/lang/String;)V"),
+        &.{ .{ .l = files_dir }, .{ .l = try j.newStringUtf(file_name) } },
+    );
+}
+
+fn truncateFile(j: Jni, activity: jobject) !void {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const file = try recordingFile(j, activity);
+    const stream_cls = try j.findClass("java/io/FileOutputStream");
+    const stream = try j.newObjectA(
+        stream_cls,
+        try j.methodId(stream_cls, "<init>", "(Ljava/io/File;)V"),
+        &.{.{ .l = file }},
+    );
+    try j.callVoidMethodA(stream, try j.methodId(stream_cls, "close", "()V"), &.{});
 }
 
 // =============================================================================
@@ -352,4 +520,89 @@ test "the store's names are the ones the service writes" {
 test "the actions match the shim exactly" {
     try testing.expectEqualStrings("getLocationRecordingState", A.get_location_recording_state);
     try testing.expectEqualStrings("readLocationRecording", A.read_location_recording);
+}
+
+// --- the controls ----------------------------------------------------------
+
+test "permission denied is a different object from never having recorded" {
+    // The one place these two shapes differ, and the reason `renderDenied` is
+    // its own function: the denied path builds a fresh JSONObject with
+    // `put("id", JSONObject.NULL)` — an explicit null whose key stays — while
+    // `state()` uses `put("id", getString("id", null))`, a Kotlin null that
+    // removes the key. A page can only tell them apart by whether `id` is
+    // there at all.
+    const denied = try renderDenied(testing.allocator);
+    defer testing.allocator.free(denied);
+
+    const never = try renderState(testing.allocator, .{
+        .id = null,
+        .active = false,
+        .paused = false,
+        .started_at = null,
+        .sample_count = 0,
+    });
+    defer testing.allocator.free(never);
+
+    try testing.expectEqualStrings(
+        \\{"id":null,"active":false,"paused":false,"startedAt":null,"sampleCount":0}
+    , denied);
+    try testing.expectEqualStrings(
+        \\{"active":false,"paused":false,"startedAt":null,"sampleCount":0}
+    , never);
+
+    // Everything else about them agrees, which is what makes the one
+    // difference easy to lose.
+    try testing.expect(!std.mem.eql(u8, denied, never));
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, denied, .{});
+    defer parsed.deinit();
+    try testing.expect(parsed.value.object.get("id").? == .null);
+}
+
+test "only stopLocationRecording asks for the locations" {
+    // `state(context, includeLocations = false)` everywhere else, so the key
+    // is absent rather than empty — a page reading `locations` on a pause
+    // reply gets undefined, not [].
+    const without = try renderStateWith(testing.allocator, .{
+        .id = "run-7",
+        .active = true,
+        .paused = false,
+        .started_at = 1,
+        .sample_count = 2,
+    }, null);
+    defer testing.allocator.free(without);
+    try testing.expect(std.mem.indexOf(u8, without, "locations") == null);
+
+    const with = try renderStateWith(testing.allocator, .{
+        .id = "run-7",
+        .active = false,
+        .paused = false,
+        .started_at = 1,
+        .sample_count = 2,
+    }, "[{\"a\":1},{\"b\":2}]");
+    defer testing.allocator.free(with);
+
+    try testing.expectEqualStrings(
+        \\{"id":"run-7","active":false,"paused":false,"startedAt":1,"sampleCount":2,"locations":[{"a":1},{"b":2}]}
+    , with);
+
+    // `locations` comes last, after `sampleCount`, because the store's
+    // `if (includeLocations) put(...)` runs after every other put.
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, with, .{});
+    defer parsed.deinit();
+    try testing.expectEqual(
+        @as(i64, 2),
+        parsed.value.object.get("sampleCount").?.integer,
+    );
+    try testing.expectEqual(
+        @as(usize, 2),
+        parsed.value.object.get("locations").?.array.items.len,
+    );
+}
+
+test "the four controls name themselves as the shim does" {
+    try testing.expectEqualStrings("startLocationRecording", A.start_location_recording);
+    try testing.expectEqualStrings("stopLocationRecording", A.stop_location_recording);
+    try testing.expectEqualStrings("pauseLocationRecording", A.pause_location_recording);
+    try testing.expectEqualStrings("resumeLocationRecording", A.resume_location_recording);
 }

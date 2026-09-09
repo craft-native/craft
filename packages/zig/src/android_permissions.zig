@@ -40,6 +40,7 @@ pub const read_calendar = "android.permission.READ_CALENDAR";
 pub const write_calendar = "android.permission.WRITE_CALENDAR";
 pub const read_contacts = "android.permission.READ_CONTACTS";
 pub const write_contacts = "android.permission.WRITE_CONTACTS";
+pub const access_fine_location = "android.permission.ACCESS_FINE_LOCATION";
 
 /// `activity.checkSelfPermission(permission) == PERMISSION_GRANTED`.
 pub fn isGranted(j: Jni, activity: jobject, permission: [*:0]const u8) !bool {
@@ -92,6 +93,7 @@ test "the permission names match Manifest.permission exactly" {
     try testing.expectEqualStrings("android.permission.WRITE_CALENDAR", write_calendar);
     try testing.expectEqualStrings("android.permission.READ_CONTACTS", read_contacts);
     try testing.expectEqualStrings("android.permission.WRITE_CONTACTS", write_contacts);
+    try testing.expectEqualStrings("android.permission.ACCESS_FINE_LOCATION", access_fine_location);
 }
 
 test "PERMISSION_GRANTED is zero, and PERMISSION_DENIED is not" {
