@@ -34,6 +34,7 @@
 
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
+const prefs_api = @import("android_prefs.zig");
 
 const Jni = jni.Jni;
 const jobject = jni.jobject;
@@ -50,9 +51,9 @@ pub const reject_global = "_craftWidgetReject";
 pub const updated_result = "{\"updated\":true}";
 pub const reloaded_result = "{\"reloaded\":true}";
 
-/// `activity.getSharedPreferences("craft_widget_prefs", MODE_PRIVATE)`.
+/// `activity.getSharedPreferences("craft_widget_prefs", MODE_PRIVATE)` — the
+/// file `CraftWidgetProvider` reads back.
 const prefs_name = "craft_widget_prefs";
-const mode_private: i32 = 0;
 
 /// The four fields, and the preference key each is written to.
 ///
@@ -106,45 +107,16 @@ pub fn writeUpdate(j: Jni, allocator: std.mem.Allocator, activity: jobject, upda
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
-    const prefs = try j.callObjectMethodA(
-        activity,
-        try j.methodId(
-            try j.objectClass(activity),
-            "getSharedPreferences",
-            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-        ),
-        &.{ .{ .l = try j.newStringUtf(prefs_name) }, .{ .i = mode_private } },
-    );
-
-    const editor = try j.callObjectMethod(
-        prefs,
-        try j.methodId(
-            try j.objectClass(prefs),
-            "edit",
-            "()Landroid/content/SharedPreferences$Editor;",
-        ),
-    );
-    const editor_cls = try j.objectClass(editor);
-    const put_string = try j.methodId(
-        editor_cls,
-        "putString",
-        "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-    );
+    const prefs = try prefs_api.open(j, allocator, activity, prefs_name);
+    const editor = try prefs_api.edit(j, prefs);
 
     inline for (fields, 0..) |field, i| {
-        if (update[i]) |text| {
-            try j.pushLocalFrame(4);
-            defer _ = j.popLocalFrame(null);
-            _ = try j.callObjectMethodA(editor, put_string, &.{
-                .{ .l = try j.newStringUtf(field.key) },
-                .{ .l = try j.newStringUtf8(allocator, text) },
-            });
-        }
+        if (update[i]) |text| try prefs_api.putString(j, allocator, editor, field.key, text);
     }
 
     // `apply`, as the shim does — the write lands on a background thread and
     // the resolve is a promise about having asked.
-    try j.callVoidMethodA(editor, try j.methodId(editor_cls, "apply", "()V"), &.{});
+    try prefs_api.apply(j, editor);
 }
 
 /// `Intent(action).setPackage(activity.packageName)`, then `sendBroadcast`.
@@ -314,7 +286,6 @@ test "the results are the shim's constants" {
 
 test "the preferences file is the one CraftWidgetProvider reads" {
     try testing.expectEqualStrings("craft_widget_prefs", prefs_name);
-    try testing.expectEqual(@as(i32, 0), mode_private);
 }
 
 test "the actions and globals match the shim exactly" {
