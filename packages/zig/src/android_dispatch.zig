@@ -42,6 +42,7 @@ const system = @import("bridge_android_system.zig");
 const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
+const appstate = @import("bridge_android_appstate.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
 const notifications = @import("bridge_android_notifications.zig");
@@ -406,6 +407,29 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeStopNetworkMonitoring",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStopNetworkMonitoring),
+    },
+    // Not an action: the other end of the lifecycle observer the holder owns.
+    // It takes no Activity, because everything it does is state and the reply
+    // channel — neither of which needs one.
+    .{
+        .name = "nativeAppStateEvent",
+        .signature = "(Ljava/lang/String;)V",
+        .fnPtr = @ptrCast(&nativeAppStateEvent),
+    },
+    .{
+        .name = "nativeStartAppStateMonitoring",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStartAppStateMonitoring),
+    },
+    .{
+        .name = "nativeStopAppStateMonitoring",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopAppStateMonitoring),
+    },
+    .{
+        .name = "nativeGetAppState",
+        .signature = "()Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeGetAppState),
     },
 };
 
@@ -1776,6 +1800,78 @@ fn callHolderVoid(j: Jni, comptime name: [:0]const u8, activity: jni.jobject) !v
     );
 }
 
+/// `nativeAppStateEvent(eventName)` — a lifecycle event, arrived at.
+///
+/// Runs on the main looper, where `ProcessLifecycleOwner` dispatches. Silent:
+/// there is no promise waiting, and a page that never registered a callback is
+/// the ordinary case rather than an error.
+fn nativeAppStateEvent(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    event_name: jni.jstring,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const name = j.stringToUtf8(allocator, event_name) catch return;
+
+    // Null covers both "this event carries no state" and "it carries the one
+    // already held", and the shim announces neither.
+    const changed = appstate.apply(name) orelse return;
+    appstate.announce(allocator, changed) catch {};
+}
+
+/// `nativeStartAppStateMonitoring(activity)`.
+///
+/// The observer is the holder's — `LifecycleEventObserver` is a Java interface
+/// — and adding it twice is a no-op, because `LifecycleRegistry` keys its
+/// observers by identity. The shim has the same property for the same reason,
+/// so unlike the network watch there is nothing to leak here.
+fn nativeStartAppStateMonitoring(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "startAppStateWatch", activity) catch |err| {
+        std.log.warn("craft: startAppStateMonitoring fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeStopAppStateMonitoring(activity)`.
+fn nativeStopAppStateMonitoring(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "stopAppStateWatch", activity) catch |err| {
+        std.log.warn("craft: stopAppStateMonitoring failed ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeGetAppState()`.
+///
+/// Reads the state Zig now owns. This is why the trio moves together: the
+/// Kotlin's `currentAppState` is only written by the observer, so serving the
+/// observer without serving this would leave the field frozen at "active"
+/// while the real state moved on.
+fn nativeGetAppState(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+
+    return j.newStringUtf8(arena.allocator(), appstate.state().name()) catch null;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1887,7 +1983,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 46), natives.len);
+    try testing.expectEqual(@as(usize, 50), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

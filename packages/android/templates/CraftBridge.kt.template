@@ -2128,11 +2128,21 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getAppState(): String {
+        // Null is "Zig declined". Otherwise this is the state Zig's observer
+        // has been maintaining, and currentAppState below is the one this
+        // file's observer maintains — whichever of the two is running.
+        CraftNative.getAppState()?.let { return it }
+
         return currentAppState
     }
 
     @JavascriptInterface
     fun startAppStateMonitoring() {
+        // The observer object is CraftNative's, and so is the state it
+        // maintains — which is why getAppState below has to reach the same
+        // way. All three move together or none of them can.
+        if (CraftNative.startAppStateMonitoring(activity)) return
+
         activity.runOnUiThread {
             ProcessLifecycleOwner.get().lifecycle.addObserver(appStateObserver)
         }
@@ -2140,6 +2150,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopAppStateMonitoring() {
+        if (CraftNative.stopAppStateMonitoring(activity)) return
+
         activity.runOnUiThread {
             ProcessLifecycleOwner.get().lifecycle.removeObserver(appStateObserver)
         }

@@ -1,6 +1,8 @@
 package com.craft.runtime
 
 import android.app.Activity
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
 import android.net.NetworkRequest
 import android.net.NetworkCapabilities
 import android.net.Network
@@ -147,6 +149,10 @@ object CraftNative {
     private external fun nativeNetworkChanged(activity: Activity)
     private external fun nativeStartNetworkMonitoring(activity: Activity): Boolean
     private external fun nativeStopNetworkMonitoring(activity: Activity): Boolean
+    private external fun nativeAppStateEvent(eventName: String)
+    private external fun nativeStartAppStateMonitoring(activity: Activity): Boolean
+    private external fun nativeStopAppStateMonitoring(activity: Activity): Boolean
+    private external fun nativeGetAppState(): String?
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -846,6 +852,69 @@ object CraftNative {
             nativeStopNetworkMonitoring(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
+        }
+    }
+
+    // ==================== App state ====================
+    //
+    // The second listener shim. `LifecycleEventObserver` is a Java interface,
+    // so the object is here; the mapping, the state and the two deliveries are
+    // in Zig.
+    //
+    // One observer instance, added and removed — `LifecycleRegistry` keys its
+    // observers by identity, so adding twice is a no-op. That is why this one
+    // has no leak to reproduce, unlike the network watch.
+    //
+    // The native takes no Activity: everything it does is state and the reply
+    // channel, and neither needs one.
+
+    private val appStateObserver = LifecycleEventObserver { _, event ->
+        try {
+            nativeAppStateEvent(event.name)
+        } catch (e: UnsatisfiedLinkError) {
+            // The library went away. Nothing is waiting on this.
+        }
+    }
+
+    @JvmStatic
+    fun startAppStateWatch(activity: Activity) {
+        activity.runOnUiThread {
+            ProcessLifecycleOwner.get().lifecycle.addObserver(appStateObserver)
+        }
+    }
+
+    @JvmStatic
+    fun stopAppStateWatch(activity: Activity) {
+        activity.runOnUiThread {
+            ProcessLifecycleOwner.get().lifecycle.removeObserver(appStateObserver)
+        }
+    }
+
+    fun startAppStateMonitoring(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartAppStateMonitoring(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopAppStateMonitoring(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopAppStateMonitoring(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Null is "Zig declined"; the state itself is never null. */
+    fun getAppState(): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeGetAppState()
+        } catch (e: UnsatisfiedLinkError) {
+            null
         }
     }
 }
