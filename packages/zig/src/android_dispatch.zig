@@ -53,6 +53,7 @@ const contacts = @import("bridge_android_contacts.zig");
 const widgets = @import("bridge_android_widgets.zig");
 const shortcuts = @import("bridge_android_shortcuts.zig");
 const screen = @import("bridge_android_screen.zig");
+const files = @import("bridge_android_files.zig");
 const main_thread = @import("android_main_thread.zig");
 
 const Jni = jni.Jni;
@@ -346,6 +347,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeSetKeepAwake",
         .signature = "(Landroid/app/Activity;Z)Z",
         .fnPtr = @ptrCast(&nativeSetKeepAwake),
+    },
+    .{
+        .name = "nativeDownloadFile",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeDownloadFile),
+    },
+    .{
+        .name = "nativeSaveFile",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeSaveFile),
     },
 };
 
@@ -1401,6 +1412,66 @@ fn nativeSetKeepAwake(
     return jni.JNI_TRUE;
 }
 
+/// `nativeDownloadFile(activity, url, filename)`.
+///
+/// Resolves with the download id as a JSON *string*, because the shim
+/// interpolated its `Long` into a quoted JavaScript string and the page has
+/// always received text.
+fn nativeDownloadFile(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    url: jni.jstring,
+    filename: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const url_text = j.stringToUtf8(allocator, url) catch return jni.JNI_FALSE;
+    const name_text = j.stringToUtf8(allocator, filename) catch return jni.JNI_FALSE;
+
+    const id = files.download(j, allocator, activity, url_text, name_text) catch |err| {
+        calendar.rejectOn(allocator, files.download_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    var buf: [24]u8 = undefined;
+    const digits = std.fmt.bufPrint(&buf, "{d}", .{id}) catch return jni.JNI_FALSE;
+    const payload = files.jsonString(allocator, digits) catch return jni.JNI_FALSE;
+    events.settle(allocator, files.download_resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeSaveFile(activity, data, filename)`.
+fn nativeSaveFile(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    data: jni.jstring,
+    filename: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const data_text = j.stringToUtf8(allocator, data) catch return jni.JNI_FALSE;
+    const name_text = j.stringToUtf8(allocator, filename) catch return jni.JNI_FALSE;
+
+    // The plan can be `nothing`, and the shim still resolves with the path.
+    // Reproduced rather than corrected — see #175.
+    const path = files.save(j, allocator, activity, name_text, files.planFor(data_text)) catch |err| {
+        calendar.rejectOn(allocator, files.save_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    const payload = files.jsonString(allocator, path) catch return jni.JNI_FALSE;
+    events.settle(allocator, files.save_resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1512,7 +1583,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 35), natives.len);
+    try testing.expectEqual(@as(usize, 37), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

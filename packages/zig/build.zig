@@ -476,6 +476,9 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_screen.zig", .{
         .root_source_file = b.path("src/bridge_android_screen.zig"),
     });
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_files.zig", .{
+        .root_source_file = b.path("src/bridge_android_files.zig"),
+    });
     const run_android_conformance_tests = b.addRunArtifact(android_conformance_tests);
 
     // The page surface, across both bridges. Not folded into the iOS

@@ -129,6 +129,8 @@ object CraftNative {
     private external fun nativeLockOrientation(activity: Activity, orientation: String): Boolean
     private external fun nativeUnlockOrientation(activity: Activity): Boolean
     private external fun nativeSetKeepAwake(activity: Activity, enabled: Boolean): Boolean
+    private external fun nativeDownloadFile(activity: Activity, url: String, filename: String): Boolean
+    private external fun nativeSaveFile(activity: Activity, data: String, filename: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -625,6 +627,25 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeSetKeepAwake(activity, enabled)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Both answer through the reply channel; true means Zig took the action. */
+    fun downloadFile(activity: Activity, url: String, filename: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeDownloadFile(activity, url, filename)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun saveFile(activity: Activity, data: String, filename: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSaveFile(activity, data, filename)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
