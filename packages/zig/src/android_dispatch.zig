@@ -49,6 +49,7 @@ const events = @import("android_events.zig");
 const calendar = @import("bridge_android_calendar.zig");
 const db = @import("bridge_android_db.zig");
 const shareditem = @import("bridge_android_shareditem.zig");
+const contacts = @import("bridge_android_contacts.zig");
 
 const Jni = jni.Jni;
 
@@ -76,6 +77,9 @@ const request_calendar: i32 = 1005;
 
 /// The shim's default event length: `System.currentTimeMillis() + 3600000`.
 const one_hour_ms: i64 = 60 * 60 * 1000;
+
+/// `CraftBridge.REQUEST_CONTACTS`.
+const request_contacts: i32 = 1004;
 
 /// The VM, captured at load so a later callback on a framework thread can ask
 /// it for that thread's `JNIEnv`.
@@ -277,6 +281,11 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeRemoveSharedItem",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeRemoveSharedItem),
+    },
+    .{
+        .name = "nativeGetContacts",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeGetContacts),
     },
 };
 
@@ -982,6 +991,48 @@ fn nativeRemoveSharedItem(
     return jni.JNI_TRUE;
 }
 
+/// `nativeGetContacts(activity)`.
+///
+/// Falls through when the query fails, for the reason `getCalendarEvents`
+/// does: the shim wraps none of `getContacts` in a try/catch, so an exception
+/// escapes the `@JavascriptInterface` method and the promise hangs. Inventing
+/// a rejection here would be kinder and would be a divergence nothing
+/// records. See #157.
+fn nativeGetContacts(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.read_contacts) catch |err| {
+        std.log.warn("craft: getContacts fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (!granted) {
+        permissions.request(j, activity, permissions.read_contacts, request_contacts) catch |err| {
+            std.log.warn("craft: getContacts fell through to the shim ({s})", .{@errorName(err)});
+            return jni.JNI_FALSE;
+        };
+        events.settle(allocator, contacts.reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    var payload: std.ArrayListUnmanaged(u8) = .empty;
+    defer payload.deinit(allocator);
+    contacts.queryContacts(j, allocator, activity, &payload) catch |err| {
+        std.log.warn("craft: getContacts fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    events.settle(allocator, contacts.resolve_global, payload.items) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1093,7 +1144,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 24), natives.len);
+    try testing.expectEqual(@as(usize, 25), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

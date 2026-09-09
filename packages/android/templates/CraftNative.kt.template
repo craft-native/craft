@@ -116,6 +116,7 @@ object CraftNative {
     private external fun nativeSetSharedItem(activity: Activity, key: String, value: String, group: String): Boolean
     private external fun nativeGetSharedItem(activity: Activity, key: String, group: String): Boolean
     private external fun nativeRemoveSharedItem(activity: Activity, key: String, group: String): Boolean
+    private external fun nativeGetContacts(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -446,6 +447,21 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeRemoveSharedItem(activity, key, group)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig took the read, not whether it found anyone.
+     *
+     * An empty address book still answers — with `[]`, through the reply
+     * channel — so a false here means Zig did not run.
+     */
+    fun getContacts(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeGetContacts(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

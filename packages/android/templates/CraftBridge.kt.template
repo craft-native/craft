@@ -2141,6 +2141,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getContacts() {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.getContacts(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_CONTACTS)

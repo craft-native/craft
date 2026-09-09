@@ -38,6 +38,7 @@ pub const granted: i32 = 0;
 
 pub const read_calendar = "android.permission.READ_CALENDAR";
 pub const write_calendar = "android.permission.WRITE_CALENDAR";
+pub const read_contacts = "android.permission.READ_CONTACTS";
 
 /// `activity.checkSelfPermission(permission) == PERMISSION_GRANTED`.
 pub fn isGranted(j: Jni, activity: jobject, permission: [*:0]const u8) !bool {
@@ -88,6 +89,7 @@ test "the permission names match Manifest.permission exactly" {
     // that is never granted and an action that always rejects.
     try testing.expectEqualStrings("android.permission.READ_CALENDAR", read_calendar);
     try testing.expectEqualStrings("android.permission.WRITE_CALENDAR", write_calendar);
+    try testing.expectEqualStrings("android.permission.READ_CONTACTS", read_contacts);
 }
 
 test "PERMISSION_GRANTED is zero, and PERMISSION_DENIED is not" {
