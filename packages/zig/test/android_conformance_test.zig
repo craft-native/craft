@@ -57,6 +57,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_files.zig"),
     @embedFile("src/bridge_android_locationstore.zig"),
     @embedFile("src/bridge_android_appstate.zig"),
+    @embedFile("src/bridge_android_bluetooth.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -91,8 +92,9 @@ const zig_sources = [_][]const u8{
 /// to name its own service class; 59 with the network monitoring pair, the
 /// first listener shim — the callback object is the holder's, the work is
 /// Zig's; 56 with the app-state trio, the first migration where the state
-/// itself moved rather than being worked around.
-const max_not_yet_migrated: usize = 56;
+/// itself moved rather than being worked around; 54 with the Bluetooth scan
+/// pair.
+const max_not_yet_migrated: usize = 54;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
