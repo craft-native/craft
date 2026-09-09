@@ -782,6 +782,39 @@ pub const Jni = struct {
         try self.check();
     }
 
+    /// `new byte[len]`.
+    pub fn newByteArray(self: Self, len: usize) JniError!jobject {
+        const new: *const fn (JNIEnv, jsize) callconv(.c) jobject =
+            @ptrCast(self.table().NewByteArray orelse return JniError.NotFound);
+        const array = new(self.env, @intCast(len)) orelse {
+            try self.check();
+            return JniError.OutOfMemory;
+        };
+        try self.check();
+        return array;
+    }
+
+    /// Copy a `byte[]` into caller-owned memory.
+    ///
+    /// `GetByteArrayRegion` rather than `GetByteArrayElements`: the region
+    /// form copies into a buffer this side already owns, so there is no
+    /// pinned-or-copied ambiguity and no `Release` call that has to happen on
+    /// every path out.
+    pub fn byteArrayToOwned(self: Self, allocator: std.mem.Allocator, array: jobject) JniError![]u8 {
+        if (array == null) return JniError.NullReference;
+
+        const len = try self.arrayLength(array);
+        const bytes = allocator.alloc(u8, len) catch return JniError.OutOfMemory;
+        errdefer allocator.free(bytes);
+        if (len == 0) return bytes;
+
+        const get: *const fn (JNIEnv, jobject, jsize, jsize, [*]jbyte) callconv(.c) void =
+            @ptrCast(self.table().GetByteArrayRegion orelse return JniError.NotFound);
+        get(self.env, array, 0, @intCast(len), @ptrCast(bytes.ptr));
+        try self.check();
+        return bytes;
+    }
+
     /// Make a Java `String` from text already in *modified* UTF-8.
     ///
     /// Use this only for ASCII the source file holds as a literal — a class

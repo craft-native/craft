@@ -54,6 +54,7 @@ const widgets = @import("bridge_android_widgets.zig");
 const shortcuts = @import("bridge_android_shortcuts.zig");
 const screen = @import("bridge_android_screen.zig");
 const files = @import("bridge_android_files.zig");
+const locationstore = @import("bridge_android_locationstore.zig");
 const main_thread = @import("android_main_thread.zig");
 
 const Jni = jni.Jni;
@@ -357,6 +358,18 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeSaveFile",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeSaveFile),
+    },
+    // Both answer by returning a String, like clipboardRead: null means "ask
+    // the shim" rather than "there is nothing".
+    .{
+        .name = "nativeGetLocationRecordingState",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeGetLocationRecordingState),
+    },
+    .{
+        .name = "nativeReadLocationRecording",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeReadLocationRecording),
     },
 };
 
@@ -1472,6 +1485,60 @@ fn nativeSaveFile(
     return jni.JNI_TRUE;
 }
 
+/// `nativeGetLocationRecordingState(activity)`.
+///
+/// Null means "ask the shim". A recording that never started is not null — it
+/// is a state object saying so, which is a different answer.
+fn nativeGetLocationRecordingState(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const contents = locationstore.readFile(j, allocator, activity) catch |err| {
+        std.log.warn("craft: getLocationRecordingState fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    // A line the shim would drop and this cannot parse: hand the whole read
+    // back rather than disagreeing about how many samples there are.
+    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+        return null;
+
+    const state = locationstore.readState(j, allocator, activity, locations.count) catch |err| {
+        std.log.warn("craft: getLocationRecordingState fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const json = locationstore.renderState(allocator, state) catch return null;
+    return j.newStringUtf8(allocator, json) catch null;
+}
+
+/// `nativeReadLocationRecording(activity)`.
+fn nativeReadLocationRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const contents = locationstore.readFile(j, allocator, activity) catch |err| {
+        std.log.warn("craft: readLocationRecording fell through to the shim ({s})", .{@errorName(err)});
+        return null;
+    };
+
+    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+        return null;
+    return j.newStringUtf8(allocator, locations.json) catch null;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1583,7 +1650,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 37), natives.len);
+    try testing.expectEqual(@as(usize, 39), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
