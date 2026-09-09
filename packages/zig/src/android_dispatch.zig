@@ -44,7 +44,7 @@ const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
-const notifcancel = @import("bridge_android_notifcancel.zig");
+const notifications = @import("bridge_android_notifications.zig");
 const events = @import("android_events.zig");
 const calendar = @import("bridge_android_calendar.zig");
 const db = @import("bridge_android_db.zig");
@@ -317,6 +317,11 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeClearShortcuts",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeClearShortcuts),
+    },
+    .{
+        .name = "nativeScheduleNotification",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeScheduleNotification),
     },
 };
 
@@ -649,7 +654,7 @@ fn nativeVibrate(
 
 /// The jstring goes through untouched — the id is hashed by Java, and
 /// converting to UTF-8 first would throw away the representation the hash is
-/// defined over. See bridge_android_notifcancel.
+/// defined over. See bridge_android_notifications.
 fn nativeCancelNotification(
     env: jni.JNIEnv,
     _: jni.jobject,
@@ -657,7 +662,7 @@ fn nativeCancelNotification(
     id: jni.jstring,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    notifcancel.cancel(j, activity, id) catch |err| {
+    notifications.cancel(j, activity, id) catch |err| {
         std.log.warn("craft: cancelNotification fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -666,7 +671,7 @@ fn nativeCancelNotification(
 
 fn nativeCancelAllNotifications(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    notifcancel.cancelAll(j, activity) catch |err| {
+    notifications.cancelAll(j, activity) catch |err| {
         std.log.warn("craft: cancelAllNotifications fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -1246,6 +1251,56 @@ fn nativeClearShortcuts(
     return jni.JNI_TRUE;
 }
 
+/// `nativeScheduleNotification(activity, notificationJson)`.
+///
+/// Serves only the immediate half. A `delay` above zero needs
+/// `Handler.postDelayed`, which needs a `Runnable`, which Zig cannot make —
+/// so it is handed back *before* the channel is created or the notification
+/// built, because the shim does both on that path too and doing them twice
+/// would post nothing visible but would still be wrong.
+fn nativeScheduleNotification(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    notification_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, notification_json) catch return jni.JNI_FALSE;
+
+    // `JSONObject(notificationJson)` throwing is the shim's first catch, so a
+    // payload this cannot parse goes back rather than being rejected here.
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
+        return jni.JNI_FALSE;
+    defer parsed.deinit();
+
+    const default_id = notifications.defaultId(j, allocator) catch return jni.JNI_FALSE;
+    const notification = notifications.parseNotification(parsed.value, default_id) orelse
+        return jni.JNI_FALSE;
+
+    if (!notifications.servesImmediately(notification)) return jni.JNI_FALSE;
+
+    notifications.ensureChannel(j, activity) catch |err| {
+        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    _ = notifications.post(j, allocator, activity, notification) catch |err| {
+        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    // The id, not the hash: the page sent a string and gets the same string
+    // back, which is what it needs to cancel with later.
+    const payload = calendar.jsonString(allocator, notification.id) catch return jni.JNI_FALSE;
+    events.settle(allocator, notifications.schedule_resolve_global, payload) catch
+        return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1357,7 +1412,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 30), natives.len);
+    try testing.expectEqual(@as(usize, 31), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

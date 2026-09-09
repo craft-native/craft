@@ -452,8 +452,8 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_haptics.zig", .{
         .root_source_file = b.path("src/bridge_android_haptics.zig"),
     });
-    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_notifcancel.zig", .{
-        .root_source_file = b.path("src/bridge_android_notifcancel.zig"),
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_notifications.zig", .{
+        .root_source_file = b.path("src/bridge_android_notifications.zig"),
     });
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_calendar.zig", .{
         .root_source_file = b.path("src/bridge_android_calendar.zig"),

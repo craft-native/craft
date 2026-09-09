@@ -46,7 +46,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
-    @embedFile("src/bridge_android_notifcancel.zig"),
+    @embedFile("src/bridge_android_notifications.zig"),
     @embedFile("src/bridge_android_calendar.zig"),
     @embedFile("src/bridge_android_db.zig"),
     @embedFile("src/bridge_android_shareditem.zig"),
@@ -76,8 +76,9 @@ const zig_sources = [_][]const u8{
 /// widget pair, the first to take a constant across from the Kotlin because
 /// deriving it here would be silently wrong under an applicationIdSuffix; 73
 /// with the shortcut pair, whose two halves disagree about what to do below
-/// API 25 and are ported disagreeing.
-const max_not_yet_migrated: usize = 73;
+/// API 25 and are ported disagreeing; 72 with the immediate half of
+/// scheduleNotification, whose delayed half needs a Runnable.
+const max_not_yet_migrated: usize = 72;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

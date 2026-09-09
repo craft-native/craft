@@ -122,6 +122,7 @@ object CraftNative {
     private external fun nativeReloadWidgets(activity: Activity, action: String): Boolean
     private external fun nativeSetShortcuts(activity: Activity, shortcutsJson: String): Boolean
     private external fun nativeClearShortcuts(activity: Activity): Boolean
+    private external fun nativeScheduleNotification(activity: Activity, notificationJson: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -533,6 +534,23 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeClearShortcuts(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig posted the notification.
+     *
+     * A false is routine on one path in particular: a `delay` above zero needs
+     * `Handler.postDelayed`, and Zig cannot make a `Runnable`. It hands those
+     * back before creating the channel, so the Kotlin below does the whole
+     * thing rather than half of it twice.
+     */
+    fun scheduleNotification(activity: Activity, notificationJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeScheduleNotification(activity, notificationJson)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
