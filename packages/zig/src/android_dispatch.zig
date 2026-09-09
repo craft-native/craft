@@ -44,6 +44,8 @@ const intents = @import("bridge_android_intents.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
+const motion = @import("bridge_android_motion.zig");
+const json_number = @import("android_json_number.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
 const notifications = @import("bridge_android_notifications.zig");
@@ -448,6 +450,22 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeStopBluetoothScan",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStopBluetoothScan),
+    },
+    // Not an action: the other end of the SensorEventListener the holder owns.
+    .{
+        .name = "nativeMotionSample",
+        .signature = "(ZFFF)V",
+        .fnPtr = @ptrCast(&nativeMotionSample),
+    },
+    .{
+        .name = "nativeStartMotionUpdates",
+        .signature = "(Landroid/app/Activity;I)Z",
+        .fnPtr = @ptrCast(&nativeStartMotionUpdates),
+    },
+    .{
+        .name = "nativeStopMotionUpdates",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopMotionUpdates),
     },
 };
 
@@ -1975,6 +1993,109 @@ fn nativeStopBluetoothScan(
     return jni.JNI_TRUE;
 }
 
+/// `nativeMotionSample(isAccelerometer, x, y, z)` — one sensor reading.
+///
+/// Every sample sends a complete event: the sensor that just reported and the
+/// last value the other one gave, which is what the shim does and is why a
+/// device with both sensors produces two events per cycle.
+fn nativeMotionSample(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    is_accelerometer: jni.jboolean,
+    x: jni.jfloat,
+    y: jni.jfloat,
+    z: jni.jfloat,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    motion.record(is_accelerometer != jni.JNI_FALSE, .{ x, y, z });
+
+    const acceleration = motion.lastAcceleration();
+    const rotation = motion.lastRotation();
+
+    // Formatted by org.json, because these are the numbers a page reads and
+    // `Float.toString` is not a format string — see `android_json_number`.
+    var printed: [6][]const u8 = undefined;
+    inline for (0..3) |i| {
+        printed[i] = json_number.fromFloat(j, allocator, acceleration[i]) catch return;
+        printed[i + 3] = json_number.fromFloat(j, allocator, rotation[i]) catch return;
+    }
+
+    motion.announce(
+        allocator,
+        .{ printed[0], printed[1], printed[2] },
+        .{ printed[3], printed[4], printed[5] },
+    ) catch {};
+}
+
+/// `nativeStartMotionUpdates(activity, intervalMs)`.
+///
+/// The delay constant is read here and handed across, so the shim's `when`
+/// stays a Zig decision while the field it names stays the platform's number.
+fn nativeStartMotionUpdates(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    interval_ms: jni.jint,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    const delay = sensorDelay(j, motion.delayFor(interval_ms)) catch |err| {
+        std.log.warn("craft: startMotionUpdates fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    // The shim builds a new listener object, whose lastAccel and lastGyro
+    // start null — so a restart forgets what the last one saw.
+    motion.reset();
+
+    callHolderInt(j, "startMotionWatch", activity, delay) catch |err| {
+        std.log.warn("craft: startMotionUpdates fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeStopMotionUpdates(activity)`.
+fn nativeStopMotionUpdates(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "stopMotionWatch", activity) catch |err| {
+        std.log.warn("craft: stopMotionUpdates failed ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `SensorManager.<field>`.
+fn sensorDelay(j: Jni, delay: motion.Delay) !jni.jint {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const manager_cls = try j.findClass("android/hardware/SensorManager");
+    return j.staticIntField(manager_cls, try j.staticFieldId(manager_cls, delay.field(), "I"));
+}
+
+/// Call an `(Activity, int) -> void` static on the holder.
+fn callHolderInt(j: Jni, comptime name: [:0]const u8, activity: jni.jobject, value: jni.jint) !void {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const holder = try j.findClass(holder_class);
+    try j.callStaticVoidMethodA(
+        holder,
+        try j.staticMethodId(holder, name, "(Landroid/app/Activity;I)V"),
+        &.{ .{ .l = activity }, .{ .i = value } },
+    );
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -2086,7 +2207,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 53), natives.len);
+    try testing.expectEqual(@as(usize, 56), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

@@ -1,6 +1,10 @@
 package com.craft.runtime
 
 import android.app.Activity
+import android.hardware.SensorManager
+import android.hardware.SensorEventListener
+import android.hardware.SensorEvent
+import android.hardware.Sensor
 import androidx.core.app.ActivityCompat
 import android.os.Build
 import android.bluetooth.le.ScanResult
@@ -162,6 +166,9 @@ object CraftNative {
     private external fun nativeBluetoothDevice(address: String, name: String?, rssi: Int)
     private external fun nativeStartBluetoothScan(activity: Activity): Boolean
     private external fun nativeStopBluetoothScan(activity: Activity): Boolean
+    private external fun nativeMotionSample(isAccelerometer: Boolean, x: Float, y: Float, z: Float)
+    private external fun nativeStartMotionUpdates(activity: Activity, intervalMs: Int): Boolean
+    private external fun nativeStopMotionUpdates(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -1013,6 +1020,74 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeStopBluetoothScan(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== Motion sensors ====================
+    //
+    // The fourth listener shim. `SensorEventListener` is a Java interface, so
+    // the object is here — but only the object: which sensor a sample came
+    // from is passed across as a boolean and everything else, including the
+    // last-value bookkeeping and the delay the interval maps to, is Zig's.
+    //
+    // `registerListener` without a Handler delivers on the main looper, so
+    // every sample arrives on one thread and the state on the other side
+    // needs no lock.
+
+    private var sensorManager: SensorManager? = null
+    private var motionListener: SensorEventListener? = null
+
+    @JvmStatic
+    fun startMotionWatch(activity: Activity, delay: Int) {
+        val manager = activity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        sensorManager = manager
+
+        val accelerometer = manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        val gyroscope = manager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                try {
+                    nativeMotionSample(
+                        event.sensor.type == Sensor.TYPE_ACCELEROMETER,
+                        event.values[0],
+                        event.values[1],
+                        event.values[2]
+                    )
+                } catch (e: UnsatisfiedLinkError) {
+                    // The library went away. Nothing is waiting on this.
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+
+        accelerometer?.let { manager.registerListener(listener, it, delay) }
+        gyroscope?.let { manager.registerListener(listener, it, delay) }
+        motionListener = listener
+    }
+
+    @JvmStatic
+    fun stopMotionWatch(activity: Activity) {
+        motionListener?.let { sensorManager?.unregisterListener(it) }
+        motionListener = null
+    }
+
+    fun startMotionUpdates(activity: Activity, intervalMs: Int): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartMotionUpdates(activity, intervalMs)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopMotionUpdates(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopMotionUpdates(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

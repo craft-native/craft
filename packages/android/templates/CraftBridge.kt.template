@@ -2866,6 +2866,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startMotionUpdates(intervalMs: Int): Boolean {
+        // The SensorEventListener object is CraftNative's, and so is the
+        // last-value bookkeeping — which is why stopMotionUpdates has to reach
+        // the same way, or its own fields stay null and nothing unregisters.
+        if (CraftNative.startMotionUpdates(activity, intervalMs)) return true
+
         sensorManager = activity.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         gyroscope = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -2907,6 +2912,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopMotionUpdates() {
+        if (CraftNative.stopMotionUpdates(activity)) return
+
         sensorListener?.let { sensorManager?.unregisterListener(it) }
         sensorListener = null
     }
