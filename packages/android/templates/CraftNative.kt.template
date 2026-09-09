@@ -117,6 +117,7 @@ object CraftNative {
     private external fun nativeGetSharedItem(activity: Activity, key: String, group: String): Boolean
     private external fun nativeRemoveSharedItem(activity: Activity, key: String, group: String): Boolean
     private external fun nativeGetContacts(activity: Activity): Boolean
+    private external fun nativeAddContact(activity: Activity, contactJson: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -462,6 +463,22 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeGetContacts(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * Returns whether Zig took the write.
+     *
+     * A false is routine rather than exceptional: Zig serves the shape the
+     * page's own SDK sends and hands anything else back, because `org.json`
+     * coerces where a strict parser refuses.
+     */
+    fun addContact(activity: Activity, contactJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeAddContact(activity, contactJson)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

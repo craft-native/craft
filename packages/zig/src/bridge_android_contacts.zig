@@ -41,10 +41,13 @@ const jobject = jni.jobject;
 
 pub const A = struct {
     pub const get_contacts = "getContacts";
+    pub const add_contact = "addContact";
 };
 
 pub const resolve_global = "_craftContactsResolve";
 pub const reject_global = "_craftContactsReject";
+pub const add_resolve_global = "_craftAddContactResolve";
+pub const add_reject_global = "_craftAddContactReject";
 
 const col_id = "_id";
 const col_display_name = "display_name";
@@ -321,6 +324,279 @@ fn javaString(j: Jni, allocator: std.mem.Allocator, text: []const u8) !jni.jstri
 }
 
 // =============================================================================
+// addContact
+// =============================================================================
+//
+// ## The MIME types are read, where the column names are written
+//
+// Every constant elsewhere in this file is a literal, because a wrong column
+// name fails loudly — the provider throws or the cursor comes back empty. A
+// wrong MIMETYPE does not: `applyBatch` accepts it, the row is written, and it
+// simply never shows up as a name or a phone number anywhere. There is no
+// error and nothing to notice until someone opens the address book.
+//
+// So `CONTENT_ITEM_TYPE` is read through JNI. The value is identical to what
+// javac folded into the shim, and reading it is one static field access that
+// cannot be misremembered.
+//
+// ## What the batch builds
+//
+// A raw contact with a null account, then up to three data rows pointing back
+// at it by index rather than by id — `withValueBackReference(RAW_CONTACT_ID,
+// 0)` means "whatever the first operation inserted", which is the only way to
+// reference a row that does not exist yet.
+//
+// Each data row is skipped when its field is empty, so a contact with no phone
+// gets no phone row rather than an empty one.
+
+const col_account_type = "account_type";
+const col_account_name = "account_name";
+const col_raw_contact_id = "raw_contact_id";
+const col_mimetype = "mimetype";
+
+/// `Phone.TYPE` and `Email.TYPE`, both of which are `DATA2`.
+const col_data2 = "data2";
+
+/// `Phone.TYPE_MOBILE` and `Email.TYPE_HOME`.
+const phone_type_mobile: i32 = 2;
+const email_type_home: i32 = 1;
+
+/// `ContactsContract.AUTHORITY`.
+const contacts_authority = "com.android.contacts";
+
+/// The three optional fields the shim reads out of the payload.
+pub const NewContact = struct {
+    display_name: []const u8,
+    phone: []const u8,
+    email: []const u8,
+};
+
+/// Read the declared shape, or null where only `org.json` would.
+///
+/// The same rule `createCalendarEvent` uses and for the same reason: the shim
+/// reads these with `optString`, which coerces a number or a boolean into its
+/// string form, and `Double.toString` is not something to reproduce from
+/// memory. An explicit null is the one coercion carried over — it becomes the
+/// four characters "null", which then passes `isNotEmpty()` and is written to
+/// the address book as a contact named "null". That is what the shim does.
+pub fn parseNewContact(value: std.json.Value) ?NewContact {
+    const object = switch (value) {
+        .object => |o| o,
+        else => return null,
+    };
+
+    return .{
+        .display_name = optString(object, "displayName") orelse return null,
+        .phone = optString(object, "phone") orelse return null,
+        .email = optString(object, "email") orelse return null,
+    };
+}
+
+fn optString(object: std.json.ObjectMap, name: []const u8) ?[]const u8 {
+    const value = object.get(name) orelse return "";
+    return switch (value) {
+        .string => |text| text,
+        .null => "null",
+        else => null,
+    };
+}
+
+/// `contentResolver.applyBatch(AUTHORITY, ops)`, and the id it lands at.
+///
+/// Returns `ContentUris.parseId(results[0].uri!!)`. A batch that produced no
+/// result, or a first result with no uri, is the Kotlin's `!!` throwing — an
+/// error here, a rejection there, the same outcome for the page.
+pub fn addContact(j: Jni, allocator: std.mem.Allocator, activity: jobject, contact: NewContact) !i64 {
+    try j.pushLocalFrame(32);
+    defer _ = j.popLocalFrame(null);
+
+    const list_cls = try j.findClass("java/util/ArrayList");
+    const ops = try j.newObjectA(list_cls, try j.methodId(list_cls, "<init>", "()V"), &.{});
+    const add = try j.methodId(list_cls, "add", "(Ljava/lang/Object;)Z");
+
+    const raw_contacts_cls = try j.findClass("android/provider/ContactsContract$RawContacts");
+    const raw_uri = try j.staticObjectField(
+        raw_contacts_cls,
+        try j.staticFieldId(raw_contacts_cls, "CONTENT_URI", "Landroid/net/Uri;"),
+    );
+
+    {
+        // The raw contact itself, with a null account — a local-only contact,
+        // which is what the shim creates.
+        try j.pushLocalFrame(8);
+        defer _ = j.popLocalFrame(null);
+
+        const builder = try newInsert(j, raw_uri);
+        _ = try withValue(j, allocator, builder, col_account_type, null);
+        _ = try withValue(j, allocator, builder, col_account_name, null);
+        _ = try j.callBooleanMethodA(ops, add, &.{.{ .l = try build(j, builder) }});
+    }
+
+    const data_cls = try j.findClass("android/provider/ContactsContract$Data");
+    const data_uri = try j.staticObjectField(
+        data_cls,
+        try j.staticFieldId(data_cls, "CONTENT_URI", "Landroid/net/Uri;"),
+    );
+
+    if (contact.display_name.len != 0) {
+        try appendDataRow(j, allocator, ops, add, data_uri, "StructuredName", .{
+            .value_column = col_data1,
+            .value = contact.display_name,
+            .type_value = null,
+        });
+    }
+
+    if (contact.phone.len != 0) {
+        try appendDataRow(j, allocator, ops, add, data_uri, "Phone", .{
+            .value_column = col_data1,
+            .value = contact.phone,
+            .type_value = phone_type_mobile,
+        });
+    }
+
+    if (contact.email.len != 0) {
+        try appendDataRow(j, allocator, ops, add, data_uri, "Email", .{
+            .value_column = col_data1,
+            .value = contact.email,
+            .type_value = email_type_home,
+        });
+    }
+
+    const resolver = try contentResolver(j, activity);
+    const results = try j.callObjectMethodA(
+        resolver,
+        try j.methodId(
+            try j.objectClass(resolver),
+            "applyBatch",
+            "(Ljava/lang/String;Ljava/util/ArrayList;)[Landroid/content/ContentProviderResult;",
+        ),
+        &.{
+            .{ .l = try javaString(j, allocator, contacts_authority) },
+            .{ .l = ops },
+        },
+    );
+
+    if (results == null) return error.BatchProducedNothing;
+    if (try j.arrayLength(results) == 0) return error.BatchProducedNothing;
+
+    const first = try j.objectArrayElement(results, 0);
+    if (first == null) return error.BatchProducedNothing;
+
+    // `ContentProviderResult.uri` is a public field, not a getter.
+    const uri = try j.objectField(
+        first,
+        try j.fieldId(try j.objectClass(first), "uri", "Landroid/net/Uri;"),
+    );
+    if (uri == null) return error.BatchProducedNothing;
+
+    const content_uris_cls = try j.findClass("android/content/ContentUris");
+    return j.callStaticLongMethodA(
+        content_uris_cls,
+        try j.staticMethodId(content_uris_cls, "parseId", "(Landroid/net/Uri;)J"),
+        &.{.{ .l = uri }},
+    );
+}
+
+const DataRow = struct {
+    value_column: []const u8,
+    value: []const u8,
+    /// `Phone.TYPE` / `Email.TYPE`, absent for a structured name.
+    type_value: ?i32,
+};
+
+fn appendDataRow(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    ops: jobject,
+    add: jni.jmethodID,
+    data_uri: jobject,
+    comptime kind: []const u8,
+    row: DataRow,
+) !void {
+    try j.pushLocalFrame(16);
+    defer _ = j.popLocalFrame(null);
+
+    // Comptime, so the class name is a string literal the linker holds rather
+    // than something assembled per call.
+    const kind_cls = try j.findClass("android/provider/ContactsContract$CommonDataKinds$" ++ kind);
+    const item_type = try j.staticObjectField(
+        kind_cls,
+        try j.staticFieldId(kind_cls, "CONTENT_ITEM_TYPE", "Ljava/lang/String;"),
+    );
+
+    const builder = try newInsert(j, data_uri);
+
+    // Index 0 is the raw contact this batch opened with; the row it inserts
+    // has no id until the batch runs, so it is referenced by position.
+    _ = try j.callObjectMethodA(
+        builder,
+        try j.methodId(
+            try j.objectClass(builder),
+            "withValueBackReference",
+            "(Ljava/lang/String;I)Landroid/content/ContentProviderOperation$Builder;",
+        ),
+        &.{ .{ .l = try javaString(j, allocator, col_raw_contact_id) }, .{ .i = 0 } },
+    );
+
+    _ = try withValue(j, allocator, builder, col_mimetype, item_type);
+    _ = try withValue(j, allocator, builder, row.value_column, try javaString(j, allocator, row.value));
+
+    if (row.type_value) |type_value| {
+        const integer_cls = try j.findClass("java/lang/Integer");
+        const boxed = try j.callStaticObjectMethodA(
+            integer_cls,
+            try j.staticMethodId(integer_cls, "valueOf", "(I)Ljava/lang/Integer;"),
+            &.{.{ .i = type_value }},
+        );
+        _ = try withValue(j, allocator, builder, col_data2, boxed);
+    }
+
+    _ = try j.callBooleanMethodA(ops, add, &.{.{ .l = try build(j, builder) }});
+}
+
+fn newInsert(j: Jni, uri: jobject) !jobject {
+    const op_cls = try j.findClass("android/content/ContentProviderOperation");
+    return j.callStaticObjectMethodA(
+        op_cls,
+        try j.staticMethodId(
+            op_cls,
+            "newInsert",
+            "(Landroid/net/Uri;)Landroid/content/ContentProviderOperation$Builder;",
+        ),
+        &.{.{ .l = uri }},
+    );
+}
+
+fn withValue(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    builder: jobject,
+    column: []const u8,
+    value: jobject,
+) !jobject {
+    return j.callObjectMethodA(
+        builder,
+        try j.methodId(
+            try j.objectClass(builder),
+            "withValue",
+            "(Ljava/lang/String;Ljava/lang/Object;)Landroid/content/ContentProviderOperation$Builder;",
+        ),
+        &.{ .{ .l = try javaString(j, allocator, column) }, .{ .l = value } },
+    );
+}
+
+fn build(j: Jni, builder: jobject) !jobject {
+    return j.callObjectMethod(
+        builder,
+        try j.methodId(
+            try j.objectClass(builder),
+            "build",
+            "()Landroid/content/ContentProviderOperation;",
+        ),
+    );
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -434,4 +710,108 @@ test "getContacts names its action and globals as the shim does" {
     try testing.expectEqualStrings("getContacts", A.get_contacts);
     try testing.expectEqualStrings("_craftContactsResolve", resolve_global);
     try testing.expectEqualStrings("_craftContactsReject", reject_global);
+}
+
+// --- addContact ------------------------------------------------------------
+
+fn parsedContact(json: []const u8) !?NewContact {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+
+    var parsed = try std.json.parseFromSlice(std.json.Value, arena.allocator(), json, .{});
+    defer parsed.deinit();
+
+    const contact = parseNewContact(parsed.value) orelse return null;
+    return NewContact{
+        .display_name = try testing.allocator.dupe(u8, contact.display_name),
+        .phone = try testing.allocator.dupe(u8, contact.phone),
+        .email = try testing.allocator.dupe(u8, contact.email),
+    };
+}
+
+fn freeContact(contact: NewContact) void {
+    testing.allocator.free(contact.display_name);
+    testing.allocator.free(contact.phone);
+    testing.allocator.free(contact.email);
+}
+
+test "the declared shape reads straight through" {
+    const contact = (try parsedContact(
+        \\{"displayName":"Ada","phone":"+441234567890","email":"ada@example.com"}
+    )).?;
+    defer freeContact(contact);
+
+    try testing.expectEqualStrings("Ada", contact.display_name);
+    try testing.expectEqualStrings("+441234567890", contact.phone);
+    try testing.expectEqualStrings("ada@example.com", contact.email);
+}
+
+test "absent fields are empty, and an empty field writes no row" {
+    // `optString(name, "")`, and then `if (x.isNotEmpty())` decides whether the
+    // batch gets a row at all. An empty phone is not a phone row with an empty
+    // number — it is no phone row.
+    const contact = (try parsedContact("{}")).?;
+    defer freeContact(contact);
+
+    try testing.expectEqualStrings("", contact.display_name);
+    try testing.expectEqualStrings("", contact.phone);
+    try testing.expectEqualStrings("", contact.email);
+}
+
+test "an explicit null becomes a contact named null" {
+    // Not a joke and not a rounding: `optString` on JSON null returns the four
+    // characters "null", which passes `isNotEmpty()` and is written to the
+    // address book. `JSON.stringify({displayName: null})` produces it, and the
+    // shim behaves this way today.
+    const contact = (try parsedContact(
+        \\{"displayName":null}
+    )).?;
+    defer freeContact(contact);
+
+    try testing.expectEqualStrings("null", contact.display_name);
+    try testing.expectEqualStrings("", contact.phone);
+}
+
+test "a shape only org.json would coerce is handed back" {
+    for ([_][]const u8{
+        \\{"displayName":1.5}
+        ,
+        \\{"phone":447700900000}
+        ,
+        \\{"email":true}
+        ,
+        \\[]
+        ,
+        \\"Ada"
+        ,
+    }) |payload| {
+        if (try parsedContact(payload)) |contact| {
+            freeContact(contact);
+            std.debug.print("payload was served rather than handed back: {s}\n", .{payload});
+            return error.CoercedShapeAccepted;
+        }
+    }
+}
+
+test "the batch's column names and types are the shim's" {
+    try testing.expectEqualStrings("account_type", col_account_type);
+    try testing.expectEqualStrings("account_name", col_account_name);
+    try testing.expectEqualStrings("raw_contact_id", col_raw_contact_id);
+    try testing.expectEqualStrings("mimetype", col_mimetype);
+    try testing.expectEqualStrings("com.android.contacts", contacts_authority);
+
+    // Phone.TYPE and Email.TYPE are both DATA2, the same way NUMBER and
+    // ADDRESS are both DATA1.
+    try testing.expectEqualStrings("data2", col_data2);
+
+    // Phone.TYPE_MOBILE and Email.TYPE_HOME. Different numbers in different
+    // enumerations that happen to sit in the same column.
+    try testing.expectEqual(@as(i32, 2), phone_type_mobile);
+    try testing.expectEqual(@as(i32, 1), email_type_home);
+}
+
+test "addContact names its action and globals as the shim does" {
+    try testing.expectEqualStrings("addContact", A.add_contact);
+    try testing.expectEqualStrings("_craftAddContactResolve", add_resolve_global);
+    try testing.expectEqualStrings("_craftAddContactReject", add_reject_global);
 }
