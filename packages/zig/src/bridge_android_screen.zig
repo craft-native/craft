@@ -1,8 +1,8 @@
-//! `lockOrientation` and `unlockOrientation` on Android.
+//! The screen: `lockOrientation`, `unlockOrientation` and `setKeepAwake`.
 //!
-//! The first pair to go through `android_main_thread`: both do their whole job
-//! on the main looper and neither touches state the shim keeps, which is what
-//! makes them the right thing to prove the trampoline with.
+//! Everything here goes through `android_main_thread`, because everything here
+//! touches the Activity's window and the shim wraps each one in
+//! `runOnUiThread { ... }`.
 //!
 //! ## They answer by returning, not through the reply channel
 //!
@@ -41,6 +41,7 @@ const jobject = jni.jobject;
 pub const A = struct {
     pub const lock_orientation = "lockOrientation";
     pub const unlock_orientation = "unlockOrientation";
+    pub const set_keep_awake = "setKeepAwake";
 };
 
 /// Which `ActivityInfo` constant a page's string names.
@@ -83,6 +84,45 @@ pub fn constantFor(j: Jni, mode: Mode) !i32 {
 pub fn apply(j: Jni, activity: jobject, mode: Mode) !void {
     const constant = try constantFor(j, mode);
     try main_thread.post(j, activity, .{ .set_requested_orientation = constant }, 0);
+}
+
+// =============================================================================
+// setKeepAwake
+// =============================================================================
+//
+// ## The field it writes is read by nothing
+//
+// The shim's block ends `isKeepingAwake = enabled`, and that field is written
+// there and read nowhere else in `CraftBridge.kt`. So unlike the flashlight
+// pair — where `toggleFlashlight` reads what `setFlashlight` wrote, and Zig
+// serving one would leave the other inverting a stale value — there is no
+// state to keep in step here. Worth saying, because the two look identical
+// from the outside and only one of them is safe to take.
+
+/// `WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON`.
+///
+/// Read through JNI rather than written down. A wrong column name throws and a
+/// wrong flag does not: the window would quietly get `FLAG_DIM_BEHIND` or
+/// `FLAG_BLUR_BEHIND` instead, and the screen would keep timing out while
+/// everything reported success.
+pub fn keepScreenOnFlag(j: Jni) !i32 {
+    try j.pushLocalFrame(4);
+    defer _ = j.popLocalFrame(null);
+
+    const params_cls = try j.findClass("android/view/WindowManager$LayoutParams");
+    return j.staticIntField(
+        params_cls,
+        try j.staticFieldId(params_cls, "FLAG_KEEP_SCREEN_ON", "I"),
+    );
+}
+
+/// Queue `window.addFlags(...)` or `window.clearFlags(...)` for the main thread.
+pub fn keepAwake(j: Jni, activity: jobject, enabled: bool) !void {
+    const flag = try keepScreenOnFlag(j);
+    try main_thread.post(j, activity, .{ .set_window_flags = .{
+        .flags = flag,
+        .add = enabled,
+    } }, 0);
 }
 
 // =============================================================================
@@ -146,4 +186,5 @@ test "each mode names a real ActivityInfo field" {
 test "the actions match the shim exactly" {
     try testing.expectEqualStrings("lockOrientation", A.lock_orientation);
     try testing.expectEqualStrings("unlockOrientation", A.unlock_orientation);
+    try testing.expectEqualStrings("setKeepAwake", A.set_keep_awake);
 }

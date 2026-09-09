@@ -473,8 +473,8 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_shortcuts.zig", .{
         .root_source_file = b.path("src/bridge_android_shortcuts.zig"),
     });
-    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_orientation.zig", .{
-        .root_source_file = b.path("src/bridge_android_orientation.zig"),
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_screen.zig", .{
+        .root_source_file = b.path("src/bridge_android_screen.zig"),
     });
     const run_android_conformance_tests = b.addRunArtifact(android_conformance_tests);
 
