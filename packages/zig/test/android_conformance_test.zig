@@ -52,6 +52,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_shareditem.zig"),
     @embedFile("src/bridge_android_contacts.zig"),
     @embedFile("src/bridge_android_widgets.zig"),
+    @embedFile("src/bridge_android_shortcuts.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -73,8 +74,10 @@ const zig_sources = [_][]const u8{
 /// with the database pair, the first to borrow a connection the Kotlin owns;
 /// 79 with the shared-item trio; 77 with the contacts pair; 75 with the
 /// widget pair, the first to take a constant across from the Kotlin because
-/// deriving it here would be silently wrong under an applicationIdSuffix.
-const max_not_yet_migrated: usize = 75;
+/// deriving it here would be silently wrong under an applicationIdSuffix; 73
+/// with the shortcut pair, whose two halves disagree about what to do below
+/// API 25 and are ported disagreeing.
+const max_not_yet_migrated: usize = 73;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
