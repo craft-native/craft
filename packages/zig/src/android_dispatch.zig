@@ -371,6 +371,26 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
         .fnPtr = @ptrCast(&nativeReadLocationRecording),
     },
+    .{
+        .name = "nativeStartLocationRecording",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeStartLocationRecording),
+    },
+    .{
+        .name = "nativeStopLocationRecording",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeStopLocationRecording),
+    },
+    .{
+        .name = "nativePauseLocationRecording",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativePauseLocationRecording),
+    },
+    .{
+        .name = "nativeResumeLocationRecording",
+        .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
+        .fnPtr = @ptrCast(&nativeResumeLocationRecording),
+    },
 };
 
 /// How binding went. A value rather than a log line, so every path is
@@ -1539,6 +1559,146 @@ fn nativeReadLocationRecording(
     return j.newStringUtf8(allocator, locations.json) catch null;
 }
 
+/// The current state as a Java String, or null if any part of the read
+/// declines. Shared by every control, since all four answer with one.
+fn recordingStateString(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    activity: jni.jobject,
+    include_locations: bool,
+) jni.jstring {
+    const contents = locationstore.readFile(j, allocator, activity) catch return null;
+    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+        return null;
+    const state = locationstore.readState(j, allocator, activity, locations.count) catch return null;
+
+    const json = locationstore.renderStateWith(
+        allocator,
+        state,
+        if (include_locations) locations.json else null,
+    ) catch return null;
+    return j.newStringUtf8(allocator, json) catch null;
+}
+
+/// `nativeStartLocationRecording(activity)`.
+fn nativeStartLocationRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.access_fine_location) catch
+        return null;
+
+    if (!granted) {
+        // A different object from "never recorded": this path builds a fresh
+        // JSONObject with an explicit JSONObject.NULL id, so the key is
+        // present and null rather than absent.
+        const json = locationstore.renderDenied(allocator) catch return null;
+        return j.newStringUtf8(allocator, json) catch null;
+    }
+
+    const id = locationstore.newRecordingId(j, allocator) catch return null;
+    const started_at = locationstore.nowMillis(j) catch return null;
+    locationstore.startStore(j, allocator, activity, id, started_at) catch return null;
+
+    // Kotlin names the service class, because its package is templated.
+    startRecordingService(j, activity) catch return null;
+
+    return recordingStateString(j, allocator, activity, false);
+}
+
+/// `nativeStopLocationRecording(activity)`.
+///
+/// The state is read *before* the service is stopped, as the shim reads it —
+/// so the array it returns is the recording as it stood at the call.
+fn nativeStopLocationRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    locationstore.stopStore(j, allocator, activity) catch return null;
+
+    // Declining after the store write is safe: `stop` is idempotent, so the
+    // shim runs the whole method again and reaches `stopService` itself.
+    const result = recordingStateString(j, allocator, activity, true);
+    if (result == null) return null;
+
+    stopRecordingService(j, activity) catch return null;
+    return result;
+}
+
+/// `nativePauseLocationRecording(activity)`.
+fn nativePauseLocationRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    locationstore.setPaused(j, allocator, activity, true) catch return null;
+    return recordingStateString(j, allocator, activity, false);
+}
+
+/// `nativeResumeLocationRecording(activity)`.
+///
+/// Restarts the service only when a recording is active, as the shim does — a
+/// page resuming something it never started should not raise a foreground
+/// notification.
+fn nativeResumeLocationRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jstring {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    locationstore.setPaused(j, allocator, activity, false) catch return null;
+
+    const active = locationstore.isActive(j, allocator, activity) catch return null;
+    if (active) startRecordingService(j, activity) catch return null;
+
+    return recordingStateString(j, allocator, activity, false);
+}
+
+fn startRecordingService(j: Jni, activity: jni.jobject) !void {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const holder = try j.findClass(holder_class);
+    try j.callStaticVoidMethodA(
+        holder,
+        try j.staticMethodId(holder, "startRecordingService", "(Landroid/app/Activity;)V"),
+        &.{.{ .l = activity }},
+    );
+}
+
+fn stopRecordingService(j: Jni, activity: jni.jobject) !void {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const holder = try j.findClass(holder_class);
+    try j.callStaticVoidMethodA(
+        holder,
+        try j.staticMethodId(holder, "stopRecordingService", "(Landroid/app/Activity;)V"),
+        &.{.{ .l = activity }},
+    );
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1650,7 +1810,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 39), natives.len);
+    try testing.expectEqual(@as(usize, 43), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

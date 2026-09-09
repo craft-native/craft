@@ -1772,6 +1772,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startLocationRecording(optionsJson: String): String {
+        // Null is "Zig declined". A permission-denied answer is not null — it
+        // is a state object saying so, and returning it here is the answer.
+        CraftNative.startLocationRecording(activity)?.let { return it }
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             return JSONObject().apply {
                 put("id", JSONObject.NULL)
@@ -1792,12 +1796,16 @@ class CraftBridge(
 
     @JavascriptInterface
     fun pauseLocationRecording(): String {
+        CraftNative.pauseLocationRecording(activity)?.let { return it }
+
         CraftLocationRecordingStore.setPaused(activity, true)
         return CraftLocationRecordingStore.state(activity).toString()
     }
 
     @JavascriptInterface
     fun resumeLocationRecording(): String {
+        CraftNative.resumeLocationRecording(activity)?.let { return it }
+
         CraftLocationRecordingStore.setPaused(activity, false)
         if (CraftLocationRecordingStore.isActive(activity)) {
             ContextCompat.startForegroundService(
@@ -1810,6 +1818,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopLocationRecording(): String {
+        CraftNative.stopLocationRecording(activity)?.let { return it }
+
         CraftLocationRecordingStore.stop(activity)
         val result = CraftLocationRecordingStore.state(activity, includeLocations = true).toString()
         activity.stopService(Intent(activity, LocationRecordingService::class.java).setAction(LocationRecordingService.ACTION_STOP))
