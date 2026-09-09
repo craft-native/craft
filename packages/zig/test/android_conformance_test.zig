@@ -50,6 +50,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_calendar.zig"),
     @embedFile("src/bridge_android_db.zig"),
     @embedFile("src/bridge_android_shareditem.zig"),
+    @embedFile("src/bridge_android_contacts.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -69,8 +70,8 @@ const zig_sources = [_][]const u8{
 /// getCalendarEvents, the first to send the page a payload it built rather
 /// than a constant; 84 with createCalendarEvent, the first to read one; 82
 /// with the database pair, the first to borrow a connection the Kotlin owns;
-/// 79 with the shared-item trio.
-const max_not_yet_migrated: usize = 79;
+/// 79 with the shared-item trio; 77 with the contacts pair.
+const max_not_yet_migrated: usize = 77;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
