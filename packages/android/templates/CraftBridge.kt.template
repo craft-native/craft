@@ -1817,10 +1817,20 @@ class CraftBridge(
     }
 
     @JavascriptInterface
-    fun getLocationRecordingState(): String = CraftLocationRecordingStore.state(activity).toString()
+    fun getLocationRecordingState(): String {
+        // Null is "Zig declined", not "no recording" — an absent recording is
+        // a state object saying so, and returning it here is the answer.
+        CraftNative.getLocationRecordingState(activity)?.let { return it }
+
+        return CraftLocationRecordingStore.state(activity).toString()
+    }
 
     @JavascriptInterface
-    fun readLocationRecording(): String = CraftLocationRecordingStore.locations(activity).toString()
+    fun readLocationRecording(): String {
+        CraftNative.readLocationRecording(activity)?.let { return it }
+
+        return CraftLocationRecordingStore.locations(activity).toString()
+    }
 
     // ==================== Clipboard ====================
 

@@ -136,6 +136,45 @@ pub fn getString(
     return try j.stringToUtf8(allocator, value);
 }
 
+/// `prefs.getBoolean(key, fallback)`.
+pub fn getBoolean(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    prefs: jobject,
+    key: []const u8,
+    fallback: bool,
+) !bool {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    return j.callBooleanMethodA(
+        prefs,
+        try j.methodId(try j.objectClass(prefs), "getBoolean", "(Ljava/lang/String;Z)Z"),
+        &.{
+            .{ .l = try j.newStringUtf8(allocator, key) },
+            .{ .z = if (fallback) jni.JNI_TRUE else jni.JNI_FALSE },
+        },
+    );
+}
+
+/// `prefs.getLong(key, fallback)`.
+pub fn getLong(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    prefs: jobject,
+    key: []const u8,
+    fallback: i64,
+) !i64 {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    return j.callLongMethodA(
+        prefs,
+        try j.methodId(try j.objectClass(prefs), "getLong", "(Ljava/lang/String;J)J"),
+        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .j = fallback } },
+    );
+}
+
 // =============================================================================
 // Tests
 // =============================================================================

@@ -55,6 +55,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_shortcuts.zig"),
     @embedFile("src/bridge_android_screen.zig"),
     @embedFile("src/bridge_android_files.zig"),
+    @embedFile("src/bridge_android_locationstore.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -84,8 +85,9 @@ const zig_sources = [_][]const u8{
 /// the Kotlin holder owns and a token that says what to do; 69 with
 /// setKeepAwake, whose Kotlin field turns out to be written and never read;
 /// 67 with downloadFile and saveFile, neither of which needed the main thread
-/// at all.
-const max_not_yet_migrated: usize = 67;
+/// at all; 65 with the recording store's two reads, whose writers stay with
+/// the service that owns them.
+const max_not_yet_migrated: usize = 65;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

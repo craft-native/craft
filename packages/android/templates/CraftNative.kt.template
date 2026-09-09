@@ -131,6 +131,8 @@ object CraftNative {
     private external fun nativeSetKeepAwake(activity: Activity, enabled: Boolean): Boolean
     private external fun nativeDownloadFile(activity: Activity, url: String, filename: String): Boolean
     private external fun nativeSaveFile(activity: Activity, data: String, filename: String): Boolean
+    private external fun nativeGetLocationRecordingState(activity: Activity): String?
+    private external fun nativeReadLocationRecording(activity: Activity): String?
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -648,6 +650,28 @@ object CraftNative {
             nativeSaveFile(activity, data, filename)
         } catch (e: UnsatisfiedLinkError) {
             false
+        }
+    }
+
+    /**
+     * The read side of the recording store. Null is "Zig declined", not "no
+     * recording" — an absent recording is a state object saying so.
+     */
+    fun getLocationRecordingState(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeGetLocationRecordingState(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    fun readLocationRecording(activity: Activity): String? {
+        if (!isAvailable) return null
+        return try {
+            nativeReadLocationRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            null
         }
     }
 }
