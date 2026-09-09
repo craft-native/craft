@@ -25,6 +25,7 @@
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
 const bridge_error = @import("bridge_error.zig");
+const prefs_api = @import("android_prefs.zig");
 
 const Jni = jni.Jni;
 const jobject = jni.jobject;
@@ -37,9 +38,6 @@ pub const A = struct {
 
 pub const resolve_global = "_craftSharedKeychainResolve";
 pub const reject_global = "_craftSharedKeychainReject";
-
-/// `Context.MODE_PRIVATE`, a compile-time constant the shim's DEX holds as 0.
-const mode_private: i32 = 0;
 
 const prefix = "craft_shared";
 
@@ -97,17 +95,7 @@ pub fn valuePayload(allocator: std.mem.Allocator, key: []const u8, value: ?[]con
 fn openPrefs(j: Jni, allocator: std.mem.Allocator, activity: jobject, group: []const u8) !jobject {
     const name = try prefsName(allocator, group);
     defer allocator.free(name);
-
-    const activity_cls = try j.objectClass(activity);
-    return j.callObjectMethodA(
-        activity,
-        try j.methodId(
-            activity_cls,
-            "getSharedPreferences",
-            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
-        ),
-        &.{ .{ .l = try j.newStringUtf8(allocator, name) }, .{ .i = mode_private } },
-    );
+    return prefs_api.open(j, allocator, activity, name);
 }
 
 /// `prefs.edit().putString(key, value).apply()`.
@@ -122,27 +110,9 @@ pub fn set(
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
-    const prefs = try openPrefs(j, allocator, activity, group);
-    const editor = try editorFor(j, prefs);
-    const editor_cls = try j.objectClass(editor);
-
-    _ = try j.callObjectMethodA(
-        editor,
-        try j.methodId(
-            editor_cls,
-            "putString",
-            "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-        ),
-        &.{
-            .{ .l = try j.newStringUtf8(allocator, key) },
-            .{ .l = try j.newStringUtf8(allocator, value) },
-        },
-    );
-
-    // `apply` rather than `commit`: it writes on a background thread and
-    // returns void, so a failure is not observable here — which is exactly
-    // what the shim's resolve already promises regardless.
-    try j.callVoidMethodA(editor, try j.methodId(editor_cls, "apply", "()V"), &.{});
+    const editor = try prefs_api.edit(j, try openPrefs(j, allocator, activity, group));
+    try prefs_api.putString(j, allocator, editor, key, value);
+    try prefs_api.apply(j, editor);
 }
 
 /// `prefs.edit().remove(key).apply()`.
@@ -156,20 +126,9 @@ pub fn remove(
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
-    const prefs = try openPrefs(j, allocator, activity, group);
-    const editor = try editorFor(j, prefs);
-    const editor_cls = try j.objectClass(editor);
-
-    _ = try j.callObjectMethodA(
-        editor,
-        try j.methodId(
-            editor_cls,
-            "remove",
-            "(Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
-        ),
-        &.{.{ .l = try j.newStringUtf8(allocator, key) }},
-    );
-    try j.callVoidMethodA(editor, try j.methodId(editor_cls, "apply", "()V"), &.{});
+    const editor = try prefs_api.edit(j, try openPrefs(j, allocator, activity, group));
+    try prefs_api.remove(j, allocator, editor, key);
+    try prefs_api.apply(j, editor);
 }
 
 /// `prefs.getString(key, null)`, null included.
@@ -187,29 +146,7 @@ pub fn get(
     defer _ = j.popLocalFrame(null);
 
     const prefs = try openPrefs(j, allocator, activity, group);
-    const value = try j.callObjectMethodA(
-        prefs,
-        try j.methodId(
-            try j.objectClass(prefs),
-            "getString",
-            "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
-        ),
-        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .l = null } },
-    );
-
-    if (value == null) return null;
-    return try j.stringToUtf8(allocator, value);
-}
-
-fn editorFor(j: Jni, prefs: jobject) !jobject {
-    return j.callObjectMethod(
-        prefs,
-        try j.methodId(
-            try j.objectClass(prefs),
-            "edit",
-            "()Landroid/content/SharedPreferences$Editor;",
-        ),
-    );
+    return prefs_api.getString(j, allocator, prefs, key);
 }
 
 // =============================================================================
@@ -285,11 +222,6 @@ test "a key or value carrying a quote survives as JSON" {
     defer parsed_success.deinit();
     try testing.expectEqualStrings("it's", parsed_success.value.object.get("key").?.string);
     try testing.expect(parsed_success.value.object.get("success").?.bool);
-}
-
-test "MODE_PRIVATE is zero" {
-    // A compile-time constant in Java, so the shim's DEX holds the literal.
-    try testing.expectEqual(@as(i32, 0), mode_private);
 }
 
 test "the actions and globals match the shim exactly" {
