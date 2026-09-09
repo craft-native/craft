@@ -56,6 +56,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_screen.zig"),
     @embedFile("src/bridge_android_files.zig"),
     @embedFile("src/bridge_android_locationstore.zig"),
+    @embedFile("src/bridge_android_appstate.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -89,8 +90,9 @@ const zig_sources = [_][]const u8{
 /// the service that owns them; 61 with the four controls, once Kotlin agreed
 /// to name its own service class; 59 with the network monitoring pair, the
 /// first listener shim — the callback object is the holder's, the work is
-/// Zig's.
-const max_not_yet_migrated: usize = 59;
+/// Zig's; 56 with the app-state trio, the first migration where the state
+/// itself moved rather than being worked around.
+const max_not_yet_migrated: usize = 56;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
