@@ -51,6 +51,7 @@ const db = @import("bridge_android_db.zig");
 const shareditem = @import("bridge_android_shareditem.zig");
 const contacts = @import("bridge_android_contacts.zig");
 const widgets = @import("bridge_android_widgets.zig");
+const shortcuts = @import("bridge_android_shortcuts.zig");
 
 const Jni = jni.Jni;
 
@@ -306,6 +307,16 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeReloadWidgets",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeReloadWidgets),
+    },
+    .{
+        .name = "nativeSetShortcuts",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeSetShortcuts),
+    },
+    .{
+        .name = "nativeClearShortcuts",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeClearShortcuts),
     },
 };
 
@@ -1152,6 +1163,89 @@ fn nativeReloadWidgets(
     return jni.JNI_TRUE;
 }
 
+/// `nativeSetShortcuts(activity, shortcutsJson)`.
+fn nativeSetShortcuts(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    shortcuts_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const sdk = shortcuts.sdkInt(j) catch |err| {
+        std.log.warn("craft: setShortcuts fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (sdk < shortcuts.n_mr1) {
+        const payload = shortcuts.jsonString(allocator, shortcuts.unsupported_message) catch
+            return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    const text = j.stringToUtf8(allocator, shortcuts_json) catch return jni.JNI_FALSE;
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
+        return jni.JNI_FALSE;
+    defer parsed.deinit();
+
+    // `getString` raises where `optString` defaults, so a payload missing a
+    // title is a rejection rather than a shape to hand back — and the shim
+    // sets nothing at all, including the entries that parsed.
+    const list = shortcuts.parseShortcuts(allocator, parsed.value) catch |err| {
+        const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
+            return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    } orelse return jni.JNI_FALSE;
+
+    shortcuts.set(j, allocator, activity, list) catch |err| {
+        const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
+            return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    };
+
+    const payload = shortcuts.countPayload(allocator, list.len) catch return jni.JNI_FALSE;
+    events.settle(allocator, shortcuts.resolve_global, payload) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeClearShortcuts(activity)`.
+///
+/// Resolves `true` below API 25 without touching anything, because that is
+/// what the shim does: nothing to clear is the same as having cleared it.
+fn nativeClearShortcuts(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const sdk = shortcuts.sdkInt(j) catch |err| {
+        std.log.warn("craft: clearShortcuts fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (sdk >= shortcuts.n_mr1) {
+        shortcuts.clear(j, activity) catch |err| {
+            const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
+                return jni.JNI_FALSE;
+            events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+            return jni.JNI_TRUE;
+        };
+    }
+
+    events.settle(allocator, shortcuts.resolve_global, "true") catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1263,7 +1357,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 28), natives.len);
+    try testing.expectEqual(@as(usize, 30), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

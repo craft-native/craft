@@ -120,6 +120,8 @@ object CraftNative {
     private external fun nativeAddContact(activity: Activity, contactJson: String): Boolean
     private external fun nativeUpdateWidget(activity: Activity, action: String, dataJson: String): Boolean
     private external fun nativeReloadWidgets(activity: Activity, action: String): Boolean
+    private external fun nativeSetShortcuts(activity: Activity, shortcutsJson: String): Boolean
+    private external fun nativeClearShortcuts(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -507,6 +509,30 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeReloadWidgets(activity, action)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * The launcher's long-press menu.
+     *
+     * Both handle the pre-25 case themselves, and asymmetrically, because the
+     * Kotlin does: setting rejects with a message and clearing resolves true.
+     */
+    fun setShortcuts(activity: Activity, shortcutsJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSetShortcuts(activity, shortcutsJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun clearShortcuts(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeClearShortcuts(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

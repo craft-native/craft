@@ -3258,6 +3258,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun setShortcuts(shortcutsJson: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice.
+        if (CraftNative.setShortcuts(activity, shortcutsJson)) return
+
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(
@@ -3313,6 +3317,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun clearShortcuts() {
+        if (CraftNative.clearShortcuts(activity)) return
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
             try {
                 val shortcutManager = activity.getSystemService(android.content.pm.ShortcutManager::class.java)
