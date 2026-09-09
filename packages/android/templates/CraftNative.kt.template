@@ -1,6 +1,11 @@
 package com.craft.runtime
 
 import android.app.Activity
+import android.net.NetworkRequest
+import android.net.NetworkCapabilities
+import android.net.Network
+import android.net.ConnectivityManager
+import android.content.Context
 import androidx.core.content.ContextCompat
 import android.content.Intent
 import android.os.Handler
@@ -139,6 +144,9 @@ object CraftNative {
     private external fun nativeStopLocationRecording(activity: Activity): String?
     private external fun nativePauseLocationRecording(activity: Activity): String?
     private external fun nativeResumeLocationRecording(activity: Activity): String?
+    private external fun nativeNetworkChanged(activity: Activity)
+    private external fun nativeStartNetworkMonitoring(activity: Activity): Boolean
+    private external fun nativeStopNetworkMonitoring(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -746,5 +754,98 @@ object CraftNative {
             Intent(activity, LocationRecordingService::class.java)
                 .setAction(LocationRecordingService.ACTION_STOP)
         )
+    }
+
+    // ==================== Network monitoring ====================
+    //
+    // The first listener shim. `ConnectivityManager.NetworkCallback` is an
+    // abstract Java class, and JNI cannot subclass one — `RegisterNatives`
+    // binds methods onto a class that already exists in the APK, so a native
+    // can be *called* from Java but cannot be a Java object of a type the
+    // framework demands.
+    //
+    // The split is the one `runOnMain` uses: the object lives here, the work
+    // lives in Zig. This class holds the callback and the registration; every
+    // override forwards to `nativeNetworkChanged`, which reads the status and
+    // sends the event.
+    //
+    // Unlike `runOnMain` there is no token, because there is only ever one
+    // watch — which is also true of the CraftBridge field this replaces, and
+    // is the reason both of them leak a second one (see the note on start).
+
+    private var networkWatch: ConnectivityManager.NetworkCallback? = null
+
+    /**
+     * Register a network callback, exactly as `CraftBridge` would.
+     *
+     * Including the part that is wrong: a second call registers a second
+     * callback and overwrites the reference to the first, which then runs
+     * until the process dies and can never be unregistered. That is the
+     * shim's behaviour and is reproduced rather than guarded, because guarding
+     * would mean a page calling start twice gets one event per change here and
+     * two on the Kotlin path.
+     */
+    @JvmStatic
+    fun startNetworkWatch(activity: Activity) {
+        val manager =
+            activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        val watch = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = changed(activity)
+            override fun onLost(network: Network) = changed(activity)
+            override fun onCapabilitiesChanged(
+                network: Network,
+                networkCapabilities: NetworkCapabilities
+            ) = changed(activity)
+        }
+
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        manager.registerNetworkCallback(request, watch)
+        networkWatch = watch
+    }
+
+    @JvmStatic
+    fun stopNetworkWatch(activity: Activity) {
+        val manager =
+            activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        networkWatch?.let { manager.unregisterNetworkCallback(it) }
+        networkWatch = null
+    }
+
+    /**
+     * Every override lands here.
+     *
+     * This runs on a Binder thread, not the main one — which is fine, because
+     * the reply channel attaches the thread it is called on and hops to the
+     * main looper itself.
+     */
+    private fun changed(activity: Activity) {
+        try {
+            nativeNetworkChanged(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            // The library went away. There is no promise waiting on this and
+            // nothing to retry.
+        }
+    }
+
+    fun startNetworkMonitoring(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartNetworkMonitoring(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopNetworkMonitoring(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopNetworkMonitoring(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
     }
 }

@@ -391,6 +391,22 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;)Ljava/lang/String;",
         .fnPtr = @ptrCast(&nativeResumeLocationRecording),
     },
+    // Not an action: the other end of the network callback the holder owns.
+    .{
+        .name = "nativeNetworkChanged",
+        .signature = "(Landroid/app/Activity;)V",
+        .fnPtr = @ptrCast(&nativeNetworkChanged),
+    },
+    .{
+        .name = "nativeStartNetworkMonitoring",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStartNetworkMonitoring),
+    },
+    .{
+        .name = "nativeStopNetworkMonitoring",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopNetworkMonitoring),
+    },
 };
 
 /// How binding went. A value rather than a log line, so every path is
@@ -1676,25 +1692,86 @@ fn nativeResumeLocationRecording(
 }
 
 fn startRecordingService(j: Jni, activity: jni.jobject) !void {
-    try j.pushLocalFrame(8);
-    defer _ = j.popLocalFrame(null);
-
-    const holder = try j.findClass(holder_class);
-    try j.callStaticVoidMethodA(
-        holder,
-        try j.staticMethodId(holder, "startRecordingService", "(Landroid/app/Activity;)V"),
-        &.{.{ .l = activity }},
-    );
+    return callHolderVoid(j, "startRecordingService", activity);
 }
 
 fn stopRecordingService(j: Jni, activity: jni.jobject) !void {
+    return callHolderVoid(j, "stopRecordingService", activity);
+}
+
+/// `nativeNetworkChanged(activity)` — a network callback, arrived at.
+///
+/// Runs on a Binder thread. That is fine and is the reason the reply channel
+/// exists in the shape it does: `events.settle` attaches whatever thread it is
+/// called on and the Kotlin deliverer hops to the main looper.
+///
+/// Void and silent. There is no promise waiting on this — the page registered
+/// a callback with `onNetworkChange` and every change calls it — so a failure
+/// has nowhere to be reported and shows up in `droppedCount` instead.
+fn nativeNetworkChanged(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const status = network.read(j, activity) catch return;
+    const json = network.render(allocator, status) catch return;
+    events.settle(allocator, network.change_global, json) catch {};
+}
+
+/// `nativeStartNetworkMonitoring(activity)`.
+///
+/// The callback object is the holder's, because
+/// `ConnectivityManager.NetworkCallback` is an abstract Java class and JNI
+/// cannot subclass one. What Zig owns is what happens when it fires.
+fn nativeStartNetworkMonitoring(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "startNetworkWatch", activity) catch |err| {
+        std.log.warn("craft: startNetworkMonitoring fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeStopNetworkMonitoring(activity)`.
+///
+/// A false here after a successful start would leave the callback registered:
+/// the shim's own `networkCallback` field is null, so its stop finds nothing
+/// to unregister. The holder's stop is the only thing that can undo the
+/// holder's start, which is why this reports the JNI failure rather than
+/// pretending the shim can finish the job.
+fn nativeStopNetworkMonitoring(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    callHolderVoid(j, "stopNetworkWatch", activity) catch |err| {
+        std.log.warn("craft: stopNetworkMonitoring failed ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// Call a `(Activity) -> void` static on the holder.
+fn callHolderVoid(j: Jni, comptime name: [:0]const u8, activity: jni.jobject) !void {
     try j.pushLocalFrame(8);
     defer _ = j.popLocalFrame(null);
 
     const holder = try j.findClass(holder_class);
     try j.callStaticVoidMethodA(
         holder,
-        try j.staticMethodId(holder, "stopRecordingService", "(Landroid/app/Activity;)V"),
+        try j.staticMethodId(holder, name, "(Landroid/app/Activity;)V"),
         &.{.{ .l = activity }},
     );
 }
@@ -1810,7 +1887,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 43), natives.len);
+    try testing.expectEqual(@as(usize, 46), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

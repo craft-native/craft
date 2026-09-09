@@ -1962,6 +1962,12 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startNetworkMonitoring() {
+        // The callback object is CraftNative's, because JNI cannot subclass
+        // an abstract Java class — what Zig owns is what happens when it
+        // fires. Returning here keeps this file's networkCallback null, which
+        // is why stopNetworkMonitoring has to reach the same way.
+        if (CraftNative.startNetworkMonitoring(activity)) return
+
         val connectivityManager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
         networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -1987,6 +1993,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopNetworkMonitoring() {
+        if (CraftNative.stopNetworkMonitoring(activity)) return
+
         val connectivityManager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         networkCallback?.let {
             connectivityManager.unregisterNetworkCallback(it)
