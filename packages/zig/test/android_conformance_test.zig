@@ -53,6 +53,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_contacts.zig"),
     @embedFile("src/bridge_android_widgets.zig"),
     @embedFile("src/bridge_android_shortcuts.zig"),
+    @embedFile("src/bridge_android_orientation.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -77,8 +78,10 @@ const zig_sources = [_][]const u8{
 /// deriving it here would be silently wrong under an applicationIdSuffix; 73
 /// with the shortcut pair, whose two halves disagree about what to do below
 /// API 25 and are ported disagreeing; 72 with the immediate half of
-/// scheduleNotification, whose delayed half needs a Runnable.
-const max_not_yet_migrated: usize = 72;
+/// scheduleNotification, whose delayed half needs a Runnable; 70 with the
+/// orientation pair, the first to run on the main looper — through a Runnable
+/// the Kotlin holder owns and a token that says what to do.
+const max_not_yet_migrated: usize = 70;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

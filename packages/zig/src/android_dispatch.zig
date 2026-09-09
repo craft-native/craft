@@ -52,6 +52,8 @@ const shareditem = @import("bridge_android_shareditem.zig");
 const contacts = @import("bridge_android_contacts.zig");
 const widgets = @import("bridge_android_widgets.zig");
 const shortcuts = @import("bridge_android_shortcuts.zig");
+const orientation = @import("bridge_android_orientation.zig");
+const main_thread = @import("android_main_thread.zig");
 
 const Jni = jni.Jni;
 
@@ -322,6 +324,23 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeScheduleNotification",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeScheduleNotification),
+    },
+    // Not an action: the other end of `CraftNative.runOnMain`, which is how
+    // anything here reaches the main looper at all.
+    .{
+        .name = "nativeRunTask",
+        .signature = "(Landroid/app/Activity;J)V",
+        .fnPtr = @ptrCast(&nativeRunTask),
+    },
+    .{
+        .name = "nativeLockOrientation",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeLockOrientation),
+    },
+    .{
+        .name = "nativeUnlockOrientation",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeUnlockOrientation),
     },
 };
 
@@ -1301,6 +1320,62 @@ fn nativeScheduleNotification(
     return jni.JNI_TRUE;
 }
 
+/// `nativeRunTask(activity, token)` — the main thread, arrived at.
+///
+/// The only native here that is not an action. `CraftNative.runOnMain` posted
+/// a `Runnable` that calls this, so by the time it runs the looper is ours and
+/// the Activity came back with it rather than being held across the hop.
+///
+/// Void and silent: there is nothing to answer to. A token that no longer
+/// names a task is dropped by `main_thread.run`, which is the case a
+/// `Runnable` outliving whatever queued it would otherwise crash on.
+fn nativeRunTask(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    token: jni.jlong,
+) callconv(.c) void {
+    main_thread.run(Jni.init(env), activity, @bitCast(token));
+}
+
+/// `nativeLockOrientation(activity, orientation)`.
+///
+/// True means the work is queued, not that the device has turned — which is
+/// what the shim's `return true` after `runOnUiThread` means too.
+fn nativeLockOrientation(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    name: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+
+    const text = j.stringToUtf8(arena.allocator(), name) catch return jni.JNI_FALSE;
+
+    orientation.apply(j, activity, orientation.modeFor(text)) catch |err| {
+        std.log.warn("craft: lockOrientation fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeUnlockOrientation(activity)`.
+fn nativeUnlockOrientation(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    orientation.apply(j, activity, .unspecified) catch |err| {
+        std.log.warn("craft: unlockOrientation fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1412,7 +1487,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 31), natives.len);
+    try testing.expectEqual(@as(usize, 34), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

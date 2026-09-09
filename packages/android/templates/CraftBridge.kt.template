@@ -2592,6 +2592,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun lockOrientation(orientation: String): Boolean {
+        // Zig queues the same work on the same looper, through a Runnable
+        // this file's holder owns — see CraftNative.runOnMain.
+        if (CraftNative.lockOrientation(activity, orientation)) return true
+
         activity.runOnUiThread {
             activity.requestedOrientation = when (orientation) {
                 "portrait" -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -2606,6 +2610,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun unlockOrientation(): Boolean {
+        if (CraftNative.unlockOrientation(activity)) return true
+
         activity.runOnUiThread {
             activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
