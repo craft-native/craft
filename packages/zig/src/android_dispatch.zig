@@ -50,6 +50,7 @@ const calendar = @import("bridge_android_calendar.zig");
 const db = @import("bridge_android_db.zig");
 const shareditem = @import("bridge_android_shareditem.zig");
 const contacts = @import("bridge_android_contacts.zig");
+const widgets = @import("bridge_android_widgets.zig");
 
 const Jni = jni.Jni;
 
@@ -291,6 +292,20 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeAddContact",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeAddContact),
+    },
+    // The broadcast action is passed across rather than built here: it is a
+    // compile-time constant in the generated app, and deriving it from the
+    // runtime package name would silently stop matching under an
+    // `applicationIdSuffix`.
+    .{
+        .name = "nativeUpdateWidget",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeUpdateWidget),
+    },
+    .{
+        .name = "nativeReloadWidgets",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
+        .fnPtr = @ptrCast(&nativeReloadWidgets),
     },
 };
 
@@ -1087,6 +1102,71 @@ fn nativeAddContact(
     return jni.JNI_TRUE;
 }
 
+/// `nativeUpdateWidget(activity, action, dataJson)`.
+fn nativeUpdateWidget(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    action: jni.jstring,
+    data_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, data_json) catch return jni.JNI_FALSE;
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
+        return jni.JNI_FALSE;
+    defer parsed.deinit();
+
+    const update = widgets.parseUpdate(parsed.value) orelse return jni.JNI_FALSE;
+    const action_text = j.stringToUtf8(allocator, action) catch return jni.JNI_FALSE;
+
+    widgets.writeUpdate(j, allocator, activity, update) catch |err| {
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+    widgets.broadcast(j, allocator, activity, action_text) catch |err| {
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    events.settle(allocator, widgets.resolve_global, widgets.updated_result) catch
+        return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+/// `nativeReloadWidgets(activity, action)`.
+///
+/// The shim wraps none of `reloadWidgets` in a try/catch, so a `sendBroadcast`
+/// that throws escapes the `@JavascriptInterface` method and the promise
+/// hangs. Rejecting here diverges in the page's favour, and unlike
+/// `getCalendarEvents` there is nothing to fall through *to* — the shim would
+/// hang. So this one rejects, and says so rather than reproducing a hang.
+fn nativeReloadWidgets(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    action: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const action_text = j.stringToUtf8(allocator, action) catch return jni.JNI_FALSE;
+
+    widgets.broadcast(j, allocator, activity, action_text) catch |err| {
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        return jni.JNI_TRUE;
+    };
+
+    events.settle(allocator, widgets.resolve_global, widgets.reloaded_result) catch
+        return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1198,7 +1278,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 26), natives.len);
+    try testing.expectEqual(@as(usize, 28), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

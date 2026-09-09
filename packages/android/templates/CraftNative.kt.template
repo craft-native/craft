@@ -118,6 +118,8 @@ object CraftNative {
     private external fun nativeRemoveSharedItem(activity: Activity, key: String, group: String): Boolean
     private external fun nativeGetContacts(activity: Activity): Boolean
     private external fun nativeAddContact(activity: Activity, contactJson: String): Boolean
+    private external fun nativeUpdateWidget(activity: Activity, action: String, dataJson: String): Boolean
+    private external fun nativeReloadWidgets(activity: Activity, action: String): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -479,6 +481,32 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeAddContact(activity, contactJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * The widget pair. `action` is the caller's own broadcast constant.
+     *
+     * Zig could build it from `activity.packageName`, and today that is the
+     * same string — but an `applicationIdSuffix` on a build type would move
+     * the package name and leave the constant where it was, and the widget
+     * would silently stop updating. Only one side gets to decide.
+     */
+    fun updateWidget(activity: Activity, action: String, dataJson: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeUpdateWidget(activity, action, dataJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun reloadWidgets(activity: Activity, action: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeReloadWidgets(activity, action)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

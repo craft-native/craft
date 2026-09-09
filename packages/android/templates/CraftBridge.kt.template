@@ -3740,6 +3740,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun updateWidget(dataJson: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice. The action is passed across
+        // rather than rebuilt there — see CraftNative.updateWidget.
+        if (CraftNative.updateWidget(activity, "{{PACKAGE_NAME}}.WIDGET_UPDATE", dataJson)) return
+
         try {
             val data = JSONObject(dataJson)
             val editor = widgetPrefs.edit()
@@ -3782,6 +3787,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun reloadWidgets() {
+        if (CraftNative.reloadWidgets(activity, "{{PACKAGE_NAME}}.WIDGET_UPDATE")) return
+
         val intent = Intent("{{PACKAGE_NAME}}.WIDGET_UPDATE")
         intent.setPackage(activity.packageName)
         activity.sendBroadcast(intent)
