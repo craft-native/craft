@@ -207,8 +207,9 @@ const deliberate_deferrals = [_]Deferral{
     // answer from Zig for. Moving a refusal across changes which language
     // holds the string and nothing a page can observe, so it would lower the
     // count without serving anything. That is worth recording explicitly,
-    // because the incentive runs the other way: eleven rows here are eleven
-    // easy decrements left on the table.
+    // because the incentive runs the other way. Seventeen rows in this table
+    // are a refusal or a fabricated success — every one of them an easy
+    // decrement, and every one of them a way of making this number lie.
     //
     // Each is also honest as it stands, which is the other half of the reason.
     // Unlike `setBadge`, a page calling these is told plainly that the feature
@@ -237,6 +238,63 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "stopAR", .reason = "resolves {stopped:true} for a session startAR always refuses to open" },
     .{ .action = "getARPlanes", .reason = "resolves [], which a page cannot tell from AR running with no planes found" },
     .{ .action = "closePDF", .reason = "resolves true and does nothing; the Kotlin says PDFs open in an external viewer" },
+
+    // ---- The background-task quartet, which schedules nothing ---------
+    //
+    // All four resolve success and do no work. `registerBackgroundTask`'s
+    // comment says "just track them" and nothing is tracked — no field, no
+    // map. `scheduleBackgroundTask` says outright that it "is a placeholder
+    // that shows the API structure", and the WorkManager dependency it names
+    // is not in the generated build.gradle.kts. The cancels then report
+    // success for work that was never enqueued.
+    //
+    // The same reason as `setBadge`: porting a fabricated success spreads the
+    // fabrication into a second language. Tracked in #178.
+    .{ .action = "registerBackgroundTask", .reason = "resolves {registered:true} and tracks nothing; the comment says otherwise" },
+    .{ .action = "scheduleBackgroundTask", .reason = "resolves {scheduled:true} and enqueues nothing; the Kotlin calls itself a placeholder" },
+    .{ .action = "cancelBackgroundTask", .reason = "resolves {cancelled:true} for work that was never scheduled" },
+    .{ .action = "cancelAllBackgroundTasks", .reason = "the same, for all of it" },
+
+    // ---- Two more refusals, one of which does look first --------------
+    //
+    // `scanNFC` reads the adapter before deciding *which* refusal to send —
+    // "NFC not available" when there is no adapter or it is off, and "NFC
+    // requires activity integration" otherwise. Both outcomes are refusals, so
+    // migrating it would move two strings and a null check.
+    //
+    // `isWatchReachable` returns false unconditionally, with a comment saying
+    // a CapabilityClient is what would answer it.
+    .{ .action = "scanNFC", .reason = "both branches reject; foreground dispatch was never wired up" },
+    .{ .action = "isWatchReachable", .reason = "returns false unconditionally; no CapabilityClient is consulted" },
+
+    // ---- State the natives cannot reach -------------------------------
+    //
+    // `watchPosition` and `clearWatch` share `locationCallback`,
+    // `fusedLocationClient` and `watchId`, all instance fields of the
+    // `CraftBridge` that `CraftNative` has no reference to — the wall the
+    // flashlight pair sits behind. They also have a bug of their own: a second
+    // watch overwrites the first's callback and orphans it, and `clearWatch`
+    // never reads its argument. Tracked in #179.
+    .{ .action = "watchPosition", .reason = "stores its callback in a CraftBridge field the natives cannot reach" },
+    .{ .action = "clearWatch", .reason = "reads the same field; migrating one half leaves the other stale" },
+
+    // The auth-persistence trio keeps its expiry in a plain `authSessionExpiry`
+    // field — which is also why the feature does not survive the process it
+    // exists to outlive. Zig would have to keep a second copy, and the two
+    // would disagree the moment either language answered a call. Once the
+    // expiry lives in a store both can read, all three become portable.
+    // Tracked in #162.
+    .{ .action = "setAuthPersistence", .reason = "writes authSessionExpiry, an in-memory CraftBridge field" },
+    .{ .action = "checkAuthPersistence", .reason = "reads the same field; a second copy in Zig would diverge immediately" },
+    .{ .action = "clearAuthPersistence", .reason = "zeroes the same field" },
+
+    // `registerVoiceAction` writes a preferences row that nothing reads, and
+    // both reply to `_craftVoiceResolve`, a global the injected bridge never
+    // assigns — so the reply is discarded by its own guard. Neither method is
+    // in craft.d.ts either. The port was written and deleted; migrating it
+    // would move the silence. Tracked in #169.
+    .{ .action = "registerVoiceAction", .reason = "writes a row nothing reads and replies to a global nothing assigns" },
+    .{ .action = "removeVoiceAction", .reason = "the same, for removing it" },
 };
 
 test "every recorded deferral is real, and still a deferral" {
