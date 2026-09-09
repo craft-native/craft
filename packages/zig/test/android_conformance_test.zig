@@ -87,8 +87,10 @@ const zig_sources = [_][]const u8{
 /// 67 with downloadFile and saveFile, neither of which needed the main thread
 /// at all; 65 with the recording store's two reads, whose writers stay with
 /// the service that owns them; 61 with the four controls, once Kotlin agreed
-/// to name its own service class.
-const max_not_yet_migrated: usize = 61;
+/// to name its own service class; 59 with the network monitoring pair, the
+/// first listener shim — the callback object is the holder's, the work is
+/// Zig's.
+const max_not_yet_migrated: usize = 59;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

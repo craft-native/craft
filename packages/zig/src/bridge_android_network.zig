@@ -38,7 +38,17 @@ const jobject = jni.jobject;
 
 pub const A = struct {
     pub const get_network_status = "getNetworkStatus";
+    pub const start_network_monitoring = "startNetworkMonitoring";
+    pub const stop_network_monitoring = "stopNetworkMonitoring";
 };
+
+/// The global the injected JS assigns for network changes.
+///
+/// Not a promise: `onNetworkChange(cb)` stores the callback once and every
+/// change calls it, so this global outlives any single reply — which is why
+/// the guard in front of it matters more here than elsewhere. A change
+/// arriving before the page has registered is dropped rather than throwing.
+pub const change_global = "_craftNetworkChangeCallback";
 
 /// The transports the Kotlin's `when` distinguishes, in its order.
 ///
@@ -151,6 +161,14 @@ pub fn read(j: Jni, activity: jobject) !NetworkStatus {
     // interface, an emulator. See the module comment: this is a real state.
     return .{ .connected = true, .transport = .none };
 }
+
+/// `NetworkCapabilities.NET_CAPABILITY_INTERNET`, the one capability the
+/// shim's `NetworkRequest` asks for.
+///
+/// Written down rather than read, because it is the Kotlin holder that builds
+/// the request — this constant is here only so the test can say what the
+/// holder is expected to have asked for.
+pub const net_capability_internet: i32 = 12;
 
 // =============================================================================
 // Tests
@@ -350,4 +368,31 @@ test "null capabilities is not connected, and an unknown transport still is" {
     const odd = try readWith(&.{}, false);
     try testing.expectEqual(true, odd.connected);
     try testing.expectEqual(Transport.none, odd.transport);
+}
+
+test "the monitoring pair names itself as the shim does" {
+    try testing.expectEqualStrings("startNetworkMonitoring", A.start_network_monitoring);
+    try testing.expectEqualStrings("stopNetworkMonitoring", A.stop_network_monitoring);
+}
+
+test "a change is delivered to the callback the page registered, not a promise" {
+    // `onNetworkChange(cb)` assigns this once and every change calls it. A
+    // promise global is assigned per call and consumed; this one is not, so a
+    // page that never called `onNetworkChange` leaves it undefined and the
+    // guard in `settle` is what stops a ReferenceError inside
+    // evaluateJavascript, where nothing would see it.
+    try testing.expectEqualStrings("_craftNetworkChangeCallback", change_global);
+    try testing.expect(!std.mem.eql(u8, change_global, "_craftNetworkResolve"));
+}
+
+test "a change carries the same object getNetworkStatus returns" {
+    // `sendNetworkChange` calls `getNetworkStatus()` and sends the result
+    // verbatim, so the event payload and the polled answer cannot drift —
+    // and here they are literally the same function.
+    const json = try render(testing.allocator, .{ .connected = true, .transport = .wifi });
+    defer testing.allocator.free(json);
+
+    try testing.expectEqualStrings(
+        \\{"isConnected":true,"type":"wifi","isWifi":true,"isCellular":false}
+    , json);
 }
