@@ -1633,6 +1633,12 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getCurrentPosition(optionsJson: String) {
+        // The task listeners and the fresh-location callback are
+        // CraftNative's, because they are Java interfaces. fusedLocationClient
+        // below stays null, which is safe: watchPosition assigns it before
+        // every use, so clearWatch is unaffected.
+        if (CraftNative.getCurrentPosition(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(

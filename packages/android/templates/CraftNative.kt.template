@@ -1,6 +1,14 @@
 package com.craft.runtime
 
 import android.app.Activity
+import com.google.android.gms.location.Priority
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.LocationResult
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.FusedLocationProviderClient
+import android.location.Location
+import android.annotation.SuppressLint
 import android.hardware.SensorManager
 import android.hardware.SensorEventListener
 import android.hardware.SensorEvent
@@ -169,6 +177,17 @@ object CraftNative {
     private external fun nativeMotionSample(isAccelerometer: Boolean, x: Float, y: Float, z: Float)
     private external fun nativeStartMotionUpdates(activity: Activity, intervalMs: Int): Boolean
     private external fun nativeStopMotionUpdates(activity: Activity): Boolean
+    private external fun nativeLocationResult(
+        latitude: Double,
+        longitude: Double,
+        accuracy: Double,
+        altitude: Double,
+        speed: Double,
+        bearing: Double,
+        time: Long
+    )
+    private external fun nativeLocationFailed(message: String?)
+    private external fun nativeGetCurrentPosition(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -1088,6 +1107,111 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeStopMotionUpdates(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== Current position ====================
+    //
+    // The fifth listener shim, and the first with two Java interfaces in one
+    // flow: `OnSuccessListener` and `OnFailureListener` on the Play Services
+    // task, plus a `LocationCallback` for the fresh-location fallback.
+    //
+    // Every value crosses as a Double, including the three the framework types
+    // as Float. That is not a convenience: `CraftBridge` writes them with
+    // `put(name, value)`, and the overload Kotlin picks there is
+    // `put(String, double)` — primitive widening beats boxing — so they print
+    // as doubles. Passing them as Float and boxing them on the other side
+    // would print `0.1` where the shim prints `0.10000000149011612`.
+
+    @JvmStatic
+    fun requestLocationPermissions(activity: Activity) {
+        ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(
+                android.Manifest.permission.ACCESS_FINE_LOCATION,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ),
+            REQUEST_LOCATION
+        )
+    }
+
+    /** `CraftBridge.REQUEST_LOCATION`, which this has to match. */
+    private const val REQUEST_LOCATION = 1003
+
+    @JvmStatic
+    @SuppressLint("MissingPermission")
+    fun requestCurrentPosition(activity: Activity) {
+        val client = LocationServices.getFusedLocationProviderClient(activity)
+        client.lastLocation
+            .addOnSuccessListener { location: Location? ->
+                if (location != null) {
+                    deliverLocation(location)
+                } else {
+                    requestFreshPosition(activity, client)
+                }
+            }
+            .addOnFailureListener { e -> failLocation(e.message) }
+    }
+
+    /**
+     * The fallback when there is no cached fix.
+     *
+     * One update, then the callback removes itself — as `CraftBridge`'s does.
+     * If it never fires, nothing settles the page's promise, here or there.
+     */
+    @SuppressLint("MissingPermission")
+    private fun requestFreshPosition(
+        activity: Activity,
+        client: FusedLocationProviderClient
+    ) {
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000)
+            .setWaitForAccurateLocation(false)
+            .setMinUpdateIntervalMillis(500)
+            .setMaxUpdateDelayMillis(1000)
+            .setMaxUpdates(1)
+            .build()
+
+        client.requestLocationUpdates(
+            request,
+            object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    client.removeLocationUpdates(this)
+                    result.lastLocation?.let { deliverLocation(it) }
+                }
+            },
+            activity.mainLooper
+        )
+    }
+
+    private fun deliverLocation(location: Location) {
+        try {
+            nativeLocationResult(
+                location.latitude,
+                location.longitude,
+                location.accuracy.toDouble(),
+                location.altitude,
+                location.speed.toDouble(),
+                location.bearing.toDouble(),
+                location.time
+            )
+        } catch (e: UnsatisfiedLinkError) {
+            // The library went away mid-flight. Nothing to answer to.
+        }
+    }
+
+    private fun failLocation(message: String?) {
+        try {
+            nativeLocationFailed(message)
+        } catch (e: UnsatisfiedLinkError) {
+        }
+    }
+
+    fun getCurrentPosition(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeGetCurrentPosition(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

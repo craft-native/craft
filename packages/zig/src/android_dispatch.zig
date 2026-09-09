@@ -45,6 +45,7 @@ const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
 const motion = @import("bridge_android_motion.zig");
+const position = @import("bridge_android_position.zig");
 const json_number = @import("android_json_number.zig");
 const securestore = @import("bridge_android_securestore.zig");
 const haptics = @import("bridge_android_haptics.zig");
@@ -466,6 +467,23 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeStopMotionUpdates",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStopMotionUpdates),
+    },
+    // Not actions: the two ends of the Play Services task listeners the
+    // holder owns.
+    .{
+        .name = "nativeLocationResult",
+        .signature = "(DDDDDDJ)V",
+        .fnPtr = @ptrCast(&nativeLocationResult),
+    },
+    .{
+        .name = "nativeLocationFailed",
+        .signature = "(Ljava/lang/String;)V",
+        .fnPtr = @ptrCast(&nativeLocationFailed),
+    },
+    .{
+        .name = "nativeGetCurrentPosition",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeGetCurrentPosition),
     },
 };
 
@@ -2096,6 +2114,109 @@ fn callHolderInt(j: Jni, comptime name: [:0]const u8, activity: jni.jobject, val
     );
 }
 
+/// `nativeLocationResult(...)` — a fix, from either the cached or fresh path.
+///
+/// Every value arrives as a `double`, including the three the framework types
+/// as `float`: the shim writes them with `put(name, value)`, and the overload
+/// Kotlin picks is `put(String, double)` because widening beats boxing. So
+/// they print as doubles, and the holder widens them for the same reason.
+fn nativeLocationResult(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    latitude: jni.jdouble,
+    longitude: jni.jdouble,
+    accuracy: jni.jdouble,
+    altitude: jni.jdouble,
+    speed: jni.jdouble,
+    bearing: jni.jdouble,
+    time: jni.jlong,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var timestamp: [24]u8 = undefined;
+    const printed: position.Printed = .{
+        .latitude = json_number.fromDouble(j, allocator, latitude) catch return,
+        .longitude = json_number.fromDouble(j, allocator, longitude) catch return,
+        .accuracy = json_number.fromDouble(j, allocator, accuracy) catch return,
+        .altitude = json_number.fromDouble(j, allocator, altitude) catch return,
+        .speed = json_number.fromDouble(j, allocator, speed) catch return,
+        .heading = json_number.fromDouble(j, allocator, bearing) catch return,
+        // A long, not a double: `put(String, long)` boxes a Long, and
+        // `numberToString` prints one with `Long.toString` — which needs no
+        // JNI call, because there is no float format to reproduce.
+        .timestamp = std.fmt.bufPrint(&timestamp, "{d}", .{time}) catch return,
+    };
+
+    const json = position.renderPosition(allocator, printed) catch return;
+    events.settle(allocator, position.resolve_global, json) catch {};
+}
+
+/// `nativeLocationFailed(message)` — the failure listener.
+fn nativeLocationFailed(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    message: jni.jstring,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    // `${jsQuote(e.message)}` — a null message reaches the page as the four
+    // characters "null", which is what `Any?.toString()` produced there.
+    const text: []const u8 = if (message == null)
+        "null"
+    else
+        j.stringToUtf8(allocator, message) catch return;
+
+    const json = position.renderRejection(allocator, position.code_client_failure, text) catch return;
+    events.settle(allocator, position.reject_global, json) catch {};
+}
+
+/// `nativeGetCurrentPosition(activity)`.
+fn nativeGetCurrentPosition(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.access_fine_location) catch |err| {
+        std.log.warn("craft: getCurrentPosition fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+
+    if (!granted) {
+        // The shim asks for both the fine and the coarse permission, so the
+        // holder does too — a request for one where the shim asked for two
+        // would leave a page permanently unable to get a coarse fix.
+        callHolderVoid(j, "requestLocationPermissions", activity) catch |err| {
+            std.log.warn("craft: getCurrentPosition fell through to the shim ({s})", .{@errorName(err)});
+            return jni.JNI_FALSE;
+        };
+
+        const json = position.renderRejection(
+            allocator,
+            position.code_permission_denied,
+            position.permission_denied_message,
+        ) catch return jni.JNI_FALSE;
+        events.settle(allocator, position.reject_global, json) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    callHolderVoid(j, "requestCurrentPosition", activity) catch |err| {
+        std.log.warn("craft: getCurrentPosition fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -2207,7 +2328,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 56), natives.len);
+    try testing.expectEqual(@as(usize, 59), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
