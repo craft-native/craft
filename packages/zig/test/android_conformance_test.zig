@@ -59,6 +59,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_appstate.zig"),
     @embedFile("src/bridge_android_bluetooth.zig"),
     @embedFile("src/bridge_android_motion.zig"),
+    @embedFile("src/bridge_android_position.zig"),
 };
 
 /// How many spec actions Zig does not serve yet.
@@ -94,8 +95,9 @@ const zig_sources = [_][]const u8{
 /// first listener shim — the callback object is the holder's, the work is
 /// Zig's; 56 with the app-state trio, the first migration where the state
 /// itself moved rather than being worked around; 54 with the Bluetooth scan
-/// pair; 52 with the motion pair, once org.json agreed to print the floats.
-const max_not_yet_migrated: usize = 52;
+/// pair; 52 with the motion pair, once org.json agreed to print the floats;
+/// 51 with getCurrentPosition, which needed the same and two Java interfaces.
+const max_not_yet_migrated: usize = 51;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
