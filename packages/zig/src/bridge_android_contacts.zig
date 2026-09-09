@@ -270,7 +270,7 @@ fn queryUri(
         for (args, 0..) |arg, i| {
             // A null argument is a null element, which is what
             // `arrayOf(contactId)` produces when the id was null.
-            const value: jni.jstring = if (arg) |text| try javaString(j, allocator, text) else null;
+            const value: jni.jstring = if (arg) |text| try j.newStringUtf8(allocator, text) else null;
             try j.setObjectArrayElement(array, i, value);
         }
         break :blk array;
@@ -286,9 +286,9 @@ fn queryUri(
         &.{
             .{ .l = uri },
             .{ .l = null },
-            .{ .l = if (selection) |text| try javaString(j, allocator, text) else null },
+            .{ .l = if (selection) |text| try j.newStringUtf8(allocator, text) else null },
             .{ .l = args_array },
-            .{ .l = if (sort_order) |text| try javaString(j, allocator, text) else null },
+            .{ .l = if (sort_order) |text| try j.newStringUtf8(allocator, text) else null },
         },
     );
 }
@@ -300,7 +300,7 @@ fn columnIndex(j: Jni, allocator: std.mem.Allocator, cursor: jobject, name: []co
     return j.callIntMethodA(
         cursor,
         try j.methodId(try j.objectClass(cursor), "getColumnIndexOrThrow", "(Ljava/lang/String;)I"),
-        &.{.{ .l = try javaString(j, allocator, name) }},
+        &.{.{ .l = try j.newStringUtf8(allocator, name) }},
     );
 }
 
@@ -314,13 +314,6 @@ fn columnText(
     const value = try j.callObjectMethodA(cursor, get_string, &.{.{ .i = index }});
     if (value == null) return null;
     return try j.stringToUtf8(allocator, value);
-}
-
-fn javaString(j: Jni, allocator: std.mem.Allocator, text: []const u8) !jni.jstring {
-    const terminated = try allocator.allocSentinel(u8, text.len, 0);
-    defer allocator.free(terminated);
-    @memcpy(terminated, text);
-    return j.newStringUtf(terminated.ptr);
 }
 
 // =============================================================================
@@ -471,7 +464,7 @@ pub fn addContact(j: Jni, allocator: std.mem.Allocator, activity: jobject, conta
             "(Ljava/lang/String;Ljava/util/ArrayList;)[Landroid/content/ContentProviderResult;",
         ),
         &.{
-            .{ .l = try javaString(j, allocator, contacts_authority) },
+            .{ .l = try j.newStringUtf8(allocator, contacts_authority) },
             .{ .l = ops },
         },
     );
@@ -535,11 +528,11 @@ fn appendDataRow(
             "withValueBackReference",
             "(Ljava/lang/String;I)Landroid/content/ContentProviderOperation$Builder;",
         ),
-        &.{ .{ .l = try javaString(j, allocator, col_raw_contact_id) }, .{ .i = 0 } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, col_raw_contact_id) }, .{ .i = 0 } },
     );
 
     _ = try withValue(j, allocator, builder, col_mimetype, item_type);
-    _ = try withValue(j, allocator, builder, row.value_column, try javaString(j, allocator, row.value));
+    _ = try withValue(j, allocator, builder, row.value_column, try j.newStringUtf8(allocator, row.value));
 
     if (row.type_value) |type_value| {
         const integer_cls = try j.findClass("java/lang/Integer");
@@ -581,7 +574,7 @@ fn withValue(
             "withValue",
             "(Ljava/lang/String;Ljava/lang/Object;)Landroid/content/ContentProviderOperation$Builder;",
         ),
-        &.{ .{ .l = try javaString(j, allocator, column) }, .{ .l = value } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, column) }, .{ .l = value } },
     );
 }
 

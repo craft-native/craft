@@ -78,7 +78,7 @@ fn apply(j: Jni, edit: jobject) !void {
     try j.callVoidMethodA(edit, try j.methodId(edit_cls, "apply", "()V"), &.{});
 }
 
-pub fn set(j: Jni, prefs: jobject, key: [*:0]const u8, value: [*:0]const u8) !void {
+pub fn set(j: Jni, allocator: std.mem.Allocator, prefs: jobject, key: []const u8, value: []const u8) !void {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
@@ -92,12 +92,12 @@ pub fn set(j: Jni, prefs: jobject, key: [*:0]const u8, value: [*:0]const u8) !vo
             "putString",
             "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;",
         ),
-        &.{ .{ .l = try j.newStringUtf(key) }, .{ .l = try j.newStringUtf(value) } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .l = try j.newStringUtf8(allocator, value) } },
     );
     try apply(j, edit);
 }
 
-pub fn remove(j: Jni, prefs: jobject, key: [*:0]const u8) !void {
+pub fn remove(j: Jni, allocator: std.mem.Allocator, prefs: jobject, key: []const u8) !void {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
@@ -107,7 +107,7 @@ pub fn remove(j: Jni, prefs: jobject, key: [*:0]const u8) !void {
     _ = try j.callObjectMethodA(
         edit,
         try j.methodId(edit_cls, "remove", "(Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;"),
-        &.{.{ .l = try j.newStringUtf(key) }},
+        &.{.{ .l = try j.newStringUtf8(allocator, key) }},
     );
     try apply(j, edit);
 }
@@ -147,7 +147,7 @@ pub fn renderRead(allocator: std.mem.Allocator, value: ?[]const u8) ![]u8 {
 }
 
 /// `prefs.getString(key, null)`, as an owned optional. Caller frees.
-pub fn get(allocator: std.mem.Allocator, j: Jni, prefs: jobject, key: [*:0]const u8) !?[]u8 {
+pub fn get(allocator: std.mem.Allocator, j: Jni, prefs: jobject, key: []const u8) !?[]u8 {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
@@ -161,7 +161,7 @@ pub fn get(allocator: std.mem.Allocator, j: Jni, prefs: jobject, key: [*:0]const
         ),
         // The default is null, which is what makes "absent" distinguishable
         // from a stored empty string.
-        &.{ .{ .l = try j.newStringUtf(key) }, .{ .l = null } },
+        &.{ .{ .l = try j.newStringUtf8(allocator, key) }, .{ .l = null } },
     );
     if (value == null) return null;
     return try j.stringToUtf8(allocator, value);

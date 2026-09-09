@@ -135,13 +135,13 @@ pub fn readMemory(j: Jni) !MemoryUsage {
 /// `CraftBridge` is filtering on a string, and changing it because Zig now
 /// emits the line would break a filter that has nothing to do with this
 /// migration.
-pub fn writeLog(j: Jni, message: [*:0]const u8) !void {
+pub fn writeLog(j: Jni, allocator: std.mem.Allocator, message: []const u8) !void {
     try j.pushLocalFrame(8);
     defer _ = j.popLocalFrame(null);
 
     const cls = try j.findClass("android/util/Log");
     const tag = try j.newStringUtf("CraftBridge");
-    const text = try j.newStringUtf(message);
+    const text = try j.newStringUtf8(allocator, message);
 
     // `Log.d` returns the number of bytes written, which the Kotlin ignores
     // and so does this. Discarding it is not the same as calling a void

@@ -137,7 +137,7 @@ pub fn writeUpdate(j: Jni, allocator: std.mem.Allocator, activity: jobject, upda
             defer _ = j.popLocalFrame(null);
             _ = try j.callObjectMethodA(editor, put_string, &.{
                 .{ .l = try j.newStringUtf(field.key) },
-                .{ .l = try javaString(j, allocator, text) },
+                .{ .l = try j.newStringUtf8(allocator, text) },
             });
         }
     }
@@ -156,7 +156,7 @@ pub fn broadcast(j: Jni, allocator: std.mem.Allocator, activity: jobject, action
     const intent = try j.newObjectA(
         intent_cls,
         try j.methodId(intent_cls, "<init>", "(Ljava/lang/String;)V"),
-        &.{.{ .l = try javaString(j, allocator, action) }},
+        &.{.{ .l = try j.newStringUtf8(allocator, action) }},
     );
 
     const activity_cls = try j.objectClass(activity);
@@ -179,13 +179,6 @@ pub fn broadcast(j: Jni, allocator: std.mem.Allocator, activity: jobject, action
         try j.methodId(activity_cls, "sendBroadcast", "(Landroid/content/Intent;)V"),
         &.{.{ .l = intent }},
     );
-}
-
-fn javaString(j: Jni, allocator: std.mem.Allocator, text: []const u8) !jni.jstring {
-    const terminated = try allocator.allocSentinel(u8, text.len, 0);
-    defer allocator.free(terminated);
-    @memcpy(terminated, text);
-    return j.newStringUtf(terminated.ptr);
 }
 
 // =============================================================================

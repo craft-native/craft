@@ -120,7 +120,7 @@ pub fn read(allocator: std.mem.Allocator, j: Jni, activity: jobject) ![]u8 {
 /// The label is `"Craft"`, and it is user-visible: Android 13 and later show a
 /// preview toast naming it. Changing it because Zig now does the writing would
 /// change what the user sees.
-pub fn write(j: Jni, activity: jobject, text: [*:0]const u8) !void {
+pub fn write(j: Jni, allocator: std.mem.Allocator, activity: jobject, text: []const u8) !void {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
@@ -129,7 +129,7 @@ pub fn write(j: Jni, activity: jobject, text: [*:0]const u8) !void {
 
     const clip_cls = try j.findClass("android/content/ClipData");
     const label = try j.newStringUtf("Craft");
-    const value = try j.newStringUtf(text);
+    const value = try j.newStringUtf8(allocator, text);
 
     // `newPlainText` takes two CharSequences; a String is one, and the JVM
     // accepts the subtype without a cast.

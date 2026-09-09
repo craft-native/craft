@@ -359,14 +359,10 @@ fn nativeGetDeviceInfo(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
 
     const json = device.render(allocator, info) catch return null;
 
-    // `NewStringUTF` reads to a NUL, and `render` produces a plain slice.
-    // Copied rather than terminated in place because the reply is JSON built
-    // for the page, and giving `render` a sentinel to satisfy would put a
-    // JNI detail into the half of this action that has nothing to do with Java.
-    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
-    @memcpy(owned, json);
-
-    return j.newStringUtf(owned.ptr) catch null;
+    // Re-encoded rather than handed over: this JSON carries device text — a
+    // model name, a carrier — and `NewStringUTF` reads modified UTF-8, where a
+    // NUL is two bytes and an astral character is a surrogate pair.
+    return j.newStringUtf8(allocator, json) catch null;
 }
 
 /// `nativeGetMemoryUsage()` — the JVM heap, as JSON.
@@ -383,10 +379,7 @@ fn nativeGetMemoryUsage(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstrin
     };
 
     const json = system.renderMemory(allocator, usage) catch return null;
-    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
-    @memcpy(owned, json);
-
-    return j.newStringUtf(owned.ptr) catch null;
+    return j.newStringUtf8(allocator, json) catch null;
 }
 
 /// `nativeLog(message)` — returns whether Zig wrote the line.
@@ -402,10 +395,8 @@ fn nativeLog(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c)
     const allocator = arena.allocator();
 
     const text = j.stringToUtf8(allocator, message) catch return jni.JNI_FALSE;
-    const owned = allocator.allocSentinel(u8, text.len, 0) catch return jni.JNI_FALSE;
-    @memcpy(owned, text);
 
-    system.writeLog(j, owned.ptr) catch |err| {
+    system.writeLog(j, allocator, text) catch |err| {
         std.log.warn("craft: log fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -429,9 +420,7 @@ fn nativeClipboardRead(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
         return null;
     };
 
-    const owned = allocator.allocSentinel(u8, text.len, 0) catch return null;
-    @memcpy(owned, text);
-    return j.newStringUtf(owned.ptr) catch null;
+    return j.newStringUtf8(allocator, text) catch null;
 }
 
 /// `nativeClipboardWrite(activity, text)`.
@@ -448,25 +437,21 @@ fn nativeClipboardWrite(
     const allocator = arena.allocator();
 
     const value = j.stringToUtf8(allocator, text) catch return jni.JNI_FALSE;
-    const owned = allocator.allocSentinel(u8, value.len, 0) catch return jni.JNI_FALSE;
-    @memcpy(owned, value);
 
-    clipboard.write(j, activity, owned.ptr) catch |err| {
+    clipboard.write(j, allocator, activity, value) catch |err| {
         std.log.warn("craft: clipboardWrite fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
 }
 
-/// Copy a `jstring` into NUL-terminated arena memory, or null.
+/// A `jstring` as arena-owned UTF-8, or null.
 ///
 /// Every native below needs this and none of them can share the result, since
-/// each arena dies with its call.
-fn ownedUtf8(j: Jni, allocator: std.mem.Allocator, str: jni.jstring) ?[:0]u8 {
-    const text = j.stringToUtf8(allocator, str) catch return null;
-    const owned = allocator.allocSentinel(u8, text.len, 0) catch return null;
-    @memcpy(owned, text);
-    return owned;
+/// each arena dies with its call. A plain slice: the JNI side re-encodes on
+/// the way back out, so nothing here has to carry a terminator.
+fn ownedUtf8(j: Jni, allocator: std.mem.Allocator, str: jni.jstring) ?[]u8 {
+    return j.stringToUtf8(allocator, str) catch null;
 }
 
 fn nativeOpenUrl(
@@ -479,8 +464,10 @@ fn nativeOpenUrl(
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
 
-    const value = ownedUtf8(j, arena.allocator(), url) orelse return jni.JNI_FALSE;
-    intents.openUrl(j, activity, value.ptr) catch |err| {
+    const allocator = arena.allocator();
+
+    const value = ownedUtf8(j, allocator, url) orelse return jni.JNI_FALSE;
+    intents.openUrl(j, allocator, activity, value) catch |err| {
         // Not a warning. `openURL` answering false is the documented outcome
         // when nothing on the device handles the scheme, and the Kotlin
         // catches exactly this — logging it at warn would put a line in
@@ -506,7 +493,7 @@ fn nativeShare(
     const body = ownedUtf8(j, allocator, text) orelse return jni.JNI_FALSE;
     const subject = ownedUtf8(j, allocator, title) orelse return jni.JNI_FALSE;
 
-    intents.share(j, activity, body.ptr, subject.ptr) catch |err| {
+    intents.share(j, allocator, activity, body, subject) catch |err| {
         std.log.warn("craft: share fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -525,9 +512,7 @@ fn nativeGetNetworkStatus(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject
     };
 
     const json = network.render(allocator, status) catch return null;
-    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
-    @memcpy(owned, json);
-    return j.newStringUtf(owned.ptr) catch null;
+    return j.newStringUtf8(allocator, json) catch null;
 }
 
 fn nativeSecureSet(
@@ -545,7 +530,7 @@ fn nativeSecureSet(
     const k = ownedUtf8(j, allocator, key) orelse return jni.JNI_FALSE;
     const v = ownedUtf8(j, allocator, value) orelse return jni.JNI_FALSE;
 
-    securestore.set(j, prefs, k.ptr, v.ptr) catch |err| {
+    securestore.set(j, allocator, prefs, k, v) catch |err| {
         std.log.warn("craft: secureSet fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -569,15 +554,13 @@ fn nativeSecureGet(
     const allocator = arena.allocator();
 
     const k = ownedUtf8(j, allocator, key) orelse return null;
-    const value = securestore.get(allocator, j, prefs, k.ptr) catch |err| {
+    const value = securestore.get(allocator, j, prefs, k) catch |err| {
         std.log.warn("craft: secureGet fell through to the shim ({s})", .{@errorName(err)});
         return null;
     };
 
     const json = securestore.renderRead(allocator, value) catch return null;
-    const owned = allocator.allocSentinel(u8, json.len, 0) catch return null;
-    @memcpy(owned, json);
-    return j.newStringUtf(owned.ptr) catch null;
+    return j.newStringUtf8(allocator, json) catch null;
 }
 
 fn nativeSecureRemove(
@@ -590,8 +573,10 @@ fn nativeSecureRemove(
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
 
-    const k = ownedUtf8(j, arena.allocator(), key) orelse return jni.JNI_FALSE;
-    securestore.remove(j, prefs, k.ptr) catch |err| {
+    const allocator = arena.allocator();
+
+    const k = ownedUtf8(j, allocator, key) orelse return jni.JNI_FALSE;
+    securestore.remove(j, allocator, prefs, k) catch |err| {
         std.log.warn("craft: secureRemove fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };

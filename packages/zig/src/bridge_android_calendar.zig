@@ -612,15 +612,12 @@ fn putString(
     try j.pushLocalFrame(4);
     defer _ = j.popLocalFrame(null);
 
-    // `NewStringUTF` needs a NUL terminator, and a title is arbitrary page
-    // text — so it is copied rather than pointed at.
-    const terminated = try allocator.allocSentinel(u8, text.len, 0);
-    defer allocator.free(terminated);
-    @memcpy(terminated, text);
-
+    // A title is arbitrary page text, so it goes through the re-encoder: a
+    // NUL would end the string early and an emoji is a surrogate pair to the
+    // JVM.
     try j.callVoidMethodA(values, put, &.{
         .{ .l = try j.newStringUtf(column) },
-        .{ .l = try j.newStringUtf(terminated.ptr) },
+        .{ .l = try j.newStringUtf8(allocator, text) },
     });
 }
 

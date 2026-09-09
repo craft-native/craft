@@ -99,7 +99,7 @@ fn detach(vm: jni.JavaVM) void {
 /// Silent on every failure, and deliberately: the caller is a device callback
 /// with nowhere to report to, and the alternatives are a log per location fix
 /// or an error nobody reads. `droppedCount` is what a diagnosis reads instead.
-pub fn evaluate(script: [*:0]const u8) void {
+pub fn evaluate(allocator: std.mem.Allocator, script: []const u8) void {
     const vm = java_vm orelse {
         dropped += 1;
         return;
@@ -111,12 +111,12 @@ pub fn evaluate(script: [*:0]const u8) void {
     };
     defer if (attachment.owned) detach(vm);
 
-    deliverThrough(attachment.env, script) catch {
+    deliverThrough(allocator, attachment.env, script) catch {
         dropped += 1;
     };
 }
 
-fn deliverThrough(env: jni.JNIEnv, script: [*:0]const u8) !void {
+fn deliverThrough(allocator: std.mem.Allocator, env: jni.JNIEnv, script: []const u8) !void {
     const j = jni.Jni.init(env);
 
     // A frame around the class, the string and any pending throwable. Without
@@ -127,7 +127,11 @@ fn deliverThrough(env: jni.JNIEnv, script: [*:0]const u8) !void {
     defer _ = j.popLocalFrame(null);
 
     const cls = try j.findClass(holder_class);
-    const text = try j.newStringUtf(script);
+    // Re-encoded rather than handed over: a reply carries page and device
+    // text — a contact's name, an event's title, an error message — and
+    // `NewStringUTF` reads modified UTF-8, in which an emoji is two three-byte
+    // halves rather than one four-byte sequence.
+    const text = try j.newStringUtf8(allocator, script);
 
     const deliver = try j.staticMethodId(cls, "deliver", "(Ljava/lang/String;)V");
     try j.callStaticVoidMethodA(cls, deliver, &.{.{ .l = text }});
@@ -152,9 +156,8 @@ pub fn emitEvent(
     try out.appendSlice(allocator, "', {detail: ");
     try out.appendSlice(allocator, detail_json);
     try out.appendSlice(allocator, "}));");
-    try out.append(allocator, 0);
 
-    evaluate(@ptrCast(out.items.ptr));
+    evaluate(allocator, out.items);
 }
 
 /// `window._craftXResolve && window._craftXResolve(payload)`.
@@ -180,9 +183,8 @@ pub fn settle(
     try out.append(allocator, '(');
     try out.appendSlice(allocator, payload_json);
     try out.appendSlice(allocator, ");");
-    try out.append(allocator, 0);
 
-    evaluate(@ptrCast(out.items.ptr));
+    evaluate(allocator, out.items);
 }
 
 // =============================================================================
@@ -287,7 +289,7 @@ test "a script reaches deliver on an already-attached thread, and nothing is det
     setVm(&ptr);
     defer clearVm();
 
-    evaluate("window.x = 1;");
+    evaluate(testing.allocator, "window.x = 1;");
     try testing.expectEqualStrings("window.x = 1;", delivered());
 
     // The UI thread and every binder thread are already attached, and
@@ -308,7 +310,7 @@ test "a detached thread is attached and then detached again" {
     defer clearVm();
 
     fake_already_attached = false;
-    evaluate("window.y = 2;");
+    evaluate(testing.allocator, "window.y = 2;");
 
     try testing.expectEqualStrings("window.y = 2;", delivered());
     try testing.expectEqual(@as(usize, 1), fake_attach_calls);
@@ -323,7 +325,7 @@ test "every way delivery can fail is counted, not logged and not crashed" {
     // No VM at all — before JNI_OnLoad, or in a build with no runtime linked.
     clearVm();
     resetDroppedForTest();
-    evaluate("window.z = 3;");
+    evaluate(testing.allocator, "window.z = 3;");
     try testing.expectEqual(@as(usize, 1), droppedCount());
 
     // A thread that cannot be attached.
@@ -332,7 +334,7 @@ test "every way delivery can fail is counted, not logged and not crashed" {
     fake_already_attached = false;
     fake_attach_succeeds = false;
     resetDroppedForTest();
-    evaluate("window.z = 3;");
+    evaluate(testing.allocator, "window.z = 3;");
     try testing.expectEqual(@as(usize, 1), droppedCount());
     // Nothing was attached, so nothing may be detached.
     try testing.expectEqual(@as(usize, 0), fake_detach_calls);
@@ -342,7 +344,7 @@ test "every way delivery can fail is counted, not logged and not crashed" {
     fake_attach_succeeds = true;
     fake_find_class_succeeds = false;
     resetDroppedForTest();
-    evaluate("window.z = 3;");
+    evaluate(testing.allocator, "window.z = 3;");
     try testing.expectEqual(@as(usize, 1), droppedCount());
 }
 
@@ -358,7 +360,7 @@ test "an attached thread is detached even when delivery fails" {
 
     fake_already_attached = false;
     fake_find_class_succeeds = false;
-    evaluate("window.z = 3;");
+    evaluate(testing.allocator, "window.z = 3;");
 
     try testing.expectEqual(@as(usize, 1), fake_attach_calls);
     try testing.expectEqual(@as(usize, 1), fake_detach_calls);
@@ -393,6 +395,50 @@ test "settling guards the global that the promise may not have assigned yet" {
     try settle(testing.allocator, "_craftLocationResolve", "{\"latitude\":1}");
     try testing.expectEqualStrings(
         "window._craftLocationResolve && window._craftLocationResolve({\"latitude\":1});",
+        delivered(),
+    );
+}
+
+test "a reply carrying an emoji reaches the JVM as a surrogate pair" {
+    // The end of the wire this whole change is about. A contact called a
+    // smiley arrives here as four UTF-8 bytes, and `NewStringUTF` reads
+    // *modified* UTF-8, where the same character is two three-byte halves.
+    // Handing over the standard form does not produce the string that was
+    // meant.
+    var invoke: jni.JNIInvokeInterface = undefined;
+    fakeVm(&invoke);
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
+    setVm(&ptr);
+    defer clearVm();
+
+    try settle(testing.allocator, "_craftContactsResolve", "[{\"displayName\":\"\u{1F642}\"}]");
+
+    try testing.expectEqualStrings(
+        "window._craftContactsResolve && window._craftContactsResolve([{\"displayName\":\"" ++
+            "\xED\xA0\xBD\xED\xB9\x82" ++ "\"}]);",
+        delivered(),
+    );
+
+    // And the four-byte form is gone rather than merely accompanied.
+    try testing.expect(std.mem.indexOf(u8, delivered(), "\xF0\x9F\x99\x82") == null);
+}
+
+test "a NUL in a reply does not truncate it" {
+    // `NewStringUTF` reads to a terminator, so a payload carrying U+0000 would
+    // end the script early and `evaluateJavascript` would run the fragment
+    // before it. A database column holding a NUL byte is the everyday way to
+    // get one.
+    var invoke: jni.JNIInvokeInterface = undefined;
+    fakeVm(&invoke);
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
+    setVm(&ptr);
+    defer clearVm();
+
+    try settle(testing.allocator, "_craftDbQueryResolve", "[\"a\x00b\"]");
+
+    try testing.expectEqualStrings(
+        "window._craftDbQueryResolve && window._craftDbQueryResolve([\"a" ++
+            "\xC0\x80" ++ "b\"]);",
         delivered(),
     );
 }
