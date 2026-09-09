@@ -2406,6 +2406,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun scheduleNotification(notificationJson: String) {
+        // Zig answers through the reply channel, so returning here is what
+        // stops the promise being settled twice. It declines a delayed
+        // notification before doing any of the work below.
+        if (CraftNative.scheduleNotification(activity, notificationJson)) return
+
         try {
             val notif = JSONObject(notificationJson)
             val title = notif.optString("title", "")
