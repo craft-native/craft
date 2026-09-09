@@ -2577,6 +2577,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun setKeepAwake(enabled: Boolean): Boolean {
+        // Zig queues the same window call on the same looper. isKeepingAwake
+        // below is written here and read nowhere, so the Kotlin body not
+        // running leaves nothing stale — unlike the flashlight pair.
+        if (CraftNative.setKeepAwake(activity, enabled)) return true
+
         activity.runOnUiThread {
             if (enabled) {
                 activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

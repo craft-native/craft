@@ -52,7 +52,7 @@ const shareditem = @import("bridge_android_shareditem.zig");
 const contacts = @import("bridge_android_contacts.zig");
 const widgets = @import("bridge_android_widgets.zig");
 const shortcuts = @import("bridge_android_shortcuts.zig");
-const orientation = @import("bridge_android_orientation.zig");
+const screen = @import("bridge_android_screen.zig");
 const main_thread = @import("android_main_thread.zig");
 
 const Jni = jni.Jni;
@@ -341,6 +341,11 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeUnlockOrientation",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeUnlockOrientation),
+    },
+    .{
+        .name = "nativeSetKeepAwake",
+        .signature = "(Landroid/app/Activity;Z)Z",
+        .fnPtr = @ptrCast(&nativeSetKeepAwake),
     },
 };
 
@@ -1354,7 +1359,7 @@ fn nativeLockOrientation(
 
     const text = j.stringToUtf8(arena.allocator(), name) catch return jni.JNI_FALSE;
 
-    orientation.apply(j, activity, orientation.modeFor(text)) catch |err| {
+    screen.apply(j, activity, screen.modeFor(text)) catch |err| {
         std.log.warn("craft: lockOrientation fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
@@ -1369,8 +1374,28 @@ fn nativeUnlockOrientation(
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
 
-    orientation.apply(j, activity, .unspecified) catch |err| {
+    screen.apply(j, activity, .unspecified) catch |err| {
         std.log.warn("craft: unlockOrientation fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+/// `nativeSetKeepAwake(activity, enabled)`.
+///
+/// Safe to serve where the flashlight pair is not: the shim's block ends
+/// `isKeepingAwake = enabled`, and nothing in `CraftBridge.kt` ever reads that
+/// field — so the Kotlin body not running leaves nothing stale behind.
+fn nativeSetKeepAwake(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    enabled: jni.jboolean,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+
+    screen.keepAwake(j, activity, enabled != jni.JNI_FALSE) catch |err| {
+        std.log.warn("craft: setKeepAwake fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
@@ -1487,7 +1512,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 34), natives.len);
+    try testing.expectEqual(@as(usize, 35), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

@@ -48,6 +48,8 @@ const jobject = jni.jobject;
 pub const Task = union(enum) {
     /// `activity.setRequestedOrientation(mode)`.
     set_requested_orientation: i32,
+    /// `activity.window.addFlags(flags)` or `clearFlags(flags)`.
+    set_window_flags: struct { flags: i32, add: bool },
 };
 
 const slot_count = 32;
@@ -160,7 +162,34 @@ pub fn run(j: Jni, activity: jobject, token: u64) void {
     const task = claim(token) orelse return;
     switch (task) {
         .set_requested_orientation => |mode| setRequestedOrientation(j, activity, mode) catch {},
+        .set_window_flags => |request| setWindowFlags(j, activity, request.flags, request.add) catch {},
     }
+}
+
+/// Which `Window` method a request names.
+///
+/// Split out because it is the one place the two directions can be swapped,
+/// and swapping them turns the screen timeout back on while reporting success.
+pub fn windowFlagMethod(add: bool) [:0]const u8 {
+    return if (add) "addFlags" else "clearFlags";
+}
+
+/// `activity.window.addFlags(flags)` / `clearFlags(flags)`.
+fn setWindowFlags(j: Jni, activity: jobject, flags: i32, add: bool) !void {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const window = try j.callObjectMethod(
+        activity,
+        try j.methodId(try j.objectClass(activity), "getWindow", "()Landroid/view/Window;"),
+    );
+
+    const window_cls = try j.objectClass(window);
+    try j.callVoidMethodA(
+        window,
+        try j.methodId(window_cls, windowFlagMethod(add), "(I)V"),
+        &.{.{ .i = flags }},
+    );
 }
 
 fn setRequestedOrientation(j: Jni, activity: jobject, mode: i32) !void {
@@ -255,6 +284,22 @@ test "releasing a token a caller could not schedule frees its slot" {
     while (count < slot_count) : (count += 1) {
         _ = try reserve(.{ .set_requested_orientation = 0 });
     }
+}
+
+test "a window-flag task carries both halves of the request" {
+    clearTable();
+
+    const token = try reserve(.{ .set_window_flags = .{ .flags = 128, .add = true } });
+    const claimed = claim(token).?;
+    try testing.expectEqual(@as(i32, 128), claimed.set_window_flags.flags);
+    try testing.expect(claimed.set_window_flags.add);
+}
+
+test "adding and clearing name different Window methods" {
+    // The swap that would leave the screen timing out while every layer
+    // reported success.
+    try testing.expectEqualStrings("addFlags", windowFlagMethod(true));
+    try testing.expectEqualStrings("clearFlags", windowFlagMethod(false));
 }
 
 test "the holder class is the fixed one, not the templated bridge" {

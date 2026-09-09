@@ -128,6 +128,7 @@ object CraftNative {
     private external fun nativeRunTask(activity: Activity, token: Long)
     private external fun nativeLockOrientation(activity: Activity, orientation: String): Boolean
     private external fun nativeUnlockOrientation(activity: Activity): Boolean
+    private external fun nativeSetKeepAwake(activity: Activity, enabled: Boolean): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -615,6 +616,15 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeUnlockOrientation(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun setKeepAwake(activity: Activity, enabled: Boolean): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeSetKeepAwake(activity, enabled)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
