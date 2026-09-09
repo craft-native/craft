@@ -1,6 +1,8 @@
 package com.craft.runtime
 
 import android.app.Activity
+import android.os.Handler
+import android.os.Looper
 import android.content.SharedPreferences
 import android.database.sqlite.SQLiteDatabase
 import org.json.JSONObject
@@ -123,6 +125,9 @@ object CraftNative {
     private external fun nativeSetShortcuts(activity: Activity, shortcutsJson: String): Boolean
     private external fun nativeClearShortcuts(activity: Activity): Boolean
     private external fun nativeScheduleNotification(activity: Activity, notificationJson: String): Boolean
+    private external fun nativeRunTask(activity: Activity, token: Long)
+    private external fun nativeLockOrientation(activity: Activity, orientation: String): Boolean
+    private external fun nativeUnlockOrientation(activity: Activity): Boolean
 
     /**
      * `getDeviceInfo`, or null to use the Kotlin implementation.
@@ -551,6 +556,65 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeScheduleNotification(activity, notificationJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /**
+     * How Zig reaches the main looper.
+     *
+     * `Window.addFlags` and `setRequestedOrientation` have to run there, and
+     * the shim wraps each in `runOnUiThread { ... }` — which takes a
+     * `Runnable`, a Java object implementing a Java interface. JNI cannot make
+     * one: `RegisterNatives` binds methods onto a class that already exists in
+     * the APK, so a native can be *called* from Java but cannot be handed to
+     * Java as an object.
+     *
+     * So the `Runnable` is here, the work is there, and a token says which
+     * work. The Activity goes across with it rather than being held by Zig
+     * over the hop, which is what would need a global reference and a matching
+     * release.
+     *
+     * Called from Zig, never from the Kotlin below.
+     */
+    @JvmStatic
+    fun runOnMain(activity: Activity, token: Long, delayMs: Long) {
+        val block = Runnable {
+            try {
+                nativeRunTask(activity, token)
+            } catch (e: UnsatisfiedLinkError) {
+                // The library went away between the post and the looper. There
+                // is nothing to answer to here and nothing to retry.
+            }
+        }
+        if (delayMs > 0) {
+            Handler(Looper.getMainLooper()).postDelayed(block, delayMs)
+        } else {
+            activity.runOnUiThread(block)
+        }
+    }
+
+    /**
+     * Returns whether Zig queued the work, not whether the device has turned.
+     *
+     * The shim returns true after `runOnUiThread` for the same reason: the
+     * JavaBridge thread is never the main thread, so the block always runs
+     * later than the answer.
+     */
+    fun lockOrientation(activity: Activity, orientation: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeLockOrientation(activity, orientation)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun unlockOrientation(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeUnlockOrientation(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
