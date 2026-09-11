@@ -526,29 +526,43 @@ pub const WindowBuilder = struct {
         return builder;
     }
 
-    pub fn build(self: WindowBuilder) Result(Window, Error) {
-        // Validate dimensions
+    /// Convert the builder state into the canonical window options without
+    /// creating a native window. Keeping this conversion separate makes every
+    /// builder option testable without starting a platform event loop.
+    pub fn toWindowOptions(self: WindowBuilder) Result(WindowOptions, Error) {
         if (self.min_width != null and self.width < self.min_width.?) {
             return .{ .err = Error.WindowCreationFailed };
         }
         if (self.min_height != null and self.height < self.min_height.?) {
             return .{ .err = Error.WindowCreationFailed };
         }
+        if (self.max_width != null and self.width > self.max_width.?) {
+            return .{ .err = Error.WindowCreationFailed };
+        }
+        if (self.max_height != null and self.height > self.max_height.?) {
+            return .{ .err = Error.WindowCreationFailed };
+        }
 
-        // Create window (platform-specific implementation would go here)
-        const opts = WindowOptions{
+        return .{ .ok = WindowOptions{
             .title = self.title,
             .width = self.width,
             .height = self.height,
             .x = self.x,
             .y = self.y,
-            .resizable = self.resizable,
-            .frameless = self.frameless,
-            .transparent = self.transparent,
+            .resizable = self.is_resizable,
+            .frameless = self.is_frameless,
+            .transparent = self.is_transparent,
             .always_on_top = self.always_on_top,
-            .fullscreen = self.fullscreen,
+            .fullscreen = self.is_fullscreen,
             .dark_mode = self.dark_mode,
             .dev_tools = self.dev_tools,
+        } };
+    }
+
+    pub fn build(self: WindowBuilder) Result(Window, Error) {
+        const opts = switch (self.toWindowOptions()) {
+            .ok => |options| options,
+            .err => |err| return .{ .err = err },
         };
 
         const window = Window.create(opts) catch {

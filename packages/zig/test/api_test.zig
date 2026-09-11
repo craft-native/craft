@@ -185,6 +185,49 @@ test "WindowBuilder - chaining" {
     try testing.expect(builder.always_on_top);
 }
 
+test "WindowBuilder - converts every stored option" {
+    const result = api.WindowBuilder.new("Configured", "https://example.com")
+        .size(960, 640)
+        .position(-20, 40)
+        .resizable(false)
+        .frameless(true)
+        .transparent(true)
+        .alwaysOnTop(true)
+        .fullscreen(true)
+        .darkMode(false)
+        .devTools(false)
+        .toWindowOptions();
+
+    try testing.expect(result.isOk());
+    const opts = try result.unwrap();
+    try testing.expectEqualStrings("Configured", opts.title);
+    try testing.expectEqual(@as(u32, 960), opts.width);
+    try testing.expectEqual(@as(u32, 640), opts.height);
+    try testing.expectEqual(@as(?i32, -20), opts.x);
+    try testing.expectEqual(@as(?i32, 40), opts.y);
+    try testing.expect(!opts.resizable);
+    try testing.expect(opts.frameless);
+    try testing.expect(opts.transparent);
+    try testing.expect(opts.always_on_top);
+    try testing.expect(opts.fullscreen);
+    try testing.expectEqual(@as(?bool, false), opts.dark_mode);
+    try testing.expect(!opts.dev_tools);
+}
+
+test "WindowBuilder - enforces minimum and maximum size" {
+    const below_minimum = api.WindowBuilder.new("Too small", "https://example.com")
+        .size(799, 600)
+        .minSize(800, 600)
+        .toWindowOptions();
+    const above_maximum = api.WindowBuilder.new("Too large", "https://example.com")
+        .size(1281, 720)
+        .maxSize(1280, 720)
+        .toWindowOptions();
+
+    try testing.expect(below_minimum.isErr());
+    try testing.expect(above_maximum.isErr());
+}
+
 test "Event - ResizeEvent" {
     const event = api.Event{ .window_resize = .{ .width = 800, .height = 600 } };
 
