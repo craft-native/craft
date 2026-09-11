@@ -45,6 +45,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_intents.zig"),
     @embedFile("src/bridge_android_imagepicker.zig"),
     @embedFile("src/bridge_android_biometric.zig"),
+    @embedFile("src/bridge_android_review.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -104,8 +105,10 @@ const zig_sources = [_][]const u8{
 /// whose abstract callback and main-thread presentation stay in the holder;
 /// 46 with the file and video launch pair, whose results the template already
 /// drops after the external Activity returns; 45 with the single-contact
-/// picker, whose existing result decoder is likewise never reached.
-const max_not_yet_migrated: usize = 45;
+/// picker, whose existing result decoder is likewise never reached; 44 with
+/// requestReview, whose Play Core Task listeners remain Java objects while
+/// Zig owns both promise outcomes.
+const max_not_yet_migrated: usize = 44;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

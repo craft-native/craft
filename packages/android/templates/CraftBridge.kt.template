@@ -2032,6 +2032,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun requestReview() {
+        if (CraftNative.requestReview(activity)) return
+
         val reviewManager = ReviewManagerFactory.create(activity)
         val request = reviewManager.requestReviewFlow()
 

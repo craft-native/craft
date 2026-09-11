@@ -43,6 +43,7 @@ const clipboard = @import("bridge_android_clipboard.zig");
 const intents = @import("bridge_android_intents.zig");
 const imagepicker = @import("bridge_android_imagepicker.zig");
 const biometric = @import("bridge_android_biometric.zig");
+const review = @import("bridge_android_review.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -219,6 +220,21 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeStartVideoRecording",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStartVideoRecording),
+    },
+    .{
+        .name = "nativeReviewSucceeded",
+        .signature = "()V",
+        .fnPtr = @ptrCast(&nativeReviewSucceeded),
+    },
+    .{
+        .name = "nativeReviewError",
+        .signature = "(Ljava/lang/String;)V",
+        .fnPtr = @ptrCast(&nativeReviewError),
+    },
+    .{
+        .name = "nativeRequestReview",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeRequestReview),
     },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
@@ -769,6 +785,37 @@ fn nativeStartVideoRecording(
     const j = Jni.init(env);
     imagepicker.startVideoRecording(j, activity) catch |err| {
         std.log.warn("craft: startVideoRecording fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativeReviewSucceeded(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
+    events.settle(backing, review.resolve_global, "true") catch {};
+}
+
+fn nativeReviewError(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    message: jni.jstring,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, message) catch return;
+    const payload = review.rejectionPayload(allocator, text) catch return;
+    events.settle(allocator, review.reject_global, payload) catch {};
+}
+
+fn nativeRequestReview(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    review.request(Jni.init(env), activity) catch |err| {
+        std.log.warn("craft: requestReview fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
@@ -2498,7 +2545,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 67), natives.len);
+    try testing.expectEqual(@as(usize, 70), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

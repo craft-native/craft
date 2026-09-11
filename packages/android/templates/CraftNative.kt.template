@@ -30,6 +30,7 @@ import android.net.Network
 import android.net.ConnectivityManager
 import android.content.Context
 import androidx.core.content.ContextCompat
+import com.google.android.play.core.review.ReviewManagerFactory
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
@@ -135,6 +136,9 @@ object CraftNative {
     private external fun nativePickImage(activity: Activity): Boolean
     private external fun nativePickFile(activity: Activity): Boolean
     private external fun nativeStartVideoRecording(activity: Activity): Boolean
+    private external fun nativeReviewSucceeded()
+    private external fun nativeReviewError(message: String)
+    private external fun nativeRequestReview(activity: Activity): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -335,6 +339,45 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeStartVideoRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== In-app review ====================
+    //
+    // Play Core's Task listeners are Java objects and remain here. Every
+    // observable outcome crosses back into Zig; completing the launched flow
+    // resolves regardless of whether Google Play displayed a review card.
+
+    @JvmStatic
+    fun startReviewFlow(activity: Activity) {
+        val reviewManager = ReviewManagerFactory.create(activity)
+        val request = reviewManager.requestReviewFlow()
+
+        request.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                val flow = reviewManager.launchReviewFlow(activity, task.result)
+                flow.addOnCompleteListener {
+                    try {
+                        nativeReviewSucceeded()
+                    } catch (e: UnsatisfiedLinkError) {
+                        // The library went away while Play owned the flow.
+                    }
+                }
+            } else {
+                try {
+                    nativeReviewError(task.exception?.message ?: "Review flow failed")
+                } catch (e: UnsatisfiedLinkError) {
+                }
+            }
+        }
+    }
+
+    fun requestReview(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeRequestReview(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
