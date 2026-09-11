@@ -57,7 +57,7 @@ pub fn install(window: objc.id) void {
             _ = capabilities.registerEmitter(ch);
         }
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             std.debug.print("[WindowEvents] Installed NSWindowDelegate\n", .{});
         }
     }

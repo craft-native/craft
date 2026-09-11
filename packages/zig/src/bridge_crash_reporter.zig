@@ -126,7 +126,7 @@ pub const CrashReporterBridge = struct {
         };
         try self.queue.append(self.allocator, entry);
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             std.debug.print("[CrashReporter] {s} ({s}): {s}\n", .{
                 entry.severity, entry.source, entry.message,
             });

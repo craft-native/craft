@@ -635,7 +635,7 @@ fn getBorderlessWindowClass() objc.Class {
     BorderlessWindowClass = objc.objc_allocateClassPair(NSWindow, "CraftBorderlessWindow", 0);
 
     if (BorderlessWindowClass == null) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Window] Failed to create CraftBorderlessWindow class\n", .{});
         return NSWindow;
     }
@@ -960,7 +960,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         // Set up the script message handler
         setupScriptMessageHandler(userContentController) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
         };
 
@@ -1081,12 +1081,12 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // here said "before the load below" — the load moved above it.)
     if (!style.benchmark) {
         setupUIDelegate(webview) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
         };
 
         setupNavigationDelegate(webview) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Nav] Failed to setup navigation delegate: {}\n", .{err});
         };
     }
@@ -1103,7 +1103,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         const windowFrame: NSRect = msgSendRect(window, "frame");
         const contentRect: NSRect = msgSendRect1Rect(window, "contentRectForFrameRect:", windowFrame);
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             std.debug.print("[WebView] Window frame: {d}x{d}, Content rect: {d}x{d}\n", .{
                 windowFrame.size.width,
                 windowFrame.size.height,
@@ -1157,7 +1157,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // Setup bridge handlers (need allocator and handles)
         const allocator = std.heap.c_allocator;
         setupBridgeHandlers(allocator, null, window) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
         };
 
@@ -1223,7 +1223,7 @@ fn setupSidebarDataSource() !objc.id {
     }
 
     if (sidebarDataSourceClass == null) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Creating data source class...\n", .{});
 
         // Create the class
@@ -1299,13 +1299,13 @@ fn setupSidebarDataSource() !objc.id {
         );
 
         objc.objc_registerClassPair(sidebarDataSourceClass);
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Data source class registered\n", .{});
     }
 
     // Create instance
     const instance = msgSend0(msgSend0(sidebarDataSourceClass, "alloc"), "init");
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Data source instance created\n", .{});
 
     return instance;
@@ -1433,7 +1433,7 @@ fn getSidebarSections() []const DynamicSidebarSection {
 
 /// Parse JSON sidebar configuration
 fn parseSidebarConfig(json: []const u8) !void {
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Parsing sidebar config ({d} bytes)\n", .{json.len});
 
     if (sidebar_arena) |*arena| arena.deinit();
@@ -1443,7 +1443,7 @@ fn parseSidebarConfig(json: []const u8) !void {
 
     // Parse JSON using std.json
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] JSON parse error: {}\n", .{err});
         return err;
     };
@@ -1501,7 +1501,7 @@ fn parseSidebarConfig(json: []const u8) !void {
 
     // Extract sections array
     const sections_json = root.object.get("sections") orelse {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] No 'sections' field in config\n", .{});
         return;
     };
@@ -1552,7 +1552,7 @@ fn parseSidebarConfig(json: []const u8) !void {
     }
 
     dynamic_sections = try sections.toOwnedSlice(allocator);
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Parsed {d} sections from config\n", .{dynamic_sections.?.len});
 }
 
@@ -1684,7 +1684,7 @@ fn sidebarSelectionDidChange(
 
     const child = &section.items[item_idx];
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Selection changed: section={s}, item={s}\n", .{ section.id, child.id });
 
     // Navigate via window.navigate() for SPA routing, or fall back to location.href.
@@ -1704,7 +1704,7 @@ fn sidebarSelectionDidChange(
         const js_str = createNSString(js);
         _ = msgSend2(sidebar_webview, "evaluateJavaScript:completionHandler:", js_str, @as(?*anyopaque, null));
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Navigate: section={s}, item={s}\n", .{ section.id, child.id });
     }
 }
@@ -1889,7 +1889,7 @@ fn getSidebarRowViewClass() objc.Class {
     sidebarRowViewClass = objc.objc_allocateClassPair(NSTableRowView, "CraftSidebarRowView", 0);
 
     if (sidebarRowViewClass == null) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Failed to create CraftSidebarRowView class\n", .{});
         return NSTableRowView;
     }
@@ -1919,7 +1919,7 @@ fn getSidebarRowViewClass() objc.Class {
     );
 
     objc.objc_registerClassPair(sidebarRowViewClass);
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Custom row view class registered\n", .{});
 
     return sidebarRowViewClass;
@@ -2120,7 +2120,7 @@ pub fn createWindowWithSidebar(
     // Parse sidebar config if provided
     if (sidebar_config_json) |json| {
         parseSidebarConfig(json) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeSidebar] Failed to parse sidebar config: {}\n", .{err});
         };
     }
@@ -2139,7 +2139,7 @@ pub fn createWindowWithSidebar(
     const WKUserContentController = getClass("WKUserContentController");
 
     _ = NSApplication;
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Creating window with native macOS sidebar...\n", .{});
 
     // Create window frame
@@ -2204,7 +2204,7 @@ pub fn createWindowWithSidebar(
     _ = msgSend1(window, "setToolbar:", toolbar);
     _ = msgSend1(window, "setToolbarStyle:", @as(c_long, 3)); // NSWindowToolbarStyleUnifiedCompact = 3
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Window created with toolbar for traffic lights\n", .{});
 
     // ========================================
@@ -2235,7 +2235,7 @@ pub fn createWindowWithSidebar(
     _ = msgSend1(scrollView, "setBackgroundColor:", msgSend0(getClass("NSColor"), "clearColor"));
     msgSendVoid1(scrollView, "setAutoresizingMask:", @as(c_ulong, 2 | 16)); // Width + Height
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Created NSScrollView for sidebar\n", .{});
 
     // Create NSOutlineView with source list style
@@ -2264,7 +2264,7 @@ pub fn createWindowWithSidebar(
     _ = msgSend1(outlineView, "addTableColumn:", column);
     _ = msgSend1(outlineView, "setOutlineTableColumn:", column);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Created NSOutlineView with source list style\n", .{});
 
     // Setup data source and delegate for the outline view
@@ -2277,7 +2277,7 @@ pub fn createWindowWithSidebar(
 
     // Expand all root items (sections)
     const numRows = msgSendNSInteger(outlineView, "numberOfRows");
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Number of rows after reload: {d}\n", .{numRows});
 
     // Expand root items
@@ -2289,7 +2289,7 @@ pub fn createWindowWithSidebar(
         }
     }
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Data source configured with demo items\n", .{});
 
     // Set outline view as document view of scroll view
@@ -2319,7 +2319,7 @@ pub fn createWindowWithSidebar(
     // Add sidebar to split view controller
     _ = msgSend1(splitVC, "addSplitViewItem:", sidebarItem);
 
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         std.debug.print("[NativeSidebar] Sidebar item added to split view controller\n", .{});
         std.debug.print("[NativeSidebar] Sidebar view controller configured\n", .{});
     }
@@ -2350,7 +2350,7 @@ pub fn createWindowWithSidebar(
     // Set up user content controller
     const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
     setupScriptMessageHandler(userContentController) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
     };
     // A sidebar window always takes the full bridge, the bootstrap and the
@@ -2371,14 +2371,14 @@ pub fn createWindowWithSidebar(
 
     // Setup UI delegate
     setupUIDelegate(webview) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
     };
 
     // The HTML below is loaded against a localhost base URL, and anything it
     // fetches over HTTPS gets the same treatment as a directly loaded URL.
     setupNavigationDelegate(webview) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Nav] Failed to setup navigation delegate: {}\n", .{err});
     };
 
@@ -2390,7 +2390,7 @@ pub fn createWindowWithSidebar(
     const base_url = msgSend1(getClass("NSURL"), "URLWithString:", base_url_string);
     _ = msgSend2(webview, "loadHTMLString:baseURL:", html_str, base_url);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] WebView created and HTML loaded\n", .{});
 
     // Store WebView reference for sidebar events
@@ -2405,7 +2405,7 @@ pub fn createWindowWithSidebar(
     const contentItem = msgSend1(NSSplitViewItem, "contentListWithViewController:", contentVC);
     _ = msgSend1(splitVC, "addSplitViewItem:", contentItem);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Content view controller configured\n", .{});
 
     // ========================================
@@ -2441,13 +2441,13 @@ pub fn createWindowWithSidebar(
 
     // Setup bridge handlers
     setupBridgeHandlers(std.heap.c_allocator, null, window) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
     };
 
     observeWindowChrome(window);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] ✓ Window with native sidebar created successfully\n", .{});
 
     return window;
@@ -2629,7 +2629,7 @@ fn generateSidebarHtml(allocator: std.mem.Allocator, sidebar_config: ?[]const u8
 
     // Parse the JSON config
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, config_json, .{}) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[SidebarHTML] JSON parse error: {}, falling back to default\n", .{err});
         return default_sidebar_html;
     };
@@ -2956,7 +2956,7 @@ fn generateSidebarHtml(allocator: std.mem.Allocator, sidebar_config: ?[]const u8
 
     try html.appendSlice(allocator, "</body>\n</html>");
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[SidebarHTML] Generated dynamic sidebar HTML ({d} bytes) from config\n", .{html.items.len});
 
     return try html.toOwnedSlice(allocator);
@@ -3258,10 +3258,10 @@ pub fn createWindowWithSidebarURL(
 ) !objc.id {
     // Parse sidebar config if provided
     if (sidebar_config) |config| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Parsing sidebar config ({d} bytes)\n", .{config.len});
         parseSidebarConfig(config) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeSidebar] Failed to parse config: {}\n", .{err});
         };
     }
@@ -3335,7 +3335,7 @@ pub fn createWindowWithSidebarURL(
     // Store sidebar width for toggle animation
     sidebar_width_stored = @floatFromInt(sidebar_width);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Window created with toolbar\n", .{});
 
     // ========================================
@@ -3395,7 +3395,7 @@ pub fn createWindowWithSidebarURL(
 
     const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
     setupScriptMessageHandler(userContentController) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
     };
 
@@ -3417,14 +3417,14 @@ pub fn createWindowWithSidebarURL(
     makeWebViewTransparent(webview);
 
     setupUIDelegate(webview) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Media] Failed to setup UI delegate: {}\n", .{err});
     };
 
     // This is the path that loads a URL straight into a sidebar window — the
     // one a local dashboard actually goes through.
     setupNavigationDelegate(webview) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Nav] Failed to setup navigation delegate: {}\n", .{err});
     };
 
@@ -3436,7 +3436,7 @@ pub fn createWindowWithSidebarURL(
     const request = msgSend1(getClass("NSURLRequest"), "requestWithURL:", nsurl);
     _ = msgSend1(webview, "loadRequest:", request);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] WebView loading URL (full window): {s}\n", .{url});
 
     sidebar_webview = webview;
@@ -3499,7 +3499,7 @@ pub fn createWindowWithSidebarURL(
         const shadowColor = msgSend4(NSColor, "colorWithRed:green:blue:alpha:", @as(f64, 0.0), @as(f64, 0.0), @as(f64, 0.0), @as(f64, 1.0));
         _ = msgSend1(sidebarLayer, "setShadowColor:", msgSend0(shadowColor, "CGColor"));
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Floating sidebar with shadow created\n", .{});
     }
 
@@ -3632,7 +3632,7 @@ pub fn createWindowWithSidebarURL(
         }
     }
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Tahoe-style floating sidebar configured\n", .{});
 
     // Center window
@@ -3653,13 +3653,13 @@ pub fn createWindowWithSidebarURL(
     }
 
     setupBridgeHandlers(std.heap.c_allocator, null, window) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup bridge handlers: {}\n", .{err});
     };
 
     observeWindowChrome(window);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] ✓ Window with native sidebar (URL mode) created\n", .{});
 
     // Make visible
@@ -4996,23 +4996,23 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
 
     // Set handles - use parameter or global
     const tray_h = tray_handle orelse global_tray_handle_for_bridge;
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         std.debug.print("[Bridge] setupBridgeHandlers: tray_handle param={*}, global={*}, resolved={*}\n", .{ @as(?*anyopaque, tray_handle), global_tray_handle_for_bridge, tray_h });
     }
     if (tray_h) |handle| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Setting tray handle on bridge: {*}\n", .{handle});
         global_tray_bridge.?.setTrayHandle(handle);
 
         // Auto-initialize menubar collapse system for tray apps
         const menubar_collapse = @import("menubar_collapse.zig");
         if (!menubar_collapse.isInitialized()) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Bridge] Auto-initializing menubar collapse for tray app\n", .{});
             menubar_collapse.init();
         }
     } else {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] WARNING: No tray handle available!\n", .{});
     }
 
@@ -5055,7 +5055,7 @@ pub fn tryEvalJS(js_code: []const u8) !void {
         const webview_id: objc.id = @ptrFromInt(@intFromPtr(webview));
         const js_str = createNSString(js_code);
         _ = msgSend2(webview_id, "evaluateJavaScript:completionHandler:", js_str, null);
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Executed JS: {s}\n", .{js_code});
     } else {
         return error.NoWebView;
@@ -5130,7 +5130,7 @@ fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]con
 /// Handle properly formatted JSON messages
 pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
     // Skip logging pollActions to reduce noise
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         if (std.mem.indexOf(u8, json_str, "pollActions") == null) {
             std.debug.print("[Bridge] Received JSON message: {s}\n", .{json_str});
         }
@@ -5139,7 +5139,7 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
     // Parse JSON to extract type, action, and data
     const allocator = std.heap.c_allocator;
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_str, .{}) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] JSON parse error: {any}\n", .{err});
         return err;
     };
@@ -5152,12 +5152,12 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
 
     // Extract type and action (short keys: t, a, d)
     const msg_type_val = root.get("t") orelse {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Missing 't' field in JSON\n", .{});
         return error.MissingType;
     };
     const action_val = root.get("a") orelse {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Missing 'a' field in JSON\n", .{});
         return error.MissingAction;
     };
@@ -5383,7 +5383,7 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
         if (global_capabilities_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
     } else if (std.mem.eql(u8, msg_type, "debug")) {
         // Handle debug messages
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             if (root.get("message")) |msg_val| {
                 if (msg_val == .string) std.debug.print("[JS Debug] {s}\n", .{msg_val.string});
             } else if (root.get("msg")) |msg_val| {
@@ -5391,7 +5391,7 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
             }
         }
     } else {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("Unknown message type: {s}\n", .{msg_type});
     }
 }
@@ -5402,7 +5402,7 @@ pub fn handleBridgeMessage(message_json: []const u8) !void {
     // Or JSON format: {"type":"tray","action":"setTitle","data":"text"}
 
     // Skip logging pollActions to reduce noise
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         if (std.mem.indexOf(u8, message_json, "pollActions") == null) {
             std.debug.print("[Bridge] Received message: {s}\n", .{message_json});
         }
@@ -5491,7 +5491,7 @@ pub fn handleBridgeMessage(message_json: []const u8) !void {
     }
 
     if (type_end == 0 or action_end == 0) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Invalid message format (missing type or action)\n", .{});
         return;
     }
@@ -5555,7 +5555,7 @@ pub fn handleBridgeMessage(message_json: []const u8) !void {
                     const msg_start = start + 1;
                     if (std.mem.indexOfPos(u8, message_json, msg_start, "\"")) |msg_end| {
                         const debug_msg = message_json[msg_start..msg_end];
-                        if (comptime builtin.mode == .Debug)
+                        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                             std.debug.print("[JS Debug] {s}\n", .{debug_msg});
                     }
                 }
@@ -5568,14 +5568,14 @@ pub fn handleBridgeMessage(message_json: []const u8) !void {
                     const msg_start = start + 1;
                     if (std.mem.indexOfPos(u8, message_json, msg_start, "\"")) |msg_end| {
                         const debug_msg = message_json[msg_start..msg_end];
-                        if (comptime builtin.mode == .Debug)
+                        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                             std.debug.print("[JS Debug] {s}\n", .{debug_msg});
                     }
                 }
             }
         }
     } else {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("Unknown message type: {s}\n", .{msg_type});
     }
 }
@@ -5612,13 +5612,13 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
 
     if (json_data == null) {
         // Fallback to description format if JSON serialization fails
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to serialize to JSON, using description format\n", .{});
         const description = msgSend0(body, "description");
         const cstr = @as([*:0]const u8, @ptrCast(msgSend0(description, "UTF8String")));
         const desc_str = std.mem.span(cstr);
         handleBridgeMessage(desc_str) catch |err| {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Bridge] Error handling message: {}\n", .{err});
         };
         return;
@@ -5631,7 +5631,7 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
     const initialized_string = msgSend2(json_string, "initWithData:encoding:", json_data, NSUTF8StringEncoding);
 
     if (initialized_string == null) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to convert JSON data to string\n", .{});
         return;
     }
@@ -5642,7 +5642,7 @@ export fn didReceiveScriptMessage(self: objc.id, _: objc.SEL, userContentControl
 
     // Now handle the properly formatted JSON
     handleBridgeMessageJSON(json_str) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Error handling JSON message: {}\n", .{err});
     };
 
@@ -5679,7 +5679,7 @@ fn sendingWebView(message: objc.id) Sender {
 
 /// Create and register the script message handler with WKUserContentController
 pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Bridge] Setting up WKScriptMessageHandler...\n", .{});
 
     // Create a custom class at runtime that implements WKScriptMessageHandler
@@ -5694,7 +5694,7 @@ pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
         handlerClass = objc.objc_allocateClassPair(@ptrCast(superclass), className, 0);
 
         if (handlerClass == null) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Bridge] Failed to allocate class pair\n", .{});
             return error.ClassAllocationFailed;
         }
@@ -5710,7 +5710,7 @@ pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
             method_types,
         );
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             if (!method_added) {
                 std.debug.print("[Bridge] Failed to add method\n", .{});
             }
@@ -5718,7 +5718,7 @@ pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
 
         // Register the class
         objc.objc_registerClassPair(@ptrCast(handlerClass));
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Registered CraftScriptMessageHandler class\n", .{});
     }
 
@@ -5730,7 +5730,7 @@ pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
     const handler_name = createNSString("craft");
     msgSendVoid2(userContentController, "addScriptMessageHandler:name:", handler, handler_name);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Bridge] Script message handler registered successfully\n", .{});
 }
 
@@ -5765,7 +5765,7 @@ fn handleMediaCapturePermission(
         2 => "camera+microphone",
         else => "unknown",
     };
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Media] Permission requested for: {s}\n", .{media_type_str});
 
     // Grant permission by calling decisionHandler with WKPermissionDecisionGrant (1)
@@ -5804,7 +5804,7 @@ fn handleMediaCapturePermission(
         const block: *BlockLayout = @ptrCast(@alignCast(handler));
         // Call the block with WKPermissionDecisionGrant (1)
         block.invoke(handler, 1);
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Media] Permission granted for {s}\n", .{media_type_str});
     }
 }
@@ -5873,7 +5873,7 @@ fn handleCreateWebView(
 /// and had `window.open()` silently dropped — neither of which is a debugging
 /// concern.
 pub fn setupUIDelegate(webview: objc.id) !void {
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Media] Setting up WKUIDelegate for media permissions...\n", .{});
 
     // Create a custom class at runtime that implements WKUIDelegate
@@ -5888,7 +5888,7 @@ pub fn setupUIDelegate(webview: objc.id) !void {
         delegateClass = objc.objc_allocateClassPair(@ptrCast(superclass), className, 0);
 
         if (delegateClass == null) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[Media] Failed to allocate UI delegate class pair\n", .{});
             return error.ClassAllocationFailed;
         }
@@ -5907,7 +5907,7 @@ pub fn setupUIDelegate(webview: objc.id) !void {
             method_types,
         );
 
-        if (comptime builtin.mode == .Debug) {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
             if (!method_added) {
                 std.debug.print("[Media] Failed to add media permission method\n", .{});
             } else {
@@ -5924,13 +5924,13 @@ pub fn setupUIDelegate(webview: objc.id) !void {
             @as(objc.IMP, @ptrCast(@constCast(&handleCreateWebView))),
             "@@:@@@@",
         )) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[UI] Failed to add createWebView method\n", .{});
         }
 
         // Register the class
         objc.objc_registerClassPair(@ptrCast(delegateClass));
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Media] Registered CraftUIDelegate class\n", .{});
     }
 
@@ -5941,7 +5941,7 @@ pub fn setupUIDelegate(webview: objc.id) !void {
     // Set the UI delegate on the webview
     msgSendVoid1(webview, "setUIDelegate:", delegate);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Media] UI delegate set successfully - camera/microphone permissions enabled\n", .{});
 }
 
@@ -6040,7 +6040,7 @@ fn handleAuthChallenge(
     if (!hostIsLocalDev(msgSend0(protectionSpace, "host")))
         return finishAuthChallenge(completionHandler, .perform_default_handling, null);
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Nav] Trusting local development certificate\n", .{});
 
     const NSURLCredential = getClass("NSURLCredential");
@@ -6257,7 +6257,7 @@ pub fn setupNavigationDelegate(webview: objc.id) !void {
     const delegate = msgSend0(msgSend0(delegate_class_id, "alloc"), "init");
     msgSendVoid1(webview, "setNavigationDelegate:", delegate);
 
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         if (allowsLocalDevTLS())
             std.debug.print("[Nav] Local development TLS enabled via {s}\n", .{local_tls.env_var});
     }
@@ -7253,7 +7253,7 @@ pub fn installAppDelegate() void {
     // #63 created for it. It is a no-op for an unbundled process.
     @import("bridge_notification.zig").installResponseDelegate();
 
-    if (comptime builtin.mode == .Debug)
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[App] Installed NSApplicationDelegate\n", .{});
 }
 
@@ -7335,7 +7335,7 @@ fn craftOpenSettingsCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) v
     @import("bridge.zig").evalJS(
         "if(window.__craftSettingsOpen)window.__craftSettingsOpen();",
     ) catch |err| {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Menu] Settings chosen but no webview to notify: {any}\n", .{err});
     };
 }
@@ -7561,7 +7561,7 @@ pub fn createApplicationMenu() void {
                     // Without a target AppKit auto-disables the item, and a
                     // permanently grey Cmd+, is a worse outcome than no Cmd+,
                     // at all — so it is omitted rather than added dead.
-                    if (comptime builtin.mode == .Debug)
+                    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                         std.debug.print("[Menu] Settings target unavailable; omitting the item\n", .{});
                     continue;
                 };

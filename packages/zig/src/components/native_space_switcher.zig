@@ -188,7 +188,7 @@ fn attach(self: *SpaceSwitcher, window: objc.id) void {
     const contentView = macos.msgSend0(window, "contentView");
     const themeFrame = if (contentView != null) macos.msgSend0(contentView, "superview") else null;
     if (themeFrame == null) {
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[SpaceSwitcher] No theme frame; switcher list is live but has no control\n", .{});
         return;
     }

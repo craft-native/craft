@@ -54,7 +54,7 @@ pub fn install() void {
     _ = objc.class_replaceMethod(WKWebView, sel_perform, our_imp, "c@:@");
     swizzled = true;
 
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         std.debug.print("[FileDrop] Installed performDragOperation: hook on WKWebView\n", .{});
     }
 }
@@ -118,7 +118,7 @@ fn extractAndPostPaths(webview: objc.id, draggingInfo: objc.id) void {
     const js_str = macos.msgSend1(NSString, "stringWithUTF8String:", @as([*:0]const u8, @ptrCast(script.items.ptr)));
     _ = macos.msgSend2(webview, "evaluateJavaScript:completionHandler:", js_str, @as(?*anyopaque, null));
 
-    if (comptime builtin.mode == .Debug) {
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         std.debug.print("[FileDrop] Posted {d} path(s) to JS\n", .{paths_count});
     }
 }

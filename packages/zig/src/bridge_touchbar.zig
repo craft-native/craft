@@ -239,7 +239,7 @@ pub const TouchBarBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[TouchBarBridge] Adding item: id={s}, type={}\n", .{ item.id, item.item_type });
         try self.items.put(item.id, item);
     }
@@ -339,7 +339,7 @@ pub const TouchBarBridge = struct {
         const enabled = std.mem.indexOf(u8, data, "\"enabled\":true") != null;
 
         // Would need to track NSButton instances to enable/disable
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[TouchBarBridge] setItemEnabled: id={s}, enabled={}\n", .{ id, enabled });
     }
 
@@ -365,7 +365,7 @@ pub const TouchBarBridge = struct {
             }
 
             // Would need to track NSSlider instance to update value
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[TouchBarBridge] Slider value updated: {s} = {d}\n", .{ id, item.value });
         }
     }
@@ -413,7 +413,7 @@ pub const TouchBarBridge = struct {
         const NSApp = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
         _ = macos.msgSend1Bool(NSApp, "setAutomaticCustomizeTouchBarMenuItemEnabled:", true);
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[TouchBarBridge] Touch bar shown\n", .{});
     }
 
@@ -433,7 +433,7 @@ pub const TouchBarBridge = struct {
             return;
         }
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[TouchBarBridge] Touch bar hidden\n", .{});
     }
 
@@ -458,7 +458,7 @@ pub const TouchBarBridge = struct {
         const NSApp = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
         const window = macos.msgSend0(NSApp, "mainWindow");
         if (window == null) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[TouchBarBridge] No main window\n", .{});
             return;
         }
@@ -466,7 +466,7 @@ pub const TouchBarBridge = struct {
         // Create NSTouchBar
         const NSTouchBar = macos.getClass("NSTouchBar");
         if (NSTouchBar == null) {
-            if (comptime builtin.mode == .Debug)
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[TouchBarBridge] NSTouchBar not available\n", .{});
             return;
         }
@@ -505,7 +505,7 @@ pub const TouchBarBridge = struct {
         // Set touch bar on window
         _ = macos.msgSend1(window, "setTouchBar:", touch_bar);
 
-        if (comptime builtin.mode == .Debug)
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[TouchBarBridge] Touch bar rebuilt with {d} items\n", .{self.items.count()});
     }
 

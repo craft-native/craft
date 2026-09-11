@@ -3,6 +3,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // Zig renamed these tags during the 0.17 development cycle. Craft's
+    // pinned CI compiler uses `.debug` / `.small`, while newer snapshots use
+    // `.Debug` / `.ReleaseSmall`; tag-name comparisons keep both buildable.
+    const optimize_name = @tagName(optimize);
+    const debug_build = std.ascii.eqlIgnoreCase(optimize_name, "debug");
+    const small_build = std.ascii.eqlIgnoreCase(optimize_name, "small") or
+        std.ascii.eqlIgnoreCase(optimize_name, "releasesmall");
 
     // macOS SDK path for cross-compilation — use -Dmacos-sdk instead of --sysroot
     // to avoid Zig bug where --sysroot breaks @cImport (ziglang/zig#22704, #25010)
@@ -106,7 +113,7 @@ pub fn build(b: *std.Build) void {
             // constraint is relaxed only for builds that include the JS
             // runtime, rather than giving it up for everyone.
             .single_threaded = !js_runtime_enabled,
-            .strip = if (optimize != .Debug) true else null,
+            .strip = if (!debug_build) true else null,
             // Never `.none` on Windows. The x64 ABI requires unwind data for
             // non-leaf functions, and zig passes this module option down into
             // the mingw-w64 CRT it builds for the target — where crtexe.c's
@@ -115,9 +122,9 @@ pub fn build(b: *std.Build) void {
             // within an active frame". The release workflow cross-compiles
             // x86_64-windows from Linux, so this is the difference between a
             // release happening and not.
-            .unwind_tables = if (optimize != .Debug and target_os != .windows) .none else null,
-            .omit_frame_pointer = if (optimize == .ReleaseSmall) true else null,
-            .error_tracing = if (optimize != .Debug) false else null,
+            .unwind_tables = if (!debug_build and target_os != .windows) .none else null,
+            .omit_frame_pointer = if (small_build) true else null,
+            .error_tracing = if (!debug_build) false else null,
             .imports = &.{
                 .{ .name = "craft", .module = craft_module },
                 .{ .name = "build_options", .module = build_options.createModule() },
