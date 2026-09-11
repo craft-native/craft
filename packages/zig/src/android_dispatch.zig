@@ -50,6 +50,7 @@ const deeplink = @import("bridge_android_deeplink.zig");
 const screenshot = @import("bridge_android_screenshot.zig");
 const billing = @import("bridge_android_billing.zig");
 const ml = @import("bridge_android_ml.zig");
+const pdf = @import("bridge_android_pdf.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -315,6 +316,9 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeClassifyImage", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeClassifyImage) },
     .{ .name = "nativeDetectObjects", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeDetectObjects) },
     .{ .name = "nativeRecognizeText", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeRecognizeText) },
+    .{ .name = "nativePdfOpened", .signature = "()V", .fnPtr = @ptrCast(&nativePdfOpened) },
+    .{ .name = "nativePdfError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativePdfError) },
+    .{ .name = "nativeOpenPDF", .signature = "(Landroid/app/Activity;Ljava/lang/String;I)Z", .fnPtr = @ptrCast(&nativeOpenPDF) },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -1253,6 +1257,37 @@ fn nativeDetectObjects(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) call
 
 fn nativeRecognizeText(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) callconv(.c) jni.jboolean {
     return startMl(env, "runTextRecognition", image);
+}
+
+fn nativePdfOpened(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
+    events.settle(backing, pdf.resolve_global, pdf.opened_payload) catch {};
+}
+
+fn nativePdfError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const text = j.stringToUtf8(allocator, message) catch return;
+    const payload = pdf.errorPayload(allocator, text) catch return;
+    events.settle(allocator, pdf.reject_global, payload) catch {};
+}
+
+fn nativeOpenPDF(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    source: jni.jstring,
+    _: jni.jint,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "openPdfExternal", "(Landroid/app/Activity;Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        &.{ .{ .l = activity }, .{ .l = source } },
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
 }
 
 fn nativeBiometricSucceeded(
@@ -2979,7 +3014,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 99), natives.len);
+    try testing.expectEqual(@as(usize, 102), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

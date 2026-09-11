@@ -191,6 +191,9 @@ object CraftNative {
     private external fun nativeClassifyImage(imageBase64: String): Boolean
     private external fun nativeDetectObjects(imageBase64: String): Boolean
     private external fun nativeRecognizeText(imageBase64: String): Boolean
+    private external fun nativePdfOpened()
+    private external fun nativePdfError(message: String)
+    private external fun nativeOpenPDF(activity: Activity, source: String, page: Int): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -843,6 +846,40 @@ object CraftNative {
     fun recognizeText(imageBase64: String): Boolean {
         if (!isAvailable) return false
         return try { nativeRecognizeText(imageBase64) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    // ==================== External PDF viewer ====================
+
+    @JvmStatic
+    fun openPdfExternal(activity: Activity, source: String) {
+        activity.runOnUiThread {
+            try {
+                val uri = if (source.startsWith("data:")) {
+                    val base64Data = source.substringAfter(",")
+                    val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                    val tempFile = File.createTempFile("craft_pdf_", ".pdf", activity.cacheDir)
+                    tempFile.writeBytes(bytes)
+                    android.net.Uri.fromFile(tempFile)
+                } else {
+                    android.net.Uri.parse(source)
+                }
+
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, "application/pdf")
+                    addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                activity.startActivity(intent)
+                nativePdfOpened()
+            } catch (e: Exception) {
+                nativePdfError(e.message ?: "null")
+            }
+        }
+    }
+
+    fun openPDF(activity: Activity, source: String, page: Int): Boolean {
+        if (!isAvailable) return false
+        return try { nativeOpenPDF(activity, source, page) } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== Biometric authentication ====================

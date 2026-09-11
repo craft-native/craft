@@ -52,6 +52,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_screenshot.zig"),
     @embedFile("src/bridge_android_billing.zig"),
     @embedFile("src/bridge_android_ml.zig"),
+    @embedFile("src/bridge_android_pdf.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -123,8 +124,10 @@ const zig_sources = [_][]const u8{
 /// encode and settle; 36 with the billing pair and its shared client moving
 /// together, including restore's pending-without-a-client quirk; 33 with the
 /// three ML Kit actions, whose Java models/listeners keep producing the exact
-/// Android JSON while Zig owns the action and promise settlement.
-const max_not_yet_migrated: usize = 33;
+/// Android JSON while Zig owns the action and promise settlement; 32 with
+/// openPDF, whose external-viewer mechanics stay in the holder while Zig owns
+/// its success object and rejection.
+const max_not_yet_migrated: usize = 32;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -203,10 +206,11 @@ const Deferral = struct {
 /// the tenth, and the two guards below are the whole point: a row Zig starts
 /// serving fails, and so does a row naming an action the Kotlin no longer has.
 ///
-/// Deliberately non-exhaustive. Most unmigrated actions are simply not reached
-/// yet, which is an honest state that needs no row. A reason is owed only where someone would otherwise try and find
-/// out the hard way — and demanding one for the rest would invite an invented
-/// reason, which is worse than silence.
+/// This was deliberately non-exhaustive while the migration was active: an
+/// unreached action needed no invented reason. It is exhaustive now. The
+/// equality guard below is the completion condition—every action left in
+/// Kotlin must have one evidence-backed reason, and no reason may outlive its
+/// action.
 const deliberate_deferrals = [_]Deferral{
     // Not a capability gap: the Kotlin builds a `NotificationManagerCompat`,
     // discards it, never reads `count`, and returns. The real work is left as
@@ -391,8 +395,10 @@ test "every recorded deferral is real, and still a deferral" {
     // Non-vacuity: the loop above is satisfied by an empty table.
     try testing.expect(deliberate_deferrals.len >= 15);
 
-    // And the table cannot claim more than remain unmigrated.
-    try testing.expect(deliberate_deferrals.len <= max_not_yet_migrated);
+    // Completion means every action still in Kotlin is classified, not merely
+    // that the table does not over-claim. Keep this equality as the permanent
+    // guard against reintroducing an ambiguous action.
+    try testing.expectEqual(max_not_yet_migrated, deliberate_deferrals.len);
 }
 
 test "the spec scan finds the bridge, and finds methods in it" {

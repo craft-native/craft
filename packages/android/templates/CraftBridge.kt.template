@@ -3232,6 +3232,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun openPDF(source: String, page: Int) {
+        if (CraftNative.openPDF(activity, source, page)) return
+
         activity.runOnUiThread {
             try {
                 val uri = if (source.startsWith("data:")) {
