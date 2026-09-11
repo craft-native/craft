@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import process from 'node:process'
 import { CRAFT_CLI_SPAWN_MARKER, craftBinaryIsCliShimMessage, craftBinaryNotFoundMessage, resolveCraftBinary } from '../src/binary-resolver'
+import { pinCraftNativeDependency } from '../src/scaffold-version'
 import { version } from '../package.json'
 
 // If this marker is already set we were spawned by a craft CLI that meant to
@@ -820,10 +821,12 @@ else {
             build: 'craft build'
           },
           dependencies: {
-            'craft-native': 'workspace:*'
+            'craft-native': `^${version}`
           }
         }, null, 2)))
       }
+
+      pinCraftNativeDependency(join(name, 'package.json'), version)
 
       console.log(`✅ ${template} project created`)
     }
@@ -896,10 +899,11 @@ export default {
           'ios:open': 'craft ios open',
         },
         devDependencies: {
-          'craft-native': '*',
+          'craft-native': `^${version}`,
         },
       }
       writeFileSync(`${name}/package.json`, JSON.stringify(packageJson, null, 2))
+      pinCraftNativeDependency(`${name}/package.json`, version)
 
       console.log('✅ Desktop project created')
     }
