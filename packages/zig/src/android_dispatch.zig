@@ -49,6 +49,7 @@ const audio = @import("bridge_android_audio.zig");
 const deeplink = @import("bridge_android_deeplink.zig");
 const screenshot = @import("bridge_android_screenshot.zig");
 const billing = @import("bridge_android_billing.zig");
+const ml = @import("bridge_android_ml.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -309,6 +310,11 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeRestoreError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeRestoreError) },
     .{ .name = "nativeGetProducts", .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeGetProducts) },
     .{ .name = "nativeRestorePurchases", .signature = "()Z", .fnPtr = @ptrCast(&nativeRestorePurchases) },
+    .{ .name = "nativeMlReady", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeMlReady) },
+    .{ .name = "nativeMlError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeMlError) },
+    .{ .name = "nativeClassifyImage", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeClassifyImage) },
+    .{ .name = "nativeDetectObjects", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeDetectObjects) },
+    .{ .name = "nativeRecognizeText", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeRecognizeText) },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -1210,6 +1216,43 @@ fn nativeRestorePurchases(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboo
         &.{},
     ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
+}
+
+fn nativeMlReady(env: jni.JNIEnv, _: jni.jobject, json: jni.jstring) callconv(.c) void {
+    settleRawString(env, ml.resolve_global, json);
+}
+
+fn nativeMlError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const text = j.stringToUtf8(allocator, message) catch return;
+    const payload = ml.errorPayload(allocator, text) catch return;
+    events.settle(allocator, ml.reject_global, payload) catch {};
+}
+
+fn startMl(env: jni.JNIEnv, method: [*:0]const u8, image: jni.jstring) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, method, "(Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        &.{.{ .l = image }},
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeClassifyImage(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) callconv(.c) jni.jboolean {
+    return startMl(env, "runImageClassification", image);
+}
+
+fn nativeDetectObjects(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) callconv(.c) jni.jboolean {
+    return startMl(env, "runObjectDetection", image);
+}
+
+fn nativeRecognizeText(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) callconv(.c) jni.jboolean {
+    return startMl(env, "runTextRecognition", image);
 }
 
 fn nativeBiometricSucceeded(
@@ -2936,7 +2979,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 94), natives.len);
+    try testing.expectEqual(@as(usize, 99), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

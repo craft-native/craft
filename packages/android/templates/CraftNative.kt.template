@@ -22,6 +22,16 @@ import android.graphics.Bitmap
 import android.webkit.WebView
 import java.io.ByteArrayOutputStream
 import com.android.billingclient.api.*
+import android.graphics.BitmapFactory
+import android.util.Base64
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.label.ImageLabeling
+import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
+import com.google.mlkit.vision.objects.ObjectDetection
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import org.json.JSONArray
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -176,6 +186,11 @@ object CraftNative {
     private external fun nativeRestoreError(message: String)
     private external fun nativeGetProducts(activity: Activity, productIdsJson: String): Boolean
     private external fun nativeRestorePurchases(): Boolean
+    private external fun nativeMlReady(resultsJson: String)
+    private external fun nativeMlError(message: String)
+    private external fun nativeClassifyImage(imageBase64: String): Boolean
+    private external fun nativeDetectObjects(imageBase64: String): Boolean
+    private external fun nativeRecognizeText(imageBase64: String): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -711,6 +726,123 @@ object CraftNative {
     fun restorePurchases(): Boolean {
         if (!isAvailable) return false
         return try { nativeRestorePurchases() } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    // ==================== ML Kit ====================
+
+    @JvmStatic
+    fun runImageClassification(imageBase64: String) {
+        try {
+            val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS).process(inputImage)
+                .addOnSuccessListener { labels ->
+                    val results = JSONArray()
+                    for (label in labels) {
+                        results.put(JSONObject().apply {
+                            put("label", label.text)
+                            put("confidence", label.confidence)
+                            put("index", label.index)
+                        })
+                    }
+                    nativeMlReady(results.toString())
+                }
+                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+        } catch (e: Exception) {
+            nativeMlError(e.message ?: "null")
+        }
+    }
+
+    @JvmStatic
+    fun runObjectDetection(imageBase64: String) {
+        try {
+            val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val options = ObjectDetectorOptions.Builder()
+                .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                .enableMultipleObjects()
+                .enableClassification()
+                .build()
+
+            ObjectDetection.getClient(options).process(inputImage)
+                .addOnSuccessListener { detectedObjects ->
+                    val results = JSONArray()
+                    for (obj in detectedObjects) {
+                        val objJson = JSONObject()
+                        objJson.put("boundingBox", JSONObject().apply {
+                            put("x", obj.boundingBox.left)
+                            put("y", obj.boundingBox.top)
+                            put("width", obj.boundingBox.width())
+                            put("height", obj.boundingBox.height())
+                        })
+                        val labels = JSONArray()
+                        for (label in obj.labels) {
+                            labels.put(JSONObject().apply {
+                                put("label", label.text)
+                                put("confidence", label.confidence)
+                                put("index", label.index)
+                            })
+                        }
+                        objJson.put("labels", labels)
+                        objJson.put("trackingId", obj.trackingId)
+                        results.put(objJson)
+                    }
+                    nativeMlReady(results.toString())
+                }
+                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+        } catch (e: Exception) {
+            nativeMlError(e.message ?: "null")
+        }
+    }
+
+    @JvmStatic
+    fun runTextRecognition(imageBase64: String) {
+        try {
+            val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
+            val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).process(inputImage)
+                .addOnSuccessListener { visionText ->
+                    val results = JSONArray()
+                    for (block in visionText.textBlocks) {
+                        for (line in block.lines) {
+                            val lineJson = JSONObject()
+                            lineJson.put("text", line.text)
+                            lineJson.put("confidence", line.confidence ?: 0.0)
+                            line.boundingBox?.let { box ->
+                                lineJson.put("boundingBox", JSONObject().apply {
+                                    put("x", box.left)
+                                    put("y", box.top)
+                                    put("width", box.width())
+                                    put("height", box.height())
+                                })
+                            }
+                            results.put(lineJson)
+                        }
+                    }
+                    nativeMlReady(results.toString())
+                }
+                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+        } catch (e: Exception) {
+            nativeMlError(e.message ?: "null")
+        }
+    }
+
+    fun classifyImage(imageBase64: String): Boolean {
+        if (!isAvailable) return false
+        return try { nativeClassifyImage(imageBase64) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun detectObjects(imageBase64: String): Boolean {
+        if (!isAvailable) return false
+        return try { nativeDetectObjects(imageBase64) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun recognizeText(imageBase64: String): Boolean {
+        if (!isAvailable) return false
+        return try { nativeRecognizeText(imageBase64) } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== Biometric authentication ====================

@@ -51,6 +51,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_deeplink.zig"),
     @embedFile("src/bridge_android_screenshot.zig"),
     @embedFile("src/bridge_android_billing.zig"),
+    @embedFile("src/bridge_android_ml.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -120,8 +121,10 @@ const zig_sources = [_][]const u8{
 /// 39 with getInitialURL and its setter/dispatch state moving as one unit; 38
 /// with takeScreenshot, whose main-thread capture returns PNG bytes for Zig to
 /// encode and settle; 36 with the billing pair and its shared client moving
-/// together, including restore's pending-without-a-client quirk.
-const max_not_yet_migrated: usize = 36;
+/// together, including restore's pending-without-a-client quirk; 33 with the
+/// three ML Kit actions, whose Java models/listeners keep producing the exact
+/// Android JSON while Zig owns the action and promise settlement.
+const max_not_yet_migrated: usize = 33;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
