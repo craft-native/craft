@@ -312,6 +312,30 @@ const deliberate_deferrals = [_]Deferral{
     // would move the silence. Tracked in #169.
     .{ .action = "registerVoiceAction", .reason = "writes a row nothing reads and replies to a global nothing assigns" },
     .{ .action = "removeVoiceAction", .reason = "the same, for removing it" },
+
+    // ---- Generated implementations, not one Kotlin contract ----------
+    //
+    // `registerPush` is a template hole, not a stable method body. The
+    // generator replaces it with either an unconditional "disabled"
+    // rejection or a FirebaseMessaging token Task, and only the enabled app
+    // gets the Firebase dependency and import. CraftNative is deliberately
+    // untemplated and compiled in both kinds of app, so it cannot name that
+    // optional class. A native that merely called the generated body again
+    // would add a JNI lap without moving any behaviour.
+    .{ .action = "registerPush", .reason = "generation selects a Firebase Task implementation or a disabled rejection; the fixed holder cannot depend on the optional Firebase class" },
+
+    // These three are already adapters, not implementations: their entire
+    // bodies delegate to CraftHealthConnect. Generation installs either the
+    // real coroutine/Health Connect implementation or a same-named stub that
+    // rejects, and only the enabled app gets the androidx.health dependency.
+    // The helper also owns pending permission state and the only Activity
+    // result MainActivity routes. Passing the helper through JNI just to call
+    // the same method would make the ratchet claim work Zig does not do;
+    // moving the implementation would require a stable cross-language Health
+    // Connect boundary first.
+    .{ .action = "requestFitnessAuthorization", .reason = "delegates to the generated real-or-stub CraftHealthConnect, which owns permission state and its Activity result" },
+    .{ .action = "getFitnessData", .reason = "delegates to the optional coroutine-based CraftHealthConnect implementation; a JNI bounce would move no behaviour" },
+    .{ .action = "saveHealthWorkout", .reason = "delegates to the optional coroutine-based CraftHealthConnect implementation; a JNI bounce would move no behaviour" },
 };
 
 test "every recorded deferral is real, and still a deferral" {
