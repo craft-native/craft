@@ -47,6 +47,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_biometric.zig"),
     @embedFile("src/bridge_android_review.zig"),
     @embedFile("src/bridge_android_speech.zig"),
+    @embedFile("src/bridge_android_audio.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -110,8 +111,10 @@ const zig_sources = [_][]const u8{
 /// requestReview, whose Play Core Task listeners remain Java objects while
 /// Zig owns both promise outcomes; 42 with the speech-recognition pair, whose
 /// Java listener and main-thread recognizer remain in the fixed holder while
-/// Zig owns errors, results, lifecycle events and haptic acknowledgements.
-const max_not_yet_migrated: usize = 42;
+/// Zig owns errors, results, lifecycle events and haptic acknowledgements; 40
+/// with the audio-recording pair, whose long-lived Java objects stay in the
+/// holder while permission policy, errors and the encoded result move to Zig.
+const max_not_yet_migrated: usize = 40;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

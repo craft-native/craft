@@ -42,6 +42,7 @@ pub const read_contacts = "android.permission.READ_CONTACTS";
 pub const write_contacts = "android.permission.WRITE_CONTACTS";
 pub const access_fine_location = "android.permission.ACCESS_FINE_LOCATION";
 pub const camera = "android.permission.CAMERA";
+pub const record_audio = "android.permission.RECORD_AUDIO";
 
 /// API 31 and later only — see `CraftNative.requestBluetoothScanPermission`,
 /// which is where the version check lives.
@@ -98,6 +99,7 @@ test "the permission names match Manifest.permission exactly" {
     try testing.expectEqualStrings("android.permission.WRITE_CALENDAR", write_calendar);
     try testing.expectEqualStrings("android.permission.READ_CONTACTS", read_contacts);
     try testing.expectEqualStrings("android.permission.WRITE_CONTACTS", write_contacts);
+    try testing.expectEqualStrings("android.permission.RECORD_AUDIO", record_audio);
     try testing.expectEqualStrings("android.permission.ACCESS_FINE_LOCATION", access_fine_location);
     try testing.expectEqualStrings("android.permission.CAMERA", camera);
     try testing.expectEqualStrings("android.permission.BLUETOOTH_SCAN", bluetooth_scan);

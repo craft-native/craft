@@ -16,6 +16,8 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import java.util.Locale
+import android.media.MediaRecorder
+import java.io.File
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -151,6 +153,12 @@ object CraftNative {
     private external fun nativeSpeechResult(activity: Activity, transcript: String, isFinal: Boolean)
     private external fun nativeStartListening(activity: Activity, available: Boolean): Boolean
     private external fun nativeStopListening(activity: Activity): Boolean
+    private external fun nativeAudioStarted()
+    private external fun nativeAudioStartError(message: String)
+    private external fun nativeAudioStopped(bytes: ByteArray)
+    private external fun nativeAudioStopError(message: String)
+    private external fun nativeStartAudioRecording(activity: Activity): Boolean
+    private external fun nativeStopAudioRecording(activity: Activity): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -484,6 +492,75 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeStopListening(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== Audio recording ====================
+    //
+    // The long-lived Java objects stay here. Zig owns permission handling and
+    // all four promise outcomes, including encoding the bytes returned on stop.
+
+    private var audioRecorder: MediaRecorder? = null
+    private var audioFile: File? = null
+
+    @JvmStatic
+    fun beginAudioRecording(activity: Activity) {
+        try {
+            audioFile = File.createTempFile("recording_", ".m4a", activity.cacheDir)
+            audioRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(activity)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+
+            audioRecorder?.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(audioFile?.absolutePath)
+                prepare()
+                start()
+            }
+            nativeAudioStarted()
+        } catch (e: Exception) {
+            nativeAudioStartError(e.message ?: "null")
+        }
+    }
+
+    @JvmStatic
+    fun endAudioRecording() {
+        try {
+            audioRecorder?.stop()
+            audioRecorder?.release()
+            audioRecorder = null
+
+            val file = audioFile
+            if (file != null) {
+                nativeAudioStopped(file.readBytes())
+            } else {
+                nativeAudioStopError("No recording")
+            }
+        } catch (e: Exception) {
+            nativeAudioStopError(e.message ?: "null")
+        }
+    }
+
+    fun startAudioRecording(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartAudioRecording(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopAudioRecording(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopAudioRecording(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

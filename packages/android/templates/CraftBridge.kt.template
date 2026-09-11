@@ -2813,6 +2813,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startAudioRecording() {
+        if (CraftNative.startAudioRecording(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
@@ -2854,6 +2856,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopAudioRecording() {
+        if (CraftNative.stopAudioRecording(activity)) return
+
         try {
             mediaRecorder?.stop()
             mediaRecorder?.release()

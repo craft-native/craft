@@ -45,6 +45,7 @@ const imagepicker = @import("bridge_android_imagepicker.zig");
 const biometric = @import("bridge_android_biometric.zig");
 const review = @import("bridge_android_review.zig");
 const speech = @import("bridge_android_speech.zig");
+const audio = @import("bridge_android_audio.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -261,6 +262,36 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeStopListening",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStopListening),
+    },
+    .{
+        .name = "nativeAudioStarted",
+        .signature = "()V",
+        .fnPtr = @ptrCast(&nativeAudioStarted),
+    },
+    .{
+        .name = "nativeAudioStartError",
+        .signature = "(Ljava/lang/String;)V",
+        .fnPtr = @ptrCast(&nativeAudioStartError),
+    },
+    .{
+        .name = "nativeAudioStopped",
+        .signature = "([B)V",
+        .fnPtr = @ptrCast(&nativeAudioStopped),
+    },
+    .{
+        .name = "nativeAudioStopError",
+        .signature = "(Ljava/lang/String;)V",
+        .fnPtr = @ptrCast(&nativeAudioStopError),
+    },
+    .{
+        .name = "nativeStartAudioRecording",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStartAudioRecording),
+    },
+    .{
+        .name = "nativeStopAudioRecording",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopAudioRecording),
     },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
@@ -935,6 +966,97 @@ fn nativeStopListening(
         j.staticMethodId(holder, "endSpeechRecognition", "(Landroid/app/Activity;)V") catch
             return jni.JNI_FALSE,
         &.{.{ .l = activity }},
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeAudioStarted(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
+    events.settle(backing, audio.start_resolve_global, "true") catch {};
+}
+
+fn settleAudioError(env: jni.JNIEnv, global: []const u8, message: jni.jstring) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, message) catch return;
+    const payload = audio.stringPayload(allocator, text) catch return;
+    events.settle(allocator, global, payload) catch {};
+}
+
+fn nativeAudioStartError(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    message: jni.jstring,
+) callconv(.c) void {
+    settleAudioError(env, audio.start_reject_global, message);
+}
+
+fn nativeAudioStopped(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    bytes: jni.jobject,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const raw = j.byteArrayToOwned(allocator, bytes) catch return;
+    const payload = audio.recordingPayload(allocator, raw) catch return;
+    events.settle(allocator, audio.stop_resolve_global, payload) catch {};
+}
+
+fn nativeAudioStopError(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    message: jni.jstring,
+) callconv(.c) void {
+    settleAudioError(env, audio.stop_reject_global, message);
+}
+
+fn nativeStartAudioRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const granted = permissions.isGranted(j, activity, permissions.record_audio) catch
+        return jni.JNI_FALSE;
+    if (!granted) {
+        permissions.request(j, activity, permissions.record_audio, audio.request_audio) catch
+            return jni.JNI_FALSE;
+        events.settle(allocator, audio.start_reject_global, "\"Permission denied\"") catch
+            return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "beginAudioRecording", "(Landroid/app/Activity;)V") catch
+            return jni.JNI_FALSE,
+        &.{.{ .l = activity }},
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeStopAudioRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    _: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "endAudioRecording", "()V") catch return jni.JNI_FALSE,
+        &.{},
     ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -2663,7 +2785,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 75), natives.len);
+    try testing.expectEqual(@as(usize, 81), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
