@@ -3121,6 +3121,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun takeScreenshot() {
+        if (CraftNative.takeScreenshot(activity, webView)) return
+
         activity.runOnUiThread {
             try {
                 val view = webView.rootView

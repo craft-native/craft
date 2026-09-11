@@ -49,6 +49,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_speech.zig"),
     @embedFile("src/bridge_android_audio.zig"),
     @embedFile("src/bridge_android_deeplink.zig"),
+    @embedFile("src/bridge_android_screenshot.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -115,8 +116,10 @@ const zig_sources = [_][]const u8{
 /// Zig owns errors, results, lifecycle events and haptic acknowledgements; 40
 /// with the audio-recording pair, whose long-lived Java objects stay in the
 /// holder while permission policy, errors and the encoded result move to Zig;
-/// 39 with getInitialURL and its setter/dispatch state moving as one unit.
-const max_not_yet_migrated: usize = 39;
+/// 39 with getInitialURL and its setter/dispatch state moving as one unit; 38
+/// with takeScreenshot, whose main-thread capture returns PNG bytes for Zig to
+/// encode and settle.
+const max_not_yet_migrated: usize = 38;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

@@ -461,6 +461,9 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_deeplink.zig", .{
         .root_source_file = b.path("src/bridge_android_deeplink.zig"),
     });
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_screenshot.zig", .{
+        .root_source_file = b.path("src/bridge_android_screenshot.zig"),
+    });
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_network.zig", .{
         .root_source_file = b.path("src/bridge_android_network.zig"),
     });

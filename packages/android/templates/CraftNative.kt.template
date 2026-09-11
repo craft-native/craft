@@ -18,6 +18,9 @@ import android.speech.SpeechRecognizer
 import java.util.Locale
 import android.media.MediaRecorder
 import java.io.File
+import android.graphics.Bitmap
+import android.webkit.WebView
+import java.io.ByteArrayOutputStream
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -163,6 +166,9 @@ object CraftNative {
     private external fun nativeSetInitialURL(url: String?): Boolean
     private external fun nativeGetInitialURL(): Boolean
     private external fun nativeDispatchDeepLink(url: String): Boolean
+    private external fun nativeScreenshotReady(bytes: ByteArray)
+    private external fun nativeScreenshotError(message: String)
+    private external fun nativeTakeScreenshot(activity: Activity, webView: WebView): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -588,6 +594,30 @@ object CraftNative {
     fun dispatchDeepLink(url: String): Boolean {
         if (!isAvailable) return false
         return try { nativeDispatchDeepLink(url) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    @JvmStatic
+    fun captureScreenshot(activity: Activity, webView: WebView) {
+        activity.runOnUiThread {
+            try {
+                val view = webView.rootView
+                view.isDrawingCacheEnabled = true
+                view.buildDrawingCache()
+                val bitmap = Bitmap.createBitmap(view.drawingCache)
+                view.isDrawingCacheEnabled = false
+
+                val outputStream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+                nativeScreenshotReady(outputStream.toByteArray())
+            } catch (e: Exception) {
+                nativeScreenshotError(e.message ?: "null")
+            }
+        }
+    }
+
+    fun takeScreenshot(activity: Activity, webView: WebView): Boolean {
+        if (!isAvailable) return false
+        return try { nativeTakeScreenshot(activity, webView) } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== Biometric authentication ====================

@@ -47,6 +47,7 @@ const review = @import("bridge_android_review.zig");
 const speech = @import("bridge_android_speech.zig");
 const audio = @import("bridge_android_audio.zig");
 const deeplink = @import("bridge_android_deeplink.zig");
+const screenshot = @import("bridge_android_screenshot.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -298,6 +299,9 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeSetInitialURL", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeSetInitialURL) },
     .{ .name = "nativeGetInitialURL", .signature = "()Z", .fnPtr = @ptrCast(&nativeGetInitialURL) },
     .{ .name = "nativeDispatchDeepLink", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeDispatchDeepLink) },
+    .{ .name = "nativeScreenshotReady", .signature = "([B)V", .fnPtr = @ptrCast(&nativeScreenshotReady) },
+    .{ .name = "nativeScreenshotError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeScreenshotError) },
+    .{ .name = "nativeTakeScreenshot", .signature = "(Landroid/app/Activity;Landroid/webkit/WebView;)Z", .fnPtr = @ptrCast(&nativeTakeScreenshot) },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -1103,6 +1107,43 @@ fn nativeDispatchDeepLink(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) cal
     deeplink.rememberFirst(text) catch return jni.JNI_FALSE;
     const detail = deeplink.payload(j, allocator, text) catch return jni.JNI_FALSE;
     events.emitEvent(allocator, deeplink.event_name, detail) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeScreenshotReady(env: jni.JNIEnv, _: jni.jobject, bytes: jni.jobject) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const raw = j.byteArrayToOwned(allocator, bytes) catch return;
+    const payload = screenshot.imagePayload(allocator, raw) catch return;
+    events.settle(allocator, screenshot.resolve_global, payload) catch {};
+}
+
+fn nativeScreenshotError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const text = j.stringToUtf8(allocator, message) catch return;
+    const payload = screenshot.errorPayload(allocator, text) catch return;
+    events.settle(allocator, screenshot.reject_global, payload) catch {};
+}
+
+fn nativeTakeScreenshot(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    web_view: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "captureScreenshot", "(Landroid/app/Activity;Landroid/webkit/WebView;)V") catch
+            return jni.JNI_FALSE,
+        &.{ .{ .l = activity }, .{ .l = web_view } },
+    ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
 
@@ -2830,7 +2871,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 85), natives.len);
+    try testing.expectEqual(@as(usize, 88), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.
