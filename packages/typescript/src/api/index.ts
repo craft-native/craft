@@ -172,6 +172,7 @@ export type {
   LiveActivityContentState,
   LiveActivityAttributes,
   LiveActivityConfig,
+  LiveActivityHandle,
   SharePlaySessionState,
   SharePlayParticipant,
   SharePlayActivity,

@@ -5,6 +5,7 @@
  * @module @craft-native/api/ios-advanced
  */
 
+import { createLiveActivityHandle } from './live-activity-handle.js'
 import { isCraft, getPlatform } from './process.js'
 
 // ============================================================================
@@ -330,6 +331,12 @@ export interface LiveActivityConfig {
   relevanceScore?: number
 }
 
+export interface LiveActivityHandle {
+  readonly id: string
+  update(state: LiveActivityContentState): Promise<void>
+  end(finalState?: LiveActivityContentState): Promise<void>
+}
+
 /**
  * Live Activities API for Dynamic Island and Lock Screen.
  *
@@ -342,14 +349,14 @@ export interface LiveActivityConfig {
  * })
  *
  * // Update the activity
- * await liveActivities.update(activity.id, {
+ * await activity.update({
  *   status: 'on-the-way',
  *   eta: '5 min',
  *   driverName: 'John'
  * })
  *
  * // End the activity
- * await liveActivities.end(activity.id, { status: 'delivered' })
+ * await activity.end({ status: 'delivered' })
  */
 export const liveActivities = {
   /**
@@ -371,11 +378,15 @@ export const liveActivities = {
   /**
    * Start a new Live Activity.
    */
-  async start(config: LiveActivityConfig): Promise<{ id: string }> {
-    if (!isCraft() || getPlatform() !== 'ios') {
-      return { id: `mock-${Date.now()}` }
-    }
-    return (window as any).craft?.liveActivities?.start?.(config) ?? { id: `mock-${Date.now()}` }
+  async start(config: LiveActivityConfig): Promise<LiveActivityHandle> {
+    const result = !isCraft() || getPlatform() !== 'ios'
+      ? { id: `mock-${Date.now()}` }
+      : await ((window as any).craft?.liveActivities?.start?.(config) ?? { id: `mock-${Date.now()}` })
+    return createLiveActivityHandle(
+      result.id,
+      state => liveActivities.update(result.id, state),
+      finalState => liveActivities.end(result.id, finalState),
+    )
   },
 
   /**

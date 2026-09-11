@@ -1094,7 +1094,7 @@ struct CraftWebView: UIViewRepresentable {
             case "updateLiveActivity":
                 updateLiveActivity(body: body, callbackId: callbackId)
             case "endLiveActivity":
-                endLiveActivity(callbackId: callbackId)
+                endLiveActivity(body: body, callbackId: callbackId)
 
             // MARK: - Screen Capture
             case "takeScreenshot":
@@ -2629,8 +2629,14 @@ struct CraftWebView: UIViewRepresentable {
                 };
                 craft.liveActivity = {
                     start: function(options) { return craft._invoke('startLiveActivity', options || {}); },
-                    update: function(options) { return craft._invoke('updateLiveActivity', options || {}); },
-                    end: function() { return craft._invoke('endLiveActivity'); }
+                    update: function(idOrState, state) {
+                        if (typeof idOrState !== 'string') return craft._invoke('updateLiveActivity', idOrState || {});
+                        return craft._invoke('updateLiveActivity', Object.assign({}, state || {}, {id: idOrState}));
+                    },
+                    end: function(id, finalState) {
+                        if (typeof id !== 'string') return craft._invoke('endLiveActivity');
+                        return craft._invoke('endLiveActivity', Object.assign({}, finalState || {}, {id: id}));
+                    }
                 };
                 var shareApi = function(text) { return legacyShare(text); };
                 shareApi.share = function(options) { return craft._invoke('share', {options: options || {}}); };
@@ -4388,9 +4394,24 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func updateLiveActivity(body: [String: Any], callbackId: String?) {
-            guard #available(iOS 16.2, *), let activity = Activity<CraftActivityAttributes>.activities.first else {
+            guard #available(iOS 16.2, *) else {
                 rejectCallback(callbackId, error: "No Live Activity is running")
                 return
+            }
+            let activities = Activity<CraftActivityAttributes>.activities
+            let activity: Activity<CraftActivityAttributes>
+            if let activityId = body["id"] as? String {
+                guard let matchingActivity = activities.first(where: { $0.id == activityId }) else {
+                    rejectCallback(callbackId, error: "No Live Activity with id \(activityId) is running")
+                    return
+                }
+                activity = matchingActivity
+            } else {
+                guard let currentActivity = activities.first else {
+                    rejectCallback(callbackId, error: "No Live Activity is running")
+                    return
+                }
+                activity = currentActivity
             }
             let current = activity.content.state
             let state = CraftActivityAttributes.ContentState(
@@ -4405,13 +4426,45 @@ struct CraftWebView: UIViewRepresentable {
             }
         }
 
-        private func endLiveActivity(callbackId: String?) {
-            guard #available(iOS 16.2, *), let activity = Activity<CraftActivityAttributes>.activities.first else {
+        private func endLiveActivity(body: [String: Any], callbackId: String?) {
+            guard #available(iOS 16.2, *) else {
                 resolveCallback(callbackId, result: ["ended": false])
                 return
             }
+            let activities = Activity<CraftActivityAttributes>.activities
+            let activity: Activity<CraftActivityAttributes>
+            if let activityId = body["id"] as? String {
+                guard let matchingActivity = activities.first(where: { $0.id == activityId }) else {
+                    rejectCallback(callbackId, error: "No Live Activity with id \(activityId) is running")
+                    return
+                }
+                activity = matchingActivity
+            } else {
+                guard let currentActivity = activities.first else {
+                    resolveCallback(callbackId, result: ["ended": false])
+                    return
+                }
+                activity = currentActivity
+            }
+            let hasFinalState = body["status"] != nil
+                || body["distanceMeters"] != nil
+                || body["durationSeconds"] != nil
+                || body["progress"] != nil
+            let finalContent: ActivityContent<CraftActivityAttributes.ContentState>?
+            if hasFinalState {
+                let current = activity.content.state
+                let state = CraftActivityAttributes.ContentState(
+                    status: body["status"] as? String ?? current.status,
+                    distanceMeters: body["distanceMeters"] as? Double ?? current.distanceMeters,
+                    durationSeconds: body["durationSeconds"] as? Double ?? current.durationSeconds,
+                    progress: min(max(body["progress"] as? Double ?? current.progress, 0), 1)
+                )
+                finalContent = ActivityContent(state: state, staleDate: nil)
+            } else {
+                finalContent = nil
+            }
             Task {
-                await activity.end(nil, dismissalPolicy: .default)
+                await activity.end(finalContent, dismissalPolicy: .default)
                 resolveCallback(callbackId, result: ["ended": true])
             }
         }

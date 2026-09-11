@@ -24,6 +24,7 @@
  */
 
 import { secureUUID } from '../bridge/ids.js'
+import { createLiveActivityHandle } from './live-activity-handle.js'
 
 /** localStorage key for the persisted web-fallback device id. */
 const WEB_DEVICE_ID_KEY = '__craft_web_device_id__'
@@ -1411,22 +1412,58 @@ export interface LiveActivityOptions extends LiveActivityState {
   title: string
 }
 
-export const liveActivities = {
-  async start(options: LiveActivityOptions): Promise<{ id: string }> {
+export interface LiveActivityHandle {
+  readonly id: string
+  update(state: LiveActivityState): Promise<void>
+  end(finalState?: LiveActivityState): Promise<void>
+}
+
+export interface LiveActivitiesApi {
+  start(options: LiveActivityOptions): Promise<LiveActivityHandle>
+  update(id: string, state: LiveActivityState): Promise<void>
+  /** @deprecated Pass the activity id returned by start, or use handle.update(state). */
+  update(state: LiveActivityState): Promise<void>
+  end(id: string, finalState?: LiveActivityState): Promise<void>
+  /** @deprecated Pass the activity id returned by start, or use handle.end(finalState). */
+  end(): Promise<void>
+}
+
+async function updateLiveActivity(idOrState: string | LiveActivityState, state?: LiveActivityState): Promise<void> {
+  const craft = getCraftRoot()
+  if (!craft?.liveActivity?.update) return
+  if (typeof idOrState === 'string') {
+    await craft.liveActivity.update(idOrState, state ?? {})
+    return
+  }
+  await craft.liveActivity.update(idOrState)
+}
+
+async function endLiveActivity(id?: string, finalState?: LiveActivityState): Promise<void> {
+  const craft = getCraftRoot()
+  if (!craft?.liveActivity?.end) return
+  if (id !== undefined) {
+    await craft.liveActivity.end(id, finalState)
+    return
+  }
+  await craft.liveActivity.end()
+}
+
+export const liveActivities: LiveActivitiesApi = {
+  async start(options: LiveActivityOptions): Promise<LiveActivityHandle> {
     const craft = getCraftRoot()
     if (!craft?.liveActivity?.start) throw new Error('Live Activities are unavailable')
-    return craft.liveActivity.start(options)
+    const result = await craft.liveActivity.start(options)
+    if (!result || typeof result.id !== 'string' || result.id.length === 0) {
+      throw new Error('Live Activities returned an invalid activity id')
+    }
+    return createLiveActivityHandle(
+      result.id,
+      state => updateLiveActivity(result.id, state),
+      finalState => endLiveActivity(result.id, finalState),
+    )
   },
-  async update(state: LiveActivityState): Promise<void> {
-    const craft = getCraftRoot()
-    if (!craft?.liveActivity?.update) return
-    await craft.liveActivity.update(state)
-  },
-  async end(): Promise<void> {
-    const craft = getCraftRoot()
-    if (!craft?.liveActivity?.end) return
-    await craft.liveActivity.end()
-  }
+  update: updateLiveActivity,
+  end: endLiveActivity,
 }
 
 export const watchConnectivity = {
@@ -1562,7 +1599,9 @@ interface CraftMobileBridge {
   }
   liveActivity?: {
     start(options: LiveActivityOptions): Promise<{ id: string }>
+    update(id: string, state: LiveActivityState): Promise<void>
     update(state: LiveActivityState): Promise<void>
+    end(id: string, finalState?: LiveActivityState): Promise<void>
     end(): Promise<void>
   }
   watch?: {

@@ -21,6 +21,7 @@ import type {
   AppState,
   NotificationOptions,
   HealthDataResult,
+  LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
 import { normalizeDeepLinkURL } from '../api/mobile'
@@ -249,8 +250,14 @@ describe('Mobile API Types', () => {
         distanceMeters: 1609,
         durationSeconds: 480,
       }
+      const handle: LiveActivityHandle = {
+        id: 'native-activity-1',
+        update: async () => {},
+        end: async () => {},
+      }
       expect(health.value).toBe(4219)
       expect(live.distanceMeters).toBe(1609)
+      expect(handle.id).toBe('native-activity-1')
     })
   })
 })
