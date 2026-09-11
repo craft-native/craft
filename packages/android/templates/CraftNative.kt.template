@@ -1620,17 +1620,30 @@ object CraftNative {
     private var bleScanCallback: ScanCallback? = null
 
     /**
-     * Start scanning, including the part that does nothing.
-     *
-     * `bleScanner` is null when the device has no adapter or Bluetooth is off,
-     * and the `?.` then skips the scan — while the caller resolves true
-     * regardless, exactly as `CraftBridge` does. Reproduced rather than
-     * guarded, because the reply is what a page acts on. See #185.
+     * Start scanning and report whether `startScan` was actually reached.
+     * The status crosses JNI so Zig can reject with the same reason as the
+     * Kotlin fallback instead of resolving an unavailable radio as success.
      */
     @JvmStatic
-    fun startBluetoothWatch(activity: Activity) {
-        val manager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bleScanner = manager.adapter?.bluetoothLeScanner
+    fun startBluetoothWatch(activity: Activity): Int {
+        val manager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            ?: return BLUETOOTH_NO_ADAPTER
+        val adapter = try {
+            manager.adapter
+        } catch (e: SecurityException) {
+            return BLUETOOTH_PERMISSION_DENIED
+        } ?: return BLUETOOTH_NO_ADAPTER
+        val enabled = try {
+            adapter.isEnabled
+        } catch (e: SecurityException) {
+            return BLUETOOTH_PERMISSION_DENIED
+        }
+        if (!enabled) return BLUETOOTH_POWERED_OFF
+        val scanner = try {
+            adapter.bluetoothLeScanner
+        } catch (e: SecurityException) {
+            return BLUETOOTH_PERMISSION_DENIED
+        } ?: return BLUETOOTH_SCANNER_UNAVAILABLE
 
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -1651,8 +1664,16 @@ object CraftNative {
             }
         }
 
-        bleScanner?.startScan(callback)
-        bleScanCallback = callback
+        return try {
+            scanner.startScan(callback)
+            bleScanner = scanner
+            bleScanCallback = callback
+            BLUETOOTH_STARTED
+        } catch (e: SecurityException) {
+            BLUETOOTH_PERMISSION_DENIED
+        } catch (e: RuntimeException) {
+            BLUETOOTH_FAILED
+        }
     }
 
     @JvmStatic
@@ -1681,6 +1702,12 @@ object CraftNative {
 
     /** `CraftBridge.REQUEST_BLUETOOTH`, which this has to match. */
     private const val REQUEST_BLUETOOTH = 1009
+    private const val BLUETOOTH_STARTED = 0
+    private const val BLUETOOTH_NO_ADAPTER = 1
+    private const val BLUETOOTH_POWERED_OFF = 2
+    private const val BLUETOOTH_PERMISSION_DENIED = 3
+    private const val BLUETOOTH_SCANNER_UNAVAILABLE = 4
+    private const val BLUETOOTH_FAILED = 5
 
     fun startBluetoothScan(activity: Activity): Boolean {
         if (!isAvailable) return false

@@ -2639,9 +2639,9 @@ fn nativeBluetoothDevice(
 
 /// `nativeStartBluetoothScan(activity)`.
 ///
-/// Resolves `true` whether or not a scan actually started, because the shim
-/// does: `bluetoothScanner?.startScan(...)` is skipped when there is no
-/// adapter or Bluetooth is off, and the resolve fires regardless. See #185.
+/// The holder owns the callback object and returns a status only after it has
+/// either called `startScan` or identified why it cannot. Zig then settles the
+/// page promise with the corresponding success or rejection. See #185.
 fn nativeStartBluetoothScan(
     env: jni.JNIEnv,
     _: jni.jobject,
@@ -2669,10 +2669,15 @@ fn nativeStartBluetoothScan(
         return jni.JNI_TRUE;
     }
 
-    callHolderVoid(j, "startBluetoothWatch", activity) catch |err| {
+    const start_status = callHolderStatus(j, "startBluetoothWatch", activity) catch |err| {
         std.log.warn("craft: startBluetoothScan fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
+
+    if (bluetooth.startError(start_status)) |message| {
+        calendar.rejectOn(allocator, bluetooth.reject_global, message) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
 
     events.settle(allocator, bluetooth.resolve_global, "true") catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
@@ -2797,6 +2802,19 @@ fn callHolderInt(j: Jni, comptime name: [:0]const u8, activity: jni.jobject, val
         holder,
         try j.staticMethodId(holder, name, "(Landroid/app/Activity;I)V"),
         &.{ .{ .l = activity }, .{ .i = value } },
+    );
+}
+
+/// Call an `(Activity) -> int` static on the holder.
+fn callHolderStatus(j: Jni, comptime name: [:0]const u8, activity: jni.jobject) !jni.jint {
+    try j.pushLocalFrame(8);
+    defer _ = j.popLocalFrame(null);
+
+    const holder = try j.findClass(holder_class);
+    return j.callStaticIntMethodA(
+        holder,
+        try j.staticMethodId(holder, name, "(Landroid/app/Activity;)I"),
+        &.{.{ .l = activity }},
     );
 }
 

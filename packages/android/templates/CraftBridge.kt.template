@@ -3046,17 +3046,47 @@ class CraftBridge(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.BLUETOOTH_SCAN), REQUEST_BLUETOOTH)
             }
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftBleReject && window._craftBleReject('Permission denied')", null)
-            }
+            rejectBluetoothScan("Bluetooth permission denied")
             return
         }
 
-        val bluetoothManager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        bluetoothAdapter = bluetoothManager.adapter
-        bluetoothScanner = bluetoothAdapter?.bluetoothLeScanner
+        val bluetoothManager = activity.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        if (bluetoothManager == null) {
+            rejectBluetoothScan("Bluetooth is unavailable on this device")
+            return
+        }
+        val adapter = try {
+            bluetoothManager.adapter
+        } catch (e: SecurityException) {
+            rejectBluetoothScan("Bluetooth permission denied")
+            return
+        }
+        if (adapter == null) {
+            rejectBluetoothScan("Bluetooth is unavailable on this device")
+            return
+        }
+        val enabled = try {
+            adapter.isEnabled
+        } catch (e: SecurityException) {
+            rejectBluetoothScan("Bluetooth permission denied")
+            return
+        }
+        if (!enabled) {
+            rejectBluetoothScan("Bluetooth is switched off")
+            return
+        }
+        val scanner = try {
+            adapter.bluetoothLeScanner
+        } catch (e: SecurityException) {
+            rejectBluetoothScan("Bluetooth permission denied")
+            return
+        }
+        if (scanner == null) {
+            rejectBluetoothScan("Bluetooth LE scanning is unavailable")
+            return
+        }
 
-        bleScanCallback = object : ScanCallback() {
+        val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 sendEvent("craftBluetoothDevice", mapOf(
                     "id" to result.device.address,
@@ -3066,9 +3096,29 @@ class CraftBridge(
             }
         }
 
-        bluetoothScanner?.startScan(bleScanCallback)
+        try {
+            scanner.startScan(callback)
+        } catch (e: SecurityException) {
+            rejectBluetoothScan("Bluetooth permission denied")
+            return
+        } catch (e: RuntimeException) {
+            rejectBluetoothScan("Bluetooth scan could not start")
+            return
+        }
+        bluetoothAdapter = adapter
+        bluetoothScanner = scanner
+        bleScanCallback = callback
         activity.runOnUiThread {
             webView.evaluateJavascript("window._craftBleResolve && window._craftBleResolve(true)", null)
+        }
+    }
+
+    private fun rejectBluetoothScan(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftBleReject && window._craftBleReject(${jsQuote(message)})",
+                null
+            )
         }
     }
 

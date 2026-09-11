@@ -3,21 +3,13 @@
 //! The third listener shim. `ScanCallback` is an abstract Java class, so the
 //! object lives in `CraftNative` and every result forwards here.
 //!
-//! ## The scan can not start and still resolve true
+//! ## Start results are explicit
 //!
-//! ```kotlin
-//! bluetoothScanner?.startScan(bleScanCallback)
-//! activity.runOnUiThread { ...craftBleResolve(true)... }
-//! ```
-//!
-//! `bluetoothScanner` is null when the device has no Bluetooth adapter or when
-//! Bluetooth is switched off — and the `?.` then skips the scan while the
-//! resolve fires anyway. A page is told scanning started, no
-//! `craftBluetoothDevice` events ever arrive, and there is nothing to
-//! distinguish that from an empty room.
-//!
-//! Reproduced rather than corrected, because the reply is what a page acts on.
-//! See #185.
+//! The Kotlin holder owns the `ScanCallback`, but Zig owns the promise. Its
+//! integer result distinguishes a scan that actually started from an absent
+//! adapter, a powered-off adapter, a missing permission, or a scanner/runtime
+//! failure. This prevents an unavailable radio from looking like a successful
+//! scan in an empty room. See #185.
 //!
 //! ## The name default is a decision, so it is made here
 //!
@@ -46,6 +38,26 @@ pub const unknown_name = "Unknown";
 
 /// `CraftBridge.REQUEST_BLUETOOTH`.
 pub const request_bluetooth: i32 = 1009;
+
+pub const StartStatus = enum(i32) {
+    started = 0,
+    no_adapter = 1,
+    powered_off = 2,
+    permission_denied = 3,
+    scanner_unavailable = 4,
+    failed = 5,
+};
+
+pub fn startError(status: i32) ?[]const u8 {
+    return switch (status) {
+        @backingInt(StartStatus.started) => null,
+        @backingInt(StartStatus.no_adapter) => "Bluetooth is unavailable on this device",
+        @backingInt(StartStatus.powered_off) => "Bluetooth is switched off",
+        @backingInt(StartStatus.permission_denied) => "Bluetooth permission denied",
+        @backingInt(StartStatus.scanner_unavailable) => "Bluetooth LE scanning is unavailable",
+        else => "Bluetooth scan could not start",
+    };
+}
 
 /// `{"id":"…","name":"…","rssi":-70}`.
 ///
@@ -151,4 +163,14 @@ test "the actions, globals and event name match the shim exactly" {
     try testing.expectEqualStrings("_craftBleReject", reject_global);
     try testing.expectEqualStrings("craftBluetoothDevice", event_name);
     try testing.expectEqualStrings("Unknown", unknown_name);
+}
+
+test "scan start statuses reject every path that did not start a scan" {
+    try testing.expectEqual(@as(?[]const u8, null), startError(@backingInt(StartStatus.started)));
+    try testing.expectEqualStrings("Bluetooth is unavailable on this device", startError(@backingInt(StartStatus.no_adapter)).?);
+    try testing.expectEqualStrings("Bluetooth is switched off", startError(@backingInt(StartStatus.powered_off)).?);
+    try testing.expectEqualStrings("Bluetooth permission denied", startError(@backingInt(StartStatus.permission_denied)).?);
+    try testing.expectEqualStrings("Bluetooth LE scanning is unavailable", startError(@backingInt(StartStatus.scanner_unavailable)).?);
+    try testing.expectEqualStrings("Bluetooth scan could not start", startError(@backingInt(StartStatus.failed)).?);
+    try testing.expectEqualStrings("Bluetooth scan could not start", startError(99).?);
 }

@@ -171,6 +171,29 @@ describe('Craft Android builder', () => {
     expect(gradle).toContain('com.google.mlkit:text-recognition')
   })
 
+  it('rejects Bluetooth scans that never reach the platform scanner', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-bluetooth-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    expect(bridge).not.toContain('bluetoothScanner?.startScan')
+    expect(holder).not.toContain('bleScanner?.startScan')
+    for (const message of [
+      'Bluetooth is unavailable on this device',
+      'Bluetooth is switched off',
+      'Bluetooth permission denied',
+      'Bluetooth LE scanning is unavailable',
+      'Bluetooth scan could not start',
+    ]) {
+      expect(bridge).toContain(message)
+    }
+    expect(holder).toContain('fun startBluetoothWatch(activity: Activity): Int')
+    expect(holder).toContain('scanner.startScan(callback)')
+    expect(holder).toContain('BLUETOOTH_STARTED')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

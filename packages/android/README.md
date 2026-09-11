@@ -215,12 +215,13 @@ await window.craft.db.execute('CREATE TABLE users (id INTEGER PRIMARY KEY, name 
 await window.craft.db.execute('INSERT INTO users (name) VALUES (?)', ['Alice']);
 const users = await window.craft.db.query('SELECT * FROM users');
 
-// Bluetooth LE Scanning
-window.craft.startBluetoothScan();
+// Bluetooth LE Scanning. Rejects when the device has no adapter, Bluetooth is
+// switched off, permission is denied, or the platform scanner cannot start.
+await window.craft.bluetooth.startScan();
 window.addEventListener('craftBluetoothDevice', (e) => {
   console.log(e.detail.name, e.detail.address, e.detail.rssi);
 });
-window.craft.stopBluetoothScan();
+window.craft.bluetooth.stopScan();
 
 // NFC Tag Reading
 const nfcData = await window.craft.scanNFC();
