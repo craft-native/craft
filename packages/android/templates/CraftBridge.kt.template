@@ -1352,6 +1352,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startListening() {
+        if (CraftNative.startListening(activity)) return
+
         if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
             sendEvent("craftSpeechError", mapOf("error" to "Speech recognition not available"))
             return
@@ -1426,6 +1428,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun stopListening() {
+        if (CraftNative.stopListening(activity)) return
+
         activity.runOnUiThread {
             speechRecognizer?.stopListening()
             speechRecognizer?.destroy()

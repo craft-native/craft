@@ -44,6 +44,7 @@ const intents = @import("bridge_android_intents.zig");
 const imagepicker = @import("bridge_android_imagepicker.zig");
 const biometric = @import("bridge_android_biometric.zig");
 const review = @import("bridge_android_review.zig");
+const speech = @import("bridge_android_speech.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -235,6 +236,31 @@ const natives = [_]jni.JNINativeMethod{
         .name = "nativeRequestReview",
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeRequestReview),
+    },
+    .{
+        .name = "nativeSpeechReady",
+        .signature = "(Landroid/app/Activity;)V",
+        .fnPtr = @ptrCast(&nativeSpeechReady),
+    },
+    .{
+        .name = "nativeSpeechError",
+        .signature = "(Landroid/app/Activity;I)V",
+        .fnPtr = @ptrCast(&nativeSpeechError),
+    },
+    .{
+        .name = "nativeSpeechResult",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Z)V",
+        .fnPtr = @ptrCast(&nativeSpeechResult),
+    },
+    .{
+        .name = "nativeStartListening",
+        .signature = "(Landroid/app/Activity;Z)Z",
+        .fnPtr = @ptrCast(&nativeStartListening),
+    },
+    .{
+        .name = "nativeStopListening",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStopListening),
     },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
@@ -818,6 +844,98 @@ fn nativeRequestReview(
         std.log.warn("craft: requestReview fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
+    return jni.JNI_TRUE;
+}
+
+fn speechHaptic(j: Jni, activity: jni.jobject) void {
+    haptics.play(j, activity, haptics.effectForStyle("light")) catch {};
+}
+
+fn nativeSpeechReady(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) void {
+    events.emitEvent(backing, speech.start_event, "{}") catch {};
+    speechHaptic(Jni.init(env), activity);
+}
+
+fn nativeSpeechError(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    error_code: jni.jint,
+) callconv(.c) void {
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const detail = speech.errorDetail(allocator, speech.errorMessage(error_code)) catch return;
+    events.emitEvent(allocator, speech.error_event, detail) catch {};
+    speechHaptic(Jni.init(env), activity);
+}
+
+fn nativeSpeechResult(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    transcript: jni.jstring,
+    is_final: jni.jboolean,
+) callconv(.c) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const text = j.stringToUtf8(allocator, transcript) catch return;
+    const final = is_final == jni.JNI_TRUE;
+    const detail = speech.resultDetail(allocator, text, final) catch return;
+    events.emitEvent(allocator, speech.result_event, detail) catch {};
+    if (final) {
+        events.emitEvent(allocator, speech.end_event, "{}") catch {};
+        speechHaptic(j, activity);
+    }
+}
+
+fn nativeStartListening(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    available: jni.jboolean,
+) callconv(.c) jni.jboolean {
+    if (available != jni.JNI_TRUE) {
+        var arena = std.heap.ArenaAllocator.init(backing);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        const detail = speech.errorDetail(allocator, speech.unavailable) catch return jni.JNI_FALSE;
+        events.emitEvent(allocator, speech.error_event, detail) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "beginSpeechRecognition", "(Landroid/app/Activity;)V") catch
+            return jni.JNI_FALSE,
+        &.{.{ .l = activity }},
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeStopListening(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "endSpeechRecognition", "(Landroid/app/Activity;)V") catch
+            return jni.JNI_FALSE,
+        &.{.{ .l = activity }},
+    ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
 
@@ -2545,7 +2663,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 70), natives.len);
+    try testing.expectEqual(@as(usize, 75), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

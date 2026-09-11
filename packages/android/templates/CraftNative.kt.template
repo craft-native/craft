@@ -9,6 +9,13 @@ import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.FusedLocationProviderClient
 import android.location.Location
 import android.annotation.SuppressLint
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import java.util.Locale
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -139,6 +146,11 @@ object CraftNative {
     private external fun nativeReviewSucceeded()
     private external fun nativeReviewError(message: String)
     private external fun nativeRequestReview(activity: Activity): Boolean
+    private external fun nativeSpeechReady(activity: Activity)
+    private external fun nativeSpeechError(activity: Activity, error: Int)
+    private external fun nativeSpeechResult(activity: Activity, transcript: String, isFinal: Boolean)
+    private external fun nativeStartListening(activity: Activity, available: Boolean): Boolean
+    private external fun nativeStopListening(activity: Activity): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -378,6 +390,100 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeRequestReview(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== Speech recognition ====================
+    //
+    // SpeechRecognizer is main-thread-only and RecognitionListener is a Java
+    // interface. The holder owns both; callbacks hand only stable values back
+    // to Zig, which owns every event and haptic decision.
+
+    private var speechRecognizer: SpeechRecognizer? = null
+
+    @JvmStatic
+    fun beginSpeechRecognition(activity: Activity) {
+        activity.runOnUiThread {
+            if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.RECORD_AUDIO), 100)
+                return@runOnUiThread
+            }
+
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(activity)
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    try {
+                        nativeSpeechReady(activity)
+                    } catch (e: UnsatisfiedLinkError) {
+                    }
+                }
+
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+
+                override fun onError(error: Int) {
+                    try {
+                        nativeSpeechError(activity, error)
+                    } catch (e: UnsatisfiedLinkError) {
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    try {
+                        nativeSpeechResult(activity, matches?.firstOrNull() ?: "", true)
+                    } catch (e: UnsatisfiedLinkError) {
+                    }
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    try {
+                        nativeSpeechResult(activity, matches?.firstOrNull() ?: "", false)
+                    } catch (e: UnsatisfiedLinkError) {
+                    }
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            }
+            speechRecognizer?.startListening(intent)
+        }
+    }
+
+    @JvmStatic
+    fun endSpeechRecognition(activity: Activity) {
+        activity.runOnUiThread {
+            speechRecognizer?.stopListening()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
+    }
+
+    fun startListening(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartListening(activity, SpeechRecognizer.isRecognitionAvailable(activity))
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun stopListening(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStopListening(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

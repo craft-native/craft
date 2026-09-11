@@ -452,6 +452,9 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_review.zig", .{
         .root_source_file = b.path("src/bridge_android_review.zig"),
     });
+    android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_speech.zig", .{
+        .root_source_file = b.path("src/bridge_android_speech.zig"),
+    });
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_network.zig", .{
         .root_source_file = b.path("src/bridge_android_network.zig"),
     });
