@@ -257,7 +257,7 @@ pub const ShellBridge = struct {
 
         try validateCommand(command);
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] exec: {s}\n", .{command});
 
         // Build argv array using cross-platform shell args
@@ -371,7 +371,7 @@ pub const ShellBridge = struct {
         var argv = try buildSpawnArgv(self.allocator, command, params.args, params.shell);
         defer argv.deinit(self.allocator);
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] spawn: {s} -> {s} ({d} args, shell={})\n", .{ id, command, params.args.len, params.shell });
 
         const io = io_context.get();
@@ -414,7 +414,7 @@ pub const ShellBridge = struct {
 
         if (id.len == 0) return BridgeError.MissingData;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] kill: {s}\n", .{id});
 
         // Mirror the cleanup order from `deinit`: close any open pipes
@@ -458,7 +458,7 @@ pub const ShellBridge = struct {
 
         try validateUrl(url);
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] openUrl: {s}\n", .{url});
 
         if (comptime builtin.os.tag == .macos) {
@@ -521,7 +521,7 @@ pub const ShellBridge = struct {
 
         try validatePath(path);
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] openPath: {s}\n", .{path});
 
         if (comptime builtin.os.tag == .macos) {
@@ -575,7 +575,7 @@ pub const ShellBridge = struct {
 
         try validatePath(path);
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] showInFinder: {s}\n", .{path});
 
         if (comptime builtin.os.tag == .macos) {
@@ -675,7 +675,7 @@ pub const ShellBridge = struct {
 
         if (name.len == 0) return BridgeError.MissingData;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[ShellBridge] setEnv: {s}={s}\n", .{ name, value });
 
         // Previously this was a no-op that silently "succeeded" — callers

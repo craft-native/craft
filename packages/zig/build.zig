@@ -106,7 +106,7 @@ pub fn build(b: *std.Build) void {
             // constraint is relaxed only for builds that include the JS
             // runtime, rather than giving it up for everyone.
             .single_threaded = !js_runtime_enabled,
-            .strip = if (optimize != .debug) true else null,
+            .strip = if (optimize != .Debug) true else null,
             // Never `.none` on Windows. The x64 ABI requires unwind data for
             // non-leaf functions, and zig passes this module option down into
             // the mingw-w64 CRT it builds for the target — where crtexe.c's
@@ -115,9 +115,9 @@ pub fn build(b: *std.Build) void {
             // within an active frame". The release workflow cross-compiles
             // x86_64-windows from Linux, so this is the difference between a
             // release happening and not.
-            .unwind_tables = if (optimize != .debug and target_os != .windows) .none else null,
-            .omit_frame_pointer = if (optimize == .small) true else null,
-            .error_tracing = if (optimize != .debug) false else null,
+            .unwind_tables = if (optimize != .Debug and target_os != .windows) .none else null,
+            .omit_frame_pointer = if (optimize == .ReleaseSmall) true else null,
+            .error_tracing = if (optimize != .Debug) false else null,
             .imports = &.{
                 .{ .name = "craft", .module = craft_module },
                 .{ .name = "build_options", .module = build_options.createModule() },

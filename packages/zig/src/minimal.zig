@@ -53,7 +53,7 @@ comptime {
 ///
 /// Not captured: `std.debug.print`, which craft uses in far more places than
 /// `std.log`. Those go through `std.Options.debug_io` rather than the log
-/// handler, and most sit behind `if (builtin.mode == .debug)`. Said plainly in
+/// handler, and most sit behind `if (builtin.mode == .Debug)`. Said plainly in
 /// `--help`, rather than left for someone to work out from a log file that is
 /// quieter than they expected.
 pub const std_options: std.Options = .{

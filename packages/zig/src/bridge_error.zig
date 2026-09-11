@@ -191,7 +191,7 @@ pub fn sendErrorToJS(allocator: std.mem.Allocator, action: []const u8, err: Brid
     var ctx = ErrorContext.init(err, action, errorMessage(err));
     ctx.request_id = request_context.current();
     const json = ctx.toJSON(allocator) catch {
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[BridgeError] Failed to serialize error\n", .{});
         return;
     };
@@ -206,19 +206,19 @@ pub fn sendErrorToJS(allocator: std.mem.Allocator, action: []const u8, err: Brid
         "if(window.__craftBridgeError)window.__craftBridgeError({s});",
         .{json},
     ) catch {
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[BridgeError] Failed to format JS\n", .{});
         return;
     };
     defer allocator.free(js);
 
     bridge.evalJS(js) catch |eval_err| {
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[BridgeError] Failed to send error to JS: {}\n", .{eval_err});
     };
 
     // Always log to console
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[BridgeError] {s}: {s} - {s}\n", .{ action, errorCodeString(err), errorMessage(err) });
 }
 
@@ -259,7 +259,7 @@ pub fn sendResultToJS(allocator: std.mem.Allocator, action: []const u8, result_j
     // (the tray and menubar polling `_post`s, which nobody awaits). The page
     // then matches by action name exactly as it did before ids.
     const js = formatResultJS(allocator, action, result_json, request_context.current()) catch {
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[BridgeResult] Failed to format JS\n", .{});
         return;
     };

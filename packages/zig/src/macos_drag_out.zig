@@ -87,7 +87,7 @@ pub fn handleMessage(action: []const u8, data: []const u8) !void {
     const app = macos.msgSend0(NSApp, "sharedApplication");
     const event = macos.msgSend0(app, "currentEvent");
     if (@intFromPtr(event) == 0) {
-        if (comptime builtin.mode == .debug) {
+        if (comptime builtin.mode == .Debug) {
             std.debug.print("[DragOut] No current event — drag not started\n", .{});
         }
         return;
@@ -98,7 +98,7 @@ pub fn handleMessage(action: []const u8, data: []const u8) !void {
     // accepts most operations.
     _ = macos.msgSend3(webview, "beginDraggingSessionWithItems:event:source:", items_arr, event, webview);
 
-    if (comptime builtin.mode == .debug) {
+    if (comptime builtin.mode == .Debug) {
         std.debug.print("[DragOut] Started session with {d} item(s)\n", .{paths.len});
     }
 }

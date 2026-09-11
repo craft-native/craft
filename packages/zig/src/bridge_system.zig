@@ -79,7 +79,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getAppearance\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -121,7 +121,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getAccentColor\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -161,7 +161,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getHighlightColor\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -199,7 +199,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getLanguage\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -236,7 +236,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getLocale\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -272,7 +272,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getTimezone\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -308,7 +308,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] is24HourTime\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -352,7 +352,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getReduceMotion\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -386,7 +386,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getReduceTransparency\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -419,7 +419,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getIncreaseContrast\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -452,7 +452,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] openSystemPreferences: {s}\n", .{pane});
 
         if (builtin.os.tag == .macos) {
@@ -491,7 +491,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getSystemVersion\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -527,7 +527,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getHostname\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -563,7 +563,7 @@ pub const SystemBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[SystemBridge] getUsername\n", .{});
 
         if (builtin.os.tag == .macos) {

@@ -71,7 +71,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] isConnected\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -108,7 +108,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getConnectionType\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -158,7 +158,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getWiFiSSID\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -214,7 +214,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getWiFiSignalStrength\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -264,7 +264,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getIPAddress\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -334,7 +334,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getMACAddress\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -387,7 +387,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getNetworkInterfaces\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -419,7 +419,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] isVPNConnected\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -453,7 +453,7 @@ pub const NetworkBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] getProxySettings\n", .{});
 
         if (builtin.os.tag == .macos) {
@@ -478,7 +478,7 @@ pub const NetworkBridge = struct {
         _ = self;
         _ = data;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[NetworkBridge] openNetworkPreferences\n", .{});
 
         if (builtin.os.tag == .macos) {

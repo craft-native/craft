@@ -49,12 +49,12 @@ pub const LogTarget = enum {
 
 /// Configuration for the logger
 pub const LogConfig = struct {
-    level: LogLevel = if (builtin.mode == .debug) .debug else .info,
+    level: LogLevel = if (builtin.mode == .Debug) .debug else .info,
     target: LogTarget = .stderr,
     colored: bool = true,
     show_timestamp: bool = true,
     show_module: bool = true,
-    show_source: bool = builtin.mode == .debug,
+    show_source: bool = builtin.mode == .Debug,
     file_path: ?[]const u8 = null,
     callback: ?*const fn (LogLevel, []const u8, []const u8) void = null,
 };

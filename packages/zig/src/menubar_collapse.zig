@@ -204,7 +204,7 @@ const Widening = struct {
         const moved = self.origin - (markerOriginX(item) orelse self.origin);
         if (moved >= self.ask * ACCEPTED_FRACTION) {
             self.settled = true;
-            if (comptime builtin.mode == .debug)
+            if (comptime builtin.mode == .Debug)
                 std.debug.print("[Menubar] Settled — moved {d}pt of {d}pt\n", .{ moved, self.ask });
             return true;
         }
@@ -292,7 +292,7 @@ pub fn earlyInit() void {
     if (builtin.target.os.tag != .macos) return;
     if (early_initialized) return;
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] earlyInit — registering click target...\n", .{});
 
     if (!class_registered) {
@@ -323,7 +323,7 @@ pub fn earlyInit() void {
 
     early_initialized = true;
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] earlyInit done\n", .{});
 }
 
@@ -355,7 +355,7 @@ pub fn init() void {
     is_initialized = true;
     is_collapsed = false;
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] Ready — separator created\n", .{});
 }
 
@@ -385,14 +385,14 @@ pub fn collapse() void {
         return;
     }
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] collapsing: boundary={d} tray={d}\n", .{ boundary, trayOriginX() });
     collapse_widening.begin(separator_item);
 
     is_collapsed = true;
     auto_collapse_timer_active = false;
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] Collapsed\n", .{});
     notifyJS();
 }
@@ -416,7 +416,7 @@ pub fn expand() void {
         auto_collapse_timer_active = true;
     }
 
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] Expanded\n", .{});
     notifyJS();
 }
@@ -652,7 +652,7 @@ fn notifyJS() void {
 }
 
 fn toggleClicked(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
-    if (comptime builtin.mode == .debug)
+    if (comptime builtin.mode == .Debug)
         std.debug.print("[Menubar] Toggle clicked\n", .{});
 
     const NSApp = msgSend0(getClass("NSApplication"), "sharedApplication");

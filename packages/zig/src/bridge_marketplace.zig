@@ -63,7 +63,7 @@ pub const MarketplaceBridge = struct {
             }
         }
 
-        if (comptime builtin.mode == .debug) {
+        if (comptime builtin.mode == .Debug) {
             if (self.pantry_path != null) {
                 std.debug.print("[MarketplaceBridge] Found pantry at: {s}\n", .{self.pantry_path.?});
             } else {
@@ -193,7 +193,7 @@ pub const MarketplaceBridge = struct {
         const query = parsed.value.query;
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] search: {s}\n", .{query});
 
         if (self.pantry_path == null) {
@@ -251,7 +251,7 @@ pub const MarketplaceBridge = struct {
             return;
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] install: {s}@{s}\n", .{ name, version });
 
         if (self.pantry_path == null) {
@@ -315,7 +315,7 @@ pub const MarketplaceBridge = struct {
             return;
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] uninstall: {s}\n", .{name});
 
         if (self.pantry_path == null) {
@@ -360,7 +360,7 @@ pub const MarketplaceBridge = struct {
         const name = parsed.value.name;
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] update: {s}\n", .{if (name.len > 0) name else "all"});
 
         if (self.pantry_path == null) {
@@ -406,7 +406,7 @@ pub const MarketplaceBridge = struct {
         defer parsed.deinit();
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] list\n", .{});
 
         if (self.pantry_path == null) {
@@ -459,7 +459,7 @@ pub const MarketplaceBridge = struct {
             return;
         }
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] info: {s}\n", .{name});
 
         if (self.pantry_path == null) {
@@ -502,7 +502,7 @@ pub const MarketplaceBridge = struct {
         defer parsed.deinit();
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] login\n", .{});
 
         if (self.pantry_path == null) {
@@ -543,7 +543,7 @@ pub const MarketplaceBridge = struct {
         defer parsed.deinit();
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] logout\n", .{});
 
         if (self.pantry_path == null) {
@@ -588,7 +588,7 @@ pub const MarketplaceBridge = struct {
         const path = parsed.value.path;
         const callback_id = parsed.value.callbackId;
 
-        if (comptime builtin.mode == .debug)
+        if (comptime builtin.mode == .Debug)
             std.debug.print("[MarketplaceBridge] publish: {s}\n", .{path});
 
         if (self.pantry_path == null) {

@@ -62,7 +62,7 @@ pub fn install() void {
     installed = true;
     _ = capabilities.registerEmitter(.theme);
 
-    if (comptime builtin.mode == .debug) {
+    if (comptime builtin.mode == .Debug) {
         std.debug.print("[Theme] Installed NSAppearance observer\n", .{});
     }
 }
