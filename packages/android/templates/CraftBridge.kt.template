@@ -1519,6 +1519,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun authenticate(reason: String) {
+        // The prompt and its Java callback live in CraftNative; every result
+        // comes back through Zig, which settles the existing page promise.
+        if (CraftNative.authenticate(activity, reason)) return
+
         if (activity !is FragmentActivity) {
             activity.runOnUiThread {
                 webView.evaluateJavascript(

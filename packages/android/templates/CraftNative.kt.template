@@ -9,6 +9,9 @@ import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.FusedLocationProviderClient
 import android.location.Location
 import android.annotation.SuppressLint
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.fragment.app.FragmentActivity
 import android.hardware.SensorManager
 import android.hardware.SensorEventListener
 import android.hardware.SensorEvent
@@ -130,6 +133,9 @@ object CraftNative {
     private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
     private external fun nativeOpenCamera(activity: Activity): Boolean
     private external fun nativePickImage(activity: Activity): Boolean
+    private external fun nativeBiometricSucceeded()
+    private external fun nativeBiometricError(message: String)
+    private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
     private external fun nativeGetNetworkStatus(activity: Activity): String?
     private external fun nativeSecureSet(prefs: SharedPreferences, key: String, value: String): Boolean
     private external fun nativeSecureGet(prefs: SharedPreferences, key: String): String?
@@ -308,6 +314,61 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativePickImage(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    // ==================== Biometric authentication ====================
+    //
+    // AuthenticationCallback is an abstract Java class and the prompt must be
+    // presented on the main thread. Those two Java-shaped pieces stay here;
+    // the decision and both promise payloads are Zig's.
+
+    @JvmStatic
+    fun showBiometricPrompt(activity: Activity, reason: String) {
+        activity.runOnUiThread {
+            val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Authenticate")
+                .setSubtitle(reason)
+                .setNegativeButtonText("Cancel")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .build()
+
+            val prompt = BiometricPrompt(
+                activity as FragmentActivity,
+                ContextCompat.getMainExecutor(activity),
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        try {
+                            nativeBiometricSucceeded()
+                        } catch (e: UnsatisfiedLinkError) {
+                            // The library went away while the prompt was open.
+                        }
+                    }
+
+                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        try {
+                            nativeBiometricError(errString.toString())
+                        } catch (e: UnsatisfiedLinkError) {
+                        }
+                    }
+
+                    override fun onAuthenticationFailed() {
+                        // Do not reject: the prompt remains open for a retry.
+                    }
+                }
+            )
+            prompt.authenticate(promptInfo)
+        }
+    }
+
+    fun authenticate(activity: Activity, reason: String): Boolean {
+        if (!isAvailable) return false
+        return try {
+            // Kotlin can observe this type without a reflective class lookup;
+            // Zig owns what the unsupported case means to the page.
+            nativeAuthenticate(activity, reason, activity is FragmentActivity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

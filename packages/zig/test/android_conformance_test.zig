@@ -44,6 +44,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_clipboard.zig"),
     @embedFile("src/bridge_android_intents.zig"),
     @embedFile("src/bridge_android_imagepicker.zig"),
+    @embedFile("src/bridge_android_biometric.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -99,8 +100,9 @@ const zig_sources = [_][]const u8{
 /// pair; 52 with the motion pair, once org.json agreed to print the floats;
 /// 51 with getCurrentPosition, which needed the same and two Java interfaces;
 /// 49 with the camera and gallery launch pair, whose existing result handler
-/// remains the one place that decodes Activity results.
-const max_not_yet_migrated: usize = 49;
+/// remains the one place that decodes Activity results; 48 with authenticate,
+/// whose abstract callback and main-thread presentation stay in the holder.
+const max_not_yet_migrated: usize = 48;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
