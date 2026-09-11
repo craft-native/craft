@@ -3263,6 +3263,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun pickContact(multiple: Boolean) {
+        // `multiple` is ignored by both implementations: Android still opens
+        // the platform's single-contact ACTION_PICK surface.
+        if (CraftNative.pickContact(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_PICK_CONTACT)

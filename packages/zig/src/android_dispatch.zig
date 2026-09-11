@@ -342,6 +342,11 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeAddContact),
     },
+    .{
+        .name = "nativePickContact",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativePickContact),
+    },
     // The broadcast action is passed across rather than built here: it is a
     // compile-time constant in the generated app, and deriving it from the
     // runtime package name would silently stop matching under an
@@ -1413,6 +1418,23 @@ fn nativeAddContact(
     return jni.JNI_TRUE;
 }
 
+/// `nativePickContact(activity)`.
+///
+/// True means the permission request or picker launch was queued. As in the
+/// shim, neither path settles the promise: the Activity result is not routed
+/// to `handleContactPickerResult` by the generated `MainActivity`.
+fn nativePickContact(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    contacts.pickContact(Jni.init(env), activity) catch |err| {
+        std.log.warn("craft: pickContact fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
 /// `nativeUpdateWidget(activity, action, dataJson)`.
 fn nativeUpdateWidget(
     env: jni.JNIEnv,
@@ -2476,7 +2498,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 66), natives.len);
+    try testing.expectEqual(@as(usize, 67), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

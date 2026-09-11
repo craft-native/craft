@@ -103,8 +103,9 @@ const zig_sources = [_][]const u8{
 /// remains the one place that decodes Activity results; 48 with authenticate,
 /// whose abstract callback and main-thread presentation stay in the holder;
 /// 46 with the file and video launch pair, whose results the template already
-/// drops after the external Activity returns.
-const max_not_yet_migrated: usize = 46;
+/// drops after the external Activity returns; 45 with the single-contact
+/// picker, whose existing result decoder is likewise never reached.
+const max_not_yet_migrated: usize = 45;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

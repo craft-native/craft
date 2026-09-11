@@ -157,6 +157,7 @@ object CraftNative {
     private external fun nativeRemoveSharedItem(activity: Activity, key: String, group: String): Boolean
     private external fun nativeGetContacts(activity: Activity): Boolean
     private external fun nativeAddContact(activity: Activity, contactJson: String): Boolean
+    private external fun nativePickContact(activity: Activity): Boolean
     private external fun nativeUpdateWidget(activity: Activity, action: String, dataJson: String): Boolean
     private external fun nativeReloadWidgets(activity: Activity, action: String): Boolean
     private external fun nativeSetShortcuts(activity: Activity, shortcutsJson: String): Boolean
@@ -652,6 +653,16 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeAddContact(activity, contactJson)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Launches the single-contact picker on the main looper. */
+    fun pickContact(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativePickContact(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

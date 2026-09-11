@@ -50,6 +50,8 @@ pub const Task = union(enum) {
     set_requested_orientation: i32,
     /// `activity.window.addFlags(flags)` or `clearFlags(flags)`.
     set_window_flags: struct { flags: i32, add: bool },
+    /// Open Android's single-contact `ACTION_PICK` surface with this request code.
+    launch_contact_picker: i32,
 };
 
 const slot_count = 32;
@@ -163,7 +165,42 @@ pub fn run(j: Jni, activity: jobject, token: u64) void {
     switch (task) {
         .set_requested_orientation => |mode| setRequestedOrientation(j, activity, mode) catch {},
         .set_window_flags => |request| setWindowFlags(j, activity, request.flags, request.add) catch {},
+        .launch_contact_picker => |request_code| launchContactPicker(j, activity, request_code) catch {},
     }
+}
+
+/// `Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI)`, then
+/// `activity.startActivityForResult(intent, REQUEST_PICK_CONTACT)`.
+fn launchContactPicker(j: Jni, activity: jobject, request_code: i32) !void {
+    try j.pushLocalFrame(16);
+    defer _ = j.popLocalFrame(null);
+
+    const intent_cls = try j.findClass("android/content/Intent");
+    const action = try j.staticObjectField(
+        intent_cls,
+        try j.staticFieldId(intent_cls, "ACTION_PICK", "Ljava/lang/String;"),
+    );
+
+    const contacts_cls = try j.findClass("android/provider/ContactsContract$Contacts");
+    const uri = try j.staticObjectField(
+        contacts_cls,
+        try j.staticFieldId(contacts_cls, "CONTENT_URI", "Landroid/net/Uri;"),
+    );
+
+    const intent = try j.newObjectA(
+        intent_cls,
+        try j.methodId(intent_cls, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V"),
+        &.{ .{ .l = action }, .{ .l = uri } },
+    );
+    try j.callVoidMethodA(
+        activity,
+        try j.methodId(
+            try j.objectClass(activity),
+            "startActivityForResult",
+            "(Landroid/content/Intent;I)V",
+        ),
+        &.{ .{ .l = intent }, .{ .i = request_code } },
+    );
 }
 
 /// Which `Window` method a request names.
@@ -293,6 +330,14 @@ test "a window-flag task carries both halves of the request" {
     const claimed = claim(token).?;
     try testing.expectEqual(@as(i32, 128), claimed.set_window_flags.flags);
     try testing.expect(claimed.set_window_flags.add);
+}
+
+test "the contact picker carries its request code onto the main thread" {
+    clearTable();
+
+    const token = try reserve(.{ .launch_contact_picker = 1010 });
+    const claimed = claim(token).?;
+    try testing.expectEqual(@as(i32, 1010), claimed.launch_contact_picker);
 }
 
 test "adding and clearing name different Window methods" {
