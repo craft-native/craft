@@ -50,6 +50,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_audio.zig"),
     @embedFile("src/bridge_android_deeplink.zig"),
     @embedFile("src/bridge_android_screenshot.zig"),
+    @embedFile("src/bridge_android_billing.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -118,8 +119,9 @@ const zig_sources = [_][]const u8{
 /// holder while permission policy, errors and the encoded result move to Zig;
 /// 39 with getInitialURL and its setter/dispatch state moving as one unit; 38
 /// with takeScreenshot, whose main-thread capture returns PNG bytes for Zig to
-/// encode and settle.
-const max_not_yet_migrated: usize = 38;
+/// encode and settle; 36 with the billing pair and its shared client moving
+/// together, including restore's pending-without-a-client quirk.
+const max_not_yet_migrated: usize = 36;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

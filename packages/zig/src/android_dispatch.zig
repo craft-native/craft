@@ -48,6 +48,7 @@ const speech = @import("bridge_android_speech.zig");
 const audio = @import("bridge_android_audio.zig");
 const deeplink = @import("bridge_android_deeplink.zig");
 const screenshot = @import("bridge_android_screenshot.zig");
+const billing = @import("bridge_android_billing.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -302,6 +303,12 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeScreenshotReady", .signature = "([B)V", .fnPtr = @ptrCast(&nativeScreenshotReady) },
     .{ .name = "nativeScreenshotError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeScreenshotError) },
     .{ .name = "nativeTakeScreenshot", .signature = "(Landroid/app/Activity;Landroid/webkit/WebView;)Z", .fnPtr = @ptrCast(&nativeTakeScreenshot) },
+    .{ .name = "nativeProductsReady", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeProductsReady) },
+    .{ .name = "nativeProductsError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeProductsError) },
+    .{ .name = "nativeRestoreReady", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeRestoreReady) },
+    .{ .name = "nativeRestoreError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeRestoreError) },
+    .{ .name = "nativeGetProducts", .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeGetProducts) },
+    .{ .name = "nativeRestorePurchases", .signature = "()Z", .fnPtr = @ptrCast(&nativeRestorePurchases) },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -1143,6 +1150,64 @@ fn nativeTakeScreenshot(
         j.staticMethodId(holder, "captureScreenshot", "(Landroid/app/Activity;Landroid/webkit/WebView;)V") catch
             return jni.JNI_FALSE,
         &.{ .{ .l = activity }, .{ .l = web_view } },
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn settleRawString(env: jni.JNIEnv, global: []const u8, value: jni.jstring) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const text = j.stringToUtf8(arena.allocator(), value) catch return;
+    events.settle(arena.allocator(), global, text) catch {};
+}
+
+fn settleBillingError(env: jni.JNIEnv, global: []const u8, value: jni.jstring) void {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const text = j.stringToUtf8(allocator, value) catch return;
+    const payload = billing.errorPayload(allocator, text) catch return;
+    events.settle(allocator, global, payload) catch {};
+}
+
+fn nativeProductsReady(env: jni.JNIEnv, _: jni.jobject, json: jni.jstring) callconv(.c) void {
+    settleRawString(env, billing.products_resolve_global, json);
+}
+fn nativeProductsError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
+    settleBillingError(env, billing.products_reject_global, message);
+}
+fn nativeRestoreReady(env: jni.JNIEnv, _: jni.jobject, json: jni.jstring) callconv(.c) void {
+    settleRawString(env, billing.restore_resolve_global, json);
+}
+fn nativeRestoreError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
+    settleBillingError(env, billing.restore_reject_global, message);
+}
+
+fn nativeGetProducts(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+    ids_json: jni.jstring,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "queryProducts", "(Landroid/app/Activity;Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        &.{ .{ .l = activity }, .{ .l = ids_json } },
+    ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeRestorePurchases(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    j.callStaticVoidMethodA(
+        holder,
+        j.staticMethodId(holder, "queryRestoredPurchases", "()V") catch return jni.JNI_FALSE,
+        &.{},
     ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -2871,7 +2936,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 88), natives.len);
+    try testing.expectEqual(@as(usize, 94), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

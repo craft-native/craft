@@ -21,6 +21,7 @@ import java.io.File
 import android.graphics.Bitmap
 import android.webkit.WebView
 import java.io.ByteArrayOutputStream
+import com.android.billingclient.api.*
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.fragment.app.FragmentActivity
@@ -169,6 +170,12 @@ object CraftNative {
     private external fun nativeScreenshotReady(bytes: ByteArray)
     private external fun nativeScreenshotError(message: String)
     private external fun nativeTakeScreenshot(activity: Activity, webView: WebView): Boolean
+    private external fun nativeProductsReady(productsJson: String)
+    private external fun nativeProductsError(message: String)
+    private external fun nativeRestoreReady(purchasesJson: String)
+    private external fun nativeRestoreError(message: String)
+    private external fun nativeGetProducts(activity: Activity, productIdsJson: String): Boolean
+    private external fun nativeRestorePurchases(): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -618,6 +625,92 @@ object CraftNative {
     fun takeScreenshot(activity: Activity, webView: WebView): Boolean {
         if (!isAvailable) return false
         return try { nativeTakeScreenshot(activity, webView) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    // ==================== Play Billing ====================
+
+    private var billingClient: BillingClient? = null
+
+    @JvmStatic
+    fun queryProducts(activity: Activity, productIdsJson: String) {
+        try {
+            val productIds = org.json.JSONArray(productIdsJson)
+            val productList = mutableListOf<String>()
+            for (i in 0 until productIds.length()) productList.add(productIds.getString(i))
+
+            billingClient = BillingClient.newBuilder(activity)
+                .setListener { _, _ -> }
+                .enablePendingPurchases()
+                .build()
+
+            billingClient?.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        val params = QueryProductDetailsParams.newBuilder()
+                            .setProductList(productList.map { productId ->
+                                QueryProductDetailsParams.Product.newBuilder()
+                                    .setProductId(productId)
+                                    .setProductType(BillingClient.ProductType.INAPP)
+                                    .build()
+                            })
+                            .build()
+
+                        billingClient?.queryProductDetailsAsync(params) { result, detailsList ->
+                            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                                val products = org.json.JSONArray()
+                                detailsList.forEach { details ->
+                                    products.put(JSONObject().apply {
+                                        put("id", details.productId)
+                                        put("displayName", details.name)
+                                        put("description", details.description)
+                                        put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
+                                    })
+                                }
+                                nativeProductsReady(products.toString())
+                            } else {
+                                nativeProductsError("Query failed")
+                            }
+                        }
+                    }
+                }
+
+                override fun onBillingServiceDisconnected() {
+                    nativeProductsError("Billing disconnected")
+                }
+            })
+        } catch (e: Exception) {
+            nativeProductsError(e.message ?: "null")
+        }
+    }
+
+    @JvmStatic
+    fun queryRestoredPurchases() {
+        billingClient?.queryPurchasesAsync(
+            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
+        ) { result, purchases ->
+            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                val restored = org.json.JSONArray()
+                purchases.forEach { purchase ->
+                    restored.put(JSONObject().apply {
+                        put("productId", purchase.products.firstOrNull())
+                        put("orderId", purchase.orderId)
+                    })
+                }
+                nativeRestoreReady(restored.toString())
+            } else {
+                nativeRestoreError("Restore failed")
+            }
+        }
+    }
+
+    fun getProducts(activity: Activity, productIdsJson: String): Boolean {
+        if (!isAvailable) return false
+        return try { nativeGetProducts(activity, productIdsJson) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun restorePurchases(): Boolean {
+        if (!isAvailable) return false
+        return try { nativeRestorePurchases() } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== Biometric authentication ====================

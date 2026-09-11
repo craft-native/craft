@@ -2544,6 +2544,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun getProducts(productIdsJson: String) {
+        if (CraftNative.getProducts(activity, productIdsJson)) return
+
         try {
             val productIds = JSONArray(productIdsJson)
             val productList = mutableListOf<String>()
@@ -2614,6 +2616,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun restorePurchases() {
+        if (CraftNative.restorePurchases()) return
+
         billingClient?.queryPurchasesAsync(
             QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
         ) { result, purchases ->
