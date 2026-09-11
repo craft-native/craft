@@ -2708,6 +2708,9 @@ class CraftBridge(
 
     @JavascriptInterface
     fun pickFile(typesJson: String) {
+        // `typesJson` is ignored below too: this picker always asks for */*.
+        if (CraftNative.pickFile(activity)) return
+
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
             type = "*/*"
@@ -2872,6 +2875,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startVideoRecording() {
+        if (CraftNative.startVideoRecording(activity)) return
+
         val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
             putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
         }

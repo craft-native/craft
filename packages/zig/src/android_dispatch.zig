@@ -210,6 +210,16 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativePickImage),
     },
+    .{
+        .name = "nativePickFile",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativePickFile),
+    },
+    .{
+        .name = "nativeStartVideoRecording",
+        .signature = "(Landroid/app/Activity;)Z",
+        .fnPtr = @ptrCast(&nativeStartVideoRecording),
+    },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -728,6 +738,32 @@ fn nativePickImage(
     const j = Jni.init(env);
     imagepicker.pickImage(j, activity) catch |err| {
         std.log.warn("craft: pickImage fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativePickFile(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    imagepicker.pickFile(j, activity) catch |err| {
+        std.log.warn("craft: pickFile fell through to the shim ({s})", .{@errorName(err)});
+        return jni.JNI_FALSE;
+    };
+    return jni.JNI_TRUE;
+}
+
+fn nativeStartVideoRecording(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    imagepicker.startVideoRecording(j, activity) catch |err| {
+        std.log.warn("craft: startVideoRecording fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
@@ -2440,7 +2476,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 64), natives.len);
+    try testing.expectEqual(@as(usize, 66), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

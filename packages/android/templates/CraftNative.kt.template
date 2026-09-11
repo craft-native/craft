@@ -133,6 +133,8 @@ object CraftNative {
     private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
     private external fun nativeOpenCamera(activity: Activity): Boolean
     private external fun nativePickImage(activity: Activity): Boolean
+    private external fun nativePickFile(activity: Activity): Boolean
+    private external fun nativeStartVideoRecording(activity: Activity): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -314,6 +316,24 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativePickImage(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun pickFile(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativePickFile(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    fun startVideoRecording(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeStartVideoRecording(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }

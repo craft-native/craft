@@ -101,8 +101,10 @@ const zig_sources = [_][]const u8{
 /// 51 with getCurrentPosition, which needed the same and two Java interfaces;
 /// 49 with the camera and gallery launch pair, whose existing result handler
 /// remains the one place that decodes Activity results; 48 with authenticate,
-/// whose abstract callback and main-thread presentation stay in the holder.
-const max_not_yet_migrated: usize = 48;
+/// whose abstract callback and main-thread presentation stay in the holder;
+/// 46 with the file and video launch pair, whose results the template already
+/// drops after the external Activity returns.
+const max_not_yet_migrated: usize = 46;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
