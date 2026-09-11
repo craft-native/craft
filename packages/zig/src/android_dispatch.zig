@@ -46,6 +46,7 @@ const biometric = @import("bridge_android_biometric.zig");
 const review = @import("bridge_android_review.zig");
 const speech = @import("bridge_android_speech.zig");
 const audio = @import("bridge_android_audio.zig");
+const deeplink = @import("bridge_android_deeplink.zig");
 const network = @import("bridge_android_network.zig");
 const appstate = @import("bridge_android_appstate.zig");
 const bluetooth = @import("bridge_android_bluetooth.zig");
@@ -293,6 +294,10 @@ const natives = [_]jni.JNINativeMethod{
         .signature = "(Landroid/app/Activity;)Z",
         .fnPtr = @ptrCast(&nativeStopAudioRecording),
     },
+    .{ .name = "nativeResetDeepLinks", .signature = "()Z", .fnPtr = @ptrCast(&nativeResetDeepLinks) },
+    .{ .name = "nativeSetInitialURL", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeSetInitialURL) },
+    .{ .name = "nativeGetInitialURL", .signature = "()Z", .fnPtr = @ptrCast(&nativeGetInitialURL) },
+    .{ .name = "nativeDispatchDeepLink", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeDispatchDeepLink) },
     // The callback object is Kotlin's; these two are its outcomes, and the
     // third starts the prompt or rejects an unsupported Activity.
     .{
@@ -1058,6 +1063,46 @@ fn nativeStopAudioRecording(
         j.staticMethodId(holder, "endAudioRecording", "()V") catch return jni.JNI_FALSE,
         &.{},
     ) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeResetDeepLinks(_: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolean {
+    deeplink.reset();
+    return jni.JNI_TRUE;
+}
+
+fn nativeSetInitialURL(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) callconv(.c) jni.jboolean {
+    if (url == null) {
+        deeplink.set(null) catch return jni.JNI_FALSE;
+        return jni.JNI_TRUE;
+    }
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const text = Jni.init(env).stringToUtf8(arena.allocator(), url) catch return jni.JNI_FALSE;
+    deeplink.set(text) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeGetInitialURL(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const url = deeplink.snapshot(allocator) catch return jni.JNI_FALSE;
+    const result = if (url) |text| deeplink.payload(j, allocator, text) catch return jni.JNI_FALSE else "null";
+    events.settle(allocator, deeplink.resolve_global, result) catch return jni.JNI_FALSE;
+    return jni.JNI_TRUE;
+}
+
+fn nativeDispatchDeepLink(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) callconv(.c) jni.jboolean {
+    const j = Jni.init(env);
+    var arena = std.heap.ArenaAllocator.init(backing);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const text = j.stringToUtf8(allocator, url) catch return jni.JNI_FALSE;
+    deeplink.rememberFirst(text) catch return jni.JNI_FALSE;
+    const detail = deeplink.payload(j, allocator, text) catch return jni.JNI_FALSE;
+    events.emitEvent(allocator, deeplink.event_name, detail) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
 
@@ -2785,7 +2830,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 81), natives.len);
+    try testing.expectEqual(@as(usize, 85), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

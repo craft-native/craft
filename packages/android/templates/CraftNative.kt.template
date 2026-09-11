@@ -159,6 +159,10 @@ object CraftNative {
     private external fun nativeAudioStopError(message: String)
     private external fun nativeStartAudioRecording(activity: Activity): Boolean
     private external fun nativeStopAudioRecording(activity: Activity): Boolean
+    private external fun nativeResetDeepLinks(): Boolean
+    private external fun nativeSetInitialURL(url: String?): Boolean
+    private external fun nativeGetInitialURL(): Boolean
+    private external fun nativeDispatchDeepLink(url: String): Boolean
     private external fun nativeBiometricSucceeded()
     private external fun nativeBiometricError(message: String)
     private external fun nativeAuthenticate(activity: Activity, reason: String, supported: Boolean): Boolean
@@ -564,6 +568,26 @@ object CraftNative {
         } catch (e: UnsatisfiedLinkError) {
             false
         }
+    }
+
+    fun resetDeepLinks(): Boolean {
+        if (!isAvailable) return false
+        return try { nativeResetDeepLinks() } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun setInitialURL(url: String?): Boolean {
+        if (!isAvailable) return false
+        return try { nativeSetInitialURL(url) } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun getInitialURL(): Boolean {
+        if (!isAvailable) return false
+        return try { nativeGetInitialURL() } catch (e: UnsatisfiedLinkError) { false }
+    }
+
+    fun dispatchDeepLink(url: String): Boolean {
+        if (!isAvailable) return false
+        return try { nativeDispatchDeepLink(url) } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== Biometric authentication ====================

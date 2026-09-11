@@ -104,6 +104,7 @@ class CraftBridge(
     private val webView: WebView,
     private val healthConnect: CraftHealthConnect
 ) {
+    private var nativeDeepLinks = CraftNative.resetDeepLinks()
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(activity)
@@ -4003,11 +4004,14 @@ class CraftBridge(
     private var initialURL: String? = null
 
     fun setInitialURL(url: String?) {
+        if (nativeDeepLinks && CraftNative.setInitialURL(url)) return
         initialURL = url
     }
 
     @JavascriptInterface
     fun getInitialURL() {
+        if (nativeDeepLinks && CraftNative.getInitialURL()) return
+
         activity.runOnUiThread {
             if (initialURL != null) {
                 val uri = Uri.parse(initialURL)
@@ -4038,6 +4042,8 @@ class CraftBridge(
     }
 
     fun dispatchDeepLink(url: String) {
+        if (nativeDeepLinks && CraftNative.dispatchDeepLink(url)) return
+
         // Store as initial URL if this is the first one
         if (initialURL == null) {
             initialURL = url
