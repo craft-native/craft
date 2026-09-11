@@ -43,6 +43,7 @@ const zig_sources = [_][]const u8{
     @embedFile("src/bridge_android_system.zig"),
     @embedFile("src/bridge_android_clipboard.zig"),
     @embedFile("src/bridge_android_intents.zig"),
+    @embedFile("src/bridge_android_imagepicker.zig"),
     @embedFile("src/bridge_android_network.zig"),
     @embedFile("src/bridge_android_securestore.zig"),
     @embedFile("src/bridge_android_haptics.zig"),
@@ -96,8 +97,10 @@ const zig_sources = [_][]const u8{
 /// Zig's; 56 with the app-state trio, the first migration where the state
 /// itself moved rather than being worked around; 54 with the Bluetooth scan
 /// pair; 52 with the motion pair, once org.json agreed to print the floats;
-/// 51 with getCurrentPosition, which needed the same and two Java interfaces.
-const max_not_yet_migrated: usize = 51;
+/// 51 with getCurrentPosition, which needed the same and two Java interfaces;
+/// 49 with the camera and gallery launch pair, whose existing result handler
+/// remains the one place that decodes Activity results.
+const max_not_yet_migrated: usize = 49;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///

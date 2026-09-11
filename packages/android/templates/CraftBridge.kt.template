@@ -1454,6 +1454,10 @@ class CraftBridge(
 
     @JavascriptInterface
     fun openCamera() {
+        // The Activity result still returns to handleImageResult below; Zig
+        // only launches it, using the same request code that routes it here.
+        if (CraftNative.openCamera(activity)) return
+
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), 101)
@@ -1466,6 +1470,8 @@ class CraftBridge(
 
     @JavascriptInterface
     fun pickImage() {
+        if (CraftNative.pickImage(activity)) return
+
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
         activity.startActivityForResult(intent, REQUEST_GALLERY)
     }

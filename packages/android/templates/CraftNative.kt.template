@@ -128,6 +128,8 @@ object CraftNative {
     private external fun nativeClipboardWrite(activity: Activity, text: String): Boolean
     private external fun nativeOpenUrl(activity: Activity, url: String): Boolean
     private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
+    private external fun nativeOpenCamera(activity: Activity): Boolean
+    private external fun nativePickImage(activity: Activity): Boolean
     private external fun nativeGetNetworkStatus(activity: Activity): String?
     private external fun nativeSecureSet(prefs: SharedPreferences, key: String, value: String): Boolean
     private external fun nativeSecureGet(prefs: SharedPreferences, key: String): String?
@@ -286,6 +288,26 @@ object CraftNative {
         if (!isAvailable) return false
         return try {
             nativeShare(activity, text, title)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Launch the camera; its result is still decoded by CraftBridge. */
+    fun openCamera(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativeOpenCamera(activity)
+        } catch (e: UnsatisfiedLinkError) {
+            false
+        }
+    }
+
+    /** Launch the system image picker; CraftBridge owns the result callback. */
+    fun pickImage(activity: Activity): Boolean {
+        if (!isAvailable) return false
+        return try {
+            nativePickImage(activity)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
