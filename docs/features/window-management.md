@@ -484,6 +484,9 @@ event subscriptions; opening the same ID afterwards creates a fresh native
 page behind the same stable SDK handle. The unnamed primary window cannot be
 force-destroyed through this API.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
+See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
+implemented routing guarantees, application-level event sinks and remaining
+cross-platform work.
 
 ## Multi-Monitor
 

@@ -336,6 +336,10 @@ uses the macOS host. `close()` retains that page for a later reopen, while
 window is not destroyable through this API. Modal and parent-window
 relationships are not supported.
 
+The [multi-window ownership contract](architecture/multi-window-ownership.md)
+tracks which state is window-scoped, which events intentionally target the
+primary page and what remains before the feature is cross-platform.
+
 ### Window Lifecycle Events
 
 ```typescript
