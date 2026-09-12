@@ -252,7 +252,7 @@ export class Window {
   }
 
   private _setupEventListeners(): void {
-    if (typeof window !== 'undefined') {
+    if (typeof globalThis.window !== 'undefined') {
       const eventTypes: WindowEventType[] = [
         'show', 'hide', 'focus', 'blur', 'minimize', 'maximize',
         'unmaximize', 'restore', 'resize', 'move', 'close', 'closed',
@@ -273,7 +273,7 @@ export class Window {
   }
 
   private _cleanupEventListeners(): void {
-    if (typeof window !== 'undefined') {
+    if (typeof globalThis.window !== 'undefined') {
       for (const { type, handler } of this._domListeners) {
         globalThis.window.removeEventListener(type, handler)
       }
