@@ -306,6 +306,25 @@ describe('Craft Android builder', () => {
     expect(authPersistence).not.toContain('private var authSessionExpiry')
   })
 
+  it('rejects calendar-provider failures instead of hanging the promise', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-calendar-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('fun getCalendarEvents(')
+    const end = bridge.indexOf('fun createCalendarEvent(', start)
+    const getEvents = bridge.slice(start, end)
+    const tryStart = getEvents.indexOf('try {')
+    const queryStart = getEvents.indexOf('activity.contentResolver.query(')
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(tryStart).toBeGreaterThan(-1)
+    expect(queryStart).toBeGreaterThan(tryStart)
+    expect(getEvents.match(/catch \(e: Exception\)/g)?.length).toBe(1)
+    expect(getEvents).toContain('window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

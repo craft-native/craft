@@ -2367,45 +2367,54 @@ class CraftBridge(
             return
         }
 
-        val events = JSONArray()
-        val startTime = if (startDateMs > 0) startDateMs else System.currentTimeMillis()
-        val endTime = if (endDateMs > 0) endDateMs else startTime + (30L * 24 * 60 * 60 * 1000) // 30 days
+        try {
+            val events = JSONArray()
+            val startTime = if (startDateMs > 0) startDateMs else System.currentTimeMillis()
+            val endTime = if (endDateMs > 0) endDateMs else startTime + (30L * 24 * 60 * 60 * 1000) // 30 days
 
-        val projection = arrayOf(
-            CalendarContract.Events._ID,
-            CalendarContract.Events.TITLE,
-            CalendarContract.Events.DESCRIPTION,
-            CalendarContract.Events.DTSTART,
-            CalendarContract.Events.DTEND,
-            CalendarContract.Events.EVENT_LOCATION,
-            CalendarContract.Events.ALL_DAY
-        )
+            val projection = arrayOf(
+                CalendarContract.Events._ID,
+                CalendarContract.Events.TITLE,
+                CalendarContract.Events.DESCRIPTION,
+                CalendarContract.Events.DTSTART,
+                CalendarContract.Events.DTEND,
+                CalendarContract.Events.EVENT_LOCATION,
+                CalendarContract.Events.ALL_DAY
+            )
 
-        val selection = "(${CalendarContract.Events.DTSTART} >= ?) AND (${CalendarContract.Events.DTSTART} <= ?)"
-        val selectionArgs = arrayOf(startTime.toString(), endTime.toString())
+            val selection = "(${CalendarContract.Events.DTSTART} >= ?) AND (${CalendarContract.Events.DTSTART} <= ?)"
+            val selectionArgs = arrayOf(startTime.toString(), endTime.toString())
 
-        val cursor = activity.contentResolver.query(
-            CalendarContract.Events.CONTENT_URI,
-            projection, selection, selectionArgs, CalendarContract.Events.DTSTART + " ASC"
-        )
+            val cursor = activity.contentResolver.query(
+                CalendarContract.Events.CONTENT_URI,
+                projection, selection, selectionArgs, CalendarContract.Events.DTSTART + " ASC"
+            )
 
-        cursor?.use {
-            while (it.moveToNext()) {
-                val event = JSONObject().apply {
-                    put("id", it.getString(0))
-                    put("title", it.getString(1) ?: "")
-                    put("notes", it.getString(2) ?: "")
-                    put("startDate", it.getLong(3))
-                    put("endDate", it.getLong(4))
-                    put("location", it.getString(5) ?: "")
-                    put("isAllDay", it.getInt(6) == 1)
+            cursor?.use {
+                while (it.moveToNext()) {
+                    val event = JSONObject().apply {
+                        put("id", it.getString(0))
+                        put("title", it.getString(1) ?: "")
+                        put("notes", it.getString(2) ?: "")
+                        put("startDate", it.getLong(3))
+                        put("endDate", it.getLong(4))
+                        put("location", it.getString(5) ?: "")
+                        put("isAllDay", it.getInt(6) == 1)
+                    }
+                    events.put(event)
                 }
-                events.put(event)
             }
-        }
 
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftCalendarResolve && window._craftCalendarResolve($events)", null)
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window._craftCalendarResolve && window._craftCalendarResolve($events)", null)
+            }
+        } catch (e: Exception) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})",
+                    null
+                )
+            }
         }
     }
 
