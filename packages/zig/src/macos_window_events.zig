@@ -165,7 +165,10 @@ export fn windowWillClose(_: objc.id, _: objc.SEL, notification: objc.id) callco
 /// been closed, and told the dashboard nothing at all.
 fn fire(notification: objc.id, name: []const u8, detail_json: []const u8) void {
     const window = macos.msgSend0(notification, "object");
-    const webview = macos.webViewForWindow(window) orelse macos.getGlobalWebView() orelse return;
+    // A notification whose window no longer owns a webview has nowhere valid
+    // to go. Falling back to the process-global page leaks that close/focus
+    // transition into an unrelated window, which is worse than dropping it.
+    const webview = macos.webViewForWindow(window) orelse return;
 
     var script: std.ArrayListUnmanaged(u8) = .empty;
     defer script.deinit(std.heap.c_allocator);

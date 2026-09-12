@@ -108,6 +108,8 @@ pub const WindowBridge = struct {
             try self.getOpacity(data);
         } else if (std.mem.eql(u8, action, "getState")) {
             try self.getState(data);
+        } else if (std.mem.eql(u8, action, "getFocused")) {
+            try self.getFocused();
         } else if (std.mem.eql(u8, action, "loadHTML")) {
             try self.loadHTML(data);
         } else if (std.mem.eql(u8, action, "loadURL")) {
@@ -672,6 +674,38 @@ pub const WindowBridge = struct {
             },
         );
         bridge_error.sendResultToJS(self.allocator, "getState", json);
+    }
+
+    fn getFocused(self: *Self) !void {
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "getFocused", "null");
+            return;
+        }
+
+        const macos = @import("macos.zig");
+        const app = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
+        const focused = macos.msgSend0(app, "keyWindow");
+        if (focused == null) {
+            bridge_error.sendResultToJS(self.allocator, "getFocused", "null");
+            return;
+        }
+
+        const handle = @intFromPtr(focused);
+        if (!window_registry.isKnown(handle)) {
+            bridge_error.sendResultToJS(self.allocator, "getFocused", "null");
+            return;
+        }
+
+        // Every page calls its own window `main`. A named result is only for a
+        // retained child handle in the caller's manager; exposing a raw ObjC
+        // pointer here would produce an id no JavaScript handle can resolve.
+        if (window_context.current()) |sender| {
+            if (sender == handle) return self.sendStringResult("getFocused", "main");
+        }
+        if (window_registry.nameOf(handle)) |name| {
+            return self.sendStringResult("getFocused", name);
+        }
+        bridge_error.sendResultToJS(self.allocator, "getFocused", "null");
     }
 
     fn reload(self: *Self, data: ?[]const u8) !void {

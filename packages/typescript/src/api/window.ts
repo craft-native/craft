@@ -816,6 +816,15 @@ class WindowManager {
    * Get focused window
    */
   async getFocused(): Promise<Window | null> {
+    if (isWebKitHost()) {
+      const injected = getInjectedWindowBridge()
+      if (!injected?._call) {
+        throw new Error('Craft window bridge is unavailable')
+      }
+      const id = await injected._call<string | null>('getFocused', undefined, 'main')
+      return id ? this._windows.get(id) || null : null
+    }
+
     const bridge = getBridge()
     const id = await bridge.request<void, string | null>('window.getFocused')
     return id ? this._windows.get(id) || null : null

@@ -489,7 +489,8 @@
         isResizable: 1,
         isMovable: 1,
         getOpacity: 1,
-        getState: 1
+        getState: 1,
+        getFocused: 1
       }
       return reads[name]
         ? _req('window', name, _stringify(payload))
@@ -504,6 +505,7 @@
     close:        function ()         { return _send('window', 'close') },
     center:       function ()         { return _send('window', 'center') },
     reload:       function ()         { return _send('window', 'reload') },
+    getFocused:   function ()         { return _req('window', 'getFocused') },
     loadHTML:     function (html)      { return _send('window', 'loadHTML', _stringify({ html: String(html) })) },
     loadURL:      function (url)       { return _send('window', 'loadURL', _stringify({ url: String(url) })) },
     toggleFullscreen: function ()     { return _send('window', 'toggleFullscreen') },

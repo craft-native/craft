@@ -1174,6 +1174,9 @@ pub fn build(b: *std.Build) void {
     window_lifecycle_tests.root_module.addAnonymousImport("src/macos.zig", .{
         .root_source_file = b.path("src/macos.zig"),
     });
+    window_lifecycle_tests.root_module.addAnonymousImport("src/macos_window_events.zig", .{
+        .root_source_file = b.path("src/macos_window_events.zig"),
+    });
 
     // The window registry itself, free of Objective-C so the whole lifecycle
     // is provable without AppKit.

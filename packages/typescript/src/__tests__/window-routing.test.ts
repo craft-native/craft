@@ -3,14 +3,17 @@ import { Window, windowManager } from '../api/window'
 
 describe('typed window-handle routing', () => {
   const previousWindow = globalThis.window
+  let callResult: unknown
   const call = mock(async (...args: [string, Record<string, unknown> | undefined, string]) => {
     void args
+    return callResult
   })
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
   const listeners = new Map<string, Set<EventListener>>()
 
   beforeEach(() => {
     call.mockClear()
+    callResult = undefined
     open.mockClear()
     listeners.clear()
     Object.defineProperty(globalThis, 'window', {
@@ -93,6 +96,15 @@ describe('typed window-handle routing', () => {
 
     expect(open).toHaveBeenCalledWith({ id, html: '<h1>Settings</h1>' })
     expect(created.id).toBe(id)
+  })
+
+  it('resolves the focused retained handle through the injected bridge', async () => {
+    const id = `focused-${Date.now()}`
+    const settings = await windowManager.create({ id, html: '<h1>Settings</h1>' })
+    callResult = id
+
+    expect(await windowManager.getFocused()).toBe(settings)
+    expect(call).toHaveBeenCalledWith('getFocused', undefined, 'main')
   })
 
   it('delivers direct native event data only to the matching local handle', () => {

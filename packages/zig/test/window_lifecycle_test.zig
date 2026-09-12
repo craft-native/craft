@@ -220,6 +220,15 @@ test "page-driven native surfaces use the sending webview" {
     try testing.expect(callsFunction(eval_body, "getMessageWebView()"));
 }
 
+test "window events never fall back to an unrelated global webview" {
+    const events_source = @embedFile("src/macos_window_events.zig");
+    const start = std.mem.indexOf(u8, events_source, "fn fire(") orelse
+        return error.WindowEventEmitterNotFound;
+    const body = enclosingFnBody(events_source, start);
+    try testing.expect(callsFunction(body, "webViewForWindow(window)"));
+    try testing.expect(std.mem.indexOf(u8, body, "getGlobalWebView") == null);
+}
+
 test "window-state selectors receive their required sender argument" {
     // These AppKit selectors end in `:` and therefore take one object
     // argument. Calling them through the zero-argument wrapper is undefined
