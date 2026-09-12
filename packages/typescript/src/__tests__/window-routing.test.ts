@@ -3,7 +3,9 @@ import { Window, windowManager } from '../api/window'
 
 describe('typed window-handle routing', () => {
   const previousWindow = globalThis.window
-  const call = mock(async () => undefined)
+  const call = mock(async (...args: [string, Record<string, unknown> | undefined, string]) => {
+    void args
+  })
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
   const listeners = new Map<string, Set<EventListener>>()
 
