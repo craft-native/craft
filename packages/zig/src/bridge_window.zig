@@ -194,7 +194,10 @@ pub const WindowBridge = struct {
     /// window — the bridge had no way of knowing who was asking.
     fn requireWindowHandle(self: *Self, data: ?[]const u8) BridgeError!*anyopaque {
         if (data) |json_data| {
-            if (json_utils.getString(json_data, "windowId")) |name| {
+            const decoded_name = json_utils.getStringDecoded(self.allocator, json_data, "windowId") catch
+                return BridgeError.InvalidParameter;
+            defer if (decoded_name) |name| self.allocator.free(name);
+            if (decoded_name) |name| {
                 // `main` means "the page this SDK instance is running in".
                 // Every page constructs its local WindowManager that way, so
                 // resolving it through the registry would incorrectly send a
@@ -221,7 +224,10 @@ pub const WindowBridge = struct {
     /// webview happened to initialise the process-global bridge first.
     fn requireWebViewHandle(self: *Self, data: ?[]const u8) BridgeError!*anyopaque {
         if (data) |json_data| {
-            if (json_utils.getString(json_data, "windowId")) |name| {
+            const decoded_name = json_utils.getStringDecoded(self.allocator, json_data, "windowId") catch
+                return BridgeError.InvalidParameter;
+            defer if (decoded_name) |name| self.allocator.free(name);
+            if (decoded_name) |name| {
                 if (!std.mem.eql(u8, name, "main")) {
                     const window = window_registry.byName(name) orelse
                         return BridgeError.InvalidParameter;
@@ -261,25 +267,54 @@ pub const WindowBridge = struct {
         const json_data = data orelse return BridgeError.MissingData;
 
         // `id` is what the TypeScript SDK calls it; `name` is what it is.
-        const name = json_utils.getString(json_data, "name") orelse
-            json_utils.getString(json_data, "id") orelse
-            return BridgeError.InvalidParameter;
+        const explicit_name = json_utils.getStringDecoded(self.allocator, json_data, "name") catch
+            return BridgeError.InvalidJSON;
+        defer if (explicit_name) |value| self.allocator.free(value);
+        const fallback_id = if (explicit_name == null)
+            json_utils.getStringDecoded(self.allocator, json_data, "id") catch
+                return BridgeError.InvalidJSON
+        else
+            null;
+        defer if (fallback_id) |value| self.allocator.free(value);
+        const name = explicit_name orelse fallback_id orelse return BridgeError.InvalidParameter;
         // Every page's local SDK handle is named `main`. Allowing a child to
         // claim that name opens a real native window, then makes the creator's
         // manager return its existing local-main wrapper for it. The new
         // window is therefore unreachable. Keep the alias out of the named
         // registry even for callers that bypass the TypeScript facade.
-        if (std.mem.eql(u8, name, "main") or name.len > window_registry.max_name)
+        if (std.mem.eql(u8, name, "main") or
+            name.len > window_registry.max_name or
+            std.mem.indexOfScalar(u8, name, 0) != null)
             return BridgeError.InvalidParameter;
 
-        const url = json_utils.getString(json_data, "url");
-        const html = json_utils.getString(json_data, "html");
+        const url = json_utils.getStringDecoded(self.allocator, json_data, "url") catch
+            return BridgeError.InvalidJSON;
+        defer if (url) |value| self.allocator.free(value);
+        const html = json_utils.getStringDecoded(self.allocator, json_data, "html") catch
+            return BridgeError.InvalidJSON;
+        defer if (html) |value| self.allocator.free(value);
         if (url == null and html == null) return BridgeError.InvalidParameter;
+
+        const title = json_utils.getStringDecoded(self.allocator, json_data, "title") catch
+            return BridgeError.InvalidJSON;
+        defer if (title) |value| self.allocator.free(value);
+
+        // These values cross APIs that take NUL-terminated UTF-8. Refuse an
+        // embedded NUL rather than silently creating a different URL, title or
+        // document than the page requested.
+        for ([_]?[]const u8{ url, html, title }) |value| {
+            if (value) |text| if (std.mem.indexOfScalar(u8, text, 0) != null)
+                return BridgeError.InvalidParameter;
+        }
+
+        const background_color_text = json_utils.getStringDecoded(self.allocator, json_data, "backgroundColor") catch
+            return BridgeError.InvalidJSON;
+        defer if (background_color_text) |value| self.allocator.free(value);
 
         // Parse before creating anything. Returning an error after AppKit has
         // already opened the window would leave a live, named window behind
         // even though the caller's `createWindow` promise rejected.
-        const background_color: ?color_parse.Rgba = if (json_utils.getString(json_data, "backgroundColor")) |text|
+        const background_color: ?color_parse.Rgba = if (background_color_text) |text|
             color_parse.parse(text) orelse return BridgeError.InvalidParameter
         else
             null;
@@ -325,7 +360,7 @@ pub const WindowBridge = struct {
 
         const window = macos.openNamedWindow(.{
             .name = name,
-            .title = json_utils.getString(json_data, "title") orelse name,
+            .title = title orelse name,
             .url = url,
             .html = html,
             .width = json_utils.getInt(u32, json_data, "width") orelse 800,
@@ -1465,6 +1500,21 @@ test "a named window handle overrides the sending window" {
     );
 }
 
+test "named handle lookup compares decoded ids" {
+    const testing = std.testing;
+    window_registry.resetForTesting();
+    defer window_registry.resetForTesting();
+
+    try testing.expect(window_registry.rememberNamed(0x3000, "settings\"panel"));
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    try testing.expectEqual(
+        @as(usize, 0x3000),
+        @intFromPtr(try bridge.requireWindowHandle("{\"windowId\":\"settings\\\"panel\"}")),
+    );
+}
+
 test "the local main alias still means the sending window" {
     const testing = std.testing;
     window_context.resetForTesting();
@@ -1569,5 +1619,16 @@ test "the current-window alias cannot name a child window" {
     try testing.expectError(
         BridgeError.InvalidParameter,
         bridge.open("{\"name\":\"main\",\"html\":\"<p>orphan</p>\"}"),
+    );
+}
+
+test "a child name containing NUL is refused before native creation" {
+    const testing = std.testing;
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    try testing.expectError(
+        BridgeError.InvalidParameter,
+        bridge.open("{\"name\":\"settings\\u0000hidden\",\"html\":\"<p>orphan</p>\"}"),
     );
 }

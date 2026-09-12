@@ -28,7 +28,9 @@ The following state belongs to one native window and must never silently fall
 back to whichever window was created most recently:
 
 - `window_registry.zig` owns the stable name, native handle and creator-webview
-  relationship for every macOS window.
+  relationship for every macOS window. Names are decoded from JSON before
+  registration and lookup, so escaped identifiers compare and emit as the
+  same bytes the TypeScript handle owns.
 - `main` is reserved as each page's local-window alias and can never be used
   as a runtime-created window name; otherwise the creator would return its
   existing local wrapper for a different native window.

@@ -188,6 +188,29 @@ test "typed open allocates its reply before creating a native window" {
     try testing.expect(format_at < native_at);
 }
 
+test "typed window names are decoded before registry lookup and creation" {
+    const handle_start = std.mem.indexOf(u8, window_bridge_source, "fn requireWindowHandle(") orelse
+        return error.WindowHandleResolverNotFound;
+    const handle_end = std.mem.indexOfPos(u8, window_bridge_source, handle_start, "    /// The webview this action applies to.") orelse
+        return error.WindowHandleResolverEndNotFound;
+    const handle_body = window_bridge_source[handle_start..handle_end];
+    try testing.expect(callsFunction(handle_body, "getStringDecoded("));
+
+    const webview_start = std.mem.indexOf(u8, window_bridge_source, "fn requireWebViewHandle(") orelse
+        return error.WindowWebViewResolverNotFound;
+    const webview_end = std.mem.indexOfPos(u8, window_bridge_source, webview_start, "    /// Open a second window") orelse
+        return error.WindowWebViewResolverEndNotFound;
+    const webview_body = window_bridge_source[webview_start..webview_end];
+    try testing.expect(callsFunction(webview_body, "getStringDecoded("));
+
+    const open_start = std.mem.indexOf(u8, window_bridge_source, "fn open(self: *Self") orelse
+        return error.WindowOpenHandlerNotFound;
+    const open_end = std.mem.indexOfPos(u8, window_bridge_source, open_start, "    fn show(") orelse
+        return error.WindowShowHandlerNotFound;
+    const open_body = window_bridge_source[open_start..open_end];
+    try testing.expect(std.mem.count(u8, open_body, "getStringDecoded(") >= 6);
+}
+
 test "whether a window is craft's is recorded, never inferred from the window" {
     // The specific regression. `isCraftWindow` asked the window what its
     // content view was; three of craft's four window styles answer with a
