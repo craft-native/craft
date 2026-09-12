@@ -6,8 +6,9 @@
 //!
 //! The reverse has never been checked, and it is where the surface has drifted
 //! furthest. `craft.d.ts` declares `window.craft` as `CraftBridge`, an
-//! interface of 78 direct methods; 33 of them are not on the object iOS
-//! injects and 17 are on neither platform's. They type-check and throw
+//! interface of direct methods. Every one must be a callable property on both
+//! platform objects. Platform-only capabilities still expose the method and
+//! reject with a useful error, instead of failing at property lookup with a
 //! `TypeError`.
 //!
 //! ## What this is not claiming
@@ -20,32 +21,12 @@
 //! a missing capability. Worth stating because "unreachable" was the first
 //! reading and it was wrong.
 //!
-//! ## Ratchets rather than a table of reasons
-//!
-//! The unimplemented names get counts, not rows. A row here would have to
-//! carry a reason, and there is no honest reason to write for most of them:
-//! they are a backlog nobody has worked through, not a set of decisions —
-//! and `ios_conformance_test.zig` already records why demanding a reason for
-//! that state "would only invite an invented reason". The failure message
-//! names every offender, so the count losing detail costs nothing.
-
 const std = @import("std");
 const testing = std.testing;
 
 const ios_spec = @embedFile("CraftApp.swift");
 const android_spec = @embedFile("CraftBridge.kt");
 const sdk_types = @embedFile("craft.d.ts");
-
-/// How many `CraftBridge` methods iOS's injected object does not define.
-///
-/// A ratchet in the shape `max_not_yet_migrated` already uses: it may only go
-/// down. Adding a declaration without the method fails here, which is the
-/// conversation this constant exists to force.
-const max_absent_from_ios: usize = 33;
-
-/// The same, for methods on neither bridge. A subset of the above by
-/// construction, and the worse half: nothing an app runs on provides them.
-const max_absent_from_both: usize = 17;
 
 /// The `window.craft = { … }` object literal, brace-balanced.
 ///
@@ -71,31 +52,36 @@ fn craftObject(source: []const u8) ?[]const u8 {
     return null;
 }
 
-/// Is `name` defined as a function on this object, at any nesting depth?
+/// Is `name` defined as a direct function property on this object?
 ///
-/// Depth is deliberately ignored. `craft.d.ts` declares these as direct
-/// methods, so a namespaced implementation is still a mismatch with the type —
-/// but it is a *different* mismatch from nothing existing at all, and calling
-/// the second one "missing" while quietly passing the first would hide the
-/// worse case behind the milder one.
-fn definesMethod(object: []const u8, name: []const u8) bool {
-    var search: usize = 0;
-    while (std.mem.indexOfPos(u8, object, search, name)) |at| {
-        search = at + 1;
-
-        // A whole word, not a suffix: `stopScan` must not match `startScan`.
-        if (at > 0) {
-            const before = object[at - 1];
-            if (std.ascii.isAlphanumeric(before) or before == '_') continue;
+/// The indentation of `platform` identifies the outer object's property
+/// depth. This deliberately does not accept a same-named method buried in a
+/// namespace: `craft.health.getData` does not make `craft.getData` callable.
+fn definesDirectMethod(object: []const u8, name: []const u8) bool {
+    var property_indent: ?usize = null;
+    var lines = std.mem.splitScalar(u8, object, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (std.mem.startsWith(u8, trimmed, "platform:")) {
+            property_indent = line.len - trimmed.len;
+            break;
         }
+    }
 
-        var i = at + name.len;
-        while (i < object.len and (object[i] == ' ' or object[i] == '\n')) : (i += 1) {}
-        if (i >= object.len or object[i] != ':') continue;
+    const expected_indent = property_indent orelse return false;
+    lines = std.mem.splitScalar(u8, object, '\n');
+    while (lines.next()) |line| {
+        const body = std.mem.trimStart(u8, line, " \t");
+        if (line.len - body.len != expected_indent) continue;
+        if (!std.mem.startsWith(u8, body, name)) continue;
+
+        var i = name.len;
+        while (i < body.len and (body[i] == ' ' or body[i] == '\t')) : (i += 1) {}
+        if (i >= body.len or body[i] != ':') continue;
 
         i += 1;
-        while (i < object.len and (object[i] == ' ' or object[i] == '\n')) : (i += 1) {}
-        if (std.mem.startsWith(u8, object[i..], "function")) return true;
+        while (i < body.len and (body[i] == ' ' or body[i] == '\t')) : (i += 1) {}
+        if (std.mem.startsWith(u8, body[i..], "function")) return true;
     }
     return false;
 }
@@ -142,12 +128,14 @@ test "the surface scans find both objects and the interface" {
 
     // And the matcher works in both directions on a name each bridge really
     // does define — otherwise "absent everywhere" would be the vacuous answer.
-    try testing.expect(definesMethod(ios, "getDeviceInfo"));
-    try testing.expect(definesMethod(android, "getDeviceInfo"));
-    try testing.expect(!definesMethod(ios, "noSuchMethodAnywhere"));
+    try testing.expect(definesDirectMethod(ios, "getDeviceInfo"));
+    try testing.expect(definesDirectMethod(android, "getDeviceInfo"));
+    try testing.expect(!definesDirectMethod(ios, "getAll"));
+    try testing.expect(!definesDirectMethod(android, "getAll"));
+    try testing.expect(!definesDirectMethod(ios, "noSuchMethodAnywhere"));
 }
 
-test "every method craft.d.ts declares exists on the bridges that ship it" {
+test "every direct method craft.d.ts declares exists directly on both bridges" {
     // Not `.?` — a broken scan should fail this test with a name, not abort the
     // whole runner on an unwrap and take the other tests' output with it.
     const ios = craftObject(ios_spec) orelse return error.IosCraftObjectNotFound;
@@ -157,14 +145,16 @@ test "every method craft.d.ts declares exists on the bridges that ship it" {
     defer declared.deinit(testing.allocator);
 
     var absent_ios: usize = 0;
+    var absent_android: usize = 0;
     var absent_both: usize = 0;
 
     for (declared.items) |name| {
-        const on_ios = definesMethod(ios, name);
-        const on_android = definesMethod(android, name);
+        const on_ios = definesDirectMethod(ios, name);
+        const on_android = definesDirectMethod(android, name);
         if (on_ios and on_android) continue;
 
         if (!on_ios) absent_ios += 1;
+        if (!on_android) absent_android += 1;
         if (!on_ios and !on_android) {
             absent_both += 1;
             std.debug.print("  craft.{s}() is declared and exists on neither bridge\n", .{name});
@@ -175,21 +165,13 @@ test "every method craft.d.ts declares exists on the bridges that ship it" {
         }
     }
 
-    if (absent_ios > max_absent_from_ios or absent_both > max_absent_from_both) {
+    if (absent_ios != 0 or absent_android != 0) {
         std.debug.print(
-            "\n{d} declared methods are absent from iOS (allowed {d}), {d} from both (allowed {d}).\n" ++
+            "\n{d} declared methods are absent from iOS, {d} from Android, {d} from both.\n" ++
                 "  A method on `CraftBridge` is a promise that `window.craft.<name>` is callable.\n" ++
                 "  Either implement it on the bridge or stop declaring it.\n",
-            .{ absent_ios, max_absent_from_ios, absent_both, max_absent_from_both },
+            .{ absent_ios, absent_android, absent_both },
         );
         return error.DeclaredMethodMissingFromBridge;
-    }
-
-    // The ratchet is only a ratchet if it is tightened.
-    if (absent_ios < max_absent_from_ios or absent_both < max_absent_from_both) {
-        std.debug.print(
-            "note: {d} absent from iOS and {d} from both; the ratchets are {d}/{d} and can be lowered.\n",
-            .{ absent_ios, absent_both, max_absent_from_ios, max_absent_from_both },
-        );
     }
 }

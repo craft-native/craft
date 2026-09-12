@@ -649,6 +649,69 @@ class CraftBridge(
                     }
                 },
 
+                // Flat SDK compatibility methods. Delegate to the namespaced
+                // bridge where Android implements the capability, and reject
+                // explicitly for APIs that are intentionally iOS-only.
+                getContacts: function() {
+                    return window.craft.contacts.getAll();
+                },
+                addContact: function(contact) {
+                    return window.craft.contacts.add(contact);
+                },
+                getCalendarEvents: function(startDate, endDate) {
+                    return window.craft.calendar.getEvents(startDate, endDate);
+                },
+                createCalendarEvent: function(event) {
+                    return window.craft.calendar.createEvent(event);
+                },
+                deleteCalendarEvent: function(eventId) {
+                    return window.craft.calendar.deleteEvent(eventId);
+                },
+                scheduleNotification: function(notification) {
+                    return window.craft.notifications.schedule(notification);
+                },
+                cancelNotification: function(id) {
+                    return Promise.resolve(window.craft.notifications.cancel(id));
+                },
+                cancelAllNotifications: function() {
+                    return Promise.resolve(window.craft.notifications.cancelAll());
+                },
+                getPendingNotifications: function() {
+                    return Promise.reject(new Error('Pending notification queries are unavailable on Android'));
+                },
+                getProducts: function(productIds) {
+                    return window.craft.iap.getProducts(productIds);
+                },
+                purchase: function(productId) {
+                    return window.craft.iap.purchase(productId);
+                },
+                restorePurchases: function() {
+                    return window.craft.iap.restore();
+                },
+                signInWithApple: function() {
+                    return Promise.reject(new Error('Sign in with Apple is unavailable on Android'));
+                },
+                startBluetoothScan: function() {
+                    return window.craft.bluetooth.startScan();
+                },
+                stopBluetoothScan: function() {
+                    return Promise.resolve(window.craft.bluetooth.stopScan());
+                },
+                requestHealthAuthorization: function() {
+                    return Promise.reject(new Error('HealthKit is unavailable on Android'));
+                },
+                getHealthData: function() {
+                    return Promise.reject(new Error('HealthKit is unavailable on Android'));
+                },
+                requestFitnessAuthorization: function() {
+                    return window.craft.health.requestAuthorization([]);
+                },
+                getFitnessData: function(type, startDate, endDate) {
+                    var start = startDate instanceof Date ? startDate.getTime() : startDate;
+                    var end = endDate instanceof Date ? endDate.getTime() : endDate;
+                    return window.craft.health.getData(type, {startDate: start, endDate: end});
+                },
+
                 // Screen Capture
                 takeScreenshot: function() {
                     return new Promise(function(resolve, reject) {

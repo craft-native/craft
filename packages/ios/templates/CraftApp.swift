@@ -1782,6 +1782,114 @@ struct CraftWebView: UIViewRepresentable {
                     };
                 },
 
+                // Flat SDK compatibility methods. The native dispatcher already
+                // owns these actions; keep the public CraftBridge shape callable
+                // while the versioned API below provides the namespaced form.
+                scanNFC: function() {
+                    return this._invoke('scanNFC');
+                },
+                scanQRCode: function() {
+                    return this._invoke('scanQRCode');
+                },
+                takeScreenshot: function() {
+                    return this._invoke('takeScreenshot');
+                },
+                startAudioRecording: function() {
+                    return this._invoke('startAudioRecording');
+                },
+                stopAudioRecording: function() {
+                    return this._invoke('stopAudioRecording');
+                },
+                startVideoRecording: function() {
+                    return this._invoke('startVideoRecording');
+                },
+                pickFile: function(types) {
+                    return this._invoke('pickFile', {types: types || []});
+                },
+                downloadFile: function(url, filename) {
+                    return this._invoke('downloadFile', {url: url, filename: filename});
+                },
+                saveFile: function(data, filename, mimeType) {
+                    return this._invoke('saveFile', {data: data, filename: filename, mimeType: mimeType});
+                },
+                startMotionUpdates: function() {
+                    return this._invoke('startMotionUpdates');
+                },
+                stopMotionUpdates: function() {
+                    return this._invoke('stopMotionUpdates');
+                },
+                getCurrentPosition: function() {
+                    return this.geolocation.getCurrentPosition({});
+                },
+                watchPosition: function(callback) {
+                    return this.geolocation.watchPosition(callback);
+                },
+                clearWatch: function(watchId) {
+                    return this.geolocation.clearWatch(watchId);
+                },
+                getContacts: function() {
+                    return this._invoke('getContacts');
+                },
+                addContact: function(contact) {
+                    return this._invoke('addContact', {contact: contact});
+                },
+                getCalendarEvents: function(startDate, endDate) {
+                    return this._invoke('getCalendarEvents', {startDate: startDate, endDate: endDate});
+                },
+                createCalendarEvent: function(event) {
+                    return this._invoke('createCalendarEvent', {event: event});
+                },
+                deleteCalendarEvent: function(eventId) {
+                    return this._invoke('deleteCalendarEvent', {eventId: eventId});
+                },
+                scheduleNotification: function(notification) {
+                    return this._invoke('scheduleNotification', {notification: notification});
+                },
+                cancelNotification: function(id) {
+                    return this._invoke('cancelNotification', {id: id});
+                },
+                cancelAllNotifications: function() {
+                    return this._invoke('cancelAllNotifications');
+                },
+                getPendingNotifications: function() {
+                    return this._invoke('getPendingNotifications');
+                },
+                getProducts: function(productIds) {
+                    return this.iap.getProducts(productIds);
+                },
+                purchase: function(productId) {
+                    return this.iap.purchase(productId);
+                },
+                restorePurchases: function() {
+                    return this._invoke('restorePurchases');
+                },
+                signInWithApple: function() {
+                    return this._invoke('signInWithApple');
+                },
+                signInWithGoogle: function() {
+                    return Promise.reject(new Error('Google Sign-In is unavailable on iOS'));
+                },
+                startBluetoothScan: function() {
+                    return this._invoke('startBluetoothScan');
+                },
+                stopBluetoothScan: function() {
+                    return this._invoke('stopBluetoothScan');
+                },
+                requestHealthAuthorization: function(types) {
+                    return this._invoke('requestHealthAuthorization', {types: types || []});
+                },
+                getHealthData: function(type, startDate, endDate) {
+                    var start = startDate instanceof Date ? startDate.getTime() : startDate;
+                    var end = endDate instanceof Date ? endDate.getTime() : endDate;
+                    return this._invoke('getHealthData', {type: type, startDate: start, endDate: end});
+                },
+                requestFitnessAuthorization: function() {
+                    return Promise.reject(new Error('Android fitness APIs are unavailable on iOS'));
+                },
+                getFitnessData: function() {
+                    return Promise.reject(new Error('Android fitness APIs are unavailable on iOS'));
+                },
+
                 haptic: function(style) {
                     window.webkit.messageHandlers.craft.postMessage({action: 'haptic', style: style || 'medium'});
                 },
@@ -1938,7 +2046,14 @@ struct CraftWebView: UIViewRepresentable {
                     });
                 },
                 onNetworkChange: function(callback) {
-                    window.addEventListener('craftNetworkChange', function(e) { callback(e.detail); });
+                    this.offNetworkChange();
+                    this._networkChangeHandler = function(e) { callback(e.detail); };
+                    window.addEventListener('craftNetworkChange', this._networkChangeHandler);
+                },
+                offNetworkChange: function() {
+                    if (!this._networkChangeHandler) return;
+                    window.removeEventListener('craftNetworkChange', this._networkChangeHandler);
+                    this._networkChangeHandler = null;
                 },
 
                 // App review
@@ -1957,8 +2072,14 @@ struct CraftWebView: UIViewRepresentable {
                     var id = 'cb_' + (++this._callbackId);
                     window.webkit.messageHandlers.craft.postMessage({action: 'setFlashlight', enabled: enabled, callbackId: id});
                     return new Promise(function(resolve, reject) {
-                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                        self._callbacks[id] = {
+                            resolve: function(value) { self._flashlightEnabled = enabled; resolve(value); },
+                            reject: reject
+                        };
                     });
+                },
+                toggleFlashlight: function() {
+                    return this.setFlashlight(!this._flashlightEnabled);
                 },
 
                 // Vibrate
@@ -1984,6 +2105,18 @@ struct CraftWebView: UIViewRepresentable {
                     return new Promise(function(resolve, reject) {
                         self._callbacks[id] = {resolve: resolve, reject: reject};
                     });
+                },
+                onAppStateChange: function(callback) {
+                    this.offAppStateChange();
+                    this._appStateChangeHandler = function() {
+                        callback(document.visibilityState === 'visible' ? 'active' : 'background');
+                    };
+                    document.addEventListener('visibilitychange', this._appStateChangeHandler);
+                },
+                offAppStateChange: function() {
+                    if (!this._appStateChangeHandler) return;
+                    document.removeEventListener('visibilitychange', this._appStateChangeHandler);
+                    this._appStateChangeHandler = null;
                 },
 
                 // Contacts
