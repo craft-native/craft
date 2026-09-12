@@ -277,6 +277,22 @@ describe('Craft Android builder', () => {
     expect(bridge).not.toContain('locationCallback = object : LocationCallback()')
   })
 
+  it('settles location calls when Play Services is unavailable or silent', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-location-failure-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const appSource = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(appSource, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const native = readFileSync(join(appSource, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    expect(bridge).toContain('GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)')
+    expect(native).toContain('GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)')
+    expect(bridge).toContain("message: 'Google Play Services is unavailable'")
+    expect(bridge).toContain("message: 'Location request timed out; Google Play Services or a location provider may be unavailable'")
+    expect(bridge).toContain('}, 15000);')
+    expect(native).toContain('failLocation("Google Play Services is unavailable")')
+  })
+
   it('rejects background-task methods instead of fabricating success', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-background-tasks-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

@@ -49,6 +49,8 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.play.core.review.ReviewManagerFactory
 {{FIREBASE_IMPORT}}
 import android.content.ContentResolver
@@ -307,9 +309,35 @@ class CraftBridge(
                 // Geolocation
                 getCurrentPosition: function(options) {
                     return new Promise(function(resolve, reject) {
-                        window._craftLocationResolve = resolve;
-                        window._craftLocationReject = reject;
-                        CraftAndroid.getCurrentPosition(JSON.stringify(options || {}));
+                        var settled = false;
+                        var timeout = setTimeout(function() {
+                            if (settled) return;
+                            settled = true;
+                            window._craftLocationResolve = null;
+                            window._craftLocationReject = null;
+                            reject({code: 2, message: 'Location request timed out; Google Play Services or a location provider may be unavailable'});
+                        }, 15000);
+                        window._craftLocationResolve = function(value) {
+                            if (settled) return;
+                            settled = true;
+                            clearTimeout(timeout);
+                            window._craftLocationResolve = null;
+                            window._craftLocationReject = null;
+                            resolve(value);
+                        };
+                        window._craftLocationReject = function(error) {
+                            if (settled) return;
+                            settled = true;
+                            clearTimeout(timeout);
+                            window._craftLocationResolve = null;
+                            window._craftLocationReject = null;
+                            reject(error);
+                        };
+                        try {
+                            CraftAndroid.getCurrentPosition(JSON.stringify(options || {}));
+                        } catch (error) {
+                            window._craftLocationReject({code: 2, message: String(error && error.message || error)});
+                        }
                     });
                 },
                 watchPosition: function(callback, options) {
@@ -1997,6 +2025,16 @@ class CraftBridge(
             return
         }
 
+        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftLocationReject && window._craftLocationReject({code: 2, message: 'Google Play Services is unavailable'})",
+                    null
+                )
+            }
+            return
+        }
+
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(activity)
         fusedLocationClient?.lastLocation?.addOnSuccessListener { location: Location? ->
             if (location != null) {
@@ -2072,6 +2110,9 @@ class CraftBridge(
     fun watchPosition(optionsJson: String): Int {
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
+            return -1
+        }
+        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
             return -1
         }
 

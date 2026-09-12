@@ -7,6 +7,8 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.common.ConnectionResult
+import com.google.android.gms.common.GoogleApiAvailability
 import android.location.Location
 import android.annotation.SuppressLint
 import android.Manifest
@@ -1819,6 +1821,10 @@ object CraftNative {
     @JvmStatic
     @SuppressLint("MissingPermission")
     fun requestCurrentPosition(activity: Activity) {
+        if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
+            failLocation("Google Play Services is unavailable")
+            return
+        }
         val client = LocationServices.getFusedLocationProviderClient(activity)
         client.lastLocation
             .addOnSuccessListener { location: Location? ->
