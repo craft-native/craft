@@ -155,7 +155,7 @@ describe('typed window-handle routing', () => {
 
     await settings.close()
     expect(settings.isClosed).toBe(true)
-    expect(listeners.get('craft:window:resize')?.size ?? 0).toBe(0)
+    expect(listeners.get('craft:window:resize')?.size).toBe(1)
 
     const reopened = await windowManager.create({ id, html: '<h1>Settings</h1>' })
     expect(reopened).toBe(settings)
@@ -165,6 +165,22 @@ describe('typed window-handle routing', () => {
     const event = { detail: { windowId: id, width: 700, height: 500 } } as CustomEvent
     for (const listener of listeners.get('craft:window:resize') ?? []) listener(event)
     expect(onResize).toHaveBeenCalledWith({ windowId: id, width: 700, height: 500 })
+  })
+
+  it('keeps the current handle subscribed across a native reopen', async () => {
+    const current = new Window('main')
+    const onFocus = mock(() => {})
+    current.on('focus', onFocus)
+
+    await current.close()
+    expect(current.isClosed).toBe(true)
+    expect(listeners.get('craft:window:focus')?.size).toBe(1)
+
+    const event = { detail: { windowId: 'main' } } as CustomEvent
+    for (const listener of listeners.get('craft:window:focus') ?? []) listener(event)
+
+    expect(current.isClosed).toBe(false)
+    expect(onFocus).toHaveBeenCalledWith({ windowId: 'main' })
   })
 
   it('tracks native close and focus events on the local handle', () => {

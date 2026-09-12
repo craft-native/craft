@@ -57,10 +57,12 @@ back to whichever window was created most recently:
 - The local scroll monitor is installed once, but reads the event's `NSWindow`,
   advances only that window's accumulator and emits only to its webview.
 
-`close()` preserves these resources so the same page can reopen with its DOM
-and JavaScript state intact. `destroy()` removes the named registry entry,
-Native UI graph, gesture and material slots, recovery state, event ownership
-and retained AppKit objects before releasing the window.
+`close()` preserves these resources and the SDK's native-event subscriptions
+so the same page can reopen with its DOM and JavaScript state intact, including
+when the primary window is reopened by the Dock rather than `createWindow()`.
+`destroy()` removes the named registry entry, Native UI graph, gesture and
+material slots, recovery state, event ownership and retained AppKit objects
+before releasing the window and detaching the SDK's DOM listeners.
 
 ## Process-global services
 

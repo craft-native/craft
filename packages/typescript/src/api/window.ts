@@ -415,7 +415,6 @@ export class Window {
   async close(): Promise<void> {
     await this._call('close')
     this._closed = true
-    this._cleanupEventListeners()
   }
 
   /**
