@@ -4359,6 +4359,10 @@ const ChromeSlot = struct {
     window: usize = 0,
     published: ?window_chrome.State = null,
     observed: bool = false,
+    /// Block observers are retained by NSNotificationCenter until their token
+    /// is removed. Keep every token so close/destroy can give both the slot and
+    /// the Objective-C observer objects back instead of leaking five per open.
+    observer_tokens: [window_chrome_notifications.len]objc.id = @splat(null),
     /// Craft's own control row on this window, if it drew one.
     host_row: ?NSRect = null,
 };
@@ -4451,6 +4455,12 @@ fn forgetWindowChrome(window: objc.id) void {
 
     for (&chrome_slots) |*slot| {
         if (slot.window != handle) continue;
+        const center = msgSend0(getClass("NSNotificationCenter"), "defaultCenter");
+        if (center != null) {
+            for (slot.observer_tokens) |token| {
+                if (token != null) msgSendVoid1(center, "removeObserver:", token);
+            }
+        }
         slot.* = .{};
         return;
     }
@@ -4491,11 +4501,12 @@ pub fn observeWindowChrome(window: objc.id) void {
     const center = msgSend0(getClass("NSNotificationCenter"), "defaultCenter");
     if (center == null) return;
 
-    for (window_chrome_notifications) |name| {
-        // The returned token is what `removeObserver:` would take. Craft never
-        // stops watching a window it owns, and the centre keeps the token
-        // alive, so there is nothing to hold onto here.
-        _ = msgSend4(
+    for (window_chrome_notifications, 0..) |name, index| {
+        // Block observers are owned by the notification centre until this
+        // token is passed to `removeObserver:`. A retained window is observed
+        // again when reopened, so keeping the token is what makes repeated
+        // close/open cycles bounded rather than leaking five objects each.
+        slot.observer_tokens[index] = msgSend4(
             center,
             "addObserverForName:object:queue:usingBlock:",
             createNSString(name),
@@ -7193,6 +7204,11 @@ pub fn findNamedWindow(name: []const u8) ?objc.id {
 /// with its page still loaded, which is both faster and where the user left it.
 pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     if (findNamedWindow(spec.name)) |existing| {
+        // Close tears down block-based chrome observers. The native window and
+        // page are retained, so put those observers back before presenting it
+        // again; otherwise button geometry stops updating after the first
+        // close/reopen cycle.
+        observeWindowChrome(existing);
         showWindow(existing);
         return existing;
     }

@@ -383,6 +383,26 @@ test "a closed window survives long enough to be reopened" {
     try testing.expect(callsFunction(body, "rememberCraftWindow("));
 }
 
+test "retained window chrome observers are removed and reinstalled" {
+    const observe_start = std.mem.indexOf(u8, macos_source, "pub fn observeWindowChrome(") orelse
+        return error.WindowChromeObserverNotFound;
+    const observe_body = enclosingFnBody(macos_source, observe_start);
+    try testing.expect(std.mem.indexOf(u8, observe_body, "observer_tokens[index] = msgSend4(") != null);
+
+    const forget_start = std.mem.indexOf(u8, macos_source, "fn forgetWindowChrome(") orelse
+        return error.WindowChromeCleanupNotFound;
+    const forget_body = enclosingFnBody(macos_source, forget_start);
+    try testing.expect(callsFunction(forget_body, "removeObserver:"));
+
+    // `windowWillClose` clears the slot, but close is not destruction: named
+    // windows keep their DOM and can be shown again. Reopen must therefore
+    // reinstall what close deliberately removed.
+    const open_start = std.mem.indexOf(u8, macos_source, "pub fn openNamedWindow(") orelse
+        return error.NamedWindowOpenNotFound;
+    const open_body = enclosingFnBody(macos_source, open_start);
+    try testing.expect(callsFunction(open_body, "observeWindowChrome(existing)"));
+}
+
 test "the scan can actually find the constructors it claims to check" {
     // Guards the guard: every test above depends on `enclosingFnBody` locating
     // real function bodies. If the file's formatting changes such that it
