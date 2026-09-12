@@ -83,30 +83,20 @@
 //! Until then, "the native call failed" is what a cancel says, and saying so
 //! here is the point.
 //!
-//! **`config.enableContacts` is read directly now, and the plist proxy below
-//! is what is left over.** `ios_config.gateFor` maps this action to
+//! **`config.enableContacts` is read directly now.** `ios_config.gateFor` maps this action to
 //! `.contacts`, so `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED`
 //! before this module is asked. The paragraph here used to say the flag had no
 //! Zig mirror, which was true until `ios_config.zig` read
 //! `craft.config.json`.
 //!
-//! The `NSContactsUsageDescription` check further down was the stand-in for
-//! that flag — `packages/ios/src/index.ts:189` writes the key if and only if
-//! `config.enableContacts`, with none of the sharing that made the location
-//! keys ambiguous. It is now a second, weaker gate behind the real one, and it
-//! can only differ in the direction that refuses an action the config allows:
-//! an app whose Info.plist was not written by the SDK. Tracked in issue #131
-//! along with three more of the same shape.
-//!
-//! Two things about that gate have to be said plainly. First, the key is **not
-//! a precondition of the API**: `CNContactPickerViewController` runs out of
-//! process and needs no Contacts authorization, so this reads the key purely as
-//! *evidence of the flag*, never as something the framework requires. Second,
-//! the behaviour changes: Swift's `case "pickContact":` has **no `else`**, so an
+//! There is deliberately no Info.plist check here. `CNContactPickerViewController`
+//! runs out of process and needs no Contacts authorization, so a usage-description
+//! key would only be a weaker proxy for the config flag the dispatcher already
+//! reads. Swift's `case "pickContact":` has **no `else`**, so an
 //! app built with `enableContacts: false` answers the page with *nothing*, on a
 //! promise with no timeout — a hang for the life of the page. Here it is an
-//! explicit `PERMISSION_DENIED`. Everybody settles, which is strictly better,
-//! and it is a difference a page can observe.
+//! explicit `CAPABILITY_DISABLED` from the dispatcher. Everybody settles,
+//! which is strictly better, and it is a difference a page can observe.
 //!
 //! **No permission is requested, deliberately.** `pickContact` never touches
 //! `CNContactStore` and never calls `requestAccess(for:.contacts)`; only
@@ -261,8 +251,8 @@ pub const ContactPickerBridge = struct {
     ///
     /// Ordering is load-bearing in two places. The payload is parsed *first*, so
     /// a malformed body is reported the same on any platform and before any
-    /// framework is consulted. And every fallible step — the Info.plist gate,
-    /// both framework classes, every selector a delegate callback or the
+    /// framework is consulted. And every fallible step — both framework
+    /// classes, every selector a delegate callback or the
     /// swipe-down belt will need, the delegate class, the presenter, the
     /// predicate, the picker itself — runs **before** `ios_async.acquire`.
     /// Exactly one path leaves this function after the lease without presenting
@@ -275,8 +265,6 @@ pub const ContactPickerBridge = struct {
         const multiple = try parseMultiple(self.allocator, data);
 
         if (!is_darwin) return error.UnsupportedPlatform;
-
-        try requireContactsConfigured();
 
         // ContactsUI first, Contacts second, each guarded on its own: a process
         // that linked Contacts but not ContactsUI is a real configuration, and
@@ -589,10 +577,6 @@ fn shapeContacts(allocator: std.mem.Allocator, contacts: []const Contact) ![]u8 
 // look anything up.
 // =============================================================================
 
-/// The Info.plist key `packages/ios/src/index.ts:189` writes if and only if
-/// `config.enableContacts`.
-const key_contacts_usage = "NSContactsUsageDescription";
-
 /// `NSUTF8StringEncoding`. Used only to ask a string how long it really is, so
 /// a NUL-truncated read can be told from a short string.
 const ns_utf8_string_encoding: c_ulong = 4;
@@ -605,49 +589,6 @@ const cn_contact_formatter_style_full_name: c_long = 0;
 fn selector(name: [*:0]const u8) !Id {
     if (!is_darwin) return error.UnsupportedPlatform;
     return objc.sel_registerName(name) orelse error.SelectorNotFound;
-}
-
-/// The main bundle's Info.plist value for `key`, or null when it has none.
-///
-/// Errors rather than answering null when the runtime itself will not
-/// cooperate: "there is no NSBundle class" and "this app was not built with
-/// contacts enabled" are different facts, and collapsing them would blame the
-/// app's configuration for a broken process. Same shape as
-/// `bridge_mobile_location.zig`'s gate, which is private to that file.
-fn infoPlistValue(comptime key: [*:0]const u8) !Id {
-    if (!is_darwin) return error.UnsupportedPlatform;
-
-    const NSBundle = objc.objc_getClass("NSBundle") orelse return error.ClassNotFound;
-    const sel_main = objc.sel_registerName("mainBundle") orelse return error.SelectorNotFound;
-    const bundle = objc.msgSendId(NSBundle, sel_main) orelse return error.NoMainBundle;
-
-    const NSString = objc.objc_getClass("NSString") orelse return error.ClassNotFound;
-    const sel_string = objc.sel_registerName("stringWithUTF8String:") orelse
-        return error.SelectorNotFound;
-    const ns_key = objc.msgSendId1(NSString, sel_string, key) orelse return error.NativeCallFailed;
-
-    const sel_lookup = objc.sel_registerName("objectForInfoDictionaryKey:") orelse
-        return error.SelectorNotFound;
-    return objc.msgSendId1(bundle, sel_lookup, ns_key);
-}
-
-/// Refuse when the app was not built with `enableContacts`.
-///
-/// Checked first, matching Swift's `if config.enableContacts` guarding the whole
-/// case. The key is evidence of that flag and nothing more — see the module
-/// comment: `CNContactPickerViewController` needs no Contacts authorization, so
-/// this is not the framework's precondition being enforced.
-fn requireContactsConfigured() !void {
-    if (!is_darwin) return error.UnsupportedPlatform;
-
-    if ((try infoPlistValue(key_contacts_usage)) == null) {
-        std.log.warn(
-            "pickContact refused: Info.plist has no {s}, so this app was not built with " ++
-                "contacts enabled",
-            .{key_contacts_usage},
-        );
-        return bridge_error.BridgeError.PermissionDenied;
-    }
 }
 
 /// Everything a delegate callback needs, resolved while a synchronous error can
@@ -1370,6 +1311,12 @@ test "an action this module does not serve is refused as UnknownAction" {
 
 test "pickContact routes to its own handler" {
     try testing.expectEqual(Route.pick_contact, routeFor("pickContact").?);
+}
+
+test "pickContact has no Info.plist proxy for the dispatcher config gate" {
+    const source = @embedFile("bridge_mobile_contactpicker.zig");
+    const obsolete_proxy = "NSContacts" ++ "UsageDescription";
+    try testing.expect(std.mem.indexOf(u8, source, obsolete_proxy) == null);
 }
 
 // ---------------------------------------------------------------------------

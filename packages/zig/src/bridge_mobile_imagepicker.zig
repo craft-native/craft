@@ -72,7 +72,7 @@
 //! `contactPickerDidCancel` `:5102` both say `"Cancelled"`). It is recorded
 //! here rather than worked around.
 //!
-//! ## The config gate, and exactly what it stands in for
+//! ## The config gate and privacy crash guard
 //!
 //! Swift wraps both actions in `if config.enableCamera`, which defaults to
 //! **false** (`CraftApp.swift:192`, `packages/ios/src/index.ts:120`). When it
@@ -86,40 +86,23 @@
 //! in the present tense until then, and the next one said `enableCamera` had
 //! no Zig-reachable channel at all.
 //!
-//! The Info.plist keys `packages/ios/src/index.ts:185-186` writes are still
-//! read, for two different reasons:
+//! The camera Info.plist key `packages/ios/src/index.ts:185` writes is still
+//! read as a crash guard:
 //!
 //!  - **`NSCameraUsageDescription` is an extra gate on `openCamera` only, and
 //!    it is a crash guard rather than a config proxy.** Presenting a `.camera` picker in a
 //!    process without that key is a TCC termination, not an error anything
 //!    could be told about. It is written for
 //!    `enableCamera || enableVideoRecording || enableQRScanner || enableAR`.
-//!  - **`NSPhotoLibraryUsageDescription` stood in for `config.enableCamera`,
-//!    and it is over-broad by `enableVideoRecording`** — it is written for
-//!    `enableCamera || enableVideoRecording`, which was the closest proxy
-//!    available while the flag could not be read. It is now a second, weaker
-//!    gate behind the real one, and the only one of these proxies inexact even
-//!    in an SDK-generated app. Tracked in issue #131 with three more.
 //!
-//!    It is emphatically **not** a photo-library permission gate:
-//!    `UIImagePickerController` with `.photoLibrary` has run out-of-process
-//!    since iOS 11 and neither prompts nor requires the key. Refusing on it is
-//!    a statement about how the app was configured, never about what the
-//!    system would allow.
+//! `NSPhotoLibraryUsageDescription` is deliberately not read. It stood in for
+//! `config.enableCamera`, but `.photoLibrary` has run out-of-process since iOS
+//! 11 and neither prompts nor requires the key. The dispatcher now reads the
+//! real flag, so the proxy could only falsely refuse a config-enabled app.
 //!
-//! So `openCamera` requires *both* keys and `pickImage` requires only the
-//! photo-library one.
-//!
-//! Measured against the shim, that trades three ways. An `enableCamera: true`
-//! app behaves exactly as it does now. A default-config app gets an explicit
-//! `PERMISSION_DENIED` instead of a promise that never settles — strictly
-//! better. And exactly one configuration, `enableVideoRecording: true` with
-//! `enableCamera: false`, gains a capability Swift denies it; that one is a
-//! real widening, it runs in the direction the Info.plist already sanctions
-//! (the usage strings exist, so the user sees a prompt the app declared), and
-//! the cell it widens is otherwise an infinite hang. The alternative was to
-//! leave both actions out of `A` entirely and keep the hang, which is a trade
-//! rather than a free choice.
+//! A default-config app gets `CAPABILITY_DISABLED` from the dispatcher instead
+//! of a promise that never settles, while a config-enabled app reaches the
+//! framework regardless of how its plist was assembled.
 //!
 //! `.unavailable` was never on the table: a declared-`.unavailable` action
 //! dispatches and refuses, which would take the working `enableCamera: true`
@@ -263,7 +246,7 @@ pub const ImagePickerBridge = struct {
     /// `data` is accepted and ignored — see the module comment; neither JS
     /// surface sends a field and the Swift dispatcher reads none.
     ///
-    /// Every fallible step runs *before* `ios_async.acquire`: the config gate,
+    /// Every fallible step runs *before* `ios_async.acquire`: the privacy guard,
     /// the class, the camera-availability question, all five delegate
     /// selectors, both `dlsym`s, the delegate class and instance, the
     /// presenter, the picker itself and every selector used to present it.
@@ -279,10 +262,9 @@ pub const ImagePickerBridge = struct {
 
         const action = source.actionName();
 
-        // The config gate first. It is the only refusal that touches no UIKit
-        // at all, and on a host build it is what keeps everything below from
-        // running against a runtime that has no picker in it.
-        try requireConfigured(source);
+        // The privacy crash guard first. Only the camera source needs it;
+        // `.photoLibrary` has no plist precondition on supported iOS versions.
+        try requireUsageDescription(source);
 
         // A cheap refusal before any of the expensive work: a modal is on
         // screen, so nothing built here could be presented anyway. `publish`
@@ -543,8 +525,7 @@ fn finishAnswer(json: ?[]const u8) Answer {
 const cancel_answer: Answer = .reject;
 
 // =============================================================================
-// The config gate. See the module comment for what each key does and does not
-// stand for.
+// Privacy crash guard. The config gate lives in ios_config.zig.
 // =============================================================================
 
 /// Written by `packages/ios/src/index.ts:185` for
@@ -552,13 +533,7 @@ const cancel_answer: Answer = .reject;
 /// Required before a `.camera` picker may be presented at all.
 const key_camera_usage = "NSCameraUsageDescription";
 
-/// Written by `packages/ios/src/index.ts:186` for
-/// `enableCamera || enableVideoRecording`. Used here as the closest available
-/// proxy for `config.enableCamera` — **not** as a permission gate; a
-/// `.photoLibrary` picker needs no such key on iOS 11+.
-const key_photo_library_usage = "NSPhotoLibraryUsageDescription";
-
-fn requireConfigured(source: Source) !void {
+fn requireUsageDescription(source: Source) !void {
     if (!is_darwin) return error.UnsupportedPlatform;
 
     // Checked first, and only for the camera: this one is a crash guard, not a
@@ -570,15 +545,6 @@ fn requireConfigured(source: Source) !void {
             "openCamera refused: Info.plist has no {s}, and presenting a camera picker " ++
                 "without it terminates the process rather than failing",
             .{key_camera_usage},
-        );
-        return bridge_error.BridgeError.PermissionDenied;
-    }
-
-    if (!try infoPlistHas(key_photo_library_usage)) {
-        std.log.warn(
-            "{s} refused: Info.plist has no {s}, the closest available proxy for " ++
-                "config.enableCamera, so this app was not built with the camera enabled",
-            .{ source.actionName(), key_photo_library_usage },
         );
         return bridge_error.BridgeError.PermissionDenied;
     }
@@ -1058,11 +1024,10 @@ fn readPhoto(info: Id, work: Work, allocator: std.mem.Allocator) !Photo {
 // integral dimensions, the cancel-is-a-rejection decision, and the concurrency
 // policy that is the whole reason a modal needs state at all.
 //
-// Nothing here presents a picker or touches UIKit. On a macOS runner
-// `objc_getClass("UIImagePickerController")` is null and the test binary has no
-// Info.plist, so the config gate refuses first — which is what makes the file
-// safe to run. The Objective-C paths that *are* exercised for real are the ones
-// with no device behind them: selector resolution and delegate registration.
+// Nothing here presents a picker. The camera test stops at the privacy crash
+// guard, while the photo-library proxy is checked structurally without calling
+// UIKit. The Objective-C paths exercised for real are the ones with no device
+// behind them: selector resolution and delegate registration.
 // =============================================================================
 
 const testing = std.testing;
@@ -1490,80 +1455,57 @@ test "off Darwin the handler refuses rather than pretending to present" {
     for ([_][]const u8{ A.open_camera, A.pick_image }) |action| {
         try testing.expectError(error.UnsupportedPlatform, bridge.handleMessage(action, "{}"));
     }
-    try testing.expectError(error.UnsupportedPlatform, requireConfigured(.camera));
-    try testing.expectError(error.UnsupportedPlatform, requireConfigured(.photo_library));
+    try testing.expectError(error.UnsupportedPlatform, requireUsageDescription(.camera));
+    try testing.expectError(error.UnsupportedPlatform, requireUsageDescription(.photo_library));
     try testing.expectError(error.UnsupportedPlatform, Sels.resolve());
     try testing.expectError(error.UnsupportedPlatform, Work.resolve());
     try testing.expectError(error.UnsupportedPlatform, ensureDelegate());
 }
 
-test "without the usage descriptions the gate refuses before any picker exists" {
+test "the camera usage description guards only the camera source" {
     if (!is_darwin) return error.SkipZigTest;
 
-    // The host runner is a bare binary with no Info.plist, which is exactly the
-    // "this app was not built with the camera enabled" case the gate is for. It
-    // is also what keeps this file safe to run: everything past the gate would
-    // look for UIKit, and on a runner that had it, present a real picker.
-    if (requireConfigured(.photo_library)) |_| {
-        // A runner that does carry the key (tests hosted inside a real app)
-        // would take the live path below, so skip rather than present.
-        return error.SkipZigTest;
-    } else |err| switch (err) {
+    // The out-of-process photo-library picker has no usage-description
+    // precondition. The dispatcher already enforced enableCamera.
+    try requireUsageDescription(.photo_library);
+
+    // A bare test runner normally has no camera usage string. If this runner is
+    // hosted in a configured app, skip the live presentation path.
+    if (requireUsageDescription(.camera)) |_| return error.SkipZigTest else |err| switch (err) {
         bridge_error.BridgeError.PermissionDenied => {
             var bridge = ImagePickerBridge.init(testing.allocator);
             defer bridge.deinit();
-
-            for ([_][]const u8{ A.open_camera, A.pick_image }) |action| {
-                try testing.expectError(
-                    bridge_error.BridgeError.PermissionDenied,
-                    bridge.handleMessage(action, "{}"),
-                );
-            }
-
-            // The refusal happens before a slot is leased and before anything
-            // is published: an unreleased lease narrows the pool for every
-            // later call, and a published call with no picker behind it would
-            // refuse every request for the life of the process.
+            try testing.expectError(
+                bridge_error.BridgeError.PermissionDenied,
+                bridge.handleMessage(A.open_camera, "{}"),
+            );
             try testing.expect(takePending() == null);
             try testing.expect(busyWith() == null);
         },
         else => return err,
     }
+
+    const source = @embedFile("bridge_mobile_imagepicker.zig");
+    const guard_start = std.mem.indexOf(u8, source, "fn requireUsageDescription") orelse
+        return error.ConfigGuardNotFound;
+    const guard_end = std.mem.indexOfPos(u8, source, guard_start, "fn infoPlistHas") orelse
+        return error.ConfigGuardEndNotFound;
+    const obsolete_proxy = "NSPhotoLibrary" ++ "UsageDescription";
+    try testing.expect(std.mem.indexOf(u8, source[guard_start..guard_end], obsolete_proxy) == null);
 }
 
 test "the payload is ignored, not parsed" {
-    if (!is_darwin) return error.SkipZigTest;
-    // Real dispatches, so this needs the process the gate stops.
-    if (requireConfigured(.photo_library)) |_| return error.SkipZigTest else |_| {}
-
     // Both injected methods are declared `function()` and the Swift dispatcher
-    // reads nothing out of `body`, so a payload that is not even JSON must
-    // reach exactly the same outcome as `{}`. If it did not, this module would
-    // have invented a failure the shim does not have.
-    var bridge = ImagePickerBridge.init(testing.allocator);
-    defer bridge.deinit();
-
-    for ([_][]const u8{ A.open_camera, A.pick_image }) |action| {
-        const empty = bridge.handleMessage(action, "{}");
-        const junk = bridge.handleMessage(action, "{not json");
-        const missing = bridge.handleMessage(action, "");
-        // The options the SDK types but the page never sends.
-        const options = bridge.handleMessage(
-            action,
-            "{\"quality\":0.5,\"maxWidth\":1024,\"camera\":\"front\",\"allowsEditing\":true}",
-        );
-
-        try testing.expectEqual(empty, junk);
-        try testing.expectEqual(empty, missing);
-        try testing.expectEqual(empty, options);
-
-        if (empty) |_| {} else |err| {
-            try testing.expect(err != bridge_error.BridgeError.InvalidJSON);
-            try testing.expect(err != bridge_error.BridgeError.MissingData);
-        }
-    }
-
-    try testing.expect(takePending() == null);
+    // reads nothing out of `body`. Pin that `present` discards the value rather
+    // than parsing it, without risking presentation from a hosted test runner.
+    const source = @embedFile("bridge_mobile_imagepicker.zig");
+    const start = std.mem.indexOf(u8, source, "fn present(self:") orelse
+        return error.PresentHandlerNotFound;
+    const end = std.mem.indexOfPos(u8, source, start, "\n};") orelse
+        return error.PresentHandlerEndNotFound;
+    const body = source[start..end];
+    try testing.expect(std.mem.indexOf(u8, body, "_ = data;") != null);
+    try testing.expect(std.mem.indexOf(u8, body, "parseFromSlice") == null);
 }
 
 test "every selector the delegate needs resolves on a real runtime" {

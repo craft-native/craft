@@ -133,11 +133,9 @@
 //! merely evidence of a config flag.** `requestAccessToEntityType:` in a process
 //! whose Info.plist lacks the usage description raises
 //! `NSInternalInconsistencyException`, which from Zig is an uncatchable SIGABRT.
-//! So the gate runs **before** the store is ever touched. This is where the
+//! So the crash guard runs **before** the store is ever touched. This is where the
 //! wording deliberately differs from `bridge_mobile_contactpicker.zig`, whose
-//! `CNContactPickerViewController` genuinely needs no authorization. For
-//! `deleteCalendarEvent` — which requests nothing (3350) — the key is only
-//! evidence of `config.enableCalendar`, and it is checked for that reason.
+//! `CNContactPickerViewController` genuinely needs no authorization.
 //!
 //! **`config.enableCalendar` is read directly now.** `ios_config.gateFor` maps
 //! all three actions to `.calendar`, so `ios_dispatch.offerToModules` answers
@@ -145,11 +143,10 @@
 //! had no Zig mirror, which was true until `ios_config.zig` read
 //! `craft.config.json`.
 //!
-//! The plist key `packages/ios/src/index.ts:190` writes iff that flag was the
-//! stand-in, and on the one path where it is *only* evidence of the flag rather
-//! than a precondition of the API it is now redundant with the real gate.
-//! Tracked in issue #131; the paths where the key is a genuine precondition are
-//! separated below and stay.
+//! The plist check remains only on the two paths where it is a genuine API
+//! precondition. `deleteCalendarEvent` requests no access, so it relies solely
+//! on the real config gate and cannot falsely refuse a config-enabled app whose
+//! plist was assembled outside the SDK.
 //!
 //! **Behaviour changes on every disabled or malformed path, in Zig's favour.**
 //! Swift's three cases have no `else` (717-731): an app with
@@ -318,7 +315,7 @@ pub const CalendarBridge = struct {
 
         if (!is_darwin) return error.UnsupportedPlatform;
 
-        try requireCalendarConfigured(A.get_calendar_events);
+        try requireCalendarUsageDescription(A.get_calendar_events);
 
         const sels = try Sels.resolve(A.get_calendar_events);
         const store = try ensureStore(A.get_calendar_events);
@@ -354,7 +351,7 @@ pub const CalendarBridge = struct {
 
         if (!is_darwin) return error.UnsupportedPlatform;
 
-        try requireCalendarConfigured(A.create_calendar_event);
+        try requireCalendarUsageDescription(A.create_calendar_event);
 
         const sels = try Sels.resolve(A.create_calendar_event);
         const store = try ensureStore(A.create_calendar_event);
@@ -379,8 +376,6 @@ pub const CalendarBridge = struct {
         defer self.allocator.free(event_id);
 
         if (!is_darwin) return error.UnsupportedPlatform;
-
-        try requireCalendarConfigured(A.delete_calendar_event);
 
         const sels = try Sels.resolve(A.delete_calendar_event);
         const store = try ensureStore(A.delete_calendar_event);
@@ -898,24 +893,22 @@ fn infoPlistValue(comptime key: [*:0]const u8) !Id {
     return objc.msgSendId1(bundle, sel_lookup, ns_key);
 }
 
-/// Refuse when the app was not built with `enableCalendar`.
+/// Guard the two APIs that request calendar authorization.
 ///
-/// Checked first, matching Swift's `if config.enableCalendar` guarding all three
-/// cases, and — for the two actions that request access — checked **before** the
-/// store is touched, because `requestAccessToEntityType:` without this key raises
+/// Checked **before** the store is touched on the two actions that request
+/// access, because `requestAccessToEntityType:` without this key raises
 /// `NSInternalInconsistencyException`, which from Zig is an uncatchable SIGABRT.
 /// That is the difference from `bridge_mobile_contactpicker.zig`'s gate, which
 /// guards a picker needing no authorization at all: here the key is a genuine
 /// precondition of the API and not merely evidence of a config flag.
-/// `deleteCalendarEvent` requests nothing, so for that one action it *is* only
-/// evidence of the flag — which is why it is still checked.
-fn requireCalendarConfigured(action: []const u8) !void {
+/// `deleteCalendarEvent` requests nothing and deliberately does not call this.
+fn requireCalendarUsageDescription(action: []const u8) !void {
     if (!is_darwin) return error.UnsupportedPlatform;
 
     if ((try infoPlistValue(key_calendars_usage)) == null) {
         std.log.warn(
-            "{s} refused: Info.plist has no {s}, so this app was not built with calendar " ++
-                "enabled (and requesting access without it would terminate the process)",
+            "{s} refused: Info.plist has no {s}, and requesting calendar access without " ++
+                "it would terminate the process",
             .{ action, key_calendars_usage },
         );
         return bridge_error.BridgeError.PermissionDenied;
@@ -2364,13 +2357,19 @@ test "a process without the calendar usage description is refused before EventKi
         expected,
         bridge.handleMessage(A.create_calendar_event, "{\"event\":{\"title\":\"x\"}}"),
     );
-    // Delete is gated too. It requests no access, so for that one action the key
-    // is only evidence of `config.enableCalendar` — but the flag guards all three
-    // Swift cases, so it guards all three here.
-    try testing.expectError(
-        expected,
-        bridge.handleMessage(A.delete_calendar_event, "{\"eventId\":\"E1\"}"),
-    );
+
+    // Delete requests no access, so this privacy crash guard must not become a
+    // second config gate on that path.
+    const source = @embedFile("bridge_mobile_calendar.zig");
+    const delete_start = std.mem.indexOf(u8, source, "fn deleteCalendarEvent") orelse
+        return error.DeleteHandlerNotFound;
+    const delete_end = std.mem.indexOfPos(u8, source, delete_start, "// =============================================================================") orelse
+        return error.DeleteHandlerEndNotFound;
+    try testing.expect(std.mem.indexOf(
+        u8,
+        source[delete_start..delete_end],
+        "requireCalendarUsageDescription",
+    ) == null);
 }
 
 test "a malformed payload is refused before any platform or permission gate" {

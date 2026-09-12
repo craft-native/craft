@@ -73,7 +73,7 @@
 //! read off the Swift dispatcher and cross-checked against Android rather than
 //! off an injected JS method that was never written.
 //!
-//! ## The `enableMotionSensors` gate, and why the Info.plist stands in for it
+//! ## The `enableMotionSensors` gate
 //!
 //! `CraftApp.swift:859` is `if config.enableMotionSensors { … }` with **no
 //! `else`**, so on the Swift path with the flag off `startMotionUpdates`
@@ -83,34 +83,11 @@
 //! `ios_config.gateFor` maps `startMotionUpdates` to `.motion_sensors`, so
 //! `ios_dispatch.offerToModules` answers `CAPABILITY_DISABLED` before this
 //! module is asked. Until `ios_config.zig` read `craft.config.json` the flag
-//! had no mirror anywhere under `packages/zig/src`, and the paragraph below is
-//! what this module did about that.
+//! had no mirror anywhere under `packages/zig/src`.
 //!
-//! `NSMotionUsageDescription` is an *exact* proxy for it —
-//! `packages/ios/src/index.ts:192` writes that Info.plist key from
-//! `config.enableMotionSensors` and from nothing else, with no `||` (unlike the
-//! location keys, where `bridge_mobile_location.zig` had to document a residual
-//! gap). So `requireMotionConfigured` reads the key and refuses when it is
-//! absent — now a second, weaker gate behind the real one, which can only
-//! differ by refusing an action the config allows. Tracked in issue #131 with
-//! three more of the same shape. Two things it bought, and one it cost:
-//!
-//!  - a hang becomes a nameable refusal, which is strictly better than the
-//!    shim's silence;
-//!  - an app whose author switched motion off does not get motion because Zig
-//!    happens to own its own manager and could have ignored the flag.
-//!  - The cost is a vocabulary mismatch: Swift rejects with `CRAFT_ERROR` and
-//!    the message "Motion sensors not available", while `BridgeError` has no
-//!    such member. `PermissionDenied` -> `PERMISSION_DENIED` is what this says
-//!    for "the app was not built with motion enabled", and
-//!    `PlatformNotSupported` -> `PLATFORM_NOT_SUPPORTED` for "this device has
-//!    no device motion". Swift collapsed both into one message; splitting them
-//!    tells the page which of the two it is.
-//!
-//! Note that `NSMotionUsageDescription` is not itself required by
-//! `CMMotionManager` for device motion — it is CMPedometer and
-//! CMMotionActivityManager that need it. It is read here purely as evidence of
-//! the build-time flag, and that is the only claim made for it.
+//! No Info.plist proxy remains: `CMMotionManager` device motion does not require
+//! the motion usage-description key, and checking that key behind the real
+//! config gate could only falsely refuse a config-enabled app.
 //!
 //! ## `isDeviceMotionAvailable` is checked before anything starts
 //!
@@ -254,12 +231,6 @@ pub const default_interval_ms: f64 = 100;
 /// produces under `.fragmentsAllowed`. Not `{"ok":true}`.
 const reply_true = "true";
 
-/// Emitted into Info.plist by `packages/ios/src/index.ts:192` iff
-/// `config.enableMotionSensors`, which `ios_config.gateFor` now reads directly.
-/// See the module comment for what this proxy claims, what it does not, and why
-/// it is redundant with the real gate.
-const key_motion_usage = "NSMotionUsageDescription";
-
 /// Which handler an action selects, split out from `handleMessage` so the
 /// table-versus-dispatch agreement is assertable on a host without touching
 /// CoreMotion.
@@ -305,8 +276,6 @@ pub const MotionBridge = struct {
             return bridge_error.BridgeError.InvalidJSON;
         defer parsed.deinit();
         const seconds = try intervalSeconds(parsed.value);
-
-        try requireMotionConfigured();
 
         // Resolved here, not in the handler: the handler runs after this frame
         // is gone, where a `sel_registerName` failure could only be logged.
@@ -384,50 +353,6 @@ pub const MotionBridge = struct {
         bridge_error.sendResultToJS(self.allocator, A.stop_motion_updates, reply_true);
     }
 };
-
-// =============================================================================
-// The config gate.
-// =============================================================================
-
-/// Refuse unless the app was built with `enableMotionSensors`.
-///
-/// See the module comment for why the Info.plist key is an exact proxy for the
-/// flag and what that does and does not claim.
-fn requireMotionConfigured() !void {
-    if (!is_darwin) return error.UnsupportedPlatform;
-
-    if (try infoPlistHas(key_motion_usage)) return;
-
-    std.log.warn(
-        "startMotionUpdates refused: Info.plist has no {s}, so this app was not built with " ++
-            "motion sensors enabled",
-        .{key_motion_usage},
-    );
-    return bridge_error.BridgeError.PermissionDenied;
-}
-
-/// Whether the main bundle's Info.plist carries `key`.
-///
-/// Errors rather than answering `false` when the runtime itself will not
-/// cooperate: "there is no NSBundle class" and "this app did not ask for
-/// motion" are different facts, and collapsing them would blame the app's
-/// configuration for a broken process. Every runtime result is guarded.
-fn infoPlistHas(comptime key: [*:0]const u8) !bool {
-    if (!is_darwin) return error.UnsupportedPlatform;
-
-    const NSBundle = objc.objc_getClass("NSBundle") orelse return error.ClassNotFound;
-    const sel_main = objc.sel_registerName("mainBundle") orelse return error.SelectorNotFound;
-    const bundle = objc.msgSendId(NSBundle, sel_main) orelse return error.NoMainBundle;
-
-    const NSString = objc.objc_getClass("NSString") orelse return error.ClassNotFound;
-    const sel_string = objc.sel_registerName("stringWithUTF8String:") orelse
-        return error.SelectorNotFound;
-    const ns_key = objc.msgSendId1(NSString, sel_string, key) orelse return error.NativeCallFailed;
-
-    const sel_lookup = objc.sel_registerName("objectForInfoDictionaryKey:") orelse
-        return error.SelectorNotFound;
-    return objc.msgSendId1(bundle, sel_lookup, ns_key) != null;
-}
 
 // =============================================================================
 // The manager and the queue.
@@ -921,10 +846,9 @@ pub fn shapeDetail(allocator: std.mem.Allocator, sample: MotionSample) ![]u8 {
 // the interval's unit and default, non-finite refusal, and a float buffer big
 // enough for 1e300.
 //
-// Nothing here constructs the *module-level* `CMMotionManager`: on the host the
-// Info.plist gate refuses before `ensureManager` is reached, and `manager ==
-// null` is asserted rather than assumed, because "it would refuse" is a claim
-// and not an observation until it is.
+// Nothing here starts the *module-level* `CMMotionManager`: malformed starts
+// fail before `ensureManager`, and the availability test below allocates a
+// manager of its own.
 //
 // `objc_getClass("CMMotionManager")` is **not** null on this host, and nothing
 // in this file treats it as though it were — see the availability test below,
@@ -1053,27 +977,13 @@ test "off Darwin both actions refuse rather than pretend" {
     );
 }
 
-test "without the usage description the gate refuses before any manager exists" {
-    if (!is_darwin) return error.SkipZigTest;
-
-    // A test runner's main bundle has no NSMotionUsageDescription, which is
-    // exactly the shape of an app built with enableMotionSensors off. The
-    // refusal must be the config one, and it must happen before CoreMotion is
-    // touched — `manager` staying null is the observable half of that.
-    try testing.expect(!try infoPlistHas(key_motion_usage));
-    try testing.expectError(bridge_error.BridgeError.PermissionDenied, requireMotionConfigured());
-
-    var bridge = MotionBridge.init(testing.allocator);
-    defer bridge.deinit();
-    try testing.expectError(
-        bridge_error.BridgeError.PermissionDenied,
-        bridge.handleMessage(A.start_motion_updates, "{}"),
-    );
-    try testing.expect(manager == null);
-    try testing.expect(!isStreaming());
+test "motion has no Info.plist proxy for the dispatcher config gate" {
+    const source = @embedFile("bridge_mobile_motion.zig");
+    const obsolete_proxy = "NSMotion" ++ "UsageDescription";
+    try testing.expect(std.mem.indexOf(u8, source, obsolete_proxy) == null);
 }
 
-test "a bad payload is refused before the config gate, and never defaulted" {
+test "a bad payload is refused before the platform, and never defaulted" {
     if (!is_darwin) return error.SkipZigTest;
 
     var bridge = MotionBridge.init(testing.allocator);
@@ -1081,7 +991,7 @@ test "a bad payload is refused before the config gate, and never defaulted" {
     const E = bridge_error.BridgeError;
 
     // Ordering matters here: parsing first means a page that sends a mistyped
-    // interval learns *that*, rather than learning about the Info.plist.
+    // interval learns *that* before any platform framework is consulted.
     try testing.expectError(E.InvalidJSON, bridge.handleMessage(A.start_motion_updates, "{not json"));
     try testing.expectError(
         E.InvalidParameter,
