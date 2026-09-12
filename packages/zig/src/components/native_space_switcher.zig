@@ -219,6 +219,10 @@ fn attach(self: *SpaceSwitcher, window: objc.id) void {
     });
     _ = macos.msgSend1(themeFrame, "addSubview:", responder);
     self.responder = responder;
+    // The theme frame now owns the responder. Keep only the borrowed pointer
+    // used for target/action teardown; otherwise every re-create leaks the
+    // creator's alloc/init retain after removeFromSuperview drops the parent.
+    macos.msgSendVoid0(responder, "release");
 
     const NSValue = macos.getClass("NSValue");
     const pointer_value = macos.msgSend1(
@@ -263,6 +267,9 @@ fn attach(self: *SpaceSwitcher, window: objc.id) void {
     _ = macos.msgSend1(themeFrame, "addSubview:", control);
 
     self.control = control;
+    // As above, transfer the creator retain to the titlebar hierarchy. The
+    // stored pointer remains valid until deinit removes it from that parent.
+    macos.msgSendVoid0(control, "release");
     rebuildSegments(self);
 }
 
@@ -280,6 +287,7 @@ pub fn create(allocator: std.mem.Allocator, window: objc.id, webview: objc.id, i
         .id = try allocator.dupe(u8, id),
         .webview = webview,
     };
+    errdefer allocator.free(self.id);
     errdefer self.spaces.deinit();
 
     for (spaces) |space| try self.spaces.append(space);

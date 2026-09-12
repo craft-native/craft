@@ -352,9 +352,10 @@ pub const NativeUIBridge = struct {
             else => null,
         } else null;
 
-        if (state.space_switcher) |previous| previous.deinit();
-        state.space_switcher = null;
-        state.space_switcher = try space_switcher.create(
+        // Build and attach the replacement before retiring the live control.
+        // Allocation failure must leave the window's current switcher usable,
+        // just like the registry-backed component creation paths below.
+        const replacement = try space_switcher.create(
             self.allocator,
             state.window,
             if (window_context.currentWebView()) |webview| @ptrFromInt(webview) else macos.webViewForWindow(state.window) orelse null,
@@ -362,6 +363,8 @@ pub const NativeUIBridge = struct {
             spaces.items,
             active,
         );
+        if (state.space_switcher) |previous| previous.deinit();
+        state.space_switcher = replacement;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Spaces switcher '{s}' with {d} space(s)\n", .{ id_str, spaces.items.len });

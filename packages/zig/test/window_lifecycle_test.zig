@@ -644,6 +644,36 @@ test "native UI creation publishes only fully initialized components" {
     }
 }
 
+test "spaces switcher replacement is transactional and transfers view ownership" {
+    const create_start = std.mem.indexOf(u8, native_ui_bridge_source, "fn createSpacesSidebar(") orelse
+        return error.SpacesSidebarCreatorNotFound;
+    const create_end = std.mem.indexOfPos(u8, native_ui_bridge_source, create_start, "    fn setSpaces(") orelse
+        return error.SpacesSidebarCreatorEndNotFound;
+    const create_body = native_ui_bridge_source[create_start..create_end];
+    const replacement_at = std.mem.indexOf(u8, create_body, "const replacement = try space_switcher.create(") orelse
+        return error.SpacesSidebarReplacementNotFound;
+    const retire_at = std.mem.indexOf(u8, create_body, "previous.deinit()") orelse
+        return error.SpacesSidebarRetirementNotFound;
+    const publish_at = std.mem.indexOf(u8, create_body, "state.space_switcher = replacement") orelse
+        return error.SpacesSidebarPublicationNotFound;
+    try testing.expect(replacement_at < retire_at);
+    try testing.expect(retire_at < publish_at);
+
+    const attach_start = std.mem.indexOf(u8, space_switcher_source, "fn attach(") orelse
+        return error.SpaceSwitcherAttachNotFound;
+    const attach_end = std.mem.indexOfPos(u8, space_switcher_source, attach_start, "// Public surface") orelse
+        return error.SpaceSwitcherAttachEndNotFound;
+    const attach_body = space_switcher_source[attach_start..attach_end];
+    for ([_][]const u8{ "msgSendVoid0(responder, \"release\")", "msgSendVoid0(control, \"release\")" }) |release| {
+        try testing.expect(std.mem.indexOf(u8, attach_body, release) != null);
+    }
+
+    const switcher_create_start = std.mem.indexOf(u8, space_switcher_source, "pub fn create(") orelse
+        return error.SpaceSwitcherCreatorNotFound;
+    const switcher_create_body = space_switcher_source[switcher_create_start..];
+    try testing.expect(std.mem.indexOf(u8, switcher_create_body, "errdefer allocator.free(self.id)") != null);
+}
+
 test "native file batches reserve and roll back as one mutation" {
     const start = std.mem.indexOf(u8, native_file_browser_source, "pub fn addFiles(") orelse
         return error.NativeFileBatchMethodNotFound;
