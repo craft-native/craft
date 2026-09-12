@@ -621,6 +621,19 @@ test "native UI creation publishes only fully initialized components" {
     }
 }
 
+test "native file batches reserve and roll back as one mutation" {
+    const start = std.mem.indexOf(u8, native_file_browser_source, "pub fn addFiles(") orelse
+        return error.NativeFileBatchMethodNotFound;
+    const end = std.mem.indexOfPos(u8, native_file_browser_source, start, "    pub fn clearFiles(") orelse
+        return error.NativeFileClearMethodNotFound;
+    const body = native_file_browser_source[start..end];
+
+    try testing.expect(callsFunction(body, "ensureUnusedCapacity("));
+    try testing.expect(std.mem.indexOf(u8, body, "errdefer") != null);
+    try testing.expect(callsFunction(body, "shrinkRetainingCapacity("));
+    try testing.expect(callsFunction(body, "appendAssumeCapacity("));
+}
+
 test "native UI teardown detaches views before freeing callback state" {
     const destroy_start = std.mem.indexOf(u8, native_ui_bridge_source, "    fn destroyComponent(") orelse
         return error.NativeUIDestroyNotFound;
@@ -768,6 +781,7 @@ test "retained window chrome observers are removed and reinstalled" {
         return error.NamedWindowOpenNotFound;
     const open_body = enclosingFnBody(macos_source, open_start);
     try testing.expect(callsFunction(open_body, "observeWindowChrome(existing)"));
+    try testing.expect(callsFunction(open_body, "window_registry.rememberNamedOwned("));
 }
 
 test "webview delegate ownership ends with its webview" {

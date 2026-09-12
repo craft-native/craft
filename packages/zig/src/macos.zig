@@ -7575,6 +7575,14 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
         return error.InvalidWindowName;
 
     if (findNamedWindow(spec.name)) |existing| {
+        // A creator can be permanently destroyed while one of its children
+        // remains retained. `forgetOwner` deliberately leaves that child
+        // alive with no dangling webview; the next page to open its name then
+        // becomes the typed handle's owner. An existing non-null owner is
+        // never transferred by `rememberNamedOwned`.
+        if (!window_registry.rememberNamedOwned(@intFromPtr(existing), spec.name, spec.owner_webview))
+            return error.WindowRegistrationFailed;
+
         // Close tears down block-based chrome observers. The native window and
         // page are retained, so put those observers back before presenting it
         // again; otherwise button geometry stops updating after the first

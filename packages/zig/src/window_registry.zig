@@ -283,6 +283,14 @@ test "forgetting an owner leaves its child registered without a dangling target"
     try testing.expect(ownerWebViewOf(0x1000) == null);
 }
 
+test "an orphaned named window can be claimed by its next opener" {
+    resetForTesting();
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    forgetOwner(0x2000);
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x3000));
+    try testing.expectEqual(@as(?Handle, 0x3000), ownerWebViewOf(0x1000));
+}
+
 test "a window opened under a name is found by it" {
     resetForTesting();
     try testing.expect(rememberNamed(0x1000, "settings"));

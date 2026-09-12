@@ -171,12 +171,21 @@ pub const NativeFileBrowser = struct {
 
     /// Add multiple files at once (more efficient)
     pub fn addFiles(self: *NativeFileBrowser, files: []const FileItem) !void {
+        // Reserve before cloning so capacity failure leaves the visible model
+        // unchanged. If cloning a later row fails, roll back every row from
+        // this batch instead of reporting an error after publishing a prefix.
+        try self.data_source.data.files.ensureUnusedCapacity(self.allocator, files.len);
+        const original_len = self.data_source.data.files.items.len;
+        errdefer {
+            for (self.data_source.data.files.items[original_len..]) |*file| {
+                file.deinit(self.allocator);
+            }
+            self.data_source.data.files.shrinkRetainingCapacity(original_len);
+        }
+
         for (files) |file| {
             const new_file = try cloneFileItem(self.allocator, file);
-            self.data_source.data.files.append(self.allocator, new_file) catch |err| {
-                new_file.deinit(self.allocator);
-                return err;
-            };
+            self.data_source.data.files.appendAssumeCapacity(new_file);
         }
 
         // Reload data once after all files added

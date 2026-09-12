@@ -45,7 +45,9 @@ back to whichever window was created most recently:
   material settings, controls and event webview in a slot keyed by `NSWindow`.
 - Window event delivery resolves the event notification's own `NSWindow`, then
   emits to that page and, for a named child, its creator page. Unrelated pages
-  receive nothing.
+  receive nothing. If that creator is permanently destroyed while the child is
+  retained, the child drops the stale route and the next page to open its name
+  becomes its handle owner; a live owner is never silently replaced.
 - The local scroll monitor is installed once, but reads the event's `NSWindow`,
   advances only that window's accumulator and emits only to its webview.
 
