@@ -10,6 +10,16 @@ const window_registry = @import("window_registry.zig");
 const BridgeError = bridge_error.BridgeError;
 const log = logging.window;
 
+fn formatOpenResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer json.deinit(allocator);
+
+    try json.appendSlice(allocator, "{\"name\":\"");
+    try bridge_error.appendJsonEscaped(allocator, &json, name);
+    try json.appendSlice(allocator, "\"}");
+    return json.toOwnedSlice(allocator);
+}
+
 /// Bridge handler for window control messages from JavaScript
 pub const WindowBridge = struct {
     allocator: std.mem.Allocator,
@@ -302,8 +312,8 @@ pub const WindowBridge = struct {
         // Answer with the name rather than nothing: `open` is the one window
         // action a page waits on, because what it does next — focus it, close
         // it — needs to know it exists.
-        var buf: [window_registry.max_name + 32]u8 = undefined;
-        const json = std.fmt.bufPrint(&buf, "{{\"name\":\"{s}\"}}", .{name}) catch return;
+        const json = try formatOpenResult(self.allocator, name);
+        defer self.allocator.free(json);
         bridge_error.sendResultToJS(self.allocator, "open", json);
     }
 
@@ -1423,4 +1433,15 @@ test "handleMessageWithData reaches a payload action" {
     bridge.setWindowHandle(@ptrFromInt(0x1000));
 
     try bridge.handleMessageWithData("setWebSidebarCollapsed", "{\"collapsed\":true}");
+}
+
+test "open result preserves an app-chosen name as JSON data" {
+    const testing = std.testing;
+    const name = "settings\"\\line\nnext";
+    const result = try formatOpenResult(testing.allocator, name);
+    defer testing.allocator.free(result);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, result, .{});
+    defer parsed.deinit();
+    try testing.expectEqualStrings(name, parsed.value.object.get("name").?.string);
 }
