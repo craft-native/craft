@@ -112,6 +112,18 @@ describe('typed window-handle routing', () => {
     expect(listeners.get('craft:window:resize')?.size ?? 0).toBe(0)
   })
 
+  it('revives the stable SDK handle around a fresh native window after destroy', async () => {
+    const id = `destroyed-${Date.now()}`
+    const first = await windowManager.create({ id, html: '<h1>First</h1>' })
+    await first.destroy()
+
+    const reopened = await windowManager.create({ id, html: '<h1>Fresh</h1>' })
+
+    expect(reopened).toBe(first)
+    expect(reopened.isClosed).toBe(false)
+    expect(open).toHaveBeenCalledTimes(2)
+  })
+
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
     const id = `settings-${Date.now()}`
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })

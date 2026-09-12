@@ -481,7 +481,8 @@ Closing a window keeps its native page alive so the macOS reopen lifecycle can
 restore its DOM and JavaScript state. Call `destroy()` on a runtime-created
 handle to permanently release its native window, webview, recovery state and
 event subscriptions; opening the same ID afterwards creates a fresh native
-page. The unnamed primary window cannot be force-destroyed through this API.
+page behind the same stable SDK handle. The unnamed primary window cannot be
+force-destroyed through this API.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
 
 ## Multi-Monitor

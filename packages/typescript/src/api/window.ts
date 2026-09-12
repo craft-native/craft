@@ -822,9 +822,9 @@ class WindowManager {
     }
 
     if (existing) {
-      // The macOS host retains closed windows and `open` brings the named one
-      // forward. Reuse means reviving its state and DOM subscriptions too;
-      // otherwise the returned object stays `isClosed === true` forever.
+      // The host either brings a closed native window forward or creates a
+      // fresh one after destroy. The stable ID still denotes one SDK handle,
+      // so revive its state and DOM subscriptions in both cases.
       const retained = existing as unknown as { _markOpen(): void }
       retained._markOpen()
       return existing
