@@ -1,16 +1,15 @@
-//! `SharedPreferences`, which three actions now reach for.
+//! `SharedPreferences` for Android bridge state.
 //!
-//! The shim opens a preferences file by name in five places — the shared-item
-//! trio, the widget data, the voice actions — and each does the same four
-//! calls: `getSharedPreferences`, `edit`, `putString`/`remove`, `apply`. This
-//! is that sequence once.
+//! The shim opens named preference files for shared items, widget data, and
+//! durable location-recording state. Each uses the same small family of JNI
+//! calls: `getSharedPreferences`, `edit`, typed reads and writes, and `apply`.
+//! This is that sequence once.
 //!
 //! What it deliberately does *not* own is the file's name. Each caller decides
 //! that, because the names are the part that differs and the part that goes
-//! wrong: `craft_shared_<group>` is built from page text, `craft_widget_prefs`
-//! has to match what `CraftWidgetProvider` reads, and `craft_voice_actions` is
-//! read by nothing else at all. A helper that also chose the name would be
-//! four helpers wearing one signature.
+//! wrong: `craft_shared_<group>` is built from page text, while the widget and
+//! location stores must match their Kotlin readers. A helper that also chose
+//! the name would be several helpers wearing one signature.
 //!
 //! ## `apply`, not `commit`
 //!

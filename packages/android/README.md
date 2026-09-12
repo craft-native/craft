@@ -456,16 +456,10 @@ await window.craft.widget.reload();
 
 // ==================== Google Assistant (App Actions) ====================
 
-// Note: App Actions are defined in shortcuts.xml, not dynamically
-// This stores action handlers for incoming intents
-await window.craft.siri.register('Open my app', 'open*app');
-
-// Remove a voice action
-await window.craft.siri.remove('open*app');
-
-// Listen for voice assistant invocations
-window.craft.siri.onInvoke((detail) => {
-  console.log('Voice action:', detail.action);
+// App Actions are declared statically in app/src/main/res/xml/shortcuts.xml.
+// Listen for incoming Google Assistant intents forwarded by the bridge.
+window.addEventListener('craftVoiceAction', (event) => {
+  console.log('Voice action:', event.detail.action);
 });
 
 // ==================== Wear OS Connectivity ====================

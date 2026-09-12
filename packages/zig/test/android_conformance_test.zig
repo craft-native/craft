@@ -7,7 +7,7 @@
 //! on the way across.
 //!
 //! iOS reached this file's job with 105 actions unmigrated and is at 13.
-//! Android is at 102 of 103. The ratchet exists now rather than later for the
+//! Android is at 71 of 101. The ratchet exists now rather than later for the
 //! reason the iOS one earned: the second migration is where a name quietly
 //! stops matching, and by then nothing remembers what the first one agreed to.
 //!
@@ -126,8 +126,9 @@ const zig_sources = [_][]const u8{
 /// three ML Kit actions, whose Java models/listeners keep producing the exact
 /// Android JSON while Zig owns the action and promise settlement; 32 with
 /// openPDF, whose external-viewer mechanics stay in the holder while Zig owns
-/// its success object and rejection.
-const max_not_yet_migrated: usize = 32;
+/// its success object and rejection; 30 after removing the two unreachable
+/// dynamic voice-action methods tracked in #169.
+const max_not_yet_migrated: usize = 30;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -328,14 +329,6 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "setAuthPersistence", .reason = "writes authSessionExpiry, an in-memory CraftBridge field" },
     .{ .action = "checkAuthPersistence", .reason = "reads the same field; a second copy in Zig would diverge immediately" },
     .{ .action = "clearAuthPersistence", .reason = "zeroes the same field" },
-
-    // `registerVoiceAction` writes a preferences row that nothing reads, and
-    // both reply to `_craftVoiceResolve`, a global the injected bridge never
-    // assigns — so the reply is discarded by its own guard. Neither method is
-    // in craft.d.ts either. The port was written and deleted; migrating it
-    // would move the silence. Tracked in #169.
-    .{ .action = "registerVoiceAction", .reason = "writes a row nothing reads and replies to a global nothing assigns" },
-    .{ .action = "removeVoiceAction", .reason = "the same, for removing it" },
 
     // ---- Generated implementations, not one Kotlin contract ----------
     //

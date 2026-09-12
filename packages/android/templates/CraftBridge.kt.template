@@ -3950,34 +3950,6 @@ class CraftBridge(
 
     // ==================== Google Assistant / App Actions ====================
 
-    @JavascriptInterface
-    fun registerVoiceAction(phrase: String, action: String) {
-        // App Actions are defined in shortcuts.xml, not dynamically
-        // This stores the action for handling incoming intents
-        val prefs = activity.getSharedPreferences("craft_voice_actions", Context.MODE_PRIVATE)
-        prefs.edit().putString(action, phrase).apply()
-
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftVoiceResolve && window._craftVoiceResolve({registered: true, action: ${jsQuote(action)}, phrase: ${jsQuote(phrase)}})",
-                null
-            )
-        }
-    }
-
-    @JavascriptInterface
-    fun removeVoiceAction(action: String) {
-        val prefs = activity.getSharedPreferences("craft_voice_actions", Context.MODE_PRIVATE)
-        prefs.edit().remove(action).apply()
-
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftVoiceResolve && window._craftVoiceResolve({removed: true, action: ${jsQuote(action)}})",
-                null
-            )
-        }
-    }
-
     // Handle incoming voice action from Google Assistant
     fun handleVoiceAction(intent: Intent?) {
         intent?.let {

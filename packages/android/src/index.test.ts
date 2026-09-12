@@ -255,6 +255,20 @@ describe('Craft Android builder', () => {
     expect(bridge).not.toContain('if (parts.size == 2)')
   })
 
+  it('omits unreachable dynamic voice-action registration', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-voice-actions-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+
+    expect(bridge).not.toContain('fun registerVoiceAction(')
+    expect(bridge).not.toContain('fun removeVoiceAction(')
+    expect(bridge).not.toContain('craft_voice_actions')
+    expect(bridge).not.toContain('_craftVoiceResolve')
+    expect(bridge).toContain('fun handleVoiceAction(intent: Intent?)')
+    expect(bridge).toContain("new CustomEvent('craftVoiceAction'")
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

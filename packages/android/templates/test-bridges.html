@@ -307,9 +307,8 @@
 
   <!-- Voice Assistant -->
   <div class="section">
-    <h2>Siri / Google Assistant</h2>
-    <button class="btn" onclick="testRegisterSiri()">Register Shortcut</button>
-    <button class="btn" onclick="testRemoveSiri()">Remove Shortcut</button>
+    <h2>Google Assistant</h2>
+    <p>App Actions are declared statically in <code>shortcuts.xml</code>.</p>
     <div id="siri-result" class="result">Results will appear here...</div>
   </div>
 
@@ -1255,36 +1254,11 @@
       }
     }
 
-    // Siri / Voice Assistant tests
-    async function testRegisterSiri() {
-      if (!window.craft?.siri) return showResult('siri-result', 'Siri API not available');
-      try {
-        const result = await window.craft.siri.register('Open my app', 'open_app');
-        showResult('siri-result', 'Siri shortcut registered: ' + JSON.stringify(result));
-        log('Siri shortcut registered');
-      } catch (e) {
-        showResult('siri-result', 'Error: ' + e.message);
-      }
-    }
-
-    async function testRemoveSiri() {
-      if (!window.craft?.siri) return showResult('siri-result', 'Siri API not available');
-      try {
-        const result = await window.craft.siri.remove('open_app');
-        showResult('siri-result', 'Siri shortcut removed: ' + JSON.stringify(result));
-        log('Siri shortcut removed');
-      } catch (e) {
-        showResult('siri-result', 'Error: ' + e.message);
-      }
-    }
-
-    // Listen for Siri invocations
-    if (window.craft?.siri) {
-      window.craft.siri.onInvoke((detail) => {
-        log('Siri shortcut invoked: ' + JSON.stringify(detail));
-        showResult('siri-result', 'Siri invoked: ' + JSON.stringify(detail));
-      });
-    }
+    // Listen for Google Assistant invocations declared in shortcuts.xml.
+    window.addEventListener('craftVoiceAction', (event) => {
+      log('Voice action invoked: ' + JSON.stringify(event.detail));
+      showResult('siri-result', 'Voice action invoked: ' + JSON.stringify(event.detail));
+    });
 
     // Watch Connectivity tests
     async function testWatchReachable() {

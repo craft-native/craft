@@ -747,23 +747,25 @@ export interface CraftBridge {
     reload(): Promise<{ reloaded: boolean }>;
   };
 
-  // ==================== Siri / Google Assistant ====================
+  // ==================== Siri (iOS only) ====================
   siri: {
     /**
-     * Register a Siri shortcut (iOS) or App Action (Android)
+     * Register a Siri shortcut. **iOS only.** Android App Actions are declared
+     * statically in `shortcuts.xml` and arrive as `craftVoiceAction` events.
      * @param phrase - The trigger phrase
      * @param action - Action identifier
      */
     register(phrase: string, action: string): Promise<{ registered: boolean; action: string; phrase: string }>;
 
     /**
-     * Remove a Siri shortcut
+     * Remove a Siri shortcut. **iOS only.**
      * @param action - Action identifier to remove
      */
     remove(action: string): Promise<{ removed: boolean; action: string }>;
 
     /**
-     * Listen for Siri shortcut invocations
+     * Listen for Siri shortcut invocations. **iOS only.** Android App Actions
+     * dispatch `craftVoiceAction` events on `window` instead.
      * @param callback - Called when shortcut is invoked
      */
     onInvoke(callback: (detail: SiriInvocationEvent) => void): void;
@@ -1472,9 +1474,9 @@ export interface CraftWatchUserInfoEvent extends CustomEvent {
 }
 
 /**
- * A registered voice action being spoken. **Android only** —
- * `craft.voice.register()` has no iOS counterpart, and the iOS bridge never
- * dispatches this.
+ * An incoming Google Assistant App Action intent. **Android only.** App
+ * Actions are declared statically in `shortcuts.xml`; the bridge does not
+ * register them at runtime.
  */
 export interface CraftVoiceActionEvent extends CustomEvent {
   detail: {
