@@ -1988,10 +1988,11 @@ class CraftBridge(
         // fires. Returning here keeps this file's networkCallback null, which
         // is why stopNetworkMonitoring has to reach the same way.
         if (CraftNative.startNetworkMonitoring(activity)) return
+        if (networkCallback != null) return
 
         val connectivityManager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 sendNetworkChange()
             }
@@ -2009,7 +2010,8 @@ class CraftBridge(
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .build()
 
-        connectivityManager.registerNetworkCallback(request, networkCallback!!)
+        connectivityManager.registerNetworkCallback(request, callback)
+        networkCallback = callback
     }
 
     @JavascriptInterface

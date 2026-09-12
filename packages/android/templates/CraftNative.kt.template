@@ -1467,23 +1467,16 @@ object CraftNative {
     // sends the event.
     //
     // Unlike `runOnMain` there is no token, because there is only ever one
-    // watch — which is also true of the CraftBridge field this replaces, and
-    // is the reason both of them leak a second one (see the note on start).
+    // watch. Repeated starts keep that existing registration so the callback
+    // remains reachable and each network change is delivered once.
 
     private var networkWatch: ConnectivityManager.NetworkCallback? = null
 
-    /**
-     * Register a network callback, exactly as `CraftBridge` would.
-     *
-     * Including the part that is wrong: a second call registers a second
-     * callback and overwrites the reference to the first, which then runs
-     * until the process dies and can never be unregistered. That is the
-     * shim's behaviour and is reproduced rather than guarded, because guarding
-     * would mean a page calling start twice gets one event per change here and
-     * two on the Kotlin path.
-     */
+    /** Register the process-wide network callback once. */
     @JvmStatic
     fun startNetworkWatch(activity: Activity) {
+        if (networkWatch != null) return
+
         val manager =
             activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 

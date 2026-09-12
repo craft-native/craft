@@ -194,6 +194,21 @@ describe('Craft Android builder', () => {
     expect(holder).toContain('BLUETOOTH_STARTED')
   })
 
+  it('keeps repeated network-monitoring starts idempotent', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-network-watch-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    expect(bridge).toContain('if (networkCallback != null) return')
+    expect(bridge).toContain('connectivityManager.registerNetworkCallback(request, callback)')
+    expect(bridge).toContain('networkCallback = callback')
+    expect(holder).toContain('if (networkWatch != null) return')
+    expect(holder).toContain('manager.registerNetworkCallback(request, watch)')
+    expect(holder).toContain('networkWatch = watch')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({
