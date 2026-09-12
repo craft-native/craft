@@ -36,6 +36,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const macos_source = @embedFile("src/macos.zig");
+const window_bridge_source = @embedFile("src/bridge_window.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
 const window_init = "initWithContentRect:styleMask:backing:defer:";
@@ -249,6 +250,27 @@ test "window-state selectors receive their required sender argument" {
     // independently. This selector has one Objective-C argument everywhere it
     // is called, including while a newly created window is being configured.
     try testing.expect(std.mem.indexOf(u8, macos_source, "msgSendVoid0(window, \"toggleFullScreen:\")") == null);
+}
+
+test "runtime window creation applies the typed appearance and size constraints" {
+    const start = std.mem.indexOf(u8, window_bridge_source, "fn open(") orelse
+        return error.WindowOpenHandlerNotFound;
+    const end = std.mem.indexOfPos(u8, window_bridge_source, start, "    fn show(") orelse
+        return error.WindowShowHandlerNotFound;
+    const body = window_bridge_source[start..end];
+
+    for ([_][]const u8{
+        "\"frameless\"",
+        "\"transparent\"",
+        "\"fullscreen\"",
+        "\"maxWidth\"",
+        "\"maxHeight\"",
+        "\"setMaxSize:\"",
+        "\"movable\"",
+        "\"setMovable:\"",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, body, contract) != null);
+    }
 }
 
 test "content replacement updates the addressed webview recovery source" {

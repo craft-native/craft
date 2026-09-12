@@ -308,8 +308,24 @@ pub const WindowBridge = struct {
                 .width = @floatFromInt(min_width orelse 0),
                 .height = @floatFromInt(min_height orelse 0),
             };
-            const msg = @as(*const fn (macos.objc.id, macos.objc.SEL, macos.NSSize) callconv(.c) void, @ptrCast(&macos.objc.objc_msgSend));
-            msg(window, macos.sel("setMinSize:"), size);
+            macos.msgSendVoid1Size(window, "setMinSize:", size);
+        }
+
+        const max_width = json_utils.getInt(u32, json_data, "maxWidth");
+        const max_height = json_utils.getInt(u32, json_data, "maxHeight");
+        if (max_width != null or max_height != null) {
+            // AppKit's practical unbounded default is much larger than a
+            // screen. Match `setMaximumSize` for an omitted dimension rather
+            // than turning `{ maxWidth: 900 }` into a zero-height window.
+            const size = macos.NSSize{
+                .width = @floatFromInt(max_width orelse 10_000),
+                .height = @floatFromInt(max_height orelse 10_000),
+            };
+            macos.msgSendVoid1Size(window, "setMaxSize:", size);
+        }
+
+        if (json_utils.getBool(json_data, "movable")) |movable| {
+            _ = macos.msgSend1(window, "setMovable:", @as(c_int, if (movable) 1 else 0));
         }
 
         // Answer with the name rather than nothing: `open` is the one window
