@@ -3225,7 +3225,7 @@ class CraftBridge(
         val message = if (taskId == null) {
             "Background tasks are unavailable on Android"
         } else {
-            "Background task '$taskId' is unavailable on Android"
+            "Background task $taskId is unavailable on Android"
         }
         activity.runOnUiThread {
             webView.evaluateJavascript(

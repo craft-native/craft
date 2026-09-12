@@ -235,7 +235,7 @@ describe('Craft Android builder', () => {
     expect(start).toBeGreaterThan(-1)
     expect(end).toBeGreaterThan(start)
     expect(backgroundTasks.match(/rejectBackgroundTask\(/g)?.length).toBe(5)
-    expect(backgroundTasks).toContain("Background task '$taskId' is unavailable on Android")
+    expect(backgroundTasks).toContain('Background task $taskId is unavailable on Android')
     expect(backgroundTasks).toContain('Background tasks are unavailable on Android')
     expect(backgroundTasks).not.toContain('registered: true')
     expect(backgroundTasks).not.toContain('scheduled: true')
