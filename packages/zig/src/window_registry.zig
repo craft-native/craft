@@ -94,9 +94,11 @@ pub fn rememberNamed(handle: Handle, name: ?[]const u8) bool {
 
 /// Record a window and, once, the page that created its typed handle.
 ///
-/// Reopening an existing name from another page does not transfer ownership:
-/// subscriptions belong to the handle returned to the original creator, and
-/// silently stealing them would make that page stop receiving native events.
+/// Reopening an existing name from another page is refused: subscriptions
+/// belong to the handle returned to the original creator. Returning success
+/// to a second page would give it a wrapper that can mutate the native window
+/// but never receives that handle's lifecycle events. An owner-less window can
+/// still be adopted after `forgetOwner` clears a destroyed creator's route.
 pub fn rememberNamedOwned(handle: Handle, name: ?[]const u8, owner_webview: Handle) bool {
     if (handle == 0) return false;
     if (name) |n| {
@@ -108,6 +110,8 @@ pub fn rememberNamedOwned(handle: Handle, name: ?[]const u8, owner_webview: Hand
 
     for (&windows) |*slot| {
         if (slot.handle == handle) {
+            if (slot.owner_webview != 0 and owner_webview != 0 and slot.owner_webview != owner_webview)
+                return false;
             if (name) |n| setName(slot, n);
             if (slot.owner_webview == 0 and owner_webview != 0) slot.owner_webview = owner_webview;
             return true;
@@ -338,10 +342,17 @@ test "a runtime window remembers the page that owns its typed handle" {
     try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
 }
 
-test "reopening a named window does not steal its creator" {
+test "the owning page can reopen its named window" {
     resetForTesting();
     try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
-    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x3000));
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
+}
+
+test "a second page cannot acquire a live typed handle it will not own" {
+    resetForTesting();
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    try testing.expect(!rememberNamedOwned(0x1000, "settings", 0x3000));
     try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
 }
 

@@ -50,7 +50,8 @@ back to whichever window was created most recently:
   emits to that page and, for a named child, its creator page. Unrelated pages
   receive nothing. If that creator is permanently destroyed while the child is
   retained, the child drops the stale route and the next page to open its name
-  becomes its handle owner; a live owner is never silently replaced.
+  becomes its handle owner. While the creator remains live, another page is
+  refused rather than receiving a handle whose events it cannot own.
 - The local scroll monitor is installed once, but reads the event's `NSWindow`,
   advances only that window's accumulator and emits only to its webview.
 
