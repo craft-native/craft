@@ -702,6 +702,35 @@ test "window-scoped context menus validate JSON shapes" {
     }
 }
 
+test "Quick Look validates a complete replacement before publishing it" {
+    const start = std.mem.indexOf(u8, native_ui_bridge_source, "    fn showQuickLook(") orelse
+        return error.NativeUIQuickLookNotFound;
+    const end = std.mem.indexOfPos(u8, native_ui_bridge_source, start, "    /// Close Quick Look panel") orelse
+        return error.NativeUIQuickLookEndNotFound;
+    const body = native_ui_bridge_source[start..end];
+
+    for ([_][]const u8{
+        "objectValue(",
+        "requiredArray(",
+        "previewItem(",
+        "optionalIndex(",
+        "setPreviewItems(",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, body, contract) != null);
+    }
+    for ([_][]const u8{
+        "parsed.value.object",
+        ".?.object",
+        ".?.array",
+        ".?.string",
+        "@intCast(i)",
+        "clearItems()",
+        "addPreviewItem(",
+    }) |unsafe_or_partial| {
+        try testing.expect(std.mem.indexOf(u8, body, unsafe_or_partial) == null);
+    }
+}
+
 test "spaces switcher replacement is transactional and transfers view ownership" {
     const create_start = std.mem.indexOf(u8, native_ui_bridge_source, "fn createSpacesSidebar(") orelse
         return error.SpacesSidebarCreatorNotFound;

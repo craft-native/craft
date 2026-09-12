@@ -30,37 +30,60 @@ pub const QuickLookCallbackData = struct {
     }
 
     pub fn deinit(self: *QuickLookCallbackData) void {
-        for (self.preview_items.items) |item| {
-            self.allocator.free(item.id);
-            self.allocator.free(item.path);
-            if (item.title) |title| {
-                self.allocator.free(title);
-            }
-        }
+        self.freeItems(self.preview_items.items);
         self.preview_items.deinit(self.allocator);
         self.allocator.destroy(self);
     }
 
     pub fn addItem(self: *QuickLookCallbackData, item: PreviewItem) !void {
+        const owned = try self.cloneItem(item);
+        errdefer self.freeItem(owned);
+        try self.preview_items.append(self.allocator, owned);
+    }
+
+    pub fn replaceItems(self: *QuickLookCallbackData, items: []const PreviewItem) !void {
+        var replacement: std.ArrayList(PreviewItem) = .empty;
+        errdefer {
+            self.freeItems(replacement.items);
+            replacement.deinit(self.allocator);
+        }
+        try replacement.ensureTotalCapacity(self.allocator, items.len);
+        for (items) |item| replacement.appendAssumeCapacity(try self.cloneItem(item));
+
+        const previous = self.preview_items;
+        self.preview_items = replacement;
+        self.current_index = 0;
+        self.freeItems(previous.items);
+        var retired = previous;
+        retired.deinit(self.allocator);
+    }
+
+    fn cloneItem(self: *QuickLookCallbackData, item: PreviewItem) !PreviewItem {
         const id_copy = try self.allocator.dupe(u8, item.id);
+        errdefer self.allocator.free(id_copy);
         const path_copy = try self.allocator.dupe(u8, item.path);
+        errdefer self.allocator.free(path_copy);
         const title_copy = if (item.title) |t| try self.allocator.dupe(u8, t) else null;
 
-        try self.preview_items.append(self.allocator, .{
+        return .{
             .id = id_copy,
             .path = path_copy,
             .title = title_copy,
-        });
+        };
+    }
+
+    fn freeItem(self: *QuickLookCallbackData, item: PreviewItem) void {
+        self.allocator.free(item.id);
+        self.allocator.free(item.path);
+        if (item.title) |title| self.allocator.free(title);
+    }
+
+    fn freeItems(self: *QuickLookCallbackData, items: []const PreviewItem) void {
+        for (items) |item| self.freeItem(item);
     }
 
     pub fn clearItems(self: *QuickLookCallbackData) void {
-        for (self.preview_items.items) |item| {
-            self.allocator.free(item.id);
-            self.allocator.free(item.path);
-            if (item.title) |title| {
-                self.allocator.free(title);
-            }
-        }
+        self.freeItems(self.preview_items.items);
         self.preview_items.clearRetainingCapacity();
         self.current_index = 0;
     }
@@ -156,10 +179,7 @@ pub const QuickLookController = struct {
 
     /// Set items to preview (replaces existing items)
     pub fn setPreviewItems(self: *QuickLookController, items: []const PreviewItem) !void {
-        self.callback_data.clearItems();
-        for (items) |item| {
-            try self.callback_data.addItem(item);
-        }
+        try self.callback_data.replaceItems(items);
         std.debug.print("[QuickLook] Set {d} preview items\n", .{items.len});
     }
 
@@ -592,4 +612,26 @@ pub fn createPreviewItemFromPath(path: []const u8, title: ?[]const u8) PreviewIt
         .path = path,
         .title = title,
     };
+}
+
+fn replaceItemsWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    const data = try QuickLookCallbackData.init(allocator);
+    defer data.deinit();
+    try data.addItem(.{ .id = "old", .path = "/old.pdf", .title = "Old" });
+
+    data.replaceItems(&.{
+        .{ .id = "first", .path = "/first.pdf", .title = "First" },
+        .{ .id = "second", .path = "/second.pdf", .title = "Second" },
+    }) catch |err| {
+        try std.testing.expectEqual(@as(usize, 1), data.itemCount());
+        try std.testing.expectEqualStrings("old", data.getItem(0).?.id);
+        return err;
+    };
+
+    try std.testing.expectEqual(@as(usize, 2), data.itemCount());
+    try std.testing.expectEqualStrings("first", data.getItem(0).?.id);
+}
+
+test "Quick Look replacement is atomic at every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceItemsWithAllocationFailures, .{});
 }

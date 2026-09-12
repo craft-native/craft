@@ -368,6 +368,23 @@ pub const NativeUIBridge = struct {
         };
     }
 
+    fn previewItem(object: std.json.ObjectMap) !quick_look.PreviewItem {
+        return .{
+            .id = try requiredString(object, "id"),
+            .path = try requiredString(object, "path"),
+            .title = try optionalString(object, "title"),
+        };
+    }
+
+    fn optionalIndex(object: std.json.ObjectMap, name: []const u8) !usize {
+        const value = object.get(name) orelse return 0;
+        return switch (value) {
+            .integer => |integer| if (integer >= 0) @intCast(integer) else error.InvalidFieldValue,
+            .null => 0,
+            else => error.InvalidFieldType,
+        };
+    }
+
     fn parseSpaces(allocator: std.mem.Allocator, value: std.json.Value) !std.ArrayList(space_switcher.Space) {
         var spaces: std.ArrayList(space_switcher.Space) = .empty;
         errdefer spaces.deinit(allocator);
@@ -1038,8 +1055,16 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const files_json = root.get("files").?.array;
+        const root = try objectValue(parsed.value);
+        const files_json = try requiredArray(root, "files");
+        const current_index = try optionalIndex(root, "currentIndex");
+
+        var items: std.ArrayList(quick_look.PreviewItem) = .empty;
+        defer items.deinit(self.allocator);
+        try items.ensureTotalCapacity(self.allocator, files_json.len);
+        for (files_json) |file_json| {
+            items.appendAssumeCapacity(try previewItem(try objectValue(file_json)));
+        }
 
         // Create or reuse Quick Look controller
         if (self.quick_look_controller == null) {
@@ -1048,35 +1073,13 @@ pub const NativeUIBridge = struct {
 
         const controller = self.quick_look_controller.?;
 
-        // Clear existing items and add new ones
-        controller.callback_data.clearItems();
-
-        for (files_json.items) |file_json| {
-            const file_obj = file_json.object;
-            const file_id = file_obj.get("id").?.string;
-            const file_path = file_obj.get("path").?.string;
-            const file_title = if (file_obj.get("title")) |t| t.string else null;
-
-            try controller.addPreviewItem(.{
-                .id = file_id,
-                .path = file_path,
-                .title = file_title,
-            });
-        }
-
-        // Set current index if provided
-        if (root.get("currentIndex")) |idx| {
-            const index: usize = switch (idx) {
-                .integer => |i| @intCast(i),
-                else => 0,
-            };
-            controller.setCurrentPreviewIndex(index);
-        }
+        try controller.setPreviewItems(items.items);
+        controller.setCurrentPreviewIndex(current_index);
 
         // Show the panel
         controller.showPanel();
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[NativeUI] Showed Quick Look with {d} files\n", .{files_json.items.len});
+            std.debug.print("[NativeUI] Showed Quick Look with {d} files\n", .{files_json.len});
     }
 
     /// Close Quick Look panel
@@ -1256,4 +1259,31 @@ test "context menu scalar parsers reject malformed values" {
     try std.testing.expectError(error.MissingRequiredField, NativeUIBridge.requiredNumber(root, "missing"));
     try std.testing.expectError(error.InvalidFieldType, NativeUIBridge.requiredNumber(root, "badNumber"));
     try std.testing.expectError(error.InvalidFieldType, NativeUIBridge.optionalBool(root, "badBool"));
+}
+
+test "Quick Look parser rejects malformed items and indices" {
+    const malformed_item = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"id\":\"report\",\"path\":false}",
+        .{},
+    );
+    defer malformed_item.deinit();
+    try std.testing.expectError(
+        error.InvalidFieldType,
+        NativeUIBridge.previewItem(try NativeUIBridge.objectValue(malformed_item.value)),
+    );
+
+    const indices = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"valid\":2,\"negative\":-1,\"wrong\":1.5}",
+        .{},
+    );
+    defer indices.deinit();
+    const root = try NativeUIBridge.objectValue(indices.value);
+    try std.testing.expectEqual(@as(usize, 2), try NativeUIBridge.optionalIndex(root, "valid"));
+    try std.testing.expectEqual(@as(usize, 0), try NativeUIBridge.optionalIndex(root, "missing"));
+    try std.testing.expectError(error.InvalidFieldValue, NativeUIBridge.optionalIndex(root, "negative"));
+    try std.testing.expectError(error.InvalidFieldType, NativeUIBridge.optionalIndex(root, "wrong"));
 }
