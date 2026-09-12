@@ -70,7 +70,7 @@ pub fn onCrash(state: *State, now_ns: i128, budget: Budget) Action {
 /// One budget per webview, so a window in a crash loop cannot spend the budget
 /// of a window that is fine. Craft opens one window today; #67 opens more, and
 /// a single shared counter would be exactly the bug that lands then.
-const max_tracked = 8;
+const max_tracked = @import("window_registry.zig").capacity;
 
 const Slot = struct {
     /// The webview this belongs to, as an opaque handle. Zero means free.

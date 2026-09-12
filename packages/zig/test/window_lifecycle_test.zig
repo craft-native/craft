@@ -20,7 +20,7 @@
 //! WebContent process behind it — heavy, and flaky on a runner with no
 //! display. The properties worth defending do not need any of that:
 //!
-//!   1. every window constructor registers its window, and
+//!   1. every window constructor registers its window transactionally, and
 //!   2. nothing infers craft-ness from the window's appearance again.
 //!
 //! Both are properties of the source, and they are only checkable *because*
@@ -154,6 +154,24 @@ test "every window craft constructs is registered as one of its own" {
     // nothing at all.
     try testing.expect(constructors >= 3);
     try testing.expectEqual(@as(usize, 0), unregistered);
+}
+
+test "window construction fails cleanly when registration is refused" {
+    var constructors: usize = 0;
+
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, macos_source, search, window_init)) |hit| {
+        search = hit + window_init.len;
+        const line = macos_source[lineStart(macos_source, hit)..hit];
+        if (std.mem.indexOf(u8, line, "msgSend4") == null) continue;
+
+        constructors += 1;
+        const body = enclosingFnBody(macos_source, hit);
+        try testing.expect(std.mem.indexOf(u8, body, "errdefer destroyWindow(window);") != null);
+        try testing.expect(std.mem.indexOf(u8, body, "try keepWindowAfterClose(window);") != null);
+    }
+
+    try testing.expect(constructors >= 3);
 }
 
 test "whether a window is craft's is recorded, never inferred from the window" {
@@ -534,6 +552,14 @@ test "scroll gestures keep independent state and target their event window" {
     try testing.expect(callsFunction(destroy_body, "forgetScrollGesture("));
 }
 
+test "retained content covers the full window registry" {
+    try testing.expect(std.mem.indexOf(
+        u8,
+        macos_source,
+        "var content_slots: [window_registry.capacity]ContentSlot",
+    ) != null);
+}
+
 test "native UI creation publishes only fully initialized components" {
     const cases = [_]struct {
         start: []const u8,
@@ -707,6 +733,7 @@ test "a closed window survives long enough to be reopened" {
 
     try testing.expect(callsFunction(body, "setReleasedWhenClosed:"));
     try testing.expect(callsFunction(body, "rememberCraftWindow("));
+    try testing.expect(std.mem.indexOf(u8, body, "!void") != null);
 }
 
 test "retained window chrome observers are removed and reinstalled" {

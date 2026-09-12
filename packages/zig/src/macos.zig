@@ -821,7 +821,9 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Allocate and initialize window
     const window_alloc = msgSend0(WindowClass, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
-    keepWindowAfterClose(window);
+    if (window == null) return error.WindowCreationFailed;
+    errdefer destroyWindow(window);
+    try keepWindowAfterClose(window);
 
     // Create title NSString
     const title_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
@@ -2262,7 +2264,9 @@ pub fn createWindowWithSidebar(
     // Create window
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
-    keepWindowAfterClose(window);
+    if (window == null) return error.WindowCreationFailed;
+    errdefer destroyWindow(window);
+    try keepWindowAfterClose(window);
     const sidebar_state = legacySidebarState(window, true) orelse return error.TooManyWindows;
     if (sidebar_config_json) |json| {
         parseSidebarConfig(sidebar_state, json) catch |err| {
@@ -3414,7 +3418,9 @@ pub fn createWindowWithSidebarURL(
 
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
-    keepWindowAfterClose(window);
+    if (window == null) return error.WindowCreationFailed;
+    errdefer destroyWindow(window);
+    try keepWindowAfterClose(window);
     const sidebar_state = legacySidebarState(window, true) orelse return error.TooManyWindows;
     if (sidebar_config) |config| {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -6480,9 +6486,9 @@ const ContentSlot = struct {
     content: LoadedContent = .none,
 };
 
-/// Sized to match `webview_recovery`'s budget table: the two are keyed the
-/// same way and a window in one should be in the other.
-var content_slots: [8]ContentSlot = @splat(.{});
+/// One recovery source for every window the registry can retain. Evicting an
+/// active window here would turn its next WebKit crash into a blank reload.
+var content_slots: [window_registry.capacity]ContentSlot = @splat(.{});
 
 fn retainContent(content: LoadedContent) void {
     switch (content) {
@@ -6521,8 +6527,8 @@ fn forgetContent(webview: objc.id) void {
 /// `requestWithURL:` and `URLWithString:` both hand back autoreleased objects,
 /// so without the retain these are dangling by the time the run loop next
 /// drains — which is long before any crash. Replacing a window's content
-/// releases its previous recovery source; final teardown will release the last
-/// one once craft grows true window destruction.
+/// releases its previous recovery source; `destroyWindow` releases the last
+/// one during permanent teardown.
 fn rememberContent(webview: objc.id, content: LoadedContent) void {
     retainContent(content);
 
@@ -7510,23 +7516,19 @@ pub const Installer = struct {
 /// closing was still there after reopening. So reopen restores the app as the
 /// user left it rather than reloading it.
 ///
-/// The cost is that a closed window is never freed. Craft opens one; when #67
-/// opens many, whatever closes them for real will need to release them, and
-/// this is the line it will have to pair with.
-fn keepWindowAfterClose(window: objc.id) void {
+/// The cost is that an ordinary close does not free the window. Runtime
+/// windows pair this retention with `destroyWindow`, which removes every
+/// per-window registration before allowing AppKit to deallocate the object.
+/// Registration is part of construction: a live but untracked window could
+/// neither be restored nor safely addressed through its typed handle.
+fn keepWindowAfterClose(window: objc.id) !void {
     _ = msgSend1(window, "setReleasedWhenClosed:", false);
-    rememberCraftWindow(window);
+    try rememberCraftWindow(window);
 }
 
-fn rememberCraftWindow(window: objc.id) void {
+fn rememberCraftWindow(window: objc.id) !void {
     if (window_registry.remember(@intFromPtr(window))) return;
-    // Full. Reopen will not restore this window, which is worse than the table
-    // being bigger — say so rather than letting a window quietly stop being
-    // reopenable, which is the bug this registry exists to prevent.
-    std.log.warn(
-        "more than {d} windows open; the newest will not be restored by a Dock click",
-        .{window_registry.capacity},
-    );
+    return error.TooManyWindows;
 }
 
 /// What a second window is asked for.
@@ -7569,6 +7571,9 @@ pub fn findNamedWindow(name: []const u8) ?objc.id {
 /// alive, so closing Settings and pressing Cmd+, again shows the same window
 /// with its page still loaded, which is both faster and where the user left it.
 pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
+    if (spec.name.len == 0 or spec.name.len > window_registry.max_name)
+        return error.InvalidWindowName;
+
     if (findNamedWindow(spec.name)) |existing| {
         // Close tears down block-based chrome observers. The native window and
         // page are retained, so put those observers back before presenting it
@@ -7586,12 +7591,13 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     else
         try createWindowWithHTML(spec.title, spec.width, spec.height, spec.html.?, spec.style);
 
-    // `createWindowWithStyle` has already recorded it through
-    // `keepWindowAfterClose`; this only attaches the name, which is why a full
-    // table is not fatal here — the window exists and works, it just cannot be
-    // found by name again.
+    // `createWindowWithStyle` has already reserved the registry row through
+    // `keepWindowAfterClose`; this only fills in its validated name and owner.
+    // Treat a refusal as a construction failure rather than returning a handle
+    // that cannot be found by name on its next `open` call.
     if (!window_registry.rememberNamedOwned(@intFromPtr(window), spec.name, spec.owner_webview)) {
-        std.log.warn("window \"{s}\" could not be named; a later open will make a second one", .{spec.name});
+        destroyWindow(window);
+        return error.WindowRegistrationFailed;
     }
 
     // Focus, blur, move, resize and close events, the same as the first window

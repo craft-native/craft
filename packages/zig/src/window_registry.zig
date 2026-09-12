@@ -32,8 +32,8 @@ const std = @import("std");
 /// AppKit.
 pub const Handle = usize;
 
-/// Craft opens one window today; #67 opens more. Far past any real app, and
-/// fixed so registration needs no allocator on the window-creation path.
+/// Maximum live windows. Fixed so registration needs no allocator on the
+/// window-creation path; constructors fail transactionally past this limit.
 pub const capacity = 16;
 
 /// How long a window's name may be.
@@ -71,7 +71,7 @@ var windows: [capacity]Entry = @splat(.{});
 /// Record a window craft created. Idempotent.
 ///
 /// Returns false if the table was full and the window was not recorded — the
-/// caller is expected to say so rather than let a window silently become
+/// caller must abandon construction rather than let a window silently become
 /// unreopenable.
 pub fn remember(handle: Handle) bool {
     return rememberNamed(handle, null);
@@ -171,7 +171,7 @@ pub fn isKnown(handle: Handle) bool {
     return false;
 }
 
-/// Drop a window. For real teardown, whenever #67 introduces some.
+/// Drop a window during permanent teardown.
 pub fn forget(handle: Handle) void {
     for (&windows) |*slot| {
         if (slot.handle == handle) slot.* = .{};
