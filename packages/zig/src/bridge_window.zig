@@ -82,6 +82,24 @@ pub const WindowBridge = struct {
             try self.moveBy(data);
         } else if (std.mem.eql(u8, action, "setTitle")) {
             try self.setTitle(data);
+        } else if (std.mem.eql(u8, action, "getTitle")) {
+            try self.getTitle(data);
+        } else if (std.mem.eql(u8, action, "getSize")) {
+            try self.getSize(data);
+        } else if (std.mem.eql(u8, action, "getPosition")) {
+            try self.getPosition(data);
+        } else if (std.mem.eql(u8, action, "getBounds")) {
+            try self.getBounds(data);
+        } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
+            try self.isAlwaysOnTop(data);
+        } else if (std.mem.eql(u8, action, "isResizable")) {
+            try self.isResizable(data);
+        } else if (std.mem.eql(u8, action, "isMovable")) {
+            try self.isMovable(data);
+        } else if (std.mem.eql(u8, action, "getOpacity")) {
+            try self.getOpacity(data);
+        } else if (std.mem.eql(u8, action, "getState")) {
+            try self.getState(data);
         } else if (std.mem.eql(u8, action, "reload")) {
             try self.reload(data);
         } else if (std.mem.eql(u8, action, "setAppearance")) {
@@ -458,6 +476,134 @@ pub const WindowBridge = struct {
             const ns_title = macos.msgSend1(str_alloc, "initWithUTF8String:", title_cstr.ptr);
             _ = macos.msgSend1(handle, "setTitle:", ns_title);
         }
+    }
+
+    fn sendStringResult(self: *Self, action: []const u8, value: []const u8) !void {
+        var json: std.ArrayListUnmanaged(u8) = .empty;
+        defer json.deinit(self.allocator);
+        try json.append(self.allocator, '"');
+        try bridge_error.appendJsonEscaped(self.allocator, &json, value);
+        try json.append(self.allocator, '"');
+        bridge_error.sendResultToJS(self.allocator, action, json.items);
+    }
+
+    fn sendBoolResult(self: *Self, action: []const u8, value: bool) void {
+        bridge_error.sendResultToJS(self.allocator, action, if (value) "true" else "false");
+    }
+
+    fn getTitle(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) return self.sendStringResult("getTitle", "");
+
+        const macos = @import("macos.zig");
+        const title = macos.msgSend0(handle, "title");
+        if (title == null) return self.sendStringResult("getTitle", "");
+        const utf8 = macos.msgSend0(title, "UTF8String");
+        if (utf8 == null) return self.sendStringResult("getTitle", "");
+        try self.sendStringResult("getTitle", std.mem.span(@as([*:0]const u8, @ptrCast(utf8))));
+    }
+
+    fn getSize(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "getSize", "{\"width\":0,\"height\":0}");
+            return;
+        }
+        const frame = @import("macos.zig").msgSendRect(handle, "frame");
+        var buf: [128]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"width\":{d},\"height\":{d}}}", .{ frame.size.width, frame.size.height });
+        bridge_error.sendResultToJS(self.allocator, "getSize", json);
+    }
+
+    fn getPosition(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "getPosition", "{\"x\":0,\"y\":0}");
+            return;
+        }
+        const frame = @import("macos.zig").msgSendRect(handle, "frame");
+        var buf: [128]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{{\"x\":{d},\"y\":{d}}}", .{ frame.origin.x, frame.origin.y });
+        bridge_error.sendResultToJS(self.allocator, "getPosition", json);
+    }
+
+    fn getBounds(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "getBounds", "{\"x\":0,\"y\":0,\"width\":0,\"height\":0}");
+            return;
+        }
+        const frame = @import("macos.zig").msgSendRect(handle, "frame");
+        var buf: [224]u8 = undefined;
+        const json = try std.fmt.bufPrint(
+            &buf,
+            "{{\"x\":{d},\"y\":{d},\"width\":{d},\"height\":{d}}}",
+            .{ frame.origin.x, frame.origin.y, frame.size.width, frame.size.height },
+        );
+        bridge_error.sendResultToJS(self.allocator, "getBounds", json);
+    }
+
+    fn isAlwaysOnTop(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) return self.sendBoolResult("isAlwaysOnTop", false);
+        self.sendBoolResult("isAlwaysOnTop", @import("macos.zig").msgSend0Ulong(handle, "level") != 0);
+    }
+
+    fn isResizable(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) return self.sendBoolResult("isResizable", false);
+        self.sendBoolResult("isResizable", (@import("macos.zig").msgSend0Ulong(handle, "styleMask") & 8) != 0);
+    }
+
+    fn isMovable(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) return self.sendBoolResult("isMovable", false);
+        self.sendBoolResult("isMovable", @import("macos.zig").msgSendBool(handle, "isMovable"));
+    }
+
+    fn getOpacity(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(self.allocator, "getOpacity", "1");
+            return;
+        }
+        var buf: [64]u8 = undefined;
+        const json = try std.fmt.bufPrint(&buf, "{d}", .{@import("macos.zig").msgSend0Double(handle, "alphaValue")});
+        bridge_error.sendResultToJS(self.allocator, "getOpacity", json);
+    }
+
+    fn getState(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag != .macos) {
+            bridge_error.sendResultToJS(
+                self.allocator,
+                "getState",
+                "{\"isVisible\":false,\"isMinimized\":false,\"isMaximized\":false,\"isFullscreen\":false,\"isFocused\":false,\"isAlwaysOnTop\":false,\"bounds\":{\"x\":0,\"y\":0,\"width\":0,\"height\":0}}",
+            );
+            return;
+        }
+
+        const macos = @import("macos.zig");
+        const frame = macos.msgSendRect(handle, "frame");
+        const style_mask = macos.msgSend0Ulong(handle, "styleMask");
+        var buf: [512]u8 = undefined;
+        const json = try std.fmt.bufPrint(
+            &buf,
+            "{{\"isVisible\":{},\"isMinimized\":{},\"isMaximized\":{},\"isFullscreen\":{},\"isFocused\":{},\"isAlwaysOnTop\":{},\"bounds\":{{\"x\":{d},\"y\":{d},\"width\":{d},\"height\":{d}}}}}",
+            .{
+                macos.msgSendBool(handle, "isVisible"),
+                macos.msgSendBool(handle, "isMiniaturized"),
+                macos.msgSendBool(handle, "isZoomed"),
+                (style_mask & 16384) != 0,
+                macos.msgSendBool(handle, "isKeyWindow"),
+                macos.msgSend0Ulong(handle, "level") != 0,
+                frame.origin.x,
+                frame.origin.y,
+                frame.size.width,
+                frame.size.height,
+            },
+        );
+        bridge_error.sendResultToJS(self.allocator, "getState", json);
     }
 
     fn reload(self: *Self, data: ?[]const u8) !void {

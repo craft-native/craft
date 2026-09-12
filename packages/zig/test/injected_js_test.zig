@@ -382,6 +382,42 @@ test "a retained window handle names the window it targets" {
     try testing.expectEqualStrings("Preferences", try fx.text("JSON.parse(posted[0].d).title"));
 }
 
+test "typed window getters wait for their correlated native result" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var measured = null;
+        \\window.craft.window._call('getBounds', undefined, 'settings').then(function (v) { measured = v });
+    );
+
+    try testing.expectEqualStrings("getBounds", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("settings", try fx.text("JSON.parse(posted[0].d).windowId"));
+    try testing.expectEqualStrings("number", try fx.text("typeof posted[0].i"));
+    try testing.expectEqualStrings("null", try fx.text("String(measured)"));
+
+    _ = try ctx.evaluate(
+        \\window.__craftBridgeResult('getBounds', { x: 10, y: 20, width: 800, height: 600 }, posted[0].i);
+    );
+    try testing.expectEqualStrings("800", try fx.text("String(measured.width)"));
+    try testing.expectEqualStrings("600", try fx.text("String(measured.height)"));
+}
+
+test "typed window mutations remain fire and forget" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("window.craft.window._call('setTitle', { title: 'Preferences' }, 'settings');");
+
+    try testing.expectEqualStrings("undefined", try fx.text("typeof window.__craftBridgePending.setTitle"));
+}
+
 test "window events identify the receiving page as its local window" {
     var fx = try Fixture.init();
     defer fx.deinit();

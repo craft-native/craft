@@ -476,7 +476,24 @@
     // authentication and request-id correlation.
     _call: function (action, data, windowId) {
       const payload = Object.assign({}, data || {}, { windowId: String(windowId || 'main') })
-      return _send('window', String(action), _stringify(payload))
+      const name = String(action)
+      // Reads need the correlated response path; mutations only need to know
+      // that their message was posted. Treating every call as fire-and-forget
+      // made the typed SDK's getters resolve immediately with `undefined`.
+      const reads = {
+        getTitle: 1,
+        getSize: 1,
+        getPosition: 1,
+        getBounds: 1,
+        isAlwaysOnTop: 1,
+        isResizable: 1,
+        isMovable: 1,
+        getOpacity: 1,
+        getState: 1
+      }
+      return reads[name]
+        ? _req('window', name, _stringify(payload))
+        : _send('window', name, _stringify(payload))
     },
     show:         function ()         { return _send('window', 'show') },
     hide:         function ()         { return _send('window', 'hide') },
