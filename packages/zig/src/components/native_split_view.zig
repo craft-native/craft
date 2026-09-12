@@ -51,10 +51,26 @@ pub const NativeSplitView = struct {
     }
 
     pub fn deinit(self: *NativeSplitView) void {
-        // Sidebar and file-browser instances are borrowed from the bridge's
-        // registries. Their own destroy actions remain valid while this
-        // layout exists, and window-state teardown releases each exactly once.
+        // Components are borrowed from the bridge registries. Detach their
+        // views before releasing the split view so either component can be
+        // reused or safely destroyed afterward.
+        if (self.sidebar) |sidebar| {
+            _ = macos.msgSend0(sidebar.getView(), "removeFromSuperview");
+        }
+        if (self.file_browser) |browser| {
+            _ = macos.msgSend0(browser.getView(), "removeFromSuperview");
+        }
+        _ = macos.msgSend0(self.split_view, "removeFromSuperview");
+        _ = macos.msgSend0(self.split_view, "release");
         self.allocator.destroy(self);
+    }
+
+    pub fn usesSidebar(self: *const NativeSplitView, sidebar: *const NativeSidebar) bool {
+        return self.sidebar == sidebar;
+    }
+
+    pub fn usesFileBrowser(self: *const NativeSplitView, browser: *const NativeFileBrowser) bool {
+        return self.file_browser == browser;
     }
 
     /// Get the split view (top-level view to add to window)

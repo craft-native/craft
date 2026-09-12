@@ -545,6 +545,18 @@ pub fn setTableViewReturnCallback(view: objc.id, callback: ?*const fn () void) v
     storeViewCallback(view, &table_return_association_key, callback);
 }
 
+/// Remove callbacks before an outline view's Zig owner is destroyed.
+pub fn clearOutlineViewCallbacks(view: objc.id) void {
+    storeViewCallback(view, &outline_spacebar_association_key, null);
+    storeViewCallback(view, &outline_return_association_key, null);
+}
+
+/// Remove callbacks before a table view's Zig owner is destroyed.
+pub fn clearTableViewCallbacks(view: objc.id) void {
+    storeViewCallback(view, &table_spacebar_association_key, null);
+    storeViewCallback(view, &table_return_association_key, null);
+}
+
 /// Install a key equivalent handler for a specific key combination
 pub fn installKeyEquivalent(
     view: objc.id,

@@ -29,6 +29,7 @@ pub const ViewControllerWrapper = struct {
     }
 
     pub fn deinit(self: *ViewControllerWrapper) void {
+        _ = macos.msgSend0(self.view_controller, "release");
         self.allocator.destroy(self);
     }
 

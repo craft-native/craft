@@ -49,8 +49,15 @@ pub const NativeSplitViewController = struct {
     }
 
     pub fn deinit(self: *NativeSplitViewController) void {
+        if (self.sidebar_item) |item| {
+            _ = macos.msgSend1(self.split_view_controller, "removeSplitViewItem:", item);
+        }
+        if (self.content_item) |item| {
+            _ = macos.msgSend1(self.split_view_controller, "removeSplitViewItem:", item);
+        }
         if (self.sidebar_view_controller) |vc| vc.deinit();
         if (self.content_view_controller) |vc| vc.deinit();
+        _ = macos.msgSend0(self.split_view_controller, "release");
         self.allocator.destroy(self);
     }
 
@@ -96,6 +103,10 @@ pub const NativeSplitViewController = struct {
 
         // Add sidebar content as subview of the glass view
         _ = macos.msgSend1(glass_view, "addSubview:", sidebar_view);
+        errdefer {
+            _ = macos.msgSend0(sidebar_view, "removeFromSuperview");
+            _ = macos.msgSend0(glass_view, "release");
+        }
 
         // Set autoresizing mask on BOTH views to resize properly
         const NSViewWidthSizable: c_ulong = 2;
@@ -106,6 +117,9 @@ pub const NativeSplitViewController = struct {
 
         // Wrap the glass view in a view controller
         const view_controller_wrapper = try ViewControllerWrapper.init(self.allocator, glass_view);
+        // The wrapper's NSViewController retains its view. Balance the
+        // alloc/init ownership so controller teardown can release it fully.
+        _ = macos.msgSend0(glass_view, "release");
         self.sidebar_view_controller = view_controller_wrapper;
 
         // Use sidebarWithViewController: class method to create sidebar item

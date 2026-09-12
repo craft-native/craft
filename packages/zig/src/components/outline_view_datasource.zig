@@ -25,7 +25,21 @@ pub const OutlineViewDataSource = struct {
                 label: []const u8,
                 icon: ?[]const u8 = null,
                 badge: ?[]const u8 = null,
+
+                pub fn deinit(self: *const Item, allocator: std.mem.Allocator) void {
+                    allocator.free(self.id);
+                    allocator.free(self.label);
+                    if (self.icon) |icon| allocator.free(icon);
+                    if (self.badge) |badge| allocator.free(badge);
+                }
             };
+
+            pub fn deinit(self: *Section, allocator: std.mem.Allocator) void {
+                allocator.free(self.id);
+                if (self.header) |header| allocator.free(header);
+                for (self.items.items) |*item| item.deinit(allocator);
+                self.items.deinit(allocator);
+            }
         };
 
         pub fn init(allocator: std.mem.Allocator) DataStore {
@@ -36,6 +50,9 @@ pub const OutlineViewDataSource = struct {
         }
 
         pub fn deinit(self: *DataStore) void {
+            for (self.sections.items) |*section| {
+                section.deinit(self.allocator);
+            }
             self.sections.deinit(self.allocator);
         }
     };
@@ -145,6 +162,25 @@ pub const OutlineViewDataSource = struct {
         return self.instance;
     }
 };
+
+test "outline data store releases owned sections and items" {
+    const allocator = std.testing.allocator;
+    var store = OutlineViewDataSource.DataStore.init(allocator);
+    defer store.deinit();
+
+    var section = OutlineViewDataSource.DataStore.Section{
+        .id = try allocator.dupe(u8, "library"),
+        .header = try allocator.dupe(u8, "Library"),
+        .items = .empty,
+    };
+    try section.items.append(allocator, .{
+        .id = try allocator.dupe(u8, "recent"),
+        .label = try allocator.dupe(u8, "Recent"),
+        .icon = try allocator.dupe(u8, "clock"),
+        .badge = try allocator.dupe(u8, "3"),
+    });
+    try store.sections.append(allocator, section);
+}
 
 /// Helper to get data store from Objective-C instance
 fn getDataStore(instance: macos.objc.id) ?*OutlineViewDataSource.DataStore {

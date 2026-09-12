@@ -40,6 +40,9 @@ const window_bridge_source = @embedFile("src/bridge_window.zig");
 const native_ui_bridge_source = @embedFile("src/bridge_native_ui.zig");
 const space_switcher_source = @embedFile("src/components/native_space_switcher.zig");
 const keyboard_handler_source = @embedFile("src/components/keyboard_handler.zig");
+const native_sidebar_source = @embedFile("src/components/native_sidebar.zig");
+const native_file_browser_source = @embedFile("src/components/native_file_browser.zig");
+const native_split_view_source = @embedFile("src/components/native_split_view.zig");
 const tray_menu_source = @embedFile("src/tray_menu.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
@@ -556,6 +559,52 @@ test "native UI creation publishes only fully initialized components" {
 
         try testing.expect(reserve < install);
         try testing.expect(install < publish);
+    }
+}
+
+test "native UI teardown detaches views before freeing callback state" {
+    const destroy_start = std.mem.indexOf(u8, native_ui_bridge_source, "    fn destroyComponent(") orelse
+        return error.NativeUIDestroyNotFound;
+    const destroy_end = std.mem.indexOfPos(u8, native_ui_bridge_source, destroy_start, "    /// Show a context menu") orelse
+        return error.NativeUIDestroyEndNotFound;
+    const destroy_body = native_ui_bridge_source[destroy_start..destroy_end];
+    try testing.expect(std.mem.indexOf(u8, destroy_body, "state.destroySplitViewsUsingSidebar(sidebar)") != null);
+    try testing.expect(std.mem.indexOf(u8, destroy_body, "state.destroySplitViewsUsingFileBrowser(browser)") != null);
+    try testing.expect(std.mem.indexOf(u8, destroy_body, "state.restoreOriginalContent()") != null);
+
+    for ([_]struct {
+        source: []const u8,
+        start: []const u8,
+        detached: []const u8,
+        freed: []const u8,
+    }{
+        .{
+            .source = native_sidebar_source,
+            .start = "    pub fn deinit(self: *NativeSidebar)",
+            .detached = "setDataSource:",
+            .freed = "self.data_source.deinit()",
+        },
+        .{
+            .source = native_file_browser_source,
+            .start = "    pub fn deinit(self: *NativeFileBrowser)",
+            .detached = "setDataSource:",
+            .freed = "self.data_source.deinit()",
+        },
+        .{
+            .source = native_split_view_source,
+            .start = "    pub fn deinit(self: *NativeSplitView)",
+            .detached = "removeFromSuperview",
+            .freed = "self.allocator.destroy(self)",
+        },
+    }) |case| {
+        const start = std.mem.indexOf(u8, case.source, case.start) orelse
+            return error.NativeUIComponentDeinitNotFound;
+        const body = case.source[start..];
+        const detached = std.mem.indexOf(u8, body, case.detached) orelse
+            return error.NativeUIViewDetachNotFound;
+        const freed = std.mem.indexOf(u8, body, case.freed) orelse
+            return error.NativeUIStateFreeNotFound;
+        try testing.expect(detached < freed);
     }
 }
 

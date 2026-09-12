@@ -4,6 +4,26 @@ const OutlineViewDataSource = @import("outline_view_datasource.zig").OutlineView
 const OutlineViewDelegate = @import("outline_view_delegate.zig").OutlineViewDelegate;
 const keyboard_handler = @import("keyboard_handler.zig");
 
+fn cloneSidebarItem(allocator: std.mem.Allocator, item: NativeSidebar.SidebarItem) !OutlineViewDataSource.DataStore.Section.Item {
+    const id = try allocator.dupe(u8, item.id);
+    errdefer allocator.free(id);
+    const label = try allocator.dupe(u8, item.label);
+    errdefer allocator.free(label);
+    const icon = if (item.icon) |value| try allocator.dupe(u8, value) else null;
+    errdefer if (icon) |value| allocator.free(value);
+    const badge = if (item.badge) |value| try allocator.dupe(u8, value) else null;
+
+    return .{ .id = id, .label = label, .icon = icon, .badge = badge };
+}
+
+fn initOwnedSection(allocator: std.mem.Allocator, section: NativeSidebar.SidebarSection) !OutlineViewDataSource.DataStore.Section {
+    const id = try allocator.dupe(u8, section.id);
+    errdefer allocator.free(id);
+    const header = if (section.header) |value| try allocator.dupe(u8, value) else null;
+
+    return .{ .id = id, .header = header, .items = .empty, .is_expanded = true };
+}
+
 /// High-level wrapper for NSOutlineView-based sidebar
 /// Integrates data source and delegate into a complete component
 pub const NativeSidebar = struct {
@@ -61,6 +81,7 @@ pub const NativeSidebar = struct {
         _ = macos.msgSend1(column, "setWidth:", @as(f64, 240.0));
         _ = macos.msgSend1(outline_view, "addTableColumn:", column);
         _ = macos.msgSend1(outline_view, "setOutlineTableColumn:", column);
+        _ = macos.msgSend0(column, "release");
 
         // CRITICAL: Enable native source list style
         _ = macos.msgSend1(outline_view, "setSelectionHighlightStyle:", @as(c_long, 1)); // NSTableViewSelectionHighlightStyleSourceList
@@ -136,8 +157,15 @@ pub const NativeSidebar = struct {
     }
 
     pub fn deinit(self: *NativeSidebar) void {
+        keyboard_handler.clearOutlineViewCallbacks(self.outline_view);
+        _ = macos.msgSend1(self.outline_view, "setDelegate:", @as(?*anyopaque, null));
+        _ = macos.msgSend1(self.outline_view, "setDataSource:", @as(?*anyopaque, null));
+        _ = macos.msgSend0(self.scroll_view, "removeFromSuperview");
+        _ = macos.msgSend1(self.scroll_view, "setDocumentView:", @as(?*anyopaque, null));
         self.delegate.deinit();
         self.data_source.deinit();
+        _ = macos.msgSend0(self.outline_view, "release");
+        _ = macos.msgSend0(self.scroll_view, "release");
         self.allocator.destroy(self);
     }
 
@@ -148,22 +176,16 @@ pub const NativeSidebar = struct {
 
     /// Add a section to the sidebar
     pub fn addSection(self: *NativeSidebar, section: SidebarSection) !void {
-        var new_section = OutlineViewDataSource.DataStore.Section{
-            .id = try self.allocator.dupe(u8, section.id),
-            .header = if (section.header) |h| try self.allocator.dupe(u8, h) else null,
-            .items = .empty,
-            .is_expanded = true,
-        };
+        var new_section = try initOwnedSection(self.allocator, section);
+        errdefer new_section.deinit(self.allocator);
 
         // Add items to section
         for (section.items) |item| {
-            const new_item = OutlineViewDataSource.DataStore.Section.Item{
-                .id = try self.allocator.dupe(u8, item.id),
-                .label = try self.allocator.dupe(u8, item.label),
-                .icon = if (item.icon) |icon| try self.allocator.dupe(u8, icon) else null,
-                .badge = if (item.badge) |badge| try self.allocator.dupe(u8, badge) else null,
+            const new_item = try cloneSidebarItem(self.allocator, item);
+            new_section.items.append(self.allocator, new_item) catch |err| {
+                new_item.deinit(self.allocator);
+                return err;
             };
-            try new_section.items.append(self.allocator, new_item);
         }
 
         const section_index = self.data_source.data.sections.items.len;

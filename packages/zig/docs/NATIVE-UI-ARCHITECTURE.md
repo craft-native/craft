@@ -305,6 +305,13 @@ the temporary objects without leaving a dangling component ID behind.
 
 ### Destruction
 
+Split views borrow their sidebar and file-browser components. Destroying either
+borrowed component first destroys every dependent split view, detaches its
+AppKit views, and only then frees delegate/data-source memory. Destroying the
+controller-backed sidebar also restores the window's original webview. This
+ordering prevents AppKit from retaining a view whose callbacks point at freed
+Zig state.
+
 ```
 
 1. JavaScript: sidebar.destroy()

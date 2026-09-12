@@ -4,6 +4,29 @@ const TableViewDataSource = @import("table_view_datasource.zig").TableViewDataSo
 const TableViewDelegate = @import("table_view_delegate.zig").TableViewDelegate;
 const keyboard_handler = @import("keyboard_handler.zig");
 
+fn cloneFileItem(allocator: std.mem.Allocator, file: NativeFileBrowser.FileItem) !TableViewDataSource.DataStore.FileItem {
+    const id = try allocator.dupe(u8, file.id);
+    errdefer allocator.free(id);
+    const name = try allocator.dupe(u8, file.name);
+    errdefer allocator.free(name);
+    const icon = if (file.icon) |value| try allocator.dupe(u8, value) else null;
+    errdefer if (icon) |value| allocator.free(value);
+    const date_modified = if (file.date_modified) |value| try allocator.dupe(u8, value) else null;
+    errdefer if (date_modified) |value| allocator.free(value);
+    const size = if (file.size) |value| try allocator.dupe(u8, value) else null;
+    errdefer if (size) |value| allocator.free(value);
+    const kind = if (file.kind) |value| try allocator.dupe(u8, value) else null;
+
+    return .{
+        .id = id,
+        .name = name,
+        .icon = icon,
+        .date_modified = date_modified,
+        .size = size,
+        .kind = kind,
+    };
+}
+
 /// High-level wrapper for NSTableView-based file browser
 /// Integrates data source and delegate into a complete multi-column table
 pub const NativeFileBrowser = struct {
@@ -73,6 +96,7 @@ pub const NativeFileBrowser = struct {
             _ = macos.msgSend1(column, "setResizingMask:", @as(c_ulong, 1)); // NSTableColumnAutoresizingMask
 
             _ = macos.msgSend1(table_view, "addTableColumn:", column);
+            _ = macos.msgSend0(column, "release");
         }
 
         // Configure appearance
@@ -116,8 +140,15 @@ pub const NativeFileBrowser = struct {
     }
 
     pub fn deinit(self: *NativeFileBrowser) void {
+        keyboard_handler.clearTableViewCallbacks(self.table_view);
+        _ = macos.msgSend1(self.table_view, "setDelegate:", @as(?*anyopaque, null));
+        _ = macos.msgSend1(self.table_view, "setDataSource:", @as(?*anyopaque, null));
+        _ = macos.msgSend0(self.scroll_view, "removeFromSuperview");
+        _ = macos.msgSend1(self.scroll_view, "setDocumentView:", @as(?*anyopaque, null));
         self.delegate.deinit();
         self.data_source.deinit();
+        _ = macos.msgSend0(self.table_view, "release");
+        _ = macos.msgSend0(self.scroll_view, "release");
         self.allocator.destroy(self);
     }
 
@@ -128,16 +159,11 @@ pub const NativeFileBrowser = struct {
 
     /// Add a single file to the browser
     pub fn addFile(self: *NativeFileBrowser, file: FileItem) !void {
-        const new_file = TableViewDataSource.DataStore.FileItem{
-            .id = try self.allocator.dupe(u8, file.id),
-            .name = try self.allocator.dupe(u8, file.name),
-            .icon = if (file.icon) |icon| try self.allocator.dupe(u8, icon) else null,
-            .date_modified = if (file.date_modified) |date| try self.allocator.dupe(u8, date) else null,
-            .size = if (file.size) |size| try self.allocator.dupe(u8, size) else null,
-            .kind = if (file.kind) |kind| try self.allocator.dupe(u8, kind) else null,
+        const new_file = try cloneFileItem(self.allocator, file);
+        self.data_source.data.files.append(self.allocator, new_file) catch |err| {
+            new_file.deinit(self.allocator);
+            return err;
         };
-
-        try self.data_source.data.files.append(self.allocator, new_file);
 
         // Reload data
         _ = macos.msgSend0(self.table_view, "reloadData");
@@ -146,16 +172,11 @@ pub const NativeFileBrowser = struct {
     /// Add multiple files at once (more efficient)
     pub fn addFiles(self: *NativeFileBrowser, files: []const FileItem) !void {
         for (files) |file| {
-            const new_file = TableViewDataSource.DataStore.FileItem{
-                .id = try self.allocator.dupe(u8, file.id),
-                .name = try self.allocator.dupe(u8, file.name),
-                .icon = if (file.icon) |icon| try self.allocator.dupe(u8, icon) else null,
-                .date_modified = if (file.date_modified) |date| try self.allocator.dupe(u8, date) else null,
-                .size = if (file.size) |size| try self.allocator.dupe(u8, size) else null,
-                .kind = if (file.kind) |kind| try self.allocator.dupe(u8, kind) else null,
+            const new_file = try cloneFileItem(self.allocator, file);
+            self.data_source.data.files.append(self.allocator, new_file) catch |err| {
+                new_file.deinit(self.allocator);
+                return err;
             };
-
-            try self.data_source.data.files.append(self.allocator, new_file);
         }
 
         // Reload data once after all files added
@@ -164,17 +185,7 @@ pub const NativeFileBrowser = struct {
 
     /// Clear all files from the browser
     pub fn clearFiles(self: *NativeFileBrowser) void {
-        // Free all file data
-        for (self.data_source.data.files.items) |file| {
-            self.allocator.free(file.id);
-            self.allocator.free(file.name);
-            if (file.icon) |icon| self.allocator.free(icon);
-            if (file.date_modified) |date| self.allocator.free(date);
-            if (file.size) |size| self.allocator.free(size);
-            if (file.kind) |kind| self.allocator.free(kind);
-        }
-
-        self.data_source.data.files.clearRetainingCapacity();
+        self.data_source.data.clear();
 
         // Reload data
         _ = macos.msgSend0(self.table_view, "reloadData");

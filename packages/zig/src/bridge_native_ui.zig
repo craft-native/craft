@@ -34,7 +34,7 @@ const WindowState = struct {
     fn deinit(self: *WindowState) void {
         if (self.space_switcher) |switcher| switcher.deinit();
         if (self.active_context_menu_delegate) |delegate| delegate.deinit();
-        if (self.split_view_controller) |controller| controller.deinit();
+        self.restoreOriginalContent();
 
         var split_iter = self.split_views.iterator();
         while (split_iter.next()) |entry| {
@@ -56,6 +56,57 @@ const WindowState = struct {
             entry.value_ptr.*.deinit();
         }
         self.file_browsers.deinit();
+    }
+
+    fn restoreOriginalContent(self: *WindowState) void {
+        const controller = self.split_view_controller orelse return;
+        _ = macos.msgSend1(self.window, "setContentViewController:", @as(?*anyopaque, null));
+        controller.deinit();
+        self.split_view_controller = null;
+
+        if (self.original_webview != null) {
+            _ = macos.msgSend1(self.window, "setContentView:", self.original_webview);
+            self.original_webview = null;
+        }
+    }
+
+    fn destroySplitView(self: *WindowState, id: []const u8) bool {
+        const entry = self.split_views.fetchRemove(id) orelse return false;
+        self.allocator.free(entry.key);
+        entry.value.deinit();
+        return true;
+    }
+
+    fn destroySplitViewsUsingSidebar(self: *WindowState, sidebar: *NativeSidebar) void {
+        while (true) {
+            var matching_id: ?[]const u8 = null;
+            var iter = self.split_views.iterator();
+            while (iter.next()) |entry| {
+                if (entry.value_ptr.*.usesSidebar(sidebar)) {
+                    matching_id = entry.key_ptr.*;
+                    break;
+                }
+            }
+            if (matching_id) |id| {
+                _ = self.destroySplitView(id);
+            } else return;
+        }
+    }
+
+    fn destroySplitViewsUsingFileBrowser(self: *WindowState, browser: *NativeFileBrowser) void {
+        while (true) {
+            var matching_id: ?[]const u8 = null;
+            var iter = self.split_views.iterator();
+            while (iter.next()) |entry| {
+                if (entry.value_ptr.*.usesFileBrowser(browser)) {
+                    matching_id = entry.key_ptr.*;
+                    break;
+                }
+            }
+            if (matching_id) |id| {
+                _ = self.destroySplitView(id);
+            } else return;
+        }
     }
 };
 
@@ -735,6 +786,10 @@ pub const NativeUIBridge = struct {
         const component_type = root.get("type").?.string;
 
         if (std.mem.eql(u8, component_type, "sidebar")) {
+            if (state.sidebars.get(id)) |sidebar| {
+                state.destroySplitViewsUsingSidebar(sidebar);
+                state.restoreOriginalContent();
+            }
             if (state.sidebars.fetchRemove(id)) |entry| {
                 self.allocator.free(entry.key);
                 entry.value.deinit();
@@ -742,6 +797,9 @@ pub const NativeUIBridge = struct {
                     std.debug.print("[NativeUI] Destroyed sidebar '{s}'\n", .{id});
             }
         } else if (std.mem.eql(u8, component_type, "fileBrowser")) {
+            if (state.file_browsers.get(id)) |browser| {
+                state.destroySplitViewsUsingFileBrowser(browser);
+            }
             if (state.file_browsers.fetchRemove(id)) |entry| {
                 self.allocator.free(entry.key);
                 entry.value.deinit();
@@ -749,9 +807,7 @@ pub const NativeUIBridge = struct {
                     std.debug.print("[NativeUI] Destroyed file browser '{s}'\n", .{id});
             }
         } else if (std.mem.eql(u8, component_type, "splitView")) {
-            if (state.split_views.fetchRemove(id)) |entry| {
-                self.allocator.free(entry.key);
-                entry.value.deinit();
+            if (state.destroySplitView(id)) {
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                     std.debug.print("[NativeUI] Destroyed split view '{s}'\n", .{id});
             }

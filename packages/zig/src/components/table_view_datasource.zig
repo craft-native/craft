@@ -21,6 +21,15 @@ pub const TableViewDataSource = struct {
             date_modified: ?[]const u8 = null,
             size: ?[]const u8 = null,
             kind: ?[]const u8 = null,
+
+            pub fn deinit(self: *const FileItem, allocator: std.mem.Allocator) void {
+                allocator.free(self.id);
+                allocator.free(self.name);
+                if (self.icon) |icon| allocator.free(icon);
+                if (self.date_modified) |date| allocator.free(date);
+                if (self.size) |size| allocator.free(size);
+                if (self.kind) |kind| allocator.free(kind);
+            }
         };
 
         pub fn init(allocator: std.mem.Allocator) DataStore {
@@ -31,7 +40,15 @@ pub const TableViewDataSource = struct {
         }
 
         pub fn deinit(self: *DataStore) void {
+            self.clear();
             self.files.deinit(self.allocator);
+        }
+
+        pub fn clear(self: *DataStore) void {
+            for (self.files.items) |file| {
+                file.deinit(self.allocator);
+            }
+            self.files.clearRetainingCapacity();
         }
     };
 
@@ -112,6 +129,23 @@ pub const TableViewDataSource = struct {
         return self.instance;
     }
 };
+
+test "table data store clear and deinit release owned files" {
+    const allocator = std.testing.allocator;
+    var store = TableViewDataSource.DataStore.init(allocator);
+    defer store.deinit();
+
+    try store.files.append(allocator, .{
+        .id = try allocator.dupe(u8, "readme"),
+        .name = try allocator.dupe(u8, "README.md"),
+        .icon = try allocator.dupe(u8, "doc.text"),
+        .date_modified = try allocator.dupe(u8, "today"),
+        .size = try allocator.dupe(u8, "4 KB"),
+        .kind = try allocator.dupe(u8, "Markdown"),
+    });
+    store.clear();
+    try std.testing.expectEqual(@as(usize, 0), store.files.items.len);
+}
 
 fn getDataStore(instance: macos.objc.id) ?*TableViewDataSource.DataStore {
     const associated = macos.objc.objc_getAssociatedObject(instance, @ptrFromInt(0x5678));
