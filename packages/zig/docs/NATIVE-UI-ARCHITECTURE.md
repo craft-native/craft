@@ -27,9 +27,12 @@ The Craft Native UI system provides native macOS AppKit components accessible fr
 │                     Zig Native UI Bridge                      │ │
 │                                                               │ │
 │  NativeUIBridge                                               │ │
-│  ├── sidebars: StringHashMap(*NativeSidebar)                  │ │
-│  ├── file*browsers: StringHashMap(*NativeFileBrowser)         │ │
-│  └── split*views: StringHashMap(*NativeSplitView)             │ │
+│  └── window*states: AutoHashMap(NSWindow, WindowState)        │ │
+│      ├── sidebars: StringHashMap(*NativeSidebar)              │ │
+│      ├── file*browsers: StringHashMap(*NativeFileBrowser)     │ │
+│      ├── split*views: StringHashMap(*NativeSplitView)         │ │
+│      ├── space*switcher: ?*SpaceSwitcher                      │ │
+│      └── active*context*menu*delegate                         │ │
 │                            │                                   │ │
 │                            ▼                                   │ │
 │  handleMessage(action, data) ─────────────────────────────────┤ │
@@ -222,6 +225,25 @@ fn getDataStore(instance: objc.id) ?*DataStore {
 
 ## Component Lifecycle
 
+### Window ownership
+
+Native UI component IDs are scoped to the window whose `WKWebView` posted the
+bridge message. The dispatcher derives that window from `WKScriptMessage`; it
+does not trust a window ID supplied by JavaScript. This means two windows may
+use the same component ID without sharing state or targeting each other's
+views.
+
+Ordinary window close retains both the page and its Native UI state so the
+window can reopen intact. `window.destroy()` is permanent: before AppKit
+releases the window, Craft removes only that window's `WindowState`. Delayed
+target/action callbacks, such as a spaces-switcher selection, retain the
+owning webview explicitly because bridge sender context ends when dispatch
+returns.
+
+Quick Look is the exception. `QLPreviewPanel` is a shared AppKit panel, so its
+controller is intentionally app-scoped; showing it from another window
+replaces the shared panel's contents.
+
 ### Creation
 
 ```
@@ -239,8 +261,9 @@ fn getDataStore(instance: objc.id) ?*DataStore {
       - Create OutlineViewDelegate (dynamic ObjC class)
       - Connect data source and delegate
 
-   c. Store in sidebars hashmap
-   d. Add to window via NSSplitViewController
+   c. Resolve the authenticated sending window
+   d. Store in that window's sidebars hashmap
+   e. Add to that window via NSSplitViewController
 
 4. Return Sidebar instance to JavaScript
 

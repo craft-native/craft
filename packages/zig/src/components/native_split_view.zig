@@ -51,12 +51,9 @@ pub const NativeSplitView = struct {
     }
 
     pub fn deinit(self: *NativeSplitView) void {
-        if (self.sidebar) |sidebar| {
-            sidebar.deinit();
-        }
-        if (self.file_browser) |browser| {
-            browser.deinit();
-        }
+        // Sidebar and file-browser instances are borrowed from the bridge's
+        // registries. Their own destroy actions remain valid while this
+        // layout exists, and window-state teardown releases each exactly once.
         self.allocator.destroy(self);
     }
 

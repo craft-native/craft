@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const macos = @import("macos.zig");
+const window_context = @import("window_context.zig");
 const NativeSidebar = @import("components/native_sidebar.zig").NativeSidebar;
 const NativeFileBrowser = @import("components/native_file_browser.zig").NativeFileBrowser;
 const NativeSplitView = @import("components/native_split_view.zig").NativeSplitView;
@@ -8,84 +9,33 @@ const NativeSplitViewController = @import("components/native_split_view_controll
 const space_switcher = @import("components/native_space_switcher.zig");
 const context_menu = @import("components/context_menu.zig");
 const quick_look = @import("components/quick_look.zig");
-const TestHelpers = @import("test_helpers.zig").TestHelpers;
 
-/// Bridge handler for native UI components
-/// Routes messages from JavaScript to native AppKit components
-pub const NativeUIBridge = struct {
+const WindowState = struct {
     allocator: std.mem.Allocator,
-    window: ?macos.objc.id,
+    window: macos.objc.id,
     sidebars: std.StringHashMap(*NativeSidebar),
     file_browsers: std.StringHashMap(*NativeFileBrowser),
     split_views: std.StringHashMap(*NativeSplitView),
-    split_view_controller: ?*NativeSplitViewController,
-    original_webview: ?macos.objc.id,
-    last_reload_time: i64,
-    is_destroyed: bool,
-    active_context_menu_delegate: ?*context_menu.ContextMenuDelegate,
-    quick_look_controller: ?*quick_look.QuickLookController,
+    split_view_controller: ?*NativeSplitViewController = null,
+    original_webview: macos.objc.id = null,
+    active_context_menu_delegate: ?*context_menu.ContextMenuDelegate = null,
+    space_switcher: ?*space_switcher.SpaceSwitcher = null,
 
-    const Self = @This();
-    const RELOAD_DEBOUNCE_MS: i64 = 16; // ~60fps
-
-    pub fn init(allocator: std.mem.Allocator) NativeUIBridge {
+    fn init(allocator: std.mem.Allocator, window: macos.objc.id) WindowState {
         return .{
             .allocator = allocator,
-            .window = null,
+            .window = window,
             .sidebars = std.StringHashMap(*NativeSidebar).init(allocator),
             .file_browsers = std.StringHashMap(*NativeFileBrowser).init(allocator),
             .split_views = std.StringHashMap(*NativeSplitView).init(allocator),
-            .split_view_controller = null,
-            .original_webview = null,
-            .last_reload_time = 0,
-            .is_destroyed = false,
-            .active_context_menu_delegate = null,
-            .quick_look_controller = null,
         };
     }
 
-    pub fn deinit(self: *Self) void {
-        self.is_destroyed = true;
+    fn deinit(self: *WindowState) void {
+        if (self.space_switcher) |switcher| switcher.deinit();
+        if (self.active_context_menu_delegate) |delegate| delegate.deinit();
+        if (self.split_view_controller) |controller| controller.deinit();
 
-        // Drop the spaces switcher before the window goes: it holds views in
-        // the titlebar and a pointer the target/action callback still reads.
-        space_switcher.destroy();
-
-        // Clean up Quick Look controller
-        if (self.quick_look_controller) |controller| {
-            controller.deinit();
-            self.quick_look_controller = null;
-        }
-
-        // Clean up active context menu delegate
-        if (self.active_context_menu_delegate) |delegate| {
-            delegate.deinit();
-            self.active_context_menu_delegate = null;
-        }
-
-        // Clean up split view controller
-        if (self.split_view_controller) |svc| {
-            svc.deinit();
-            self.split_view_controller = null;
-        }
-
-        // Clean up all sidebars
-        var sidebar_iter = self.sidebars.iterator();
-        while (sidebar_iter.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.*.deinit();
-        }
-        self.sidebars.deinit();
-
-        // Clean up all file browsers
-        var browser_iter = self.file_browsers.iterator();
-        while (browser_iter.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.*.deinit();
-        }
-        self.file_browsers.deinit();
-
-        // Clean up all split views
         var split_iter = self.split_views.iterator();
         while (split_iter.next()) |entry| {
             self.allocator.free(entry.key_ptr.*);
@@ -93,26 +43,96 @@ pub const NativeUIBridge = struct {
         }
         self.split_views.deinit();
 
-        self.window = null;
-        self.original_webview = null;
+        var sidebar_iter = self.sidebars.iterator();
+        while (sidebar_iter.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.*.deinit();
+        }
+        self.sidebars.deinit();
+
+        var browser_iter = self.file_browsers.iterator();
+        while (browser_iter.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            entry.value_ptr.*.deinit();
+        }
+        self.file_browsers.deinit();
+    }
+};
+
+/// Bridge handler for native UI components
+/// Routes messages from JavaScript to native AppKit components
+pub const NativeUIBridge = struct {
+    allocator: std.mem.Allocator,
+    primary_window: macos.objc.id,
+    window_states: std.AutoHashMap(usize, *WindowState),
+    is_destroyed: bool,
+    // QLPreviewPanel is process-global by AppKit design, so its controller is
+    // deliberately app-scoped rather than pretending each window owns a panel.
+    quick_look_controller: ?*quick_look.QuickLookController,
+
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator) NativeUIBridge {
+        return .{
+            .allocator = allocator,
+            .primary_window = null,
+            .window_states = std.AutoHashMap(usize, *WindowState).init(allocator),
+            .is_destroyed = false,
+            .quick_look_controller = null,
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.is_destroyed = true;
+
+        // Clean up Quick Look controller
+        if (self.quick_look_controller) |controller| {
+            controller.deinit();
+            self.quick_look_controller = null;
+        }
+
+        var state_iter = self.window_states.valueIterator();
+        while (state_iter.next()) |state| {
+            state.*.deinit();
+            self.allocator.destroy(state.*);
+        }
+        self.window_states.deinit();
+        self.primary_window = null;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Bridge destroyed and all components cleaned up\n", .{});
     }
 
-    /// Called when window is about to close - cleanup all resources
-    pub fn handleWindowClose(self: *Self) void {
-        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[NativeUI] Window closing - cleaning up resources\n", .{});
-        self.deinit();
+    pub fn setWindow(self: *Self, window: macos.objc.id) void {
+        if (self.primary_window == null) self.primary_window = window;
     }
 
-    pub fn setWindow(self: *Self, window: macos.objc.id) void {
-        // The bridge is process-global. Every secondary window runs bridge
-        // setup too, but until NativeUI component storage is partitioned by
-        // sender, replacing this pointer would make opening a child silently
-        // retarget the main page's later NativeUI calls to that child.
-        if (self.window == null) self.window = window;
+    fn currentWindow(self: *Self) macos.objc.id {
+        if (window_context.current()) |handle| return @ptrFromInt(handle);
+        return self.primary_window;
+    }
+
+    fn currentState(self: *Self) !*WindowState {
+        const window = self.currentWindow() orelse return error.NoWindow;
+        const key = @intFromPtr(window);
+        if (self.window_states.get(key)) |state| return state;
+
+        const state = try self.allocator.create(WindowState);
+        errdefer self.allocator.destroy(state);
+        state.* = WindowState.init(self.allocator, window);
+        errdefer state.deinit();
+        try self.window_states.put(key, state);
+        return state;
+    }
+
+    /// Forget only the UI owned by a permanently destroyed window. Ordinary
+    /// close/reopen intentionally keeps this state alive with the retained page.
+    pub fn forgetWindow(self: *Self, window: macos.objc.id) void {
+        if (window == null) return;
+        if (self.window_states.fetchRemove(@intFromPtr(window))) |entry| {
+            entry.value.deinit();
+            self.allocator.destroy(entry.value);
+        }
     }
 
     /// Handle incoming messages from JavaScript
@@ -217,16 +237,6 @@ pub const NativeUIBridge = struct {
         }
     }
 
-    /// Check if enough time has passed for a reload (debounce)
-    fn shouldDebounceReload(self: *Self) bool {
-        const now = std.time.milliTimestamp();
-        if (now - self.last_reload_time < RELOAD_DEBOUNCE_MS) {
-            return true;
-        }
-        self.last_reload_time = now;
-        return false;
-    }
-
     /// Parse a `spaces` array into the switcher's own shape.
     ///
     /// The returned slice borrows every string from `parsed`, so it must be
@@ -263,6 +273,7 @@ pub const NativeUIBridge = struct {
     /// `createSidebar`, so a window can have both.
     fn createSpacesSidebar(self: *Self, data: []const u8) !void {
         if (data.len == 0) return error.EmptyData;
+        const state = try self.currentState();
 
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, data, .{}) catch
             return error.MalformedJSON;
@@ -282,10 +293,16 @@ pub const NativeUIBridge = struct {
             else => null,
         } else null;
 
-        // `self.window` is doubly optional: an unset window reference vs. a nil
-        // objc id. The switcher treats both the same — the list works, the
-        // control just has nowhere to attach.
-        try space_switcher.create(self.allocator, self.window orelse null, id_str, spaces.items, active);
+        if (state.space_switcher) |previous| previous.deinit();
+        state.space_switcher = null;
+        state.space_switcher = try space_switcher.create(
+            self.allocator,
+            state.window,
+            if (window_context.currentWebView()) |webview| @ptrFromInt(webview) else macos.webViewForWindow(state.window) orelse null,
+            id_str,
+            spaces.items,
+            active,
+        );
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Spaces switcher '{s}' with {d} space(s)\n", .{ id_str, spaces.items.len });
@@ -293,6 +310,7 @@ pub const NativeUIBridge = struct {
 
     fn setSpaces(self: *Self, data: []const u8) !void {
         if (data.len == 0) return error.EmptyData;
+        const state = try self.currentState();
 
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, data, .{}) catch
             return error.MalformedJSON;
@@ -302,22 +320,26 @@ pub const NativeUIBridge = struct {
         var spaces = try parseSpaces(self.allocator, spaces_value);
         defer spaces.deinit(self.allocator);
 
-        try space_switcher.setSpaces(spaces.items);
+        const switcher = state.space_switcher orelse return error.SpacesSidebarNotFound;
+        try space_switcher.setSpaces(switcher, spaces.items);
     }
 
     fn setActiveSpace(self: *Self, data: []const u8) !void {
         if (data.len == 0) return error.EmptyData;
+        const state = try self.currentState();
 
         const parsed = std.json.parseFromSlice(std.json.Value, self.allocator, data, .{}) catch
             return error.MalformedJSON;
         defer parsed.deinit();
 
         const space_id = parsed.value.object.get("spaceId") orelse return error.MissingRequiredField;
-        space_switcher.setActiveSpace(space_id.string);
+        const switcher = state.space_switcher orelse return error.SpacesSidebarNotFound;
+        space_switcher.setActiveSpace(switcher, space_id.string);
     }
 
     /// Create a new sidebar component using NSSplitViewController with native Liquid Glass
     fn createSidebar(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         // Edge case: Empty data
         if (data.len == 0) {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -326,11 +348,6 @@ pub const NativeUIBridge = struct {
         }
 
         // Edge case: Missing window reference
-        if (self.window == null) {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[NativeUI] WARNING: No window reference set. Sidebar will be created but not displayed.\n", .{});
-        }
-
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Parsing JSON: {s}\n", .{data});
 
@@ -350,7 +367,7 @@ pub const NativeUIBridge = struct {
         const id_str = id.string;
 
         // Check if a sidebar already exists
-        if (self.sidebars.count() > 0) {
+        if (state.sidebars.count() > 0) {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeUI] WARNING: Sidebar already exists. Only one sidebar is supported. Ignoring request for: {s}\n", .{id_str});
             return;
@@ -398,18 +415,19 @@ pub const NativeUIBridge = struct {
 
         // Store in registry
         const id_copy = try self.allocator.dupe(u8, id_str);
-        try self.sidebars.put(id_copy, sidebar);
+        try state.sidebars.put(id_copy, sidebar);
 
-        // Add to window if we have window reference
-        if (self.window) |window| {
+        // Add to the window that sent this bridge message.
+        const window = state.window;
+        {
             // Save the original webview (current content view)
-            self.original_webview = macos.msgSend0(window, "contentView");
+            state.original_webview = macos.msgSend0(window, "contentView");
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[LiquidGlass] Saved original webview: {*}\n", .{self.original_webview.?});
+                std.debug.print("[LiquidGlass] Saved original webview: {*}\n", .{state.original_webview});
 
             // Create NSSplitViewController
             const split_vc = try NativeSplitViewController.init(self.allocator);
-            self.split_view_controller = split_vc;
+            state.split_view_controller = split_vc;
 
             // CRITICAL: Add sidebar FIRST (AppKit applies Liquid Glass automatically)
             try split_vc.setSidebar(sidebar.getView());
@@ -417,7 +435,7 @@ pub const NativeUIBridge = struct {
                 std.debug.print("[LiquidGlass] Sidebar added with native Liquid Glass material\n", .{});
 
             // CRITICAL: Add content SECOND (extends full-width under sidebar)
-            try split_vc.setContent(self.original_webview.?);
+            try split_vc.setContent(state.original_webview);
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[LiquidGlass] Content extends under floating sidebar\n", .{});
 
@@ -470,6 +488,7 @@ pub const NativeUIBridge = struct {
 
     /// Add a section to an existing sidebar
     fn addSidebarSection(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -478,7 +497,7 @@ pub const NativeUIBridge = struct {
         const section_data = root.get("section").?.object;
 
         // Get sidebar from registry
-        const sidebar = self.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
+        const sidebar = state.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
 
         const section_id = section_data.get("id").?.string;
         const header = if (section_data.get("header")) |h| h.string else null;
@@ -511,6 +530,7 @@ pub const NativeUIBridge = struct {
 
     /// Set selected item in sidebar
     fn setSelectedItem(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -518,7 +538,7 @@ pub const NativeUIBridge = struct {
         const sidebar_id = root.get("sidebarId").?.string;
         const item_id = root.get("itemId").?.string;
 
-        const sidebar = self.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
+        const sidebar = state.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
         sidebar.setSelectedItem(item_id);
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -527,11 +547,13 @@ pub const NativeUIBridge = struct {
 
     /// Create a new file browser component
     fn createFileBrowser(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
         const root = parsed.value.object;
         const id = root.get("id").?.string;
+        if (state.file_browsers.contains(id)) return error.ComponentAlreadyExists;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Creating file browser: {s}\n", .{id});
@@ -542,10 +564,11 @@ pub const NativeUIBridge = struct {
 
         // Store in registry
         const id_copy = try self.allocator.dupe(u8, id);
-        try self.file_browsers.put(id_copy, browser);
+        try state.file_browsers.put(id_copy, browser);
 
-        // Add to window if we have window reference
-        if (self.window) |window| {
+        // Add to the window that sent this bridge message.
+        const window = state.window;
+        {
             const content_view = macos.msgSend0(window, "contentView");
             const browser_view = browser.getView();
 
@@ -566,6 +589,7 @@ pub const NativeUIBridge = struct {
 
     /// Add a single file to file browser
     fn addFile(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -573,7 +597,7 @@ pub const NativeUIBridge = struct {
         const browser_id = root.get("browserId").?.string;
         const file_data = root.get("file").?.object;
 
-        const browser = self.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
+        const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
         const file = NativeFileBrowser.FileItem{
             .id = file_data.get("id").?.string,
@@ -591,6 +615,7 @@ pub const NativeUIBridge = struct {
 
     /// Add multiple files to file browser
     fn addFiles(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -598,7 +623,7 @@ pub const NativeUIBridge = struct {
         const browser_id = root.get("browserId").?.string;
         const files_json = root.get("files").?.array;
 
-        const browser = self.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
+        const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
         var files: std.ArrayList(NativeFileBrowser.FileItem) = .empty;
         defer files.deinit(self.allocator);
@@ -622,13 +647,14 @@ pub const NativeUIBridge = struct {
 
     /// Clear all files from file browser
     fn clearFiles(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
         const root = parsed.value.object;
         const browser_id = root.get("browserId").?.string;
 
-        const browser = self.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
+        const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
         browser.clearFiles();
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -637,6 +663,7 @@ pub const NativeUIBridge = struct {
 
     /// Create a split view combining sidebar and file browser
     fn createSplitView(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -644,13 +671,14 @@ pub const NativeUIBridge = struct {
         const id = root.get("id").?.string;
         const sidebar_id = root.get("sidebarId").?.string;
         const browser_id = root.get("browserId").?.string;
+        if (state.split_views.contains(id)) return error.ComponentAlreadyExists;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Creating split view: {s}\n", .{id});
 
         // Get sidebar and browser
-        const sidebar = self.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
-        const browser = self.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
+        const sidebar = state.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
+        const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
         // Create split view
         const split_view = try NativeSplitView.init(self.allocator, .{});
@@ -662,10 +690,11 @@ pub const NativeUIBridge = struct {
 
         // Store in registry
         const id_copy = try self.allocator.dupe(u8, id);
-        try self.split_views.put(id_copy, split_view);
+        try state.split_views.put(id_copy, split_view);
 
-        // Add to window if we have window reference
-        if (self.window) |window| {
+        // Add to the window that sent this bridge message.
+        const window = state.window;
+        {
             const content_view = macos.msgSend0(window, "contentView");
             const split_view_obj = split_view.getView();
 
@@ -686,6 +715,7 @@ pub const NativeUIBridge = struct {
 
     /// Destroy a component
     fn destroyComponent(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -694,21 +724,21 @@ pub const NativeUIBridge = struct {
         const component_type = root.get("type").?.string;
 
         if (std.mem.eql(u8, component_type, "sidebar")) {
-            if (self.sidebars.fetchRemove(id)) |entry| {
+            if (state.sidebars.fetchRemove(id)) |entry| {
                 self.allocator.free(entry.key);
                 entry.value.deinit();
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                     std.debug.print("[NativeUI] Destroyed sidebar '{s}'\n", .{id});
             }
         } else if (std.mem.eql(u8, component_type, "fileBrowser")) {
-            if (self.file_browsers.fetchRemove(id)) |entry| {
+            if (state.file_browsers.fetchRemove(id)) |entry| {
                 self.allocator.free(entry.key);
                 entry.value.deinit();
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                     std.debug.print("[NativeUI] Destroyed file browser '{s}'\n", .{id});
             }
         } else if (std.mem.eql(u8, component_type, "splitView")) {
-            if (self.split_views.fetchRemove(id)) |entry| {
+            if (state.split_views.fetchRemove(id)) |entry| {
                 self.allocator.free(entry.key);
                 entry.value.deinit();
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -717,8 +747,10 @@ pub const NativeUIBridge = struct {
         } else if (std.mem.eql(u8, component_type, "spacesSidebar")) {
             // Guarded by id: a second consumer tearing down its own switcher
             // must not remove the one that is currently installed.
-            if (space_switcher.isActive(id)) {
-                space_switcher.destroy();
+            if (state.space_switcher) |switcher| {
+                if (!space_switcher.isActive(switcher, id)) return;
+                switcher.deinit();
+                state.space_switcher = null;
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                     std.debug.print("[NativeUI] Destroyed spaces switcher '{s}'\n", .{id});
             }
@@ -739,6 +771,7 @@ pub const NativeUIBridge = struct {
     ///   ]
     /// }
     fn showContextMenu(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
@@ -759,14 +792,14 @@ pub const NativeUIBridge = struct {
         };
 
         // Clean up previous delegate if it exists
-        if (self.active_context_menu_delegate) |prev_delegate| {
+        if (state.active_context_menu_delegate) |prev_delegate| {
             prev_delegate.deinit();
-            self.active_context_menu_delegate = null;
+            state.active_context_menu_delegate = null;
         }
 
         // Create new delegate
         const delegate = try context_menu.ContextMenuDelegate.init(self.allocator, target_id, target_type);
-        self.active_context_menu_delegate = delegate;
+        state.active_context_menu_delegate = delegate;
 
         // Parse menu items
         const items_json = root.get("items").?.array;
@@ -835,13 +868,13 @@ pub const NativeUIBridge = struct {
         var view: macos.objc.id = null;
         if (std.mem.eql(u8, target_type, "sidebar")) {
             // Use the sidebar's view
-            var sidebar_iter = self.sidebars.valueIterator();
+            var sidebar_iter = state.sidebars.valueIterator();
             if (sidebar_iter.next()) |sidebar| {
                 view = sidebar.*.getView();
             }
         } else if (std.mem.eql(u8, target_type, "file")) {
             // Use the file browser's view
-            var browser_iter = self.file_browsers.valueIterator();
+            var browser_iter = state.file_browsers.valueIterator();
             if (browser_iter.next()) |browser| {
                 view = browser.*.getView();
             }
@@ -849,9 +882,7 @@ pub const NativeUIBridge = struct {
 
         // Fallback to window's content view
         if (view == null) {
-            if (self.window) |window| {
-                view = macos.msgSend0(window, "contentView");
-            }
+            view = macos.msgSend0(state.window, "contentView");
         }
 
         if (view == null) {
@@ -971,3 +1002,42 @@ pub const NativeUIBridge = struct {
             std.debug.print("[NativeUI] Toggled Quick Look ON\n", .{});
     }
 };
+
+test "native UI component registries are isolated by sending window" {
+    var bridge = NativeUIBridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    window_context.push(0x1000, 0x1001);
+    const first = try bridge.currentState();
+    window_context.pop();
+
+    window_context.push(0x2000, 0x2001);
+    const second = try bridge.currentState();
+    window_context.pop();
+
+    window_context.push(0x1000, 0x1001);
+    defer window_context.pop();
+    try std.testing.expectEqual(first, try bridge.currentState());
+    try std.testing.expect(first != second);
+    try std.testing.expectEqual(@as(usize, 2), bridge.window_states.count());
+}
+
+test "forgetting a window preserves other native UI state" {
+    var bridge = NativeUIBridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    window_context.push(0x1000, 0x1001);
+    _ = try bridge.currentState();
+    window_context.pop();
+    window_context.push(0x2000, 0x2001);
+    const survivor = try bridge.currentState();
+    window_context.pop();
+
+    bridge.forgetWindow(@ptrFromInt(0x1000));
+    try std.testing.expectEqual(@as(usize, 1), bridge.window_states.count());
+    try std.testing.expectEqual(survivor, bridge.window_states.get(0x2000).?);
+}

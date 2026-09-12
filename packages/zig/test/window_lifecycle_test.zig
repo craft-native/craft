@@ -38,6 +38,7 @@ const testing = std.testing;
 const macos_source = @embedFile("src/macos.zig");
 const window_bridge_source = @embedFile("src/bridge_window.zig");
 const native_ui_bridge_source = @embedFile("src/bridge_native_ui.zig");
+const space_switcher_source = @embedFile("src/components/native_space_switcher.zig");
 const tray_menu_source = @embedFile("src/tray_menu.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
@@ -418,13 +419,40 @@ test "JavaScript evaluation preserves target request and reply webview" {
     try testing.expect(std.mem.indexOf(u8, callback_body, "isValidJSONObject:") != null);
 }
 
-test "secondary setup does not steal the primary native UI target" {
+test "native UI state follows the authenticated sending window" {
     const setter_start = std.mem.indexOf(u8, native_ui_bridge_source, "pub fn setWindow(") orelse
         return error.NativeUIWindowSetterNotFound;
-    const setter_end = std.mem.indexOfPos(u8, native_ui_bridge_source, setter_start, "    pub fn handleMessage(") orelse
+    const setter_end = std.mem.indexOfPos(u8, native_ui_bridge_source, setter_start, "    fn currentState(") orelse
         return error.NativeUIWindowSetterEndNotFound;
     const setter_body = native_ui_bridge_source[setter_start..setter_end];
-    try testing.expect(std.mem.indexOf(u8, setter_body, "self.window == null") != null);
+    try testing.expect(std.mem.indexOf(u8, setter_body, "self.primary_window == null") != null);
+    try testing.expect(std.mem.indexOf(u8, setter_body, "window_context.current()") != null);
+
+    const state_start = std.mem.indexOf(u8, native_ui_bridge_source, "fn currentState(") orelse
+        return error.NativeUIStateResolverNotFound;
+    const state_end = std.mem.indexOfPos(u8, native_ui_bridge_source, state_start, "    /// Forget only the UI") orelse
+        return error.NativeUIStateResolverEndNotFound;
+    const state_body = native_ui_bridge_source[state_start..state_end];
+    try testing.expect(std.mem.indexOf(u8, state_body, "self.window_states.get(key)") != null);
+    try testing.expect(std.mem.indexOf(u8, state_body, "WindowState.init(self.allocator, window)") != null);
+}
+
+test "native UI teardown and delayed control events stay window-scoped" {
+    const destroy_start = std.mem.indexOf(u8, macos_source, "pub fn destroyWindow(") orelse
+        return error.NativeWindowDestroyNotFound;
+    const destroy_body = enclosingFnBody(macos_source, destroy_start);
+    try testing.expect(std.mem.indexOf(u8, destroy_body, "bridge.forgetWindow(window)") != null);
+
+    const callback_start = std.mem.indexOf(u8, space_switcher_source, "fn spaceSelectedCallback(") orelse
+        return error.SpaceSwitcherCallbackNotFound;
+    const callback_body = enclosingFnBody(space_switcher_source, callback_start);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "switcherForResponder(responder)") != null);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "self.webview") != null);
+
+    const emit_start = std.mem.indexOf(u8, space_switcher_source, "fn emitSpaceChange(") orelse
+        return error.SpaceSwitcherEmitterNotFound;
+    const emit_body = enclosingFnBody(space_switcher_source, emit_start);
+    try testing.expect(std.mem.indexOf(u8, emit_body, "tryEvalJSInWebView(webview") != null);
 }
 
 test "destroy releases every retained runtime-window resource" {

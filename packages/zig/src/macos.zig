@@ -3871,6 +3871,7 @@ pub fn destroyWindow(window_handle: anytype) void {
     if (window == null) return;
 
     const webview = webViewForWindow(window);
+    if (global_native_ui_bridge) |bridge| bridge.forgetWindow(window);
     forgetWindowChrome(window);
     forgetWebMaterial(window);
     if (webview) |view| {
@@ -5170,6 +5171,14 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
 /// delivered somewhere else.
 pub fn tryEvalJS(js_code: []const u8) !void {
     const webview = getMessageWebView() orelse return error.NoWebView;
+    try tryEvalJSInWebView(webview, js_code);
+}
+
+/// Evaluate JavaScript in a specific page. Native controls use this after the
+/// bridge dispatch that created them has returned, when `window_context` no
+/// longer identifies the page that owns the control.
+pub fn tryEvalJSInWebView(webview: objc.id, js_code: []const u8) !void {
+    if (webview == null) return error.NoWebView;
     const js_str = createNSString(js_code);
     _ = msgSend2(webview, "evaluateJavaScript:completionHandler:", js_str, null);
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))

@@ -23,9 +23,8 @@ const objc = macos.objc;
 
 pub const Space = space_list.Space;
 
-/// One switcher per window, mirroring the single-sidebar model.
-var state: ?*SpaceSwitcher = null;
 var switcherClass: objc.Class = null;
+var switcher_association_key: u8 = 0;
 
 pub const SpaceSwitcher = struct {
     allocator: std.mem.Allocator,
@@ -35,6 +34,9 @@ pub const SpaceSwitcher = struct {
     control: objc.id = null,
     /// Retained so the control has a target to send its action to.
     responder: objc.id = null,
+    /// The page that created the switcher. Target/action fires outside bridge
+    /// dispatch, so there is no `window_context` left to route the event.
+    webview: objc.id = null,
     /// Component id from JS, echoed back on every event so a page with more
     /// than one consumer can tell them apart.
     id: []const u8,
@@ -48,6 +50,12 @@ pub const SpaceSwitcher = struct {
         // before building the new one — leaving it parented would strand a
         // zero-sized subview in the window chrome on every re-create.
         if (self.responder != null) {
+            objc.objc_setAssociatedObject(
+                self.responder,
+                &switcher_association_key,
+                null,
+                objc.OBJC_ASSOCIATION_RETAIN,
+            );
             _ = macos.msgSend0(self.responder, "removeFromSuperview");
             self.responder = null;
         }
@@ -61,8 +69,17 @@ pub const SpaceSwitcher = struct {
 // Target/action
 // =============================================================================
 
-fn spaceSelectedCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
-    const self = state orelse return;
+fn switcherForResponder(responder: objc.id) ?*SpaceSwitcher {
+    const associated = objc.objc_getAssociatedObject(responder, &switcher_association_key);
+    if (associated == @as(objc.id, null)) return null;
+
+    const ptr = macos.msgSend0(associated, "pointerValue");
+    if (@intFromPtr(ptr) == 0) return null;
+    return @ptrCast(@alignCast(ptr));
+}
+
+fn spaceSelectedCallback(responder: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
+    const self = switcherForResponder(responder) orelse return;
     if (sender == null) return;
 
     const selected = macos.msgSend0Ulong(sender, "selectedSegment");
@@ -72,7 +89,7 @@ fn spaceSelectedCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) 
     if (!self.spaces.setActiveIndex(@intCast(selected))) return;
 
     const space = self.spaces.activeSpace() orelse return;
-    emitSpaceChange(self.id, space.id);
+    emitSpaceChange(self.webview, self.id, space.id);
 }
 
 fn ensureSwitcherClass() void {
@@ -115,7 +132,7 @@ pub fn sanitizeId(out: []u8, value: []const u8) []const u8 {
 /// `_emitSpaceChange` is defined by `craft-native-ui.js`; guarding on it means
 /// an event that lands before the script has run, or after the page navigated
 /// away, is a no-op rather than a console error.
-fn emitSpaceChange(component_id: []const u8, space_id: []const u8) void {
+fn emitSpaceChange(webview: objc.id, component_id: []const u8, space_id: []const u8) void {
     var component_buf: [128]u8 = undefined;
     var space_buf: [128]u8 = undefined;
     var js_buf: [512]u8 = undefined;
@@ -126,7 +143,7 @@ fn emitSpaceChange(component_id: []const u8, space_id: []const u8) void {
         .{ sanitizeId(&component_buf, component_id), sanitizeId(&space_buf, space_id) },
     ) catch return;
 
-    macos.tryEvalJS(js) catch {};
+    macos.tryEvalJSInWebView(webview, js) catch {};
 }
 
 // =============================================================================
@@ -203,6 +220,19 @@ fn attach(self: *SpaceSwitcher, window: objc.id) void {
     _ = macos.msgSend1(themeFrame, "addSubview:", responder);
     self.responder = responder;
 
+    const NSValue = macos.getClass("NSValue");
+    const pointer_value = macos.msgSend1(
+        NSValue,
+        "valueWithPointer:",
+        @as(?*anyopaque, @ptrCast(self)),
+    );
+    objc.objc_setAssociatedObject(
+        responder,
+        &switcher_association_key,
+        pointer_value,
+        objc.OBJC_ASSOCIATION_RETAIN,
+    );
+
     const NSSegmentedControl = macos.getClass("NSSegmentedControl");
     const control_alloc = macos.msgSend0(NSSegmentedControl, "alloc");
 
@@ -240,9 +270,7 @@ fn attach(self: *SpaceSwitcher, window: objc.id) void {
 // Public surface, called from the native-UI bridge
 // =============================================================================
 
-pub fn create(allocator: std.mem.Allocator, window: objc.id, id: []const u8, spaces: []const Space, active_id: ?[]const u8) !void {
-    destroy();
-
+pub fn create(allocator: std.mem.Allocator, window: objc.id, webview: objc.id, id: []const u8, spaces: []const Space, active_id: ?[]const u8) !*SpaceSwitcher {
     const self = try allocator.create(SpaceSwitcher);
     errdefer allocator.destroy(self);
 
@@ -250,39 +278,31 @@ pub fn create(allocator: std.mem.Allocator, window: objc.id, id: []const u8, spa
         .allocator = allocator,
         .spaces = space_list.SpaceList.init(allocator),
         .id = try allocator.dupe(u8, id),
+        .webview = webview,
     };
     errdefer self.spaces.deinit();
 
     for (spaces) |space| try self.spaces.append(space);
     if (active_id) |wanted| _ = self.spaces.setActiveId(wanted);
 
-    state = self;
     attach(self, window);
+    return self;
 }
 
-pub fn setSpaces(spaces: []const Space) !void {
-    const self = state orelse return;
+pub fn setSpaces(self: *SpaceSwitcher, spaces: []const Space) !void {
     try self.spaces.replace(spaces);
     rebuildSegments(self);
 }
 
-pub fn setActiveSpace(id: []const u8) void {
-    const self = state orelse return;
+pub fn setActiveSpace(self: *SpaceSwitcher, id: []const u8) void {
     if (!self.spaces.setActiveId(id)) return;
     if (self.control != null and self.spaces.active != null)
         _ = macos.msgSend1(self.control, "setSelectedSegment:", @as(c_long, @intCast(self.spaces.active.?)));
     applyTint(self);
 }
 
-pub fn destroy() void {
-    const self = state orelse return;
-    state = null;
-    self.deinit();
-}
-
 /// Whether a switcher is currently installed. Used by the bridge to answer
 /// `destroyComponent` for an id it may or may not own.
-pub fn isActive(id: []const u8) bool {
-    const self = state orelse return false;
+pub fn isActive(self: *const SpaceSwitcher, id: []const u8) bool {
     return std.mem.eql(u8, self.id, id);
 }

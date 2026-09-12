@@ -14,6 +14,13 @@ All native UI functions are available under `window.craft.nativeUI`.
 const { nativeUI } = window.craft;
 ```
 
+Components belong to the window that creates them. IDs only need to be unique
+within that window, so separate windows can both use IDs such as `sidebar` or
+`files`. Closing a window preserves its components for reopen; permanently
+destroying a typed window releases all of its Native UI components. Quick Look
+uses macOS's app-wide shared preview panel, so opening it from another window
+replaces the current preview.
+
 ### Ready Event
 
 The API fires a ready event when initialized:
