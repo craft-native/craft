@@ -587,6 +587,8 @@
   window.craft.window.onClose    = _evt('craft:window:close')
   window.craft.window.onMinimize = _evt('craft:window:minimize')
   window.craft.window.onRestore  = _evt('craft:window:restore')
+  window.craft.window.onEnterFullscreen = _evt('craft:window:enter-fullscreen')
+  window.craft.window.onLeaveFullscreen = _evt('craft:window:leave-fullscreen')
 
   // -------------------------------------------------------------------------
   // dialog — file pickers + alerts

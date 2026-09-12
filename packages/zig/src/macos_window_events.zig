@@ -13,6 +13,8 @@ const objc = macos.objc;
 ///   `craft:window:resize` — windowDidResize (size only — not the live drag)
 ///   `craft:window:move`  — windowDidMove
 ///   `craft:window:close` — windowWillClose
+///   `craft:window:enter-fullscreen` — windowDidEnterFullScreen
+///   `craft:window:leave-fullscreen` — windowDidExitFullScreen
 ///
 /// "willClose" fires after AppKit has committed to closing the window —
 /// i.e. you can't actually intercept it from here without subclassing
@@ -45,15 +47,27 @@ pub fn install(window: objc.id) void {
             addMethod(cls, "windowWillClose:", &windowWillClose);
             addMethod(cls, "windowDidMiniaturize:", &windowDidMiniaturize);
             addMethod(cls, "windowDidDeminiaturize:", &windowDidDeminiaturize);
+            addMethod(cls, "windowDidEnterFullScreen:", &windowDidEnterFullScreen);
+            addMethod(cls, "windowDidExitFullScreen:", &windowDidExitFullScreen);
 
             objc.objc_registerClassPair(cls);
         }
 
         delegate_instance = macos.msgSend0(macos.msgSend0(cls, "alloc"), "init");
         installed = true;
-        // Five channels, one delegate. The names are composed in JS from
+        // Nine channels, one delegate. The names are composed in JS from
         // `__craftDeliverWindowEvent`, so no source scan could ever find them.
-        inline for ([_]capabilities.Channel{ .window_focus, .window_blur, .window_resize, .window_move, .window_close }) |ch| {
+        inline for ([_]capabilities.Channel{
+            .window_focus,
+            .window_blur,
+            .window_resize,
+            .window_move,
+            .window_close,
+            .window_minimize,
+            .window_restore,
+            .window_enterfullscreen,
+            .window_leavefullscreen,
+        }) |ch| {
             _ = capabilities.registerEmitter(ch);
         }
 
@@ -122,6 +136,14 @@ export fn windowDidMiniaturize(_: objc.id, _: objc.SEL, notification: objc.id) c
 
 export fn windowDidDeminiaturize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
     fire(notification, "restore", "");
+}
+
+export fn windowDidEnterFullScreen(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "enter-fullscreen", "");
+}
+
+export fn windowDidExitFullScreen(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    fire(notification, "leave-fullscreen", "");
 }
 
 export fn windowDidResize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {

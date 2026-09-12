@@ -230,6 +230,18 @@ test "window events never fall back to an unrelated global webview" {
     try testing.expect(std.mem.indexOf(u8, body, "getGlobalWebView") == null);
 }
 
+test "the native delegate emits both fullscreen transitions" {
+    const events_source = @embedFile("src/macos_window_events.zig");
+    for ([_][]const u8{
+        "windowDidEnterFullScreen:",
+        "windowDidExitFullScreen:",
+        "fire(notification, \"enter-fullscreen\"",
+        "fire(notification, \"leave-fullscreen\"",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, events_source, contract) != null);
+    }
+}
+
 test "window-state selectors receive their required sender argument" {
     // These AppKit selectors end in `:` and therefore take one object
     // argument. Calling them through the zero-argument wrapper is undefined
