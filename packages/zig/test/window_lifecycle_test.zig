@@ -512,6 +512,53 @@ test "legacy native sidebar data and controls are window-scoped" {
     try testing.expect(callsFunction(destroy_body, "forgetLegacySidebar("));
 }
 
+test "native UI creation publishes only fully initialized components" {
+    const cases = [_]struct {
+        start: []const u8,
+        end: []const u8,
+        map: []const u8,
+        installed: []const u8,
+    }{
+        .{
+            .start = "    fn createSidebar(",
+            .end = "    /// Add a section to an existing sidebar",
+            .map = "sidebars",
+            .installed = "setContentViewController:",
+        },
+        .{
+            .start = "    fn createFileBrowser(",
+            .end = "    /// Add a single file to file browser",
+            .map = "file_browsers",
+            .installed = "addSubview:",
+        },
+        .{
+            .start = "    fn createSplitView(",
+            .end = "    /// Destroy a component",
+            .map = "split_views",
+            .installed = "addSubview:",
+        },
+    };
+
+    for (cases) |case| {
+        const start = std.mem.indexOf(u8, native_ui_bridge_source, case.start) orelse
+            return error.NativeUICreatorNotFound;
+        const end = std.mem.indexOfPos(u8, native_ui_bridge_source, start, case.end) orelse
+            return error.NativeUICreatorEndNotFound;
+        const body = native_ui_bridge_source[start..end];
+        const reserve = std.mem.indexOf(u8, body, ".ensureUnusedCapacity(1)") orelse
+            return error.NativeUIRegistryReservationNotFound;
+        const install = std.mem.indexOf(u8, body, case.installed) orelse
+            return error.NativeUIInstallationNotFound;
+        const publish_needle = try std.fmt.allocPrint(testing.allocator, "state.{s}.putAssumeCapacityNoClobber", .{case.map});
+        defer testing.allocator.free(publish_needle);
+        const publish = std.mem.indexOf(u8, body, publish_needle) orelse
+            return error.NativeUIRegistryPublicationNotFound;
+
+        try testing.expect(reserve < install);
+        try testing.expect(install < publish);
+    }
+}
+
 test "destroy releases every retained runtime-window resource" {
     const bridge_start = std.mem.indexOf(u8, window_bridge_source, "fn destroy(") orelse
         return error.WindowDestroyHandlerNotFound;

@@ -257,6 +257,11 @@ replaces the shared panel's contents.
 
 ### Creation
 
+Creation is transactional. Each per-window registry reserves capacity before
+allocating its component and owned ID, and publishes the entry only after the
+native view has been installed. An allocation or setup error therefore unwinds
+the temporary objects without leaving a dangling component ID behind.
+
 ```
 
 1. JavaScript: nativeUI.createSidebar({ id: 'main' })

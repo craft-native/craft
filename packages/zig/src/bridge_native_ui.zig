@@ -373,6 +373,14 @@ pub const NativeUIBridge = struct {
             return;
         }
 
+        // Reserve the registry slot before creating AppKit state. From this
+        // point on, every allocation is covered by an errdefer and the final
+        // insertion cannot fail, so callers never inherit a half-created
+        // sidebar or a dangling registry entry after an allocation failure.
+        try state.sidebars.ensureUnusedCapacity(1);
+        const id_copy = try self.allocator.dupe(u8, id_str);
+        errdefer self.allocator.free(id_copy);
+
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[LiquidGlass] Creating sidebar with NSSplitViewController: {s}\n", .{id_str});
 
@@ -413,21 +421,17 @@ pub const NativeUIBridge = struct {
             }
         }
 
-        // Store in registry
-        const id_copy = try self.allocator.dupe(u8, id_str);
-        try state.sidebars.put(id_copy, sidebar);
-
         // Add to the window that sent this bridge message.
         const window = state.window;
         {
             // Save the original webview (current content view)
-            state.original_webview = macos.msgSend0(window, "contentView");
+            const original_webview = macos.msgSend0(window, "contentView");
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[LiquidGlass] Saved original webview: {*}\n", .{state.original_webview});
+                std.debug.print("[LiquidGlass] Saved original webview: {*}\n", .{original_webview});
 
             // Create NSSplitViewController
             const split_vc = try NativeSplitViewController.init(self.allocator);
-            state.split_view_controller = split_vc;
+            errdefer split_vc.deinit();
 
             // CRITICAL: Add sidebar FIRST (AppKit applies Liquid Glass automatically)
             try split_vc.setSidebar(sidebar.getView());
@@ -435,12 +439,15 @@ pub const NativeUIBridge = struct {
                 std.debug.print("[LiquidGlass] Sidebar added with native Liquid Glass material\n", .{});
 
             // CRITICAL: Add content SECOND (extends full-width under sidebar)
-            try split_vc.setContent(state.original_webview);
+            try split_vc.setContent(original_webview);
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[LiquidGlass] Content extends under floating sidebar\n", .{});
 
             // Set split view controller as window's content view controller
             _ = macos.msgSend1(window, "setContentViewController:", split_vc.getSplitViewController());
+            state.original_webview = original_webview;
+            state.split_view_controller = split_vc;
+            state.sidebars.putAssumeCapacityNoClobber(id_copy, sidebar);
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[LiquidGlass] Set NSSplitViewController as window content view controller\n", .{});
 
@@ -554,6 +561,10 @@ pub const NativeUIBridge = struct {
         const root = parsed.value.object;
         const id = root.get("id").?.string;
         if (state.file_browsers.contains(id)) return error.ComponentAlreadyExists;
+        try state.file_browsers.ensureUnusedCapacity(1);
+
+        const id_copy = try self.allocator.dupe(u8, id);
+        errdefer self.allocator.free(id_copy);
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Creating file browser: {s}\n", .{id});
@@ -561,10 +572,6 @@ pub const NativeUIBridge = struct {
         // Create file browser
         const browser = try NativeFileBrowser.init(self.allocator);
         errdefer browser.deinit();
-
-        // Store in registry
-        const id_copy = try self.allocator.dupe(u8, id);
-        try state.file_browsers.put(id_copy, browser);
 
         // Add to the window that sent this bridge message.
         const window = state.window;
@@ -585,6 +592,8 @@ pub const NativeUIBridge = struct {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeUI] File browser added to window\n", .{});
         }
+
+        state.file_browsers.putAssumeCapacityNoClobber(id_copy, browser);
     }
 
     /// Add a single file to file browser
@@ -672,6 +681,10 @@ pub const NativeUIBridge = struct {
         const sidebar_id = root.get("sidebarId").?.string;
         const browser_id = root.get("browserId").?.string;
         if (state.split_views.contains(id)) return error.ComponentAlreadyExists;
+        try state.split_views.ensureUnusedCapacity(1);
+
+        const id_copy = try self.allocator.dupe(u8, id);
+        errdefer self.allocator.free(id_copy);
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Creating split view: {s}\n", .{id});
@@ -687,10 +700,6 @@ pub const NativeUIBridge = struct {
         // Add components to split view
         split_view.setSidebar(sidebar);
         split_view.setFileBrowser(browser);
-
-        // Store in registry
-        const id_copy = try self.allocator.dupe(u8, id);
-        try state.split_views.put(id_copy, split_view);
 
         // Add to the window that sent this bridge message.
         const window = state.window;
@@ -711,6 +720,8 @@ pub const NativeUIBridge = struct {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeUI] Split view added to window\n", .{});
         }
+
+        state.split_views.putAssumeCapacityNoClobber(id_copy, split_view);
     }
 
     /// Destroy a component
