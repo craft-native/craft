@@ -261,10 +261,13 @@ pub const WindowBridge = struct {
         const macos = @import("macos.zig");
 
         const style: macos.WindowStyle = .{
+            .frameless = json_utils.getBool(json_data, "frameless") orelse false,
+            .transparent = json_utils.getBool(json_data, "transparent") orelse false,
             .resizable = json_utils.getBool(json_data, "resizable") orelse true,
             .closable = json_utils.getBool(json_data, "closable") orelse true,
             .miniaturizable = json_utils.getBool(json_data, "minimizable") orelse true,
             .always_on_top = json_utils.getBool(json_data, "alwaysOnTop") orelse false,
+            .fullscreen = json_utils.getBool(json_data, "fullscreen") orelse false,
             .titlebar_hidden = json_utils.getBool(json_data, "titlebarHidden") orelse false,
             .web_sidebar_material = json_utils.getBool(json_data, "webSidebarMaterial") orelse false,
             .web_window_material = json_utils.getBool(json_data, "webWindowMaterial") orelse false,

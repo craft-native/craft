@@ -26,48 +26,51 @@ await show(html, {
 })
 ```
 
-### Advanced Window Creation
+### Runtime Window Creation
+
+The `craft-native` SDK returns a typed `Window` handle. Runtime-created
+windows are currently implemented by the macOS host and must provide either
+`html` or `url` content.
 
 ```typescript
 import { createWindow } from 'craft-native'
 
-const window = await createWindow(html, {
-  // Identification
-  title: 'My Application',
+const settings = await createWindow({
+  // A stable ID makes repeated opens idempotent.
+  id: 'settings',
+  url: 'https://app.example/settings',
+  title: 'Settings',
 
   // Size
-  width: 1200,
-  height: 800,
-  minWidth: 400,
-  minHeight: 300,
-  maxWidth: 1920,
-  maxHeight: 1080,
+  width: 720,
+  height: 560,
+  minWidth: 480,
+  minHeight: 360,
 
   // Position
   x: 100,
   y: 100,
-  center: true, // Overrides x, y if true
 
-  // Appearance
-  frameless: false,
-  transparent: false,
+  // Native behavior
   resizable: true,
-
-  // Behavior
   alwaysOnTop: false,
-  visible: true,
-  focused: true,
+  titlebarHidden: true,
+  persistentStorage: true,
 })
+
+await settings.setTitle('Settings — Account')
 ```
+
+The older `createWindow(html, options)` overload remains available when the
+content is already in a string.
 
 ## Window Positioning
 
 ### Center on Screen
 
 ```typescript
-const window = await createWindow(html, {
-  center: true,
-})
+const window = await createWindow(html)
+await window.center()
 ```
 
 ### Specific Position
@@ -421,46 +424,52 @@ window.setAlwaysOnTop(!window.isAlwaysOnTop())
 ### Creating Multiple Windows
 
 ```typescript
-import { createApp, createWindow } from 'craft-native'
+import { createWindow, windowManager } from 'craft-native'
 
-const app = await createApp()
-
-// Main window
-const mainWindow = await createWindow(mainHtml, {
-  title: 'Main Window',
-  width: 1200,
-  height: 800,
+const mainWindow = windowManager.current
+const inspector = await createWindow({
+  id: 'inspector',
+  html: inspectorHtml,
+  title: 'Inspector',
+  width: 520,
+  height: 640,
 })
 
-// Child window
-const childWindow = await createWindow(childHtml, {
-  title: 'Child Window',
-  width: 400,
-  height: 300,
-  parent: mainWindow,
-})
+await inspector.setPosition(900, 120)
+await inspector.focus()
 ```
 
-### Modal Windows
+Every operation on `inspector` carries that stable ID to the host, so it still
+targets the Inspector when called from the main page. Calling `createWindow`
+again with `id: 'inspector'` brings the existing native window forward and
+returns the existing SDK handle:
 
 ```typescript
-const modalWindow = await createWindow(modalHtml, {
-  title: 'Dialog',
-  width: 400,
-  height: 200,
-  parent: mainWindow,
-  modal: true, // Blocks parent interaction
+const sameInspector = await createWindow({
+  id: 'inspector',
+  html: inspectorHtml,
 })
+
+console.log(sameInspector === inspector) // true
 ```
 
-### Window List
+Inside any window's own page, `windowManager.current` is named `main`; that is
+a local alias for the page's native window, not the process's first window.
+Use the manager to inspect handles retained by the current page or resolve its
+focused handle:
 
 ```typescript
-const windows = app.getWindows()
-windows.forEach((win) => {
-  console.log(win.getTitle())
-})
+for (const handle of windowManager.all) {
+  console.log(handle.id)
+}
+
+const focused = await windowManager.getFocused()
+console.log(focused?.id)
 ```
+
+Closing a window keeps its native page alive so the macOS reopen lifecycle can
+restore its DOM and JavaScript state. Force-destroy and modal/parent semantics
+are not part of the runtime-created-window contract yet.
 
 ## Multi-Monitor
 

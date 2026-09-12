@@ -244,6 +244,11 @@ test "window-state selectors receive their required sender argument" {
         try testing.expect(callsFunction(body, "msgSendVoid1("));
         try testing.expect(std.mem.indexOf(u8, body, "msgSendVoid0(") == null);
     }
+
+    // The initial-fullscreen path is outside `toggleFullscreen`, so guard it
+    // independently. This selector has one Objective-C argument everywhere it
+    // is called, including while a newly created window is being configured.
+    try testing.expect(std.mem.indexOf(u8, macos_source, "msgSendVoid0(window, \"toggleFullScreen:\")") == null);
 }
 
 test "content replacement updates the addressed webview recovery source" {

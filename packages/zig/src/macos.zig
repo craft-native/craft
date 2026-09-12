@@ -1205,7 +1205,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         // Enter fullscreen if requested
         if (style.fullscreen) {
-            msgSendVoid0(window, "toggleFullScreen:");
+            msgSendVoid1(window, "toggleFullScreen:", @as(objc.id, null));
         }
     }
 
