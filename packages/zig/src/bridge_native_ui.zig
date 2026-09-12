@@ -324,6 +324,32 @@ pub const NativeUIBridge = struct {
         };
     }
 
+    fn arrayValue(value: std.json.Value) ![]std.json.Value {
+        return switch (value) {
+            .array => |array| array.items,
+            else => error.InvalidFieldType,
+        };
+    }
+
+    fn requiredObject(object: std.json.ObjectMap, name: []const u8) !std.json.ObjectMap {
+        return objectValue(object.get(name) orelse return error.MissingRequiredField);
+    }
+
+    fn requiredArray(object: std.json.ObjectMap, name: []const u8) ![]std.json.Value {
+        return arrayValue(object.get(name) orelse return error.MissingRequiredField);
+    }
+
+    fn fileItem(object: std.json.ObjectMap) !NativeFileBrowser.FileItem {
+        return .{
+            .id = try requiredString(object, "id"),
+            .name = try requiredString(object, "name"),
+            .icon = try optionalString(object, "icon"),
+            .date_modified = try optionalString(object, "dateModified"),
+            .size = try optionalString(object, "size"),
+            .kind = try optionalString(object, "kind"),
+        };
+    }
+
     fn parseSpaces(allocator: std.mem.Allocator, value: std.json.Value) !std.ArrayList(space_switcher.Space) {
         var spaces: std.ArrayList(space_switcher.Space) = .empty;
         errdefer spaces.deinit(allocator);
@@ -441,13 +467,12 @@ pub const NativeUIBridge = struct {
         };
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const id = root.get("id") orelse {
+        const root = try objectValue(parsed.value);
+        const id_str = requiredString(root, "id") catch |err| {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[NativeUI] ERROR: Missing 'id' field in createSidebar data\n", .{});
-            return error.MissingRequiredField;
+            return err;
         };
-        const id_str = id.string;
 
         // Check if a sidebar already exists
         if (state.sidebars.count() > 0) {
@@ -472,27 +497,25 @@ pub const NativeUIBridge = struct {
         errdefer sidebar.deinit();
 
         if (root.get("sections")) |sections_value| {
-            for (sections_value.array.items) |section_value| {
-                const section_obj = section_value.object;
-                const section_id = if (section_obj.get("id")) |v| v.string else "section";
-                const section_label = if (section_obj.get("label")) |v| v.string else if (section_obj.get("title")) |v| v.string else section_id;
+            for (try arrayValue(sections_value)) |section_value| {
+                const section_obj = try objectValue(section_value);
+                const section_id = try optionalString(section_obj, "id") orelse "section";
+                const section_label = try optionalString(section_obj, "label") orelse
+                    try optionalString(section_obj, "title") orelse section_id;
                 const items_value = section_obj.get("items") orelse continue;
 
                 var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
                 defer items.deinit(self.allocator);
 
-                for (items_value.array.items) |item_value| {
-                    const item_obj = item_value.object;
-                    const item_id = if (item_obj.get("id")) |v| v.string else "item";
-                    const item_label = if (item_obj.get("label")) |v| v.string else item_id;
+                for (try arrayValue(items_value)) |item_value| {
+                    const item_obj = try objectValue(item_value);
+                    const item_id = try optionalString(item_obj, "id") orelse "item";
+                    const item_label = try optionalString(item_obj, "label") orelse item_id;
                     try items.append(self.allocator, .{
                         .id = item_id,
                         .label = item_label,
-                        .icon = if (item_obj.get("icon")) |icon| icon.string else null,
-                        .badge = if (item_obj.get("badge")) |badge| switch (badge) {
-                            .string => |s| s,
-                            else => null,
-                        } else null,
+                        .icon = try optionalString(item_obj, "icon"),
+                        .badge = try optionalString(item_obj, "badge"),
                     });
                 }
 
@@ -582,28 +605,28 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const sidebar_id = root.get("sidebarId").?.string;
-        const section_data = root.get("section").?.object;
+        const root = try objectValue(parsed.value);
+        const sidebar_id = try requiredString(root, "sidebarId");
+        const section_data = try requiredObject(root, "section");
 
         // Get sidebar from registry
         const sidebar = state.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
 
-        const section_id = section_data.get("id").?.string;
-        const header = if (section_data.get("header")) |h| h.string else null;
-        const items_json = section_data.get("items").?.array;
+        const section_id = try requiredString(section_data, "id");
+        const header = try optionalString(section_data, "header");
+        const items_json = try requiredArray(section_data, "items");
 
         // Build items array
         var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
         defer items.deinit(self.allocator);
 
-        for (items_json.items) |item_json| {
-            const item_obj = item_json.object;
+        for (items_json) |item_json| {
+            const item_obj = try objectValue(item_json);
             try items.append(self.allocator, .{
-                .id = item_obj.get("id").?.string,
-                .label = item_obj.get("label").?.string,
-                .icon = if (item_obj.get("icon")) |icon| icon.string else null,
-                .badge = if (item_obj.get("badge")) |badge| badge.string else null,
+                .id = try requiredString(item_obj, "id"),
+                .label = try requiredString(item_obj, "label"),
+                .icon = try optionalString(item_obj, "icon"),
+                .badge = try optionalString(item_obj, "badge"),
             });
         }
 
@@ -624,9 +647,9 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const sidebar_id = root.get("sidebarId").?.string;
-        const item_id = root.get("itemId").?.string;
+        const root = try objectValue(parsed.value);
+        const sidebar_id = try requiredString(root, "sidebarId");
+        const item_id = try requiredString(root, "itemId");
 
         const sidebar = state.sidebars.get(sidebar_id) orelse return error.SidebarNotFound;
         sidebar.setSelectedItem(item_id);
@@ -641,8 +664,8 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const id = root.get("id").?.string;
+        const root = try objectValue(parsed.value);
+        const id = try requiredString(root, "id");
         if (state.file_browsers.contains(id)) return error.ComponentAlreadyExists;
         try state.file_browsers.ensureUnusedCapacity(1);
 
@@ -685,20 +708,13 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const browser_id = root.get("browserId").?.string;
-        const file_data = root.get("file").?.object;
+        const root = try objectValue(parsed.value);
+        const browser_id = try requiredString(root, "browserId");
+        const file_data = try requiredObject(root, "file");
 
         const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
-        const file = NativeFileBrowser.FileItem{
-            .id = file_data.get("id").?.string,
-            .name = file_data.get("name").?.string,
-            .icon = if (file_data.get("icon")) |icon| icon.string else null,
-            .date_modified = if (file_data.get("dateModified")) |date| date.string else null,
-            .size = if (file_data.get("size")) |size| size.string else null,
-            .kind = if (file_data.get("kind")) |kind| kind.string else null,
-        };
+        const file = try fileItem(file_data);
 
         try browser.addFile(file);
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -711,25 +727,17 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const browser_id = root.get("browserId").?.string;
-        const files_json = root.get("files").?.array;
+        const root = try objectValue(parsed.value);
+        const browser_id = try requiredString(root, "browserId");
+        const files_json = try requiredArray(root, "files");
 
         const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
 
         var files: std.ArrayList(NativeFileBrowser.FileItem) = .empty;
         defer files.deinit(self.allocator);
 
-        for (files_json.items) |file_json| {
-            const file_obj = file_json.object;
-            try files.append(self.allocator, .{
-                .id = file_obj.get("id").?.string,
-                .name = file_obj.get("name").?.string,
-                .icon = if (file_obj.get("icon")) |icon| icon.string else null,
-                .date_modified = if (file_obj.get("dateModified")) |date| date.string else null,
-                .size = if (file_obj.get("size")) |size| size.string else null,
-                .kind = if (file_obj.get("kind")) |kind| kind.string else null,
-            });
+        for (files_json) |file_json| {
+            try files.append(self.allocator, try fileItem(try objectValue(file_json)));
         }
 
         try browser.addFiles(files.items);
@@ -743,8 +751,8 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const browser_id = root.get("browserId").?.string;
+        const root = try objectValue(parsed.value);
+        const browser_id = try requiredString(root, "browserId");
 
         const browser = state.file_browsers.get(browser_id) orelse return error.BrowserNotFound;
         browser.clearFiles();
@@ -759,10 +767,10 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const id = root.get("id").?.string;
-        const sidebar_id = root.get("sidebarId").?.string;
-        const browser_id = root.get("browserId").?.string;
+        const root = try objectValue(parsed.value);
+        const id = try requiredString(root, "id");
+        const sidebar_id = try requiredString(root, "sidebarId");
+        const browser_id = try requiredString(root, "browserId");
         if (state.split_views.contains(id)) return error.ComponentAlreadyExists;
         try state.split_views.ensureUnusedCapacity(1);
 
@@ -813,9 +821,9 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const id = root.get("id").?.string;
-        const component_type = root.get("type").?.string;
+        const root = try objectValue(parsed.value);
+        const id = try requiredString(root, "id");
+        const component_type = try requiredString(root, "type");
 
         if (std.mem.eql(u8, component_type, "sidebar")) {
             if (state.sidebars.get(id)) |sidebar| {
@@ -1184,4 +1192,43 @@ test "spaces parser preserves valid optional strings and nulls" {
     try std.testing.expectEqualStrings("Work", spaces.items[0].label);
     try std.testing.expect(spaces.items[0].icon == null);
     try std.testing.expectEqualStrings("#4488ff", spaces.items[0].tint.?);
+}
+
+test "native file parser rejects missing and malformed fields" {
+    const cases = [_]struct {
+        source: []const u8,
+        expected: anyerror,
+    }{
+        .{ .source = "{}", .expected = error.MissingRequiredField },
+        .{ .source = "{\"id\":1,\"name\":\"Report\"}", .expected = error.InvalidFieldType },
+        .{ .source = "{\"id\":\"report\",\"name\":false}", .expected = error.InvalidFieldType },
+        .{ .source = "{\"id\":\"report\",\"name\":\"Report\",\"icon\":[]}", .expected = error.InvalidFieldType },
+    };
+
+    for (cases) |case| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, case.source, .{});
+        defer parsed.deinit();
+        try std.testing.expectError(
+            case.expected,
+            NativeUIBridge.fileItem(try NativeUIBridge.objectValue(parsed.value)),
+        );
+    }
+}
+
+test "native file parser preserves valid optional strings and nulls" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"id\":\"report\",\"name\":\"Report\",\"icon\":null,\"dateModified\":\"today\",\"size\":\"1 KB\"}",
+        .{},
+    );
+    defer parsed.deinit();
+
+    const file = try NativeUIBridge.fileItem(try NativeUIBridge.objectValue(parsed.value));
+    try std.testing.expectEqualStrings("report", file.id);
+    try std.testing.expectEqualStrings("Report", file.name);
+    try std.testing.expect(file.icon == null);
+    try std.testing.expectEqualStrings("today", file.date_modified.?);
+    try std.testing.expectEqualStrings("1 KB", file.size.?);
+    try std.testing.expect(file.kind == null);
 }

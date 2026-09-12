@@ -644,6 +644,34 @@ test "native UI creation publishes only fully initialized components" {
     }
 }
 
+test "window-scoped native UI mutations validate JSON shapes" {
+    const start = std.mem.indexOf(u8, native_ui_bridge_source, "    fn createSidebar(") orelse
+        return error.NativeUISidebarCreatorNotFound;
+    const end = std.mem.indexOfPos(u8, native_ui_bridge_source, start, "    /// Show a context menu") orelse
+        return error.NativeUIContextMenuNotFound;
+    const body = native_ui_bridge_source[start..end];
+
+    for ([_][]const u8{
+        "parsed.value.object",
+        ".?.object",
+        ".?.array",
+        ".?.string",
+    }) |unchecked_access| {
+        try testing.expect(std.mem.indexOf(u8, body, unchecked_access) == null);
+    }
+
+    for ([_][]const u8{
+        "objectValue(",
+        "arrayValue(",
+        "requiredObject(",
+        "requiredArray(",
+        "requiredString(",
+        "optionalString(",
+    }) |checked_access| {
+        try testing.expect(std.mem.indexOf(u8, body, checked_access) != null);
+    }
+}
+
 test "spaces switcher replacement is transactional and transfers view ownership" {
     const create_start = std.mem.indexOf(u8, native_ui_bridge_source, "fn createSpacesSidebar(") orelse
         return error.SpacesSidebarCreatorNotFound;
