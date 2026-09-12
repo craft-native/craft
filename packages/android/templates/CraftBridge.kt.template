@@ -35,7 +35,6 @@ import android.webkit.WebView
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.app.ActivityCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.Lifecycle
@@ -207,7 +206,7 @@ class CraftBridge(
                     backgroundLocation: {{ENABLE_BACKGROUND_LOCATION}},
                     clipboard: false,
                     deviceInfo: true,
-                    appBadge: {{ENABLE_PUSH}},
+                    appBadge: false,
                     networkStatus: true,
                     appReview: true,
                     flashlight: {{ENABLE_CAMERA}} && ${hasFlashlight()},
@@ -338,11 +337,11 @@ class CraftBridge(
                 },
 
                 // App Badge
-                setBadge: function(count) {
-                    CraftAndroid.setBadge(count);
+                setBadge: function() {
+                    throw new Error('App badges are unavailable on Android');
                 },
                 clearBadge: function() {
-                    CraftAndroid.clearBadge();
+                    throw new Error('App badges are unavailable on Android');
                 },
 
                 // Network Status
@@ -1931,28 +1930,6 @@ class CraftBridge(
             } catch (e: Exception) { 0 })
             put("isEmulator", Build.FINGERPRINT.contains("generic") || Build.FINGERPRINT.contains("emulator"))
         }.toString()
-    }
-
-    // ==================== App Badge ====================
-
-    @JavascriptInterface
-    fun setBadge(count: Int) {
-        // Android doesn't have native badge support, but we can use notification channels
-        // This is a simplified implementation - for full support, use ShortcutBadger library
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val notificationManager = NotificationManagerCompat.from(activity)
-                // Badge is typically shown via notification count
-                // Full implementation would require creating a notification
-            }
-        } catch (e: Exception) {
-            log("Badge not supported: ${e.message}")
-        }
-    }
-
-    @JavascriptInterface
-    fun clearBadge() {
-        setBadge(0)
     }
 
     // ==================== Network Status ====================

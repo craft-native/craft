@@ -269,6 +269,26 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain("new CustomEvent('craftVoiceAction'")
   })
 
+  it('reports app badges unavailable instead of silently succeeding', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-app-badge-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('// App Badge')
+    const end = bridge.indexOf('// Network Status', start)
+    const appBadge = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(bridge).toContain('appBadge: false')
+    expect(appBadge.match(/throw new Error\('App badges are unavailable on Android'\)/g)?.length).toBe(2)
+    expect(appBadge).not.toContain('CraftAndroid.setBadge')
+    expect(appBadge).not.toContain('CraftAndroid.clearBadge')
+    expect(bridge).not.toContain('fun setBadge(')
+    expect(bridge).not.toContain('fun clearBadge(')
+    expect(bridge).not.toContain('NotificationManagerCompat')
+  })
+
   it('loads contacts with three projected provider queries', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-contacts-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

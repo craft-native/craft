@@ -765,6 +765,9 @@
 
     function testBadge() {
       if (!window.craft) return showResult('system-result', 'Craft not ready');
+      if (!window.craft.capabilities.appBadge) {
+        return showResult('system-result', 'App badges are unavailable on Android');
+      }
       window.craft.setBadge(5);
       setTimeout(() => window.craft.clearBadge(), 3000);
       showResult('system-result', 'Badge set to 5 (will clear in 3s)');

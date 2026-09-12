@@ -7,7 +7,7 @@
 //! on the way across.
 //!
 //! iOS reached this file's job with 105 actions unmigrated and is at 13.
-//! Android is at 71 of 101. The ratchet exists now rather than later for the
+//! Android is at 71 of 99. The ratchet exists now rather than later for the
 //! reason the iOS one earned: the second migration is where a name quietly
 //! stops matching, and by then nothing remembers what the first one agreed to.
 //!
@@ -127,8 +127,9 @@ const zig_sources = [_][]const u8{
 /// Android JSON while Zig owns the action and promise settlement; 32 with
 /// openPDF, whose external-viewer mechanics stay in the holder while Zig owns
 /// its success object and rejection; 30 after removing the two unreachable
-/// dynamic voice-action methods tracked in #169.
-const max_not_yet_migrated: usize = 30;
+/// dynamic voice-action methods tracked in #169; 28 after removing the two
+/// app-badge no-ops tracked in #148.
+const max_not_yet_migrated: usize = 28;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -213,18 +214,6 @@ const Deferral = struct {
 /// Kotlin must have one evidence-backed reason, and no reason may outlive its
 /// action.
 const deliberate_deferrals = [_]Deferral{
-    // Not a capability gap: the Kotlin builds a `NotificationManagerCompat`,
-    // discards it, never reads `count`, and returns. The real work is left as
-    // two comments. Migrating it would mean porting a no-op — the same reason
-    // the iOS table refuses `startVideoRecording`, whose success path has never
-    // run.
-    //
-    // Android has no first-party badge API and the Kotlin's comment is right
-    // about that; launchers implement it through vendor broadcasts. But the
-    // page cannot tell, because the same call works on iOS. Tracked in #148.
-    .{ .action = "setBadge", .reason = "the Kotlin discards the manager it builds and never reads count; there is no working contract to port" },
-    .{ .action = "clearBadge", .reason = "delegates to setBadge, which does nothing" },
-
     // Kotlin-held state, not a missing API. `setFlashlight` writes
     // `isFlashlightOn` (`CraftBridge.kt:2011`) and `toggleFlashlight` reads it
     // to decide what to flip to (`:2026`). Serving `setFlashlight` from Zig
@@ -397,7 +386,7 @@ test "the spec scan finds the bridge, and finds methods in it" {
     // scan that silently matched nothing would satisfy all of them.
     var spec = try collectSpecActions(testing.allocator);
     defer spec.deinit();
-    try testing.expect(spec.count() >= 100);
+    try testing.expect(spec.count() >= 98);
 
     // And it found real ones rather than fragments.
     try testing.expect(spec.contains("getDeviceInfo"));

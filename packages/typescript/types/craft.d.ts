@@ -500,13 +500,15 @@ export interface CraftBridge {
   offAppStateChange(): void;
 
   /**
-   * Set app badge count
+   * Set app badge count. **iOS only.** Android reports `appBadge: false` in
+   * `craft.capabilities` and throws if this method is called.
    * @param count - Badge count
    */
   setBadge(count: number): void;
 
   /**
-   * Clear app badge
+   * Clear app badge. **iOS only.** Android reports `appBadge: false` in
+   * `craft.capabilities` and throws if this method is called.
    */
   clearBadge(): void;
 

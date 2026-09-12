@@ -50,7 +50,7 @@ Build native Android apps with web technologies using Craft.
 
 - **Device Info** - Device model, OS version, screen info
 - **Network Status** - Connection type monitoring (WiFi/Cellular)
-- **App Badge** - Notification badge count
+- **Capability Reporting** - Unsupported app badges are reported honestly
 - **App State** - Foreground/background detection
 - **Flashlight** - Camera flash control
 - **Open URL** - External browser launch
@@ -271,9 +271,10 @@ const text = await window.craft.clipboard.read();
 const device = window.craft.getDeviceInfo();
 console.log(device.model, device.manufacturer, device.systemVersion);
 
-// App Badge
-window.craft.setBadge(5);
-window.craft.clearBadge();
+// App badges have no portable Android API, so this is always false.
+if (window.craft.capabilities.appBadge) {
+  window.craft.setBadge(5);
+}
 
 // Network Status
 const network = window.craft.getNetworkStatus();
