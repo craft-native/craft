@@ -252,6 +252,8 @@ export class Window {
   }
 
   private _setupEventListeners(): void {
+    if (this._domListeners.length > 0) return
+
     if (typeof globalThis.window !== 'undefined') {
       const eventTypes: WindowEventType[] = [
         'show', 'hide', 'focus', 'blur', 'minimize', 'maximize',
@@ -262,6 +264,12 @@ export class Window {
       eventTypes.forEach(type => {
         const handler = ((event: CustomEvent) => {
           if (event.detail?.windowId === this._id || !event.detail?.windowId) {
+            // AppKit close retains the native window so it can be shown again.
+            // Keep the handle's state in step with native chrome actions too,
+            // not only calls made through this object.
+            if (type === 'close' || type === 'closed') this._closed = true
+            else if (type === 'show' || type === 'focus') this._closed = false
+
             // The injected bridge emits native detail directly (`width`,
             // `height`, `x`, `y`, ...). Accept the older `{ data }` wrapper
             // too, but do not throw the direct payload away.
@@ -282,6 +290,12 @@ export class Window {
       }
       this._domListeners = []
     }
+  }
+
+  /** Restore a retained handle after native code has shown it again. */
+  private _markOpen(): void {
+    this._closed = false
+    this._setupEventListeners()
   }
 
   private _emit(event: string, data?: any): void {
@@ -332,6 +346,7 @@ export class Window {
    */
   async show(): Promise<void> {
     await this._call('show')
+    this._markOpen()
   }
 
   /**
@@ -346,6 +361,7 @@ export class Window {
    */
   async toggle(): Promise<void> {
     await this._call('toggle')
+    if (this._closed) this._markOpen()
   }
 
   /**
@@ -353,6 +369,7 @@ export class Window {
    */
   async focus(): Promise<void> {
     await this._call('focus')
+    this._markOpen()
   }
 
   /**
@@ -804,7 +821,14 @@ class WindowManager {
       await bridge.request('window.create', { ...options, id })
     }
 
-    if (existing) return existing
+    if (existing) {
+      // The macOS host retains closed windows and `open` brings the named one
+      // forward. Reuse means reviving its state and DOM subscriptions too;
+      // otherwise the returned object stays `isClosed === true` forever.
+      const retained = existing as unknown as { _markOpen(): void }
+      retained._markOpen()
+      return existing
+    }
 
     const win = new Window(id)
     this._windows.set(id, win)
