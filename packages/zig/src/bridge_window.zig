@@ -576,13 +576,14 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn setWebSidebarCollapsed(_: *Self, data: ?[]const u8) !void {
+    fn setWebSidebarCollapsed(self: *Self, data: ?[]const u8) !void {
         const json_data = data orelse return BridgeError.MissingData;
+        const handle = try self.requireWindowHandle(data);
         const collapsed = json_utils.getBool(json_data, "collapsed") orelse false;
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
-            macos.setWebSidebarCollapsed(collapsed);
+            macos.setWebSidebarCollapsed(handle, collapsed);
         }
     }
 
@@ -1109,12 +1110,24 @@ test "the same action succeeds when the payload is routed through" {
     const testing = std.testing;
     var bridge = WindowBridge.init(testing.allocator);
     defer bridge.deinit();
+    bridge.setWindowHandle(@ptrFromInt(0x1000));
 
-    // No window handle is set and none is needed: this action only forwards a
-    // flag to the platform layer, which is exactly why its failure was a
-    // routing bug rather than a windowing one.
     try bridge.setWebSidebarCollapsed("{\"collapsed\":true}");
     try bridge.setWebSidebarCollapsed("{\"collapsed\":false}");
+}
+
+test "web sidebar collapse requires a target window" {
+    const testing = std.testing;
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    try testing.expectError(
+        BridgeError.WindowHandleNotSet,
+        bridge.setWebSidebarCollapsed("{\"collapsed\":true}"),
+    );
 }
 
 test "handleMessageWithData reaches a payload action" {
@@ -1123,6 +1136,7 @@ test "handleMessageWithData reaches a payload action" {
     const testing = std.testing;
     var bridge = WindowBridge.init(testing.allocator);
     defer bridge.deinit();
+    bridge.setWindowHandle(@ptrFromInt(0x1000));
 
     try bridge.handleMessageWithData("setWebSidebarCollapsed", "{\"collapsed\":true}");
 }

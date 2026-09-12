@@ -205,6 +205,35 @@ test "titlebar controls resolve the webview in their own window" {
     }
 }
 
+test "web material state and collapse actions stay with their window" {
+    // Material views used to live in six process globals. Constructing a
+    // second window overwrote them, so the next collapse from main mutated the
+    // second window. Both construction and mutation must now resolve a slot
+    // from the window they were handed.
+    const create_start = std.mem.indexOf(u8, macos_source, "fn createWebMaterialBackdrop(") orelse
+        return error.WebMaterialConstructorNotFound;
+    const create_body = enclosingFnBody(macos_source, create_start);
+    try testing.expect(std.mem.indexOf(u8, create_body, "window: objc.id") != null);
+    try testing.expect(callsFunction(create_body, "webMaterialSlot(window, true)"));
+
+    const collapse_start = std.mem.indexOf(u8, macos_source, "pub fn setWebSidebarCollapsed(") orelse
+        return error.WebMaterialCollapseNotFound;
+    const collapse_body = enclosingFnBody(macos_source, collapse_start);
+    try testing.expect(std.mem.indexOf(u8, collapse_body, "window: objc.id") != null);
+    try testing.expect(callsFunction(collapse_body, "webMaterialSlot(window, false)"));
+
+    for ([_][]const u8{
+        "web_sidebar_material_container",
+        "web_sidebar_material_view",
+        "web_sidebar_material_tint",
+        "web_sidebar_content_surface",
+        "web_sidebar_toggle_button",
+        "web_sidebar_width_stored",
+    }) |old_global| {
+        try testing.expect(std.mem.indexOf(u8, macos_source, old_global) == null);
+    }
+}
+
 test "the reopen handler filters by that answer" {
     // Registration is worth nothing if the reopen loop stops asking. This
     // pins the one place the two meet.

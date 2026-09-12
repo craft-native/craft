@@ -89,6 +89,45 @@ const startup_timing = @import("startup_timing.zig");
 ///     with edges and the desktop shows through everywhere between them.
 pub const WebMaterialSpan = enum { none, sidebar, window };
 
+/// Native material state owned by one window.
+///
+/// These references used to be process globals. Creating a Settings window
+/// replaced the main window's references, so collapsing the main sidebar hid
+/// Settings' material instead. Keep the fixed-size, allocation-free shape of
+/// the surrounding window registries, but key every reference by NSWindow.
+const WebMaterialSlot = struct {
+    window: usize = 0,
+    container: objc.id = null,
+    span: WebMaterialSpan = .none,
+    material_view: objc.id = null,
+    tint: objc.id = null,
+    content_surface: objc.id = null,
+    toggle_button: objc.id = null,
+    sidebar_width: f64 = 286.0,
+};
+
+var web_material_slots: [window_registry.capacity]WebMaterialSlot = @splat(.{});
+
+fn webMaterialSlot(window: objc.id, create: bool) ?*WebMaterialSlot {
+    const handle = @intFromPtr(window);
+    if (handle == 0) return null;
+
+    // Find before inserting. A window can sit after a gap left for eventual
+    // teardown, and taking that gap first would give it two independent rows.
+    for (&web_material_slots) |*slot| {
+        if (slot.window == handle) return slot;
+    }
+    if (!create) return null;
+
+    for (&web_material_slots) |*slot| {
+        if (slot.window == 0) {
+            slot.* = .{ .window = handle };
+            return slot;
+        }
+    }
+    return null;
+}
+
 pub const WindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
@@ -361,7 +400,7 @@ fn createWebContentSurface(frame: NSRect, sidebar_width: u32) objc.id {
 /// pinned to vibrant light; a `.window` material inherits the window's
 /// appearance, so `--dark` and the system setting reach it and the page's
 /// `prefers-color-scheme` and the material agree.
-fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width: u32, material_opacity: f64) objc.id {
+fn createWebMaterialBackdrop(window: objc.id, frame: NSRect, span: WebMaterialSpan, sidebar_width: u32, material_opacity: f64) objc.id {
     const NSView = getClass("NSView");
     const container_alloc = msgSend0(NSView, "alloc");
     const container = msgSend1Rect(container_alloc, "initWithFrame:", frame);
@@ -369,9 +408,17 @@ fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width
 
     msgSendVoid1(container, "setAutoresizingMask:", @as(c_ulong, 2 | 16));
     makeViewLayerTransparent(container);
-    web_sidebar_material_container = container;
-    web_material_span = span;
-    web_sidebar_width_stored = @as(f64, @floatFromInt(sidebar_width));
+    const slot = webMaterialSlot(window, true);
+    if (slot) |state| {
+        // A retained window can be configured again. Clear every child first
+        // so a missing optional view cannot leave an older one addressable.
+        state.* = .{
+            .window = @intFromPtr(window),
+            .container = container,
+            .span = span,
+            .sidebar_width = @as(f64, @floatFromInt(sidebar_width)),
+        };
+    }
 
     const full_window = span == .window;
 
@@ -390,7 +437,7 @@ fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width
     if (!full_window) {
         const contentSurface = createWebContentSurface(frame, sidebar_width);
         if (contentSurface != null) {
-            web_sidebar_content_surface = contentSurface;
+            if (slot) |state| state.content_surface = contentSurface;
             _ = msgSend1(container, "addSubview:", contentSurface);
         }
     }
@@ -399,14 +446,14 @@ fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width
     if (material != null) {
         if (!full_window) setViewAppearance(material, "NSAppearanceNameVibrantLight");
         msgSendVoid1(material, "setAutoresizingMask:", materialResize);
-        web_sidebar_material_view = material;
+        if (slot) |state| state.material_view = material;
         _ = msgSend1(container, "addSubview:", material);
     }
 
     if (!full_window) {
         const overlay = createLightSidebarMaterialTint(materialFrame, material_opacity);
         if (overlay != null) {
-            web_sidebar_material_tint = overlay;
+            if (slot) |state| state.tint = overlay;
             _ = msgSend1(container, "addSubview:", overlay);
         }
     }
@@ -420,27 +467,28 @@ fn createWebMaterialBackdrop(frame: NSRect, span: WebMaterialSpan, sidebar_width
 /// take away — hiding its material would strip the vibrancy from the whole
 /// window — so the toggle moves the button and stops there, leaving the page
 /// to collapse whatever it draws.
-pub fn setWebSidebarCollapsed(collapsed: bool) void {
-    if (web_sidebar_material_container == null) return;
-    if (web_material_span != .sidebar) {
-        updateWebSidebarToggleButton(collapsed);
+pub fn setWebSidebarCollapsed(window: objc.id, collapsed: bool) void {
+    const slot = webMaterialSlot(window, false) orelse return;
+    if (slot.container == null) return;
+    if (slot.span != .sidebar) {
+        updateWebSidebarToggleButton(window, collapsed);
         return;
     }
 
-    updateWebSidebarToggleButton(collapsed);
+    updateWebSidebarToggleButton(window, collapsed);
 
     const hidden = @as(c_int, if (collapsed) 1 else 0);
-    if (web_sidebar_material_view != null) {
-        _ = msgSend1(web_sidebar_material_view, "setHidden:", hidden);
+    if (slot.material_view != null) {
+        _ = msgSend1(slot.material_view, "setHidden:", hidden);
     }
-    if (web_sidebar_material_tint != null) {
-        _ = msgSend1(web_sidebar_material_tint, "setHidden:", hidden);
+    if (slot.tint != null) {
+        _ = msgSend1(slot.tint, "setHidden:", hidden);
     }
 
-    if (web_sidebar_content_surface != null) {
-        const bounds = msgSendRect(web_sidebar_material_container, "bounds");
-        const sidebarWidth = if (collapsed) 0.0 else web_sidebar_width_stored;
-        msgSendVoid1Rect(web_sidebar_content_surface, "setFrame:", .{
+    if (slot.content_surface != null) {
+        const bounds = msgSendRect(slot.container, "bounds");
+        const sidebarWidth = if (collapsed) 0.0 else slot.sidebar_width;
+        msgSendVoid1Rect(slot.content_surface, "setFrame:", .{
             .origin = .{ .x = sidebarWidth, .y = 0 },
             .size = .{ .width = bounds.size.width - sidebarWidth, .height = bounds.size.height },
         });
@@ -1128,7 +1176,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         msgSendVoid1(webview, "setAutoresizingMask:", @as(c_ulong, 2 | 16));
 
         if (style.hasWebMaterial()) {
-            const materialContainer = createWebMaterialBackdrop(webviewFrame, style.webMaterialSpan(), style.web_sidebar_width, style.web_sidebar_material_opacity);
+            const materialContainer = createWebMaterialBackdrop(window, webviewFrame, style.webMaterialSpan(), style.web_sidebar_width, style.web_sidebar_material_opacity);
             if (materialContainer != null) {
                 _ = msgSend1(materialContainer, "addSubview:", webview);
                 _ = msgSend1(window, "setContentView:", materialContainer);
@@ -1348,12 +1396,6 @@ var sidebar_allows_vibrancy: bool = false;
 var sidebar_material_opacity: f64 = 0.90;
 var sidebar_material_scheme: SidebarMaterialScheme = .system;
 var webChromeResponderClass: objc.Class = null;
-var web_sidebar_material_container: objc.id = null;
-var web_material_span: WebMaterialSpan = .none;
-var web_sidebar_material_view: objc.id = null;
-var web_sidebar_material_tint: objc.id = null;
-var web_sidebar_content_surface: objc.id = null;
-var web_sidebar_toggle_button: objc.id = null;
 /// The union of the chrome row Craft draws beside the window buttons on a
 /// web-sidebar window, in theme-frame coordinates, or null when there is none.
 ///
@@ -1373,18 +1415,17 @@ fn setWebChromeRow(window: objc.id, row: ?NSRect) void {
 fn webChromeRow(window: objc.id) ?NSRect {
     return if (chromeSlot(window)) |slot| slot.host_row else null;
 }
-var web_sidebar_width_stored: f64 = 286.0;
-
-fn updateWebSidebarToggleButton(collapsed: bool) void {
-    if (web_sidebar_toggle_button == null) return;
+fn updateWebSidebarToggleButton(window: objc.id, collapsed: bool) void {
+    const slot = webMaterialSlot(window, false) orelse return;
+    if (slot.toggle_button == null) return;
 
     const NSImage = getClass("NSImage");
     const symbolName = createNSString(if (collapsed) "sidebar.right" else "sidebar.left");
     const image = msgSend2(NSImage, "imageWithSystemSymbolName:accessibilityDescription:", symbolName, @as(?*anyopaque, null));
     if (image != null) {
-        _ = msgSend1(web_sidebar_toggle_button, "setImage:", image);
+        _ = msgSend1(slot.toggle_button, "setImage:", image);
     }
-    _ = msgSend1(web_sidebar_toggle_button, "setToolTip:", createNSString(if (collapsed) "Expand Sidebar" else "Collapse Sidebar"));
+    _ = msgSend1(slot.toggle_button, "setToolTip:", createNSString(if (collapsed) "Expand Sidebar" else "Collapse Sidebar"));
 }
 
 const SidebarMaterialScheme = enum {
@@ -3249,7 +3290,7 @@ fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
         msgSendVoid1(btn, "setAutoresizingMask:", titlebar_control_autoresizing_mask);
         _ = msgSend1(themeFrame, "addSubview:", btn);
         if (std.mem.eql(u8, button.symbol, "sidebar.left")) {
-            web_sidebar_toggle_button = btn;
+            if (webMaterialSlot(window, false)) |slot| slot.toggle_button = btn;
         }
     }
 
