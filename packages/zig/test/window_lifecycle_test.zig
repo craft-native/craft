@@ -403,6 +403,28 @@ test "retained window chrome observers are removed and reinstalled" {
     try testing.expect(callsFunction(open_body, "observeWindowChrome(existing)"));
 }
 
+test "webview delegate ownership ends with its webview" {
+    for ([_]struct { declaration: []const u8, association: []const u8 }{
+        .{ .declaration = "pub fn setupUIDelegate(", .association = "ui_delegate_association_key" },
+        .{ .declaration = "pub fn setupNavigationDelegate(", .association = "navigation_delegate_association_key" },
+    }) |contract| {
+        const start = std.mem.indexOf(u8, macos_source, contract.declaration) orelse
+            return error.WebViewDelegateSetupNotFound;
+        const body = enclosingFnBody(macos_source, start);
+        try testing.expect(callsFunction(body, "objc.objc_setAssociatedObject("));
+        try testing.expect(std.mem.indexOf(u8, body, contract.association) != null);
+        try testing.expect(callsFunction(body, "msgSendVoid0(delegate, \"release\")"));
+    }
+
+    // The content controller retains a registered script-message handler. The
+    // creator must drop its own +1 or controller teardown still leaves one.
+    const handler_start = std.mem.indexOf(u8, macos_source, "pub fn setupScriptMessageHandler(") orelse
+        return error.ScriptMessageHandlerSetupNotFound;
+    const handler_body = enclosingFnBody(macos_source, handler_start);
+    try testing.expect(callsFunction(handler_body, "addScriptMessageHandler:name:"));
+    try testing.expect(callsFunction(handler_body, "msgSendVoid0(handler, \"release\")"));
+}
+
 test "the scan can actually find the constructors it claims to check" {
     // Guards the guard: every test above depends on `enclosingFnBody` locating
     // real function bodies. If the file's formatting changes such that it

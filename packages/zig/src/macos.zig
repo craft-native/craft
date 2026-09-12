@@ -5786,6 +5786,10 @@ pub fn setupScriptMessageHandler(userContentController: objc.id) !void {
     // Add the handler to the user content controller
     const handler_name = createNSString("craft");
     msgSendVoid2(userContentController, "addScriptMessageHandler:name:", handler, handler_name);
+    // WKUserContentController retains registered handlers. Balance alloc/init
+    // here so removing the handler or deallocating the controller can actually
+    // reclaim it instead of leaving one leaked object per window.
+    msgSendVoid0(handler, "release");
 
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Bridge] Script message handler registered successfully\n", .{});
@@ -5929,6 +5933,8 @@ fn handleCreateWebView(
 /// `--dev-tools`, which meant a packaged app was denied the camera outright
 /// and had `window.open()` silently dropped — neither of which is a debugging
 /// concern.
+var ui_delegate_association_key: u8 = 0;
+
 pub fn setupUIDelegate(webview: objc.id) !void {
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Media] Setting up WKUIDelegate for media permissions...\n", .{});
@@ -5997,6 +6003,11 @@ pub fn setupUIDelegate(webview: objc.id) !void {
 
     // Set the UI delegate on the webview
     msgSendVoid1(webview, "setUIDelegate:", delegate);
+    // WKWebView's delegate property is weak. Associate the object with exactly
+    // this webview, then balance alloc/init: it stays alive for the view's
+    // lifetime and is released automatically when that view is destroyed.
+    objc.objc_setAssociatedObject(webview, &ui_delegate_association_key, delegate, objc.OBJC_ASSOCIATION_RETAIN);
+    msgSendVoid0(delegate, "release");
 
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Media] UI delegate set successfully - camera/microphone permissions enabled\n", .{});
@@ -6316,6 +6327,8 @@ fn handleContentProcessTerminated(_: objc.id, _: objc.SEL, webview: objc.id) cal
 /// shipped app ran without the crash notification. Everything not implemented
 /// here — navigation policy, redirects, provisional failures — stays at its
 /// AppKit default, as before.
+var navigation_delegate_association_key: u8 = 0;
+
 pub fn setupNavigationDelegate(webview: objc.id) !void {
     const superclass = getClass("NSObject");
     const className = "CraftNavigationDelegate";
@@ -6355,13 +6368,13 @@ pub fn setupNavigationDelegate(webview: objc.id) !void {
         objc.objc_registerClassPair(@ptrCast(delegateClass));
     }
 
-    // `navigationDelegate` is a weak reference, so the +1 from `alloc`/`init`
-    // is what keeps this alive — one small object per window, deliberately
-    // never released. Balancing it would leave the webview pointing at freed
-    // memory the moment a challenge arrived.
+    // `navigationDelegate` is weak, so keep its owner on this webview rather
+    // than leaking the +1 from alloc/init for the lifetime of the process.
     const delegate_class_id: objc.id = @ptrCast(@alignCast(delegateClass));
     const delegate = msgSend0(msgSend0(delegate_class_id, "alloc"), "init");
     msgSendVoid1(webview, "setNavigationDelegate:", delegate);
+    objc.objc_setAssociatedObject(webview, &navigation_delegate_association_key, delegate, objc.OBJC_ASSOCIATION_RETAIN);
+    msgSendVoid0(delegate, "release");
 
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {
         if (allowsLocalDevTLS())
