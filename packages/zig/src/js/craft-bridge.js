@@ -490,7 +490,8 @@
         isMovable: 1,
         getOpacity: 1,
         getState: 1,
-        getFocused: 1
+        getFocused: 1,
+        executeJavaScript: 1
       }
       return reads[name]
         ? _req('window', name, _stringify(payload))

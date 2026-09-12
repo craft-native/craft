@@ -90,6 +90,18 @@ describe('typed window-handle routing', () => {
     ])
   })
 
+  it('awaits JavaScript results from the retained child', async () => {
+    const settings = new Window('settings')
+    callResult = 'Preferences'
+
+    await expect(settings.executeJavaScript('document.title')).resolves.toBe('Preferences')
+    expect(call).toHaveBeenCalledWith(
+      'executeJavaScript',
+      { code: 'document.title' },
+      'settings',
+    )
+  })
+
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
     const id = `settings-${Date.now()}`
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })

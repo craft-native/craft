@@ -49,9 +49,13 @@ pub const WindowBridge = struct {
     /// Handle window-related messages from JavaScript
     /// action: the action name, data: optional JSON data string
     pub fn handleMessage(self: *Self, action: []const u8) !void {
-        self.handleMessageWithData(action, null) catch |err| {
-            self.reportError(action, err);
-        };
+        self.handleMessageWithDataReporting(action, null);
+    }
+
+    /// Dispatch a payload-bearing message and settle a requesting page with a
+    /// correlated bridge error instead of leaving its Promise to time out.
+    pub fn handleMessageWithDataReporting(self: *Self, action: []const u8, data: ?[]const u8) void {
+        self.handleMessageWithData(action, data) catch |err| self.reportError(action, err);
     }
 
     /// Report error to JavaScript and log
@@ -62,6 +66,7 @@ pub const WindowBridge = struct {
             BridgeError.MissingData => BridgeError.MissingData,
             BridgeError.InvalidJSON => BridgeError.InvalidJSON,
             BridgeError.InvalidParameter => BridgeError.InvalidParameter,
+            BridgeError.PlatformNotSupported => BridgeError.PlatformNotSupported,
             else => BridgeError.NativeCallFailed,
         };
         bridge_error.sendErrorToJS(self.allocator, action, bridge_err);
@@ -130,6 +135,8 @@ pub const WindowBridge = struct {
             try self.loadURL(data);
         } else if (std.mem.eql(u8, action, "reload")) {
             try self.reload(data);
+        } else if (std.mem.eql(u8, action, "executeJavaScript")) {
+            try self.executeJavaScript(data);
         } else if (std.mem.eql(u8, action, "setAppearance")) {
             try self.setAppearance(data);
         } else if (std.mem.eql(u8, action, "setVibrancy")) {
@@ -779,6 +786,36 @@ pub const WindowBridge = struct {
             const macos = @import("macos.zig");
             macos.reloadWindow(handle);
         }
+    }
+
+    /// Evaluate in the addressed window, then return the asynchronous WebKit
+    /// result to the page that made the request. Those can be different
+    /// webviews when a creator calls `child.executeJavaScript(...)`.
+    fn executeJavaScript(self: *Self, data: ?[]const u8) !void {
+        const json_data = data orelse return BridgeError.MissingData;
+        const code = json_utils.getStringDecoded(self.allocator, json_data, "code") catch
+            return BridgeError.InvalidJSON;
+        const decoded = code orelse
+            return BridgeError.InvalidParameter;
+        defer self.allocator.free(decoded);
+        if (std.mem.indexOfScalar(u8, decoded, 0) != null) return BridgeError.InvalidParameter;
+        const target = try self.requireWebViewHandle(data);
+
+        if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        const macos = @import("macos.zig");
+        const reply_webview: macos.objc.id = if (window_context.currentWebView()) |sender|
+            @ptrFromInt(sender)
+        else if (self.webview_handle) |fallback|
+            fallback
+        else
+            return BridgeError.WebViewHandleNotSet;
+
+        macos.evaluateJavaScriptWithReply(
+            target,
+            reply_webview,
+            decoded,
+            @import("request_context.zig").current(),
+        );
     }
 
     fn loadHTML(self: *Self, data: ?[]const u8) !void {

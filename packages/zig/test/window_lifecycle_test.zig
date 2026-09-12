@@ -383,6 +383,40 @@ test "content replacement updates the addressed webview recovery source" {
     try testing.expect(callsFunction(remember_body, "releaseContent("));
 }
 
+test "JavaScript evaluation preserves target request and reply webview" {
+    const bridge_start = std.mem.indexOf(u8, window_bridge_source, "fn executeJavaScript(") orelse
+        return error.ExecuteJavaScriptHandlerNotFound;
+    const bridge_end = std.mem.indexOfPos(u8, window_bridge_source, bridge_start, "    fn loadHTML(") orelse
+        return error.ExecuteJavaScriptHandlerEndNotFound;
+    const bridge_body = window_bridge_source[bridge_start..bridge_end];
+    for ([_][]const u8{
+        "requireWebViewHandle(",
+        "getStringDecoded(",
+        "indexOfScalar(u8, decoded, 0)",
+        "window_context.currentWebView()",
+        "request_context.zig",
+        "evaluateJavaScriptWithReply(",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, bridge_body, contract) != null);
+    }
+
+    const native_start = std.mem.indexOf(u8, macos_source, "pub fn evaluateJavaScriptWithReply(") orelse
+        return error.NativeJavaScriptEvaluatorNotFound;
+    const native_body = enclosingFnBody(macos_source, native_start);
+    try testing.expect(std.mem.indexOf(u8, native_body, "reply_webview") != null);
+    try testing.expect(std.mem.indexOf(u8, native_body, "request_id") != null);
+    try testing.expect(std.mem.indexOf(u8, native_body, "msgSend0(reply_webview, \"retain\")") != null);
+
+    const callback_start = std.mem.indexOf(u8, macos_source, "fn javascriptDidFinish(") orelse
+        return error.JavaScriptCallbackNotFound;
+    const callback_body = enclosingFnBody(macos_source, callback_start);
+    try testing.expect(callsFunction(callback_body, "formatResultJS("));
+    try testing.expect(std.mem.indexOf(u8, callback_body, "block.request_id") != null);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "block.reply_webview") != null);
+    try testing.expect(callsFunction(callback_body, "sendJavaScriptEvaluationError("));
+    try testing.expect(std.mem.indexOf(u8, callback_body, "isValidJSONObject:") != null);
+}
+
 test "web material state and collapse actions stay with their window" {
     // Material views used to live in six process globals. Constructing a
     // second window overwrote them, so the next collapse from main mutated the

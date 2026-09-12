@@ -5144,6 +5144,158 @@ pub fn tryEvalJS(js_code: []const u8) !void {
         std.debug.print("[Bridge] Executed JS: {s}\n", .{js_code});
 }
 
+/// Completion block for `WKWebView.evaluateJavaScript`. The reply webview is
+/// retained explicitly before the asynchronous call and released exactly once
+/// when WebKit invokes the block; a plain C pointer capture would otherwise
+/// become dangling if its window closed while the script was running.
+const JavaScriptReplyBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int,
+    invoke: *const fn (*const anyopaque, objc.id, objc.id) callconv(.c) void,
+    descriptor: *const ScrollBlockDescriptor,
+    reply_webview: objc.id,
+    request_id: i64,
+};
+
+const javascript_reply_block_descriptor = ScrollBlockDescriptor{ .size = @sizeOf(JavaScriptReplyBlock) };
+
+fn evaluateReply(webview: objc.id, source: []const u8) void {
+    if (webview == null) return;
+    _ = msgSend2(
+        webview,
+        "evaluateJavaScript:completionHandler:",
+        createNSString(source),
+        @as(objc.id, null),
+    );
+}
+
+fn sendJavaScriptEvaluationError(reply_webview: objc.id, request_id: ?u64, message: []const u8) void {
+    const bridge_error = @import("bridge_error.zig");
+    const allocator = std.heap.c_allocator;
+    var context = bridge_error.ErrorContext.init(
+        bridge_error.BridgeError.NativeCallFailed,
+        "executeJavaScript",
+        message,
+    );
+    context.request_id = request_id;
+    const json = context.toJSON(allocator) catch return;
+    defer allocator.free(json);
+    const js = std.fmt.allocPrint(
+        allocator,
+        "if(window.__craftBridgeError)window.__craftBridgeError({s});",
+        .{json},
+    ) catch return;
+    defer allocator.free(js);
+    evaluateReply(reply_webview, js);
+}
+
+fn javascriptDidFinish(raw_block: *const anyopaque, result: objc.id, error_object: objc.id) callconv(.c) void {
+    const block: *const JavaScriptReplyBlock = @ptrCast(@alignCast(raw_block));
+    const reply_webview = block.reply_webview;
+    defer msgSendVoid0(reply_webview, "release");
+
+    const allocator = std.heap.c_allocator;
+    const request_id: ?u64 = if (block.request_id < 0) null else @intCast(block.request_id);
+
+    if (error_object != null) {
+        sendJavaScriptEvaluationError(reply_webview, request_id, "JavaScript evaluation failed");
+        return;
+    }
+
+    var result_json: []const u8 = "null";
+    var result_string: objc.id = null;
+    defer if (result_string != null) msgSendVoid0(result_string, "release");
+
+    if (result != null) {
+        // `dataWithJSONObject:` raises an Objective-C exception for unsupported
+        // graphs (for example a DOM node). Validate a one-element wrapper first
+        // because `isValidJSONObject:` otherwise rejects valid scalar results.
+        const serialization = getClass("NSJSONSerialization");
+        const wrapper = msgSend1(getClass("NSArray"), "arrayWithObject:", result);
+        if (wrapper == null or !msgSendBool1Id(serialization, "isValidJSONObject:", wrapper)) {
+            sendJavaScriptEvaluationError(
+                reply_webview,
+                request_id,
+                "JavaScript returned a value that cannot be encoded as JSON",
+            );
+            return;
+        }
+
+        // FragmentsAllowed admits the scalar values WebKit commonly returns
+        // (`document.title`, booleans, numbers), not only arrays/dictionaries.
+        const data = msgSend3(
+            serialization,
+            "dataWithJSONObject:options:error:",
+            result,
+            @as(c_ulong, 4), // NSJSONWritingFragmentsAllowed
+            @as(objc.id, null),
+        );
+        if (data == null) {
+            sendJavaScriptEvaluationError(
+                reply_webview,
+                request_id,
+                "JavaScript returned a value that cannot be encoded as JSON",
+            );
+            return;
+        }
+
+        result_string = msgSend2(
+            msgSend0(getClass("NSString"), "alloc"),
+            "initWithData:encoding:",
+            data,
+            @as(c_ulong, 4), // NSUTF8StringEncoding
+        );
+        if (result_string == null) {
+            sendJavaScriptEvaluationError(reply_webview, request_id, "Failed to encode the JavaScript result as UTF-8");
+            return;
+        }
+        const c_string = msgSend0(result_string, "UTF8String");
+        if (c_string == null) {
+            sendJavaScriptEvaluationError(reply_webview, request_id, "Failed to read the JavaScript result as UTF-8");
+            return;
+        }
+        result_json = std.mem.span(@as([*:0]const u8, @ptrCast(c_string)));
+    }
+
+    const js = @import("bridge_error.zig").formatResultJS(
+        allocator,
+        "executeJavaScript",
+        result_json,
+        request_id,
+    ) catch return;
+    defer allocator.free(js);
+    evaluateReply(reply_webview, js);
+}
+
+/// Start an asynchronous evaluation in `target_webview` and settle the
+/// correlated request in `reply_webview` when WebKit finishes.
+pub fn evaluateJavaScriptWithReply(
+    target_webview: objc.id,
+    reply_webview: objc.id,
+    code: []const u8,
+    request_id: ?u64,
+) void {
+    if (target_webview == null or reply_webview == null) return;
+    _ = msgSend0(reply_webview, "retain");
+
+    var block = JavaScriptReplyBlock{
+        .isa = &_NSConcreteStackBlock,
+        .flags = 0,
+        .reserved = 0,
+        .invoke = javascriptDidFinish,
+        .descriptor = &javascript_reply_block_descriptor,
+        .reply_webview = reply_webview,
+        .request_id = if (request_id) |id| @intCast(id) else -1,
+    };
+    _ = msgSend2(
+        target_webview,
+        "evaluateJavaScript:completionHandler:",
+        createNSString(code),
+        @as(objc.id, @ptrCast(&block)),
+    );
+}
+
 /// Handle incoming messages from JavaScript bridge
 /// Convert a JSON Value to string
 fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]const u8 {
@@ -5301,7 +5453,7 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
             // every action that *does* take one (setSize, setTitle,
             // setWebSidebarCollapsed, and 15 more) received null and answered
             // MISSING_DATA, no matter what the page sent.
-            try bridge.handleMessageWithData(action, data_opt);
+            bridge.handleMessageWithDataReporting(action, data_opt);
         }
     } else if (std.mem.eql(u8, msg_type, "app")) {
         if (global_app_bridge) |bridge| {
