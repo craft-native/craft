@@ -155,6 +155,23 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain("addEventListener('craftOTAStatus'")
   })
 
+  it('returns completed video recordings as the documented base64 string', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-video-recording-'))
+    await init({
+      runtimeDir: null,
+      name: 'WildLoop',
+      bundleId: 'org.wildloop.app',
+      output,
+      config: { enableVideoRecording: true },
+    })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    expect(swift).toContain('if let movieURL = info[.mediaURL] as? URL')
+    expect(swift).toContain('Data(contentsOf: movieURL, options: .mappedIfSafe)')
+    expect(swift).toContain('result: "data:video/quicktime;base64," + base64')
+    expect(swift).toContain('error: "Failed to process video: \\(error.localizedDescription)"')
+  })
+
   it('generates a native Live Activity extension when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-live-activity-'))
     await init({

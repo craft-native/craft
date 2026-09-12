@@ -309,9 +309,10 @@ const deliberate_deferrals = [_]Deferral{
     // assumed.
     .{ .action = "scanQRCode", .reason = "VisionKit's DataScanner is Swift-only; the delegate takes a Swift enum with associated values" },
 
-    // Not a capability gap: the spec's own success path has never executed, so
-    // there is no working contract to port. See the tracking issue.
-    .{ .action = "startVideoRecording", .reason = "the spec reads info[.originalImage] for a movie pick, so its success path never runs" },
+    // UIImagePickerController delivers the movie URL through its Swift-owned
+    // delegate. The shim now reads and encodes it correctly; Zig deliberately
+    // leaves the action there rather than install a competing picker delegate.
+    .{ .action = "startVideoRecording", .reason = "the completed movie arrives through the Swift coordinator's UIImagePickerController delegate" },
 };
 
 test "every recorded deferral is real, and still a deferral" {

@@ -3120,7 +3120,15 @@ struct CraftWebView: UIViewRepresentable {
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
             picker.dismiss(animated: true)
 
-            if let image = info[.originalImage] as? UIImage,
+            if let movieURL = info[.mediaURL] as? URL {
+                do {
+                    let movieData = try Data(contentsOf: movieURL, options: .mappedIfSafe)
+                    let base64 = movieData.base64EncodedString()
+                    resolveCallback(pendingCallbackId, result: "data:video/quicktime;base64," + base64)
+                } catch {
+                    rejectCallback(pendingCallbackId, error: "Failed to process video: \(error.localizedDescription)")
+                }
+            } else if let image = info[.originalImage] as? UIImage,
                let imageData = image.jpegData(compressionQuality: 0.8) {
                 let base64 = imageData.base64EncodedString()
                 resolveCallback(pendingCallbackId, result: [

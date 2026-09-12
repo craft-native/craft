@@ -141,15 +141,13 @@
 //! reached the module says so in the log and does **not** claim that a cancel
 //! is always delivered.
 //!
-//! ## A Swift bug this deliberately does not inherit
+//! ## Video recording stays with the Swift coordinator
 //!
-//! `startVideoRecording` (`:3731-3749`) reuses the *same* `Coordinator`
-//! delegate and the *same* `pendingCallbackId`, sets `mediaTypes` to
-//! `["public.movie"]`, and then `didFinishPickingMediaWithInfo` reads
-//! `info[.originalImage]` — nil for a movie — so every finished recording
-//! rejects with `"Failed to process image"`. It stays with the shim; because
-//! this module has its own delegate class and its own instance, the crosstalk
-//! disappears rather than getting worse.
+//! `startVideoRecording` reuses the template's `Coordinator` delegate and its
+//! `pendingCallbackId`. The delegate distinguishes `info[.mediaURL]` from
+//! still-image results and returns the documented base64 movie string. This
+//! module keeps its own image-picker delegate rather than compete for that
+//! callback and recreate the shared-state crosstalk it was built to remove.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -1135,8 +1133,7 @@ test "an action the namespace does not serve is reported, not ignored" {
     // The neighbours that share Swift's Coordinator delegate but are not this
     // module's. Two modules answering one action would make `ios_dispatch`'s
     // first-match routing order-dependent — and `startVideoRecording` in
-    // particular must keep reaching the shim, whose delegate crosstalk this
-    // module exists partly to avoid inheriting.
+    // particular must keep reaching the shim that owns its movie delegate.
     for ([_][]const u8{
         "startVideoRecording",
         "stopVideoRecording",
