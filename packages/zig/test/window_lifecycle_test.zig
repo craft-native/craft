@@ -268,6 +268,10 @@ test "runtime window creation applies the typed appearance and size constraints"
         "\"setMaxSize:\"",
         "\"movable\"",
         "\"setMovable:\"",
+        "\"maximizable\"",
+        "\"standardWindowButton:\"",
+        "\"backgroundColor\"",
+        "\"setBackgroundColor:\"",
     }) |contract| {
         try testing.expect(std.mem.indexOf(u8, body, contract) != null);
     }

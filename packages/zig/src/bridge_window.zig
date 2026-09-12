@@ -256,6 +256,14 @@ pub const WindowBridge = struct {
         const html = json_utils.getString(json_data, "html");
         if (url == null and html == null) return BridgeError.InvalidParameter;
 
+        // Parse before creating anything. Returning an error after AppKit has
+        // already opened the window would leave a live, named window behind
+        // even though the caller's `createWindow` promise rejected.
+        const background_color: ?color_parse.Rgba = if (json_utils.getString(json_data, "backgroundColor")) |text|
+            color_parse.parse(text) orelse return BridgeError.InvalidParameter
+        else
+            null;
+
         if (builtin.os.tag != .macos) return BridgeError.NativeCallFailed;
 
         const macos = @import("macos.zig");
@@ -326,6 +334,25 @@ pub const WindowBridge = struct {
 
         if (json_utils.getBool(json_data, "movable")) |movable| {
             _ = macos.msgSend1(window, "setMovable:", @as(c_int, if (movable) 1 else 0));
+        }
+
+        if (json_utils.getBool(json_data, "maximizable")) |maximizable| {
+            // NSWindowZoomButton = 2. Resizability and the zoom control are
+            // separate AppKit choices, matching the two SDK options.
+            const zoom_button = macos.msgSend1(window, "standardWindowButton:", @as(c_long, 2));
+            if (zoom_button != null) {
+                _ = macos.msgSend1(zoom_button, "setEnabled:", @as(c_int, if (maximizable) 1 else 0));
+            }
+        }
+
+        if (background_color) |rgba| {
+            const NSColor = macos.getClass("NSColor");
+            const make_color = @as(
+                *const fn (macos.objc.Class, macos.objc.SEL, f64, f64, f64, f64) callconv(.c) macos.objc.id,
+                @ptrCast(&macos.objc.objc_msgSend),
+            );
+            const color = make_color(NSColor, macos.sel("colorWithRed:green:blue:alpha:"), rgba.r, rgba.g, rgba.b, rgba.a);
+            _ = macos.msgSend1(window, "setBackgroundColor:", color);
         }
 
         // Answer with the name rather than nothing: `open` is the one window
