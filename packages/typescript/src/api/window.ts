@@ -262,7 +262,10 @@ export class Window {
       eventTypes.forEach(type => {
         const handler = ((event: CustomEvent) => {
           if (event.detail?.windowId === this._id || !event.detail?.windowId) {
-            this._emit(type, event.detail?.data)
+            // The injected bridge emits native detail directly (`width`,
+            // `height`, `x`, `y`, ...). Accept the older `{ data }` wrapper
+            // too, but do not throw the direct payload away.
+            this._emit(type, event.detail?.data ?? event.detail)
           }
         }) as EventListener
         const eventName = `craft:window:${type}`

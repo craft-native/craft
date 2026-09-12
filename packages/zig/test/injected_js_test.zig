@@ -382,6 +382,24 @@ test "a retained window handle names the window it targets" {
     try testing.expectEqualStrings("Preferences", try fx.text("JSON.parse(posted[0].d).title"));
 }
 
+test "window events identify the receiving page as its local window" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var delivered = null;
+        \\window.craft.window.onResize(function (detail) { delivered = detail });
+        \\window.__craftDeliverWindowEvent('resize', { width: 800, height: 600 });
+    );
+
+    try testing.expectEqualStrings("main", try fx.text("delivered.windowId"));
+    try testing.expectEqualStrings("800", try fx.text("String(delivered.width)"));
+    try testing.expectEqualStrings("600", try fx.text("String(delivered.height)"));
+}
+
 test "unregister, enable and disable post the id the registry looks up" {
     var fx = try Fixture.init();
     defer fx.deinit();

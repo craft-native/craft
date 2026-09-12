@@ -549,7 +549,13 @@
   // -------------------------------------------------------------------------
   window.__craftDeliverWindowEvent = function (name, detail) {
     if (typeof name !== 'string' || name.length === 0) return
-    window.dispatchEvent(new CustomEvent('craft:window:' + name, { detail: detail || {} }))
+    // Events are evaluated only in the webview belonging to the AppKit
+    // window that changed. In that page's WindowManager, the local window is
+    // always called `main`; naming it here keeps retained handles for other
+    // windows from accepting this event as their own.
+    const payload = Object.assign({}, detail || {})
+    if (!payload.windowId) payload.windowId = 'main'
+    window.dispatchEvent(new CustomEvent('craft:window:' + name, { detail: payload }))
   }
   // Add event subscribers as a sibling object — keeps the action API
   // (`craft.window.show()`) and the event API distinct.

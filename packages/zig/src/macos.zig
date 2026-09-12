@@ -3124,19 +3124,30 @@ pub fn titlebarControlY(window: objc.id, themeFrame: objc.id, height: f64) f64 {
 /// up 100pt further from the titlebar it belongs to.
 pub const titlebar_control_autoresizing_mask: c_ulong = 4 | 8;
 
-fn webChromeToggleSidebarCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    const webview = getGlobalWebView() orelse return;
+/// The page controlled by one of Craft's titlebar buttons.
+///
+/// The sender is the NSButton itself, and therefore already identifies its
+/// window. Looking at `global_webview` made every button in an earlier window
+/// drive the last window Craft happened to create.
+fn webViewForChromeControl(sender: objc.id) ?objc.id {
+    const window = msgSend0(sender, "window");
+    if (window == null) return null;
+    return webViewForWindow(window);
+}
+
+fn webChromeToggleSidebarCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
+    const webview = webViewForChromeControl(sender) orelse return;
     const js = createNSString("document.querySelector('[data-sidebar-collapse]')?.click()");
     _ = msgSend2(webview, "evaluateJavaScript:completionHandler:", js, @as(?*anyopaque, null));
 }
 
-fn webChromeBackCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    const webview = getGlobalWebView() orelse return;
+fn webChromeBackCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
+    const webview = webViewForChromeControl(sender) orelse return;
     msgSendVoid0(webview, "goBack");
 }
 
-fn webChromeForwardCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    const webview = getGlobalWebView() orelse return;
+fn webChromeForwardCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
+    const webview = webViewForChromeControl(sender) orelse return;
     msgSendVoid0(webview, "goForward");
 }
 

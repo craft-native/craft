@@ -180,6 +180,31 @@ test "whether a window is craft's is recorded, never inferred from the window" {
     try testing.expect(callsFunction(body, "window_registry.isKnown"));
 }
 
+test "titlebar controls resolve the webview in their own window" {
+    // The button callbacks used to read `getGlobalWebView()`. After opening a
+    // Settings window, Back in the main window therefore navigated Settings —
+    // the button itself already knew which window it belonged to, but that
+    // identity was discarded.
+    const helper_start = std.mem.indexOf(u8, macos_source, "fn webViewForChromeControl(") orelse
+        return error.ChromeControlResolverNotFound;
+    const helper = enclosingFnBody(macos_source, helper_start);
+    try testing.expect(std.mem.indexOf(u8, helper, "msgSend0(sender, \"window\")") != null);
+    try testing.expect(std.mem.indexOf(u8, helper, "webViewForWindow(window)") != null);
+    try testing.expect(std.mem.indexOf(u8, helper, "getGlobalWebView") == null);
+
+    for ([_][]const u8{
+        "fn webChromeToggleSidebarCallback(",
+        "fn webChromeBackCallback(",
+        "fn webChromeForwardCallback(",
+    }) |declaration| {
+        const start = std.mem.indexOf(u8, macos_source, declaration) orelse
+            return error.ChromeControlCallbackNotFound;
+        const body = enclosingFnBody(macos_source, start);
+        try testing.expect(std.mem.indexOf(u8, body, "webViewForChromeControl(sender)") != null);
+        try testing.expect(std.mem.indexOf(u8, body, "getGlobalWebView") == null);
+    }
+}
+
 test "the reopen handler filters by that answer" {
     // Registration is worth nothing if the reopen loop stops asking. This
     // pins the one place the two meet.

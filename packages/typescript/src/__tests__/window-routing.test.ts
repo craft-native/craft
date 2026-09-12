@@ -5,15 +5,23 @@ describe('typed window-handle routing', () => {
   const previousWindow = globalThis.window
   const call = mock(async () => undefined)
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
+  const listeners = new Map<string, Set<EventListener>>()
 
   beforeEach(() => {
     call.mockClear()
     open.mockClear()
+    listeners.clear()
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: {
-        addEventListener: () => {},
-        removeEventListener: () => {},
+        addEventListener: (name: string, listener: EventListener) => {
+          const bucket = listeners.get(name) ?? new Set<EventListener>()
+          bucket.add(listener)
+          listeners.set(name, bucket)
+        },
+        removeEventListener: (name: string, listener: EventListener) => {
+          listeners.get(name)?.delete(listener)
+        },
         webkit: { messageHandlers: { craft: { postMessage: () => {} } } },
         craft: { window: { _call: call, open } },
       },
@@ -49,5 +57,20 @@ describe('typed window-handle routing', () => {
 
     expect(open).toHaveBeenCalledWith({ id, html: '<h1>Settings</h1>' })
     expect(created.id).toBe(id)
+  })
+
+  it('delivers direct native event data only to the matching local handle', () => {
+    const current = new Window('main')
+    const settings = new Window('settings')
+    const currentResize = mock(() => {})
+    const settingsResize = mock(() => {})
+    current.on('resize', currentResize)
+    settings.on('resize', settingsResize)
+
+    const event = { detail: { windowId: 'main', width: 800, height: 600 } } as CustomEvent
+    for (const listener of listeners.get('craft:window:resize') ?? []) listener(event)
+
+    expect(currentResize).toHaveBeenCalledWith({ windowId: 'main', width: 800, height: 600 })
+    expect(settingsResize).not.toHaveBeenCalled()
   })
 })
