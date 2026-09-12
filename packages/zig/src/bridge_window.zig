@@ -277,6 +277,12 @@ pub const WindowBridge = struct {
         else
             null;
 
+        // Allocate the success payload before AppKit creates anything. If this
+        // fails after `openNamedWindow`, the Promise rejects while a live named
+        // window remains behind and a retry unexpectedly resolves that orphan.
+        const result_json = try formatOpenResult(self.allocator, name);
+        defer self.allocator.free(result_json);
+
         if (builtin.os.tag != .macos) return BridgeError.NativeCallFailed;
 
         const macos = @import("macos.zig");
@@ -375,9 +381,7 @@ pub const WindowBridge = struct {
         // Answer with the name rather than nothing: `open` is the one window
         // action a page waits on, because what it does next — focus it, close
         // it — needs to know it exists.
-        const json = try formatOpenResult(self.allocator, name);
-        defer self.allocator.free(json);
-        bridge_error.sendResultToJS(self.allocator, "open", json);
+        bridge_error.sendResultToJS(self.allocator, "open", result_json);
     }
 
     fn show(self: *Self, data: ?[]const u8) !void {

@@ -174,6 +174,20 @@ test "window construction fails cleanly when registration is refused" {
     try testing.expect(constructors >= 3);
 }
 
+test "typed open allocates its reply before creating a native window" {
+    const start = std.mem.indexOf(u8, window_bridge_source, "fn open(self: *Self") orelse
+        return error.WindowOpenHandlerNotFound;
+    const end = std.mem.indexOfPos(u8, window_bridge_source, start, "    fn show(") orelse
+        return error.WindowShowHandlerNotFound;
+    const body = window_bridge_source[start..end];
+    const format_at = std.mem.indexOf(u8, body, "try formatOpenResult(") orelse
+        return error.WindowOpenResultAllocationNotFound;
+    const native_at = std.mem.indexOf(u8, body, "macos.openNamedWindow(") orelse
+        return error.NativeWindowOpenNotFound;
+
+    try testing.expect(format_at < native_at);
+}
+
 test "whether a window is craft's is recorded, never inferred from the window" {
     // The specific regression. `isCraftWindow` asked the window what its
     // content view was; three of craft's four window styles answer with a
