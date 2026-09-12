@@ -237,6 +237,24 @@ test "window-state selectors receive their required sender argument" {
     }
 }
 
+test "content replacement updates the addressed webview recovery source" {
+    for ([_][]const u8{
+        "pub fn loadURLInWebView(",
+        "pub fn loadHTMLInWebView(",
+    }) |declaration| {
+        const start = std.mem.indexOf(u8, macos_source, declaration) orelse
+            return error.WindowContentLoaderNotFound;
+        const body = enclosingFnBody(macos_source, start);
+        try testing.expect(callsFunction(body, "rememberContent("));
+    }
+
+    const remember_start = std.mem.indexOf(u8, macos_source, "fn rememberContent(") orelse
+        return error.ContentMemoryNotFound;
+    const remember_body = enclosingFnBody(macos_source, remember_start);
+    try testing.expect(callsFunction(remember_body, "retainContent("));
+    try testing.expect(callsFunction(remember_body, "releaseContent("));
+}
+
 test "web material state and collapse actions stay with their window" {
     // Material views used to live in six process globals. Constructing a
     // second window overwrote them, so the next collapse from main mutated the

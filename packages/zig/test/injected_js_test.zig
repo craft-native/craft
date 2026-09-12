@@ -418,6 +418,31 @@ test "typed window mutations remain fire and forget" {
     try testing.expectEqualStrings("undefined", try fx.text("typeof window.__craftBridgePending.setTitle"));
 }
 
+test "window content calls preserve markup and retained-handle routing" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\window.craft.window._call('loadHTML', { html: '<p title="quoted">line 1\\nline 2</p>' }, 'settings');
+        \\window.craft.window._call('loadURL', { url: 'https://example.test/a?b=one%20two' }, 'settings');
+    );
+
+    try testing.expectEqualStrings("loadHTML", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("settings", try fx.text("JSON.parse(posted[0].d).windowId"));
+    try testing.expectEqualStrings(
+        "<p title=\"quoted\">line 1\\nline 2</p>",
+        try fx.text("JSON.parse(posted[0].d).html"),
+    );
+    try testing.expectEqualStrings("loadURL", try fx.text("posted[1].a"));
+    try testing.expectEqualStrings(
+        "https://example.test/a?b=one%20two",
+        try fx.text("JSON.parse(posted[1].d).url"),
+    );
+}
+
 test "window events identify the receiving page as its local window" {
     var fx = try Fixture.init();
     defer fx.deinit();

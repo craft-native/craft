@@ -504,6 +504,8 @@
     close:        function ()         { return _send('window', 'close') },
     center:       function ()         { return _send('window', 'center') },
     reload:       function ()         { return _send('window', 'reload') },
+    loadHTML:     function (html)      { return _send('window', 'loadHTML', _stringify({ html: String(html) })) },
+    loadURL:      function (url)       { return _send('window', 'loadURL', _stringify({ url: String(url) })) },
     toggleFullscreen: function ()     { return _send('window', 'toggleFullscreen') },
     setFullscreen: function (on)      { return _send('window', 'setFullscreen', _stringify({ value: !!on })) },
     setTitle:     function (title)    { return _send('window', 'setTitle', _stringify({ title: String(title) })) },

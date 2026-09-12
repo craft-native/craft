@@ -73,6 +73,18 @@ describe('typed window-handle routing', () => {
     ])
   })
 
+  it('loads content in the retained handle instead of the calling page', async () => {
+    const settings = new Window('settings')
+
+    await settings.loadHTML('<h1>Preferences</h1>')
+    await settings.loadURL('https://example.test/preferences')
+
+    expect(call.mock.calls.map(args => [args[0], args[1], args[2]])).toEqual([
+      ['loadHTML', { html: '<h1>Preferences</h1>' }, 'settings'],
+      ['loadURL', { url: 'https://example.test/preferences' }, 'settings'],
+    ])
+  })
+
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
     const id = `settings-${Date.now()}`
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })

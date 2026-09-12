@@ -1062,15 +1062,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Load content - either URL or HTML
     if (url) |u| {
         // Load URL directly (no iframe!)
-        const url_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, u);
-        defer std.heap.c_allocator.free(url_cstr);
-        const url_str_alloc = msgSend0(NSString, "alloc");
-        const url_str = msgSend1(url_str_alloc, "initWithUTF8String:", url_cstr.ptr);
-
-        const nsurl = msgSend1(getClass("NSURL"), "URLWithString:", url_str);
-        const request = msgSend1(getClass("NSURLRequest"), "requestWithURL:", nsurl);
-        _ = msgSend1(webview, "loadRequest:", request);
-        rememberContent(webview, .{ .request = request });
+        try loadURLInWebView(webview, u);
         startup_timing.mark(.load_started);
     } else if (html) |h| {
         if (style.benchmark) {
@@ -1082,19 +1074,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         } else {
             // The bridge is already installed on the content controller as a
             // document-start user script, so the HTML loads unmodified.
-            const html_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, h);
-            defer std.heap.c_allocator.free(html_cstr);
-            const html_str_alloc = msgSend0(NSString, "alloc");
-            const html_str = msgSend1(html_str_alloc, "initWithUTF8String:", html_cstr.ptr);
-
-            // A real baseURL matters twice over: without one, body scripts may
-            // not execute, `evaluateJavaScript` from native code is restricted,
-            // and `WKUserScript` injection into `loadHTMLString:` is unreliable.
-            const base_url_string = createNSString("http://localhost/");
-            const base_url = msgSend1(getClass("NSURL"), "URLWithString:", base_url_string);
-
-            _ = msgSend2(webview, "loadHTMLString:baseURL:", html_str, base_url);
-            rememberContent(webview, .{ .html = .{ .string = html_str, .base_url = base_url } });
+            try loadHTMLInWebView(webview, h);
         }
     }
 
@@ -6138,29 +6118,45 @@ const ContentSlot = struct {
 /// same way and a window in one should be in the other.
 var content_slots: [8]ContentSlot = @splat(.{});
 
+fn retainContent(content: LoadedContent) void {
+    switch (content) {
+        .none => {},
+        .request => |request| _ = msgSend0(request, "retain"),
+        .html => |html| {
+            _ = msgSend0(html.string, "retain");
+            if (html.base_url != null) _ = msgSend0(html.base_url, "retain");
+        },
+    }
+}
+
+fn releaseContent(content: LoadedContent) void {
+    switch (content) {
+        .none => {},
+        .request => |request| msgSendVoid0(request, "release"),
+        .html => |html| {
+            msgSendVoid0(html.string, "release");
+            if (html.base_url != null) msgSendVoid0(html.base_url, "release");
+        },
+    }
+}
+
 /// Hold on to what a webview was given, retaining it for as long as the window
 /// might need it back.
 ///
 /// `requestWithURL:` and `URLWithString:` both hand back autoreleased objects,
 /// so without the retain these are dangling by the time the run loop next
-/// drains — which is long before any crash. The matching release would be at
-/// window teardown; craft never tears one down today, and one request or one
-/// HTML string per window is not a leak worth the risk of releasing early.
+/// drains — which is long before any crash. Replacing a window's content
+/// releases its previous recovery source; final teardown will release the last
+/// one once craft grows true window destruction.
 fn rememberContent(webview: objc.id, content: LoadedContent) void {
-    switch (content) {
-        .none => {},
-        .request => |r| _ = msgSend0(r, "retain"),
-        .html => |h| {
-            _ = msgSend0(h.string, "retain");
-            if (h.base_url != null) _ = msgSend0(h.base_url, "retain");
-        },
-    }
+    retainContent(content);
 
     const key = @intFromPtr(webview);
     // Existing entry first, then a free one. Taking whichever comes first would
     // leave a stale duplicate behind for a webview that loads twice.
     for (&content_slots) |*slot| {
         if (slot.key == key) {
+            releaseContent(slot.content);
             slot.content = content;
             return;
         }
@@ -6173,7 +6169,40 @@ fn rememberContent(webview: objc.id, content: LoadedContent) void {
     }
     // Full. Slot zero holds the earliest window registered, which is the one
     // least likely to still be around.
+    releaseContent(content_slots[0].content);
     content_slots[0] = .{ .key = key, .content = content };
+}
+
+/// Navigate one concrete webview and make the new URL its reload/recovery
+/// source. Keeping this beside `rememberContent` makes a typed child-window
+/// handle behave like the initial window: Reload and renderer recovery repeat
+/// the latest app-directed navigation, not the URL used at construction.
+pub fn loadURLInWebView(webview: objc.id, url: []const u8) !void {
+    if (webview == null or url.len == 0) return error.InvalidURL;
+    const url_string = createNSString(url);
+    const nsurl = msgSend1(getClass("NSURL"), "URLWithString:", url_string);
+    if (nsurl == null) return error.InvalidURL;
+    const request = msgSend1(getClass("NSURLRequest"), "requestWithURL:", nsurl);
+    if (request == null) return error.InvalidURL;
+    _ = msgSend1(webview, "loadRequest:", request);
+    rememberContent(webview, .{ .request = request });
+}
+
+/// Replace one concrete webview's document and retain exactly that document
+/// as the source for Reload and renderer recovery.
+pub fn loadHTMLInWebView(webview: objc.id, html: []const u8) !void {
+    if (webview == null) return error.InvalidWebView;
+    const html_string = createNSString(html);
+
+    // A real baseURL matters twice over: without one, body scripts may not
+    // execute, `evaluateJavaScript` from native code is restricted, and
+    // `WKUserScript` injection into `loadHTMLString:` is unreliable.
+    const base_url_string = createNSString("http://localhost/");
+    const base_url = msgSend1(getClass("NSURL"), "URLWithString:", base_url_string);
+    if (base_url == null) return error.InvalidURL;
+
+    _ = msgSend2(webview, "loadHTMLString:baseURL:", html_string, base_url);
+    rememberContent(webview, .{ .html = .{ .string = html_string, .base_url = base_url } });
 }
 
 fn contentFor(webview: objc.id) LoadedContent {

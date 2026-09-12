@@ -108,6 +108,10 @@ pub const WindowBridge = struct {
             try self.getOpacity(data);
         } else if (std.mem.eql(u8, action, "getState")) {
             try self.getState(data);
+        } else if (std.mem.eql(u8, action, "loadHTML")) {
+            try self.loadHTML(data);
+        } else if (std.mem.eql(u8, action, "loadURL")) {
+            try self.loadURL(data);
         } else if (std.mem.eql(u8, action, "reload")) {
             try self.reload(data);
         } else if (std.mem.eql(u8, action, "setAppearance")) {
@@ -677,6 +681,31 @@ pub const WindowBridge = struct {
             const macos = @import("macos.zig");
             macos.reloadWindow(handle);
         }
+    }
+
+    fn loadHTML(self: *Self, data: ?[]const u8) !void {
+        const webview = try self.requireWebViewHandle(data);
+        const json_data = data orelse return BridgeError.MissingData;
+        const html = json_utils.getStringDecoded(self.allocator, json_data, "html") catch
+            return BridgeError.InvalidJSON;
+        const decoded = html orelse return BridgeError.InvalidParameter;
+        defer self.allocator.free(decoded);
+
+        if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        try @import("macos.zig").loadHTMLInWebView(webview, decoded);
+    }
+
+    fn loadURL(self: *Self, data: ?[]const u8) !void {
+        const webview = try self.requireWebViewHandle(data);
+        const json_data = data orelse return BridgeError.MissingData;
+        const url = json_utils.getStringDecoded(self.allocator, json_data, "url") catch
+            return BridgeError.InvalidJSON;
+        const decoded = url orelse return BridgeError.InvalidParameter;
+        defer self.allocator.free(decoded);
+        if (decoded.len == 0) return BridgeError.InvalidParameter;
+
+        if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        try @import("macos.zig").loadURLInWebView(webview, decoded);
     }
 
     /// Pin this window to light or dark, or hand it back to the system.
