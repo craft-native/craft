@@ -339,6 +339,24 @@ pub const NativeUIBridge = struct {
         return arrayValue(object.get(name) orelse return error.MissingRequiredField);
     }
 
+    fn optionalBool(object: std.json.ObjectMap, name: []const u8) !?bool {
+        const value = object.get(name) orelse return null;
+        return switch (value) {
+            .bool => |boolean| boolean,
+            .null => null,
+            else => error.InvalidFieldType,
+        };
+    }
+
+    fn requiredNumber(object: std.json.ObjectMap, name: []const u8) !f64 {
+        const value = object.get(name) orelse return error.MissingRequiredField;
+        return switch (value) {
+            .integer => |integer| @floatFromInt(integer),
+            .float => |float| float,
+            else => error.InvalidFieldType,
+        };
+    }
+
     fn fileItem(object: std.json.ObjectMap) !NativeFileBrowser.FileItem {
         return .{
             .id = try requiredString(object, "id"),
@@ -882,24 +900,16 @@ pub const NativeUIBridge = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const target_id = root.get("targetId").?.string;
-        const target_type = root.get("targetType").?.string;
+        const root = try objectValue(parsed.value);
+        const target_id = try requiredString(root, "targetId");
+        const target_type = try requiredString(root, "targetType");
 
         // Get position
-        const x = switch (root.get("x").?) {
-            .integer => |i| @as(f64, @floatFromInt(i)),
-            .float => |f| f,
-            else => 0.0,
-        };
-        const y = switch (root.get("y").?) {
-            .integer => |i| @as(f64, @floatFromInt(i)),
-            .float => |f| f,
-            else => 0.0,
-        };
+        const x = try requiredNumber(root, "x");
+        const y = try requiredNumber(root, "y");
 
         // Parse menu items
-        const items_json = root.get("items").?.array;
+        const items_json = try requiredArray(root, "items");
         var items: std.ArrayList(context_menu.MenuItem) = .empty;
         defer items.deinit(self.allocator);
         var owned_submenus: std.ArrayList([]const context_menu.MenuItem) = .empty;
@@ -908,9 +918,9 @@ pub const NativeUIBridge = struct {
             owned_submenus.deinit(self.allocator);
         }
 
-        for (items_json.items) |item_json| {
-            const item_obj = item_json.object;
-            const item_type_str = if (item_obj.get("type")) |t| t.string else "standard";
+        for (items_json) |item_json| {
+            const item_obj = try objectValue(item_json);
+            const item_type_str = try optionalString(item_obj, "type") orelse "standard";
 
             const item_type: context_menu.MenuItemType = if (std.mem.eql(u8, item_type_str, "separator"))
                 .separator
@@ -923,45 +933,41 @@ pub const NativeUIBridge = struct {
             var submenu_items: ?[]const context_menu.MenuItem = null;
             if (item_type == .submenu) {
                 if (item_obj.get("submenu")) |submenu_json| {
-                    if (submenu_json == .array) {
-                        var submenu_list: std.ArrayList(context_menu.MenuItem) = .empty;
-                        defer submenu_list.deinit(self.allocator);
-                        for (submenu_json.array.items) |sub_item_json| {
-                            if (sub_item_json == .object) {
-                                const sub_obj = sub_item_json.object;
-                                const sub_type_str = if (sub_obj.get("type")) |t| t.string else "standard";
-                                const sub_type: context_menu.MenuItemType = if (std.mem.eql(u8, sub_type_str, "separator"))
-                                    .separator
-                                else
-                                    .standard;
+                    var submenu_list: std.ArrayList(context_menu.MenuItem) = .empty;
+                    defer submenu_list.deinit(self.allocator);
+                    for (try arrayValue(submenu_json)) |sub_item_json| {
+                        const sub_obj = try objectValue(sub_item_json);
+                        const sub_type_str = try optionalString(sub_obj, "type") orelse "standard";
+                        const sub_type: context_menu.MenuItemType = if (std.mem.eql(u8, sub_type_str, "separator"))
+                            .separator
+                        else
+                            .standard;
 
-                                try submenu_list.append(self.allocator, .{
-                                    .id = if (sub_obj.get("id")) |id| id.string else "",
-                                    .title = if (sub_obj.get("title")) |title| title.string else "",
-                                    .icon = if (sub_obj.get("icon")) |icon| icon.string else null,
-                                    .shortcut = if (sub_obj.get("shortcut")) |shortcut| shortcut.string else null,
-                                    .enabled = if (sub_obj.get("enabled")) |enabled| enabled.bool else true,
-                                    .item_type = sub_type,
-                                    .submenu_items = null, // Only one level deep
-                                });
-                            }
-                        }
-                        if (submenu_list.items.len > 0) {
-                            const owned = try submenu_list.toOwnedSlice(self.allocator);
-                            errdefer self.allocator.free(owned);
-                            try owned_submenus.append(self.allocator, owned);
-                            submenu_items = owned;
-                        }
+                        try submenu_list.append(self.allocator, .{
+                            .id = try optionalString(sub_obj, "id") orelse "",
+                            .title = try optionalString(sub_obj, "title") orelse "",
+                            .icon = try optionalString(sub_obj, "icon"),
+                            .shortcut = try optionalString(sub_obj, "shortcut"),
+                            .enabled = try optionalBool(sub_obj, "enabled") orelse true,
+                            .item_type = sub_type,
+                            .submenu_items = null, // Only one level deep
+                        });
+                    }
+                    if (submenu_list.items.len > 0) {
+                        const owned = try submenu_list.toOwnedSlice(self.allocator);
+                        errdefer self.allocator.free(owned);
+                        try owned_submenus.append(self.allocator, owned);
+                        submenu_items = owned;
                     }
                 }
             }
 
             try items.append(self.allocator, .{
-                .id = item_obj.get("id").?.string,
-                .title = item_obj.get("title").?.string,
-                .icon = if (item_obj.get("icon")) |icon| icon.string else null,
-                .shortcut = if (item_obj.get("shortcut")) |shortcut| shortcut.string else null,
-                .enabled = if (item_obj.get("enabled")) |enabled| enabled.bool else true,
+                .id = try requiredString(item_obj, "id"),
+                .title = try requiredString(item_obj, "title"),
+                .icon = try optionalString(item_obj, "icon"),
+                .shortcut = try optionalString(item_obj, "shortcut"),
+                .enabled = try optionalBool(item_obj, "enabled") orelse true,
                 .item_type = item_type,
                 .submenu_items = submenu_items,
             });
@@ -1231,4 +1237,23 @@ test "native file parser preserves valid optional strings and nulls" {
     try std.testing.expectEqualStrings("today", file.date_modified.?);
     try std.testing.expectEqualStrings("1 KB", file.size.?);
     try std.testing.expect(file.kind == null);
+}
+
+test "context menu scalar parsers reject malformed values" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"x\":12,\"y\":3.5,\"enabled\":true,\"badNumber\":false,\"badBool\":\"yes\"}",
+        .{},
+    );
+    defer parsed.deinit();
+    const root = try NativeUIBridge.objectValue(parsed.value);
+
+    try std.testing.expectEqual(@as(f64, 12), try NativeUIBridge.requiredNumber(root, "x"));
+    try std.testing.expectEqual(@as(f64, 3.5), try NativeUIBridge.requiredNumber(root, "y"));
+    try std.testing.expectEqual(true, (try NativeUIBridge.optionalBool(root, "enabled")).?);
+    try std.testing.expect((try NativeUIBridge.optionalBool(root, "missing")) == null);
+    try std.testing.expectError(error.MissingRequiredField, NativeUIBridge.requiredNumber(root, "missing"));
+    try std.testing.expectError(error.InvalidFieldType, NativeUIBridge.requiredNumber(root, "badNumber"));
+    try std.testing.expectError(error.InvalidFieldType, NativeUIBridge.optionalBool(root, "badBool"));
 }
