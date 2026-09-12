@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const macos = @import("macos.zig");
 const capabilities = @import("capabilities.zig");
+const bridge_error = @import("bridge_error.zig");
+const window_registry = @import("window_registry.zig");
 
 const objc = macos.objc;
 
@@ -191,17 +193,37 @@ fn fire(notification: objc.id, name: []const u8, detail_json: []const u8) void {
     // to go. Falling back to the process-global page leaks that close/focus
     // transition into an unrelated window, which is worse than dropping it.
     const webview = macos.webViewForWindow(window) orelse return;
+    deliver(webview, name, detail_json, null);
+
+    // A typed child handle lives in its creator page, while the child page
+    // calls itself `main`. Send the same transition to both views with the id
+    // each Window instance expects. This is an ownership route, not a process
+    // broadcast: unrelated windows never see the event.
+    const handle = @intFromPtr(window);
+    const owner = window_registry.ownerWebViewOf(handle) orelse return;
+    if (owner == @intFromPtr(webview)) return;
+    const window_name = window_registry.nameOf(handle) orelse return;
+    deliver(@ptrFromInt(owner), name, detail_json, window_name);
+}
+
+fn deliver(webview: objc.id, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
+    if (webview == null) return;
 
     var script: std.ArrayListUnmanaged(u8) = .empty;
     defer script.deinit(std.heap.c_allocator);
 
-    script.appendSlice(std.heap.c_allocator, "if (window.__craftDeliverWindowEvent) window.__craftDeliverWindowEvent('") catch return;
-    script.appendSlice(std.heap.c_allocator, name) catch return;
-    script.appendSlice(std.heap.c_allocator, "',") catch return;
+    script.appendSlice(std.heap.c_allocator, "if (window.__craftDeliverWindowEvent) window.__craftDeliverWindowEvent(\"") catch return;
+    bridge_error.appendJsonEscaped(std.heap.c_allocator, &script, name) catch return;
+    script.appendSlice(std.heap.c_allocator, "\",") catch return;
     if (detail_json.len > 0) {
         script.appendSlice(std.heap.c_allocator, detail_json) catch return;
     } else {
         script.appendSlice(std.heap.c_allocator, "{}") catch return;
+    }
+    if (window_name) |id| {
+        script.appendSlice(std.heap.c_allocator, ",\"") catch return;
+        bridge_error.appendJsonEscaped(std.heap.c_allocator, &script, id) catch return;
+        script.append(std.heap.c_allocator, '"') catch return;
     }
     script.appendSlice(std.heap.c_allocator, ");") catch return;
     script.append(std.heap.c_allocator, 0) catch return;

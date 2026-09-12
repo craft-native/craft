@@ -152,4 +152,19 @@ describe('typed window-handle routing', () => {
     expect(currentResize).toHaveBeenCalledWith({ windowId: 'main', width: 800, height: 600 })
     expect(settingsResize).not.toHaveBeenCalled()
   })
+
+  it('delivers a child event to its typed handle in the creator page', () => {
+    const current = new Window('main')
+    const settings = new Window('settings')
+    const currentFocus = mock(() => {})
+    const settingsFocus = mock(() => {})
+    current.on('focus', currentFocus)
+    settings.on('focus', settingsFocus)
+
+    const event = { detail: { windowId: 'settings' } } as CustomEvent
+    for (const listener of listeners.get('craft:window:focus') ?? []) listener(event)
+
+    expect(settingsFocus).toHaveBeenCalledWith({ windowId: 'settings' })
+    expect(currentFocus).not.toHaveBeenCalled()
+  })
 })

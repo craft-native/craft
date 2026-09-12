@@ -52,6 +52,10 @@ pub const max_name = 64;
 /// instead.
 const Entry = struct {
     handle: Handle = 0,
+    /// The webview whose page created this named window. Native events are
+    /// delivered both to the window's own page and to this owner, where the
+    /// TypeScript `Window` handle and its listeners live.
+    owner_webview: Handle = 0,
     name: [max_name]u8 = @splat(0),
     name_len: usize = 0,
 
@@ -85,6 +89,15 @@ pub fn remember(handle: Handle) bool {
 /// entry — the window would then be recorded twice and `forget` would clear
 /// only one of them.
 pub fn rememberNamed(handle: Handle, name: ?[]const u8) bool {
+    return rememberNamedOwned(handle, name, 0);
+}
+
+/// Record a window and, once, the page that created its typed handle.
+///
+/// Reopening an existing name from another page does not transfer ownership:
+/// subscriptions belong to the handle returned to the original creator, and
+/// silently stealing them would make that page stop receiving native events.
+pub fn rememberNamedOwned(handle: Handle, name: ?[]const u8, owner_webview: Handle) bool {
     if (handle == 0) return false;
     if (name) |n| {
         if (n.len == 0 or n.len > max_name) return false;
@@ -96,6 +109,7 @@ pub fn rememberNamed(handle: Handle, name: ?[]const u8) bool {
     for (&windows) |*slot| {
         if (slot.handle == handle) {
             if (name) |n| setName(slot, n);
+            if (slot.owner_webview == 0 and owner_webview != 0) slot.owner_webview = owner_webview;
             return true;
         }
     }
@@ -103,12 +117,24 @@ pub fn rememberNamed(handle: Handle, name: ?[]const u8) bool {
     for (&windows) |*slot| {
         if (slot.handle == 0) {
             slot.handle = handle;
+            slot.owner_webview = owner_webview;
             if (name) |n| setName(slot, n) else slot.name_len = 0;
             return true;
         }
     }
 
     return false;
+}
+
+/// The page that owns this window's typed handle, if it was runtime-created.
+pub fn ownerWebViewOf(handle: Handle) ?Handle {
+    if (handle == 0) return null;
+    for (windows) |entry| {
+        if (entry.handle == handle) {
+            return if (entry.owner_webview == 0) null else entry.owner_webview;
+        }
+    }
+    return null;
 }
 
 fn setName(slot: *Entry, name: []const u8) void {
@@ -279,6 +305,26 @@ test "a window already recorded can be named afterwards" {
     try testing.expect(rememberNamed(0x1000, "settings"));
     try testing.expectEqual(@as(usize, 1), count());
     try testing.expectEqual(@as(?Handle, 0x1000), byName("settings"));
+}
+
+test "a runtime window remembers the page that owns its typed handle" {
+    resetForTesting();
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
+}
+
+test "reopening a named window does not steal its creator" {
+    resetForTesting();
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x3000));
+    try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
+}
+
+test "naming an already registered child records its creator" {
+    resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    try testing.expectEqual(@as(?Handle, 0x2000), ownerWebViewOf(0x1000));
 }
 
 test "forgetting a window releases its name" {

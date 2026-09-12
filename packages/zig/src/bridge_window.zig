@@ -309,6 +309,10 @@ pub const WindowBridge = struct {
             .width = json_utils.getInt(u32, json_data, "width") orelse 800,
             .height = json_utils.getInt(u32, json_data, "height") orelse 600,
             .style = style,
+            // The creator page owns the typed handle and its subscriptions.
+            // Keep the authenticated sender from `WKScriptMessage`, not a
+            // window id asserted by the payload.
+            .owner_webview = window_context.currentWebView() orelse 0,
         }) catch return BridgeError.NativeCallFailed;
 
         // A floor on the size, so a window with a fixed-width sidebar cannot be

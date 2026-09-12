@@ -252,6 +252,21 @@ test "window events never fall back to an unrelated global webview" {
     try testing.expect(std.mem.indexOf(u8, body, "getGlobalWebView") == null);
 }
 
+test "typed child events return only to their creator page" {
+    const events_source = @embedFile("src/macos_window_events.zig");
+    const start = std.mem.indexOf(u8, events_source, "fn fire(") orelse
+        return error.WindowEventEmitterNotFound;
+    const body = enclosingFnBody(events_source, start);
+    try testing.expect(callsFunction(body, "window_registry.ownerWebViewOf("));
+    try testing.expect(callsFunction(body, "window_registry.nameOf("));
+    try testing.expect(callsFunction(body, "deliver("));
+
+    const open_start = std.mem.indexOf(u8, window_bridge_source, "fn open(") orelse
+        return error.WindowOpenHandlerNotFound;
+    const open_body = enclosingFnBody(window_bridge_source, open_start);
+    try testing.expect(callsFunction(open_body, "window_context.currentWebView()"));
+}
+
 test "the native delegate emits both fullscreen transitions" {
     const events_source = @embedFile("src/macos_window_events.zig");
     for ([_][]const u8{

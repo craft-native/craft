@@ -7196,6 +7196,9 @@ pub const SecondaryWindow = struct {
     width: u32 = 800,
     height: u32 = 600,
     style: WindowStyle = .{},
+    /// Webview of the page holding the typed handle returned by `open`.
+    /// Zero is for native callers with no page owner.
+    owner_webview: window_registry.Handle = 0,
 };
 
 /// The window open under this name, if one is.
@@ -7237,7 +7240,7 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     // `keepWindowAfterClose`; this only attaches the name, which is why a full
     // table is not fatal here — the window exists and works, it just cannot be
     // found by name again.
-    if (!window_registry.rememberNamed(@intFromPtr(window), spec.name)) {
+    if (!window_registry.rememberNamedOwned(@intFromPtr(window), spec.name, spec.owner_webview)) {
         std.log.warn("window \"{s}\" could not be named; a later open will make a second one", .{spec.name});
     }
 

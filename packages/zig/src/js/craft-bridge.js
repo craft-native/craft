@@ -568,14 +568,13 @@
   // The event payload arrives via __craftDeliverWindowEvent from the
   // native NSWindowDelegate; we re-emit as `craft:window:<name>` events.
   // -------------------------------------------------------------------------
-  window.__craftDeliverWindowEvent = function (name, detail) {
+  window.__craftDeliverWindowEvent = function (name, detail, windowId) {
     if (typeof name !== 'string' || name.length === 0) return
-    // Events are evaluated only in the webview belonging to the AppKit
-    // window that changed. In that page's WindowManager, the local window is
-    // always called `main`; naming it here keeps retained handles for other
-    // windows from accepting this event as their own.
+    // In the changed window's page the local handle is `main`. Native also
+    // routes a named child event to the creator page, where `windowId` selects
+    // the typed handle returned by `create`; unrelated handles ignore it.
     const payload = Object.assign({}, detail || {})
-    if (!payload.windowId) payload.windowId = 'main'
+    if (!payload.windowId) payload.windowId = String(windowId || 'main')
     window.dispatchEvent(new CustomEvent('craft:window:' + name, { detail: payload }))
   }
   // Add event subscribers as a sibling object — keeps the action API
