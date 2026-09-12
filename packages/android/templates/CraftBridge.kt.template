@@ -111,7 +111,7 @@ class CraftBridge(
 
     // Location tracking
     private var fusedLocationClient: FusedLocationProviderClient? = null
-    private var locationCallback: LocationCallback? = null
+    private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
     private var watchId = 0
 
     // Network monitoring
@@ -1650,8 +1650,8 @@ class CraftBridge(
     fun getCurrentPosition(optionsJson: String) {
         // The task listeners and the fresh-location callback are
         // CraftNative's, because they are Java interfaces. fusedLocationClient
-        // below stays null, which is safe: watchPosition assigns it before
-        // every use, so clearWatch is unaffected.
+        // below is independent from the callbacks owned by watchPosition, so
+        // a one-shot lookup cannot overwrite or clear a continuous watch.
         if (CraftNative.getCurrentPosition(activity)) return
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -1755,7 +1755,7 @@ class CraftBridge(
             .setMinUpdateIntervalMillis(2000)
             .build()
 
-        locationCallback = object : LocationCallback() {
+        val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val location = result.lastLocation ?: return
                 val json = JSONObject().apply {
@@ -1777,7 +1777,8 @@ class CraftBridge(
         }
 
         if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fusedLocationClient?.requestLocationUpdates(locationRequest, locationCallback!!, Looper.getMainLooper())
+            fusedLocationClient?.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
+            locationCallbacks[currentWatchId] = callback
         }
 
         return currentWatchId
@@ -1785,10 +1786,9 @@ class CraftBridge(
 
     @JavascriptInterface
     fun clearWatch(watchId: Int) {
-        locationCallback?.let {
+        locationCallbacks.remove(watchId)?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
-        locationCallback = null
     }
 
     @JavascriptInterface

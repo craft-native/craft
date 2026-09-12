@@ -209,6 +209,20 @@ describe('Craft Android builder', () => {
     expect(holder).toContain('networkWatch = watch')
   })
 
+  it('keeps every location watch addressable by its returned id', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-location-watch-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+
+    expect(bridge).toContain('private val locationCallbacks = mutableMapOf<Int, LocationCallback>()')
+    expect(bridge).toContain('locationCallbacks[currentWatchId] = callback')
+    expect(bridge).toContain('locationCallbacks.remove(watchId)?.let')
+    expect(bridge).toContain('requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())')
+    expect(bridge).not.toContain('private var locationCallback: LocationCallback?')
+    expect(bridge).not.toContain('locationCallback = object : LocationCallback()')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({
