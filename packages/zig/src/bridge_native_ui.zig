@@ -300,24 +300,46 @@ pub const NativeUIBridge = struct {
     ///
     /// The returned slice borrows every string from `parsed`, so it must be
     /// consumed before the parse arena is freed — `SpaceList.append` copies.
+    fn objectValue(value: std.json.Value) !std.json.ObjectMap {
+        return switch (value) {
+            .object => |object| object,
+            else => error.InvalidFieldType,
+        };
+    }
+
+    fn requiredString(object: std.json.ObjectMap, name: []const u8) ![]const u8 {
+        const value = object.get(name) orelse return error.MissingRequiredField;
+        return switch (value) {
+            .string => |string| string,
+            else => error.InvalidFieldType,
+        };
+    }
+
+    fn optionalString(object: std.json.ObjectMap, name: []const u8) !?[]const u8 {
+        const value = object.get(name) orelse return null;
+        return switch (value) {
+            .string => |string| string,
+            .null => null,
+            else => error.InvalidFieldType,
+        };
+    }
+
     fn parseSpaces(allocator: std.mem.Allocator, value: std.json.Value) !std.ArrayList(space_switcher.Space) {
         var spaces: std.ArrayList(space_switcher.Space) = .empty;
         errdefer spaces.deinit(allocator);
 
-        for (value.array.items) |entry| {
-            const obj = entry.object;
-            const space_id = if (obj.get("id")) |v| v.string else continue;
+        const values = switch (value) {
+            .array => |array| array.items,
+            else => return error.InvalidFieldType,
+        };
+        for (values) |entry| {
+            const obj = try objectValue(entry);
+            const space_id = try requiredString(obj, "id");
             try spaces.append(allocator, .{
                 .id = space_id,
-                .label = if (obj.get("label")) |v| v.string else space_id,
-                .icon = if (obj.get("icon")) |v| switch (v) {
-                    .string => |s| s,
-                    else => null,
-                } else null,
-                .tint = if (obj.get("tint")) |v| switch (v) {
-                    .string => |s| s,
-                    else => null,
-                } else null,
+                .label = try optionalString(obj, "label") orelse space_id,
+                .icon = try optionalString(obj, "icon"),
+                .tint = try optionalString(obj, "tint"),
             });
         }
 
@@ -338,8 +360,8 @@ pub const NativeUIBridge = struct {
             return error.MalformedJSON;
         defer parsed.deinit();
 
-        const root = parsed.value.object;
-        const id_str = if (root.get("id")) |v| v.string else return error.MissingRequiredField;
+        const root = try objectValue(parsed.value);
+        const id_str = try requiredString(root, "id");
 
         var spaces = if (root.get("spaces")) |v|
             try parseSpaces(self.allocator, v)
@@ -347,10 +369,7 @@ pub const NativeUIBridge = struct {
             std.ArrayList(space_switcher.Space).empty;
         defer spaces.deinit(self.allocator);
 
-        const active = if (root.get("activeSpace")) |v| switch (v) {
-            .string => |s| s,
-            else => null,
-        } else null;
+        const active = try optionalString(root, "activeSpace");
 
         // Build and attach the replacement before retiring the live control.
         // Allocation failure must leave the window's current switcher usable,
@@ -378,7 +397,8 @@ pub const NativeUIBridge = struct {
             return error.MalformedJSON;
         defer parsed.deinit();
 
-        const spaces_value = parsed.value.object.get("spaces") orelse return error.MissingRequiredField;
+        const root = try objectValue(parsed.value);
+        const spaces_value = root.get("spaces") orelse return error.MissingRequiredField;
         var spaces = try parseSpaces(self.allocator, spaces_value);
         defer spaces.deinit(self.allocator);
 
@@ -394,9 +414,10 @@ pub const NativeUIBridge = struct {
             return error.MalformedJSON;
         defer parsed.deinit();
 
-        const space_id = parsed.value.object.get("spaceId") orelse return error.MissingRequiredField;
+        const root = try objectValue(parsed.value);
+        const space_id = try requiredString(root, "spaceId");
         const switcher = state.space_switcher orelse return error.SpacesSidebarNotFound;
-        space_switcher.setActiveSpace(switcher, space_id.string);
+        space_switcher.setActiveSpace(switcher, space_id);
     }
 
     /// Create a new sidebar component using NSSplitViewController with native Liquid Glass
@@ -1126,4 +1147,41 @@ test "forgetting a window preserves other native UI state" {
     bridge.forgetWindow(@ptrFromInt(0x1000));
     try std.testing.expectEqual(@as(usize, 1), bridge.window_states.count());
     try std.testing.expectEqual(survivor, bridge.window_states.get(0x2000).?);
+}
+
+test "spaces parser rejects malformed shapes without unchecked union access" {
+    const cases = [_][]const u8{
+        "{}",
+        "[1]",
+        "[{\"id\":1}]",
+        "[{\"id\":\"work\",\"label\":false}]",
+        "[{\"id\":\"work\",\"icon\":[]}]",
+    };
+
+    for (cases) |source| {
+        const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, source, .{});
+        defer parsed.deinit();
+        try std.testing.expectError(
+            error.InvalidFieldType,
+            NativeUIBridge.parseSpaces(std.testing.allocator, parsed.value),
+        );
+    }
+}
+
+test "spaces parser preserves valid optional strings and nulls" {
+    const parsed = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "[{\"id\":\"work\",\"label\":\"Work\",\"icon\":null,\"tint\":\"#4488ff\"}]",
+        .{},
+    );
+    defer parsed.deinit();
+
+    var spaces = try NativeUIBridge.parseSpaces(std.testing.allocator, parsed.value);
+    defer spaces.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), spaces.items.len);
+    try std.testing.expectEqualStrings("work", spaces.items[0].id);
+    try std.testing.expectEqualStrings("Work", spaces.items[0].label);
+    try std.testing.expect(spaces.items[0].icon == null);
+    try std.testing.expectEqualStrings("#4488ff", spaces.items[0].tint.?);
 }
