@@ -3944,6 +3944,7 @@ pub fn destroyWindow(window_handle: anytype) void {
     const webview = webViewForWindow(window);
     if (global_native_ui_bridge) |bridge| bridge.forgetWindow(window);
     forgetLegacySidebar(window);
+    forgetScrollGesture(window);
     forgetWindowChrome(window);
     forgetWebMaterial(window);
     if (webview) |view| {
@@ -4681,10 +4682,56 @@ const ScrollBlockDescriptor = extern struct {
 
 extern var _NSConcreteStackBlock: anyopaque;
 
-var scroll_state: scroll_gesture.State = .{};
+const ScrollGestureSlot = struct {
+    window: objc.id = null,
+    state: scroll_gesture.State = .{},
+};
+
+var scroll_gesture_slots: [window_registry.capacity]ScrollGestureSlot = @splat(.{});
 var scroll_monitor: ?objc.id = null;
 
-fn emitSwipe(emit: scroll_gesture.Emit) void {
+fn scrollGestureState(window: objc.id, create: bool) ?*scroll_gesture.State {
+    if (window == null) return null;
+    for (&scroll_gesture_slots) |*slot| {
+        if (slot.window == window) return &slot.state;
+    }
+    if (!create) return null;
+    for (&scroll_gesture_slots) |*slot| {
+        if (slot.window == null) {
+            slot.window = window;
+            return &slot.state;
+        }
+    }
+    return null;
+}
+
+fn forgetScrollGesture(window: objc.id) void {
+    for (&scroll_gesture_slots) |*slot| {
+        if (slot.window == window) {
+            slot.* = .{};
+            return;
+        }
+    }
+}
+
+test "scroll gesture state is partitioned by window" {
+    const first_window: objc.id = @ptrFromInt(0x3000);
+    const second_window: objc.id = @ptrFromInt(0x4000);
+    defer forgetScrollGesture(first_window);
+    defer forgetScrollGesture(second_window);
+
+    const first = scrollGestureState(first_window, true).?;
+    const second = scrollGestureState(second_window, true).?;
+    try std.testing.expect(first != second);
+    try std.testing.expect(first == scrollGestureState(first_window, false).?);
+    try std.testing.expect(second == scrollGestureState(second_window, false).?);
+
+    forgetScrollGesture(first_window);
+    try std.testing.expect(scrollGestureState(first_window, false) == null);
+    try std.testing.expect(scrollGestureState(second_window, false) == second);
+}
+
+fn emitSwipe(webview: objc.id, emit: scroll_gesture.Emit) void {
     var buffer: [320]u8 = undefined;
     const js = std.fmt.bufPrint(
         &buffer,
@@ -4692,8 +4739,8 @@ fn emitSwipe(emit: scroll_gesture.Emit) void {
         .{ @tagName(emit.phase), emit.delta_x, emit.delta_y, emit.velocity_x },
     ) catch return;
 
-    // No webview yet (or already torn down) is normal, not an error.
-    tryEvalJS(js) catch {};
+    // A disappearing webview during teardown is normal, not an error.
+    tryEvalJSInWebView(webview, js) catch {};
 }
 
 fn scrollMonitorInvoke(_: *const anyopaque, event: objc.id) callconv(.c) objc.id {
@@ -4701,8 +4748,12 @@ fn scrollMonitorInvoke(_: *const anyopaque, event: objc.id) callconv(.c) objc.id
     // Swallowing it here would break vertical scrolling everywhere.
     if (event == null) return event;
 
+    const window = msgSend0(event, "window");
+    const state = scrollGestureState(window, true) orelse return event;
+    const webview = webViewForWindow(window) orelse return event;
+
     const emits = scroll_gesture.step(
-        &scroll_state,
+        state,
         msgSend0Ulong(event, "phase"),
         msgSend0Ulong(event, "momentumPhase"),
         msgSend0Double(event, "scrollingDeltaX"),
@@ -4710,7 +4761,7 @@ fn scrollMonitorInvoke(_: *const anyopaque, event: objc.id) callconv(.c) objc.id
         msgSend0Double(event, "timestamp"),
     );
 
-    for (emits.slice()) |emit| emitSwipe(emit);
+    for (emits.slice()) |emit| emitSwipe(webview, emit);
 
     return event;
 }

@@ -245,6 +245,11 @@ view and monitor instance. A sidebar or file browser therefore reads only its
 own space/return callbacks; creating a component in another window cannot
 replace them.
 
+The process installs one local scroll-wheel monitor, but gesture accumulation
+and delivery are per-window. Each event resolves its `NSWindow`, advances only
+that window's gesture state, and emits into the webview owned by that window.
+Destroying a window clears its accumulator slot.
+
 The older whole-window native-sidebar constructors use the same ownership
 rule. Their parsed section arena, material options, webview, toggle button, and
 collapsed state live in a bounded slot keyed by `NSWindow`; the data-source

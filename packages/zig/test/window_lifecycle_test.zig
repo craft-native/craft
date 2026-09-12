@@ -515,6 +515,25 @@ test "legacy native sidebar data and controls are window-scoped" {
     try testing.expect(callsFunction(destroy_body, "forgetLegacySidebar("));
 }
 
+test "scroll gestures keep independent state and target their event window" {
+    try testing.expect(std.mem.indexOf(u8, macos_source, "var scroll_state:") == null);
+
+    const callback_start = std.mem.indexOf(u8, macos_source, "fn scrollMonitorInvoke(") orelse
+        return error.ScrollMonitorCallbackNotFound;
+    const callback_end = std.mem.indexOfPos(u8, macos_source, callback_start, "const scroll_block_descriptor") orelse
+        return error.ScrollMonitorCallbackEndNotFound;
+    const callback_body = macos_source[callback_start..callback_end];
+    try testing.expect(std.mem.indexOf(u8, callback_body, "msgSend0(event, \"window\")") != null);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "scrollGestureState(window, true)") != null);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "webViewForWindow(window)") != null);
+    try testing.expect(std.mem.indexOf(u8, callback_body, "emitSwipe(webview, emit)") != null);
+
+    const destroy_start = std.mem.indexOf(u8, macos_source, "pub fn destroyWindow(") orelse
+        return error.NativeWindowDestroyNotFound;
+    const destroy_body = enclosingFnBody(macos_source, destroy_start);
+    try testing.expect(callsFunction(destroy_body, "forgetScrollGesture("));
+}
+
 test "native UI creation publishes only fully initialized components" {
     const cases = [_]struct {
         start: []const u8,
