@@ -62,10 +62,16 @@ pub const WindowBridge = struct {
             try self.toggle(data);
         } else if (std.mem.eql(u8, action, "focus")) {
             try self.focus(data);
+        } else if (std.mem.eql(u8, action, "blur")) {
+            try self.blur(data);
         } else if (std.mem.eql(u8, action, "minimize")) {
             try self.minimize(data);
         } else if (std.mem.eql(u8, action, "maximize")) {
             try self.maximize(data);
+        } else if (std.mem.eql(u8, action, "unmaximize")) {
+            try self.unmaximize(data);
+        } else if (std.mem.eql(u8, action, "restore")) {
+            try self.restore(data);
         } else if (std.mem.eql(u8, action, "close")) {
             try self.close(data);
         } else if (std.mem.eql(u8, action, "center")) {
@@ -80,6 +86,8 @@ pub const WindowBridge = struct {
             try self.setPosition(data);
         } else if (std.mem.eql(u8, action, "moveBy")) {
             try self.moveBy(data);
+        } else if (std.mem.eql(u8, action, "setBounds")) {
+            try self.setBounds(data);
         } else if (std.mem.eql(u8, action, "setTitle")) {
             try self.setTitle(data);
         } else if (std.mem.eql(u8, action, "getTitle")) {
@@ -116,9 +124,9 @@ pub const WindowBridge = struct {
             try self.setResizable(data);
         } else if (std.mem.eql(u8, action, "setBackgroundColor")) {
             try self.setBackgroundColor(data);
-        } else if (std.mem.eql(u8, action, "setMinSize")) {
+        } else if (std.mem.eql(u8, action, "setMinSize") or std.mem.eql(u8, action, "setMinimumSize")) {
             try self.setMinSize(data);
-        } else if (std.mem.eql(u8, action, "setMaxSize")) {
+        } else if (std.mem.eql(u8, action, "setMaxSize") or std.mem.eql(u8, action, "setMaximumSize")) {
             try self.setMaxSize(data);
         } else if (std.mem.eql(u8, action, "setMovable")) {
             try self.setMovable(data);
@@ -126,6 +134,8 @@ pub const WindowBridge = struct {
             try self.startDrag(data);
         } else if (std.mem.eql(u8, action, "setHasShadow")) {
             try self.setHasShadow(data);
+        } else if (std.mem.eql(u8, action, "setWindowLevel")) {
+            try self.setWindowLevel(data);
         } else if (std.mem.eql(u8, action, "setAspectRatio")) {
             try self.setAspectRatio(data);
         } else if (std.mem.eql(u8, action, "flashFrame")) {
@@ -346,13 +356,41 @@ pub const WindowBridge = struct {
         }
     }
 
+    fn blur(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            macos.msgSendVoid0(handle, "resignKeyWindow");
+        }
+    }
+
     fn maximize(self: *Self, data: ?[]const u8) !void {
         const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
             // On macOS, "zoom" is the maximize equivalent
-            macos.msgSendVoid0(handle, "zoom:");
+            macos.maximizeWindow(handle);
+        }
+    }
+
+    fn unmaximize(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            if (macos.msgSendBool(handle, "isZoomed")) macos.maximizeWindow(handle);
+        }
+    }
+
+    fn restore(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            if (macos.msgSendBool(handle, "isMiniaturized")) {
+                macos.msgSendVoid1(handle, "deminiaturize:", @as(?*anyopaque, null));
+            } else if (macos.msgSendBool(handle, "isZoomed")) {
+                macos.maximizeWindow(handle);
+            }
         }
     }
 
@@ -453,6 +491,32 @@ pub const WindowBridge = struct {
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
             macos.moveWindowBy(handle, dx, dy);
+        }
+    }
+
+    fn setBounds(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        const json_data = data orelse return BridgeError.MissingData;
+
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            var frame = macos.msgSendRect(handle, "frame");
+            frame.origin.x = json_utils.getFloat(f64, json_data, "x") orelse frame.origin.x;
+            frame.origin.y = json_utils.getFloat(f64, json_data, "y") orelse frame.origin.y;
+            if (json_utils.getFloat(f64, json_data, "width")) |width| {
+                if (width <= 0) return BridgeError.InvalidParameter;
+                frame.size.width = width;
+            }
+            if (json_utils.getFloat(f64, json_data, "height")) |height| {
+                if (height <= 0) return BridgeError.InvalidParameter;
+                frame.size.height = height;
+            }
+
+            const msg = @as(
+                *const fn (@TypeOf(handle), macos.objc.SEL, macos.NSRect, bool) callconv(.c) void,
+                @ptrCast(&macos.objc.objc_msgSend),
+            );
+            msg(handle, macos.sel("setFrame:display:"), frame, true);
         }
     }
 
@@ -978,6 +1042,17 @@ pub const WindowBridge = struct {
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
             _ = macos.msgSend1(handle, "setHasShadow:", @as(c_int, if (has_shadow) 1 else 0));
+        }
+    }
+
+    fn setWindowLevel(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        const json_data = data orelse return BridgeError.MissingData;
+        const level = json_utils.getInt(c_long, json_data, "level") orelse return BridgeError.InvalidParameter;
+
+        if (builtin.os.tag == .macos) {
+            const macos = @import("macos.zig");
+            _ = macos.msgSend1(handle, "setLevel:", level);
         }
     }
 

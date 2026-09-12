@@ -51,6 +51,28 @@ describe('typed window-handle routing', () => {
     )
   })
 
+  it('keeps every common mutation on the retained handle', async () => {
+    const settings = new Window('settings')
+
+    await settings.blur()
+    await settings.unmaximize()
+    await settings.restore()
+    await settings.setMinimumSize(320, 240)
+    await settings.setMaximumSize(1600, 1200)
+    await settings.setBounds({ x: 40, width: 900 })
+    await settings.setWindowLevel(3)
+
+    expect(call.mock.calls.map(args => [args[0], args[2]])).toEqual([
+      ['blur', 'settings'],
+      ['unmaximize', 'settings'],
+      ['restore', 'settings'],
+      ['setMinimumSize', 'settings'],
+      ['setMaximumSize', 'settings'],
+      ['setBounds', 'settings'],
+      ['setWindowLevel', 'settings'],
+    ])
+  })
+
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
     const id = `settings-${Date.now()}`
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })

@@ -220,6 +220,23 @@ test "page-driven native surfaces use the sending webview" {
     try testing.expect(callsFunction(eval_body, "getMessageWebView()"));
 }
 
+test "window-state selectors receive their required sender argument" {
+    // These AppKit selectors end in `:` and therefore take one object
+    // argument. Calling them through the zero-argument wrapper is undefined
+    // ABI behavior even when AppKit currently ignores the sender.
+    for ([_][]const u8{
+        "pub fn minimizeWindow(",
+        "pub fn maximizeWindow(",
+        "pub fn toggleFullscreen(",
+    }) |declaration| {
+        const start = std.mem.indexOf(u8, macos_source, declaration) orelse
+            return error.WindowStateHelperNotFound;
+        const body = enclosingFnBody(macos_source, start);
+        try testing.expect(callsFunction(body, "msgSendVoid1("));
+        try testing.expect(std.mem.indexOf(u8, body, "msgSendVoid0(") == null);
+    }
+}
+
 test "web material state and collapse actions stay with their window" {
     // Material views used to live in six process globals. Constructing a
     // second window overwrote them, so the next collapse from main mutated the

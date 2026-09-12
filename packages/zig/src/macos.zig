@@ -3838,15 +3838,15 @@ pub fn showSaveDialog(title: []const u8, default_name: ?[]const u8) !?[]const u8
 // Window control functions
 pub fn minimizeWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
-    msgSendVoid0(window, "miniaturize:");
+    msgSendVoid1(window, "miniaturize:", @as(objc.id, null));
 }
 
 pub fn maximizeWindow(window: objc.id) void {
-    msgSendVoid0(window, "zoom:");
+    msgSendVoid1(window, "zoom:", @as(objc.id, null));
 }
 
 pub fn toggleFullscreen(window: objc.id) void {
-    msgSendVoid0(window, "toggleFullScreen:");
+    msgSendVoid1(window, "toggleFullScreen:", @as(objc.id, null));
 }
 
 pub fn closeWindow(window_handle: anytype) void {
