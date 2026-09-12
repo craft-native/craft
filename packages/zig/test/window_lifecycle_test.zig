@@ -680,6 +680,26 @@ test "native UI teardown detaches views before freeing callback state" {
     }
 }
 
+test "native UI restoration retains the webview across controller teardown" {
+    const start = std.mem.indexOf(u8, native_ui_bridge_source, "fn restoreOriginalContent(") orelse
+        return error.NativeUIRestoreNotFound;
+    const end = std.mem.indexOfPos(u8, native_ui_bridge_source, start, "    fn destroySplitView(") orelse
+        return error.NativeUIRestoreEndNotFound;
+    const body = native_ui_bridge_source[start..end];
+    const retain_at = std.mem.indexOf(u8, body, "msgSend0(original_webview, \"retain\")") orelse
+        return error.NativeUIWebViewRetainNotFound;
+    const deinit_at = std.mem.indexOf(u8, body, "controller.deinit()") orelse
+        return error.NativeUIControllerDeinitNotFound;
+    const restore_at = std.mem.indexOf(u8, body, "setContentView:\", original_webview") orelse
+        return error.NativeUIWebViewRestoreNotFound;
+    const release_at = std.mem.indexOf(u8, body, "msgSend0(original_webview, \"release\")") orelse
+        return error.NativeUIWebViewReleaseNotFound;
+
+    try testing.expect(retain_at < deinit_at);
+    try testing.expect(deinit_at < restore_at);
+    try testing.expect(restore_at < release_at);
+}
+
 test "destroy releases every retained runtime-window resource" {
     const bridge_start = std.mem.indexOf(u8, window_bridge_source, "fn destroy(") orelse
         return error.WindowDestroyHandlerNotFound;

@@ -60,14 +60,22 @@ const WindowState = struct {
 
     fn restoreOriginalContent(self: *WindowState) void {
         const controller = self.split_view_controller orelse return;
+        const original_webview = self.original_webview;
+        // The content view controller is what keeps the displaced WKWebView
+        // alive after it leaves NSWindow. Hold a temporary +1 across removing
+        // and destroying that controller, then transfer it back to the window.
+        // Without this handoff the pointer can be deallocated one statement
+        // before `setContentView:` tries to reuse it.
+        if (original_webview != null) _ = macos.msgSend0(original_webview, "retain");
         _ = macos.msgSend1(self.window, "setContentViewController:", @as(?*anyopaque, null));
         controller.deinit();
         self.split_view_controller = null;
 
-        if (self.original_webview != null) {
-            _ = macos.msgSend1(self.window, "setContentView:", self.original_webview);
-            self.original_webview = null;
+        if (original_webview != null) {
+            _ = macos.msgSend1(self.window, "setContentView:", original_webview);
+            _ = macos.msgSend0(original_webview, "release");
         }
+        self.original_webview = null;
     }
 
     fn destroySplitView(self: *WindowState, id: []const u8) bool {
