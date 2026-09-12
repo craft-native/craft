@@ -267,6 +267,26 @@ test "typed child events return only to their creator page" {
     try testing.expect(callsFunction(open_body, "window_context.currentWebView()"));
 }
 
+test "runtime window construction balances its WebKit creator retains" {
+    const start = std.mem.indexOf(u8, macos_source, "pub fn createWindowWithStyle(") orelse
+        return error.WindowConstructorNotFound;
+    const body = enclosingFnBody(macos_source, start);
+
+    for ([_][]const u8{
+        "defer msgSendVoid0(config, \"release\")",
+        "defer msgSendVoid0(prefs, \"release\")",
+        "defer msgSendVoid0(userContentController, \"release\")",
+        "defer msgSendVoid0(webview, \"release\")",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, body, contract) != null);
+    }
+
+    const script_start = std.mem.indexOf(u8, macos_source, "fn addUserScriptSource(") orelse
+        return error.UserScriptInstallerNotFound;
+    const script_body = enclosingFnBody(macos_source, script_start);
+    try testing.expect(std.mem.indexOf(u8, script_body, "msgSendVoid0(script, \"release\")") != null);
+}
+
 test "the native delegate emits both fullscreen transitions" {
     const events_source = @embedFile("src/macos_window_events.zig");
     for ([_][]const u8{

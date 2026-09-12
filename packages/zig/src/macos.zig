@@ -821,6 +821,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     defer std.heap.c_allocator.free(title_cstr);
     const title_str_alloc = msgSend0(NSString, "alloc");
     const title_str = msgSend1(title_str_alloc, "initWithUTF8String:", title_cstr.ptr);
+    defer msgSendVoid0(title_str, "release");
 
     // Set window title
     _ = msgSend1(window, "setTitle:", title_str);
@@ -936,11 +937,13 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Create WebView configuration
     const config_alloc = msgSend0(WKWebViewConfiguration, "alloc");
     const config = msgSend0(config_alloc, "init");
+    defer msgSendVoid0(config, "release");
 
     // In benchmark mode, use bare default config (JS enabled by default, no bridge needed)
     if (!style.benchmark) {
         const prefs_alloc = msgSend0(WKPreferences, "alloc");
         const prefs = msgSend0(prefs_alloc, "init");
+        defer msgSendVoid0(prefs, "release");
 
         // Enable JavaScript explicitly (should be enabled by default, but let's be explicit)
         msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
@@ -949,6 +952,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         if (style.dev_tools) {
             const key_str = createNSString("developerExtrasEnabled");
             const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
+            defer msgSendVoid0(value_obj, "release");
             msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
         }
 
@@ -956,6 +960,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         if (style.dev_tools) {
             const clipboard_key = createNSString("javaScriptCanAccessClipboard");
             const clipboard_value = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
+            defer msgSendVoid0(clipboard_value, "release");
             msgSendVoid2(prefs, "setValue:forKey:", clipboard_value, clipboard_key);
         }
 
@@ -966,6 +971,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         // Set up user content controller for JavaScript bridge
         const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
+        defer msgSendVoid0(userContentController, "release");
 
         // One injection path for both URL and HTML loads — see
         // `injectCraftScripts`. Scripts land at document-start and survive
@@ -1043,6 +1049,9 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Create WKWebView with configuration
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", frame, config);
+    // Once installed below, the window/view hierarchy owns the webview. Keep
+    // this creator retain only until construction finishes (or fails).
+    defer msgSendVoid0(webview, "release");
     // `developerExtrasEnabled` above is necessary and, since macOS 13.3, not
     // sufficient. See `setWebViewInspectable`.
     if (style.dev_tools) setWebViewInspectable(webview);
@@ -1070,6 +1079,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             const html_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, h);
             defer std.heap.c_allocator.free(html_cstr);
             const html_str = msgSend1(msgSend0(NSString, "alloc"), "initWithUTF8String:", html_cstr.ptr);
+            defer msgSendVoid0(html_str, "release");
             _ = msgSend2(webview, "loadHTMLString:baseURL:", html_str, @as(?*anyopaque, null));
         } else {
             // The bridge is already installed on the content controller as a
@@ -4650,6 +4660,9 @@ fn addUserScriptSource(userContentController: objc.id, source: []const u8) void 
         @as(c_int, 1), // main frame only
     );
     _ = msgSend1(userContentController, "addUserScript:", script);
+    // The content controller retains installed user scripts. Balance the
+    // creator retain so its eventual teardown can reclaim each script.
+    msgSendVoid0(script, "release");
 }
 
 /// Install Craft's JS into a content controller.
