@@ -288,6 +288,24 @@ describe('Craft Android builder', () => {
     expect(contacts).not.toContain('CONTACT_ID + " = ?"')
   })
 
+  it('persists local auth sessions in encrypted preferences', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-auth-persistence-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('// ==================== Local Auth Persistence ====================')
+    const end = bridge.indexOf('// ==================== AR (ARCore) ====================', start)
+    const authPersistence = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(authPersistence).toContain('private val authSessionExpiryKey = "craft_auth_session_expiry"')
+    expect(authPersistence).toContain('securePrefs.edit().putLong(authSessionExpiryKey, expiresAt).apply()')
+    expect(authPersistence).toContain('securePrefs.getLong(authSessionExpiryKey, 0L)')
+    expect(authPersistence.match(/securePrefs\.edit\(\)\.remove\(authSessionExpiryKey\)\.apply\(\)/g)?.length).toBe(2)
+    expect(authPersistence).not.toContain('private var authSessionExpiry')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

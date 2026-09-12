@@ -3577,21 +3577,22 @@ class CraftBridge(
 
     // ==================== Local Auth Persistence ====================
 
-    private var authSessionExpiry: Long = 0L
+    private val authSessionExpiryKey = "craft_auth_session_expiry"
 
     @JavascriptInterface
     fun setAuthPersistence(enabled: Boolean, duration: Long) {
         try {
             if (enabled) {
-                authSessionExpiry = System.currentTimeMillis() + (duration * 1000)
+                val expiresAt = System.currentTimeMillis() + (duration * 1000)
+                securePrefs.edit().putLong(authSessionExpiryKey, expiresAt).apply()
                 activity.runOnUiThread {
                     webView.evaluateJavascript(
-                        "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: true, duration: $duration, expiresAt: $authSessionExpiry})",
+                        "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: true, duration: $duration, expiresAt: $expiresAt})",
                         null
                     )
                 }
             } else {
-                authSessionExpiry = 0L
+                securePrefs.edit().remove(authSessionExpiryKey).apply()
                 activity.runOnUiThread {
                     webView.evaluateJavascript(
                         "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: false})",
@@ -3613,6 +3614,7 @@ class CraftBridge(
     fun checkAuthPersistence() {
         try {
             val now = System.currentTimeMillis()
+            val authSessionExpiry = securePrefs.getLong(authSessionExpiryKey, 0L)
             val isValid = authSessionExpiry > now
             val remainingMs = if (isValid) authSessionExpiry - now else 0L
             val remainingSeconds = remainingMs / 1000
@@ -3636,7 +3638,7 @@ class CraftBridge(
     @JavascriptInterface
     fun clearAuthPersistence() {
         try {
-            authSessionExpiry = 0L
+            securePrefs.edit().remove(authSessionExpiryKey).apply()
             activity.runOnUiThread {
                 webView.evaluateJavascript(
                     "window._craftAuthPersistResolve && window._craftAuthPersistResolve({cleared: true})",

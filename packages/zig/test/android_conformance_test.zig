@@ -320,15 +320,13 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "watchPosition", .reason = "stores its callback in a CraftBridge field the natives cannot reach" },
     .{ .action = "clearWatch", .reason = "reads the same field; migrating one half leaves the other stale" },
 
-    // The auth-persistence trio keeps its expiry in a plain `authSessionExpiry`
-    // field — which is also why the feature does not survive the process it
-    // exists to outlive. Zig would have to keep a second copy, and the two
-    // would disagree the moment either language answered a call. Once the
-    // expiry lives in a store both can read, all three become portable.
-    // Tracked in #162.
-    .{ .action = "setAuthPersistence", .reason = "writes authSessionExpiry, an in-memory CraftBridge field" },
-    .{ .action = "checkAuthPersistence", .reason = "reads the same field; a second copy in Zig would diverge immediately" },
-    .{ .action = "clearAuthPersistence", .reason = "zeroes the same field" },
+    // The auth-persistence trio shares one timestamp in Kotlin-configured
+    // EncryptedSharedPreferences. It now survives process death, but migrating
+    // any one action would split ownership of the same key; the trio must move
+    // together with the configured store passed across the JNI seam.
+    .{ .action = "setAuthPersistence", .reason = "writes the encrypted auth-session preference; the trio must migrate together" },
+    .{ .action = "checkAuthPersistence", .reason = "reads the encrypted auth-session preference configured by Kotlin" },
+    .{ .action = "clearAuthPersistence", .reason = "removes the same encrypted auth-session preference" },
 
     // ---- Generated implementations, not one Kotlin contract ----------
     //
