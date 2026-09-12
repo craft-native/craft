@@ -4,7 +4,7 @@
 //! download is queued with the system's own manager and the save is ordinary
 //! file I/O — so both are served whole rather than in halves.
 //!
-//! ## saveFile can report a path it never wrote
+//! ## saveFile only reports paths it wrote
 //!
 //! The shim's data-URL branch is:
 //!
@@ -19,13 +19,9 @@
 //! ```
 //!
 //! `split(",")` splits on *every* comma, so a data URL whose payload contains
-//! one — base64 does not produce commas, but `data:text/plain,a,b` is a legal
-//! data URL — yields three parts, the `if` is skipped, **nothing is written**,
-//! and the resolve still hands the page a path. The file may not exist at all.
-//!
-//! Reproduced rather than corrected, because the reply is what a page acts on
-//! and changing it is a behaviour change. Recorded as `Plan.nothing` so the
-//! case has a name instead of being an absent `else`. See #175.
+//! one yields more than two parts. The Kotlin path now rejects that shape as
+//! malformed instead of skipping the write and resolving a nonexistent path.
+//! `planFor` makes the same decision before JNI creates the file. See #175.
 //!
 //! ## The decoding is Java's
 //!
@@ -51,6 +47,7 @@ pub const download_resolve_global = "_craftDownloadResolve";
 pub const download_reject_global = "_craftDownloadReject";
 pub const save_resolve_global = "_craftSaveResolve";
 pub const save_reject_global = "_craftSaveReject";
+pub const malformed_data_url = "Malformed data URL";
 
 /// What the shim's notification says while a download runs.
 const download_description = "Downloading...";
@@ -61,19 +58,16 @@ pub const Plan = union(enum) {
     text: []const u8,
     /// `Base64.decode(parts[1])` — a data URL with exactly one comma.
     base64: []const u8,
-    /// A data URL with any other number of commas. The shim writes nothing
-    /// and resolves with the path anyway.
-    nothing,
 };
 
 /// The shim's branch, comma counting included.
-pub fn planFor(data: []const u8) Plan {
+pub fn planFor(data: []const u8) error{MalformedDataUrl}!Plan {
     if (!std.mem.startsWith(u8, data, "data:")) return .{ .text = data };
 
     // `split(",")` gives `count + 1` parts, so "exactly one comma" is the
     // whole of `parts.size == 2`.
-    const first = std.mem.indexOfScalar(u8, data, ',') orelse return .nothing;
-    if (std.mem.indexOfScalarPos(u8, data, first + 1, ',') != null) return .nothing;
+    const first = std.mem.indexOfScalar(u8, data, ',') orelse return error.MalformedDataUrl;
+    if (std.mem.indexOfScalarPos(u8, data, first + 1, ',') != null) return error.MalformedDataUrl;
 
     return .{ .base64 = data[first + 1 ..] };
 }
@@ -177,9 +171,6 @@ pub fn download(
 }
 
 /// Write the file and return its absolute path.
-///
-/// The path is produced whether or not anything was written, because that is
-/// what the shim resolves with — see the note at the top of this file.
 pub fn save(
     j: Jni,
     allocator: std.mem.Allocator,
@@ -213,7 +204,6 @@ pub fn save(
     );
 
     switch (plan) {
-        .nothing => {},
         .text => |text| try writeBytes(j, file, try utf8Bytes(j, allocator, text)),
         .base64 => |encoded| try writeBytes(j, file, try decodeBase64(j, allocator, encoded)),
     }
@@ -306,45 +296,42 @@ pub fn jsonString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
 const testing = std.testing;
 
 test "anything not a data URL is written as text" {
-    const plan = planFor("hello, world");
+    const plan = try planFor("hello, world");
     try testing.expectEqualStrings("hello, world", plan.text);
 
     // Including text that merely contains "data:" later on.
-    try testing.expectEqualStrings("x data:y", planFor("x data:y").text);
+    try testing.expectEqualStrings("x data:y", (try planFor("x data:y")).text);
 
     // And the empty string, which writes an empty file rather than nothing.
-    try testing.expectEqualStrings("", planFor("").text);
+    try testing.expectEqualStrings("", (try planFor("")).text);
 }
 
 test "a data URL with exactly one comma decodes the tail" {
-    const plan = planFor("data:image/png;base64,iVBORw0KGgo=");
+    const plan = try planFor("data:image/png;base64,iVBORw0KGgo=");
     try testing.expectEqualStrings("iVBORw0KGgo=", plan.base64);
 
     // The payload can be empty — `Base64.decode("")` is an empty array, so
     // this writes an empty file rather than skipping the write.
-    try testing.expectEqualStrings("", planFor("data:,").base64);
+    try testing.expectEqualStrings("", (try planFor("data:,")).base64);
 }
 
-test "a data URL with any other number of commas writes nothing at all" {
-    // The shim's `if (parts.size == 2)` with no else. The resolve still hands
-    // the page `file.absolutePath`, so a page is told where a file is that may
-    // not exist. See #175.
-    try testing.expectEqual(Plan.nothing, planFor("data:text/plain,a,b"));
-    try testing.expectEqual(Plan.nothing, planFor("data:image/png;base64,AAA,BBB"));
+test "a data URL with any other number of commas is rejected" {
+    try testing.expectError(error.MalformedDataUrl, planFor("data:text/plain,a,b"));
+    try testing.expectError(error.MalformedDataUrl, planFor("data:image/png;base64,AAA,BBB"));
 
-    // No comma at all is the same skipped branch.
-    try testing.expectEqual(Plan.nothing, planFor("data:image/png;base64"));
-    try testing.expectEqual(Plan.nothing, planFor("data:"));
+    // No comma at all is malformed too.
+    try testing.expectError(error.MalformedDataUrl, planFor("data:image/png;base64"));
+    try testing.expectError(error.MalformedDataUrl, planFor("data:"));
 }
 
 test "the prefix test is the shim's startsWith, not a contains" {
     // `data` alone is text; only the colon makes it a URL.
-    try testing.expectEqualStrings("data", planFor("data").text);
-    try testing.expect(planFor("data:") == .nothing);
+    try testing.expectEqualStrings("data", (try planFor("data")).text);
+    try testing.expectError(error.MalformedDataUrl, planFor("data:"));
 
     // Case matters: `startsWith` is not case-insensitive, so `DATA:` is text
     // and is written verbatim.
-    try testing.expectEqualStrings("DATA:x,y", planFor("DATA:x,y").text);
+    try testing.expectEqualStrings("DATA:x,y", (try planFor("DATA:x,y")).text);
 }
 
 test "the actions and globals match the shim exactly" {
@@ -354,6 +341,7 @@ test "the actions and globals match the shim exactly" {
     try testing.expectEqualStrings("_craftDownloadReject", download_reject_global);
     try testing.expectEqualStrings("_craftSaveResolve", save_resolve_global);
     try testing.expectEqualStrings("_craftSaveReject", save_reject_global);
+    try testing.expectEqualStrings("Malformed data URL", malformed_data_url);
 }
 
 test "a path carrying a quote comes back as JSON" {

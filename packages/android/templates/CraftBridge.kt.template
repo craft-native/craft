@@ -2779,10 +2779,12 @@ class CraftBridge(
             if (data.startsWith("data:")) {
                 // Base64 data URL
                 val parts = data.split(",")
-                if (parts.size == 2) {
-                    val bytes = Base64.decode(parts[1], Base64.DEFAULT)
-                    file.writeBytes(bytes)
+                if (parts.size != 2) {
+                    rejectSaveFile("Malformed data URL")
+                    return
                 }
+                val bytes = Base64.decode(parts[1], Base64.DEFAULT)
+                file.writeBytes(bytes)
             } else {
                 file.writeText(data)
             }
@@ -2794,12 +2796,16 @@ class CraftBridge(
                 )
             }
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSaveReject && window._craftSaveReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            rejectSaveFile(e.message)
+        }
+    }
+
+    private fun rejectSaveFile(message: String?) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftSaveReject && window._craftSaveReject(${jsQuote(message ?: "File save failed")})",
+                null
+            )
         }
     }
 

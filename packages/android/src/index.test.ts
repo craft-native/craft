@@ -243,6 +243,18 @@ describe('Craft Android builder', () => {
     expect(backgroundTasks).not.toContain('This is a placeholder that shows the API structure')
   })
 
+  it('rejects malformed data URLs before resolving a saved-file path', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-save-file-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+
+    expect(bridge).toContain('if (parts.size != 2)')
+    expect(bridge).toContain('rejectSaveFile("Malformed data URL")')
+    expect(bridge).toContain('private fun rejectSaveFile(message: String?)')
+    expect(bridge).not.toContain('if (parts.size == 2)')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

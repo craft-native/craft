@@ -2273,9 +2273,11 @@ fn nativeSaveFile(
     const data_text = j.stringToUtf8(allocator, data) catch return jni.JNI_FALSE;
     const name_text = j.stringToUtf8(allocator, filename) catch return jni.JNI_FALSE;
 
-    // The plan can be `nothing`, and the shim still resolves with the path.
-    // Reproduced rather than corrected — see #175.
-    const path = files.save(j, allocator, activity, name_text, files.planFor(data_text)) catch |err| {
+    const plan = files.planFor(data_text) catch {
+        calendar.rejectOn(allocator, files.save_reject_global, files.malformed_data_url) catch {};
+        return jni.JNI_TRUE;
+    };
+    const path = files.save(j, allocator, activity, name_text, plan) catch |err| {
         calendar.rejectOn(allocator, files.save_reject_global, @errorName(err)) catch {};
         return jni.JNI_TRUE;
     };
