@@ -2198,6 +2198,7 @@ pub fn createWindowWithSidebar(
     const title_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
     defer std.heap.c_allocator.free(title_cstr);
     const title_str = msgSend1(msgSend0(NSString, "alloc"), "initWithUTF8String:", title_cstr.ptr);
+    defer msgSendVoid0(title_str, "release");
     _ = msgSend1(window, "setTitle:", title_str);
 
     // Configure for native sidebar appearance
@@ -2367,19 +2368,23 @@ pub fn createWindowWithSidebar(
     // Create WebView configuration
     const config_alloc = msgSend0(WKWebViewConfiguration, "alloc");
     const config = msgSend0(config_alloc, "init");
+    defer msgSendVoid0(config, "release");
 
     const prefs_alloc = msgSend0(WKPreferences, "alloc");
     const prefs = msgSend0(prefs_alloc, "init");
+    defer msgSendVoid0(prefs, "release");
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
 
     // Enable developer extras
     const key_str = createNSString("developerExtrasEnabled");
     const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
+    defer msgSendVoid0(value_obj, "release");
     msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
     _ = msgSend1(config, "setPreferences:", prefs);
 
     // Set up user content controller
     const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
+    defer msgSendVoid0(userContentController, "release");
     setupScriptMessageHandler(userContentController) catch |err| {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
@@ -2397,6 +2402,7 @@ pub fn createWindowWithSidebar(
     // Create WKWebView
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", contentFrame, config);
+    defer msgSendVoid0(webview, "release");
     makeWindowTranslucent(window);
     makeWebViewTransparent(webview);
 
@@ -2417,6 +2423,7 @@ pub fn createWindowWithSidebar(
     const html_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, html);
     defer std.heap.c_allocator.free(html_cstr);
     const html_str = msgSend1(msgSend0(NSString, "alloc"), "initWithUTF8String:", html_cstr.ptr);
+    defer msgSendVoid0(html_str, "release");
     const base_url_string = createNSString("http://localhost/");
     const base_url = msgSend1(getClass("NSURL"), "URLWithString:", base_url_string);
     _ = msgSend2(webview, "loadHTMLString:baseURL:", html_str, base_url);
@@ -3425,17 +3432,21 @@ pub fn createWindowWithSidebarURL(
 
     const config_alloc = msgSend0(WKWebViewConfiguration, "alloc");
     const config = msgSend0(config_alloc, "init");
+    defer msgSendVoid0(config, "release");
 
     const prefs_alloc = msgSend0(WKPreferences, "alloc");
     const prefs = msgSend0(prefs_alloc, "init");
+    defer msgSendVoid0(prefs, "release");
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
 
     const key_str = createNSString("developerExtrasEnabled");
     const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
+    defer msgSendVoid0(value_obj, "release");
     msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
     _ = msgSend1(config, "setPreferences:", prefs);
 
     const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
+    defer msgSendVoid0(userContentController, "release");
     setupScriptMessageHandler(userContentController) catch |err| {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[Bridge] Failed to setup message handler: {}\n", .{err});
@@ -3454,6 +3465,7 @@ pub fn createWindowWithSidebarURL(
 
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", contentFrame, config);
+    defer msgSendVoid0(webview, "release");
     makeWindowTranslucent(window);
     makeViewLayerTransparent(mainContainer);
     makeWebViewTransparent(webview);

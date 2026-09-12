@@ -267,18 +267,24 @@ test "typed child events return only to their creator page" {
     try testing.expect(callsFunction(open_body, "window_context.currentWebView()"));
 }
 
-test "runtime window construction balances its WebKit creator retains" {
-    const start = std.mem.indexOf(u8, macos_source, "pub fn createWindowWithStyle(") orelse
-        return error.WindowConstructorNotFound;
-    const body = enclosingFnBody(macos_source, start);
-
+test "window construction balances its WebKit creator retains" {
     for ([_][]const u8{
-        "defer msgSendVoid0(config, \"release\")",
-        "defer msgSendVoid0(prefs, \"release\")",
-        "defer msgSendVoid0(userContentController, \"release\")",
-        "defer msgSendVoid0(webview, \"release\")",
-    }) |contract| {
-        try testing.expect(std.mem.indexOf(u8, body, contract) != null);
+        "pub fn createWindowWithStyle(",
+        "pub fn createWindowWithSidebar(",
+        "pub fn createWindowWithSidebarURL(",
+    }) |declaration| {
+        const start = std.mem.indexOf(u8, macos_source, declaration) orelse
+            return error.WindowConstructorNotFound;
+        const body = enclosingFnBody(macos_source, start);
+
+        for ([_][]const u8{
+            "defer msgSendVoid0(config, \"release\")",
+            "defer msgSendVoid0(prefs, \"release\")",
+            "defer msgSendVoid0(userContentController, \"release\")",
+            "defer msgSendVoid0(webview, \"release\")",
+        }) |contract| {
+            try testing.expect(std.mem.indexOf(u8, body, contract) != null);
+        }
     }
 
     const script_start = std.mem.indexOf(u8, macos_source, "fn addUserScriptSource(") orelse
