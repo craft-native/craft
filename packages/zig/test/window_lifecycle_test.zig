@@ -37,6 +37,7 @@ const testing = std.testing;
 
 const macos_source = @embedFile("src/macos.zig");
 const window_bridge_source = @embedFile("src/bridge_window.zig");
+const tray_menu_source = @embedFile("src/tray_menu.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
 const window_init = "initWithContentRect:styleMask:backing:defer:";
@@ -219,6 +220,27 @@ test "page-driven native surfaces use the sending webview" {
         return error.TryEvalJSNotFound;
     const eval_body = enclosingFnBody(macos_source, eval_start);
     try testing.expect(callsFunction(eval_body, "getMessageWebView()"));
+}
+
+test "opening a child does not replace sender-less primary fallbacks" {
+    // Every constructor runs the shared setup path. These four setters used to
+    // assign unconditionally, so opening Settings made app-wide notifications,
+    // menu items and any native callback without a message sender jump from the
+    // main page to Settings merely because it was constructed later.
+    for ([_]struct { source: []const u8, declaration: []const u8, slot: []const u8 }{
+        .{ .source = macos_source, .declaration = "pub fn setGlobalWebView(", .slot = "global_webview" },
+        .{ .source = tray_menu_source, .declaration = "pub fn setGlobalWebView(", .slot = "global_webview" },
+        .{ .source = tray_menu_source, .declaration = "pub fn setGlobalWindow(", .slot = "global_window_handle" },
+        .{ .source = window_bridge_source, .declaration = "    pub fn setWindowHandle(", .slot = "self.window_handle" },
+        .{ .source = window_bridge_source, .declaration = "    pub fn setWebViewHandle(", .slot = "self.webview_handle" },
+    }) |contract| {
+        const start = std.mem.indexOf(u8, contract.source, contract.declaration) orelse
+            return error.PrimaryFallbackSetterNotFound;
+        const body = enclosingFnBody(contract.source, start);
+        var guard_buf: [96]u8 = undefined;
+        const guard = try std.fmt.bufPrint(&guard_buf, "if ({s} == null)", .{contract.slot});
+        try testing.expect(std.mem.indexOf(u8, body, guard) != null);
+    }
 }
 
 test "window events never fall back to an unrelated global webview" {

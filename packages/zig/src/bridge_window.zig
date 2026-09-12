@@ -35,11 +35,15 @@ pub const WindowBridge = struct {
     }
 
     pub fn setWindowHandle(self: *Self, handle: *anyopaque) void {
-        self.window_handle = handle;
+        // This is the fallback for native calls with no authenticated message
+        // sender. Every runtime-created window reuses the global bridge and
+        // runs setup again; replacing the fallback there made menu actions
+        // target the newest child instead of the primary window.
+        if (self.window_handle == null) self.window_handle = handle;
     }
 
     pub fn setWebViewHandle(self: *Self, handle: *anyopaque) void {
-        self.webview_handle = handle;
+        if (self.webview_handle == null) self.webview_handle = handle;
     }
 
     /// Handle window-related messages from JavaScript

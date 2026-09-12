@@ -184,16 +184,18 @@ fn parseMenuItem(allocator: std.mem.Allocator, value: std.json.Value) !MenuItemC
     return item;
 }
 
-// Global webview reference for menu actions
+// Primary window references for menu actions. Runtime-created windows call the
+// same setup path, but a window with no sender context must stay anchored to
+// the app's first page rather than whichever child was constructed last.
 var global_webview: ?*anyopaque = null;
 var global_window_handle: ?*anyopaque = null;
 
 pub fn setGlobalWebView(webview: *anyopaque) void {
-    global_webview = webview;
+    if (global_webview == null) global_webview = webview;
 }
 
 pub fn setGlobalWindow(window: *anyopaque) void {
-    global_window_handle = window;
+    if (global_window_handle == null) global_window_handle = window;
 }
 
 pub fn getGlobalWindow() ?*anyopaque {

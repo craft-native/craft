@@ -4147,11 +4147,14 @@ pub const WindowEvent = struct {
 // Window event callback (simplified - would need delegate in real implementation)
 pub const WindowEventCallback = *const fn (WindowEvent) void;
 
-// Store webview reference for access by window
+// Store the primary webview for app-wide callbacks that do not originate in a
+// page. A second window must not replace this: notification, theme and menu
+// callbacks have no sender context, and silently jumping to the newest window
+// makes opening Settings steal every later app-level event from the main page.
 var global_webview: ?objc.id = null;
 
 pub fn setGlobalWebView(webview: objc.id) void {
-    global_webview = webview;
+    if (global_webview == null) global_webview = webview;
 }
 
 pub fn getGlobalWebView() ?objc.id {
