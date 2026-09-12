@@ -155,6 +155,22 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('else -> healthConnect.onActivityResult(requestCode, resultCode, data)')
   })
 
+  it('exposes native Android permission checks, requests, and settings', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-permissions-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java/org/wildloop/app')
+    const bridge = readFileSync(join(sourceRoot, 'CraftBridge.kt'), 'utf8')
+    const activity = readFileSync(join(sourceRoot, 'MainActivity.kt'), 'utf8')
+
+    expect(bridge).toContain('craft.permissions = {')
+    expect(bridge).toContain('CraftAndroid.checkPermission(String(permission))')
+    expect(bridge).toContain('CraftAndroid.requestPermission(String(permission), id)')
+    expect(bridge).toContain('fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean')
+    expect(bridge).toContain('Settings.ACTION_APPLICATION_DETAILS_SETTINGS')
+    expect(activity).toContain('craftBridge.onRequestPermissionsResult(requestCode, grantResults)')
+  })
+
   it('generates a foreground service for durable background recording', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-location-'))
     await init({

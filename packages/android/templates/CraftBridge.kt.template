@@ -115,6 +115,8 @@ class CraftBridge(
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
     private var watchId = 0
+    private val pendingPermissionRequests = mutableMapOf<Int, Int>()
+    private var nextPermissionRequestCode = PERMISSION_REQUEST_START
 
     // Network monitoring
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -1335,6 +1337,41 @@ class CraftBridge(
                     delete: function(key) { return Promise.resolve(legacySecureStore.remove(key)).then(function() {}); },
                     clear: function() { return Promise.resolve(CraftAndroid.secureClear()).then(function() {}); }
                 };
+                var permissionRequestSequence = 0;
+                var permissionRequests = Object.create(null);
+                window.__craftPermissionResult = function(id, status) {
+                    var pending = permissionRequests[id];
+                    if (!pending) return;
+                    delete permissionRequests[id];
+                    clearTimeout(pending.timeout);
+                    pending.resolve(status || 'undetermined');
+                };
+                craft.permissions = {
+                    check: function(permission) {
+                        return Promise.resolve(CraftAndroid.checkPermission(String(permission)));
+                    },
+                    request: function(permission) {
+                        return new Promise(function(resolve, reject) {
+                            permissionRequestSequence += 1;
+                            var id = permissionRequestSequence;
+                            var timeout = setTimeout(function() {
+                                delete permissionRequests[id];
+                                reject(new Error('Craft permission request timed out'));
+                            }, 30000);
+                            permissionRequests[id] = {resolve: resolve, timeout: timeout};
+                            try {
+                                CraftAndroid.requestPermission(String(permission), id);
+                            } catch (error) {
+                                clearTimeout(timeout);
+                                delete permissionRequests[id];
+                                reject(error);
+                            }
+                        });
+                    },
+                    openSettings: function() {
+                        return Promise.resolve().then(function() { CraftAndroid.openPermissionSettings(); });
+                    }
+                };
                 craft.location = {
                     getCurrentPosition: craft.getCurrentPosition,
                     watchPosition: craft.watchPosition,
@@ -1822,6 +1859,119 @@ class CraftBridge(
     }
 
     // ==================== Geolocation ====================
+
+    private fun permissionsFor(name: String): Array<String>? = when (name) {
+        "camera" -> arrayOf(Manifest.permission.CAMERA)
+        "microphone" -> arrayOf(Manifest.permission.RECORD_AUDIO)
+        "photos" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        "location" -> arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        "locationAlways" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            )
+        } else {
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        }
+        "notifications" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            emptyArray()
+        }
+        "contacts" -> arrayOf(Manifest.permission.READ_CONTACTS)
+        "calendar" -> arrayOf(Manifest.permission.READ_CALENDAR)
+        "bluetooth" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN)
+        } else {
+            emptyArray()
+        }
+        "motion" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            arrayOf(Manifest.permission.ACTIVITY_RECOGNITION)
+        } else {
+            emptyArray()
+        }
+        else -> null
+    }
+
+    private fun nativePermissionStatus(name: String): String {
+        val required = permissionsFor(name) ?: return "undetermined"
+        return if (required.all {
+                ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED
+            }) "granted" else "denied"
+    }
+
+    @JavascriptInterface
+    fun checkPermission(permission: String): String = nativePermissionStatus(permission)
+
+    @JavascriptInterface
+    fun requestPermission(permission: String, callbackId: Int) {
+        activity.runOnUiThread {
+            val required = permissionsFor(permission)
+            if (required == null || required.isEmpty() || nativePermissionStatus(permission) == "granted") {
+                deliverPermissionResult(callbackId, nativePermissionStatus(permission))
+                return@runOnUiThread
+            }
+
+            var requestCode = nextPermissionRequestCode
+            while (pendingPermissionRequests.containsKey(requestCode)) {
+                requestCode += 1
+                if (requestCode > PERMISSION_REQUEST_END) requestCode = PERMISSION_REQUEST_START
+                if (requestCode == nextPermissionRequestCode) {
+                    deliverPermissionResult(callbackId, "denied")
+                    return@runOnUiThread
+                }
+            }
+            nextPermissionRequestCode = if (requestCode == PERMISSION_REQUEST_END) {
+                PERMISSION_REQUEST_START
+            } else {
+                requestCode + 1
+            }
+            pendingPermissionRequests[requestCode] = callbackId
+            ActivityCompat.requestPermissions(activity, required, requestCode)
+        }
+    }
+
+    @JavascriptInterface
+    fun openPermissionSettings() {
+        activity.runOnUiThread {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", activity.packageName, null)
+            )
+            activity.startActivity(intent)
+        }
+    }
+
+    fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean {
+        val callbackId = pendingPermissionRequests.remove(requestCode) ?: return false
+        val status = if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+            "granted"
+        } else {
+            "denied"
+        }
+        deliverPermissionResult(callbackId, status)
+        return true
+    }
+
+    private fun deliverPermissionResult(callbackId: Int, status: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window.__craftPermissionResult && window.__craftPermissionResult($callbackId, ${jsQuote(status)})",
+                null
+            )
+        }
+    }
 
     @JavascriptInterface
     fun getCurrentPosition(optionsJson: String) {
@@ -4331,5 +4481,7 @@ class CraftBridge(
         const val REQUEST_VIDEO = 1008
         const val REQUEST_BLUETOOTH = 1009
         const val REQUEST_PICK_CONTACT = 1010
+        private const val PERMISSION_REQUEST_START = 2000
+        private const val PERMISSION_REQUEST_END = 2999
     }
 }

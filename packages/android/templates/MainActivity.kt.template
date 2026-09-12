@@ -235,6 +235,15 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        if (craftBridge.onRequestPermissionsResult(requestCode, grantResults)) return
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
     companion object {
         private const val BUNDLED_APP_HOST = "appassets.androidplatform.net"
         private const val BUNDLED_APP_URL = "https://appassets.androidplatform.net/"
