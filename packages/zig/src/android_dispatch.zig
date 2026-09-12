@@ -1719,7 +1719,7 @@ fn nativeDbExecute(
     const call = (dbCall(j, allocator, sql, params_json, &parsed) catch return jni.JNI_FALSE) orelse
         return jni.JNI_FALSE;
 
-    db.execute(j, allocator, database, call.sql, call.args) catch |err| {
+    const rows_affected = db.execute(j, allocator, database, call.sql, call.args) catch |err| {
         // The shim catches and rejects with the exception's message; the
         // throwable was described to logcat and cleared by `Jni.check` before
         // this point, so the error name is what is left to say.
@@ -1727,7 +1727,8 @@ fn nativeDbExecute(
         return jni.JNI_TRUE;
     };
 
-    events.settle(allocator, db.exec_resolve_global, db.exec_result) catch return jni.JNI_FALSE;
+    const payload = db.renderExecResult(allocator, rows_affected) catch return jni.JNI_FALSE;
+    events.settle(allocator, db.exec_resolve_global, payload) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
 

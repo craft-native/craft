@@ -325,6 +325,25 @@ describe('Craft Android builder', () => {
     expect(getEvents).toContain('window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})')
   })
 
+  it('reports SQLite changed rows instead of a constant', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-database-count-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('fun dbExecute(')
+    const end = bridge.indexOf('fun dbQuery(', start)
+    const execute = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(execute).toContain('database!!.compileStatement(sql).use { statement ->')
+    expect(execute).toContain('statement.bindString(index + 1, value)')
+    expect(execute).toContain('statement.executeUpdateDelete()')
+    expect(execute).toContain('{rowsAffected: $rowsAffected}')
+    expect(execute).not.toContain('{rowsAffected: 1}')
+    expect(execute).not.toContain('database?.execSQL(sql, args)')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

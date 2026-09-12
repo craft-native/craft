@@ -2991,11 +2991,16 @@ class CraftBridge(
             val params = JSONArray(paramsJson)
             val args = Array(params.length()) { params.getString(it) }
 
-            database?.execSQL(sql, args)
+            val rowsAffected = database!!.compileStatement(sql).use { statement ->
+                args.forEachIndexed { index, value ->
+                    statement.bindString(index + 1, value)
+                }
+                statement.executeUpdateDelete()
+            }
 
             activity.runOnUiThread {
                 webView.evaluateJavascript(
-                    "window._craftDbExecResolve && window._craftDbExecResolve({rowsAffected: 1})",
+                    "window._craftDbExecResolve && window._craftDbExecResolve({rowsAffected: $rowsAffected})",
                     null
                 )
             }

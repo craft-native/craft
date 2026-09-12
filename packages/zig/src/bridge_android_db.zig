@@ -50,14 +50,11 @@ pub const exec_reject_global = "_craftDbExecReject";
 pub const query_resolve_global = "_craftDbQueryResolve";
 pub const query_reject_global = "_craftDbQueryReject";
 
-/// What `dbExecute` resolves with, exactly as the shim writes it.
-///
-/// The 1 is a literal in the Kotlin, not a row count — `execSQL` returns void,
-/// so nothing here knows how many rows were touched. A `DELETE` matching
-/// nothing reports the same 1 as an `INSERT`. Ported rather than corrected,
-/// because correcting it means a different number reaching pages that already
-/// read this one. See #159.
-pub const exec_result = "{\"rowsAffected\":1}";
+/// What `dbExecute` resolves with, preserving the existing object shape while
+/// reporting SQLite's actual changed-row count.
+pub fn renderExecResult(allocator: std.mem.Allocator, rows_affected: i32) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{{\"rowsAffected\":{d}}}", .{rows_affected});
+}
 
 /// `Array(params.length()) { params.getString(it) }`, or null to decline.
 ///
@@ -123,20 +120,40 @@ pub fn appendRow(
     try out.append(allocator, '}');
 }
 
-/// `database.execSQL(sql, args)`.
-pub fn execute(j: Jni, allocator: std.mem.Allocator, db: jobject, sql: []const u8, args: []const []const u8) !void {
+/// Compile, bind, and execute one statement, returning SQLite's changed rows.
+pub fn execute(j: Jni, allocator: std.mem.Allocator, db: jobject, sql: []const u8, args: []const []const u8) !i32 {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
-    const bind = try stringArray(j, allocator, args);
     const db_cls = try j.objectClass(db);
-
-    // `execSQL(String, Object[])` — a `String[]` is an `Object[]`, which is
-    // what the Kotlin passes too.
-    try j.callVoidMethodA(
+    const statement = try j.callObjectMethodA(
         db,
-        try j.methodId(db_cls, "execSQL", "(Ljava/lang/String;[Ljava/lang/Object;)V"),
-        &.{ .{ .l = try j.newStringUtf8(allocator, sql) }, .{ .l = bind } },
+        try j.methodId(
+            db_cls,
+            "compileStatement",
+            "(Ljava/lang/String;)Landroid/database/sqlite/SQLiteStatement;",
+        ),
+        &.{.{ .l = try j.newStringUtf8(allocator, sql) }},
+    );
+    const statement_cls = try j.objectClass(statement);
+    const close = try j.methodId(statement_cls, "close", "()V");
+    defer j.callVoidMethodA(statement, close, &.{}) catch {};
+
+    const bind_string = try j.methodId(statement_cls, "bindString", "(ILjava/lang/String;)V");
+    for (args, 0..) |value, index| {
+        try j.pushLocalFrame(4);
+        defer _ = j.popLocalFrame(null);
+        try j.callVoidMethodA(
+            statement,
+            bind_string,
+            &.{ .{ .i = @intCast(index + 1) }, .{ .l = try j.newStringUtf8(allocator, value) } },
+        );
+    }
+
+    return j.callIntMethodA(
+        statement,
+        try j.methodId(statement_cls, "executeUpdateDelete", "()I"),
+        &.{},
     );
 }
 
@@ -359,14 +376,18 @@ test "a column name or value carrying a quote survives as JSON" {
     try testing.expectEqualStrings("it's \"fine\"", parsed.value.object.get("a\"b").?.string);
 }
 
-test "dbExecute resolves with the shim's constant, not a row count" {
-    // `execSQL` returns void, so the 1 is a literal in the Kotlin and stays a
-    // literal here. Asserted as the exact bytes because the page parses them.
-    try testing.expectEqualStrings("{\"rowsAffected\":1}", exec_result);
+test "dbExecute renders SQLite's changed-row count in the existing shape" {
+    const result = try renderExecResult(testing.allocator, 37);
+    defer testing.allocator.free(result);
+    try testing.expectEqualStrings("{\"rowsAffected\":37}", result);
 
-    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, exec_result, .{});
+    var parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, result, .{});
     defer parsed.deinit();
-    try testing.expectEqual(@as(i64, 1), parsed.value.object.get("rowsAffected").?.integer);
+    try testing.expectEqual(@as(i64, 37), parsed.value.object.get("rowsAffected").?.integer);
+
+    const none = try renderExecResult(testing.allocator, 0);
+    defer testing.allocator.free(none);
+    try testing.expectEqualStrings("{\"rowsAffected\":0}", none);
 }
 
 test "the actions and globals match the shim exactly" {
