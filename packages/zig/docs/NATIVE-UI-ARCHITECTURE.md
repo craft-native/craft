@@ -245,6 +245,12 @@ view and monitor instance. A sidebar or file browser therefore reads only its
 own space/return callbacks; creating a component in another window cannot
 replace them.
 
+The older whole-window native-sidebar constructors use the same ownership
+rule. Their parsed section arena, material options, webview, toggle button, and
+collapsed state live in a bounded slot keyed by `NSWindow`; the data-source
+object carries a reference to that slot. Destroying the window clears just its
+slot and parse arena.
+
 Quick Look is the exception. `QLPreviewPanel` is a shared AppKit panel, so its
 controller is intentionally app-scoped; showing it from another window
 replaces the shared panel's contents.

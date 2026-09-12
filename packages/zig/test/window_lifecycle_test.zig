@@ -484,6 +484,34 @@ test "native UI keyboard callbacks are associated with their source view" {
     try testing.expect(std.mem.indexOf(u8, table_body, "viewCallback(self, &table_return_association_key)") != null);
 }
 
+test "legacy native sidebar data and controls are window-scoped" {
+    for ([_][]const u8{
+        "var dynamic_sections:",
+        "var sidebar_webview:",
+        "var sidebar_container:",
+        "var sidebar_content_webview:",
+        "var sidebar_toggle_btn:",
+        "var sidebar_collapsed:",
+    }) |retired_global| {
+        try testing.expect(std.mem.indexOf(u8, macos_source, retired_global) == null);
+    }
+
+    const data_source_start = std.mem.indexOf(u8, macos_source, "fn setupSidebarDataSource(") orelse
+        return error.LegacySidebarDataSourceNotFound;
+    const data_source_body = enclosingFnBody(macos_source, data_source_start);
+    try testing.expect(std.mem.indexOf(u8, data_source_body, "associateLegacySidebarState(instance, state)") != null);
+
+    const toggle_start = std.mem.indexOf(u8, macos_source, "fn sidebarToggleCallback(") orelse
+        return error.LegacySidebarToggleNotFound;
+    const toggle_body = enclosingFnBody(macos_source, toggle_start);
+    try testing.expect(std.mem.indexOf(u8, toggle_body, "legacySidebarState(window, false)") != null);
+
+    const destroy_start = std.mem.indexOf(u8, macos_source, "pub fn destroyWindow(") orelse
+        return error.NativeWindowDestroyNotFound;
+    const destroy_body = enclosingFnBody(macos_source, destroy_start);
+    try testing.expect(callsFunction(destroy_body, "forgetLegacySidebar("));
+}
+
 test "destroy releases every retained runtime-window resource" {
     const bridge_start = std.mem.indexOf(u8, window_bridge_source, "fn destroy(") orelse
         return error.WindowDestroyHandlerNotFound;

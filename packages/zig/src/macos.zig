@@ -357,9 +357,9 @@ fn createLightSidebarMaterialTint(frame: NSRect, opacity: f64) objc.id {
     return createTintedView(frame, color);
 }
 
-fn createSidebarMaterialTint(frame: NSRect, opacity: f64) objc.id {
+fn createSidebarMaterialTint(frame: NSRect, opacity: f64, scheme: SidebarMaterialScheme) objc.id {
     const clampedOpacity = if (opacity < 0.0) 0.0 else if (opacity > 1.0) 1.0 else opacity;
-    const color = switch (sidebar_material_scheme) {
+    const color = switch (scheme) {
         .light => createColor(246.0 / 255.0, 246.0 / 255.0, 244.0 / 255.0, clampedOpacity),
         .dark => createColor(24.0 / 255.0, 24.0 / 255.0, 23.0 / 255.0, clampedOpacity),
         .system => blk: {
@@ -1258,7 +1258,7 @@ var sidebarDataSourceClass: objc.Class = null;
 
 /// Setup a simple data source for the sidebar outline view
 /// Returns an Objective-C object that implements NSOutlineViewDataSource and NSOutlineViewDelegate
-fn setupSidebarDataSource() !objc.id {
+fn setupSidebarDataSource(state: *LegacySidebarState) !objc.id {
     const NSObject = getClass("NSObject");
     const className = "CraftSidebarDataSource";
 
@@ -1350,6 +1350,8 @@ fn setupSidebarDataSource() !objc.id {
 
     // Create instance
     const instance = msgSend0(msgSend0(sidebarDataSourceClass, "alloc"), "init");
+    associateLegacySidebarState(instance, state);
+    state.data_source = instance;
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Data source instance created\n", .{});
 
@@ -1373,25 +1375,92 @@ const DynamicSidebarSection = struct {
     collapsed: bool = false,
 };
 
-// Global dynamic sidebar data (parsed from JSON config)
-var dynamic_sections: ?[]DynamicSidebarSection = null;
-var sidebar_allocator: ?std.mem.Allocator = null;
-var sidebar_arena: ?std.heap.ArenaAllocator = null;
+const LegacySidebarState = struct {
+    window: objc.id = null,
+    arena: ?std.heap.ArenaAllocator = null,
+    sections: ?[]DynamicSidebarSection = null,
+    data_source: objc.id = null,
+    webview: objc.id = null,
+    container: objc.id = null,
+    content_webview: objc.id = null,
+    toggle_button: objc.id = null,
+    collapsed: bool = false,
+    width: f64 = 240.0,
+    uses_desktop_material: bool = false,
+    uses_shimmer: bool = false,
+    allows_vibrancy: bool = false,
+    material_opacity: f64 = 0.90,
+    material_scheme: SidebarMaterialScheme = .system,
 
-// Global WebView reference for sending sidebar events
-var sidebar_webview: objc.id = null;
+    fn reset(self: *LegacySidebarState) void {
+        if (self.data_source != null) {
+            objc.objc_setAssociatedObject(
+                self.data_source,
+                &legacy_sidebar_state_association_key,
+                null,
+                objc.OBJC_ASSOCIATION_RETAIN,
+            );
+        }
+        if (self.arena) |*arena| arena.deinit();
+        self.* = .{};
+    }
+};
 
-// Global references for sidebar toggle
-var sidebar_container: objc.id = null;
-var sidebar_content_webview: objc.id = null;
-var sidebar_toggle_btn: objc.id = null;
-var sidebar_collapsed: bool = false;
-var sidebar_width_stored: f64 = 240.0;
-var sidebar_uses_desktop_material: bool = false;
-var sidebar_uses_shimmer: bool = false;
-var sidebar_allows_vibrancy: bool = false;
-var sidebar_material_opacity: f64 = 0.90;
-var sidebar_material_scheme: SidebarMaterialScheme = .system;
+var legacy_sidebar_slots: [window_registry.capacity]LegacySidebarState = @splat(.{});
+var legacy_sidebar_state_association_key: u8 = 0;
+
+fn legacySidebarState(window: objc.id, create: bool) ?*LegacySidebarState {
+    if (window == null) return null;
+    for (&legacy_sidebar_slots) |*slot| {
+        if (slot.window == window) return slot;
+    }
+    if (!create) return null;
+    for (&legacy_sidebar_slots) |*slot| {
+        if (slot.window == null) {
+            slot.window = window;
+            return slot;
+        }
+    }
+    return null;
+}
+
+fn forgetLegacySidebar(window: objc.id) void {
+    if (legacySidebarState(window, false)) |state| state.reset();
+}
+
+fn associateLegacySidebarState(object: objc.id, state: *LegacySidebarState) void {
+    const NSValue = getClass("NSValue");
+    const value = msgSend1(NSValue, "valueWithPointer:", @as(?*anyopaque, @ptrCast(state)));
+    objc.objc_setAssociatedObject(object, &legacy_sidebar_state_association_key, value, objc.OBJC_ASSOCIATION_RETAIN);
+}
+
+fn associatedLegacySidebarState(object: objc.id) ?*LegacySidebarState {
+    const value = objc.objc_getAssociatedObject(object, &legacy_sidebar_state_association_key);
+    if (value == null) return null;
+    const ptr = msgSend0(value, "pointerValue");
+    if (ptr == null) return null;
+    return @ptrCast(@alignCast(ptr));
+}
+
+test "legacy native sidebar state is partitioned by window" {
+    const first_window: objc.id = @ptrFromInt(0x1000);
+    const second_window: objc.id = @ptrFromInt(0x2000);
+    defer forgetLegacySidebar(first_window);
+    defer forgetLegacySidebar(second_window);
+
+    const first = legacySidebarState(first_window, true).?;
+    const second = legacySidebarState(second_window, true).?;
+    first.width = 210;
+    second.width = 330;
+
+    try std.testing.expect(first != second);
+    try std.testing.expectEqual(@as(f64, 210), legacySidebarState(first_window, false).?.width);
+    try std.testing.expectEqual(@as(f64, 330), legacySidebarState(second_window, false).?.width);
+
+    forgetLegacySidebar(first_window);
+    try std.testing.expect(legacySidebarState(first_window, false) == null);
+    try std.testing.expect(legacySidebarState(second_window, false) != null);
+}
 var webChromeResponderClass: objc.Class = null;
 /// The union of the chrome row Craft draws beside the window buttons on a
 /// web-sidebar window, in theme-frame coordinates, or null when there is none.
@@ -1462,22 +1531,22 @@ const default_sections = [_]DynamicSidebarSection{
 };
 
 /// Get the current sidebar sections (dynamic or default)
-fn getSidebarSections() []const DynamicSidebarSection {
-    if (dynamic_sections) |sections| {
+fn getSidebarSections(state: ?*LegacySidebarState) []const DynamicSidebarSection {
+    if (state) |sidebar_state| if (sidebar_state.sections) |sections| {
         return sections;
-    }
+    };
     return &default_sections;
 }
 
 /// Parse JSON sidebar configuration
-fn parseSidebarConfig(json: []const u8) !void {
+fn parseSidebarConfig(state: *LegacySidebarState, json: []const u8) !void {
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Parsing sidebar config ({d} bytes)\n", .{json.len});
 
-    if (sidebar_arena) |*arena| arena.deinit();
-    sidebar_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
-    const allocator = sidebar_arena.?.allocator();
-    sidebar_allocator = allocator;
+    state.sections = null;
+    if (state.arena) |*arena| arena.deinit();
+    state.arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    const allocator = state.arena.?.allocator();
 
     // Parse JSON using std.json
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{}) catch |err| {
@@ -1488,43 +1557,43 @@ fn parseSidebarConfig(json: []const u8) !void {
     const root = parsed.value;
     if (root != .object) return error.InvalidSidebarConfig;
     if (root.object.get("variant")) |v| {
-        sidebar_uses_desktop_material = switch (v) {
+        state.uses_desktop_material = switch (v) {
             .string => |s| std.mem.eql(u8, s, "desktop"),
             else => false,
         };
     } else {
-        sidebar_uses_desktop_material = false;
+        state.uses_desktop_material = false;
     }
     if (root.object.get("backgroundEffect")) |v| {
-        sidebar_uses_shimmer = switch (v) {
+        state.uses_shimmer = switch (v) {
             .string => |s| std.mem.eql(u8, s, "shimmer"),
             else => false,
         };
     } else {
-        sidebar_uses_shimmer = false;
+        state.uses_shimmer = false;
     }
     if (root.object.get("allowsVibrancy")) |v| {
-        sidebar_allows_vibrancy = switch (v) {
+        state.allows_vibrancy = switch (v) {
             .bool => |b| b,
             else => false,
         };
     } else {
-        sidebar_allows_vibrancy = sidebar_uses_desktop_material or (if (root.object.get("backgroundEffect")) |v| switch (v) {
+        state.allows_vibrancy = state.uses_desktop_material or (if (root.object.get("backgroundEffect")) |v| switch (v) {
             .string => |s| std.mem.eql(u8, s, "vibrancy"),
             else => false,
         } else false);
     }
     if (root.object.get("materialOpacity")) |v| {
-        sidebar_material_opacity = switch (v) {
+        state.material_opacity = switch (v) {
             .float => |f| f,
             .integer => |i| @floatFromInt(i),
             else => 0.90,
         };
     } else {
-        sidebar_material_opacity = 0.90;
+        state.material_opacity = 0.90;
     }
     if (root.object.get("materialScheme")) |v| {
-        sidebar_material_scheme = switch (v) {
+        state.material_scheme = switch (v) {
             .string => |s| if (std.mem.eql(u8, s, "light"))
                 .light
             else if (std.mem.eql(u8, s, "dark"))
@@ -1534,7 +1603,7 @@ fn parseSidebarConfig(json: []const u8) !void {
             else => .system,
         };
     } else {
-        sidebar_material_scheme = .system;
+        state.material_scheme = .system;
     }
 
     // Extract sections array
@@ -1589,19 +1658,19 @@ fn parseSidebarConfig(json: []const u8) !void {
         });
     }
 
-    dynamic_sections = try sections.toOwnedSlice(allocator);
+    state.sections = try sections.toOwnedSlice(allocator);
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-        std.debug.print("[NativeSidebar] Parsed {d} sections from config\n", .{dynamic_sections.?.len});
+        std.debug.print("[NativeSidebar] Parsed {d} sections from config\n", .{state.sections.?.len});
 }
 
 // NSOutlineViewDataSource: numberOfChildrenOfItem
 fn sidebarNumberOfChildren(
-    _: objc.id,
+    data_source: objc.id,
     _: objc.SEL,
     _: objc.id, // outlineView
     item: objc.id,
 ) callconv(.c) c_long {
-    const sections = getSidebarSections();
+    const sections = getSidebarSections(associatedLegacySidebarState(data_source));
 
     // If item is nil, return number of sections
     if (item == null) {
@@ -1624,13 +1693,13 @@ fn sidebarNumberOfChildren(
 
 // NSOutlineViewDataSource: child:ofItem
 fn sidebarChildOfItem(
-    _: objc.id,
+    data_source: objc.id,
     _: objc.SEL,
     _: objc.id, // outlineView
     index: c_long,
     item: objc.id,
 ) callconv(.c) objc.id {
-    const sections = getSidebarSections();
+    const sections = getSidebarSections(associatedLegacySidebarState(data_source));
     const idx: usize = @intCast(index);
 
     // If item is nil, return section wrapper
@@ -1685,7 +1754,7 @@ fn sidebarIsGroupItem(
 
 // NSOutlineViewDelegate: selectionDidChange - Handle selection events
 fn sidebarSelectionDidChange(
-    _: objc.id,
+    data_source: objc.id,
     _: objc.SEL,
     notification: objc.id,
 ) callconv(.c) void {
@@ -1714,7 +1783,8 @@ fn sidebarSelectionDidChange(
     const section_idx: usize = @intCast(msgSendULong(item, "sectionIndex"));
     const item_idx: usize = @intCast(msgSendULong(item, "itemIndex"));
 
-    const sections = getSidebarSections();
+    const state = associatedLegacySidebarState(data_source);
+    const sections = getSidebarSections(state);
     if (section_idx >= sections.len) return;
 
     const section = &sections[section_idx];
@@ -1727,7 +1797,7 @@ fn sidebarSelectionDidChange(
 
     // Navigate via window.navigate() for SPA routing, or fall back to location.href.
     // If the item has a URL, use it directly. Otherwise construct from section/item IDs.
-    if (sidebar_webview != null) {
+    if (state) |sidebar_state| if (sidebar_state.webview != null) {
         const allocator = std.heap.c_allocator;
         const generated_url = if (child.url == null)
             std.fmt.allocPrint(allocator, "/{s}/{s}", .{ section.id, child.id }) catch return
@@ -1740,11 +1810,11 @@ fn sidebarSelectionDidChange(
         defer allocator.free(js);
 
         const js_str = createNSString(js);
-        _ = msgSend2(sidebar_webview, "evaluateJavaScript:completionHandler:", js_str, @as(?*anyopaque, null));
+        _ = msgSend2(sidebar_state.webview, "evaluateJavaScript:completionHandler:", js_str, @as(?*anyopaque, null));
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeSidebar] Navigate: section={s}, item={s}\n", .{ section.id, child.id });
-    }
+    };
 }
 
 // NSOutlineViewDelegate: shouldSelectItem - Prevent section headers from being selected
@@ -1767,7 +1837,7 @@ fn sidebarShouldSelectItem(
 
 // NSOutlineViewDelegate: viewForTableColumn:item
 fn sidebarViewForItem(
-    _: objc.id,
+    data_source: objc.id,
     _: objc.SEL,
     outlineView: objc.id,
     _: objc.id, // tableColumn
@@ -1848,7 +1918,7 @@ fn sidebarViewForItem(
 
     // Get the text field and set the text
     const textField = msgSend0(cellView, "textField");
-    const sections = getSidebarSections();
+    const sections = getSidebarSections(associatedLegacySidebarState(data_source));
 
     // Always set text color (in case cell is reused from different type)
     if (isSectionItem) {
@@ -2155,13 +2225,6 @@ pub fn createWindowWithSidebar(
     sidebar_config_json: ?[]const u8,
     style: WindowStyle,
 ) !objc.id {
-    // Parse sidebar config if provided
-    if (sidebar_config_json) |json| {
-        parseSidebarConfig(json) catch |err| {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[NativeSidebar] Failed to parse sidebar config: {}\n", .{err});
-        };
-    }
     const NSApplication = getClass("NSApplication");
     const NSWindow = getClass("NSWindow");
     const NSString = getClass("NSString");
@@ -2200,6 +2263,13 @@ pub fn createWindowWithSidebar(
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
     keepWindowAfterClose(window);
+    const sidebar_state = legacySidebarState(window, true) orelse return error.TooManyWindows;
+    if (sidebar_config_json) |json| {
+        parseSidebarConfig(sidebar_state, json) catch |err| {
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                std.debug.print("[NativeSidebar] Failed to parse sidebar config: {}\n", .{err});
+        };
+    }
 
     // Set window title
     const title_cstr = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
@@ -2220,7 +2290,7 @@ pub fn createWindowWithSidebar(
     // Apply dark mode appearance FIRST so sidebar inherits it
     // Use vibrant appearance for proper sidebar vibrancy
     const NSAppearance = getClass("NSAppearance");
-    const is_dark = switch (sidebar_material_scheme) {
+    const is_dark = switch (sidebar_state.material_scheme) {
         .light => false,
         .dark => true,
         .system => if (style.dark_mode) |dm| dm else false,
@@ -2307,7 +2377,7 @@ pub fn createWindowWithSidebar(
         std.debug.print("[NativeSidebar] Created NSOutlineView with source list style\n", .{});
 
     // Setup data source and delegate for the outline view
-    const dataSource = try setupSidebarDataSource();
+    const dataSource = try setupSidebarDataSource(sidebar_state);
     _ = msgSend1(outlineView, "setDataSource:", dataSource);
     _ = msgSend1(outlineView, "setDelegate:", dataSource);
 
@@ -2439,7 +2509,7 @@ pub fn createWindowWithSidebar(
         std.debug.print("[NativeSidebar] WebView created and HTML loaded\n", .{});
 
     // Store WebView reference for sidebar events
-    sidebar_webview = webview;
+    sidebar_state.webview = webview;
 
     // Create content view controller with WebView
     const contentVC_alloc = msgSend0(NSViewController, "alloc");
@@ -3012,10 +3082,12 @@ fn generateSidebarHtml(allocator: std.mem.Allocator, sidebar_config: ?[]const u8
 // ============================================================================
 
 /// Toggle sidebar visibility with animation. Called via responder chain from toolbar button.
-fn sidebarToggleCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
-    if (sidebar_container == null or sidebar_content_webview == null) return;
+fn sidebarToggleCallback(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
+    const window = msgSend0(sender, "window");
+    const state = legacySidebarState(window, false) orelse return;
+    if (state.container == null or state.content_webview == null) return;
 
-    sidebar_collapsed = !sidebar_collapsed;
+    state.collapsed = !state.collapsed;
 
     // Animate
     const NSAnimationContext = getClass("NSAnimationContext");
@@ -3024,27 +3096,27 @@ fn sidebarToggleCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void 
     _ = msgSend1(ctx, "setDuration:", @as(f64, 0.2));
     _ = msgSend1(ctx, "setAllowsImplicitAnimation:", @as(c_int, 1));
 
-    if (sidebar_collapsed) {
-        _ = msgSend1(sidebar_container, "setHidden:", @as(c_int, 1));
-        const f = msgSendRect(sidebar_content_webview, "frame");
-        msgSendVoid1Rect(sidebar_content_webview, "setFrame:", .{
+    if (state.collapsed) {
+        _ = msgSend1(state.container, "setHidden:", @as(c_int, 1));
+        const f = msgSendRect(state.content_webview, "frame");
+        msgSendVoid1Rect(state.content_webview, "setFrame:", .{
             .origin = .{ .x = 0, .y = f.origin.y },
             .size = .{ .width = f.size.width + f.origin.x, .height = f.size.height },
         });
     } else {
-        _ = msgSend1(sidebar_container, "setHidden:", @as(c_int, 0));
-        const f = msgSendRect(sidebar_content_webview, "frame");
-        msgSendVoid1Rect(sidebar_content_webview, "setFrame:", .{
-            .origin = .{ .x = sidebar_width_stored, .y = f.origin.y },
-            .size = .{ .width = f.size.width - sidebar_width_stored, .height = f.size.height },
+        _ = msgSend1(state.container, "setHidden:", @as(c_int, 0));
+        const f = msgSendRect(state.content_webview, "frame");
+        msgSendVoid1Rect(state.content_webview, "setFrame:", .{
+            .origin = .{ .x = state.width, .y = f.origin.y },
+            .size = .{ .width = f.size.width - state.width, .height = f.size.height },
         });
     }
 
     // Reposition toggle button: right-aligned when expanded, left (after traffic lights) when collapsed
-    if (sidebar_toggle_btn != null) {
-        const btnFrame = msgSendRect(sidebar_toggle_btn, "frame");
-        const newX: f64 = if (sidebar_collapsed) 88.0 else sidebar_width_stored - 28.0 - 12.0;
-        msgSendVoid1Rect(sidebar_toggle_btn, "setFrame:", .{
+    if (state.toggle_button != null) {
+        const btnFrame = msgSendRect(state.toggle_button, "frame");
+        const newX: f64 = if (state.collapsed) 88.0 else state.width - 28.0 - 12.0;
+        msgSendVoid1Rect(state.toggle_button, "setFrame:", .{
             .origin = .{ .x = newX, .y = btnFrame.origin.y },
             .size = btnFrame.size,
         });
@@ -3052,8 +3124,8 @@ fn sidebarToggleCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void 
 
     // Tell the webview about collapsed state so it can show/hide the home icon
     // Also inject CSS to add left padding so content clears the traffic lights + toggle button
-    if (sidebar_webview != null) {
-        const js = if (sidebar_collapsed)
+    if (state.webview != null) {
+        const js = if (state.collapsed)
             \\window.__craftSidebarCollapsed = true;
             \\document.documentElement.setAttribute('data-sidebar-collapsed', 'true');
             \\if (!document.getElementById('craft-collapsed-pad')) {
@@ -3069,7 +3141,7 @@ fn sidebarToggleCallback(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void 
             \\if (ps) ps.remove();
         ;
         const jsStr = createNSString(js);
-        _ = msgSend2(sidebar_webview, "evaluateJavaScript:completionHandler:", jsStr, @as(?*anyopaque, null));
+        _ = msgSend2(state.webview, "evaluateJavaScript:completionHandler:", jsStr, @as(?*anyopaque, null));
     }
 
     _ = msgSend0(NSAnimationContext, "endGrouping");
@@ -3312,16 +3384,6 @@ pub fn createWindowWithSidebarURL(
     sidebar_config: ?[]const u8,
     style: WindowStyle,
 ) !objc.id {
-    // Parse sidebar config if provided
-    if (sidebar_config) |config| {
-        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[NativeSidebar] Parsing sidebar config ({d} bytes)\n", .{config.len});
-        parseSidebarConfig(config) catch |err| {
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[NativeSidebar] Failed to parse config: {}\n", .{err});
-        };
-    }
-
     // Import the necessary classes
     const NSApplication = getClass("NSApplication");
     const NSWindow = getClass("NSWindow");
@@ -3353,6 +3415,15 @@ pub fn createWindowWithSidebarURL(
     const window_alloc = msgSend0(NSWindow, "alloc");
     const window = msgSend4(window_alloc, "initWithContentRect:styleMask:backing:defer:", frame, styleMask, backing, defer_flag);
     keepWindowAfterClose(window);
+    const sidebar_state = legacySidebarState(window, true) orelse return error.TooManyWindows;
+    if (sidebar_config) |config| {
+        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+            std.debug.print("[NativeSidebar] Parsing sidebar config ({d} bytes)\n", .{config.len});
+        parseSidebarConfig(sidebar_state, config) catch |err| {
+            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                std.debug.print("[NativeSidebar] Failed to parse config: {}\n", .{err});
+        };
+    }
 
     // Set window title
     const title_str = createNSString(title);
@@ -3389,7 +3460,7 @@ pub fn createWindowWithSidebarURL(
     _ = msgSend1(window, "setToolbarStyle:", @as(c_long, 3)); // NSWindowToolbarStyleUnifiedCompact = 3
 
     // Store sidebar width for toggle animation
-    sidebar_width_stored = @floatFromInt(sidebar_width);
+    sidebar_state.width = @floatFromInt(sidebar_width);
 
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] Window created with toolbar\n", .{});
@@ -3407,9 +3478,9 @@ pub fn createWindowWithSidebarURL(
     const NSColor = getClass("NSColor");
 
     // Set window background so translucent desktop sidebars can let the surface shimmer through.
-    const bgRed: f64 = if (sidebar_uses_desktop_material) 244.0 / 255.0 else 15.0 / 255.0;
-    const bgGreen: f64 = if (sidebar_uses_desktop_material) 244.0 / 255.0 else 15.0 / 255.0;
-    const bgBlue: f64 = if (sidebar_uses_desktop_material) 243.0 / 255.0 else 35.0 / 255.0;
+    const bgRed: f64 = if (sidebar_state.uses_desktop_material) 244.0 / 255.0 else 15.0 / 255.0;
+    const bgGreen: f64 = if (sidebar_state.uses_desktop_material) 244.0 / 255.0 else 15.0 / 255.0;
+    const bgBlue: f64 = if (sidebar_state.uses_desktop_material) 243.0 / 255.0 else 35.0 / 255.0;
     const windowBgColor = msgSend4(
         NSColor,
         "colorWithRed:green:blue:alpha:",
@@ -3500,7 +3571,7 @@ pub fn createWindowWithSidebarURL(
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[NativeSidebar] WebView loading URL (full window): {s}\n", .{url});
 
-    sidebar_webview = webview;
+    sidebar_state.webview = webview;
 
     // Add webview to main container FIRST (it goes behind)
     _ = msgSend1(mainContainer, "addSubview:", webview);
@@ -3535,10 +3606,10 @@ pub fn createWindowWithSidebarURL(
         // Don't mask to bounds so shadow can show
         _ = msgSend1(sidebarLayer, "setMasksToBounds:", @as(c_int, 0));
 
-        const sidebarRed: f64 = if (sidebar_allows_vibrancy) 1.0 else 26.0 / 255.0;
-        const sidebarGreen: f64 = if (sidebar_allows_vibrancy) 1.0 else 26.0 / 255.0;
-        const sidebarBlue: f64 = if (sidebar_allows_vibrancy) 1.0 else 46.0 / 255.0;
-        const sidebarAlpha: f64 = if (sidebar_allows_vibrancy) 0.0 else 0.90;
+        const sidebarRed: f64 = if (sidebar_state.allows_vibrancy) 1.0 else 26.0 / 255.0;
+        const sidebarGreen: f64 = if (sidebar_state.allows_vibrancy) 1.0 else 26.0 / 255.0;
+        const sidebarBlue: f64 = if (sidebar_state.allows_vibrancy) 1.0 else 46.0 / 255.0;
+        const sidebarAlpha: f64 = if (sidebar_state.allows_vibrancy) 0.0 else 0.90;
         const customBgColor = msgSend4(
             NSColor,
             "colorWithRed:green:blue:alpha:",
@@ -3553,8 +3624,8 @@ pub fn createWindowWithSidebarURL(
         }
 
         // Add shadow for floating effect
-        _ = msgSend1(sidebarLayer, "setShadowOpacity:", if (sidebar_uses_desktop_material) @as(f32, 0.16) else @as(f32, 0.4));
-        _ = msgSend1(sidebarLayer, "setShadowRadius:", if (sidebar_uses_desktop_material) @as(f64, 20.0) else @as(f64, 8.0));
+        _ = msgSend1(sidebarLayer, "setShadowOpacity:", if (sidebar_state.uses_desktop_material) @as(f32, 0.16) else @as(f32, 0.4));
+        _ = msgSend1(sidebarLayer, "setShadowRadius:", if (sidebar_state.uses_desktop_material) @as(f64, 20.0) else @as(f64, 8.0));
         const shadowOffset = NSSize{ .width = 0, .height = -2 };
         _ = msgSend1(sidebarLayer, "setShadowOffset:", shadowOffset);
         const shadowColor = msgSend4(NSColor, "colorWithRed:green:blue:alpha:", @as(f64, 0.0), @as(f64, 0.0), @as(f64, 0.0), @as(f64, 1.0));
@@ -3564,7 +3635,7 @@ pub fn createWindowWithSidebarURL(
             std.debug.print("[NativeSidebar] Floating sidebar with shadow created\n", .{});
     }
 
-    if (sidebar_allows_vibrancy) {
+    if (sidebar_state.allows_vibrancy) {
         const materialFrame = NSRect{
             .origin = .{ .x = 0, .y = 0 },
             .size = sidebarFrame.size,
@@ -3573,7 +3644,7 @@ pub fn createWindowWithSidebarURL(
         if (materialView != null) {
             _ = msgSend1(sidebarContainer, "addSubview:", materialView);
         }
-        const materialTint = createSidebarMaterialTint(materialFrame, sidebar_material_opacity);
+        const materialTint = createSidebarMaterialTint(materialFrame, sidebar_state.material_opacity, sidebar_state.material_scheme);
         if (materialTint != null) {
             _ = msgSend1(sidebarContainer, "addSubview:", materialTint);
         }
@@ -3615,7 +3686,7 @@ pub fn createWindowWithSidebarURL(
     _ = msgSend1(outlineView, "setOutlineTableColumn:", column);
 
     // Setup data source
-    const dataSource = try setupSidebarDataSource();
+    const dataSource = try setupSidebarDataSource(sidebar_state);
     _ = msgSend1(outlineView, "setDataSource:", dataSource);
     _ = msgSend1(outlineView, "setDelegate:", dataSource);
     _ = msgSend0(outlineView, "reloadData");
@@ -3637,9 +3708,9 @@ pub fn createWindowWithSidebarURL(
     _ = msgSend1(mainContainer, "addSubview:", sidebarContainer);
 
     // Store references for sidebar toggle
-    sidebar_container = sidebarContainer;
-    sidebar_content_webview = webview;
-    sidebar_collapsed = false;
+    sidebar_state.container = sidebarContainer;
+    sidebar_state.content_webview = webview;
+    sidebar_state.collapsed = false;
 
     // Set main container as window content view
     _ = msgSend1(window, "setContentView:", mainContainer);
@@ -3671,7 +3742,7 @@ pub fn createWindowWithSidebarURL(
         _ = msgSend1(toggleBtn, "setToolTip:", createNSString("Toggle Sidebar"));
 
         // Store reference for repositioning on toggle
-        sidebar_toggle_btn = toggleBtn;
+        sidebar_state.toggle_button = toggleBtn;
 
         // Position it in the titlebar by adding to the window's contentView's superview (themeFrame)
         // Traffic lights are at roughly x=7..67, y centered in titlebar (38px high)
@@ -3872,6 +3943,7 @@ pub fn destroyWindow(window_handle: anytype) void {
 
     const webview = webViewForWindow(window);
     if (global_native_ui_bridge) |bridge| bridge.forgetWindow(window);
+    forgetLegacySidebar(window);
     forgetWindowChrome(window);
     forgetWebMaterial(window);
     if (webview) |view| {
