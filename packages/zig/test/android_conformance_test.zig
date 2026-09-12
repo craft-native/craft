@@ -128,8 +128,9 @@ const zig_sources = [_][]const u8{
 /// openPDF, whose external-viewer mechanics stay in the holder while Zig owns
 /// its success object and rejection; 30 after removing the two unreachable
 /// dynamic voice-action methods tracked in #169; 28 after removing the two
-/// app-badge no-ops tracked in #148.
-const max_not_yet_migrated: usize = 28;
+/// app-badge no-ops tracked in #148; 31 when #190 added the three runtime
+/// permission methods whose Activity callback state belongs to CraftBridge.
+const max_not_yet_migrated: usize = 31;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -214,6 +215,17 @@ const Deferral = struct {
 /// Kotlin must have one evidence-backed reason, and no reason may outlive its
 /// action.
 const deliberate_deferrals = [_]Deferral{
+    // Runtime permission requests are identified by an Activity request code
+    // and completed by MainActivity.onRequestPermissionsResult. Both the
+    // pending-code map and the callback live on this CraftBridge instance;
+    // CraftNative is a process singleton with no reference back to it. Keep
+    // the trio together: moving only the synchronous check would split the
+    // permission-name/status policy between languages, and a JNI bounce for
+    // the other two would move no implementation.
+    .{ .action = "checkPermission", .reason = "shares Android permission-name and status policy with the Activity-owned request flow" },
+    .{ .action = "requestPermission", .reason = "owns request-code state completed by MainActivity.onRequestPermissionsResult" },
+    .{ .action = "openPermissionSettings", .reason = "part of the same Kotlin permission contract; a JNI bounce would move no behaviour" },
+
     // Kotlin-held state, not a missing API. `setFlashlight` writes
     // `isFlashlightOn` (`CraftBridge.kt:2011`) and `toggleFlashlight` reads it
     // to decide what to flip to (`:2026`). Serving `setFlashlight` from Zig
