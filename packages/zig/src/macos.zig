@@ -4178,6 +4178,27 @@ pub fn getGlobalWebView() ?objc.id {
     return global_webview;
 }
 
+/// The webview a synchronous page-driven operation belongs to.
+///
+/// `getGlobalWebView` is the original single-window fallback and remains the
+/// right answer for app-wide native events. A bridge message, however, already
+/// carries its sending webview in `window_context`; printing or starting a
+/// drag from the main page must not act on the Settings webview merely because
+/// Settings was created later.
+pub fn getMessageWebView() objc.id {
+    if (window_context.currentWebView()) |webview| return @ptrFromInt(webview);
+    return @import("tray_menu.zig").getGlobalWebView();
+}
+
+test "a page-driven native operation uses the sending webview" {
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    window_context.push(0x2000, 0x2001);
+    defer window_context.pop();
+    try std.testing.expectEqual(@as(usize, 0x2001), @intFromPtr(getMessageWebView()));
+}
+
 // ============================================================================
 // JavaScript Bridge Injection
 // ============================================================================
@@ -5097,21 +5118,11 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
 /// call, and leaves the page that did waiting for a reply that has already been
 /// delivered somewhere else.
 pub fn tryEvalJS(js_code: []const u8) !void {
-    const tray_menu = @import("tray_menu.zig");
-    const target: ?*anyopaque = if (window_context.currentWebView()) |wv|
-        @as(?*anyopaque, @ptrFromInt(wv))
-    else
-        tray_menu.getGlobalWebView();
-
-    if (target) |webview| {
-        const webview_id: objc.id = @ptrFromInt(@intFromPtr(webview));
-        const js_str = createNSString(js_code);
-        _ = msgSend2(webview_id, "evaluateJavaScript:completionHandler:", js_str, null);
-        if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-            std.debug.print("[Bridge] Executed JS: {s}\n", .{js_code});
-    } else {
-        return error.NoWebView;
-    }
+    const webview = getMessageWebView() orelse return error.NoWebView;
+    const js_str = createNSString(js_code);
+    _ = msgSend2(webview, "evaluateJavaScript:completionHandler:", js_str, null);
+    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+        std.debug.print("[Bridge] Executed JS: {s}\n", .{js_code});
 }
 
 /// Handle incoming messages from JavaScript bridge

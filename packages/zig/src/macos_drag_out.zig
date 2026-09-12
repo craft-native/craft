@@ -36,7 +36,7 @@ pub fn handleMessage(action: []const u8, data: []const u8) !void {
     defer std.heap.c_allocator.free(paths);
     if (paths.len == 0) return;
 
-    const webview = macos.getGlobalWebView() orelse return;
+    const webview = macos.getMessageWebView() orelse return;
 
     // Build NSArray<NSDraggingItem*> — one per path, each backed by an
     // NSURL pasteboard writer. NSURL is the standard "promise this is a

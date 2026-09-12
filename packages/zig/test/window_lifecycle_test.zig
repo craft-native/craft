@@ -205,6 +205,21 @@ test "titlebar controls resolve the webview in their own window" {
     }
 }
 
+test "page-driven native surfaces use the sending webview" {
+    const resolver_start = std.mem.indexOf(u8, macos_source, "pub fn getMessageWebView(") orelse
+        return error.MessageWebViewResolverNotFound;
+    const resolver = enclosingFnBody(macos_source, resolver_start);
+    try testing.expect(callsFunction(resolver, "window_context.currentWebView()"));
+
+    // `tryEvalJS` is the shared reply path. Keep it on the same resolver as
+    // direct native surfaces so the two cannot drift back to different ideas
+    // of which page owns the operation.
+    const eval_start = std.mem.indexOf(u8, macos_source, "pub fn tryEvalJS(") orelse
+        return error.TryEvalJSNotFound;
+    const eval_body = enclosingFnBody(macos_source, eval_start);
+    try testing.expect(callsFunction(eval_body, "getMessageWebView()"));
+}
+
 test "web material state and collapse actions stay with their window" {
     // Material views used to live in six process globals. Constructing a
     // second window overwrote them, so the next collapse from main mutated the

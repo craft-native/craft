@@ -39,7 +39,7 @@ pub const PrintingBridge = struct {
             return;
         }
         const macos = @import("macos.zig");
-        const webview = macos.getGlobalWebView() orelse {
+        const webview = macos.getMessageWebView() orelse {
             bridge_error.sendResultToJS(self.allocator, "print", "{\"ok\":false,\"reason\":\"no webview\"}");
             return;
         };
@@ -70,7 +70,7 @@ pub const PrintingBridge = struct {
             return;
         }
         const macos = @import("macos.zig");
-        const webview = macos.getGlobalWebView() orelse {
+        const webview = macos.getMessageWebView() orelse {
             bridge_error.sendResultToJS(self.allocator, "printToPDF", "{\"ok\":false,\"reason\":\"no webview\"}");
             return;
         };
