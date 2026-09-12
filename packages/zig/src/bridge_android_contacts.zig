@@ -19,15 +19,13 @@
 //! its MIMETYPE and the generic `data1` column holds whichever value that row
 //! is. Writing "data1" twice is what the shim compiles to.
 //!
-//! ## One query per contact, twice over
+//! ## Three projected queries, joined in memory
 //!
-//! The shim runs a query for the contact list and then two more *per contact*,
-//! one for phones and one for emails, each on the JavaBridge thread. A device
-//! with two thousand contacts makes four thousand and one queries for a single
-//! `craft.contacts.getAll()`. Reproduced rather than improved: the same rows
-//! could be fetched in three queries and grouped, but that changes what a
-//! concurrent edit to the address book produces, and this port is meant to be
-//! auditable against the Kotlin line by line. See #165.
+//! Contacts, phone numbers, and email addresses are each read once with only
+//! the columns the bridge consumes. Phone and email rows are grouped by
+//! `contact_id` and joined to the ordered contact list in memory. This keeps a
+//! large address book to three provider round trips instead of 2N+1 while
+//! preserving the page's JSON shape.
 //!
 //! ## A null is not the same absence twice
 //!
@@ -84,7 +82,8 @@ const col_contact_id = "contact_id";
 const col_data1 = "data1";
 
 const contacts_sort_order = col_display_name ++ " ASC";
-const data_selection = col_contact_id ++ " = ?";
+const contacts_projection = [_][]const u8{ col_id, col_display_name };
+const related_projection = [_][]const u8{ col_contact_id, col_data1 };
 
 /// One contact, as the two cursors give it.
 pub const Contact = struct {
@@ -157,6 +156,38 @@ fn appendStringMember(
     try out.append(allocator, '"');
 }
 
+const ContactRow = struct {
+    id: ?[]const u8,
+    display_name: ?[]const u8,
+};
+
+const RelatedValues = struct {
+    map: std.StringHashMapUnmanaged(std.ArrayListUnmanaged(?[]const u8)) = .empty,
+
+    fn deinit(self: *RelatedValues, allocator: std.mem.Allocator) void {
+        var values = self.map.valueIterator();
+        while (values.next()) |items| items.deinit(allocator);
+        self.map.deinit(allocator);
+    }
+
+    fn append(
+        self: *RelatedValues,
+        allocator: std.mem.Allocator,
+        contact_id: []const u8,
+        value: ?[]const u8,
+    ) !void {
+        const result = try self.map.getOrPut(allocator, contact_id);
+        if (!result.found_existing) result.value_ptr.* = .empty;
+        try result.value_ptr.append(allocator, value);
+    }
+
+    fn forContact(self: *const RelatedValues, contact_id: ?[]const u8) []const ?[]const u8 {
+        const id = contact_id orelse return &.{};
+        const values = self.map.get(id) orelse return &.{};
+        return values.items;
+    }
+};
+
 /// The whole address book, appended to `out` as a JSON array.
 pub fn queryContacts(
     j: Jni,
@@ -174,63 +205,62 @@ pub fn queryContacts(
         try j.staticFieldId(contacts_cls, "CONTENT_URI", "Landroid/net/Uri;"),
     );
 
-    // `query(uri, null, null, null, "display_name ASC")` — a null projection
-    // selects every column of a wide table, which is the shim's call and is
-    // half of why #165 exists.
-    const cursor = try queryUri(j, allocator, resolver, content_uri, null, null, contacts_sort_order);
+    var rows: std.ArrayListUnmanaged(ContactRow) = .empty;
+    defer rows.deinit(allocator);
+
+    {
+        const cursor = try queryUri(j, allocator, resolver, content_uri, &contacts_projection, contacts_sort_order);
+        if (cursor == null) {
+            try out.appendSlice(allocator, "[]");
+            return;
+        }
+
+        const cursor_cls = try j.objectClass(cursor);
+        const move_to_next = try j.methodId(cursor_cls, "moveToNext", "()Z");
+        const get_string = try j.methodId(cursor_cls, "getString", "(I)Ljava/lang/String;");
+        const close = try j.methodId(cursor_cls, "close", "()V");
+        defer j.callVoidMethodA(cursor, close, &.{}) catch {};
+
+        const id_index = try columnIndex(j, allocator, cursor, col_id);
+        const name_index = try columnIndex(j, allocator, cursor, col_display_name);
+
+        while (try j.callBooleanMethodA(cursor, move_to_next, &.{})) {
+            try j.pushLocalFrame(8);
+            defer _ = j.popLocalFrame(null);
+
+            try rows.append(allocator, .{
+                .id = try columnText(j, allocator, cursor, get_string, id_index),
+                .display_name = try columnText(j, allocator, cursor, get_string, name_index),
+            });
+        }
+    }
+
+    var phones = try relatedValues(j, allocator, resolver, "Phone");
+    defer phones.deinit(allocator);
+    var emails = try relatedValues(j, allocator, resolver, "Email");
+    defer emails.deinit(allocator);
 
     try out.append(allocator, '[');
     defer out.append(allocator, ']') catch {};
 
-    if (cursor == null) return;
-
-    const cursor_cls = try j.objectClass(cursor);
-    const move_to_next = try j.methodId(cursor_cls, "moveToNext", "()Z");
-    const get_string = try j.methodId(cursor_cls, "getString", "(I)Ljava/lang/String;");
-    const close = try j.methodId(cursor_cls, "close", "()V");
-    defer j.callVoidMethodA(cursor, close, &.{}) catch {};
-
-    // `getColumnIndexOrThrow` is resolved once rather than per row. The shim
-    // calls it inside the loop; the answer cannot change while a cursor is
-    // open, and the difference is not observable.
-    const id_index = try columnIndex(j, allocator, cursor, col_id);
-    const name_index = try columnIndex(j, allocator, cursor, col_display_name);
-
-    var count: usize = 0;
-    while (try j.callBooleanMethodA(cursor, move_to_next, &.{})) {
-        try j.pushLocalFrame(8);
-        defer _ = j.popLocalFrame(null);
-
-        const id = try columnText(j, allocator, cursor, get_string, id_index);
-        const name = try columnText(j, allocator, cursor, get_string, name_index);
-
-        // The two extra queries per contact. They need the id as text, and a
-        // contact without one cannot be joined to — the shim passes the null
-        // straight to `arrayOf(contactId)`, where it becomes a selection
-        // argument of null and the provider matches nothing.
-        const phones = try relatedValues(j, allocator, resolver, "Phone", id);
-        const emails = try relatedValues(j, allocator, resolver, "Email", id);
-
-        if (count != 0) try out.append(allocator, ',');
+    for (rows.items, 0..) |row, i| {
+        if (i != 0) try out.append(allocator, ',');
         try appendContact(allocator, out, .{
-            .id = id,
-            .display_name = name,
-            .phone_numbers = phones,
-            .email_addresses = emails,
+            .id = row.id,
+            .display_name = row.display_name,
+            .phone_numbers = phones.forContact(row.id),
+            .email_addresses = emails.forContact(row.id),
         });
-        count += 1;
     }
 }
 
-/// `getContactPhones` / `getContactEmails`, which differ only in the class
-/// holding the `CONTENT_URI`.
+/// Read one related-data table and group its values by contact id.
 fn relatedValues(
     j: Jni,
     allocator: std.mem.Allocator,
     resolver: jobject,
     comptime kind: []const u8,
-    contact_id: ?[]const u8,
-) ![]const ?[]const u8 {
+) !RelatedValues {
     try j.pushLocalFrame(16);
     defer _ = j.popLocalFrame(null);
 
@@ -240,13 +270,12 @@ fn relatedValues(
         try j.staticFieldId(cls, "CONTENT_URI", "Landroid/net/Uri;"),
     );
 
-    const args = [_]?[]const u8{contact_id};
-    const cursor = try queryUri(j, allocator, resolver, content_uri, data_selection, &args, null);
+    const cursor = try queryUri(j, allocator, resolver, content_uri, &related_projection, null);
 
-    var values: std.ArrayListUnmanaged(?[]const u8) = .empty;
+    var values: RelatedValues = .{};
     errdefer values.deinit(allocator);
 
-    if (cursor == null) return values.toOwnedSlice(allocator);
+    if (cursor == null) return values;
 
     const cursor_cls = try j.objectClass(cursor);
     const move_to_next = try j.methodId(cursor_cls, "moveToNext", "()Z");
@@ -254,14 +283,21 @@ fn relatedValues(
     const close = try j.methodId(cursor_cls, "close", "()V");
     defer j.callVoidMethodA(cursor, close, &.{}) catch {};
 
+    const contact_id_index = try columnIndex(j, allocator, cursor, col_contact_id);
     const value_index = try columnIndex(j, allocator, cursor, col_data1);
 
     while (try j.callBooleanMethodA(cursor, move_to_next, &.{})) {
         try j.pushLocalFrame(8);
         defer _ = j.popLocalFrame(null);
-        try values.append(allocator, try columnText(j, allocator, cursor, get_string, value_index));
+
+        const contact_id = try columnText(j, allocator, cursor, get_string, contact_id_index) orelse continue;
+        try values.append(
+            allocator,
+            contact_id,
+            try columnText(j, allocator, cursor, get_string, value_index),
+        );
     }
-    return values.toOwnedSlice(allocator);
+    return values;
 }
 
 fn contentResolver(j: Jni, activity: jobject) !jobject {
@@ -275,31 +311,20 @@ fn contentResolver(j: Jni, activity: jobject) !jobject {
     );
 }
 
-/// `resolver.query(uri, null, selection, selectionArgs, sortOrder)`.
-///
-/// The projection is always null here because both of the shim's queries pass
-/// null; a caller wanting one would pass the array rather than this taking a
-/// parameter nothing sets.
+/// `resolver.query(uri, projection, null, null, sortOrder)`.
 fn queryUri(
     j: Jni,
     allocator: std.mem.Allocator,
     resolver: jobject,
     uri: jobject,
-    selection: ?[]const u8,
-    selection_args: ?[]const ?[]const u8,
+    projection: []const []const u8,
     sort_order: ?[]const u8,
 ) !jobject {
-    const args_array: jobject = if (selection_args) |args| blk: {
-        const string_cls = try j.findClass("java/lang/String");
-        const array = try j.newObjectArray(args.len, string_cls);
-        for (args, 0..) |arg, i| {
-            // A null argument is a null element, which is what
-            // `arrayOf(contactId)` produces when the id was null.
-            const value: jni.jstring = if (arg) |text| try j.newStringUtf8(allocator, text) else null;
-            try j.setObjectArrayElement(array, i, value);
-        }
-        break :blk array;
-    } else null;
+    const string_cls = try j.findClass("java/lang/String");
+    const projection_array = try j.newObjectArray(projection.len, string_cls);
+    for (projection, 0..) |column, i| {
+        try j.setObjectArrayElement(projection_array, i, try j.newStringUtf8(allocator, column));
+    }
 
     return j.callObjectMethodA(
         resolver,
@@ -310,9 +335,9 @@ fn queryUri(
         ),
         &.{
             .{ .l = uri },
+            .{ .l = projection_array },
             .{ .l = null },
-            .{ .l = if (selection) |text| try j.newStringUtf8(allocator, text) else null },
-            .{ .l = args_array },
+            .{ .l = null },
             .{ .l = if (sort_order) |text| try j.newStringUtf8(allocator, text) else null },
         },
     );
@@ -713,15 +738,30 @@ test "an empty address book is an empty array" {
     try testing.expectEqualStrings("[]", json);
 }
 
-test "the query strings are the shim's, character for character" {
+test "contact queries request only the columns they consume" {
     try testing.expectEqualStrings("display_name ASC", contacts_sort_order);
-    try testing.expectEqualStrings("contact_id = ?", data_selection);
+    try testing.expectEqualSlices([]const u8, &.{ col_id, col_display_name }, &contacts_projection);
+    try testing.expectEqualSlices([]const u8, &.{ col_contact_id, col_data1 }, &related_projection);
 
     // Phone.NUMBER and Email.ADDRESS really are the same column: a data row's
     // meaning comes from its MIMETYPE, and data1 holds whichever value it is.
     try testing.expectEqualStrings("data1", col_data1);
     try testing.expectEqualStrings("_id", col_id);
     try testing.expectEqualStrings("display_name", col_display_name);
+}
+
+test "related values group once by contact id" {
+    var values: RelatedValues = .{};
+    defer values.deinit(testing.allocator);
+
+    try values.append(testing.allocator, "ada", "+44 1234");
+    try values.append(testing.allocator, "grace", null);
+    try values.append(testing.allocator, "ada", "+44 5678");
+
+    try testing.expectEqualSlices(?[]const u8, &.{ "+44 1234", "+44 5678" }, values.forContact("ada"));
+    try testing.expectEqualSlices(?[]const u8, &.{null}, values.forContact("grace"));
+    try testing.expectEqual(@as(usize, 0), values.forContact("missing").len);
+    try testing.expectEqual(@as(usize, 0), values.forContact(null).len);
 }
 
 test "getContacts names its action and globals as the shim does" {

@@ -2219,25 +2219,43 @@ class CraftBridge(
             return
         }
 
-        val contacts = JSONArray()
+        val contactRows = mutableListOf<Pair<String?, String?>>()
         val cursor: Cursor? = activity.contentResolver.query(
             ContactsContract.Contacts.CONTENT_URI,
-            null, null, null, ContactsContract.Contacts.DISPLAY_NAME + " ASC"
+            arrayOf(
+                ContactsContract.Contacts._ID,
+                ContactsContract.Contacts.DISPLAY_NAME
+            ),
+            null, null, ContactsContract.Contacts.DISPLAY_NAME + " ASC"
         )
 
         cursor?.use {
+            val idIndex = it.getColumnIndexOrThrow(ContactsContract.Contacts._ID)
+            val nameIndex = it.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME)
             while (it.moveToNext()) {
-                val id = it.getString(it.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
-                val name = it.getString(it.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME))
-
-                val contact = JSONObject().apply {
-                    put("id", id)
-                    put("displayName", name ?: "")
-                    put("phoneNumbers", getContactPhones(id))
-                    put("emailAddresses", getContactEmails(id))
-                }
-                contacts.put(contact)
+                contactRows.add(it.getString(idIndex) to it.getString(nameIndex))
             }
+        }
+
+        val phoneNumbers = getContactValues(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        val emailAddresses = getContactValues(
+            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+            ContactsContract.CommonDataKinds.Email.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Email.ADDRESS
+        )
+
+        val contacts = JSONArray()
+        contactRows.forEach { (id, name) ->
+            contacts.put(JSONObject().apply {
+                put("id", id)
+                put("displayName", name ?: "")
+                put("phoneNumbers", id?.let { phoneNumbers[it] } ?: JSONArray())
+                put("emailAddresses", id?.let { emailAddresses[it] } ?: JSONArray())
+            })
         }
 
         activity.runOnUiThread {
@@ -2245,38 +2263,22 @@ class CraftBridge(
         }
     }
 
-    private fun getContactPhones(contactId: String): JSONArray {
-        val phones = JSONArray()
+    private fun getContactValues(contentUri: Uri, contactIdColumn: String, valueColumn: String): Map<String, JSONArray> {
+        val values = mutableMapOf<String, JSONArray>()
         val cursor = activity.contentResolver.query(
-            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-            null,
-            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
-            arrayOf(contactId), null
+            contentUri,
+            arrayOf(contactIdColumn, valueColumn),
+            null, null, null
         )
         cursor?.use {
+            val contactIdIndex = it.getColumnIndexOrThrow(contactIdColumn)
+            val valueIndex = it.getColumnIndexOrThrow(valueColumn)
             while (it.moveToNext()) {
-                val phone = it.getString(it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
-                phones.put(phone)
+                val contactId = it.getString(contactIdIndex) ?: continue
+                values.getOrPut(contactId) { JSONArray() }.put(it.getString(valueIndex))
             }
         }
-        return phones
-    }
-
-    private fun getContactEmails(contactId: String): JSONArray {
-        val emails = JSONArray()
-        val cursor = activity.contentResolver.query(
-            ContactsContract.CommonDataKinds.Email.CONTENT_URI,
-            null,
-            ContactsContract.CommonDataKinds.Email.CONTACT_ID + " = ?",
-            arrayOf(contactId), null
-        )
-        cursor?.use {
-            while (it.moveToNext()) {
-                val email = it.getString(it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Email.ADDRESS))
-                emails.put(email)
-            }
-        }
-        return emails
+        return values
     }
 
     @JavascriptInterface

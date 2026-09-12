@@ -269,6 +269,25 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain("new CustomEvent('craftVoiceAction'")
   })
 
+  it('loads contacts with three projected provider queries', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-contacts-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('// ==================== Contacts ====================')
+    const end = bridge.indexOf('// ==================== Calendar ====================', start)
+    const contacts = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(contacts.match(/getContactValues\(/g)?.length).toBe(3)
+    expect(contacts).toContain('arrayOf(\n                ContactsContract.Contacts._ID,')
+    expect(contacts).toContain('arrayOf(contactIdColumn, valueColumn)')
+    expect(contacts).not.toContain('fun getContactPhones(')
+    expect(contacts).not.toContain('fun getContactEmails(')
+    expect(contacts).not.toContain('CONTACT_ID + " = ?"')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({
