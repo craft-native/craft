@@ -858,20 +858,15 @@ pub const NativeUIBridge = struct {
             else => 0.0,
         };
 
-        // Clean up previous delegate if it exists
-        if (state.active_context_menu_delegate) |prev_delegate| {
-            prev_delegate.deinit();
-            state.active_context_menu_delegate = null;
-        }
-
-        // Create new delegate
-        const delegate = try context_menu.ContextMenuDelegate.init(self.allocator, target_id, target_type);
-        state.active_context_menu_delegate = delegate;
-
         // Parse menu items
         const items_json = root.get("items").?.array;
         var items: std.ArrayList(context_menu.MenuItem) = .empty;
         defer items.deinit(self.allocator);
+        var owned_submenus: std.ArrayList([]const context_menu.MenuItem) = .empty;
+        defer {
+            for (owned_submenus.items) |submenu| self.allocator.free(submenu);
+            owned_submenus.deinit(self.allocator);
+        }
 
         for (items_json.items) |item_json| {
             const item_obj = item_json.object;
@@ -890,6 +885,7 @@ pub const NativeUIBridge = struct {
                 if (item_obj.get("submenu")) |submenu_json| {
                     if (submenu_json == .array) {
                         var submenu_list: std.ArrayList(context_menu.MenuItem) = .empty;
+                        defer submenu_list.deinit(self.allocator);
                         for (submenu_json.array.items) |sub_item_json| {
                             if (sub_item_json == .object) {
                                 const sub_obj = sub_item_json.object;
@@ -911,7 +907,10 @@ pub const NativeUIBridge = struct {
                             }
                         }
                         if (submenu_list.items.len > 0) {
-                            submenu_items = try submenu_list.toOwnedSlice(self.allocator);
+                            const owned = try submenu_list.toOwnedSlice(self.allocator);
+                            errdefer self.allocator.free(owned);
+                            try owned_submenus.append(self.allocator, owned);
+                            submenu_items = owned;
                         }
                     }
                 }
@@ -927,9 +926,6 @@ pub const NativeUIBridge = struct {
                 .submenu_items = submenu_items,
             });
         }
-
-        // Create the menu
-        const menu = try context_menu.createMenu(self.allocator, "", items.items, delegate);
 
         // Get the view to show the menu in
         var view: macos.objc.id = null;
@@ -957,6 +953,18 @@ pub const NativeUIBridge = struct {
                 std.debug.print("[NativeUI] ERROR: No view available for context menu\n", .{});
             return error.NoViewAvailable;
         }
+
+        // Do not disturb the previous valid delegate until every fallible part
+        // of the replacement is ready. The popup call below is synchronous, so
+        // releasing the menu afterwards is safe while the delegate stays owned
+        // by this window until its next menu or permanent teardown.
+        const delegate = try context_menu.ContextMenuDelegate.init(self.allocator, target_id, target_type);
+        errdefer delegate.deinit();
+        const menu = try context_menu.createMenu(self.allocator, "", items.items, delegate);
+        defer _ = macos.msgSend0(menu, "release");
+
+        if (state.active_context_menu_delegate) |prev_delegate| prev_delegate.deinit();
+        state.active_context_menu_delegate = delegate;
 
         // Show the menu
         context_menu.showContextMenu(menu, view, .{ .x = x, .y = y });

@@ -39,9 +39,13 @@ pub const MenuCallbackData = struct {
 
     pub fn init(allocator: std.mem.Allocator, target_id: []const u8, target_type: []const u8) !*MenuCallbackData {
         const data = try allocator.create(MenuCallbackData);
+        errdefer allocator.destroy(data);
+        const owned_target_id = try allocator.dupe(u8, target_id);
+        errdefer allocator.free(owned_target_id);
+        const owned_target_type = try allocator.dupe(u8, target_type);
         data.* = .{
-            .target_id = try allocator.dupe(u8, target_id),
-            .target_type = try allocator.dupe(u8, target_type),
+            .target_id = owned_target_id,
+            .target_type = owned_target_type,
             .item_ids = .empty,
             .allocator = allocator,
         };
@@ -58,9 +62,12 @@ pub const MenuCallbackData = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn addItemId(self: *MenuCallbackData, item_id: []const u8) !void {
+    pub fn addItemId(self: *MenuCallbackData, item_id: []const u8) !usize {
         const id_copy = try self.allocator.dupe(u8, item_id);
+        errdefer self.allocator.free(id_copy);
+        const tag = self.item_ids.items.len;
         try self.item_ids.append(self.allocator, id_copy);
+        return tag;
     }
 
     pub fn getItemId(self: *MenuCallbackData, index: usize) ?[]const u8 {
@@ -82,6 +89,7 @@ pub const ContextMenuDelegate = struct {
 
     pub fn init(allocator: std.mem.Allocator, target_id: []const u8, target_type: []const u8) !*ContextMenuDelegate {
         const callback_data = try MenuCallbackData.init(allocator, target_id, target_type);
+        errdefer callback_data.deinit();
 
         const NSObject = macos.getClass("NSObject");
         const class_name = "CraftContextMenuDelegate";
@@ -89,6 +97,7 @@ pub const ContextMenuDelegate = struct {
         var objc_class = objc.objc_getClass(class_name);
         if (objc_class == null) {
             objc_class = objc.objc_allocateClassPair(NSObject, class_name, 0);
+            if (objc_class == null) return error.DelegateClassCreationFailed;
 
             // menuItemClicked: (custom action)
             const menuItemClicked = @as(
@@ -130,6 +139,8 @@ pub const ContextMenuDelegate = struct {
         }
 
         const instance = macos.msgSend0(macos.msgSend0(objc_class.?, "alloc"), "init");
+        if (instance == @as(objc.id, null)) return error.DelegateCreationFailed;
+        errdefer _ = macos.msgSend0(instance, "release");
 
         // Store callback data as associated object
         const data_ptr_value = @intFromPtr(callback_data);
@@ -158,6 +169,12 @@ pub const ContextMenuDelegate = struct {
 
     pub fn deinit(self: *ContextMenuDelegate) void {
         if (self.instance != @as(objc.id, null)) {
+            objc.objc_setAssociatedObject(
+                self.instance,
+                @ptrFromInt(AssociatedObjectKey),
+                null,
+                objc.OBJC_ASSOCIATION_RETAIN,
+            );
             _ = macos.msgSend0(self.instance, "release");
         }
         self.callback_data.deinit();
@@ -235,7 +252,7 @@ export fn menuDidCloseHandler(
 }
 
 /// Create an NSMenu with the given items
-pub fn createMenu(allocator: std.mem.Allocator, title: []const u8, items: []const MenuItem, delegate: *ContextMenuDelegate) !objc.id {
+pub fn createMenu(_: std.mem.Allocator, title: []const u8, items: []const MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     const NSMenu = macos.getClass("NSMenu");
 
     // Create menu
@@ -245,14 +262,17 @@ pub fn createMenu(allocator: std.mem.Allocator, title: []const u8, items: []cons
         "initWithTitle:",
         nsTitle,
     );
+    if (menu == @as(objc.id, null)) return error.MenuCreationFailed;
+    errdefer _ = macos.msgSend0(menu, "release");
 
     // Set delegate
     _ = macos.msgSend1(menu, "setDelegate:", delegate.getInstance());
 
     // Add items
-    for (items, 0..) |item, index| {
-        const menu_item = try createMenuItem(allocator, item, delegate, index);
+    for (items) |item| {
+        const menu_item = try createMenuItem(item, delegate);
         _ = macos.msgSend1(menu, "addItem:", menu_item);
+        if (item.item_type != .separator) _ = macos.msgSend0(menu_item, "release");
     }
 
     std.debug.print("[ContextMenu] Created menu with {d} items\n", .{items.len});
@@ -260,7 +280,7 @@ pub fn createMenu(allocator: std.mem.Allocator, title: []const u8, items: []cons
 }
 
 /// Create an NSMenuItem
-fn createMenuItem(_: std.mem.Allocator, item: MenuItem, delegate: *ContextMenuDelegate, index: usize) !objc.id {
+fn createMenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     const NSMenuItem = macos.getClass("NSMenuItem");
 
     if (item.item_type == .separator) {
@@ -289,6 +309,8 @@ fn createMenuItem(_: std.mem.Allocator, item: MenuItem, delegate: *ContextMenuDe
         macos.sel("menuItemClicked:"),
         key_equivalent,
     );
+    if (menu_item == @as(objc.id, null)) return error.MenuItemCreationFailed;
+    errdefer _ = macos.msgSend0(menu_item, "release");
 
     // Set target to delegate
     _ = macos.msgSend1(menu_item, "setTarget:", delegate.getInstance());
@@ -298,10 +320,10 @@ fn createMenuItem(_: std.mem.Allocator, item: MenuItem, delegate: *ContextMenuDe
         *const fn (objc.id, objc.SEL, c_long) callconv(.c) void,
         @ptrCast(&objc.objc_msgSend),
     );
-    setTag(menu_item, macos.sel("setTag:"), @intCast(index));
-
-    // Store item ID in callback data
-    try delegate.callback_data.addItemId(item.id);
+    // The tag indexes the compact ID array. Menu positions cannot do that:
+    // separators have positions but deliberately have no callback ID.
+    const tag = try delegate.callback_data.addItemId(item.id);
+    setTag(menu_item, macos.sel("setTag:"), @intCast(tag));
 
     // Set modifier mask if shortcut was provided
     if (modifier_mask != 0) {
@@ -336,14 +358,14 @@ fn createMenuItem(_: std.mem.Allocator, item: MenuItem, delegate: *ContextMenuDe
                 "initWithTitle:",
                 nsTitle,
             );
+            if (submenu == @as(objc.id, null)) return error.MenuCreationFailed;
+            defer _ = macos.msgSend0(submenu, "release");
 
             // Add submenu items (non-recursive for simplicity - one level deep)
-            for (submenu_items, 0..) |sub_item, sub_index| {
-                const sub_menu_item = createSubmenuItem(sub_item, delegate, index * 100 + sub_index) catch |err| {
-                    std.debug.print("[ContextMenu] Error creating submenu item: {any}\n", .{err});
-                    continue;
-                };
+            for (submenu_items) |sub_item| {
+                const sub_menu_item = try createSubmenuItem(sub_item, delegate);
                 _ = macos.msgSend1(submenu, "addItem:", sub_menu_item);
+                if (sub_item.item_type != .separator) _ = macos.msgSend0(sub_menu_item, "release");
             }
 
             // Attach submenu to menu item
@@ -358,7 +380,7 @@ fn createMenuItem(_: std.mem.Allocator, item: MenuItem, delegate: *ContextMenuDe
 }
 
 /// Create a submenu item (simplified version for nested menus)
-fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate, index: usize) !objc.id {
+fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     const NSMenuItem = macos.getClass("NSMenuItem");
 
     if (item.item_type == .separator) {
@@ -385,6 +407,8 @@ fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate, index: usiz
         macos.sel("menuItemClicked:"),
         key_equivalent,
     );
+    if (menu_item == @as(objc.id, null)) return error.MenuItemCreationFailed;
+    errdefer _ = macos.msgSend0(menu_item, "release");
 
     // Set target to delegate
     _ = macos.msgSend1(menu_item, "setTarget:", delegate.getInstance());
@@ -394,10 +418,8 @@ fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate, index: usiz
         *const fn (objc.id, objc.SEL, c_long) callconv(.c) void,
         @ptrCast(&objc.objc_msgSend),
     );
-    setTag(menu_item, macos.sel("setTag:"), @intCast(index));
-
-    // Store item ID in callback data
-    try delegate.callback_data.addItemId(item.id);
+    const tag = try delegate.callback_data.addItemId(item.id);
+    setTag(menu_item, macos.sel("setTag:"), @intCast(tag));
 
     // Set modifier mask if shortcut was provided
     if (modifier_mask != 0) {
@@ -500,9 +522,11 @@ pub fn showSidebarContextMenu(
     callback: *const fn ([]const u8, []const u8, []const u8) void,
 ) !void {
     const delegate = try ContextMenuDelegate.init(allocator, item_id, "sidebar");
+    defer delegate.deinit();
     delegate.setOnMenuActionCallback(callback);
 
     const menu = try createMenu(allocator, "", items, delegate);
+    defer _ = macos.msgSend0(menu, "release");
     showContextMenu(menu, view, point);
 }
 
@@ -516,10 +540,23 @@ pub fn showFileContextMenu(
     callback: *const fn ([]const u8, []const u8, []const u8) void,
 ) !void {
     const delegate = try ContextMenuDelegate.init(allocator, file_id, "file");
+    defer delegate.deinit();
     delegate.setOnMenuActionCallback(callback);
 
     const menu = try createMenu(allocator, "", items, delegate);
+    defer _ = macos.msgSend0(menu, "release");
     showContextMenu(menu, view, point);
+}
+
+test "callback IDs use compact stable menu tags" {
+    const data = try MenuCallbackData.init(std.testing.allocator, "target", "file");
+    defer data.deinit();
+
+    try std.testing.expectEqual(@as(usize, 0), try data.addItemId("open"));
+    try std.testing.expectEqual(@as(usize, 1), try data.addItemId("rename"));
+    try std.testing.expectEqualStrings("open", data.getItemId(0).?);
+    try std.testing.expectEqualStrings("rename", data.getItemId(1).?);
+    try std.testing.expect(data.getItemId(2) == null);
 }
 
 /// Default sidebar context menu items
