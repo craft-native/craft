@@ -46,12 +46,16 @@ pub const SpaceList = struct {
     /// Append a space, taking a private copy of every string. The caller's
     /// slices point into a JSON parse arena that is freed on return.
     pub fn append(self: *SpaceList, space: Space) !void {
-        try self.spaces.append(self.allocator, .{
-            .id = try self.allocator.dupe(u8, space.id),
-            .label = try self.allocator.dupe(u8, space.label),
-            .icon = if (space.icon) |icon| try self.allocator.dupe(u8, icon) else null,
-            .tint = if (space.tint) |tint| try self.allocator.dupe(u8, tint) else null,
-        });
+        const id = try self.allocator.dupe(u8, space.id);
+        errdefer self.allocator.free(id);
+        const label = try self.allocator.dupe(u8, space.label);
+        errdefer self.allocator.free(label);
+        const icon = if (space.icon) |value| try self.allocator.dupe(u8, value) else null;
+        errdefer if (icon) |value| self.allocator.free(value);
+        const tint = if (space.tint) |value| try self.allocator.dupe(u8, value) else null;
+        errdefer if (tint) |value| self.allocator.free(value);
+
+        try self.spaces.append(self.allocator, .{ .id = id, .label = label, .icon = icon, .tint = tint });
         if (self.active == null) self.active = 0;
     }
 
@@ -97,18 +101,21 @@ pub const SpaceList = struct {
     /// while the sidebar is open; re-selecting by index would silently move the
     /// user to a different space whenever the list shifted under them.
     pub fn replace(self: *SpaceList, spaces: []const Space) !void {
-        const previous_id: ?[]const u8 = if (self.activeSpace()) |space|
-            try self.allocator.dupe(u8, space.id)
-        else
-            null;
-        defer if (previous_id) |id| self.allocator.free(id);
-
-        self.clear();
-        for (spaces) |space| try self.append(space);
+        // Keep the old storage alive while cloning the replacement. Its active
+        // id is therefore a stable borrowed slice, and any allocation failure
+        // destroys only `next` instead of exposing a half-replaced list.
+        const previous_id = if (self.activeSpace()) |space| space.id else null;
+        var next = SpaceList.init(self.allocator);
+        errdefer next.deinit();
+        for (spaces) |space| try next.append(space);
 
         if (previous_id) |id| {
-            if (self.indexOf(id)) |index| self.active = index;
+            _ = next.setActiveId(id);
         }
+
+        var previous = self.*;
+        self.* = next;
+        previous.deinit();
     }
 };
 
@@ -306,4 +313,45 @@ test "optional icon and tint survive a copy" {
     const space = list.activeSpace().?;
     try testing.expectEqualStrings("star.fill", space.icon.?);
     try testing.expectEqualStrings("#5aa9ee", space.tint.?);
+}
+
+fn appendWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var list = make(allocator);
+    defer list.deinit();
+    try list.append(.{
+        .id = "dev",
+        .label = "Development",
+        .icon = "star.fill",
+        .tint = "#5aa9ee",
+    });
+}
+
+test "append releases every partial clone on allocation failure" {
+    try testing.checkAllAllocationFailures(testing.allocator, appendWithAllocationFailures, .{});
+}
+
+fn replaceWithAllocationFailures(allocator: std.mem.Allocator) !void {
+    var list = make(allocator);
+    defer list.deinit();
+    try list.append(.{ .id = "personal", .label = "Personal" });
+    try list.append(.{ .id = "work", .label = "Work" });
+    _ = list.setActiveId("work");
+
+    list.replace(&.{
+        .{ .id = "side", .label = "Side project", .icon = "hammer", .tint = "#ff8800" },
+        .{ .id = "work", .label = "Work", .icon = "briefcase", .tint = "#4488ff" },
+    }) catch |err| {
+        // Every failure after initial setup leaves the complete old state,
+        // including its id-based selection, observable to the live control.
+        try testing.expectEqual(@as(usize, 2), list.count());
+        try testing.expectEqualStrings("work", list.activeSpace().?.id);
+        return err;
+    };
+
+    try testing.expectEqual(@as(usize, 2), list.count());
+    try testing.expectEqualStrings("work", list.activeSpace().?.id);
+}
+
+test "replace is atomic at every allocation failure" {
+    try testing.checkAllAllocationFailures(testing.allocator, replaceWithAllocationFailures, .{});
 }
