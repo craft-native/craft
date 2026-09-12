@@ -223,6 +223,26 @@ describe('Craft Android builder', () => {
     expect(bridge).not.toContain('locationCallback = object : LocationCallback()')
   })
 
+  it('rejects background-task methods instead of fabricating success', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-background-tasks-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('// ==================== Background Tasks ====================')
+    const end = bridge.indexOf('// ==================== PDF Viewer ====================', start)
+    const backgroundTasks = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(backgroundTasks.match(/rejectBackgroundTask\(/g)?.length).toBe(5)
+    expect(backgroundTasks).toContain("Background task '$taskId' is unavailable on Android")
+    expect(backgroundTasks).toContain('Background tasks are unavailable on Android')
+    expect(backgroundTasks).not.toContain('registered: true')
+    expect(backgroundTasks).not.toContain('scheduled: true')
+    expect(backgroundTasks).not.toContain('cancelled: true')
+    expect(backgroundTasks).not.toContain('This is a placeholder that shows the API structure')
+  })
+
   it('generates Health Connect permissions, APIs, and workout write-back only when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-health-'))
     await init({

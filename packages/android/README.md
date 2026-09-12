@@ -370,15 +370,17 @@ window.craft.unlockOrientation();           // Allow all orientations
 
 // ==================== Medium Value Bridges ====================
 
-// Background Tasks (WorkManager)
-await window.craft.backgroundTask.register('sync-data');
-await window.craft.backgroundTask.schedule('sync-data', {
-  delay: 900,              // 15 minutes
-  requiresNetwork: true,
-  requiresCharging: false
-});
-await window.craft.backgroundTask.cancel('sync-data');
-await window.craft.backgroundTask.cancelAll();
+// Background Tasks are not implemented on Android. These methods reject
+// instead of reporting that work was scheduled when no worker can run.
+try {
+  await window.craft.backgroundTask.schedule('sync-data', {
+    delay: 900,
+    requiresNetwork: true,
+    requiresCharging: false
+  });
+} catch (error) {
+  console.error(error);
+}
 
 // PDF Viewer (opens in external PDF app)
 await window.craft.openPDF('https://example.com/document.pdf');

@@ -3202,81 +3202,36 @@ class CraftBridge(
 
     @JavascriptInterface
     fun registerBackgroundTask(taskId: String) {
-        try {
-            // WorkManager tasks don't require explicit registration, just track them
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, registered: true})",
-                    null
-                )
-            }
-        } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
-        }
+        rejectBackgroundTask(taskId)
     }
 
     @JavascriptInterface
+    @Suppress("UNUSED_PARAMETER")
     fun scheduleBackgroundTask(taskId: String, delay: Long, requiresNetwork: Boolean, requiresCharging: Boolean) {
-        try {
-            // Note: Full WorkManager implementation requires adding the dependency
-            // implementation 'androidx.work:work-runtime-ktx:2.9.0'
-            // This is a placeholder that shows the API structure
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, scheduled: true, delay: $delay})",
-                    null
-                )
-            }
-        } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
-        }
+        rejectBackgroundTask(taskId)
     }
 
     @JavascriptInterface
     fun cancelBackgroundTask(taskId: String) {
-        try {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({taskId: ${jsQuote(taskId)}, cancelled: true})",
-                    null
-                )
-            }
-        } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
-        }
+        rejectBackgroundTask(taskId)
     }
 
     @JavascriptInterface
     fun cancelAllBackgroundTasks() {
-        try {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskResolve && window._craftBgTaskResolve({cancelled: true})",
-                    null
-                )
-            }
-        } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+        rejectBackgroundTask()
+    }
+
+    private fun rejectBackgroundTask(taskId: String? = null) {
+        val message = if (taskId == null) {
+            "Background tasks are unavailable on Android"
+        } else {
+            "Background task '$taskId' is unavailable on Android"
+        }
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(message)})",
+                null
+            )
         }
     }
 
