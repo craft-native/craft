@@ -39,6 +39,7 @@ const macos_source = @embedFile("src/macos.zig");
 const window_bridge_source = @embedFile("src/bridge_window.zig");
 const native_ui_bridge_source = @embedFile("src/bridge_native_ui.zig");
 const space_switcher_source = @embedFile("src/components/native_space_switcher.zig");
+const keyboard_handler_source = @embedFile("src/components/keyboard_handler.zig");
 const tray_menu_source = @embedFile("src/tray_menu.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
@@ -453,6 +454,34 @@ test "native UI teardown and delayed control events stay window-scoped" {
         return error.SpaceSwitcherEmitterNotFound;
     const emit_body = enclosingFnBody(space_switcher_source, emit_start);
     try testing.expect(std.mem.indexOf(u8, emit_body, "tryEvalJSInWebView(webview") != null);
+}
+
+test "native UI keyboard callbacks are associated with their source view" {
+    for ([_][]const u8{
+        "global_keyboard_callback_data",
+        "global_outline_spacebar_callback",
+        "global_table_spacebar_callback",
+        "global_outline_return_callback",
+        "global_table_return_callback",
+    }) |retired_global| {
+        try testing.expect(std.mem.indexOf(u8, keyboard_handler_source, retired_global) == null);
+    }
+
+    const outline_start = std.mem.indexOf(u8, keyboard_handler_source, "export fn craftOutlineViewKeyDown(") orelse
+        return error.OutlineKeyHandlerNotFound;
+    const outline_end = std.mem.indexOfPos(u8, keyboard_handler_source, outline_start, "/// keyDown: handler for CraftTableView") orelse
+        return error.OutlineKeyHandlerEndNotFound;
+    const outline_body = keyboard_handler_source[outline_start..outline_end];
+    try testing.expect(std.mem.indexOf(u8, outline_body, "viewCallback(self, &outline_spacebar_association_key)") != null);
+    try testing.expect(std.mem.indexOf(u8, outline_body, "viewCallback(self, &outline_return_association_key)") != null);
+
+    const table_start = std.mem.indexOf(u8, keyboard_handler_source, "export fn craftTableViewKeyDown(") orelse
+        return error.TableKeyHandlerNotFound;
+    const table_end = std.mem.indexOfPos(u8, keyboard_handler_source, table_start, "/// Set the spacebar callback") orelse
+        return error.TableKeyHandlerEndNotFound;
+    const table_body = keyboard_handler_source[table_start..table_end];
+    try testing.expect(std.mem.indexOf(u8, table_body, "viewCallback(self, &table_spacebar_association_key)") != null);
+    try testing.expect(std.mem.indexOf(u8, table_body, "viewCallback(self, &table_return_association_key)") != null);
 }
 
 test "destroy releases every retained runtime-window resource" {

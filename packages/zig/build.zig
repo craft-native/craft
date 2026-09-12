@@ -1186,6 +1186,9 @@ pub fn build(b: *std.Build) void {
     window_lifecycle_tests.root_module.addAnonymousImport("src/components/native_space_switcher.zig", .{
         .root_source_file = b.path("src/components/native_space_switcher.zig"),
     });
+    window_lifecycle_tests.root_module.addAnonymousImport("src/components/keyboard_handler.zig", .{
+        .root_source_file = b.path("src/components/keyboard_handler.zig"),
+    });
     window_lifecycle_tests.root_module.addAnonymousImport("src/tray_menu.zig", .{
         .root_source_file = b.path("src/tray_menu.zig"),
     });

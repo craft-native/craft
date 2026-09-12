@@ -240,6 +240,11 @@ target/action callbacks, such as a spaces-switcher selection, retain the
 owning webview explicitly because bridge sender context ends when dispatch
 returns.
 
+Keyboard handlers use Objective-C associated objects on each outline/table
+view and monitor instance. A sidebar or file browser therefore reads only its
+own space/return callbacks; creating a component in another window cannot
+replace them.
+
 Quick Look is the exception. `QLPreviewPanel` is a shared AppKit panel, so its
 controller is intentionally app-scoped; showing it from another window
 replaces the shared panel's contents.

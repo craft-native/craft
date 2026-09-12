@@ -219,13 +219,13 @@ pub const NativeSidebar = struct {
     }
 
     /// Register callback for spacebar key (Quick Look)
-    pub fn setOnSpacebarCallback(_: *NativeSidebar, callback: *const fn () void) void {
-        keyboard_handler.setOutlineViewSpacebarCallback(callback);
+    pub fn setOnSpacebarCallback(self: *NativeSidebar, callback: *const fn () void) void {
+        keyboard_handler.setOutlineViewSpacebarCallback(self.outline_view, callback);
     }
 
     /// Register callback for return key
-    pub fn setOnReturnCallback(_: *NativeSidebar, callback: *const fn () void) void {
-        keyboard_handler.setOutlineViewReturnCallback(callback);
+    pub fn setOnReturnCallback(self: *NativeSidebar, callback: *const fn () void) void {
+        keyboard_handler.setOutlineViewReturnCallback(self.outline_view, callback);
     }
 
     /// Set frame for the sidebar view

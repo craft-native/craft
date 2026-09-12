@@ -105,6 +105,12 @@ pub const KeyboardMonitor = struct {
 
     pub fn deinit(self: *KeyboardMonitor) void {
         if (self.monitor != @as(objc.id, null)) {
+            objc.objc_setAssociatedObject(
+                self.monitor,
+                &keyboard_monitor_association_key,
+                null,
+                objc.OBJC_ASSOCIATION_RETAIN,
+            );
             const NSEvent = macos.getClass("NSEvent");
             if (NSEvent != null) {
                 _ = macos.msgSend1(NSEvent, "removeMonitor:", self.monitor);
@@ -152,14 +158,10 @@ pub const KeyboardMonitor = struct {
     }
 };
 
-// Global storage for callback data (needed for the C callback)
-var global_keyboard_callback_data: ?*KeyboardCallbackData = null;
+var keyboard_monitor_association_key: u8 = 0;
 
 /// Create a local event monitor
 fn createLocalMonitor(NSEvent: objc.Class, mask: c_ulonglong, data_ptr: usize) objc.id {
-    // Store globally for the callback
-    global_keyboard_callback_data = @ptrFromInt(data_ptr);
-
     // We'll use a different approach - create an NSObject subclass that handles events
     // and use it with performSelector or similar
 
@@ -177,7 +179,7 @@ fn createLocalMonitor(NSEvent: objc.Class, mask: c_ulonglong, data_ptr: usize) o
     );
     objc.objc_setAssociatedObject(
         instance,
-        @ptrFromInt(0x4B45),
+        &keyboard_monitor_association_key,
         data_value,
         objc.OBJC_ASSOCIATION_RETAIN,
     );
@@ -228,8 +230,6 @@ export fn keyboardHandleKeyEvent(
     _: objc.SEL,
     event: objc.id,
 ) callconv(.c) void {
-    _ = self;
-
     if (event == @as(objc.id, null)) return;
 
     // Get key code
@@ -246,8 +246,12 @@ export fn keyboardHandleKeyEvent(
     );
     const modifiers = modifierFlags(event, macos.sel("modifierFlags"));
 
-    // Process using global callback data
-    if (global_keyboard_callback_data) |data| {
+    const associated = objc.objc_getAssociatedObject(self, &keyboard_monitor_association_key);
+    if (associated == @as(objc.id, null)) return;
+    const data_ptr = macos.msgSend0(associated, "pointerValue");
+    if (@intFromPtr(data_ptr) == 0) return;
+    const data: *KeyboardCallbackData = @ptrCast(@alignCast(data_ptr));
+    {
         processKeyEvent(data, code, modifiers);
     }
 }
@@ -328,17 +332,26 @@ pub fn enableKeyEventsForView(view: objc.id) void {
     }
 }
 
-/// Global storage for outline view spacebar callback
-var global_outline_spacebar_callback: ?*const fn () void = null;
+var outline_spacebar_association_key: u8 = 0;
+var table_spacebar_association_key: u8 = 0;
+var outline_return_association_key: u8 = 0;
+var table_return_association_key: u8 = 0;
 
-/// Global storage for table view spacebar callback
-var global_table_spacebar_callback: ?*const fn () void = null;
+fn storeViewCallback(view: objc.id, key: *const anyopaque, callback: ?*const fn () void) void {
+    const value = if (callback) |cb| blk: {
+        const NSValue = macos.getClass("NSValue");
+        break :blk macos.msgSend1(NSValue, "valueWithPointer:", @as(?*anyopaque, @ptrCast(@constCast(cb))));
+    } else null;
+    objc.objc_setAssociatedObject(view, key, value, objc.OBJC_ASSOCIATION_RETAIN);
+}
 
-/// Global storage for outline view return callback
-var global_outline_return_callback: ?*const fn () void = null;
-
-/// Global storage for table view return callback
-var global_table_return_callback: ?*const fn () void = null;
+fn viewCallback(view: objc.id, key: *const anyopaque) ?*const fn () void {
+    const associated = objc.objc_getAssociatedObject(view, key);
+    if (associated == @as(objc.id, null)) return null;
+    const ptr = macos.msgSend0(associated, "pointerValue");
+    if (@intFromPtr(ptr) == 0) return null;
+    return @ptrCast(@alignCast(ptr));
+}
 
 /// Create a custom NSOutlineView subclass with keyboard handling
 pub fn createCraftOutlineViewClass() !objc.Class {
@@ -446,7 +459,7 @@ export fn craftOutlineViewKeyDown(
     // Handle spacebar for Quick Look
     if (code == KeyCode.Space) {
         std.debug.print("[Keyboard] Spacebar pressed in outline view\n", .{});
-        if (global_outline_spacebar_callback) |callback| {
+        if (viewCallback(self, &outline_spacebar_association_key)) |callback| {
             callback();
             return;
         }
@@ -455,7 +468,7 @@ export fn craftOutlineViewKeyDown(
     // Handle Return key
     if (code == KeyCode.Return) {
         std.debug.print("[Keyboard] Return pressed in outline view\n", .{});
-        if (global_outline_return_callback) |callback| {
+        if (viewCallback(self, &outline_return_association_key)) |callback| {
             callback();
             return;
         }
@@ -488,7 +501,7 @@ export fn craftTableViewKeyDown(
     // Handle spacebar for Quick Look
     if (code == KeyCode.Space) {
         std.debug.print("[Keyboard] Spacebar pressed in table view\n", .{});
-        if (global_table_spacebar_callback) |callback| {
+        if (viewCallback(self, &table_spacebar_association_key)) |callback| {
             callback();
             return;
         }
@@ -497,7 +510,7 @@ export fn craftTableViewKeyDown(
     // Handle Return key for opening
     if (code == KeyCode.Return) {
         std.debug.print("[Keyboard] Return pressed in table view\n", .{});
-        if (global_table_return_callback) |callback| {
+        if (viewCallback(self, &table_return_association_key)) |callback| {
             callback();
             return;
         }
@@ -513,23 +526,23 @@ export fn craftTableViewKeyDown(
 }
 
 /// Set the spacebar callback for outline view (sidebar)
-pub fn setOutlineViewSpacebarCallback(callback: ?*const fn () void) void {
-    global_outline_spacebar_callback = callback;
+pub fn setOutlineViewSpacebarCallback(view: objc.id, callback: ?*const fn () void) void {
+    storeViewCallback(view, &outline_spacebar_association_key, callback);
 }
 
 /// Set the spacebar callback for table view (file browser)
-pub fn setTableViewSpacebarCallback(callback: ?*const fn () void) void {
-    global_table_spacebar_callback = callback;
+pub fn setTableViewSpacebarCallback(view: objc.id, callback: ?*const fn () void) void {
+    storeViewCallback(view, &table_spacebar_association_key, callback);
 }
 
 /// Set the return key callback for outline view (sidebar)
-pub fn setOutlineViewReturnCallback(callback: ?*const fn () void) void {
-    global_outline_return_callback = callback;
+pub fn setOutlineViewReturnCallback(view: objc.id, callback: ?*const fn () void) void {
+    storeViewCallback(view, &outline_return_association_key, callback);
 }
 
 /// Set the return key callback for table view (file browser)
-pub fn setTableViewReturnCallback(callback: ?*const fn () void) void {
-    global_table_return_callback = callback;
+pub fn setTableViewReturnCallback(view: objc.id, callback: ?*const fn () void) void {
+    storeViewCallback(view, &table_return_association_key, callback);
 }
 
 /// Install a key equivalent handler for a specific key combination

@@ -195,13 +195,13 @@ pub const NativeFileBrowser = struct {
     }
 
     /// Register callback for spacebar key (Quick Look)
-    pub fn setOnSpacebarCallback(_: *NativeFileBrowser, callback: *const fn () void) void {
-        keyboard_handler.setTableViewSpacebarCallback(callback);
+    pub fn setOnSpacebarCallback(self: *NativeFileBrowser, callback: *const fn () void) void {
+        keyboard_handler.setTableViewSpacebarCallback(self.table_view, callback);
     }
 
     /// Register callback for return key (open file)
-    pub fn setOnReturnCallback(_: *NativeFileBrowser, callback: *const fn () void) void {
-        keyboard_handler.setTableViewReturnCallback(callback);
+    pub fn setOnReturnCallback(self: *NativeFileBrowser, callback: *const fn () void) void {
+        keyboard_handler.setTableViewReturnCallback(self.table_view, callback);
     }
 
     /// Set frame for the file browser view
