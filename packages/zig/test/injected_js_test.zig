@@ -361,6 +361,27 @@ test "craft.shortcuts.register posts what the native registry reads" {
     try testing.expect(entry.binding.modifiers.shift);
 }
 
+test "a retained window handle names the window it targets" {
+    // `Window` objects live in the page that opened the child. The child is
+    // not the sender of this message, so sender context alone cannot route the
+    // call; the stable name returned by `craft.window.open` must travel in the
+    // payload.
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\window.craft.window._call('setTitle', { title: 'Preferences' }, 'settings');
+    );
+
+    try testing.expectEqualStrings("window", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("setTitle", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("settings", try fx.text("JSON.parse(posted[0].d).windowId"));
+    try testing.expectEqualStrings("Preferences", try fx.text("JSON.parse(posted[0].d).title"));
+}
+
 test "unregister, enable and disable post the id the registry looks up" {
     var fx = try Fixture.init();
     defer fx.deinit();

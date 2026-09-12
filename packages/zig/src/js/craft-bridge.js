@@ -469,6 +469,15 @@
   // window — full surface from bridge_window.zig
   // -------------------------------------------------------------------------
   window.craft.window = {
+    // Internal adapter used by the TypeScript `Window` handle. The regular
+    // methods below always mean "this page's window"; a retained handle must
+    // be able to address the named child it represents from another page.
+    // Keep the target inside `d` so the native dispatcher still owns sender
+    // authentication and request-id correlation.
+    _call: function (action, data, windowId) {
+      const payload = Object.assign({}, data || {}, { windowId: String(windowId || 'main') })
+      return _send('window', String(action), _stringify(payload))
+    },
     show:         function ()         { return _send('window', 'show') },
     hide:         function ()         { return _send('window', 'hide') },
     toggle:       function ()         { return _send('window', 'toggle') },

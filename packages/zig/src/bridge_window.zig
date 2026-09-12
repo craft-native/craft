@@ -55,23 +55,23 @@ pub const WindowBridge = struct {
 
     pub fn handleMessageWithData(self: *Self, action: []const u8, data: ?[]const u8) !void {
         if (std.mem.eql(u8, action, "show")) {
-            try self.show();
+            try self.show(data);
         } else if (std.mem.eql(u8, action, "hide")) {
-            try self.hide();
+            try self.hide(data);
         } else if (std.mem.eql(u8, action, "toggle")) {
-            try self.toggle();
+            try self.toggle(data);
         } else if (std.mem.eql(u8, action, "focus")) {
-            try self.focus();
+            try self.focus(data);
         } else if (std.mem.eql(u8, action, "minimize")) {
-            try self.minimize();
+            try self.minimize(data);
         } else if (std.mem.eql(u8, action, "maximize")) {
-            try self.maximize();
+            try self.maximize(data);
         } else if (std.mem.eql(u8, action, "close")) {
-            try self.close();
+            try self.close(data);
         } else if (std.mem.eql(u8, action, "center")) {
-            try self.center();
+            try self.center(data);
         } else if (std.mem.eql(u8, action, "toggleFullscreen")) {
-            try self.toggleFullscreen();
+            try self.toggleFullscreen(data);
         } else if (std.mem.eql(u8, action, "setFullscreen")) {
             try self.setFullscreen(data);
         } else if (std.mem.eql(u8, action, "setSize")) {
@@ -83,7 +83,7 @@ pub const WindowBridge = struct {
         } else if (std.mem.eql(u8, action, "setTitle")) {
             try self.setTitle(data);
         } else if (std.mem.eql(u8, action, "reload")) {
-            try self.reload();
+            try self.reload(data);
         } else if (std.mem.eql(u8, action, "setAppearance")) {
             try self.setAppearance(data);
         } else if (std.mem.eql(u8, action, "setVibrancy")) {
@@ -105,7 +105,7 @@ pub const WindowBridge = struct {
         } else if (std.mem.eql(u8, action, "setMovable")) {
             try self.setMovable(data);
         } else if (std.mem.eql(u8, action, "startDrag")) {
-            try self.startDrag();
+            try self.startDrag(data);
         } else if (std.mem.eql(u8, action, "setHasShadow")) {
             try self.setHasShadow(data);
         } else if (std.mem.eql(u8, action, "setAspectRatio")) {
@@ -135,15 +135,54 @@ pub const WindowBridge = struct {
     /// Before this, every action used that one handle. With a second window
     /// open, `craft.window.close()` from the Settings page closed the main
     /// window — the bridge had no way of knowing who was asking.
-    fn requireWindowHandle(self: *Self) BridgeError!*anyopaque {
+    fn requireWindowHandle(self: *Self, data: ?[]const u8) BridgeError!*anyopaque {
+        if (data) |json_data| {
+            if (json_utils.getString(json_data, "windowId")) |name| {
+                // `main` means "the page this SDK instance is running in".
+                // Every page constructs its local WindowManager that way, so
+                // resolving it through the registry would incorrectly send a
+                // child page back to the process's first window.
+                if (!std.mem.eql(u8, name, "main")) {
+                    const named = window_registry.byName(name) orelse
+                        return BridgeError.InvalidParameter;
+                    return @ptrFromInt(named);
+                }
+            }
+        }
         if (window_context.current()) |sender| {
             return @ptrFromInt(sender);
         }
         return self.window_handle orelse BridgeError.WindowHandleNotSet;
     }
 
-    /// Get webview handle or return error
-    fn requireWebViewHandle(self: *Self) BridgeError!*anyopaque {
+    /// The webview this action applies to.
+    ///
+    /// Exactly parallel to `requireWindowHandle`: a page-driven action belongs
+    /// to the webview that posted it. The stored handle is only the fallback
+    /// for native callers and the original single-window path. Without the
+    /// sender context, `reload()` in a secondary window reloads whichever
+    /// webview happened to initialise the process-global bridge first.
+    fn requireWebViewHandle(self: *Self, data: ?[]const u8) BridgeError!*anyopaque {
+        if (data) |json_data| {
+            if (json_utils.getString(json_data, "windowId")) |name| {
+                if (!std.mem.eql(u8, name, "main")) {
+                    const window = window_registry.byName(name) orelse
+                        return BridgeError.InvalidParameter;
+                    if (builtin.os.tag == .macos) {
+                        const macos = @import("macos.zig");
+                        const maybe_webview = macos.webViewForWindow(@ptrFromInt(window)) orelse
+                            return BridgeError.WebViewHandleNotSet;
+                        const webview = maybe_webview orelse
+                            return BridgeError.WebViewHandleNotSet;
+                        return webview;
+                    }
+                    return BridgeError.WebViewHandleNotSet;
+                }
+            }
+        }
+        if (window_context.currentWebView()) |sender| {
+            return @ptrFromInt(sender);
+        }
         return self.webview_handle orelse BridgeError.WebViewHandleNotSet;
     }
 
@@ -234,8 +273,8 @@ pub const WindowBridge = struct {
         bridge_error.sendResultToJS(self.allocator, "open", json);
     }
 
-    fn show(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn show(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -243,8 +282,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn hide(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn hide(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -252,8 +291,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn toggle(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn toggle(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -261,8 +300,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn minimize(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn minimize(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -270,8 +309,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn close(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn close(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -279,8 +318,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn focus(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn focus(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -289,8 +328,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn maximize(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn maximize(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -299,8 +338,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn center(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn center(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -308,8 +347,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn toggleFullscreen(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn toggleFullscreen(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -318,7 +357,7 @@ pub const WindowBridge = struct {
     }
 
     fn setFullscreen(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         // Parse `{"fullscreen": true|false}`. The old implementation fell
         // back to matching any `:false` / `:true` in the blob, which meant
@@ -353,7 +392,7 @@ pub const WindowBridge = struct {
     }
 
     fn setSize(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
 
         // Use the shared JSON helper; it handles whitespace, escapes, and
@@ -370,7 +409,7 @@ pub const WindowBridge = struct {
     }
 
     fn setPosition(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
 
         // `getInt` only accepts a leading `-` on the number itself, so
@@ -387,7 +426,7 @@ pub const WindowBridge = struct {
     }
 
     fn moveBy(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
 
         const dx = json_utils.getFloat(f64, json_data, "dx") orelse 0.0;
@@ -400,7 +439,7 @@ pub const WindowBridge = struct {
     }
 
     fn setTitle(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
 
         // Use the shared getString helper (imported at module scope), which
@@ -421,8 +460,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn reload(self: *Self) !void {
-        const handle = try self.requireWebViewHandle();
+    fn reload(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWebViewHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -438,7 +477,7 @@ pub const WindowBridge = struct {
     /// window's appearance rather than the page's. Without a way to say so,
     /// choosing dark in an app left a dark page on a light material.
     fn setAppearance(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
         const mode = json_utils.getString(json_data, "appearance") orelse return BridgeError.InvalidJSON;
 
@@ -457,7 +496,7 @@ pub const WindowBridge = struct {
     }
 
     fn setVibrancy(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -548,15 +587,13 @@ pub const WindowBridge = struct {
     }
 
     fn setAlwaysOnTop(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
-        var always_on_top = true;
-        if (data) |json_data| {
-            // Parse {"alwaysOnTop": true/false}
-            if (std.mem.indexOf(u8, json_data, "false")) |_| {
-                always_on_top = false;
-            }
-        }
+        const always_on_top = if (data) |json_data|
+            json_utils.getBool(json_data, "value") orelse
+                json_utils.getBool(json_data, "alwaysOnTop") orelse true
+        else
+            true;
 
         log.debug("setAlwaysOnTop: {}", .{always_on_top});
 
@@ -569,7 +606,7 @@ pub const WindowBridge = struct {
     }
 
     fn setOpacity(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         var opacity: f64 = 1.0;
         if (data) |json_data| {
@@ -601,14 +638,13 @@ pub const WindowBridge = struct {
     }
 
     fn setResizable(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
-        var resizable = true;
-        if (data) |json_data| {
-            if (std.mem.indexOf(u8, json_data, "false")) |_| {
-                resizable = false;
-            }
-        }
+        const resizable = if (data) |json_data|
+            json_utils.getBool(json_data, "value") orelse
+                json_utils.getBool(json_data, "resizable") orelse true
+        else
+            true;
 
         log.debug("setResizable: {}", .{resizable});
 
@@ -631,7 +667,7 @@ pub const WindowBridge = struct {
     }
 
     fn setBackgroundColor(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         // Default to white
         var r: f64 = 1.0;
@@ -680,7 +716,7 @@ pub const WindowBridge = struct {
     }
 
     fn setMinSize(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         var width: u32 = 100;
         var height: u32 = 100;
@@ -719,7 +755,7 @@ pub const WindowBridge = struct {
     }
 
     fn setMaxSize(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         var width: u32 = 10000;
         var height: u32 = 10000;
@@ -756,14 +792,13 @@ pub const WindowBridge = struct {
     }
 
     fn setMovable(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
-        var movable = true;
-        if (data) |json_data| {
-            if (std.mem.indexOf(u8, json_data, "false")) |_| {
-                movable = false;
-            }
-        }
+        const movable = if (data) |json_data|
+            json_utils.getBool(json_data, "value") orelse
+                json_utils.getBool(json_data, "movable") orelse true
+        else
+            true;
 
         log.debug("setMovable: {}", .{movable});
 
@@ -773,8 +808,8 @@ pub const WindowBridge = struct {
         }
     }
 
-    fn startDrag(self: *Self) !void {
-        const handle = try self.requireWindowHandle();
+    fn startDrag(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -783,14 +818,13 @@ pub const WindowBridge = struct {
     }
 
     fn setHasShadow(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
-        var has_shadow = true;
-        if (data) |json_data| {
-            if (std.mem.indexOf(u8, json_data, "false")) |_| {
-                has_shadow = false;
-            }
-        }
+        const has_shadow = if (data) |json_data|
+            json_utils.getBool(json_data, "value") orelse
+                json_utils.getBool(json_data, "hasShadow") orelse true
+        else
+            true;
 
         log.debug("setHasShadow: {}", .{has_shadow});
 
@@ -803,7 +837,7 @@ pub const WindowBridge = struct {
     /// Set aspect ratio for window resizing
     /// JSON: {"width": 16, "height": 9} or {"ratio": 1.777}
     fn setAspectRatio(self: *Self, data: ?[]const u8) !void {
-        const handle = try self.requireWindowHandle();
+        const handle = try self.requireWindowHandle(data);
 
         var width: f64 = 0;
         var height: f64 = 0;
@@ -867,14 +901,12 @@ pub const WindowBridge = struct {
     /// Flash the window frame to get user attention (bounce dock icon on macOS)
     /// JSON: {"flash": true} or {"count": 3}
     fn flashFrame(self: *Self, data: ?[]const u8) !void {
-        _ = try self.requireWindowHandle();
+        _ = try self.requireWindowHandle(data);
 
-        var should_flash = true;
-        if (data) |json_data| {
-            if (std.mem.indexOf(u8, json_data, "false")) |_| {
-                should_flash = false;
-            }
-        }
+        const should_flash = if (data) |json_data|
+            json_utils.getBool(json_data, "flash") orelse true
+        else
+            true;
 
         log.debug("flashFrame: {}", .{should_flash});
 
@@ -902,7 +934,7 @@ pub const WindowBridge = struct {
     /// Set dock progress bar (macOS only)
     /// JSON: {"progress": 0.5} (0.0-1.0) or {"progress": -1} to hide
     fn setProgressBar(self: *Self, data: ?[]const u8) !void {
-        _ = try self.requireWindowHandle();
+        _ = try self.requireWindowHandle(data);
 
         var progress: f64 = -1;
         if (data) |json_data| {
@@ -971,7 +1003,7 @@ test "WindowBridge.requireWindowHandle returns error when null" {
     var bridge = WindowBridge.init(testing.allocator);
     defer bridge.deinit();
 
-    const result = bridge.requireWindowHandle();
+    const result = bridge.requireWindowHandle(null);
     try testing.expectError(BridgeError.WindowHandleNotSet, result);
 }
 
@@ -980,8 +1012,84 @@ test "WindowBridge.requireWebViewHandle returns error when null" {
     var bridge = WindowBridge.init(testing.allocator);
     defer bridge.deinit();
 
-    const result = bridge.requireWebViewHandle();
+    const result = bridge.requireWebViewHandle(null);
     try testing.expectError(BridgeError.WebViewHandleNotSet, result);
+}
+
+test "WindowBridge uses the sending webview before its stored fallback" {
+    const testing = std.testing;
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+    bridge.setWebViewHandle(@ptrFromInt(0x1000));
+
+    window_context.push(0x2000, 0x2001);
+    defer window_context.pop();
+
+    try testing.expectEqual(
+        @as(usize, 0x2001),
+        @intFromPtr(try bridge.requireWebViewHandle(null)),
+    );
+}
+
+test "a named window handle overrides the sending window" {
+    const testing = std.testing;
+    window_registry.resetForTesting();
+    window_context.resetForTesting();
+    defer window_registry.resetForTesting();
+    defer window_context.resetForTesting();
+
+    try testing.expect(window_registry.rememberNamed(0x3000, "settings"));
+    window_context.push(0x2000, 0x2001);
+    defer window_context.pop();
+
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+    bridge.setWindowHandle(@ptrFromInt(0x1000));
+
+    try testing.expectEqual(
+        @as(usize, 0x3000),
+        @intFromPtr(try bridge.requireWindowHandle("{\"windowId\":\"settings\"}")),
+    );
+}
+
+test "the local main alias still means the sending window" {
+    const testing = std.testing;
+    window_context.resetForTesting();
+    defer window_context.resetForTesting();
+
+    window_context.push(0x2000, 0x2001);
+    defer window_context.pop();
+
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+    bridge.setWindowHandle(@ptrFromInt(0x1000));
+
+    try testing.expectEqual(
+        @as(usize, 0x2000),
+        @intFromPtr(try bridge.requireWindowHandle("{\"windowId\":\"main\"}")),
+    );
+}
+
+test "an unknown named window is rejected instead of touching the sender" {
+    const testing = std.testing;
+    window_registry.resetForTesting();
+    window_context.resetForTesting();
+    defer window_registry.resetForTesting();
+    defer window_context.resetForTesting();
+
+    window_context.push(0x2000, 0x2001);
+    defer window_context.pop();
+
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    try testing.expectError(
+        BridgeError.InvalidParameter,
+        bridge.requireWindowHandle("{\"windowId\":\"gone\"}"),
+    );
 }
 
 test "an action that takes a payload fails without one" {

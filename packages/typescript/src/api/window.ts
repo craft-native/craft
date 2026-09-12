@@ -5,7 +5,18 @@
  */
 
 import { getBridge } from '../bridge/core.js'
-import { isWebKitHost, webkitRequest } from '../bridge/webkit-pending.js'
+import { isWebKitHost } from '../bridge/webkit-pending.js'
+
+interface InjectedWindowBridge {
+  _call<T>(action: string, data: Record<string, any> | undefined, windowId: string): Promise<T>
+  open(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
+}
+
+function getInjectedWindowBridge(): InjectedWindowBridge | undefined {
+  if (typeof globalThis.window === 'undefined') return undefined
+  return (globalThis.window as unknown as { craft?: { window?: InjectedWindowBridge } })
+    .craft?.window
+}
 
 // ============================================================================
 // Types
@@ -709,16 +720,11 @@ export class Window {
 
   private async _call<T = void>(action: string, data?: Record<string, any>): Promise<T> {
     if (isWebKitHost()) {
-      // Route via the unified WKWebView pending queue so getters actually
-      // receive their native response instead of resolving with `undefined`
-      // (the previous implementation silently broke `getTitle()`,
-      // `getSize()`, `getBounds()`, `getState()`, etc.).
-      return webkitRequest<T>(`window.${action}`, {
-        type: 'window',
-        action,
-        windowId: this._id,
-        data,
-      })
+      const injected = getInjectedWindowBridge()
+      if (!injected?._call) {
+        throw new Error('Craft window bridge is unavailable')
+      }
+      return injected._call<T>(action, data, this._id)
     }
 
     // Fallback to unified NativeBridge.
@@ -783,8 +789,17 @@ class WindowManager {
     const id = options.id || `window_${++this._idCounter}_${Date.now()}`
     const existing = this._windows.get(id)
 
-    const bridge = getBridge()
-    await bridge.request('window.create', { ...options, id })
+    if (isWebKitHost()) {
+      const injected = getInjectedWindowBridge()
+      if (!injected?.open) {
+        throw new Error('Craft window bridge is unavailable')
+      }
+      await injected.open({ ...options, id })
+    }
+    else {
+      const bridge = getBridge()
+      await bridge.request('window.create', { ...options, id })
+    }
 
     if (existing) return existing
 

@@ -610,6 +610,26 @@ await window.craft.window.open({
 });
 ```
 
+The TypeScript SDK returns that stable identity as a `Window` handle. Calls on
+the handle continue to address the child even when they are made by the page
+that opened it:
+
+```typescript
+import { createWindow } from 'craft-native'
+
+const settings = await createWindow({
+  id: 'settings',
+  url: 'http://127.0.0.1:8471/app/settings',
+})
+
+await settings.setTitle('Preferences')
+await settings.focus()
+```
+
+The plain `window.craft.window.*` methods still apply to the page that invokes
+them. The named target is carried only by the SDK handle; an unknown name is
+rejected instead of falling back to the caller's window.
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `name` (or `id`) | — | Required. The window's identity, up to 64 bytes. |
