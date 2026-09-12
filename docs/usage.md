@@ -313,36 +313,40 @@ export default {
 ### Creating Multiple Windows
 
 ```typescript
-import { createApp, createWindow } from 'craft-native'
+import { createWindow, windowManager } from 'craft-native'
 
-const app = await createApp()
-
-// Main window
-const mainWindow = await createWindow(mainHtml, {
-  title: 'Main Window',
-  width: 1200,
-  height: 800,
-})
+const mainWindow = windowManager.current
 
 // Settings window
-const settingsWindow = await createWindow(settingsHtml, {
+const settingsWindow = await createWindow({
+  id: 'settings',
+  html: settingsHtml,
   title: 'Settings',
   width: 600,
   height: 400,
-  parent: mainWindow, // Optional: make it a child window
 })
+
+await settingsWindow.focus()
 ```
 
-### Window Communication
+Calling `createWindow` again with the same `id` brings the retained native
+window forward and returns the same typed handle. Runtime creation currently
+uses the macOS host; modal and parent-window relationships are not supported.
+
+### Window Lifecycle Events
 
 ```typescript
-// Send message between windows
-mainWindow.emit('update', { key: 'value' })
+mainWindow.on('focus', () => {
+  console.log('Main window focused')
+})
 
-settingsWindow.on('update', (data) => {
-  console.log('Received in settings:', data)
+settingsWindow.on('resize', ({ width, height }) => {
+  console.log(`Settings resized to ${width}×${height}`)
 })
 ```
+
+The creator page receives events for `settingsWindow` on that named handle;
+the Settings page receives its local events on `windowManager.current`.
 
 ## Hot Reload
 

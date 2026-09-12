@@ -437,6 +437,10 @@ const inspector = await createWindow({
 
 await inspector.setPosition(900, 120)
 await inspector.focus()
+
+const stopWatching = inspector.on('resize', ({ width, height }) => {
+  console.log(`Inspector is now ${width}×${height}`)
+})
 ```
 
 Every operation on `inspector` carries that stable ID to the host, so it still
@@ -466,6 +470,12 @@ for (const handle of windowManager.all) {
 const focused = await windowManager.getFocused()
 console.log(focused?.id)
 ```
+
+Native lifecycle events are scoped to their owners. The Inspector page sees
+its own events through `windowManager.current` (`main` locally), and the page
+that created it sees the same transitions through the `inspector` handle.
+Other open windows do not receive them. Call the unsubscribe function returned
+by `on`, such as `stopWatching()` above, when the listener is no longer needed.
 
 Closing a window keeps its native page alive so the macOS reopen lifecycle can
 restore its DOM and JavaScript state. Force-destroy and modal/parent semantics

@@ -624,11 +624,20 @@ const settings = await createWindow({
 
 await settings.setTitle('Preferences')
 await settings.focus()
+
+const unsubscribe = settings.on('focus', () => {
+  console.log('Settings is focused')
+})
 ```
 
 The plain `window.craft.window.*` methods still apply to the page that invokes
 them. The named target is carried only by the SDK handle; an unknown name is
 rejected instead of falling back to the caller's window.
+
+Window lifecycle events follow the same ownership rule. A runtime-created
+window receives the event in its own page as `windowManager.current`, and its
+creator receives it on the named handle (`settings` above). Craft does not
+broadcast the transition into unrelated pages.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
