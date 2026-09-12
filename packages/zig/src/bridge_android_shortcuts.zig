@@ -26,6 +26,10 @@
 //! and `putExtra("shortcut_type", type)` puts it in the intent as well. So two
 //! shortcuts sharing a `type` are one shortcut, silently — the second replaces
 //! the first in a `List` the framework keys by id.
+//!
+//! MainActivity reads that extra on both cold and warm launches. CraftBridge
+//! queues cold-launch values until its script is installed, then dispatches
+//! `craftShortcut` with the same `type` the page supplied here.
 
 const std = @import("std");
 const jni = @import("jni_runtime.zig");

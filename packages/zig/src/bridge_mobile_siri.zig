@@ -38,6 +38,10 @@
 //! they disagree gets the identifier the process actually has, which is the
 //! one Siri will match against.
 //!
+//! Invoking the donated activity returns through `CraftAppDelegate`. The
+//! template queues its `craftSiriShortcut` event until the web bridge is ready,
+//! so a cold launch carries the same action as a foreground invocation.
+//!
 //! ## Key order in the replies
 //!
 //! Swift resolves Swift `Dictionary` literals, and `JSONSerialization` emits

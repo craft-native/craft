@@ -598,3 +598,69 @@ test "the holder's package is the one JNI_OnLoad looks for" {
     // separate from CraftBridge.
     try testing.expect(std.mem.indexOf(u8, package, "{") == null);
 }
+
+// ---------------------------------------------------------------------------
+// Page event channels
+//
+// Android used to have four listeners with no possible sender: shortcut taps,
+// two OTA streams, and AR planes. Unlike an unresolved promise, each failed
+// silently forever. Keep both halves of every remaining channel tied together.
+// ---------------------------------------------------------------------------
+
+fn collectAndroidEvents(
+    allocator: std.mem.Allocator,
+    needle: []const u8,
+    quote: u8,
+) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, android_spec, search, needle)) |at| {
+        const start = at + needle.len;
+        const end = std.mem.indexOfScalarPos(u8, android_spec, start, quote) orelse break;
+        search = end;
+
+        const name = android_spec[start..end];
+        if (!std.mem.startsWith(u8, name, "craft")) continue;
+        var valid = true;
+        for (name) |c| {
+            if (!std.ascii.isAlphanumeric(c)) valid = false;
+        }
+        if (valid) try set.put(name, {});
+    }
+    return set;
+}
+
+fn collectAndroidDispatchedEvents(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = try collectAndroidEvents(allocator, "sendEvent(\"", '"');
+    errdefer set.deinit();
+
+    var literal = try collectAndroidEvents(allocator, "CustomEvent('", '\'');
+    defer literal.deinit();
+    var it = literal.keyIterator();
+    while (it.next()) |name| try set.put(name.*, {});
+    return set;
+}
+
+test "every Android event subscription has a native emitter" {
+    var subscribed = try collectAndroidEvents(testing.allocator, "addEventListener('", '\'');
+    defer subscribed.deinit();
+    var dispatched = try collectAndroidDispatchedEvents(testing.allocator);
+    defer dispatched.deinit();
+
+    // Non-vacuity for both textual scans.
+    try testing.expect(subscribed.count() >= 4);
+    try testing.expect(dispatched.count() >= 12);
+
+    var it = subscribed.keyIterator();
+    while (it.next()) |name| {
+        if (dispatched.contains(name.*)) continue;
+        std.debug.print(
+            "the Android bridge subscribes to '{s}', which it never dispatches.\n" ++
+                "  Refuse the subscription or implement its native emitter.\n",
+            .{name.*},
+        );
+        return error.AndroidSubscriptionHasNoEmitter;
+    }
+}

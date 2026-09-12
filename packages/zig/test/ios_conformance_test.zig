@@ -955,11 +955,12 @@ test "getDeviceInfo answers every field the spec answers" {
 //     "copied from a `sendToWeb` call"; copied, and then never re-checked.
 //
 //   * A name the page subscribes to that nothing dispatches. This is exactly
-//     the `ota*` bug — a surface that reads as implemented and is not — and
-//     the OTA surface is where it still lives: when the five unhandled
-//     `ota*` methods were fixed to reject through `_unavailable`, the two
+//     the `ota*` bug — a surface that read as implemented and was not. When
+//     the five unhandled `ota*` methods were fixed to reject through
+//     `_unavailable`, the two
 //     *subscription* methods beside them were left as they were, because the
-//     scan that found them only knew about actions.
+//     scan that found them only knew about actions. The event scan caught and
+//     removed those dead listeners in #127.
 //
 // Both scans are textual and carry the usual hazard, so both have floors.
 // ---------------------------------------------------------------------------
@@ -1044,44 +1045,6 @@ fn collectZigEventNames(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     return set;
 }
 
-const DeadSubscription = struct {
-    event: []const u8,
-    reason: []const u8,
-};
-
-/// Events the injected JavaScript subscribes to that nothing in this repository
-/// ever dispatches — so the callback a page hands to the method beside them is
-/// registered, retained, and never called.
-///
-/// Recorded here for the reason the deferral table above exists: a gap nothing
-/// checks is a gap that outlives its own explanation. All four are the same
-/// shape — the *sending* half of a surface whose receiving half shipped — and
-/// none is fixable from Zig alone, which is why they are a table rather than a
-/// commit. Tracked in issue #127.
-const dead_subscriptions = [_]DeadSubscription{
-    // `setShortcuts` really does install home-screen items; tapping one
-    // launches the app and stops there. No template implements
-    // `application(_:performActionFor:completionHandler:)` or a scene-delegate
-    // equivalent, so the `UIApplicationShortcutItem` never reaches the page.
-    // `bridge_mobile_shortcuts.zig` documents this from the other side.
-    .{ .event = "craftShortcut", .reason = "nothing implements performActionFor:, so a tapped shortcut only launches the app" },
-
-    // `donateSiriShortcut` donates an `NSUserActivity` typed
-    // `{{BUNDLE_ID}}.<action>`. The only `onContinueUserActivity` in the
-    // template is bound to `NSUserActivityTypeBrowsingWeb` and routes to
-    // `DeepLinkManager`, so an invocation of a donated shortcut relaunches the
-    // app and is dropped.
-    .{ .event = "craftSiriShortcut", .reason = "the only onContinueUserActivity handles browsing-web activities, so a donated shortcut's invocation is dropped" },
-
-    // The `ota*` half-fix. `checkForUpdate`, `downloadUpdate`, `applyUpdate`
-    // and `rollback` were changed to reject through `_unavailable`; these two
-    // register a callback against a name no OTA implementation exists to
-    // dispatch, and were missed because the scan that found the others only
-    // looked at actions.
-    .{ .event = "craftOTAProgress", .reason = "the OTA surface is _unavailable; its two subscription methods were left behind" },
-    .{ .event = "craftOTAStatus", .reason = "the OTA surface is _unavailable; its two subscription methods were left behind" },
-};
-
 test "the event scans find both halves of the channel" {
     // Non-vacuity. Every assertion below is a membership check, and a needle
     // that stopped matching would satisfy all of them at once.
@@ -1091,7 +1054,7 @@ test "the event scans find both halves of the channel" {
 
     var subscribed = try collectSpecSubscribedEvents(testing.allocator);
     defer subscribed.deinit();
-    try testing.expect(subscribed.count() >= 10);
+    try testing.expect(subscribed.count() >= 8);
 
     var zig = try collectZigEventNames(testing.allocator);
     defer zig.deinit();
@@ -1148,14 +1111,9 @@ test "every event the page subscribes to is one something dispatches" {
     var subscribed = try collectSpecSubscribedEvents(testing.allocator);
     defer subscribed.deinit();
 
-    var recorded = std.StringHashMap(void).init(testing.allocator);
-    defer recorded.deinit();
-    for (dead_subscriptions) |d| try recorded.put(d.event, {});
-
     var it = subscribed.keyIterator();
     while (it.next()) |name| {
         if (dispatched.contains(name.*)) continue;
-        if (recorded.contains(name.*)) continue;
         std.debug.print(
             "the injected JS subscribes to '{s}', which nothing dispatches.\n" ++
                 "  The callback a page registers for it can never be called.\n",
@@ -1163,40 +1121,6 @@ test "every event the page subscribes to is one something dispatches" {
         );
         return error.PageSubscribesToAnEventNothingEmits;
     }
-}
-
-test "every recorded dead subscription is real, and still dead" {
-    // The anti-rot half, in the shape the deferral table already uses. A row
-    // that has grown an emitter must fail here rather than sit in a list
-    // telling the next reader the surface is broken when it works.
-    var dispatched = try collectSpecDispatchedEvents(testing.allocator);
-    defer dispatched.deinit();
-
-    var subscribed = try collectSpecSubscribedEvents(testing.allocator);
-    defer subscribed.deinit();
-
-    for (dead_subscriptions) |d| {
-        if (!subscribed.contains(d.event)) {
-            std.debug.print(
-                "'{s}' is recorded as a dead subscription, but the injected JS no longer subscribes to it — " ++
-                    "delete the row.\n",
-                .{d.event},
-            );
-            return error.DeadSubscriptionNoLongerSubscribed;
-        }
-        if (dispatched.contains(d.event)) {
-            std.debug.print(
-                "'{s}' is recorded as having no emitter, and something dispatches it now — " ++
-                    "delete the row, its reason is spent.\n",
-                .{d.event},
-            );
-            return error.DeadSubscriptionIsAliveNow;
-        }
-        try testing.expect(d.reason.len > 0);
-    }
-
-    // Non-vacuity: the loop above is satisfied by an empty table.
-    try testing.expect(dead_subscriptions.len >= 4);
 }
 
 // ---------------------------------------------------------------------------
@@ -1683,16 +1607,6 @@ test "the SDK's event map declares nothing that never fires" {
     var it = map.keyIterator();
     while (it.next()) |name| {
         if (dispatched.contains(name.*)) continue;
-
-        // The two recorded dead subscriptions are typed on purpose: the page
-        // subscribes to them today, and a listener written now should compile
-        // against the shape it will receive when the missing half lands. Any
-        // other name here is a type with nothing behind it.
-        var recorded = false;
-        for (dead_subscriptions) |d| {
-            if (std.mem.eql(u8, d.event, name.*)) recorded = true;
-        }
-        if (recorded) continue;
 
         std.debug.print(
             "craft.d.ts types `{s}` in WindowEventMap, and nothing dispatches it.\n" ++

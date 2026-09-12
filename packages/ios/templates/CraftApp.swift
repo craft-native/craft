@@ -40,7 +40,22 @@ extension Notification.Name {
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        if let shortcut = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            CraftEventManager.shared.handleShortcut(shortcut)
+            // Returning false tells UIKit the launch-time item was handled and
+            // prevents a second performActionFor callback for the same tap.
+            return false
+        }
         return true
+    }
+
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        CraftEventManager.shared.handleShortcut(shortcutItem)
+        completionHandler(true)
+    }
+
+    func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
+        CraftEventManager.shared.handleSiriActivity(userActivity)
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -59,6 +74,71 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .badge, .sound])
+    }
+}
+
+// MARK: - Native Event Manager
+class CraftEventManager {
+    static let shared = CraftEventManager()
+
+    private weak var webView: WKWebView?
+    private var isReady = false
+    private var pendingEvents: [(name: String, data: [String: Any])] = []
+
+    private init() {}
+
+    func setWebView(_ webView: WKWebView) {
+        self.webView = webView
+    }
+
+    func setLoading() {
+        isReady = false
+    }
+
+    func setReady() {
+        isReady = true
+        let events = pendingEvents
+        pendingEvents.removeAll()
+        for event in events {
+            dispatch(event.name, data: event.data)
+        }
+    }
+
+    func handleShortcut(_ shortcut: UIApplicationShortcutItem) {
+        sendToWeb("craftShortcut", data: ["type": shortcut.type])
+    }
+
+    func handleSiriActivity(_ activity: NSUserActivity) -> Bool {
+        let prefix = "\(Bundle.main.bundleIdentifier ?? "{{BUNDLE_ID}}")."
+        guard activity.activityType.hasPrefix(prefix) else { return false }
+
+        let action = activity.userInfo?["action"] as? String
+            ?? String(activity.activityType.dropFirst(prefix.count))
+        var data: [String: Any] = [:]
+        for (key, value) in activity.userInfo ?? [:] {
+            guard let key = key as? String, key != "action" else { continue }
+            data[key] = value
+        }
+        sendToWeb("craftSiriShortcut", data: ["action": action, "data": data])
+        return true
+    }
+
+    private func sendToWeb(_ event: String, data: [String: Any]) {
+        guard isReady, webView != nil else {
+            pendingEvents.append((event, data))
+            return
+        }
+        dispatch(event, data: data)
+    }
+
+    private func dispatch(_ event: String, data: [String: Any]) {
+        guard let webView = webView,
+              let jsonData = try? JSONSerialization.data(withJSONObject: data),
+              let json = String(data: jsonData, encoding: .utf8) else { return }
+        let script = "window.dispatchEvent(new CustomEvent('\(event)', {detail: \(json)}));"
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(script, completionHandler: nil)
+        }
     }
 }
 
@@ -346,6 +426,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // Register with DeepLinkManager
         DeepLinkManager.shared.setWebView(webView)
+        CraftEventManager.shared.setWebView(webView)
 
         // Parse background color
         let bgColor = UIColor(hex: config.backgroundColor) ?? .black
@@ -1313,6 +1394,10 @@ struct CraftWebView: UIViewRepresentable {
             default:
                 break
             }
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            CraftEventManager.shared.setLoading()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -2604,8 +2689,6 @@ struct CraftWebView: UIViewRepresentable {
                 ota: {
                     _config: null,
                     _status: 'idle',
-                    _progressCallbacks: [],
-                    _statusCallbacks: [],
 
                     // OTA is not implemented natively. These five used to post
                     // to actions the switch below does not handle, and register
@@ -2646,12 +2729,10 @@ struct CraftWebView: UIViewRepresentable {
                         };
                     },
                     onProgress: function(callback) {
-                        this._progressCallbacks.push(callback);
-                        window.addEventListener('craftOTAProgress', function(e) { callback(e.detail); });
+                        throw new Error('craft.ota.onProgress is not implemented on this platform');
                     },
                     onStatusChange: function(callback) {
-                        this._statusCallbacks.push(callback);
-                        window.addEventListener('craftOTAStatus', function(e) { callback(e.detail.status); });
+                        throw new Error('craft.ota.onStatusChange is not implemented on this platform');
                     }
                 },
 
@@ -2825,6 +2906,7 @@ struct CraftWebView: UIViewRepresentable {
 
             // Mark DeepLinkManager as ready
             DeepLinkManager.shared.setReady()
+            CraftEventManager.shared.setReady()
         }
 
         // MARK: - Callback Helpers

@@ -117,6 +117,24 @@ describe('Craft Android builder', () => {
     expect(activity).toContain('hasBundledFallback && !loadedBundledFallback')
   })
 
+  it('delivers shortcut activations and refuses impossible event streams', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-shortcut-events-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java/org/wildloop/app')
+    const bridge = readFileSync(join(sourceRoot, 'CraftBridge.kt'), 'utf8')
+    const activity = readFileSync(join(sourceRoot, 'MainActivity.kt'), 'utf8')
+    expect(activity).toContain('handleIncomingShortcut(intent)')
+    expect(activity).toContain('getStringExtra(SHORTCUT_TYPE_EXTRA)')
+    expect(activity).toContain('craftBridge.markBridgeLoading()')
+    expect(bridge).toContain('sendEvent("craftShortcut", data)')
+    expect(bridge).toContain('pendingEvents.add("craftShortcut" to data)')
+    expect(bridge).not.toContain("addEventListener('craftOTAProgress'")
+    expect(bridge).not.toContain("addEventListener('craftOTAStatus'")
+    expect(bridge).not.toContain("addEventListener('craftARPlane'")
+    expect(bridge).toContain('craft.ar.onPlaneDetected is unavailable because ARCore requires native Activity integration')
+  })
+
   it('generates a foreground service for durable background recording', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-location-'))
     await init({

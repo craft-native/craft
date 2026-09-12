@@ -139,6 +139,22 @@ describe('Craft iOS builder', () => {
     expect(readFileSync(join(output, 'dist/index.html'), 'utf8')).toContain('Available offline')
   })
 
+  it('delivers shortcut and Siri activations after cold launches', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-shortcut-events-'))
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    expect(swift).toContain('launchOptions?[.shortcutItem] as? UIApplicationShortcutItem')
+    expect(swift).toContain('performActionFor shortcutItem: UIApplicationShortcutItem')
+    expect(swift).toContain('continue userActivity: NSUserActivity')
+    expect(swift).toContain('sendToWeb("craftShortcut", data: ["type": shortcut.type])')
+    expect(swift).toContain('sendToWeb("craftSiriShortcut", data: ["action": action, "data": data])')
+    expect(swift).toContain('pendingEvents.append((event, data))')
+    expect(swift).toContain('CraftEventManager.shared.setReady()')
+    expect(swift).not.toContain("addEventListener('craftOTAProgress'")
+    expect(swift).not.toContain("addEventListener('craftOTAStatus'")
+  })
+
   it('generates a native Live Activity extension when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-live-activity-'))
     await init({

@@ -107,6 +107,8 @@ class CraftBridge(
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(activity)
+    private var bridgeReady = false
+    private val pendingEvents = mutableListOf<Pair<String, Map<String, Any>>>()
 
     // Location tracking
     private var fusedLocationClient: FusedLocationProviderClient? = null
@@ -901,7 +903,7 @@ class CraftBridge(
                         });
                     },
                     onPlaneDetected: function(callback) {
-                        window.addEventListener('craftARPlane', function(e) { callback(e.detail); });
+                        throw new Error('craft.ar.onPlaneDetected is unavailable because ARCore requires native Activity integration');
                     }
                 },
 
@@ -1020,8 +1022,6 @@ class CraftBridge(
                 ota: {
                     _config: null,
                     _status: 'idle',
-                    _progressCallbacks: [],
-                    _statusCallbacks: [],
 
                     configure: function(options) {
                         this._config = options;
@@ -1061,12 +1061,10 @@ class CraftBridge(
                         catch(e) { return { version: '1.0.0', buildNumber: 1, hash: '', isOriginal: true, installedAt: '' }; }
                     },
                     onProgress: function(callback) {
-                        this._progressCallbacks.push(callback);
-                        window.addEventListener('craftOTAProgress', function(e) { callback(e.detail); });
+                        throw new Error('craft.ota.onProgress is not implemented on this platform');
                     },
                     onStatusChange: function(callback) {
-                        this._statusCallbacks.push(callback);
-                        window.addEventListener('craftOTAStatus', function(e) { callback(e.detail.status); });
+                        throw new Error('craft.ota.onStatusChange is not implemented on this platform');
                     }
                 },
 
@@ -1375,8 +1373,17 @@ class CraftBridge(
         """.trimIndent()
 
         activity.runOnUiThread {
-            webView.evaluateJavascript(script, null)
+            webView.evaluateJavascript(script) {
+                bridgeReady = true
+                val events = pendingEvents.toList()
+                pendingEvents.clear()
+                events.forEach { (name, data) -> sendEvent(name, data) }
+            }
         }
+    }
+
+    fun markBridgeLoading() {
+        bridgeReady = false
     }
 
     // ==================== Haptics ====================
@@ -3446,6 +3453,17 @@ class CraftBridge(
     }
 
     // ==================== App Shortcuts ====================
+
+    fun dispatchShortcut(type: String) {
+        activity.runOnUiThread {
+            val data = mapOf<String, Any>("type" to type)
+            if (bridgeReady) {
+                sendEvent("craftShortcut", data)
+            } else {
+                pendingEvents.add("craftShortcut" to data)
+            }
+        }
+    }
 
     @JavascriptInterface
     fun setShortcuts(shortcutsJson: String) {

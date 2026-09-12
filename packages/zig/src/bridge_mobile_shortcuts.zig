@@ -58,22 +58,10 @@
 //! Foundation types (`NSString`/`NSNumber`/`NSArray`/`NSDictionary`/`NSNull`)
 //! that Swift's `as? [String: NSSecureCoding]` cast admits.
 //!
-//! ## The gap that is real and is not this file's to close
-//!
-//! Installing shortcuts is honest — they appear in the long-press menu — but
-//! **tapping one never reaches the page**: the injected JS registers
-//! `craftShortcut` listeners, and no template implements
-//! `application(_:performActionFor:completionHandler:)` or any scene-delegate
-//! equivalent, so nothing ever dispatches that event. Tapping launches or
-//! foregrounds the app and stops there. Pre-existing, identical under the
-//! Swift shim, and outside these two actions' scope.
-//!
-//! That paragraph was the only record of it for several phases, which is the
-//! problem with recording a gap in the header of the one module that noticed:
-//! nothing else can see it and nothing re-checks it. `craftShortcut` is now a
-//! row in `ios_conformance_test.zig`'s `dead_subscriptions`, alongside three
-//! more of the same shape found by looking — the build fails if it quietly
-//! gains an emitter, and fails if a fifth appears. Tracked in issue #127.
+//! Shortcut activation is delivered by the Swift app delegate. Its event
+//! manager queues cold-launch taps until the web bridge is ready, so the same
+//! `craftShortcut` payload reaches the page whether the app was foregrounded
+//! or launched by the shortcut.
 
 const std = @import("std");
 const builtin = @import("builtin");

@@ -854,12 +854,12 @@ export interface CraftBridge {
     getCurrentBundle(): OTABundleInfo;
 
     /**
-     * Listen for download progress
+     * Listen for download progress. Throws while native OTA updates are unavailable.
      */
     onProgress(callback: (progress: OTAProgress) => void): void;
 
     /**
-     * Listen for update status changes
+     * Listen for update status changes. Throws while native OTA updates are unavailable.
      */
     onStatusChange(callback: (status: OTAStatus) => void): void;
   };
@@ -1404,12 +1404,6 @@ export interface CraftARPlaneEvent extends CustomEvent {
 
 /**
  * A home-screen quick action being tapped.
- *
- * **Never dispatched today.** `craft.shortcuts.set()` really does install the
- * items and they appear in the long-press menu, but no template implements
- * `application(_:performActionFor:completionHandler:)` or a scene-delegate
- * equivalent, so a tap launches the app and stops there. A listener registered
- * for this is never called.
  */
 export interface CraftShortcutEvent extends CustomEvent {
   detail: {
@@ -1419,11 +1413,6 @@ export interface CraftShortcutEvent extends CustomEvent {
 
 /**
  * A donated Siri shortcut being invoked.
- *
- * **Never dispatched today.** `craft.siri.register()` donates an
- * `NSUserActivity`, but the only `onContinueUserActivity` in the template is
- * bound to `NSUserActivityTypeBrowsingWeb` and routes to the deep-link
- * handler, so invoking a donated shortcut relaunches the app and is dropped.
  */
 export interface CraftSiriShortcutEvent extends CustomEvent {
   detail: SiriInvocationEvent;
@@ -1532,11 +1521,6 @@ declare global {
     craftAppStateChange: CraftAppStateChangeEvent;
     craftError: CraftErrorEvent;
     craftDeepLink: CraftDeepLinkEvent;
-    // Kept, and kept last, because nothing dispatches either one: the app
-    // installs the shortcuts and donates the activities, and no template
-    // implements the callback that would deliver a tap. Typed so the listener
-    // an app writes today compiles against the shape it will receive if that
-    // lands; see the note on each interface.
     craftShortcut: CraftShortcutEvent;
     craftSiriShortcut: CraftSiriShortcutEvent;
   }
