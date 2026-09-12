@@ -79,6 +79,12 @@ Quick Look is application-scoped because `QLPreviewPanel` is an AppKit shared
 panel. Showing it from another window replaces the shared panel's contents;
 Craft does not pretend each window owns a separate panel.
 
+Touch Bar is also a legacy application-scoped service today. One global
+`TouchBarBridge` owns the item definitions, and rebuilding it installs the bar
+on AppKit's `mainWindow`; a delayed callback has no sending-page context and
+therefore uses the primary-page evaluator. A child-page call mutates that same
+main-window bar rather than creating per-window Touch Bar state.
+
 ## Primary-page event sinks
 
 Some asynchronous native sources have no authenticated sender by the time they
@@ -110,11 +116,13 @@ The next multi-window milestone needs product decisions in addition to code:
    destroyed.
 2. Choose primary-only, broadcast or per-subscriber delivery for each
    application-level asynchronous source above.
-3. Bring Linux and Windows runtime creation, stable handles, sender routing,
+3. Decide whether Touch Bar should stay primary-window scoped or follow the
+   key window with separately owned item definitions and callbacks.
+4. Bring Linux and Windows runtime creation, stable handles, sender routing,
    lifecycle events and destroy semantics up to the macOS contract. Their
    platform backends can create native windows today, but the TypeScript bridge
    deliberately reports runtime creation as unsupported outside macOS.
-4. Add platform-native integration coverage. Source conformance and pure state
+5. Add platform-native integration coverage. Source conformance and pure state
    tests defend macOS invariants without requiring a GUI runner, but they do
    not substitute for real Windows WebView2 and Linux WebKitGTK lifecycle tests.
 
