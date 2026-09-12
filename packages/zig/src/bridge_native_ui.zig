@@ -108,7 +108,11 @@ pub const NativeUIBridge = struct {
     }
 
     pub fn setWindow(self: *Self, window: macos.objc.id) void {
-        self.window = window;
+        // The bridge is process-global. Every secondary window runs bridge
+        // setup too, but until NativeUI component storage is partitioned by
+        // sender, replacing this pointer would make opening a child silently
+        // retarget the main page's later NativeUI calls to that child.
+        if (self.window == null) self.window = window;
     }
 
     /// Handle incoming messages from JavaScript

@@ -1180,6 +1180,9 @@ pub fn build(b: *std.Build) void {
     window_lifecycle_tests.root_module.addAnonymousImport("src/bridge_window.zig", .{
         .root_source_file = b.path("src/bridge_window.zig"),
     });
+    window_lifecycle_tests.root_module.addAnonymousImport("src/bridge_native_ui.zig", .{
+        .root_source_file = b.path("src/bridge_native_ui.zig"),
+    });
     window_lifecycle_tests.root_module.addAnonymousImport("src/tray_menu.zig", .{
         .root_source_file = b.path("src/tray_menu.zig"),
     });

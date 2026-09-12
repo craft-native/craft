@@ -37,6 +37,7 @@ const testing = std.testing;
 
 const macos_source = @embedFile("src/macos.zig");
 const window_bridge_source = @embedFile("src/bridge_window.zig");
+const native_ui_bridge_source = @embedFile("src/bridge_native_ui.zig");
 const tray_menu_source = @embedFile("src/tray_menu.zig");
 
 /// The Objective-C initialiser every `NSWindow` in craft goes through.
@@ -415,6 +416,15 @@ test "JavaScript evaluation preserves target request and reply webview" {
     try testing.expect(std.mem.indexOf(u8, callback_body, "block.reply_webview") != null);
     try testing.expect(callsFunction(callback_body, "sendJavaScriptEvaluationError("));
     try testing.expect(std.mem.indexOf(u8, callback_body, "isValidJSONObject:") != null);
+}
+
+test "secondary setup does not steal the primary native UI target" {
+    const setter_start = std.mem.indexOf(u8, native_ui_bridge_source, "pub fn setWindow(") orelse
+        return error.NativeUIWindowSetterNotFound;
+    const setter_end = std.mem.indexOfPos(u8, native_ui_bridge_source, setter_start, "    pub fn handleMessage(") orelse
+        return error.NativeUIWindowSetterEndNotFound;
+    const setter_body = native_ui_bridge_source[setter_start..setter_end];
+    try testing.expect(std.mem.indexOf(u8, setter_body, "self.window == null") != null);
 }
 
 test "web material state and collapse actions stay with their window" {
