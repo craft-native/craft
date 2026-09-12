@@ -135,6 +135,26 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('craft.ar.onPlaneDetected is unavailable because ARCore requires native Activity integration')
   })
 
+  it('routes external Activity results back to every pending media promise', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-activity-results-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    for (const request of ['REQUEST_CAMERA, REQUEST_GALLERY', 'REQUEST_FILE_PICKER', 'REQUEST_VIDEO', 'REQUEST_PICK_CONTACT']) {
+      expect(bridge).toContain(request)
+    }
+    expect(bridge).toContain('handleImageResult(requestCode, resultCode, data)')
+    expect(bridge).toContain('handleFilePickerResult(resultCode, data)')
+    expect(bridge).toContain('handleVideoResult(resultCode, data)')
+    expect(bridge).toContain('handleContactPickerResult(resultCode, data)')
+    expect(bridge).toContain('window._craftVideoResolve && window._craftVideoResolve')
+    expect(bridge).toContain('val result = "data:$mimeType;base64,$encoded"')
+    expect(bridge).toContain('window._craftFileResolve && window._craftFileResolve($result)')
+    expect(bridge).toContain('resolveMediaPromise(promise, "data:$mimeType;base64,$encoded")')
+    expect(bridge).toContain('rejectMediaPromise(promise, "Camera returned no image")')
+    expect(bridge).toContain('else -> healthConnect.onActivityResult(requestCode, resultCode, data)')
+  })
+
   it('generates a foreground service for durable background recording', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-location-'))
     await init({

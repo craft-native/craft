@@ -1,19 +1,18 @@
 //! The four Android actions that launch a system media/file Activity:
 //! `openCamera`, `pickImage`, `pickFile` and `startVideoRecording`.
 //!
-//! These actions only launch. `CraftBridge.handleImageResult` contains camera
-//! and gallery decoding, but `MainActivity.onActivityResult` routes only to
-//! Health Connect, so it never calls that handler. File and video have no
-//! result handler at all. Consequently all four promises stay pending after
-//! the external Activity returns; moving the launch preserves that incomplete
-//! behaviour rather than quietly inventing a result path on the Zig side.
+//! These actions only launch. `MainActivity.onActivityResult` routes the four
+//! request codes back to `CraftBridge`, which owns the Java `Intent`, content
+//! resolver, and promise globals needed to decode each result. Camera/gallery,
+//! file, video, and the neighbouring contact picker all settle through that
+//! one lifecycle seam instead of being dropped after the external Activity
+//! returns.
 //!
 //! ## Starting is the part that moved
 //!
-//! None keeps state between launch and result. The request codes still cross
-//! because they are observable to the launched Activity lifecycle and are the
-//! exact values the shim uses, even though this template currently drops the
-//! corresponding results.
+//! None keeps state between launch and result. The request codes cross because
+//! they are the addresses the template uses to send each result to the right
+//! decoder and page promise.
 //!
 //! `openCamera` also preserves the shim's permission behaviour. A denied call
 //! asks for CAMERA and returns without launching or settling the promise; the

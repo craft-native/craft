@@ -25,6 +25,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -1551,30 +1552,137 @@ class CraftBridge(
     }
 
     fun handleImageResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        val promise = if (requestCode == REQUEST_CAMERA) "_craftCamera" else "_craftGallery"
         if (resultCode != Activity.RESULT_OK) {
-            val event = if (requestCode == REQUEST_CAMERA) "_craftCameraReject" else "_craftGalleryReject"
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window.$event && window.$event('Cancelled')", null)
+            rejectMediaPromise(promise, "Cancelled")
+            return
+        }
+
+        if (requestCode == REQUEST_CAMERA) {
+            val bitmap = data?.extras?.get("data") as? Bitmap
+            if (bitmap == null) {
+                rejectMediaPromise(promise, "Camera returned no image")
+            } else {
+                resolveMediaPromise(promise, "data:image/png;base64,${bitmapToBase64(bitmap)}")
             }
             return
         }
 
-        val imageUri: String? = when (requestCode) {
-            REQUEST_CAMERA -> {
-                // For camera, we get a bitmap thumbnail
-                val bitmap = data?.extras?.get("data") as? Bitmap
-                bitmap?.let { "data:image/png;base64,${bitmapToBase64(it)}" }
-            }
-            REQUEST_GALLERY -> {
-                data?.data?.toString()
-            }
-            else -> null
+        val uri = data?.data
+        if (uri == null) {
+            rejectMediaPromise(promise, "Gallery returned no image")
+            return
         }
 
-        val event = if (requestCode == REQUEST_CAMERA) "_craftCameraResolve" else "_craftGalleryResolve"
+        Thread {
+            try {
+                val bytes = activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Selected image could not be opened")
+                val mimeType = activity.contentResolver.getType(uri) ?: "image/jpeg"
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                resolveMediaPromise(promise, "data:$mimeType;base64,$encoded")
+            } catch (e: Exception) {
+                rejectMediaPromise(promise, e.message ?: "Selected image could not be read")
+            }
+        }.start()
+    }
+
+    private fun resolveMediaPromise(promise: String, value: String) {
         activity.runOnUiThread {
-            webView.evaluateJavascript("window.$event && window.$event(${jsQuote(imageUri)})", null)
+            webView.evaluateJavascript(
+                "window.${promise}Resolve && window.${promise}Resolve(${jsQuote(value)})",
+                null
+            )
         }
+    }
+
+    private fun rejectMediaPromise(promise: String, message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window.${promise}Reject && window.${promise}Reject(${jsQuote(message)})",
+                null
+            )
+        }
+    }
+
+    private fun handleFilePickerResult(resultCode: Int, data: Intent?) {
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window._craftFileReject && window._craftFileReject('Cancelled')", null)
+            }
+            return
+        }
+
+        Thread {
+            try {
+                val bytes = activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Selected file could not be opened")
+                var name = uri.lastPathSegment ?: "file"
+                activity.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        name = cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+                    }
+                }
+                val result = JSONObject().apply {
+                    put("name", name)
+                    put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    put("mimeType", activity.contentResolver.getType(uri) ?: "application/octet-stream")
+                }
+                activity.runOnUiThread {
+                    webView.evaluateJavascript("window._craftFileResolve && window._craftFileResolve($result)", null)
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window._craftFileReject && window._craftFileReject(${jsQuote(e.message)})",
+                        null
+                    )
+                }
+            }
+        }.start()
+    }
+
+    private fun handleVideoResult(resultCode: Int, data: Intent?) {
+        val uri = data?.data
+        if (resultCode != Activity.RESULT_OK) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window._craftVideoReject && window._craftVideoReject('Cancelled')", null)
+            }
+            return
+        }
+        if (uri == null) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftVideoReject && window._craftVideoReject('Video capture returned no file')",
+                    null
+                )
+            }
+            return
+        }
+
+        Thread {
+            try {
+                val bytes = activity.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: throw IllegalStateException("Recorded video could not be opened")
+                val mimeType = activity.contentResolver.getType(uri) ?: "video/mp4"
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                val result = "data:$mimeType;base64,$encoded"
+                activity.runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window._craftVideoResolve && window._craftVideoResolve(${jsQuote(result)})",
+                        null
+                    )
+                }
+            } catch (e: Exception) {
+                activity.runOnUiThread {
+                    webView.evaluateJavascript(
+                        "window._craftVideoReject && window._craftVideoReject(${jsQuote(e.message)})",
+                        null
+                    )
+                }
+            }
+        }.start()
     }
 
     private fun bitmapToBase64(bitmap: Bitmap): String {
@@ -3235,8 +3343,25 @@ class CraftBridge(
         healthConnect.saveWorkout(workoutJson)
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean =
-        healthConnect.onActivityResult(requestCode, resultCode, data)
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean = when (requestCode) {
+        REQUEST_CAMERA, REQUEST_GALLERY -> {
+            handleImageResult(requestCode, resultCode, data)
+            true
+        }
+        REQUEST_FILE_PICKER -> {
+            handleFilePickerResult(resultCode, data)
+            true
+        }
+        REQUEST_VIDEO -> {
+            handleVideoResult(resultCode, data)
+            true
+        }
+        REQUEST_PICK_CONTACT -> {
+            handleContactPickerResult(resultCode, data)
+            true
+        }
+        else -> healthConnect.onActivityResult(requestCode, resultCode, data)
+    }
 
     fun close() {
         healthConnect.close()
