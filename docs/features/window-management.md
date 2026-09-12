@@ -478,8 +478,11 @@ Other open windows do not receive them. Call the unsubscribe function returned
 by `on`, such as `stopWatching()` above, when the listener is no longer needed.
 
 Closing a window keeps its native page alive so the macOS reopen lifecycle can
-restore its DOM and JavaScript state. Force-destroy and modal/parent semantics
-are not part of the runtime-created-window contract yet.
+restore its DOM and JavaScript state. Call `destroy()` on a runtime-created
+handle to permanently release its native window, webview, recovery state and
+event subscriptions; opening the same ID afterwards creates a fresh native
+page. The unnamed primary window cannot be force-destroyed through this API.
+Modal/parent semantics are not part of the runtime-created-window contract yet.
 
 ## Multi-Monitor
 

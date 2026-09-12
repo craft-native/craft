@@ -93,6 +93,8 @@ pub const WindowBridge = struct {
             try self.restore(data);
         } else if (std.mem.eql(u8, action, "close")) {
             try self.close(data);
+        } else if (std.mem.eql(u8, action, "destroy")) {
+            try self.destroy(data);
         } else if (std.mem.eql(u8, action, "center")) {
             try self.center(data);
         } else if (std.mem.eql(u8, action, "toggleFullscreen")) {
@@ -421,6 +423,17 @@ pub const WindowBridge = struct {
             const macos = @import("macos.zig");
             macos.closeWindow(handle);
         }
+    }
+
+    /// Permanently release a runtime-created window. The unnamed primary
+    /// window keeps the close/reopen lifecycle owned by the app delegate.
+    fn destroy(self: *Self, data: ?[]const u8) !void {
+        const handle = try self.requireWindowHandle(data);
+        if (window_registry.nameOf(@intFromPtr(handle)) == null)
+            return BridgeError.InvalidParameter;
+
+        if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        @import("macos.zig").destroyWindow(handle);
     }
 
     fn focus(self: *Self, data: ?[]const u8) !void {

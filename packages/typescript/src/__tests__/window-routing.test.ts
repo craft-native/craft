@@ -102,6 +102,16 @@ describe('typed window-handle routing', () => {
     )
   })
 
+  it('destroys the retained child rather than the calling page', async () => {
+    const settings = new Window('settings')
+
+    await settings.destroy()
+
+    expect(call).toHaveBeenCalledWith('destroy', undefined, 'settings')
+    expect(settings.isClosed).toBe(true)
+    expect(listeners.get('craft:window:resize')?.size ?? 0).toBe(0)
+  })
+
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
     const id = `settings-${Date.now()}`
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })

@@ -128,6 +128,13 @@ fn webMaterialSlot(window: objc.id, create: bool) ?*WebMaterialSlot {
     return null;
 }
 
+fn forgetWebMaterial(window: objc.id) void {
+    const handle = @intFromPtr(window);
+    for (&web_material_slots) |*slot| {
+        if (slot.window == handle) slot.* = .{};
+    }
+}
+
 pub const WindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
@@ -3856,6 +3863,31 @@ pub fn closeWindow(window_handle: anytype) void {
     msgSendVoid0(window, "close");
 }
 
+/// Permanently tear down a named runtime window. Ordinary `close` deliberately
+/// retains its page for reopen; this path pairs that policy with every cache
+/// and observer release before allowing AppKit to deallocate the window.
+pub fn destroyWindow(window_handle: anytype) void {
+    const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
+    if (window == null) return;
+
+    const webview = webViewForWindow(window);
+    forgetWindowChrome(window);
+    forgetWebMaterial(window);
+    if (webview) |view| {
+        forgetContent(view);
+        @import("webview_recovery.zig").forget(@intFromPtr(view));
+        window_registry.forgetOwner(@intFromPtr(view));
+        msgSendVoid0(view, "stopLoading");
+    }
+    window_registry.forget(@intFromPtr(window));
+
+    // `windowWillClose:` is an ordinary-close event. Destroy is explicitly
+    // silent, matching the SDK contract, so detach the weak delegate first.
+    msgSendVoid1(window, "setDelegate:", @as(objc.id, null));
+    msgSendVoid1(window, "setReleasedWhenClosed:", true);
+    msgSendVoid0(window, "close");
+}
+
 pub fn hideWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
     msgSendVoid1(window, "orderOut:", @as(objc.id, null));
@@ -6339,6 +6371,15 @@ fn releaseContent(content: LoadedContent) void {
             msgSendVoid0(html.string, "release");
             if (html.base_url != null) msgSendVoid0(html.base_url, "release");
         },
+    }
+}
+
+fn forgetContent(webview: objc.id) void {
+    const key = @intFromPtr(webview);
+    for (&content_slots) |*slot| {
+        if (slot.key != key) continue;
+        releaseContent(slot.content);
+        slot.* = .{};
     }
 }
 

@@ -331,7 +331,10 @@ await settingsWindow.focus()
 
 Calling `createWindow` again with the same `id` brings the retained native
 window forward and returns the same typed handle. Runtime creation currently
-uses the macOS host; modal and parent-window relationships are not supported.
+uses the macOS host. `close()` retains that page for a later reopen, while
+`destroy()` permanently releases a runtime-created window; the unnamed primary
+window is not destroyable through this API. Modal and parent-window
+relationships are not supported.
 
 ### Window Lifecycle Events
 

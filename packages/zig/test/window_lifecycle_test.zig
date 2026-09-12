@@ -427,6 +427,34 @@ test "secondary setup does not steal the primary native UI target" {
     try testing.expect(std.mem.indexOf(u8, setter_body, "self.window == null") != null);
 }
 
+test "destroy releases every retained runtime-window resource" {
+    const bridge_start = std.mem.indexOf(u8, window_bridge_source, "fn destroy(") orelse
+        return error.WindowDestroyHandlerNotFound;
+    const bridge_end = std.mem.indexOfPos(u8, window_bridge_source, bridge_start, "    fn focus(") orelse
+        return error.WindowDestroyHandlerEndNotFound;
+    const bridge_body = window_bridge_source[bridge_start..bridge_end];
+    try testing.expect(std.mem.indexOf(u8, bridge_body, "window_registry.nameOf(") != null);
+    try testing.expect(callsFunction(bridge_body, "destroyWindow("));
+
+    const native_start = std.mem.indexOf(u8, macos_source, "pub fn destroyWindow(") orelse
+        return error.NativeWindowDestroyNotFound;
+    const native_end = std.mem.indexOfPos(u8, macos_source, native_start, "pub fn hideWindow(") orelse
+        return error.NativeWindowDestroyEndNotFound;
+    const native_body = macos_source[native_start..native_end];
+    for ([_][]const u8{
+        "forgetWindowChrome(",
+        "forgetWebMaterial(",
+        "forgetContent(",
+        "webview_recovery.zig",
+        "window_registry.forgetOwner(",
+        "window_registry.forget(",
+        "setDelegate:",
+        "setReleasedWhenClosed:",
+    }) |contract| {
+        try testing.expect(std.mem.indexOf(u8, native_body, contract) != null);
+    }
+}
+
 test "web material state and collapse actions stay with their window" {
     // Material views used to live in six process globals. Constructing a
     // second window overwrote them, so the next collapse from main mutated the

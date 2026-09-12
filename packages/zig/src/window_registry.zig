@@ -178,6 +178,15 @@ pub fn forget(handle: Handle) void {
     }
 }
 
+/// Stop delivering child-window events to a webview being destroyed.
+/// Children remain alive and continue receiving their own local events.
+pub fn forgetOwner(owner_webview: Handle) void {
+    if (owner_webview == 0) return;
+    for (&windows) |*slot| {
+        if (slot.owner_webview == owner_webview) slot.owner_webview = 0;
+    }
+}
+
 pub fn count() usize {
     var n: usize = 0;
     for (windows) |entry| {
@@ -264,6 +273,14 @@ test "forgetting a window that was never known changes nothing" {
     forget(0x2000);
     try testing.expect(isKnown(0x1000));
     try testing.expectEqual(@as(usize, 1), count());
+}
+
+test "forgetting an owner leaves its child registered without a dangling target" {
+    resetForTesting();
+    try testing.expect(rememberNamedOwned(0x1000, "settings", 0x2000));
+    forgetOwner(0x2000);
+    try testing.expectEqual(@as(?Handle, 0x1000), byName("settings"));
+    try testing.expect(ownerWebViewOf(0x1000) == null);
 }
 
 test "a window opened under a name is found by it" {

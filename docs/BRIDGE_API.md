@@ -639,6 +639,11 @@ window receives the event in its own page as `windowManager.current`, and its
 creator receives it on the named handle (`settings` above). Craft does not
 broadcast the transition into unrelated pages.
 
+`close()` retains a runtime-created window and its page for a later idempotent
+open. `destroy()` permanently releases a named runtime window and its retained
+recovery/observer state. It intentionally does not apply to the unnamed primary
+window, whose close/reopen behavior belongs to the application lifecycle.
+
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `name` (or `id`) | — | Required. The window's identity, up to 64 bytes. |
