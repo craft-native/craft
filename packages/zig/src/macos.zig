@@ -3858,7 +3858,7 @@ pub fn closeWindow(window_handle: anytype) void {
 
 pub fn hideWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
-    msgSendVoid0(window, "orderOut:");
+    msgSendVoid1(window, "orderOut:", @as(objc.id, null));
 }
 
 pub fn showWindow(window_handle: anytype) void {
@@ -3953,7 +3953,7 @@ pub fn reloadWindow(webview: objc.id) void {
 }
 
 pub fn reloadWindowIgnoringCache(webview: objc.id) void {
-    msgSendVoid0(webview, "reloadFromOrigin:");
+    msgSendVoid1(webview, "reloadFromOrigin:", @as(objc.id, null));
 }
 
 // System tray integration

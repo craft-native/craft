@@ -327,6 +327,19 @@ test "window-state selectors receive their required sender argument" {
     try testing.expect(std.mem.indexOf(u8, macos_source, "msgSendVoid0(window, \"toggleFullScreen:\")") == null);
 }
 
+test "hide and force reload selectors receive their sender argument" {
+    for ([_][]const u8{
+        "pub fn hideWindow(",
+        "pub fn reloadWindowIgnoringCache(",
+    }) |declaration| {
+        const start = std.mem.indexOf(u8, macos_source, declaration) orelse
+            return error.WindowHelperNotFound;
+        const body = enclosingFnBody(macos_source, start);
+        try testing.expect(callsFunction(body, "msgSendVoid1("));
+        try testing.expect(std.mem.indexOf(u8, body, "msgSendVoid0(") == null);
+    }
+}
+
 test "runtime window creation applies the typed appearance and size constraints" {
     const start = std.mem.indexOf(u8, window_bridge_source, "fn open(") orelse
         return error.WindowOpenHandlerNotFound;
