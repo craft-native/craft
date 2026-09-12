@@ -545,6 +545,7 @@
       const o = opts || {}
       const name = String(o.name || o.id || '')
       if (!name) return Promise.reject(new Error('craft.window.open needs a name'))
+      if (name === 'main') return Promise.reject(new Error('craft.window.open reserves "main" for the current window'))
       if (!o.url && !o.html) return Promise.reject(new Error('craft.window.open needs a url or html'))
       return _req('window', 'open', _stringify(Object.assign({}, o, { name: name })))
     },

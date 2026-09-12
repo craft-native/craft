@@ -29,6 +29,9 @@ back to whichever window was created most recently:
 
 - `window_registry.zig` owns the stable name, native handle and creator-webview
   relationship for every macOS window.
+- `main` is reserved as each page's local-window alias and can never be used
+  as a runtime-created window name; otherwise the creator would return its
+  existing local wrapper for a different native window.
 - `window_context.zig` carries the authenticated `WKScriptMessage` sender while
   a bridge call is dispatched. The host, not the JSON payload, establishes the
   caller's local window and webview.

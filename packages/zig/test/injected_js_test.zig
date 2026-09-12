@@ -382,6 +382,26 @@ test "a retained window handle names the window it targets" {
     try testing.expectEqualStrings("Preferences", try fx.text("JSON.parse(posted[0].d).title"));
 }
 
+test "the raw window bridge reserves main for the receiving page" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate(
+        \\var openFailure = '';
+        \\window.craft.window.open({ name: 'main', html: '<p>orphan</p>' })
+        \\  .catch(function (err) { openFailure = err.message });
+    );
+
+    try testing.expectEqualStrings("0", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings(
+        "craft.window.open reserves \"main\" for the current window",
+        try fx.text("openFailure"),
+    );
+}
+
 test "typed window getters wait for their correlated native result" {
     var fx = try Fixture.init();
     defer fx.deinit();

@@ -132,6 +132,12 @@ describe('typed window-handle routing', () => {
     expect(created.id).toBe(id)
   })
 
+  it('refuses the local main alias before opening a child window', async () => {
+    await expect(windowManager.create({ id: 'main', html: '<h1>Orphan</h1>' }))
+      .rejects.toThrow('reserved for the current window')
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it('resolves the focused retained handle through the injected bridge', async () => {
     const id = `focused-${Date.now()}`
     const settings = await windowManager.create({ id, html: '<h1>Settings</h1>' })

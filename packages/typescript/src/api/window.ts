@@ -12,6 +12,8 @@ interface InjectedWindowBridge {
   open(options: WindowCreateOptions & { id: string }): Promise<{ name: string }>
 }
 
+const CURRENT_WINDOW_ID = 'main'
+
 function getInjectedWindowBridge(): InjectedWindowBridge | undefined {
   if (typeof globalThis.window === 'undefined') return undefined
   return (globalThis.window as unknown as { craft?: { window?: InjectedWindowBridge } })
@@ -807,6 +809,9 @@ class WindowManager {
     // than opening a twin, so handing back a second wrapper for it would be a
     // lie about how many windows there are.
     const id = options.id || `window_${++this._idCounter}_${Date.now()}`
+    if (id === CURRENT_WINDOW_ID) {
+      throw new Error(`Window id "${CURRENT_WINDOW_ID}" is reserved for the current window`)
+    }
     const existing = this._windows.get(id)
 
     if (isWebKitHost()) {

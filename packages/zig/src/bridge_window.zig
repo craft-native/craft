@@ -264,6 +264,13 @@ pub const WindowBridge = struct {
         const name = json_utils.getString(json_data, "name") orelse
             json_utils.getString(json_data, "id") orelse
             return BridgeError.InvalidParameter;
+        // Every page's local SDK handle is named `main`. Allowing a child to
+        // claim that name opens a real native window, then makes the creator's
+        // manager return its existing local-main wrapper for it. The new
+        // window is therefore unreachable. Keep the alias out of the named
+        // registry even for callers that bypass the TypeScript facade.
+        if (std.mem.eql(u8, name, "main") or name.len > window_registry.max_name)
+            return BridgeError.InvalidParameter;
 
         const url = json_utils.getString(json_data, "url");
         const html = json_utils.getString(json_data, "html");
@@ -1552,4 +1559,15 @@ test "open result preserves an app-chosen name as JSON data" {
     const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, result, .{});
     defer parsed.deinit();
     try testing.expectEqualStrings(name, parsed.value.object.get("name").?.string);
+}
+
+test "the current-window alias cannot name a child window" {
+    const testing = std.testing;
+    var bridge = WindowBridge.init(testing.allocator);
+    defer bridge.deinit();
+
+    try testing.expectError(
+        BridgeError.InvalidParameter,
+        bridge.open("{\"name\":\"main\",\"html\":\"<p>orphan</p>\"}"),
+    );
 }
