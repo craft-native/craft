@@ -476,6 +476,27 @@ describe('Craft Android builder', () => {
     expect(gradle).toContain('com.google.mlkit:text-recognition')
   })
 
+  it('guards contacts, calendar, notification, and billing promise channels', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-promise-data-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    for (const [channel, resolver] of [
+      ['contacts read', '_craftContactsResolve'],
+      ['contact write', '_craftAddContactResolve'],
+      ['calendar read', '_craftCalendarResolve'],
+      ['calendar create', '_craftCreateEventResolve'],
+      ['calendar delete', '_craftDeleteEventResolve'],
+      ['notification schedule', '_craftNotifResolve'],
+      ['products', '_craftProductsResolve'],
+      ['purchase', '_craftPurchaseResolve'],
+      ['purchase restore', '_craftRestoreResolve'],
+    ]) {
+      expect(bridge).toContain(`window.__craftPromise('${channel}', '${resolver}',`)
+      expect(bridge).not.toContain(`window.${resolver} = resolve`)
+    }
+  })
+
   it('rejects Bluetooth scans that never reach the platform scanner', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-bluetooth-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

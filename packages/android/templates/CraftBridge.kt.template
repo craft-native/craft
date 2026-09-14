@@ -502,16 +502,12 @@ class CraftBridge(
                 // Contacts
                 contacts: {
                     getAll: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftContactsResolve = resolve;
-                            window._craftContactsReject = reject;
+                        return window.__craftPromise('contacts read', '_craftContactsResolve', '_craftContactsReject', function() {
                             CraftAndroid.getContacts();
                         });
                     },
                     add: function(contact) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftAddContactResolve = resolve;
-                            window._craftAddContactReject = reject;
+                        return window.__craftPromise('contact write', '_craftAddContactResolve', '_craftAddContactReject', function() {
                             CraftAndroid.addContact(JSON.stringify(contact));
                         });
                     }
@@ -520,23 +516,17 @@ class CraftBridge(
                 // Calendar
                 calendar: {
                     getEvents: function(startDate, endDate) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftCalendarResolve = resolve;
-                            window._craftCalendarReject = reject;
+                        return window.__craftPromise('calendar read', '_craftCalendarResolve', '_craftCalendarReject', function() {
                             CraftAndroid.getCalendarEvents(startDate || 0, endDate || 0);
                         });
                     },
                     createEvent: function(event) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftCreateEventResolve = resolve;
-                            window._craftCreateEventReject = reject;
+                        return window.__craftPromise('calendar create', '_craftCreateEventResolve', '_craftCreateEventReject', function() {
                             CraftAndroid.createCalendarEvent(JSON.stringify(event));
                         });
                     },
                     deleteEvent: function(eventId) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftDeleteEventResolve = resolve;
-                            window._craftDeleteEventReject = reject;
+                        return window.__craftPromise('calendar delete', '_craftDeleteEventResolve', '_craftDeleteEventReject', function() {
                             CraftAndroid.deleteCalendarEvent(eventId);
                         });
                     }
@@ -545,9 +535,7 @@ class CraftBridge(
                 // Local Notifications
                 notifications: {
                     schedule: function(notification) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftNotifResolve = resolve;
-                            window._craftNotifReject = reject;
+                        return window.__craftPromise('notification schedule', '_craftNotifResolve', '_craftNotifReject', function() {
                             CraftAndroid.scheduleNotification(JSON.stringify(notification));
                         });
                     },
@@ -562,23 +550,17 @@ class CraftBridge(
                 // In-App Purchase
                 iap: {
                     getProducts: function(productIds) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftProductsResolve = resolve;
-                            window._craftProductsReject = reject;
+                        return window.__craftPromise('products', '_craftProductsResolve', '_craftProductsReject', function() {
                             CraftAndroid.getProducts(JSON.stringify(productIds));
                         });
                     },
                     purchase: function(productId) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftPurchaseResolve = resolve;
-                            window._craftPurchaseReject = reject;
+                        return window.__craftPromise('purchase', '_craftPurchaseResolve', '_craftPurchaseReject', function() {
                             CraftAndroid.purchase(productId);
                         });
                     },
                     restore: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftRestoreResolve = resolve;
-                            window._craftRestoreReject = reject;
+                        return window.__craftPromise('purchase restore', '_craftRestoreResolve', '_craftRestoreReject', function() {
                             CraftAndroid.restorePurchases();
                         });
                     }
