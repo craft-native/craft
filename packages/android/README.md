@@ -120,26 +120,21 @@ Edit `craft.config.json` in your Android project:
   "enablePushNotifications": false,
   "enableSecureStorage": true,
   "enableGeolocation": true,
-  "enableClipboard": true,
-  "enableNetworkStatus": true,
-  "enableAppReview": true,
-  "enableFlashlight": true,
-  "enableQRScanner": true,
-  "enableFilePicker": true,
-  "enableFileDownload": true,
-  "enableSocialAuth": true,
-  "enableAudioRecording": true,
-  "enableVideoRecording": true,
-  "enableMotionSensors": true,
-  "enableLocalDatabase": true,
-  "enableBluetooth": true,
-  "enableNFC": true,
-  "enableFitness": false,
-  "enableScreenCapture": true,
-  "minSdk": 24,
-  "targetSdk": 34
+  "enableBackgroundLocation": false,
+  "enableHealthConnect": false,
+  "enableKeepAwake": true,
+  "enableDeepLinks": true,
+  "urlSchemes": ["myapp"],
+  "trustedOrigins": ["https://app.example.com"],
+  "minSdk": 26,
+  "compileSdk": 36,
+  "targetSdk": 35
 }
 ```
+
+Only the fields shown above are generator options. Enabling background location
+also enables foreground geolocation. Push notifications require a
+`googleServicesFile` path when generating the project.
 
 ## JavaScript Bridge
 
@@ -514,54 +509,40 @@ Options:
 
 - Android Studio with Android SDK
 - JDK 17+
-- Gradle 8.4+
+- Gradle 8.11.1 (the generator creates a wrapper pinned to this version)
 - ADB (for device deployment)
 
 ## Permissions
 
-Add to your AndroidManifest.xml as needed:
+The generator adds manifest permissions from enabled capabilities:
 
-```xml
-<!-- Speech Recognition -->
-<uses-permission android:name="android.permission.RECORD*AUDIO" />
+| Option | Android permissions |
+| --- | --- |
+| `enableSpeechRecognition` | `RECORD_AUDIO` |
+| `enableCamera` | `CAMERA` |
+| `enableHaptics` | `VIBRATE` |
+| `enableBiometric` | `USE_BIOMETRIC` |
+| `enableGeolocation` | `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION` |
+| `enableBackgroundLocation` | foreground location plus `ACCESS_BACKGROUND_LOCATION` and foreground-service permissions |
+| `enablePushNotifications` | `POST_NOTIFICATIONS` |
+| `enableKeepAwake` | `WAKE_LOCK` |
+| `enableHealthConnect` | the configured Health Connect read/write permissions |
 
-<!-- Camera -->
-<uses-permission android:name="android.permission.CAMERA" />
-<uses-permission android:name="android.permission.WRITE*EXTERNAL*STORAGE" />
+Use `permissions.check('location')` and `permissions.request('location')` from
+`craft-native/mobile` for runtime authorization. Android precise and
+approximate access both count as a granted foreground location permission;
+obtaining a GPS fix is a separate operation. See the
+[Permissions API](../../docs/api/mobile/permissions.md) for status semantics.
 
-<!-- Location -->
-<uses-permission android:name="android.permission.ACCESS*FINE*LOCATION" />
-<uses-permission android:name="android.permission.ACCESS*COARSE*LOCATION" />
+## Template Validation
 
-<!-- Biometric -->
-<uses-permission android:name="android.permission.USE*BIOMETRIC" />
+Android projects generated with the default and capability-heavy configurations
+are assembled in CI, and their Kotlin permission tests are run. Contributors
+with JDK 17, Android SDK 36, and Gradle 8.11.1 installed can run the same check:
 
-<!-- Vibration -->
-<uses-permission android:name="android.permission.VIBRATE" />
-
-<!-- NFC -->
-<uses-permission android:name="android.permission.NFC" />
-<uses-feature android:name="android.hardware.nfc" android:required="false" />
-
-<!-- Bluetooth -->
-<uses-permission android:name="android.permission.BLUETOOTH" />
-<uses-permission android:name="android.permission.BLUETOOTH*ADMIN" />
-<uses-permission android:name="android.permission.BLUETOOTH*SCAN" />
-<uses-permission android:name="android.permission.BLUETOOTH*CONNECT" />
-
-<!-- Fitness (Google Fit) -->
-<uses-permission android:name="android.permission.ACTIVITY*RECOGNITION" />
-
-<!-- Contacts -->
-<uses-permission android:name="android.permission.READ*CONTACTS" />
-<uses-permission android:name="android.permission.WRITE*CONTACTS" />
-
-<!-- Calendar -->
-<uses-permission android:name="android.permission.READ*CALENDAR" />
-<uses-permission android:name="android.permission.WRITE*CALENDAR" />
-
-<!-- Notifications (Android 13+) -->
-<uses-permission android:name="android.permission.POST*NOTIFICATIONS" />
+```bash
+cd packages/android
+bun run test:templates
 ```
 
 ## Development Mode
