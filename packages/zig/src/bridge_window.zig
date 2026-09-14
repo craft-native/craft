@@ -44,6 +44,51 @@ fn parseOpacity(data: ?[]const u8) BridgeError!f64 {
     return @max(0.0, @min(1.0, value));
 }
 
+/// Resolve the public vibrancy vocabulary to `NSVisualEffectMaterial` values.
+/// `null` means remove the effect. These numbers come from AppKit's
+/// `NSVisualEffectView.h`; they are not sequential after `sidebar`.
+fn parseVibrancyMaterial(allocator: std.mem.Allocator, data: ?[]const u8) BridgeError!?c_long {
+    const json_data = data orelse return null;
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, json_data, .{}) catch
+        return BridgeError.InvalidJSON;
+    defer parsed.deinit();
+    if (parsed.value != .object) return BridgeError.InvalidJSON;
+
+    const value = parsed.value.object.get("material") orelse
+        parsed.value.object.get("vibrancy") orelse
+        return null;
+    if (value == .null) return null;
+    if (value != .string) return BridgeError.InvalidParameter;
+
+    const name = value.string;
+    if (name.len == 0 or std.mem.eql(u8, name, "none") or std.mem.eql(u8, name, "null"))
+        return null;
+
+    const materials = [_]struct { name: []const u8, value: c_long }{
+        .{ .name = "appearance-based", .value = 0 },
+        .{ .name = "light", .value = 1 },
+        .{ .name = "dark", .value = 2 },
+        .{ .name = "titlebar", .value = 3 },
+        .{ .name = "selection", .value = 4 },
+        .{ .name = "menu", .value = 5 },
+        .{ .name = "popover", .value = 6 },
+        .{ .name = "sidebar", .value = 7 },
+        .{ .name = "header", .value = 10 },
+        .{ .name = "sheet", .value = 11 },
+        .{ .name = "window", .value = 12 },
+        .{ .name = "hud", .value = 13 },
+        .{ .name = "fullscreen-ui", .value = 15 },
+        .{ .name = "tooltip", .value = 17 },
+        .{ .name = "content", .value = 18 },
+        .{ .name = "under-window", .value = 21 },
+        .{ .name = "under-page", .value = 22 },
+    };
+    for (materials) |material| {
+        if (std.mem.eql(u8, name, material.name)) return material.value;
+    }
+    return BridgeError.InvalidParameter;
+}
+
 /// Bridge handler for window control messages from JavaScript
 pub const WindowBridge = struct {
     allocator: std.mem.Allocator,
@@ -953,58 +998,18 @@ pub const WindowBridge = struct {
     fn setVibrancy(self: *Self, data: ?[]const u8) !void {
         const handle = try self.requireWindowHandle(data);
 
+        // The injected bridge sends "material" and the TypeScript handle sends
+        // "vibrancy". Both spellings share one complete AppKit mapping.
+        const maybe_material = try parseVibrancyMaterial(self.allocator, data);
+
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
-
-            // Parse vibrancy type from {"vibrancy": "..."}
-            var vibrancy_type: []const u8 = "none";
-            if (data) |json_data| {
-                // `setVibrancy(material)` sends `{"material":"sidebar"}`;
-                // this scanned for `"vibrancy":"`, never matched, and left
-                // "none" — which takes the *removal* branch below, so the call
-                // stripped vibrancy instead of applying it.
-                const vkey = if (std.mem.indexOf(u8, json_data, "\"material\":\"") != null)
-                    "\"material\":\""
-                else
-                    "\"vibrancy\":\"";
-                if (std.mem.indexOf(u8, json_data, vkey)) |idx| {
-                    // `vkey.len`, not a literal: the two spellings happen to
-                    // be the same length, which is luck and not something the
-                    // next key added here would inherit.
-                    const start = idx + vkey.len;
-                    if (std.mem.indexOfPos(u8, json_data, start, "\"")) |end| {
-                        vibrancy_type = json_data[start..end];
-                    }
-                }
-            }
-
-            log.debug("setVibrancy: {s}", .{vibrancy_type});
-
-            // Get NSVisualEffectView material enum value
-            // Common values: 0=appearance-based, 1=light, 2=dark, 3=titlebar, 4=selection
-            // 10=menu, 11=popover, 12=sidebar, 13=header, 14=sheet, 17=HUD, etc.
-            var material: c_long = 0;
-            if (std.mem.eql(u8, vibrancy_type, "sidebar")) {
-                material = 12;
-            } else if (std.mem.eql(u8, vibrancy_type, "header")) {
-                material = 13;
-            } else if (std.mem.eql(u8, vibrancy_type, "sheet")) {
-                material = 14;
-            } else if (std.mem.eql(u8, vibrancy_type, "menu")) {
-                material = 10;
-            } else if (std.mem.eql(u8, vibrancy_type, "popover")) {
-                material = 11;
-            } else if (std.mem.eql(u8, vibrancy_type, "fullscreen-ui")) {
-                material = 15;
-            } else if (std.mem.eql(u8, vibrancy_type, "hud")) {
-                material = 17;
-            } else if (std.mem.eql(u8, vibrancy_type, "titlebar")) {
-                material = 3;
-            } else if (std.mem.eql(u8, vibrancy_type, "none") or std.mem.eql(u8, vibrancy_type, "null")) {
-                // Remove vibrancy - set window to opaque
+            const material = maybe_material orelse {
                 _ = macos.msgSend1(handle, "setOpaque:", true);
                 return;
-            }
+            };
+
+            log.debug("setVibrancy: AppKit material {}", .{material});
 
             // Make window non-opaque for vibrancy
             _ = macos.msgSend1(handle, "setOpaque:", false);
@@ -1654,6 +1659,47 @@ test "window opacity rejects a missing or malformed numeric value" {
     try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{}"));
     try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{\"value\":null}"));
     try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{\"value\":\"0.5\"}"));
+}
+
+test "every typed vibrancy material maps to its AppKit constant" {
+    const testing = std.testing;
+    const cases = [_]struct { name: []const u8, value: c_long }{
+        .{ .name = "appearance-based", .value = 0 },
+        .{ .name = "light", .value = 1 },
+        .{ .name = "dark", .value = 2 },
+        .{ .name = "titlebar", .value = 3 },
+        .{ .name = "selection", .value = 4 },
+        .{ .name = "menu", .value = 5 },
+        .{ .name = "popover", .value = 6 },
+        .{ .name = "sidebar", .value = 7 },
+        .{ .name = "header", .value = 10 },
+        .{ .name = "sheet", .value = 11 },
+        .{ .name = "window", .value = 12 },
+        .{ .name = "hud", .value = 13 },
+        .{ .name = "fullscreen-ui", .value = 15 },
+        .{ .name = "tooltip", .value = 17 },
+        .{ .name = "content", .value = 18 },
+        .{ .name = "under-window", .value = 21 },
+        .{ .name = "under-page", .value = 22 },
+    };
+
+    for (cases) |case| {
+        const json = try std.fmt.allocPrint(testing.allocator, "{{\"vibrancy\":\"{s}\"}}", .{case.name});
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(?c_long, case.value), try parseVibrancyMaterial(testing.allocator, json));
+    }
+}
+
+test "vibrancy removal and invalid materials are explicit" {
+    const testing = std.testing;
+
+    try testing.expectEqual(@as(?c_long, null), try parseVibrancyMaterial(testing.allocator, null));
+    try testing.expectEqual(@as(?c_long, null), try parseVibrancyMaterial(testing.allocator, "{\"vibrancy\":null}"));
+    try testing.expectEqual(@as(?c_long, null), try parseVibrancyMaterial(testing.allocator, "{ \"material\" : \"\" }"));
+    try testing.expectEqual(@as(?c_long, 7), try parseVibrancyMaterial(testing.allocator, "{\"material\":\"\\u0073idebar\"}"));
+    try testing.expectError(BridgeError.InvalidParameter, parseVibrancyMaterial(testing.allocator, "{\"vibrancy\":\"unknown\"}"));
+    try testing.expectError(BridgeError.InvalidParameter, parseVibrancyMaterial(testing.allocator, "{\"vibrancy\":7}"));
+    try testing.expectError(BridgeError.InvalidJSON, parseVibrancyMaterial(testing.allocator, "not json"));
 }
 
 test "the current-window alias cannot name a child window" {
