@@ -2039,13 +2039,9 @@ class CraftBridge(
                 put("heading", location.bearing)
                 put("timestamp", location.time)
             }
-            activity.runOnUiThread {
-                if (closed) return@runOnUiThread
-                webView.evaluateJavascript(
-                    "window._craftLocationResolve && window._craftLocationResolve($json)",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftLocationResolve && window._craftLocationResolve($json)"
+            )
         }
 
         fun rejectLocationRequest(message: String, code: Int = 2) {
@@ -2132,13 +2128,9 @@ class CraftBridge(
     }
 
     private fun rejectLocation(message: String, code: Int = 2) {
-        activity.runOnUiThread {
-            if (closed) return@runOnUiThread
-            webView.evaluateJavascript(
-                "window._craftLocationReject && window._craftLocationReject({code: $code, message: ${jsQuote(message)}})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftLocationReject && window._craftLocationReject({code: $code, message: ${jsQuote(message)}})"
+        )
     }
 
     @JavascriptInterface
@@ -2603,27 +2595,20 @@ class CraftBridge(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_CONTACTS)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftContactsReject && window._craftContactsReject('Permission denied')", null)
-            }
+            evaluatePromiseJavascript("window._craftContactsReject && window._craftContactsReject('Permission denied')")
             return
         }
 
         val contacts = try {
             loadContacts()
         } catch (error: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftContactsReject && window._craftContactsReject(${jsQuote(error.message ?: "Contacts could not be read")})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftContactsReject && window._craftContactsReject(${jsQuote(error.message ?: "Contacts could not be read")})"
+            )
             return
         }
 
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftContactsResolve && window._craftContactsResolve($contacts)", null)
-        }
+        evaluatePromiseJavascript("window._craftContactsResolve && window._craftContactsResolve($contacts)")
     }
 
     private fun loadContacts(): JSONArray {
@@ -2695,9 +2680,7 @@ class CraftBridge(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_CONTACTS), REQUEST_CONTACTS)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAddContactReject && window._craftAddContactReject('Permission denied')", null)
-            }
+            evaluatePromiseJavascript("window._craftAddContactReject && window._craftAddContactReject('Permission denied')")
             return
         }
 
@@ -2745,13 +2728,13 @@ class CraftBridge(
             val results = activity.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
             val contactId = ContentUris.parseId(results[0].uri!!)
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAddContactResolve && window._craftAddContactResolve(${jsQuote(contactId)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftAddContactResolve && window._craftAddContactResolve(${jsQuote(contactId)})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAddContactReject && window._craftAddContactReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftAddContactReject && window._craftAddContactReject(${jsQuote(e.message ?: "Contact could not be added")})"
+            )
         }
     }
 
@@ -2766,9 +2749,7 @@ class CraftBridge(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CALENDAR), REQUEST_CALENDAR)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCalendarReject && window._craftCalendarReject('Permission denied')", null)
-            }
+            evaluatePromiseJavascript("window._craftCalendarReject && window._craftCalendarReject('Permission denied')")
             return
         }
 
@@ -2810,16 +2791,11 @@ class CraftBridge(
                 }
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCalendarResolve && window._craftCalendarResolve($events)", null)
-            }
+            evaluatePromiseJavascript("window._craftCalendarResolve && window._craftCalendarResolve($events)")
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message ?: "Calendar events could not be read")})"
+            )
         }
     }
 
@@ -2832,9 +2808,7 @@ class CraftBridge(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_CALENDAR), REQUEST_CALENDAR)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCreateEventReject && window._craftCreateEventReject('Permission denied')", null)
-            }
+            evaluatePromiseJavascript("window._craftCreateEventReject && window._craftCreateEventReject('Permission denied')")
             return
         }
 
@@ -2854,13 +2828,13 @@ class CraftBridge(
             val uri = activity.contentResolver.insert(CalendarContract.Events.CONTENT_URI, values)
             val eventId = uri?.lastPathSegment ?: ""
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCreateEventResolve && window._craftCreateEventResolve(${jsQuote(eventId)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftCreateEventResolve && window._craftCreateEventResolve(${jsQuote(eventId)})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftCreateEventReject && window._craftCreateEventReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftCreateEventReject && window._craftCreateEventReject(${jsQuote(e.message ?: "Calendar event could not be created")})"
+            )
         }
     }
 
@@ -2873,13 +2847,11 @@ class CraftBridge(
         try {
             val uri = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId.toLong())
             activity.contentResolver.delete(uri, null, null)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftDeleteEventResolve && window._craftDeleteEventResolve(true)", null)
-            }
+            evaluatePromiseJavascript("window._craftDeleteEventResolve && window._craftDeleteEventResolve(true)")
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftDeleteEventReject && window._craftDeleteEventReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftDeleteEventReject && window._craftDeleteEventReject(${jsQuote(e.message ?: "Calendar event could not be deleted")})"
+            )
         }
     }
 
@@ -2919,13 +2891,13 @@ class CraftBridge(
                 notificationManager.notify(id.hashCode(), builder.build())
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftNotifResolve && window._craftNotifResolve(${jsQuote(id)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftNotifResolve && window._craftNotifResolve(${jsQuote(id)})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftNotifReject && window._craftNotifReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftNotifReject && window._craftNotifReject(${jsQuote(e.message ?: "Notification could not be scheduled")})"
+            )
         }
     }
 
@@ -2968,9 +2940,7 @@ class CraftBridge(
 
         fun resolveProductRequest(products: JSONArray) {
             if (!settled.compareAndSet(false, true) || closed) return
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftProductsResolve && window._craftProductsResolve($products)", null)
-            }
+            evaluatePromiseJavascript("window._craftProductsResolve && window._craftProductsResolve($products)")
         }
 
         fun rejectProductRequest(message: String) {
@@ -3039,20 +3009,17 @@ class CraftBridge(
     }
 
     private fun rejectProducts(message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftProductsReject && window._craftProductsReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftProductsReject && window._craftProductsReject(${jsQuote(message)})"
+        )
     }
 
     @JavascriptInterface
     fun purchase(productId: String) {
         // Simplified - real implementation would query product details first
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftPurchaseReject && window._craftPurchaseReject('Purchase flow not fully implemented')", null)
-        }
+        evaluatePromiseJavascript(
+            "window._craftPurchaseReject && window._craftPurchaseReject('Purchase flow not fully implemented')"
+        )
     }
 
     @JavascriptInterface
@@ -3063,9 +3030,7 @@ class CraftBridge(
 
         fun resolveRestoreRequest(restored: JSONArray) {
             if (!settled.compareAndSet(false, true) || closed) return
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)", null)
-            }
+            evaluatePromiseJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)")
         }
 
         fun rejectRestoreRequest(message: String) {
@@ -3132,12 +3097,9 @@ class CraftBridge(
     }
 
     private fun rejectRestore(message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftRestoreReject && window._craftRestoreReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftRestoreReject && window._craftRestoreReject(${jsQuote(message)})"
+        )
     }
 
     // ==================== Keep Awake ====================
@@ -3207,12 +3169,9 @@ class CraftBridge(
     @JavascriptInterface
     fun scanQRCode() {
         // Uses ML Kit barcode scanning - requires camera permission
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftQRReject && window._craftQRReject('QR scanning requires camera integration - use native camera intent')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftQRReject && window._craftQRReject('QR scanning requires camera integration - use native camera intent')"
+        )
     }
 
     // ==================== File Picker ====================
@@ -3266,19 +3225,13 @@ class CraftBridge(
             val downloadManager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val downloadId = downloadManager.enqueue(request)
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDownloadResolve && window._craftDownloadResolve(${jsQuote(downloadId)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftDownloadResolve && window._craftDownloadResolve(${jsQuote(downloadId)})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDownloadReject && window._craftDownloadReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftDownloadReject && window._craftDownloadReject(${jsQuote(e.message ?: "Download could not be started")})"
+            )
         }
     }
 
@@ -3305,24 +3258,18 @@ class CraftBridge(
                 file.writeText(data)
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSaveResolve && window._craftSaveResolve(${jsQuote(file.absolutePath)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSaveResolve && window._craftSaveResolve(${jsQuote(file.absolutePath)})"
+            )
         } catch (e: Exception) {
             rejectSaveFile(e.message)
         }
     }
 
     private fun rejectSaveFile(message: String?) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftSaveReject && window._craftSaveReject(${jsQuote(message ?: "File save failed")})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftSaveReject && window._craftSaveReject(${jsQuote(message ?: "File save failed")})"
+        )
     }
 
     // ==================== Google Sign In ====================
@@ -3330,12 +3277,9 @@ class CraftBridge(
     @JavascriptInterface
     fun signInWithGoogle() {
         // Google Sign In requires configuration in build.gradle
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftGoogleReject && window._craftGoogleReject('Google Sign In requires app configuration')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftGoogleReject && window._craftGoogleReject('Google Sign In requires app configuration')"
+        )
     }
 
     // ==================== Audio Recording ====================
@@ -3347,9 +3291,7 @@ class CraftBridge(
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioReject && window._craftAudioReject('Permission denied')", null)
-            }
+            evaluatePromiseJavascript("window._craftAudioReject && window._craftAudioReject('Permission denied')")
             return
         }
 
@@ -3373,13 +3315,11 @@ class CraftBridge(
                 start()
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioResolve && window._craftAudioResolve(true)", null)
-            }
+            evaluatePromiseJavascript("window._craftAudioResolve && window._craftAudioResolve(true)")
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioReject && window._craftAudioReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftAudioReject && window._craftAudioReject(${jsQuote(e.message ?: "Audio recording could not start")})"
+            )
         }
     }
 
@@ -3395,18 +3335,18 @@ class CraftBridge(
             audioFile?.let { file ->
                 val bytes = file.readBytes()
                 val base64 = "data:audio/m4a;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
-                activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftAudioStopResolve && window._craftAudioStopResolve(${jsQuote(base64)})", null)
-                }
+                evaluatePromiseJavascript(
+                    "window._craftAudioStopResolve && window._craftAudioStopResolve(${jsQuote(base64)})"
+                )
             } ?: run {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftAudioStopReject && window._craftAudioStopReject('No recording')", null)
-                }
+                evaluatePromiseJavascript(
+                    "window._craftAudioStopReject && window._craftAudioStopReject('No recording')"
+                )
             }
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftAudioStopReject && window._craftAudioStopReject(${jsQuote(e.message)})", null)
-            }
+            evaluatePromiseJavascript(
+                "window._craftAudioStopReject && window._craftAudioStopReject(${jsQuote(e.message ?: "Audio recording could not stop")})"
+            )
         }
     }
 
@@ -3422,12 +3362,9 @@ class CraftBridge(
             }
             activity.startActivityForResult(intent, REQUEST_VIDEO)
         } catch (error: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftVideoReject && window._craftVideoReject(${jsQuote(error.message ?: "Video capture could not be opened")})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftVideoReject && window._craftVideoReject(${jsQuote(error.message ?: "Video capture could not be opened")})"
+            )
         }
     }
 
@@ -3512,19 +3449,13 @@ class CraftBridge(
                 statement.executeUpdateDelete()
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDbExecResolve && window._craftDbExecResolve({rowsAffected: $rowsAffected})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftDbExecResolve && window._craftDbExecResolve({rowsAffected: $rowsAffected})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDbExecReject && window._craftDbExecReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftDbExecReject && window._craftDbExecReject(${jsQuote(e.message ?: "Database execution failed")})"
+            )
         }
     }
 
@@ -3554,19 +3485,11 @@ class CraftBridge(
                 }
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDbQueryResolve && window._craftDbQueryResolve($results)",
-                    null
-                )
-            }
+            evaluatePromiseJavascript("window._craftDbQueryResolve && window._craftDbQueryResolve($results)")
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftDbQueryReject && window._craftDbQueryReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftDbQueryReject && window._craftDbQueryReject(${jsQuote(e.message ?: "Database query failed")})"
+            )
         }
     }
 
@@ -3646,18 +3569,13 @@ class CraftBridge(
         bluetoothAdapter = adapter
         bluetoothScanner = scanner
         bleScanCallback = callback
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftBleResolve && window._craftBleResolve(true)", null)
-        }
+        evaluatePromiseJavascript("window._craftBleResolve && window._craftBleResolve(true)")
     }
 
     private fun rejectBluetoothScan(message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftBleReject && window._craftBleReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftBleReject && window._craftBleReject(${jsQuote(message)})"
+        )
     }
 
     @JavascriptInterface
@@ -3674,15 +3592,13 @@ class CraftBridge(
     fun scanNFC() {
         val nfcAdapter = NfcAdapter.getDefaultAdapter(activity)
         if (nfcAdapter == null || !nfcAdapter.isEnabled) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftNfcReject && window._craftNfcReject('NFC not available')", null)
-            }
+            evaluatePromiseJavascript("window._craftNfcReject && window._craftNfcReject('NFC not available')")
             return
         }
         // NFC requires foreground dispatch - simplified implementation
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftNfcReject && window._craftNfcReject('NFC requires activity integration')", null)
-        }
+        evaluatePromiseJavascript(
+            "window._craftNfcReject && window._craftNfcReject('NFC requires activity integration')"
+        )
     }
 
     // ==================== Fitness ====================
@@ -3862,12 +3778,9 @@ class CraftBridge(
         } else {
             "Background task $taskId is unavailable on Android"
         }
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftBgTaskReject && window._craftBgTaskReject(${jsQuote(message)})"
+        )
     }
 
     // ==================== PDF Viewer ====================
@@ -4038,12 +3951,9 @@ class CraftBridge(
         if (CraftNative.setShortcuts(activity, shortcutsJson)) return
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N_MR1) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftShortcutsReject && window._craftShortcutsReject('App shortcuts require Android 7.1+')",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftShortcutsReject && window._craftShortcutsReject('App shortcuts require Android 7.1+')"
+            )
             return
         }
 
@@ -4074,19 +3984,13 @@ class CraftBridge(
 
             shortcutManager?.dynamicShortcuts = shortcuts
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftShortcutsResolve && window._craftShortcutsResolve({count: ${shortcuts.size}})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftShortcutsResolve && window._craftShortcutsResolve({count: ${shortcuts.size}})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message ?: "Shortcuts could not be set")})"
+            )
         }
     }
 
@@ -4099,27 +4003,14 @@ class CraftBridge(
                 val shortcutManager = activity.getSystemService(android.content.pm.ShortcutManager::class.java)
                 shortcutManager?.removeAllDynamicShortcuts()
 
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftShortcutsResolve && window._craftShortcutsResolve(true)",
-                        null
-                    )
-                }
+                evaluatePromiseJavascript("window._craftShortcutsResolve && window._craftShortcutsResolve(true)")
             } catch (e: Exception) {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message)})",
-                        null
-                    )
-                }
-            }
-        } else {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftShortcutsResolve && window._craftShortcutsResolve(true)",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftShortcutsReject && window._craftShortcutsReject(${jsQuote(e.message ?: "Shortcuts could not be cleared")})"
                 )
             }
+        } else {
+            evaluatePromiseJavascript("window._craftShortcutsResolve && window._craftShortcutsResolve(true)")
         }
     }
 
@@ -4136,19 +4027,13 @@ class CraftBridge(
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
             prefs.edit().putString(key, value).apply()
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message ?: "Shared item could not be stored")})"
+            )
         }
     }
 
@@ -4163,26 +4048,18 @@ class CraftBridge(
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
             val value = prefs.getString(key, null)
 
-            activity.runOnUiThread {
-                if (value != null) {
-                    webView.evaluateJavascript(
-                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: ${jsQuote(value)}, key: ${jsQuote(key)}})",
-                        null
-                    )
-                } else {
-                    webView.evaluateJavascript(
-                        "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({value: null, key: ${jsQuote(key)}})",
-                        null
-                    )
-                }
+            val payload = if (value != null) {
+                "{value: ${jsQuote(value)}, key: ${jsQuote(key)}}"
+            } else {
+                "{value: null, key: ${jsQuote(key)}}"
             }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve($payload)"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message ?: "Shared item could not be read")})"
+            )
         }
     }
 
@@ -4197,19 +4074,13 @@ class CraftBridge(
             val prefs = activity.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
             prefs.edit().remove(key).apply()
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainResolve && window._craftSharedKeychainResolve({success: true, key: ${jsQuote(key)}})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftSharedKeychainReject && window._craftSharedKeychainReject(${jsQuote(e.message ?: "Shared item could not be removed")})"
+            )
         }
     }
 
@@ -4223,28 +4094,19 @@ class CraftBridge(
             if (enabled) {
                 val expiresAt = System.currentTimeMillis() + (duration * 1000)
                 securePrefs.edit().putLong(authSessionExpiryKey, expiresAt).apply()
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: true, duration: $duration, expiresAt: $expiresAt})",
-                        null
-                    )
-                }
+                evaluatePromiseJavascript(
+                    "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: true, duration: $duration, expiresAt: $expiresAt})"
+                )
             } else {
                 securePrefs.edit().remove(authSessionExpiryKey).apply()
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: false})",
-                        null
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftAuthPersistResolve && window._craftAuthPersistResolve({enabled: false})"
                 )
             }
+        } catch (e: Exception) {
+            evaluatePromiseJavascript(
+                "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message ?: "Auth persistence could not be updated")})"
+            )
         }
     }
 
@@ -4257,19 +4119,13 @@ class CraftBridge(
             val remainingMs = if (isValid) authSessionExpiry - now else 0L
             val remainingSeconds = remainingMs / 1000
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAuthPersistResolve && window._craftAuthPersistResolve({isValid: $isValid, remainingSeconds: $remainingSeconds})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftAuthPersistResolve && window._craftAuthPersistResolve({isValid: $isValid, remainingSeconds: $remainingSeconds})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message ?: "Auth persistence could not be checked")})"
+            )
         }
     }
 
@@ -4277,19 +4133,13 @@ class CraftBridge(
     fun clearAuthPersistence() {
         try {
             securePrefs.edit().remove(authSessionExpiryKey).apply()
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAuthPersistResolve && window._craftAuthPersistResolve({cleared: true})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftAuthPersistResolve && window._craftAuthPersistResolve({cleared: true})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftAuthPersistReject && window._craftAuthPersistReject(${jsQuote(e.message ?: "Auth persistence could not be cleared")})"
+            )
         }
     }
 
@@ -4300,52 +4150,33 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startAR(optionsJson: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftARReject && window._craftARReject('ARCore requires native Activity integration. Use Sceneform or AR Fragment for full AR support.')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftARReject && window._craftARReject('ARCore requires native Activity integration. Use Sceneform or AR Fragment for full AR support.')"
+        )
     }
 
     @JavascriptInterface
     fun stopAR() {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftARResolve && window._craftARResolve({stopped: true})",
-                null
-            )
-        }
+        evaluatePromiseJavascript("window._craftARResolve && window._craftARResolve({stopped: true})")
     }
 
     @JavascriptInterface
     fun placeARObject(model: String, positionJson: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftARReject && window._craftARReject('ARCore requires native Activity integration')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftARReject && window._craftARReject('ARCore requires native Activity integration')"
+        )
     }
 
     @JavascriptInterface
     fun removeARObject(objectId: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftARReject && window._craftARReject('ARCore requires native Activity integration')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftARReject && window._craftARReject('ARCore requires native Activity integration')"
+        )
     }
 
     @JavascriptInterface
     fun getARPlanes() {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftARResolve && window._craftARResolve([])",
-                null
-            )
-        }
+        evaluatePromiseJavascript("window._craftARResolve && window._craftARResolve([])")
     }
 
     // ==================== ML Kit ====================
@@ -4647,14 +4478,12 @@ class CraftBridge(
                     }
                     put("queryParams", queryParams)
                 }
-                webView.evaluateJavascript(
-                    "window._craftDeepLinkResolve && window._craftDeepLinkResolve($json)",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftDeepLinkResolve && window._craftDeepLinkResolve($json)"
                 )
             } else {
-                webView.evaluateJavascript(
-                    "window._craftDeepLinkResolve && window._craftDeepLinkResolve(null)",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftDeepLinkResolve && window._craftDeepLinkResolve(null)"
                 )
             }
         }

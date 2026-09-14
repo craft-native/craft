@@ -565,6 +565,7 @@ describe('Craft Android builder', () => {
     for (const callbackName of nativeCallbackNames) {
       expect(bridge).toContain(`'${callbackName}'`)
     }
+    expect(bridge.match(/webView\.evaluateJavascript\(\s*"window\._craft[A-Za-z]+(?:Resolve|Reject)/g)).toBeNull()
     expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
     expect(bridge).toContain('window.__craftRejectPermissionRequests = function(message)')
     expect(bridge).toContain("window.__craftRejectPermissionRequests('Android bridge closed')")
@@ -985,7 +986,7 @@ describe('Craft Android builder', () => {
     expect(tryStart).toBeGreaterThan(-1)
     expect(queryStart).toBeGreaterThan(tryStart)
     expect(getEvents.match(/catch \(e: Exception\)/g)?.length).toBe(1)
-    expect(getEvents).toContain('window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})')
+    expect(getEvents).toContain('jsQuote(e.message ?: "Calendar events could not be read")')
   })
 
   it('rejects widget reload failures instead of hanging the promise', async () => {
