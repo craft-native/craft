@@ -5,8 +5,12 @@ if (window.__craftRejectPendingPromises) {
 if (window.__craftRejectPermissionRequests) {
     window.__craftRejectPermissionRequests('Android bridge reinitialized');
 }
+window.__craftPromiseRuntimeClosed = false;
 window.__craftPendingPromises = Object.create(null);
 window.__craftPromise = function(channel, resolveName, rejectName, invoke, timeoutMs, timeoutError) {
+    if (window.__craftPromiseRuntimeClosed) {
+        return Promise.reject(new Error('Android bridge is closed'));
+    }
     if (window.__craftPendingPromises[channel]) {
         return Promise.reject(new Error('A '.concat(channel, ' request is already in progress')));
     }
@@ -53,6 +57,7 @@ window.__craftPromise = function(channel, resolveName, rejectName, invoke, timeo
 };
 
 window.__craftRejectPendingPromises = function(message) {
+    window.__craftPromiseRuntimeClosed = true;
     Object.keys(window.__craftPendingPromises).forEach(function(channel) {
         var entry = window.__craftPendingPromises[channel];
         if (entry) entry.settle(false, new Error(message || 'Android bridge closed'));

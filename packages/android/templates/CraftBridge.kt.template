@@ -1379,7 +1379,9 @@ class CraftBridge(
                 };
                 var permissionRequestSequence = 0;
                 var permissionRequests = Object.create(null);
+                var permissionRuntimeClosed = false;
                 window.__craftPermissionResult = function(id, status) {
+                    if (permissionRuntimeClosed) return;
                     var pending = permissionRequests[id];
                     if (!pending) return;
                     delete permissionRequests[id];
@@ -1387,6 +1389,7 @@ class CraftBridge(
                     pending.resolve(status || 'undetermined');
                 };
                 window.__craftRejectPermissionRequests = function(message) {
+                    permissionRuntimeClosed = true;
                     Object.keys(permissionRequests).forEach(function(id) {
                         var pending = permissionRequests[id];
                         delete permissionRequests[id];
@@ -1399,6 +1402,9 @@ class CraftBridge(
                         return Promise.resolve().then(function() { return CraftAndroid.checkPermission(String(permission)); });
                     },
                     request: function(permission) {
+                        if (permissionRuntimeClosed) {
+                            return Promise.reject(new Error('Android bridge is closed'));
+                        }
                         return new Promise(function(resolve, reject) {
                             permissionRequestSequence += 1;
                             var id = permissionRequestSequence;

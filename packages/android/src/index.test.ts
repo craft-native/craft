@@ -609,6 +609,9 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('_craftSharedKeychainResolve({removed: true, key: ${jsQuote(key)}})')
     expect(bridge).toContain('window.__craftRejectPermissionRequests = function(message)')
     expect(bridge).toContain("window.__craftRejectPermissionRequests('Android bridge closed')")
+    expect(bridge).toContain('var permissionRuntimeClosed = false')
+    expect(bridge).toContain('permissionRuntimeClosed = true')
+    expect(bridge).toContain("return Promise.reject(new Error('Android bridge is closed'))")
   })
 
   it('turns synchronous native-call failures into Promise rejections', async () => {

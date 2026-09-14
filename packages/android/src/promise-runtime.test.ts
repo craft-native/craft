@@ -13,6 +13,7 @@ type NativePromise = (
 interface RuntimeWindow extends Record<string, unknown> {
   __craftPendingPromises: Record<string, unknown>
   __craftPromise: NativePromise
+  __craftPromiseRuntimeClosed: boolean
   __craftRejectPendingPromises: (message?: string) => void
 }
 
@@ -78,6 +79,20 @@ describe('Android promise runtime', () => {
     expect(Object.keys(runtimeWindow.__craftPendingPromises)).toEqual([])
   })
 
+  it('rejects new requests after close without invoking native code', async () => {
+    const runtimeWindow = installRuntime()
+    let invoked = false
+    runtimeWindow.__craftRejectPendingPromises('Android bridge closed')
+
+    await expect(runtimeWindow.__craftPromise('camera', 'cameraResolve', 'cameraReject', () => {
+      invoked = true
+    })).rejects.toThrow('Android bridge is closed')
+
+    expect(invoked).toBe(false)
+    expect(runtimeWindow.cameraResolve).toBeUndefined()
+    expect(runtimeWindow.cameraReject).toBeUndefined()
+  })
+
   it('rejects active work before reinstalling the bridge runtime', async () => {
     const runtimeWindow = installRuntime()
     const pending = runtimeWindow.__craftPromise('camera', 'cameraResolve', 'cameraReject', () => {})
@@ -86,6 +101,7 @@ describe('Android promise runtime', () => {
 
     await expect(pending).rejects.toThrow('Android bridge reinitialized')
     expect(Object.keys(runtimeWindow.__craftPendingPromises)).toEqual([])
+    expect(runtimeWindow.__craftPromiseRuntimeClosed).toBe(false)
   })
 
   it('renders with the requested Kotlin indentation', () => {

@@ -557,9 +557,10 @@ mutations—so callers should await one before starting the next.
 Native success, error, cancellation, and timeout callbacks settle a request at
 most once. Synchronous JavaScript-interface failures are converted to Promise
 rejections. Permission requests use request IDs and a 30-second timeout, while
-one-shot location requests use a 15-second timeout. Destroying or reinjecting
-the bridge rejects all pending work and ignores callbacks queued by the old
-Activity lifecycle.
+one-shot location requests use a 15-second timeout. Destroying the bridge
+rejects all pending work and any new request, while callbacks queued by the old
+Activity lifecycle are ignored. Reinjecting the bridge rejects old work and
+opens a fresh runtime.
 
 ## Template Validation
 
