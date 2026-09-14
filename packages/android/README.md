@@ -134,7 +134,13 @@ Edit `craft.config.json` in your Android project:
 
 Only the fields shown above are generator options. Enabling background location
 also enables foreground geolocation. Push notifications require a
-`googleServicesFile` path when generating the project.
+`googleServicesFile` path when generating the project. Deep links require at
+least one valid URI scheme; scheme names are normalized to lowercase.
+
+Remote app and trusted-origin URLs must use HTTPS. Local development may use
+HTTP with `localhost`, `127.0.0.1`, or the Android emulator host `10.0.2.2`.
+Origins are normalized before they are stored, and a configured development
+server is trusted automatically.
 
 ## JavaScript Bridge
 
