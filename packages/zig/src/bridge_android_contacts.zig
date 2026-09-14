@@ -1,10 +1,9 @@
 //! Contacts and the single-contact picker on Android.
 //!
-//! `pickContact` only launches. Its Kotlin result decoder is not called by
-//! `MainActivity.onActivityResult`, which routes only to Health Connect, so
-//! the page's promise remains pending after the picker returns. The ignored
-//! `multiple` argument stays in the JavaScript/Kotlin contract; Android still
-//! launches `ACTION_PICK` for one contact.
+//! `pickContact` only launches. `MainActivity.onActivityResult` routes its
+//! result to Kotlin's decoder, which reads and settles the page promise. The
+//! ignored `multiple` argument stays in the JavaScript/Kotlin contract;
+//! Android still launches `ACTION_PICK` for one contact.
 //!
 //! ## The column names are literals, and that is the faithful choice
 //!
@@ -39,7 +38,6 @@
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
 const bridge_error = @import("bridge_error.zig");
-const permissions = @import("android_permissions.zig");
 const main_thread = @import("android_main_thread.zig");
 
 const Jni = jni.Jni;
@@ -56,19 +54,12 @@ pub const reject_global = "_craftContactsReject";
 pub const add_resolve_global = "_craftAddContactResolve";
 pub const add_reject_global = "_craftAddContactReject";
 
-/// `CraftBridge.REQUEST_PICK_CONTACT`, used for both permission and Activity
-/// requests by the existing shim.
+/// `CraftBridge.REQUEST_PICK_CONTACT`, used for the Activity result.
 pub const request_pick_contact: i32 = 1010;
 
-/// Ask for contacts access when needed, otherwise queue the system picker on
-/// the main looper. Neither branch settles the promise: permission grant needs
-/// a second call, and the generated Activity currently drops the picker result.
+/// Queue the system picker on the main looper. Kotlin checks permission first,
+/// so a denied call can reject its promise instead of being claimed here.
 pub fn pickContact(j: Jni, activity: jobject) !void {
-    if (!try permissions.isGranted(j, activity, permissions.read_contacts)) {
-        try permissions.request(j, activity, permissions.read_contacts, request_pick_contact);
-        return;
-    }
-
     try main_thread.post(j, activity, .{ .launch_contact_picker = request_pick_contact }, 0);
 }
 

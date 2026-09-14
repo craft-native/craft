@@ -1937,9 +1937,8 @@ fn nativeAddContact(
 
 /// `nativePickContact(activity)`.
 ///
-/// True means the permission request or picker launch was queued. As in the
-/// shim, neither path settles the promise: the Activity result is not routed
-/// to `handleContactPickerResult` by the generated `MainActivity`.
+/// True means the picker launch was queued. Kotlin checks permission before
+/// calling this and routes the Activity result back to its promise decoder.
 fn nativePickContact(
     env: jni.JNIEnv,
     _: jni.jobject,

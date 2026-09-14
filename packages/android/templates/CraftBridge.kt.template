@@ -3878,28 +3878,28 @@ class CraftBridge(
     fun pickContact(multiple: Boolean) {
         // `multiple` is ignored by both implementations: Android still opens
         // the platform's single-contact ACTION_PICK surface.
-        if (CraftNative.pickContact(activity)) return
-
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_PICK_CONTACT)
+            rejectContactPicker("Contacts permission is required; retry after granting it")
             return
         }
 
+        if (CraftNative.pickContact(activity)) return
+
         activity.runOnUiThread {
-            val intent = Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI)
-            activity.startActivityForResult(intent, REQUEST_PICK_CONTACT)
+            try {
+                val intent = Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI)
+                activity.startActivityForResult(intent, REQUEST_PICK_CONTACT)
+            } catch (error: Exception) {
+                rejectContactPicker(error.message ?: "Contact picker could not be opened")
+            }
         }
     }
 
     fun handleContactPickerResult(resultCode: Int, data: Intent?) {
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftPickContactReject && window._craftPickContactReject('Cancelled')",
-                    null
-                )
-            }
+            rejectContactPicker("Cancelled")
             return
         }
 
@@ -3967,6 +3967,15 @@ class CraftBridge(
                     null
                 )
             }
+        }
+    }
+
+    private fun rejectContactPicker(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(message)})",
+                null
+            )
         }
     }
 

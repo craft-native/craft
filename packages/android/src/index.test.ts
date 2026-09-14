@@ -635,6 +635,23 @@ describe('Craft Android builder', () => {
     expect(contacts).not.toContain('CONTACT_ID + " = ?"')
   })
 
+  it('settles contact-picker permission and launch failures', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-contact-picker-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('fun pickContact(')
+    const end = bridge.indexOf('fun handleContactPickerResult(', start)
+    const picker = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(picker.indexOf('checkSelfPermission')).toBeLessThan(picker.indexOf('CraftNative.pickContact'))
+    expect(picker).toContain('Contacts permission is required; retry after granting it')
+    expect(picker).toContain('Contact picker could not be opened')
+    expect(bridge).toContain('private fun rejectContactPicker(message: String)')
+  })
+
   it('persists local auth sessions in encrypted preferences', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-auth-persistence-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
