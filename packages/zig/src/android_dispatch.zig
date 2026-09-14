@@ -1846,11 +1846,9 @@ fn nativeRemoveSharedItem(
 
 /// `nativeGetContacts(activity)`.
 ///
-/// Falls through when the query fails, for the reason `getCalendarEvents`
-/// does: the shim wraps none of `getContacts` in a try/catch, so an exception
-/// escapes the `@JavascriptInterface` method and the promise hangs. Inventing
-/// a rejection here would be kinder and would be a divergence nothing
-/// records. See #157.
+/// Falls through when the query fails. Kotlin wraps its provider reads and
+/// rejects the promise, so a permission revocation or provider failure after
+/// this hand-back still produces a terminal answer.
 fn nativeGetContacts(
     env: jni.JNIEnv,
     _: jni.jobject,

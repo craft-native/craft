@@ -2687,6 +2687,24 @@ class CraftBridge(
             return
         }
 
+        val contacts = try {
+            loadContacts()
+        } catch (error: Exception) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftContactsReject && window._craftContactsReject(${jsQuote(error.message ?: "Contacts could not be read")})",
+                    null
+                )
+            }
+            return
+        }
+
+        activity.runOnUiThread {
+            webView.evaluateJavascript("window._craftContactsResolve && window._craftContactsResolve($contacts)", null)
+        }
+    }
+
+    private fun loadContacts(): JSONArray {
         val contactRows = mutableListOf<Pair<String?, String?>>()
         val cursor: Cursor? = activity.contentResolver.query(
             ContactsContract.Contacts.CONTENT_URI,
@@ -2716,18 +2734,15 @@ class CraftBridge(
             ContactsContract.CommonDataKinds.Email.ADDRESS
         )
 
-        val contacts = JSONArray()
-        contactRows.forEach { (id, name) ->
-            contacts.put(JSONObject().apply {
-                put("id", id)
-                put("displayName", name ?: "")
-                put("phoneNumbers", id?.let { phoneNumbers[it] } ?: JSONArray())
-                put("emailAddresses", id?.let { emailAddresses[it] } ?: JSONArray())
-            })
-        }
-
-        activity.runOnUiThread {
-            webView.evaluateJavascript("window._craftContactsResolve && window._craftContactsResolve($contacts)", null)
+        return JSONArray().apply {
+            contactRows.forEach { (id, name) ->
+                put(JSONObject().apply {
+                    put("id", id)
+                    put("displayName", name ?: "")
+                    put("phoneNumbers", id?.let { phoneNumbers[it] } ?: JSONArray())
+                    put("emailAddresses", id?.let { emailAddresses[it] } ?: JSONArray())
+                })
+            }
         }
     }
 
