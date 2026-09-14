@@ -221,6 +221,21 @@ function validateAndroidConfig(config: CraftAndroidConfig): void {
   }
 }
 
+function writeAndroidConfig(output: string, config: CraftAndroidConfig): void {
+  writeFileSync(join(output, 'craft.config.json'), JSON.stringify(config, null, 2))
+
+  // Generator-only paths can reveal the developer machine's directory layout
+  // and have no meaning to the installed app. Keep them in the project config
+  // but never package them into the APK's assets.
+  const runtimeConfig = { ...config }
+  delete runtimeConfig.appIconPath
+  delete runtimeConfig.googleServicesFile
+  writeFileSync(
+    join(output, 'app/src/main/assets/craft.config.json'),
+    JSON.stringify(runtimeConfig, null, 2),
+  )
+}
+
 export function syncAndroidWebAssets(source: string, output: string): void {
   const sourcePath = resolve(source)
   if (!existsSync(sourcePath)) throw new Error(`Web asset path not found: ${source}`)
@@ -330,8 +345,7 @@ export async function init(options: InitOptions): Promise<void> {
   }
 
   // Create craft.config.json
-  writeFileSync(join(output, 'craft.config.json'), JSON.stringify(config, null, 2))
-  writeFileSync(join(output, 'app/src/main/assets/craft.config.json'), JSON.stringify(config, null, 2))
+  writeAndroidConfig(output, config)
 
   const hasGoogleServices = Boolean(config.googleServicesFile)
   if (config.googleServicesFile) {
@@ -635,8 +649,7 @@ export async function build(options: BuildOptions): Promise<void> {
       ...(config.trustedOrigins ?? []).map(value => androidWebUrl(value, 'Android trusted origin').origin),
       url.origin,
     ])]
-    writeFileSync(configPath, JSON.stringify(config, null, 2))
-    writeFileSync(join(output, 'app/src/main/assets/craft.config.json'), JSON.stringify(config, null, 2))
+    writeAndroidConfig(output, config)
     console.log(`   Dev server: ${devServer}`)
   }
 
@@ -644,8 +657,7 @@ export async function build(options: BuildOptions): Promise<void> {
   if (htmlPath) {
     syncAndroidWebAssets(htmlPath, output)
     config.hasBundledFallback = Boolean(devServer)
-    writeFileSync(configPath, JSON.stringify(config, null, 2))
-    writeFileSync(join(output, 'app/src/main/assets/craft.config.json'), JSON.stringify(config, null, 2))
+    writeAndroidConfig(output, config)
     console.log(`   Synced: ${htmlPath} → assets/`)
   }
 

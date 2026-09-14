@@ -313,6 +313,12 @@ describe('Craft Android builder', () => {
     expect(appGradle).toContain('id("com.google.gms.google-services")')
     expect(projectGradle).toContain('id("com.google.gms.google-services")')
     expect(existsSync(join(output, 'app/google-services.json'))).toBe(true)
+    expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).googleServicesFile)
+      .toBe(googleServicesFile)
+    expect(JSON.parse(readFileSync(
+      join(output, 'app/src/main/assets/craft.config.json'),
+      'utf8',
+    ))).not.toHaveProperty('googleServicesFile')
   })
 
   it('declares the libraries used by the generated bridge', async () => {
