@@ -219,6 +219,7 @@ class CraftBridge(
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
     private val oneShotLocationCallbacks = mutableSetOf<LocationCallback>()
+    private val currentPositionSequence = java.util.concurrent.atomic.AtomicLong(0)
     private var watchId = 0
     private val pendingPermissionRequests = mutableMapOf<Int, PendingPermissionRequest>()
     private var nextPermissionRequestCode = PERMISSION_REQUEST_START
@@ -1981,7 +1982,42 @@ class CraftBridge(
         // CraftNative's, because they are Java interfaces. fusedLocationClient
         // below is independent from the callbacks owned by watchPosition, so
         // a one-shot lookup cannot overwrite or clear a continuous watch.
+        val requestId = currentPositionSequence.incrementAndGet()
+        oneShotLocationCallbacks.forEach { callback ->
+            runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
+        }
+        oneShotLocationCallbacks.clear()
+
         if (CraftNative.getCurrentPosition(activity)) return
+
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveLocationRequest(location: Location) {
+            if (requestId != currentPositionSequence.get()) return
+            if (!settled.compareAndSet(false, true) || closed) return
+            val json = JSONObject().apply {
+                put("latitude", location.latitude)
+                put("longitude", location.longitude)
+                put("accuracy", location.accuracy)
+                put("altitude", location.altitude)
+                put("speed", location.speed)
+                put("heading", location.bearing)
+                put("timestamp", location.time)
+            }
+            activity.runOnUiThread {
+                if (closed) return@runOnUiThread
+                webView.evaluateJavascript(
+                    "window._craftLocationResolve && window._craftLocationResolve($json)",
+                    null
+                )
+            }
+        }
+
+        fun rejectLocationRequest(message: String, code: Int = 2) {
+            if (requestId != currentPositionSequence.get()) return
+            if (!settled.compareAndSet(false, true) || closed) return
+            rejectLocation(message, code)
+        }
 
         if (!hasForegroundLocationPermission()) {
             ActivityCompat.requestPermissions(
@@ -1989,22 +2025,12 @@ class CraftBridge(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
                 REQUEST_LOCATION
             )
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftLocationReject && window._craftLocationReject({code: 1, message: 'Permission denied'})",
-                    null
-                )
-            }
+            rejectLocationRequest("Permission denied", 1)
             return
         }
 
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftLocationReject && window._craftLocationReject({code: 2, message: 'Google Play Services is unavailable'})",
-                    null
-                )
-            }
+            rejectLocationRequest("Google Play Services is unavailable")
             return
         }
 
@@ -2012,34 +2038,31 @@ class CraftBridge(
             val client = LocationServices.getFusedLocationProviderClient(activity)
             fusedLocationClient = client
             client.lastLocation.addOnSuccessListener { location: Location? ->
+                if (requestId != currentPositionSequence.get()) return@addOnSuccessListener
                 if (location != null) {
-                    val json = JSONObject().apply {
-                        put("latitude", location.latitude)
-                        put("longitude", location.longitude)
-                        put("accuracy", location.accuracy)
-                        put("altitude", location.altitude)
-                        put("speed", location.speed)
-                        put("heading", location.bearing)
-                        put("timestamp", location.time)
-                    }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftLocationResolve && window._craftLocationResolve($json)",
-                            null
-                        )
-                    }
+                    resolveLocationRequest(location)
                 } else {
-                    requestFreshLocation(client)
+                    requestFreshLocation(
+                        client,
+                        requestId,
+                        ::resolveLocationRequest,
+                        { message -> rejectLocationRequest(message) }
+                    )
                 }
-            }.addOnFailureListener { error -> rejectLocation(error.message ?: "Location lookup failed") }
+            }.addOnFailureListener { error -> rejectLocationRequest(error.message ?: "Location lookup failed") }
         } catch (error: Exception) {
-            rejectLocation(error.message ?: "Location lookup failed")
+            rejectLocationRequest(error.message ?: "Location lookup failed")
         }
     }
 
-    private fun requestFreshLocation(client: FusedLocationProviderClient) {
+    private fun requestFreshLocation(
+        client: FusedLocationProviderClient,
+        requestId: Long,
+        resolve: (Location) -> Unit,
+        reject: (String) -> Unit
+    ) {
         if (!hasForegroundLocationPermission()) {
-            rejectLocation("Location permission was revoked")
+            reject("Location permission was revoked")
             return
         }
 
@@ -2054,27 +2077,9 @@ class CraftBridge(
             override fun onLocationResult(result: LocationResult) {
                 client.removeLocationUpdates(this)
                 oneShotLocationCallbacks.remove(this)
-                val location = result.lastLocation
-                if (location != null) {
-                    val json = JSONObject().apply {
-                        put("latitude", location.latitude)
-                        put("longitude", location.longitude)
-                        put("accuracy", location.accuracy)
-                        put("altitude", location.altitude)
-                        put("speed", location.speed)
-                        put("heading", location.bearing)
-                        put("timestamp", location.time)
-                    }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftLocationResolve && window._craftLocationResolve($json)",
-                            null
-                        )
-                    }
-                }
-                else {
-                    rejectLocation("Location provider returned no position")
-                }
+                if (requestId != currentPositionSequence.get()) return
+                result.lastLocation?.let(resolve)
+                    ?: reject("Location provider returned no position")
             }
         }
 
@@ -2083,18 +2088,19 @@ class CraftBridge(
             client.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
                 .addOnFailureListener { error ->
                     oneShotLocationCallbacks.remove(callback)
-                    rejectLocation(error.message ?: "Location request failed")
+                    reject(error.message ?: "Location request failed")
                 }
         } catch (error: Exception) {
             oneShotLocationCallbacks.remove(callback)
-            rejectLocation(error.message ?: "Location request failed")
+            reject(error.message ?: "Location request failed")
         }
     }
 
-    private fun rejectLocation(message: String) {
+    private fun rejectLocation(message: String, code: Int = 2) {
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             webView.evaluateJavascript(
-                "window._craftLocationReject && window._craftLocationReject({code: 2, message: ${jsQuote(message)}})",
+                "window._craftLocationReject && window._craftLocationReject({code: $code, message: ${jsQuote(message)}})",
                 null
             )
         }
@@ -3675,6 +3681,7 @@ class CraftBridge(
 
     fun close() {
         closed = true
+        currentPositionSequence.incrementAndGet()
         activity.runOnUiThread {
             runCatching {
                 webView.evaluateJavascript(
