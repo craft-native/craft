@@ -187,6 +187,10 @@ object CraftNative {
             runCatching { client.removeLocationUpdates(callback) }
         }
         currentLocationCallbacks.clear()
+        currentLocationTimeouts.values.forEach { timeout ->
+            currentLocationHandler.removeCallbacks(timeout)
+        }
+        currentLocationTimeouts.clear()
         currentPositionSequence.incrementAndGet()
     }
 
@@ -2073,7 +2077,10 @@ object CraftNative {
     /** `CraftBridge.REQUEST_LOCATION`, which this has to match. */
     private const val REQUEST_LOCATION = 1003
     private val currentLocationCallbacks = mutableMapOf<LocationCallback, FusedLocationProviderClient>()
+    private val currentLocationHandler = Handler(Looper.getMainLooper())
+    private val currentLocationTimeouts = mutableMapOf<LocationCallback, Runnable>()
     private val currentPositionSequence = java.util.concurrent.atomic.AtomicLong(0)
+    private const val LOCATION_REQUEST_TIMEOUT_MS = 15_000L
 
     @JvmStatic
     @SuppressLint("MissingPermission")
@@ -2097,6 +2104,10 @@ object CraftNative {
             runCatching { client.removeLocationUpdates(callback) }
         }
         currentLocationCallbacks.clear()
+        currentLocationTimeouts.values.forEach { timeout ->
+            currentLocationHandler.removeCallbacks(timeout)
+        }
+        currentLocationTimeouts.clear()
 
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
             rejectLocationRequest("Google Play Services is unavailable")
@@ -2149,23 +2160,40 @@ object CraftNative {
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                client.removeLocationUpdates(this)
-                currentLocationCallbacks.remove(this)
+                clearCurrentLocationCallback(client, this)
                 if (requestId != currentPositionSequence.get()) return
                 result.lastLocation?.let(resolve)
                     ?: reject("Location provider returned no position")
             }
         }
         currentLocationCallbacks[callback] = client
+        val timeout = Runnable {
+            if (!currentLocationCallbacks.containsKey(callback)) return@Runnable
+            clearCurrentLocationCallback(client, callback)
+            reject("Location request timed out; provider returned no position")
+        }
+        currentLocationTimeouts[callback] = timeout
+        currentLocationHandler.postDelayed(timeout, LOCATION_REQUEST_TIMEOUT_MS)
         try {
             client.requestLocationUpdates(request, callback, activity.mainLooper)
                 .addOnFailureListener { error ->
-                    currentLocationCallbacks.remove(callback)
+                    clearCurrentLocationCallback(client, callback)
                     reject(error.message)
                 }
         } catch (error: Exception) {
-            currentLocationCallbacks.remove(callback)
+            clearCurrentLocationCallback(client, callback)
             reject(error.message)
+        }
+    }
+
+    private fun clearCurrentLocationCallback(
+        client: FusedLocationProviderClient,
+        callback: LocationCallback
+    ) {
+        runCatching { client.removeLocationUpdates(callback) }
+        currentLocationCallbacks.remove(callback)
+        currentLocationTimeouts.remove(callback)?.let { timeout ->
+            currentLocationHandler.removeCallbacks(timeout)
         }
     }
 

@@ -22,6 +22,7 @@ import com.craft.runtime.CraftNative
 import com.craft.runtime.CraftLocationRecordingStore
 import com.craft.runtime.LocationRecordingService
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -221,6 +222,8 @@ class CraftBridge(
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
     private val oneShotLocationCallbacks = mutableSetOf<LocationCallback>()
+    private val oneShotLocationHandler = Handler(Looper.getMainLooper())
+    private val oneShotLocationTimeouts = mutableMapOf<LocationCallback, Runnable>()
     private val currentPositionSequence = java.util.concurrent.atomic.AtomicLong(0)
     private var watchId = 0
     private val pendingPermissionRequests = mutableMapOf<Int, PendingPermissionRequest>()
@@ -2045,6 +2048,10 @@ class CraftBridge(
             runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
         }
         oneShotLocationCallbacks.clear()
+        oneShotLocationTimeouts.values.forEach { timeout ->
+            oneShotLocationHandler.removeCallbacks(timeout)
+        }
+        oneShotLocationTimeouts.clear()
 
         if (CraftNative.getCurrentPosition(activity)) return
 
@@ -2128,8 +2135,7 @@ class CraftBridge(
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                client.removeLocationUpdates(this)
-                oneShotLocationCallbacks.remove(this)
+                clearOneShotLocationCallback(client, this)
                 if (requestId != currentPositionSequence.get()) return
                 result.lastLocation?.let(resolve)
                     ?: reject("Location provider returned no position")
@@ -2137,15 +2143,33 @@ class CraftBridge(
         }
 
         oneShotLocationCallbacks.add(callback)
+        val timeout = Runnable {
+            if (!oneShotLocationCallbacks.contains(callback)) return@Runnable
+            clearOneShotLocationCallback(client, callback)
+            reject("Location request timed out; provider returned no position")
+        }
+        oneShotLocationTimeouts[callback] = timeout
+        oneShotLocationHandler.postDelayed(timeout, LOCATION_REQUEST_TIMEOUT_MS)
         try {
             client.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
                 .addOnFailureListener { error ->
-                    oneShotLocationCallbacks.remove(callback)
+                    clearOneShotLocationCallback(client, callback)
                     reject(error.message ?: "Location request failed")
                 }
         } catch (error: Exception) {
-            oneShotLocationCallbacks.remove(callback)
+            clearOneShotLocationCallback(client, callback)
             reject(error.message ?: "Location request failed")
+        }
+    }
+
+    private fun clearOneShotLocationCallback(
+        client: FusedLocationProviderClient,
+        callback: LocationCallback
+    ) {
+        runCatching { client.removeLocationUpdates(callback) }
+        oneShotLocationCallbacks.remove(callback)
+        oneShotLocationTimeouts.remove(callback)?.let { timeout ->
+            oneShotLocationHandler.removeCallbacks(timeout)
         }
     }
 
@@ -3695,6 +3719,10 @@ class CraftBridge(
             runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
         }
         oneShotLocationCallbacks.clear()
+        oneShotLocationTimeouts.values.forEach { timeout ->
+            oneShotLocationHandler.removeCallbacks(timeout)
+        }
+        oneShotLocationTimeouts.clear()
 
         networkCallback?.let { callback ->
             val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -4605,5 +4633,6 @@ class CraftBridge(
         const val REQUEST_PICK_CONTACT = 1010
         private const val PERMISSION_REQUEST_START = 2000
         private const val PERMISSION_REQUEST_END = 2999
+        private const val LOCATION_REQUEST_TIMEOUT_MS = 15_000L
     }
 }
