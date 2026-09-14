@@ -239,6 +239,28 @@ describe('Craft Android builder', () => {
     expect(existsSync(join(output, 'app/src/main/assets/craft.config.json'))).toBe(true)
   })
 
+  it('rejects unsafe web asset sources before replacing generated assets', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'craft-android-asset-guard-'))
+    const output = join(root, 'android')
+    const incompleteWeb = join(root, 'incomplete-web')
+    mkdirSync(incompleteWeb)
+    writeFileSync(join(incompleteWeb, 'app.js'), 'export {}')
+    await init({ name: 'Asset Guard', packageName: 'dev.craft.assets', output })
+
+    const generatedIndex = join(output, 'app/src/main/assets/index.html')
+    const initialHtml = readFileSync(generatedIndex, 'utf8')
+    expect(() => syncAndroidWebAssets(incompleteWeb, output))
+      .toThrow('Web asset directory entry point not found')
+    expect(readFileSync(generatedIndex, 'utf8')).toBe(initialHtml)
+
+    const generatedAssets = join(output, 'app/src/main/assets')
+    expect(() => syncAndroidWebAssets(generatedAssets, output))
+      .toThrow('Web asset source must not overlap generated asset directory')
+    expect(() => syncAndroidWebAssets(output, output))
+      .toThrow('Web asset source must not overlap generated asset directory')
+    expect(readFileSync(generatedIndex, 'utf8')).toBe(initialHtml)
+  })
+
   it('generates a least-privilege bridge contract and secure manifest', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-project-'))
     await init({

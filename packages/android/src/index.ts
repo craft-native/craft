@@ -5,7 +5,7 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, extname, join, resolve } from 'node:path'
+import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
@@ -157,6 +157,12 @@ function requireRegularFile(path: string, label: string): void {
   if (!statSync(path).isFile()) throw new Error(`${label} must be a file: ${path}`)
 }
 
+function containsPath(parent: string, candidate: string): boolean {
+  const relativePath = relative(parent, candidate)
+  return relativePath === ''
+    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+}
+
 function validateGoogleServicesFile(path: string, packageName: string): void {
   requireRegularFile(path, 'Google services file')
 
@@ -267,12 +273,24 @@ function writeAndroidConfig(output: string, config: CraftAndroidConfig): void {
 export function syncAndroidWebAssets(source: string, output: string): void {
   const sourcePath = resolve(source)
   if (!existsSync(sourcePath)) throw new Error(`Web asset path not found: ${source}`)
-  const assetsDir = join(output, 'app/src/main/assets')
+  const sourceStat = statSync(sourcePath)
+  if (!sourceStat.isDirectory() && !sourceStat.isFile()) {
+    throw new Error(`Web asset path must be a file or directory: ${source}`)
+  }
+
+  const assetsDir = resolve(output, 'app/src/main/assets')
+  if (containsPath(sourcePath, assetsDir) || containsPath(assetsDir, sourcePath)) {
+    throw new Error(`Web asset source must not overlap generated asset directory: ${source}`)
+  }
+  if (sourceStat.isDirectory()) {
+    requireRegularFile(join(sourcePath, 'index.html'), 'Web asset directory entry point')
+  }
+
   const configPath = join(assetsDir, 'craft.config.json')
   const config = existsSync(configPath) ? readFileSync(configPath) : undefined
   rmSync(assetsDir, { recursive: true, force: true })
   mkdirSync(assetsDir, { recursive: true })
-  if (statSync(sourcePath).isDirectory()) cpSync(sourcePath, assetsDir, { recursive: true })
+  if (sourceStat.isDirectory()) cpSync(sourcePath, assetsDir, { recursive: true })
   else cpSync(sourcePath, join(assetsDir, 'index.html'))
   if (!existsSync(join(assetsDir, 'index.html'))) throw new Error(`Web asset directory must contain index.html: ${source}`)
   if (config) writeFileSync(configPath, config)
