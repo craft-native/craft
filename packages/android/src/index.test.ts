@@ -398,6 +398,8 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('CraftAndroid.requestPermission(String(permission), id)')
     expect(bridge).toContain('group.any(isGranted)')
     expect(bridge).toContain('CraftPermissionPolicy.nextRequest(')
+    expect(bridge).toContain('pendingPermissionRequests.remove(requestCode)')
+    expect(bridge).toContain('catch (error: Exception)')
     expect(bridge).toContain('pending.groupIndex + 1')
     expect(bridge).toContain('nativePermissionStatus(pending.permission)')
     expect(bridge).toContain('CraftPermissionPolicy.foregroundLocationIsGranted(::isPermissionGranted)')
@@ -405,6 +407,13 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('if (hasForegroundLocationPermission())')
     expect(bridge).not.toContain('grantResults.all { it == PackageManager.PERMISSION_GRANTED }')
     expect(bridge).toContain('fun onRequestPermissionsResult(requestCode: Int): Boolean')
+    expect(bridge).toContain('if (closed) return requestCode in PERMISSION_REQUEST_START..PERMISSION_REQUEST_END')
+    const permissionDelivery = bridge.slice(
+      bridge.indexOf('private fun deliverPermissionResult('),
+      bridge.indexOf('@JavascriptInterface\n    fun getCurrentPosition(', bridge.indexOf('private fun deliverPermissionResult(')),
+    )
+    expect(permissionDelivery).toContain('if (closed) return')
+    expect(permissionDelivery).toContain('if (closed) return@runOnUiThread')
     expect(bridge).toContain('Settings.ACTION_APPLICATION_DETAILS_SETTINGS')
     expect(existsSync(service)).toBe(true)
     const serviceSource = readFileSync(service, 'utf8')

@@ -1951,8 +1951,13 @@ class CraftBridge(
             permission,
             request.groupIndex
         )
-        ActivityCompat.requestPermissions(activity, request.permissions, requestCode)
-        return true
+        return try {
+            ActivityCompat.requestPermissions(activity, request.permissions, requestCode)
+            true
+        } catch (error: Exception) {
+            pendingPermissionRequests.remove(requestCode)
+            false
+        }
     }
 
     @JavascriptInterface
@@ -1961,6 +1966,7 @@ class CraftBridge(
     @JavascriptInterface
     fun requestPermission(permission: String, callbackId: Int) {
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             val status = nativePermissionStatus(permission)
             if (status == "granted" || !enqueuePermissionRequest(permission, callbackId, 0)) {
                 deliverPermissionResult(callbackId, status)
@@ -1980,6 +1986,7 @@ class CraftBridge(
     }
 
     fun onRequestPermissionsResult(requestCode: Int): Boolean {
+        if (closed) return requestCode in PERMISSION_REQUEST_START..PERMISSION_REQUEST_END
         val pending = pendingPermissionRequests.remove(requestCode) ?: return false
         // Re-read package state instead of interpreting the parallel callback
         // arrays. In particular, an approximate-location choice returns a
@@ -2003,7 +2010,9 @@ class CraftBridge(
     }
 
     private fun deliverPermissionResult(callbackId: Int, status: String) {
+        if (closed) return
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             webView.evaluateJavascript(
                 "window.__craftPermissionResult && window.__craftPermissionResult($callbackId, ${jsQuote(status)})",
                 null
