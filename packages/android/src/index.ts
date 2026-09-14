@@ -7,6 +7,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { $ } from 'bun'
+import { renderAndroidPromiseRuntime } from './promise-runtime'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
 const LOCAL_DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '10.0.2.2'])
@@ -416,6 +417,7 @@ export async function init(options: InitOptions): Promise<void> {
   // Create CraftBridge.kt
   const craftBridgeTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftBridge.kt.template'), 'utf-8')
   const craftBridge = craftBridgeTemplate
+    .replace(/\{\{PROMISE_RUNTIME\}\}/g, () => renderAndroidPromiseRuntime('            '))
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
     .replace(/\{\{ENABLE_SPEECH\}\}/g, String(Boolean(config.enableSpeechRecognition)))
     .replace(/\{\{ENABLE_HAPTICS\}\}/g, String(Boolean(config.enableHaptics)))

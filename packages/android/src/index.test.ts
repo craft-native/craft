@@ -544,7 +544,8 @@ describe('Craft Android builder', () => {
     expect(native).toContain('GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)')
     expect(bridge).toContain("message: 'Google Play Services is unavailable'")
     expect(bridge).toContain("message: 'Location request timed out; Google Play Services or a location provider may be unavailable'")
-    expect(bridge).toContain('}, 15000);')
+    expect(bridge).toContain("'_craftLocationReject',")
+    expect(bridge).toContain('15000,')
     expect(native).toContain('failLocation("Google Play Services is unavailable")')
     expect(bridge).toContain('private val oneShotLocationCallbacks')
     expect(bridge).toContain('oneShotLocationCallbacks.remove(callback)')
@@ -700,6 +701,7 @@ describe('Craft Android builder', () => {
 
     expect(activity).toContain('craftBridge.close()')
     for (const cleanup of [
+      'window.__craftRejectPendingPromises',
       'CraftNative.close(activity)',
       'speechRecognizer?.destroy()',
       'fusedLocationClient?.removeLocationUpdates(callback)',
