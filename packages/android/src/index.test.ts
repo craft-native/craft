@@ -71,7 +71,7 @@ describe('Craft Android builder', () => {
     })
 
     expect(readFileSync(join(output, 'settings.gradle.kts'), 'utf8'))
-      .toContain('rootProject.name = "Rock & \\"Roll\\" \\$Build"')
+      .toContain('rootProject.name = "Rock & -Roll- \\$Build"')
     expect(readFileSync(join(output, 'app/build.gradle.kts'), 'utf8'))
       .toContain('versionName = "1.0 \\"preview\\" \\$build"')
     expect(readFileSync(join(output, 'app/src/main/res/values/strings.xml'), 'utf8'))

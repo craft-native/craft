@@ -142,6 +142,15 @@ function generatedPackageSegment(name: string): string {
   return /^[a-z_]/.test(normalized) ? normalized : `app${normalized}`
 }
 
+function generatedGradleProjectName(name: string): string {
+  const invalidCharacters = ['/', '\\', ':', '<', '>', '"', '?', '*', '|']
+  const normalized = invalidCharacters.reduce(
+    (value, character) => value.replaceAll(character, '-'),
+    name,
+  ).trim()
+  return normalized || 'craft-app'
+}
+
 function validateAndroidConfig(config: CraftAndroidConfig): void {
   if (!config.appName.trim()) throw new Error('Android app name must not be empty')
 
@@ -413,7 +422,10 @@ export async function init(options: InitOptions): Promise<void> {
 
   // Create settings.gradle.kts
   const settingsTemplate = readFileSync(join(TEMPLATES_DIR, 'settings.gradle.kts.template'), 'utf-8')
-  const settings = settingsTemplate.replace(/\{\{APP_NAME\}\}/g, escapeKotlinString(name))
+  const settings = settingsTemplate.replace(
+    /\{\{APP_NAME\}\}/g,
+    escapeKotlinString(generatedGradleProjectName(name)),
+  )
   writeFileSync(join(output, 'settings.gradle.kts'), settings)
 
   // Create gradle.properties
