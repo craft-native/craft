@@ -1516,9 +1516,10 @@ class CraftBridge(
         }
 
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.RECORD_AUDIO), 100)
+                requestPermissionsBestEffort(arrayOf(Manifest.permission.RECORD_AUDIO), 100)
                 return@runOnUiThread
             }
 
@@ -1616,8 +1617,8 @@ class CraftBridge(
     fun openCamera() {
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), 101)
             rejectMediaPromise("_craftCamera", "Camera permission is required; retry after granting it")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.CAMERA), 101)
             return
         }
 
@@ -2063,12 +2064,11 @@ class CraftBridge(
         }
 
         if (!hasForegroundLocationPermission()) {
-            ActivityCompat.requestPermissions(
-                activity,
+            rejectLocationRequest("Permission denied", 1)
+            requestPermissionsBestEffort(
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
                 REQUEST_LOCATION
             )
-            rejectLocationRequest("Permission denied", 1)
             return
         }
 
@@ -2597,8 +2597,8 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_CONTACTS)
             evaluatePromiseJavascript("window._craftContactsReject && window._craftContactsReject('Permission denied')")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_CONTACTS)
             return
         }
 
@@ -2682,8 +2682,8 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_CONTACTS), REQUEST_CONTACTS)
             evaluatePromiseJavascript("window._craftAddContactReject && window._craftAddContactReject('Permission denied')")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.WRITE_CONTACTS), REQUEST_CONTACTS)
             return
         }
 
@@ -2751,8 +2751,8 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CALENDAR), REQUEST_CALENDAR)
             evaluatePromiseJavascript("window._craftCalendarReject && window._craftCalendarReject('Permission denied')")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.READ_CALENDAR), REQUEST_CALENDAR)
             return
         }
 
@@ -2810,8 +2810,8 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_CALENDAR)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.WRITE_CALENDAR), REQUEST_CALENDAR)
             evaluatePromiseJavascript("window._craftCreateEventReject && window._craftCreateEventReject('Permission denied')")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.WRITE_CALENDAR), REQUEST_CALENDAR)
             return
         }
 
@@ -3293,8 +3293,8 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
             evaluatePromiseJavascript("window._craftAudioReject && window._craftAudioReject('Permission denied')")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
             return
         }
 
@@ -3507,10 +3507,10 @@ class CraftBridge(
 
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.BLUETOOTH_SCAN)
             != PackageManager.PERMISSION_GRANTED) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.BLUETOOTH_SCAN), REQUEST_BLUETOOTH)
-            }
             rejectBluetoothScan("Bluetooth permission denied")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                requestPermissionsBestEffort(arrayOf(Manifest.permission.BLUETOOTH_SCAN), REQUEST_BLUETOOTH)
+            }
             return
         }
 
@@ -3838,14 +3838,15 @@ class CraftBridge(
         // the platform's single-contact ACTION_PICK surface.
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_CONTACTS)
             != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_PICK_CONTACT)
             rejectContactPicker("Contacts permission is required; retry after granting it")
+            requestPermissionsBestEffort(arrayOf(Manifest.permission.READ_CONTACTS), REQUEST_PICK_CONTACT)
             return
         }
 
         if (CraftNative.pickContact(activity)) return
 
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             try {
                 val intent = Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI)
                 activity.startActivityForResult(intent, REQUEST_PICK_CONTACT)
@@ -4555,6 +4556,13 @@ class CraftBridge(
 
     private fun evaluatePromiseJavascript(script: String) {
         evaluateJavascriptUnlessClosed(script)
+    }
+
+    private fun requestPermissionsBestEffort(permissions: Array<String>, requestCode: Int) {
+        activity.runOnUiThread {
+            if (closed) return@runOnUiThread
+            runCatching { ActivityCompat.requestPermissions(activity, permissions, requestCode) }
+        }
     }
 
     private fun evaluateJavascriptUnlessClosed(script: String) {
