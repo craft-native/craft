@@ -40,6 +40,50 @@ describe('Craft Android builder', () => {
     })).toBe('')
   })
 
+  it('rejects metadata that would produce an invalid Android project', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-invalid-'))
+
+    await expect(init({ name: 'Bad Package', packageName: 'dev.when.app', output }))
+      .rejects.toThrow('Invalid Android package name')
+    await expect(init({
+      name: 'Bad Color',
+      output,
+      config: { backgroundColor: 'transparent' },
+    })).rejects.toThrow('Invalid Android background color')
+    await expect(init({
+      name: 'Bad SDKs',
+      output,
+      config: { compileSdk: 34, targetSdk: 35 },
+    })).rejects.toThrow('targetSdk must not exceed compileSdk')
+  })
+
+  it('escapes user-facing metadata without changing generator-owned identity', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-metadata-'))
+    await init({
+      name: 'Rock & "Roll" $Build',
+      packageName: 'dev.craft.metadata',
+      output,
+      config: {
+        appName: 'Ignored config name',
+        packageName: 'dev.ignored.package',
+        version: '1.0 "preview" $build',
+      },
+    })
+
+    expect(readFileSync(join(output, 'settings.gradle.kts'), 'utf8'))
+      .toContain('rootProject.name = "Rock & \\"Roll\\" \\$Build"')
+    expect(readFileSync(join(output, 'app/build.gradle.kts'), 'utf8'))
+      .toContain('versionName = "1.0 \\"preview\\" \\$build"')
+    expect(readFileSync(join(output, 'app/src/main/res/values/strings.xml'), 'utf8'))
+      .toContain('Rock &amp; &quot;Roll&quot; $Build')
+    expect(readFileSync(join(output, 'app/src/main/assets/index.html'), 'utf8'))
+      .toContain('<h1>⚡ Rock &amp; &quot;Roll&quot; $Build</h1>')
+
+    const generated = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(generated.appName).toBe('Rock & "Roll" $Build')
+    expect(generated.packageName).toBe('dev.craft.metadata')
+  })
+
   it('emits the native holder to a fixed package, whatever the app is called', async () => {
     // The prebuilt libcraft.so binds its natives by class name in JNI_OnLoad
     // and cannot know a package chosen here. So CraftNative lives at a path
@@ -107,7 +151,10 @@ describe('Craft Android builder', () => {
     expect(gradle).toContain('androidx.webkit:webkit')
     expect(gradle).toContain('ignoreAssetsPattern')
     expect(gradle).not.toContain('<dir>_*')
-    expect(readFileSync(join(output, 'app/proguard-rules.pro'), 'utf8')).toContain('android.webkit.JavascriptInterface')
+    const proguard = readFileSync(join(output, 'app/proguard-rules.pro'), 'utf8')
+    expect(proguard).toContain('android.webkit.JavascriptInterface')
+    expect(proguard).toContain('com.craft.runtime.LocationRecordingService')
+    expect(proguard).not.toContain('org.wildloop.app.LocationRecordingService')
   })
 
   it('marks bundled assets as the remote-app recovery path', async () => {
@@ -457,7 +504,7 @@ describe('Craft Android builder', () => {
       name: 'WildLoop',
       packageName: 'org.wildloop.app',
       output,
-      config: { enableHealthConnect: true },
+      config: { compileSdk: 34, enableHealthConnect: true },
     })
 
     const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
@@ -473,5 +520,6 @@ describe('Craft Android builder', () => {
     expect(manifest).toContain('android.intent.category.HEALTH_PERMISSIONS')
     expect(gradle).toContain('androidx.health.connect:connect-client')
     expect(gradle).toContain('compileSdk = 36')
+    expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).compileSdk).toBe(36)
   })
 })

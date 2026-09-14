@@ -105,7 +105,7 @@ class LocationRecordingService : Service() {
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("Recording your activity")
-            .setContentText("WildLoop is securely saving your route")
+            .setContentText("${applicationInfo.loadLabel(packageManager)} is securely saving your route")
             .setOngoing(true)
             .setSilent(true)
             .build()

@@ -9,6 +9,36 @@ import { dirname, join, resolve } from 'node:path'
 import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
+const KOTLIN_KEYWORDS = new Set([
+  'as',
+  'break',
+  'class',
+  'continue',
+  'do',
+  'else',
+  'false',
+  'for',
+  'fun',
+  'if',
+  'in',
+  'interface',
+  'is',
+  'null',
+  'object',
+  'package',
+  'return',
+  'super',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'typealias',
+  'typeof',
+  'val',
+  'var',
+  'when',
+  'while',
+])
 
 export interface CraftAndroidConfig {
   appName: string
@@ -88,6 +118,62 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   targetSdk: 35,
 }
 
+function escapeXml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('\'', '&apos;')
+}
+
+function escapeKotlinString(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('$', '\\$')
+    .replaceAll('\r', '\\r')
+    .replaceAll('\n', '\\n')
+}
+
+function generatedPackageSegment(name: string): string {
+  const normalized = name.toLowerCase().replace(/[^a-z0-9_]/g, '')
+  if (!normalized) return 'app'
+  return /^[a-z_]/.test(normalized) ? normalized : `app${normalized}`
+}
+
+function validateAndroidConfig(config: CraftAndroidConfig): void {
+  if (!config.appName.trim()) throw new Error('Android app name must not be empty')
+
+  const packageSegments = config.packageName.split('.')
+  if (packageSegments.length < 2
+    || packageSegments.some(segment => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(segment) || KOTLIN_KEYWORDS.has(segment))) {
+    throw new Error(`Invalid Android package name: ${config.packageName}`)
+  }
+
+  if (!/^#(?:[\dA-F]{3,4}|[\dA-F]{6}|[\dA-F]{8})$/i.test(config.backgroundColor ?? '')) {
+    throw new Error(`Invalid Android background color: ${config.backgroundColor}`)
+  }
+
+  for (const [name, value] of [
+    ['versionCode', config.versionCode],
+    ['minSdk', config.minSdk],
+    ['compileSdk', config.compileSdk],
+    ['targetSdk', config.targetSdk],
+  ] as const) {
+    if (!Number.isInteger(value) || Number(value) < 1) {
+      throw new Error(`Android ${name} must be a positive integer`)
+    }
+  }
+
+  if (Number(config.minSdk) > Number(config.targetSdk)) {
+    throw new Error('Android minSdk must not exceed targetSdk')
+  }
+  if (Number(config.targetSdk) > Number(config.compileSdk)) {
+    throw new Error('Android targetSdk must not exceed compileSdk')
+  }
+}
+
 export function syncAndroidWebAssets(source: string, output: string): void {
   const sourcePath = resolve(source)
   if (!existsSync(sourcePath)) throw new Error(`Web asset path not found: ${source}`)
@@ -153,8 +239,21 @@ export async function init(options: InitOptions): Promise<void> {
   console.log(`   Output: ${output}\n`)
 
   // Generate package name from app name if not provided
-  const finalPackageName = packageName || `com.craft.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+  const finalPackageName = packageName || `com.craft.${generatedPackageSegment(name)}`
   const packagePath = finalPackageName.replace(/\./g, '/')
+
+  // Command-level identity always wins over duplicate fields in `config`.
+  // Normalize implied capabilities before validation so craft.config.json and
+  // the generated Gradle source describe the same effective project.
+  const config: CraftAndroidConfig = {
+    ...DEFAULT_CONFIG,
+    ...options.config,
+    appName: name,
+    packageName: finalPackageName,
+  }
+  if (config.enableBackgroundLocation) config.enableGeolocation = true
+  if (config.enableHealthConnect) config.compileSdk = Math.max(config.compileSdk ?? 36, 36)
+  validateAndroidConfig(config)
 
   // Create directory structure
   const dirs = [
@@ -174,14 +273,6 @@ export async function init(options: InitOptions): Promise<void> {
   }
 
   // Create craft.config.json
-  const config: CraftAndroidConfig = {
-    ...DEFAULT_CONFIG,
-    appName: name,
-    packageName: finalPackageName,
-    ...options.config,
-  }
-  if (config.enableBackgroundLocation) config.enableGeolocation = true
-
   writeFileSync(join(output, 'craft.config.json'), JSON.stringify(config, null, 2))
   writeFileSync(join(output, 'app/src/main/assets/craft.config.json'), JSON.stringify(config, null, 2))
 
@@ -299,10 +390,10 @@ export async function init(options: InitOptions): Promise<void> {
   const appGradleTemplate = readFileSync(join(TEMPLATES_DIR, 'build.gradle.kts.app.template'), 'utf-8')
   const appGradle = appGradleTemplate
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
-    .replace(/\{\{VERSION_NAME\}\}/g, config.version || '1.0.0')
+    .replace(/\{\{VERSION_NAME\}\}/g, escapeKotlinString(config.version || '1.0.0'))
     .replace(/\{\{VERSION_CODE\}\}/g, String(config.versionCode || 1))
     .replace(/\{\{MIN_SDK\}\}/g, String(config.minSdk || 24))
-    .replace(/\{\{COMPILE_SDK\}\}/g, String(Math.max(config.compileSdk || 36, config.enableHealthConnect ? 36 : 1)))
+    .replace(/\{\{COMPILE_SDK\}\}/g, String(config.compileSdk || 36))
     .replace(/\{\{TARGET_SDK\}\}/g, String(config.targetSdk || 35))
     .replace(/\{\{GOOGLE_SERVICES_PLUGIN\}\}/g, hasGoogleServices ? '    id("com.google.gms.google-services")' : '')
     .replace(/\{\{FIREBASE_MESSAGING_DEPENDENCY\}\}/g, config.enablePushNotifications
@@ -322,7 +413,7 @@ export async function init(options: InitOptions): Promise<void> {
 
   // Create settings.gradle.kts
   const settingsTemplate = readFileSync(join(TEMPLATES_DIR, 'settings.gradle.kts.template'), 'utf-8')
-  const settings = settingsTemplate.replace(/\{\{APP_NAME\}\}/g, name)
+  const settings = settingsTemplate.replace(/\{\{APP_NAME\}\}/g, escapeKotlinString(name))
   writeFileSync(join(output, 'settings.gradle.kts'), settings)
 
   // Create gradle.properties
@@ -350,7 +441,7 @@ zipStorePath=wrapper/dists
   // Create res/values files
   const stringsXml = `<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">${name}</string>
+    <string name="app_name">${escapeXml(name)}</string>
 </resources>
 `
   writeFileSync(join(output, 'app/src/main/res/values/strings.xml'), stringsXml)
@@ -417,7 +508,7 @@ zipStorePath=wrapper/dists
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>${name}</title>
+  <title>${escapeXml(name)}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -437,7 +528,7 @@ zipStorePath=wrapper/dists
 </head>
 <body>
   <div class="container">
-    <h1>⚡ ${name}</h1>
+    <h1>⚡ ${escapeXml(name)}</h1>
     <p>Built with Craft Android</p>
     <p class="ready" id="status">Waiting for Craft bridge...</p>
   </div>

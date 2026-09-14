@@ -6,4 +6,4 @@
 }
 -keep class {{PACKAGE_NAME}}.CraftBridge { *; }
 -keep class {{PACKAGE_NAME}}.CraftHealthConnect { *; }
--keep class {{PACKAGE_NAME}}.LocationRecordingService { *; }
+-keep class com.craft.runtime.LocationRecordingService { *; }

@@ -6,6 +6,7 @@ import { init, type CraftAndroidConfig } from '../src/index'
 
 interface CompileFixture {
   config?: Partial<CraftAndroidConfig>
+  directoryName: string
   name: string
   packageName: string
 }
@@ -22,10 +23,12 @@ const workspace = mkdtempSync(join(tmpdir(), 'craft-android-templates-'))
 
 const fixtures: CompileFixture[] = [
   {
-    name: 'CraftTemplateMinimal',
+    directoryName: 'minimal',
+    name: 'Craft & "Kotlin" $Build',
     packageName: 'dev.craft.fixture.minimal',
   },
   {
+    directoryName: 'capabilities',
     name: 'CraftTemplateCapabilities',
     packageName: 'dev.craft.fixture.capabilities',
     config: {
@@ -67,11 +70,11 @@ function writeGoogleServicesFixture(path: string, packageName: string): void {
 
 try {
   for (const fixture of fixtures) {
-    const output = join(workspace, fixture.name)
+    const output = join(workspace, fixture.directoryName)
     const config = { ...fixture.config }
 
     if (config.enablePushNotifications) {
-      const googleServicesFile = join(workspace, `${fixture.name}-google-services.json`)
+      const googleServicesFile = join(workspace, `${fixture.directoryName}-google-services.json`)
       writeGoogleServicesFixture(googleServicesFile, fixture.packageName)
       config.googleServicesFile = googleServicesFile
     }
