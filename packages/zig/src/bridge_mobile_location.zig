@@ -16,25 +16,20 @@
 //! `watchPosition`, and they migrate together.
 //!
 //! Two JS surfaces reach `getCurrentPosition`, and both end up in the same
-//! place. The legacy `craft.geolocation.getCurrentPosition()` posts
-//! `{action:'getCurrentPosition', callbackId: id}` and builds its `Promise`
-//! by hand rather than through `_createCallback` — so it has **no timeout**;
-//! an unanswered call parks the page forever. The v1 wrapper
-//! `craft.location.getCurrentPosition(options)` forwards straight to it. That
-//! is why every path below ends in a reply or an error, and why
-//! `didFailWithError` must answer rather than log.
+//! place. The legacy `craft.geolocation.getCurrentPosition(options)` owns the
+//! callback and its requested timeout; the v1 wrapper forwards to it. Native
+//! owns a matching timeout as well, because deleting the page callback is not
+//! enough: without native cleanup a silent Core Location request would keep an
+//! `ios_async` slot occupied for the life of the process.
 //!
 //! ## What is carried across exactly, because it is the observable contract
 //!
-//!  - **No payload crosses the bridge.** `legacyGeolocation.getCurrentPosition`
-//!    is declared `function()` — zero parameters — so the `options` object the
-//!    v1 wrapper accepts (`enableHighAccuracy`, `timeout`, `maximumAge`, typed
-//!    in `packages/typescript/src/api/mobile.ts`) is dropped by the *page*,
-//!    before native sees anything. This is not a field this module drops: the
-//!    field never arrives. `d` is therefore ignored rather than parsed, exactly
-//!    as the Swift dispatcher reads nothing out of `body` for this action —
-//!    parsing it would invent a way for the call to fail that the shim does not
-//!    have.
+//!  - **All three location options cross the bridge.** The page normalises
+//!    `enableHighAccuracy`, `timeout` and `maximumAge` before posting. A fresh
+//!    request selects best or hundred-metre accuracy, `maximumAge` may answer
+//!    from the manager's cached location, and the timeout both rejects and
+//!    releases native state. The defaults are false, 30 seconds and zero,
+//!    matching the injected bridge.
 //!  - **The reply is an object with eight keys**, from `didUpdateLocations`:
 //!    `latitude`, `longitude`, `altitude`, `accuracy`, `altitudeAccuracy`,
 //!    `heading`, `speed`, `timestamp`. Swift resolves a `[String: Any]`
@@ -70,16 +65,14 @@
 //! logged before the enum is chosen.
 //!
 //! **`didUpdateLocations` with an empty array.** Swift's `guard let location =
-//! locations.last else { return }` replies nothing at all, which on an untimed
-//! promise is a hang forever. Here it is an error. Same divergence, same
+//! locations.last else { return }` replies nothing immediately, leaving the
+//! timeout to reject. Here it is an immediate error. Same divergence, same
 //! argument, as `bridge_mobile_watch.zig`'s missing-`context` note.
 //!
-//! **Swift's orphaned first caller.** `getCurrentPosition` assigns
-//! `singleLocationCallbackId = callbackId` unconditionally, so a second call
-//! while one is in flight overwrites the first id and the first promise never
-//! settles. Here the displaced call is rejected instead — see "One native slot
-//! for the one-shot, one flag for the watch, one mutex for both" below for the
-//! cost that buys.
+//! **Overlapping callers.** Both implementations keep one native one-shot slot.
+//! A second call rejects the request it replaces instead of orphaning it; see
+//! "One native slot for the one-shot, one flag for the watch, one mutex for
+//! both" below for the cost that buys.
 //!
 //! **Nothing about `craftLocationError` any more.** A paragraph here used to
 //! record that Swift's `didFailWithError` both rejects the caller *and* fires
@@ -120,35 +113,14 @@
 //! subscribers again, because one `didUpdateLocations` settles the one-shot and
 //! emits the same fix, exactly as Swift's does.
 //!
-//! ## The cross-action cost, stated rather than argued away
+//! ## The cross-action permission boundary
 //!
-//! `locationManager.delegate = self` is set in exactly four Swift places:
-//! `getCurrentPosition`, `watchPosition`, `startLocationRecording` and
-//! `restoreLocationRecordingState`. The `requestPermission` arm for
-//! `location`/`locationAlways` does **not** set it — it only assigns
-//! `locationPermissionCallbackId` and calls `requestWhenInUseAuthorization` —
-//! and that request is settled *only* by
-//! `locationManagerDidChangeAuthorization` firing on Swift's manager.
 //! `bridge_mobile_permissions.zig` returns `UnknownAction` for those two
-//! permission values, so `requestPermission('location')` is still shim-served.
-//!
-//! Taking `getCurrentPosition` into Zig — with Zig's own manager and its own
-//! delegate — removes one of the two commonly-hit paths that gave Swift's
-//! manager a delegate. `craft.permissions.request('location')` therefore
-//! resolves in fewer orderings than before: it already fails today when it is
-//! the first location call a page makes, and after this it also fails when
-//! `getCurrentPosition` was the only call before it. Taking `watchPosition`
-//! removes the *second* of those two paths: after this change the only things
-//! left that give Swift's manager a delegate are `startLocationRecording` and
-//! `restoreLocationRecordingState`. So `craft.permissions.request('location')`
-//! now settles only in an app that has started or restored a recording. That is
-//! a narrowing of an already-broken path rather than a new break — it was
-//! already broken for the first location call any page makes — but it is
-//! narrower than it was before this change, and the earlier wording ("watchPosition
-//! and the three recording actions still install Swift's delegate") is no
-//! longer true. The fix is to migrate `requestPermission` for location in
-//! `bridge_mobile_permissions.zig`, which is a second file this pass is not
-//! writing.
+//! permission values, so `requestPermission('location')` remains shim-served.
+//! The shim now installs its own manager's delegate before prompting and
+//! immediately resolves already-determined states. It therefore no longer
+//! relies on a preceding location action to make its callback reachable, and
+//! this module owning the data manager does not narrow permission settlement.
 //!
 //! ## What `watchPosition` and `clearWatch` owe the page, exactly
 //!
@@ -158,8 +130,8 @@
 //! only posts to native when the map goes from empty to one and back. The
 //! native side has a single on/off, and both JS surfaces post
 //! `{action:'clearWatch'}` with no `id`. So the `id` is not a field this module
-//! drops — it never crosses the bridge, exactly as `options` does not for
-//! `getCurrentPosition`.
+//! drops — it never crosses the bridge. Current-position options do cross;
+//! watch ids do not.
 //!
 //! **Both replies are the bare fragment `true`.** Swift is
 //! `resolveCallback(callbackId, result: true)` for each, and `resolveCallback`
@@ -223,11 +195,8 @@
 //! **`clearWatch` must not strand a one-shot.** CoreLocation documents
 //! `stopUpdatingLocation()` as cancelling a pending `requestLocation()`, so the
 //! fix that would have answered an in-flight `getCurrentPosition` is not
-//! coming, and its promise is the untimed hand-built kind: a page parked
-//! forever. So the stop takes the pending fix out with it, under the same lock,
-//! and rejects it. Swift has the same cancellation and no such handling — it
-//! relies on CoreLocation reporting the cancellation through `didFailWithError`,
-//! which is not guaranteed. Rejecting is the same outcome, made certain.
+//! coming. So the stop takes the pending fix out with it, under the same lock,
+//! and rejects it immediately rather than making the page wait for its timer.
 //!
 //! The point above closes the only door that might have been left open: with a
 //! watch running, a pending one-shot would otherwise be answered by the
@@ -321,8 +290,8 @@ pub const A = struct {
 
 /// `.result`: the Swift path terminates in exactly one `resolveCallback` (from
 /// `didUpdateLocations`) or one `rejectCallback` (from `didFailWithError`), and
-/// the JS promise is the untimed hand-built kind — `.none` here would strand a
-/// caller forever rather than for thirty seconds.
+/// the JS promise is timed — `.none` here would still force every caller to
+/// wait for that deadline instead of receiving the native result.
 ///
 /// `.live`: it dispatches and does the thing. `.unavailable` is for an action
 /// that dispatches and refuses, which this is not — a refusal here is a
@@ -390,6 +359,59 @@ fn routeFor(action: []const u8) ?Route {
     return null;
 }
 
+const default_position_timeout_ms: u32 = 30_000;
+const maximum_position_timeout_ms: u32 = 2_147_483_647;
+
+const PositionOptions = struct {
+    enable_high_accuracy: bool = false,
+    timeout_ms: u32 = default_position_timeout_ms,
+    maximum_age_ms: f64 = 0,
+};
+
+fn finiteNonNegativeNumber(value: std.json.Value) ?f64 {
+    const number: f64 = switch (value) {
+        .integer => |n| @floatFromInt(n),
+        .float => |n| n,
+        else => return null,
+    };
+    if (!std.math.isFinite(number) or number < 0) return null;
+    return number;
+}
+
+/// Read the options the injected bridge has already normalised. Unknown and
+/// mistyped fields keep the same defaults Swift's optional casts use, while a
+/// malformed envelope is rejected instead of silently starting a request with
+/// values the page did not send.
+fn parsePositionOptions(allocator: std.mem.Allocator, data: []const u8) !PositionOptions {
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, data, .{}) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return bridge_error.BridgeError.InvalidJSON,
+    };
+    defer parsed.deinit();
+
+    const object = switch (parsed.value) {
+        .object => |value| value,
+        else => return bridge_error.BridgeError.InvalidJSON,
+    };
+
+    var options: PositionOptions = .{};
+    if (object.get("enableHighAccuracy")) |value| {
+        switch (value) {
+            .bool => |enabled| options.enable_high_accuracy = enabled,
+            else => {},
+        }
+    }
+    if (object.get("timeout")) |value| {
+        if (finiteNonNegativeNumber(value)) |number| {
+            options.timeout_ms = @intFromFloat(@min(number, @as(f64, @floatFromInt(maximum_position_timeout_ms))));
+        }
+    }
+    if (object.get("maximumAge")) |value| {
+        if (finiteNonNegativeNumber(value)) |number| options.maximum_age_ms = number;
+    }
+    return options;
+}
+
 pub const LocationBridge = struct {
     allocator: std.mem.Allocator,
 
@@ -418,11 +440,6 @@ pub const LocationBridge = struct {
 
     /// Ask CoreLocation for one fix and answer when it arrives.
     ///
-    /// `data` is accepted and ignored: the page drops `options` before posting
-    /// (`legacyGeolocation.getCurrentPosition` takes no parameters) and the
-    /// Swift dispatcher reads nothing out of `body`. Parsing it would invent a
-    /// failure mode the shim does not have.
-    ///
     /// Every fallible step — the Info.plist gate, all nine reply selectors, the
     /// delegate class, the manager, the two request selectors — runs *before*
     /// `ios_async.acquire`, so there is no error path between leasing a slot
@@ -430,10 +447,9 @@ pub const LocationBridge = struct {
     /// would have to release the slot by hand, and a missed release is a
     /// permanently narrower pool.
     fn getCurrentPosition(self: *Self, data: []const u8) !void {
-        _ = self;
-        _ = data;
         if (!is_darwin) return error.UnsupportedPlatform;
 
+        const options = try parsePositionOptions(self.allocator, data);
         const authorization = try resolveAuthorization();
         const sels = try Sels.resolve();
         const mgr = try ensureManager();
@@ -445,6 +461,22 @@ pub const LocationBridge = struct {
         const sel_authorize = try selector(auth_selector_name);
         const sel_request = try selector("requestLocation");
 
+        // A new call replaces the one native slot even when it can be answered
+        // from cache. This is the Swift fallback's ordering: the new caller
+        // owns the slot before maximumAge is considered.
+        if (takePendingFix()) |displaced| {
+            restoreBestAccuracy();
+            ios_async.deliverError(displaced.ticket);
+        }
+
+        if (try cachedFix(mgr, sels, options.maximum_age_ms)) |fix| {
+            const json = try shapeFix(self.allocator, fix);
+            defer self.allocator.free(json);
+            bridge_error.sendResultToJS(self.allocator, A.get_current_position, json);
+            return;
+        }
+
+        const accuracy = try AccuracySetting.resolve(options.enable_high_accuracy);
         const ticket = ios_async.acquire(A.get_current_position) orelse return poolFull();
 
         // Published before the framework call, never after: `requestLocation`
@@ -452,9 +484,9 @@ pub const LocationBridge = struct {
         // `msgSend` returns, and a callback that arrived at an empty slot would
         // have no ticket to reply with.
         if (publishPendingFix(ticket, sels)) |displaced| {
-            // Swift overwrites `singleLocationCallbackId` here and the first
-            // caller's untimed promise never settles. Rejecting it is strictly
-            // better: every caller ends up settled. See "One native slot for
+            // A concurrent publish displaced the older single native slot.
+            // Rejecting it immediately is better than waiting for its timer.
+            // See "One native slot for
             // the one-shot, ..." below for what this costs.
             std.log.warn(
                 "getCurrentPosition: a second call displaced one still in flight; " ++
@@ -463,6 +495,9 @@ pub const LocationBridge = struct {
             );
             ios_async.deliverError(displaced.ticket);
         }
+
+        accuracy.apply(mgr);
+        schedulePositionTimeout(ticket, options.timeout_ms);
 
         objc.msgSend(mgr, sel_authorize);
         objc.msgSend(mgr, sel_request);
@@ -538,7 +573,8 @@ pub const LocationBridge = struct {
 
         // `stopUpdatingLocation` cancels a pending `requestLocation`, so a
         // one-shot in flight is not going to be answered by CoreLocation. Its
-        // promise has no timeout, so leaving it is a page parked forever.
+        // timer would eventually reject, but leaving it until then needlessly
+        // retains both the callback and an async slot.
         //
         // Settled *here*, above every remaining exit from this function, rather
         // than after the stop: `takeWatchAndPending` has already removed it from
@@ -550,6 +586,7 @@ pub const LocationBridge = struct {
         // Null whenever `stop.watching` is false: nothing was stopped, so
         // nothing was cancelled, so there is nothing to reject.
         if (stop.pending) |call| {
+            restoreBestAccuracy();
             std.log.warn(
                 "clearWatch: stopUpdatingLocation cancels the in-flight getCurrentPosition; " ++
                     "rejecting it rather than leaving its promise unsettled",
@@ -1494,6 +1531,46 @@ fn bestAccuracy() ?f64 {
     return cell.*;
 }
 
+fn hundredMetersAccuracy() ?f64 {
+    if (!is_darwin) return null;
+    const symbol = dlsym(RTLD_DEFAULT, "kCLLocationAccuracyHundredMeters") orelse return null;
+    const cell: *const f64 = @ptrCast(@alignCast(symbol));
+    return cell.*;
+}
+
+const AccuracySetting = struct {
+    selector: Id,
+    value: ?f64,
+
+    fn resolve(high_accuracy: bool) !AccuracySetting {
+        const value = if (high_accuracy) bestAccuracy() else hundredMetersAccuracy();
+        if (!high_accuracy and value == null) return error.NativeCallFailed;
+        return .{
+            .selector = try selector("setDesiredAccuracy:"),
+            .value = value,
+        };
+    }
+
+    fn apply(self: AccuracySetting, target: Id) void {
+        const value = self.value orelse return;
+        const Fn = *const fn (Id, Id, f64) callconv(.c) void;
+        const function: Fn = @ptrCast(&objc.objc_msgSend);
+        function(target, self.selector, value);
+    }
+};
+
+/// Return the shared manager to the template's default after a one-shot. A
+/// watch or recorder may share this manager, so the one call's low-accuracy
+/// preference must not silently become the stream's permanent setting.
+fn restoreBestAccuracy() void {
+    const target = manager orelse return;
+    const setting = AccuracySetting.resolve(true) catch |err| {
+        std.log.warn("location: could not restore best accuracy after one-shot ({})", .{err});
+        return;
+    };
+    setting.apply(target);
+}
+
 /// `CLActivityTypeFitness`. A header enum constant — `Other = 1`,
 /// `AutomotiveNavigation = 2`, `Fitness = 3` — so this one is safe to spell out.
 const cl_activity_type_fitness: c_long = 3;
@@ -1702,6 +1779,53 @@ fn takePendingFix() ?PendingFix {
     return call;
 }
 
+fn takePendingFixIf(ticket: ios_async.Ticket) ?PendingFix {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    const call = pending_fix orelse return null;
+    if (call.ticket.index != ticket.index or call.ticket.generation != ticket.generation) return null;
+    pending_fix = null;
+    return call;
+}
+
+const dispatch_function_t = *const fn (?*anyopaque) callconv(.c) void;
+extern "c" fn dispatch_time(when: u64, delta: i64) u64;
+extern "c" fn dispatch_after_f(
+    when: u64,
+    queue: *anyopaque,
+    context: ?*anyopaque,
+    work: dispatch_function_t,
+) void;
+extern var _dispatch_main_q: anyopaque;
+
+fn timeoutContext(ticket: ios_async.Ticket) ?*anyopaque {
+    const encoded = (@as(usize, ticket.generation) << 5) | @as(usize, ticket.index);
+    return @ptrFromInt(encoded + 1);
+}
+
+fn ticketFromTimeoutContext(context: ?*anyopaque) ios_async.Ticket {
+    const encoded = @intFromPtr(context orelse unreachable) - 1;
+    return .{
+        .index = @intCast(encoded & 31),
+        .generation = @intCast(encoded >> 5),
+    };
+}
+
+fn positionTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+    const ticket = ticketFromTimeoutContext(context);
+    const call = takePendingFixIf(ticket) orelse return;
+    restoreBestAccuracy();
+    ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.Timeout);
+}
+
+fn schedulePositionTimeout(ticket: ios_async.Ticket, timeout_ms: u32) void {
+    if (!is_darwin) return;
+    const delay_ns: i64 = @as(i64, timeout_ms) * 1_000_000;
+    const deadline = dispatch_time(0, delay_ns);
+    dispatch_after_f(deadline, &_dispatch_main_q, timeoutContext(ticket), positionTimedOut);
+}
+
 /// Record the running watch. Overwriting is the whole behaviour: a second
 /// `watchPosition` is idempotent in Swift, and the selectors are the same ones.
 fn publishWatch(sels: Sels) void {
@@ -1802,6 +1926,7 @@ fn didUpdateLocations(_: Id, _: Id, _: Id, locations: Id) callconv(.c) void {
 
     // One read: the one-shot is taken, the watch is left. See `DelegateWork`.
     const work = takeDelegateWork();
+    if (work.pending != null) restoreBestAccuracy();
 
     // Either consumer's selectors will do — they are the same nine names, and
     // `Sels.resolve()` is deterministic — but preferring the one-shot's keeps
@@ -1866,12 +1991,14 @@ fn didFailWithError(_: Id, _: Id, _: Id, err_object: Id) callconv(.c) void {
     // `BridgeError` enum leaves for a rejected caller, and the event is the
     // only channel a watch has at all.
     const description = readNSString(err_object, "localizedDescription") orelse "(none)";
+    const domain = readNSString(err_object, "domain") orelse "(none)";
+    const native_code = readNSInteger(err_object, "code");
 
     std.log.warn(
         "location: CLLocationManager failed - domain={s} code={d} description={s}",
         .{
-            readNSString(err_object, "domain") orelse "(none)",
-            readNSInteger(err_object, "code"),
+            domain,
+            native_code,
             description,
         },
     );
@@ -1879,7 +2006,8 @@ fn didFailWithError(_: Id, _: Id, _: Id, err_object: Id) callconv(.c) void {
     // Swift's order again: `rejectCallback(singleLocationCallbackId, …)` first,
     // then `sendToWeb("craftLocationError", …)`.
     if (takePendingFix()) |call| {
-        ios_async.deliverError(call.ticket);
+        restoreBestAccuracy();
+        ios_async.deliverErrorCode(call.ticket, locationBridgeError(domain, native_code));
     } else {
         std.log.info("location: a CoreLocation error arrived with no one-shot waiting", .{});
     }
@@ -1892,13 +2020,20 @@ fn didFailWithError(_: Id, _: Id, _: Id, err_object: Id) callconv(.c) void {
     emitLocationError(description);
 }
 
+fn locationBridgeError(domain: []const u8, native_code: c_long) bridge_error.BridgeError {
+    return if (native_code == 1 and std.mem.eql(u8, domain, "kCLErrorDomain"))
+        bridge_error.BridgeError.PermissionDenied
+    else
+        bridge_error.BridgeError.NativeCallFailed;
+}
+
 /// Answer a fix that arrived and could not be used.
 ///
 /// Two consumers, two consequences, and the log level follows the consequence
 /// rather than the cause. A waiting `getCurrentPosition` is *rejected*: Swift
 /// returns silently from `guard let location = locations.last else { return }`,
-/// which on that untimed hand-built promise is a hang forever, so this is a real
-/// failure being reported to a caller. A watch has nobody to reject — its `true`
+/// which would make the page wait for its timeout, so this is a real failure
+/// being reported immediately. A watch has nobody to reject — its `true`
 /// went out when it started — and Swift emits nothing here either, so it is a
 /// gap in a stream rather than a failed call.
 ///
@@ -1966,6 +2101,15 @@ fn readFix(locations: Id, sels: Sels) !Fix {
     const send_id: IdFn = @ptrCast(&objc.objc_msgSend);
     const location = send_id(locations, sels.last_object) orelse return error.NoLocationInUpdate;
 
+    return readLocation(location, sels);
+}
+
+fn readLocation(location: Id, sels: Sels) !Fix {
+    if (!is_darwin) return error.UnsupportedPlatform;
+    if (location == null) return error.NativeCallFailed;
+
+    const IdFn = *const fn (Id, Id) callconv(.c) Id;
+    const send_id: IdFn = @ptrCast(&objc.objc_msgSend);
     const CoordFn = *const fn (Id, Id) callconv(.c) Coord;
     const send_coord: CoordFn = @ptrCast(&objc.objc_msgSend);
     const coordinate = send_coord(location, sels.coordinate);
@@ -1988,6 +2132,24 @@ fn readFix(locations: Id, sels: Sels) !Fix {
         .speed = send_double(location, sels.speed),
         .timestamp_ms = send_double(date, sels.time_interval_since_1970) * 1000.0,
     };
+}
+
+/// Reuse the manager's last reading only when the caller explicitly permits
+/// it and its wall-clock age fits. A future-dated reading has age zero, the
+/// same defensive treatment the Swift fallback applies.
+fn cachedFix(target: Id, sels: Sels, maximum_age_ms: f64) !?Fix {
+    if (!is_darwin) return error.UnsupportedPlatform;
+    if (maximum_age_ms <= 0) return null;
+
+    const sel_location = try selector("location");
+    const location = objc.msgSendId(target, sel_location) orelse return null;
+    const fix = try readLocation(location, sels);
+    return if (cacheAgeIsAcceptable(nowMillis(), fix.timestamp_ms, maximum_age_ms)) fix else null;
+}
+
+fn cacheAgeIsAcceptable(now_ms: f64, timestamp_ms: f64, maximum_age_ms: f64) bool {
+    if (maximum_age_ms <= 0) return false;
+    return @max(0, now_ms - timestamp_ms) <= maximum_age_ms;
 }
 
 /// A zero-argument `NSString`-returning property, as bytes. Null for a nil
@@ -2048,8 +2210,8 @@ test "the declared actions are the ones the handler serves" {
     try testing.expectEqualStrings(A.get_location_recording_state, capability_actions[7].name);
 
     for (capability_actions) |decl| {
-        // A `.result` whose handler never replies parks the caller on an untimed
-        // promise; a `.none` that is awaited resolves immediately and means
+        // A `.result` whose handler never replies parks the caller until its
+        // timeout; a `.none` that is awaited resolves immediately and means
         // nothing. Both failure modes are invisible from the page. Swift
         // resolves all three of these, so all three are `.result` — including
         // `watchPosition`, whose `true` is about the subscribe having started,
@@ -2448,6 +2610,21 @@ test "the error event carries Swift's one-key message object" {
     try testing.expect(parsed.value.object.get("domain") == null);
 }
 
+test "only Core Location denial becomes a permission error" {
+    try testing.expectEqual(
+        bridge_error.BridgeError.PermissionDenied,
+        locationBridgeError("kCLErrorDomain", 1),
+    );
+    try testing.expectEqual(
+        bridge_error.BridgeError.NativeCallFailed,
+        locationBridgeError("kCLErrorDomain", 0),
+    );
+    try testing.expectEqual(
+        bridge_error.BridgeError.NativeCallFailed,
+        locationBridgeError("another-domain", 1),
+    );
+}
+
 test "a description carrying quotes, backslashes or control bytes stays inside its string" {
     // `ios_events.formatEvent` inlines this detail into a JavaScript source
     // position verbatim. An unescaped `"` closes the string early and turns the
@@ -2619,9 +2796,7 @@ test "one fix settles the one-shot and feeds the watch, consuming only the one-s
 test "clearing a running watch settles the one-shot it just cancelled" {
     // CoreLocation documents `stopUpdatingLocation()` as cancelling a pending
     // `requestLocation()`, so the fix that would have answered an in-flight
-    // `getCurrentPosition` is not coming. Its promise is the untimed
-    // hand-built kind, so leaving it there is a page parked forever, not a page
-    // that waits thirty seconds. `clearWatch` has to be handed that call in
+    // `getCurrentPosition` is not coming. `clearWatch` has to be handed that call in
     // order to reject it — if this returned null the rejection could not
     // happen, and the drop would be silent.
     _ = takeWatchAndPending();
@@ -2770,32 +2945,55 @@ test "without the usage description the gate refuses before any manager exists" 
     }
 }
 
-test "the payload is ignored, not parsed" {
+test "current-position options are parsed, defaulted and bounded" {
+    const defaults = try parsePositionOptions(testing.allocator, "{}");
+    try testing.expect(!defaults.enable_high_accuracy);
+    try testing.expectEqual(default_position_timeout_ms, defaults.timeout_ms);
+    try testing.expectEqual(@as(f64, 0), defaults.maximum_age_ms);
+
+    const requested = try parsePositionOptions(
+        testing.allocator,
+        "{\"enableHighAccuracy\":true,\"timeout\":15000,\"maximumAge\":2500}",
+    );
+    try testing.expect(requested.enable_high_accuracy);
+    try testing.expectEqual(@as(u32, 15_000), requested.timeout_ms);
+    try testing.expectEqual(@as(f64, 2_500), requested.maximum_age_ms);
+
+    const bounded = try parsePositionOptions(
+        testing.allocator,
+        "{\"timeout\":999999999999,\"maximumAge\":-1,\"enableHighAccuracy\":\"yes\"}",
+    );
+    try testing.expect(!bounded.enable_high_accuracy);
+    try testing.expectEqual(maximum_position_timeout_ms, bounded.timeout_ms);
+    try testing.expectEqual(@as(f64, 0), bounded.maximum_age_ms);
+
+    try testing.expectError(
+        bridge_error.BridgeError.InvalidJSON,
+        parsePositionOptions(testing.allocator, "{not json"),
+    );
+}
+
+test "cache age is explicit, inclusive and future-safe" {
+    try testing.expect(!cacheAgeIsAcceptable(10_000, 9_000, 0));
+    try testing.expect(cacheAgeIsAcceptable(10_000, 9_000, 1_000));
+    try testing.expect(!cacheAgeIsAcceptable(10_000, 8_999, 1_000));
+    try testing.expect(cacheAgeIsAcceptable(10_000, 11_000, 1));
+}
+
+test "position timeout contexts retain the complete async ticket" {
+    const original: ios_async.Ticket = .{ .index = 15, .generation = 0xfedcba98 };
+    const decoded = ticketFromTimeoutContext(timeoutContext(original));
+    try testing.expectEqual(original.index, decoded.index);
+    try testing.expectEqual(original.generation, decoded.generation);
+}
+
+test "watch payloads remain ignored" {
     if (!is_darwin) return error.SkipZigTest;
-    // Three real dispatches, so this needs the process the gate stops.
+    // Real dispatches, so this needs the process the gate stops.
     if (resolveAuthorization()) |_| return error.SkipZigTest else |_| {}
 
-    // The page drops `options` before posting — `legacyGeolocation.getCurrentPosition`
-    // takes no parameters — and the Swift dispatcher reads nothing out of
-    // `body`. A payload that is not even JSON must therefore reach exactly the
-    // same outcome as `{}`; if it did not, this module would have invented a
-    // failure the shim does not have.
     var bridge = LocationBridge.init(testing.allocator);
     defer bridge.deinit();
-
-    const empty = bridge.handleMessage(A.get_current_position, "{}");
-    const junk = bridge.handleMessage(A.get_current_position, "{not json");
-    const options = bridge.handleMessage(
-        A.get_current_position,
-        "{\"enableHighAccuracy\":true,\"timeout\":5000,\"maximumAge\":0}",
-    );
-
-    try testing.expectEqual(empty, junk);
-    try testing.expectEqual(empty, options);
-    if (empty) |_| {} else |err| {
-        try testing.expect(err != bridge_error.BridgeError.InvalidJSON);
-        try testing.expect(err != bridge_error.BridgeError.MissingData);
-    }
 
     // `watchPosition` is posted with no payload by both JS surfaces, and
     // `clearWatch` posts no `id` — `nextLocationWatchId` is a JS-side map key.
@@ -2855,7 +3053,7 @@ test "the delegate class registers under its own name, idempotently" {
 
     // Both methods were added. CoreLocation dispatches through
     // `respondsToSelector:`, so a method that failed to attach is a callback
-    // that is simply never made — silence, on an untimed promise.
+    // that is simply never made — silence until the timeout.
     const sel_responds = objc.sel_registerName("respondsToSelector:") orelse
         return error.SelectorNotFound;
     const RespondsFn = *const fn (Id, Id, Id) callconv(.c) bool;

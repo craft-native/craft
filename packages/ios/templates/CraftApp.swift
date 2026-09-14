@@ -2064,13 +2064,27 @@ struct CraftWebView: UIViewRepresentable {
                         var id = 'cb_' + (++self._callbackId);
                         var requestedTimeout = Number(options.timeout);
                         var timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout >= 0
-                            ? requestedTimeout
+                            ? Math.min(requestedTimeout, 2147483647)
                             : 30000;
                         return new Promise(function(resolve, reject) {
                             var timeout;
                             self._callbacks[id] = {
                                 resolve: function(value) { clearTimeout(timeout); resolve(value); },
-                                reject: function(error) { clearTimeout(timeout); reject(error); }
+                                reject: function(error) {
+                                    clearTimeout(timeout);
+                                    var locationErrorCode = error && ({
+                                        'PERMISSION_DENIED': 1,
+                                        'POSITION_UNAVAILABLE': 2,
+                                        'NATIVE_CALL_FAILED': 2,
+                                        'TIMEOUT': 3,
+                                        'LOCATION_TIMEOUT': 3
+                                    })[error.code];
+                                    if (locationErrorCode) {
+                                        error.name = 'GeolocationPositionError';
+                                        error.code = locationErrorCode;
+                                    }
+                                    reject(error);
+                                }
                             };
                             timeout = setTimeout(function() {
                                 if (!self._callbacks[id]) return;
@@ -3431,7 +3445,7 @@ struct CraftWebView: UIViewRepresentable {
             let maximumAge = max(0, (body["maximumAge"] as? NSNumber)?.doubleValue ?? 0)
             if maximumAge > 0,
                let cachedLocation = manager.location,
-               Date().timeIntervalSince(cachedLocation.timestamp) * 1000 <= maximumAge {
+               max(0, Date().timeIntervalSince(cachedLocation.timestamp) * 1000) <= maximumAge {
                 finishSingleLocationRequest()
                 resolveCallback(callbackId, result: locationData(cachedLocation))
                 return
@@ -3453,6 +3467,7 @@ struct CraftWebView: UIViewRepresentable {
             singleLocationTimeoutWorkItem?.cancel()
             singleLocationTimeoutWorkItem = nil
             singleLocationCallbackId = nil
+            locationManager?.desiredAccuracy = kCLLocationAccuracyBest
         }
 
         private func locationData(_ location: CLLocation) -> [String: Any] {
@@ -3669,7 +3684,11 @@ struct CraftWebView: UIViewRepresentable {
         func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
             let callbackId = singleLocationCallbackId
             finishSingleLocationRequest()
-            rejectCallback(callbackId, error: error.localizedDescription, code: "POSITION_UNAVAILABLE")
+            let nativeError = error as NSError
+            let code = nativeError.domain == kCLErrorDomain && nativeError.code == CLError.Code.denied.rawValue
+                ? "PERMISSION_DENIED"
+                : "POSITION_UNAVAILABLE"
+            rejectCallback(callbackId, error: error.localizedDescription, code: code)
             sendToWeb("craftLocationError", data: ["message": error.localizedDescription])
         }
 

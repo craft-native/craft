@@ -118,7 +118,7 @@ describe('Craft iOS builder', () => {
     expect(swift).toContain('private var singleLocationTimeoutWorkItem: DispatchWorkItem?')
     expect(swift).toContain('manager.delegate = self')
     expect(swift).toContain('let alreadyGranted = status == .authorizedAlways')
-    expect(swift).toContain('Date().timeIntervalSince(cachedLocation.timestamp) * 1000 <= maximumAge')
+    expect(swift).toContain('max(0, Date().timeIntervalSince(cachedLocation.timestamp) * 1000) <= maximumAge')
     expect(swift).toContain('code: "LOCATION_TIMEOUT"')
     expect(swift.match(/private var pendingCallbackId/g)?.length).toBe(1)
     expect(plist).toContain('NSLocationWhenInUseUsageDescription')
