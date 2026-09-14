@@ -206,6 +206,8 @@ class CraftBridge(
     private val webView: WebView,
     private val healthConnect: CraftHealthConnect
 ) {
+    @Volatile
+    private var closed = false
     private var nativeDeepLinks = CraftNative.resetDeepLinks()
     private var speechRecognizer: SpeechRecognizer? = null
     private var isListening = false
@@ -233,8 +235,9 @@ class CraftBridge(
     // Keep awake
     private var isKeepingAwake = false
 
-    // Billing client for in-app purchases
-    private var billingClient: BillingClient? = null
+    // Billing clients for in-app purchases
+    private var productBillingClient: BillingClient? = null
+    private var restoreBillingClient: BillingClient? = null
 
     // Notification channel ID
     private val notificationChannelId = "craft_notifications"
@@ -2912,6 +2915,20 @@ class CraftBridge(
     fun getProducts(productIdsJson: String) {
         if (CraftNative.getProducts(activity, productIdsJson)) return
 
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveProductRequest(products: JSONArray) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window._craftProductsResolve && window._craftProductsResolve($products)", null)
+            }
+        }
+
+        fun rejectProductRequest(message: String) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            rejectProducts(message)
+        }
+
         try {
             val productIds = JSONArray(productIdsJson)
             val productList = mutableListOf<String>()
@@ -2919,11 +2936,12 @@ class CraftBridge(
                 productList.add(productIds.getString(i))
             }
 
+            runCatching { productBillingClient?.endConnection() }
             val client = BillingClient.newBuilder(activity)
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
-            billingClient = client
+            productBillingClient = client
 
             client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
@@ -2949,27 +2967,25 @@ class CraftBridge(
                                             put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
                                         })
                                     }
-                                    activity.runOnUiThread {
-                                        webView.evaluateJavascript("window._craftProductsResolve && window._craftProductsResolve($products)", null)
-                                    }
+                                    resolveProductRequest(products)
                                 } else {
-                                    rejectProducts("Product query failed: ${result.debugMessage}")
+                                    rejectProductRequest("Product query failed: ${result.debugMessage}")
                                 }
                             }
                         } catch (error: Exception) {
-                            rejectProducts(error.message ?: "Product query failed")
+                            rejectProductRequest(error.message ?: "Product query failed")
                         }
                     } else {
-                        rejectProducts("Billing setup failed: ${billingResult.debugMessage}")
+                        rejectProductRequest("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    rejectProducts("Billing disconnected")
+                    rejectProductRequest("Billing disconnected")
                 }
             })
         } catch (e: Exception) {
-            rejectProducts(e.message ?: "Product query failed")
+            rejectProductRequest(e.message ?: "Product query failed")
         }
     }
 
@@ -2994,9 +3010,23 @@ class CraftBridge(
     fun restorePurchases() {
         if (CraftNative.restorePurchases(activity)) return
 
-        val connectedClient = billingClient
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveRestoreRequest(restored: JSONArray) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            activity.runOnUiThread {
+                webView.evaluateJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)", null)
+            }
+        }
+
+        fun rejectRestoreRequest(message: String) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            rejectRestore(message)
+        }
+
+        val connectedClient = restoreBillingClient
         if (connectedClient != null && connectedClient.isReady) {
-            queryRestoredPurchases(connectedClient)
+            queryRestoredPurchases(connectedClient, ::resolveRestoreRequest, ::rejectRestoreRequest)
             return
         }
 
@@ -3005,27 +3035,31 @@ class CraftBridge(
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
-                .also { billingClient = it }
+                .also { restoreBillingClient = it }
 
             client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                        queryRestoredPurchases(client)
+                        queryRestoredPurchases(client, ::resolveRestoreRequest, ::rejectRestoreRequest)
                     } else {
-                        rejectRestore("Billing setup failed: ${billingResult.debugMessage}")
+                        rejectRestoreRequest("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    rejectRestore("Billing disconnected")
+                    rejectRestoreRequest("Billing disconnected")
                 }
             })
         } catch (error: Exception) {
-            rejectRestore(error.message ?: "Billing connection failed")
+            rejectRestoreRequest(error.message ?: "Billing connection failed")
         }
     }
 
-    private fun queryRestoredPurchases(client: BillingClient) {
+    private fun queryRestoredPurchases(
+        client: BillingClient,
+        resolve: (JSONArray) -> Unit,
+        reject: (String) -> Unit
+    ) {
         try {
             client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
@@ -3038,15 +3072,13 @@ class CraftBridge(
                             put("orderId", purchase.orderId)
                         })
                     }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)", null)
-                    }
+                    resolve(restored)
                 } else {
-                    rejectRestore("Restore failed: ${result.debugMessage}")
+                    reject("Restore failed: ${result.debugMessage}")
                 }
             }
         } catch (error: Exception) {
-            rejectRestore(error.message ?: "Restore failed")
+            reject(error.message ?: "Restore failed")
         }
     }
 
@@ -3642,6 +3674,7 @@ class CraftBridge(
     }
 
     fun close() {
+        closed = true
         activity.runOnUiThread {
             runCatching {
                 webView.evaluateJavascript(
@@ -3695,8 +3728,10 @@ class CraftBridge(
         bluetoothScanner = null
         bluetoothAdapter = null
 
-        runCatching { billingClient?.endConnection() }
-        billingClient = null
+        runCatching { productBillingClient?.endConnection() }
+        productBillingClient = null
+        runCatching { restoreBillingClient?.endConnection() }
+        restoreBillingClient = null
         runCatching { database?.close() }
         database = null
 

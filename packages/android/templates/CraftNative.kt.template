@@ -133,12 +133,15 @@ object CraftNative {
     @Volatile
     private var deliverer: ((String) -> Unit)? = null
 
+    private val lifecycleGeneration = java.util.concurrent.atomic.AtomicLong(0)
+
     fun setDeliverer(deliver: ((String) -> Unit)?) {
         deliverer = deliver
     }
 
     /** Release platform objects owned by native-backed actions. */
     fun close(activity: Activity) {
+        lifecycleGeneration.incrementAndGet()
         deliverer = null
 
         runCatching { speechRecognizer?.cancel() }
@@ -153,8 +156,10 @@ object CraftNative {
         audioFile?.delete()
         audioFile = null
 
-        runCatching { billingClient?.endConnection() }
-        billingClient = null
+        runCatching { productBillingClient?.endConnection() }
+        productBillingClient = null
+        runCatching { restoreBillingClient?.endConnection() }
+        restoreBillingClient = null
 
         networkWatch?.let { watch ->
             val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -693,20 +698,37 @@ object CraftNative {
 
     // ==================== Play Billing ====================
 
-    private var billingClient: BillingClient? = null
+    private var productBillingClient: BillingClient? = null
+    private var restoreBillingClient: BillingClient? = null
 
     @JvmStatic
     fun queryProducts(activity: Activity, productIdsJson: String) {
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveProductRequest(productsJson: String) {
+            if (!settled.compareAndSet(false, true)) return
+            if (requestGeneration != lifecycleGeneration.get()) return
+            nativeProductsReady(productsJson)
+        }
+
+        fun rejectProductRequest(message: String) {
+            if (!settled.compareAndSet(false, true)) return
+            if (requestGeneration != lifecycleGeneration.get()) return
+            nativeProductsError(message)
+        }
+
         try {
             val productIds = org.json.JSONArray(productIdsJson)
             val productList = mutableListOf<String>()
             for (i in 0 until productIds.length()) productList.add(productIds.getString(i))
 
+            runCatching { productBillingClient?.endConnection() }
             val client = BillingClient.newBuilder(activity)
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
-            billingClient = client
+            productBillingClient = client
 
             client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
@@ -732,33 +754,48 @@ object CraftNative {
                                             put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
                                         })
                                     }
-                                    nativeProductsReady(products.toString())
+                                    resolveProductRequest(products.toString())
                                 } else {
-                                    nativeProductsError("Product query failed: ${result.debugMessage}")
+                                    rejectProductRequest("Product query failed: ${result.debugMessage}")
                                 }
                             }
                         } catch (error: Exception) {
-                            nativeProductsError(error.message ?: "Product query failed")
+                            rejectProductRequest(error.message ?: "Product query failed")
                         }
                     } else {
-                        nativeProductsError("Billing setup failed: ${billingResult.debugMessage}")
+                        rejectProductRequest("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    nativeProductsError("Billing disconnected")
+                    rejectProductRequest("Billing disconnected")
                 }
             })
         } catch (e: Exception) {
-            nativeProductsError(e.message ?: "null")
+            rejectProductRequest(e.message ?: "Product query failed")
         }
     }
 
     @JvmStatic
     fun queryRestoredPurchases(activity: Activity) {
-        val connectedClient = billingClient
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveRestoreRequest(purchasesJson: String) {
+            if (!settled.compareAndSet(false, true)) return
+            if (requestGeneration != lifecycleGeneration.get()) return
+            nativeRestoreReady(purchasesJson)
+        }
+
+        fun rejectRestoreRequest(message: String) {
+            if (!settled.compareAndSet(false, true)) return
+            if (requestGeneration != lifecycleGeneration.get()) return
+            nativeRestoreError(message)
+        }
+
+        val connectedClient = restoreBillingClient
         if (connectedClient != null && connectedClient.isReady) {
-            queryRestoredPurchases(connectedClient)
+            queryRestoredPurchases(connectedClient, ::resolveRestoreRequest, ::rejectRestoreRequest)
             return
         }
 
@@ -767,27 +804,31 @@ object CraftNative {
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
-                .also { billingClient = it }
+                .also { restoreBillingClient = it }
 
             client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
-                        queryRestoredPurchases(client)
+                        queryRestoredPurchases(client, ::resolveRestoreRequest, ::rejectRestoreRequest)
                     } else {
-                        nativeRestoreError("Billing setup failed: ${billingResult.debugMessage}")
+                        rejectRestoreRequest("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    nativeRestoreError("Billing disconnected")
+                    rejectRestoreRequest("Billing disconnected")
                 }
             })
         } catch (error: Exception) {
-            nativeRestoreError(error.message ?: "Billing connection failed")
+            rejectRestoreRequest(error.message ?: "Billing connection failed")
         }
     }
 
-    private fun queryRestoredPurchases(client: BillingClient) {
+    private fun queryRestoredPurchases(
+        client: BillingClient,
+        resolve: (String) -> Unit,
+        reject: (String) -> Unit
+    ) {
         try {
             client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
@@ -800,13 +841,13 @@ object CraftNative {
                             put("orderId", purchase.orderId)
                         })
                     }
-                    nativeRestoreReady(restored.toString())
+                    resolve(restored.toString())
                 } else {
-                    nativeRestoreError("Restore failed: ${result.debugMessage}")
+                    reject("Restore failed: ${result.debugMessage}")
                 }
             }
         } catch (error: Exception) {
-            nativeRestoreError(error.message ?: "Restore failed")
+            reject(error.message ?: "Restore failed")
         }
     }
 

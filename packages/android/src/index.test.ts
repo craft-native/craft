@@ -785,14 +785,16 @@ describe('Craft Android builder', () => {
       'manager.unregisterNetworkCallback(callback)',
       'sensorManager?.unregisterListener(listener)',
       'bluetoothScanner?.stopScan(callback)',
-      'billingClient?.endConnection()',
+      'productBillingClient?.endConnection()',
+      'restoreBillingClient?.endConnection()',
       'database?.close()',
       'setFlashlight(false)',
     ]) expect(bridgeClose).toContain(cleanup)
     for (const cleanup of [
       'deliverer = null',
       'speechRecognizer?.destroy()',
-      'billingClient?.endConnection()',
+      'productBillingClient?.endConnection()',
+      'restoreBillingClient?.endConnection()',
       'manager.unregisterNetworkCallback(watch)',
       'bleScanner?.stopScan(callback)',
       'sensorManager?.unregisterListener(listener)',
@@ -809,7 +811,12 @@ describe('Craft Android builder', () => {
 
     for (const source of [bridge, holder]) {
       expect(source).toContain('if (connectedClient != null && connectedClient.isReady) {')
-      expect(source).toContain('private fun queryRestoredPurchases(client: BillingClient)')
+      expect(source).toContain('private var productBillingClient: BillingClient? = null')
+      expect(source).toContain('private var restoreBillingClient: BillingClient? = null')
+      expect(source).toContain('val settled = java.util.concurrent.atomic.AtomicBoolean(false)')
+      expect(source).toContain('if (!settled.compareAndSet(false, true)')
+      expect(source).toContain('queryRestoredPurchases(connectedClient, ::resolveRestoreRequest, ::rejectRestoreRequest)')
+      expect(source).toContain('reject: (String) -> Unit')
       expect(source).toContain('Billing setup failed: ${billingResult.debugMessage}')
       expect(source).toContain('Product query failed: ${result.debugMessage}')
       expect(source).toContain('Restore failed: ${result.debugMessage}')
@@ -819,7 +826,12 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('CraftNative.restorePurchases(activity)')
     expect(bridge).toContain('private fun rejectProducts(message: String)')
     expect(bridge).toContain('private fun rejectRestore(message: String)')
+    expect(bridge).toContain('private var closed = false')
+    expect(bridge).toContain('closed = true')
     expect(holder).toContain('private external fun nativeRestorePurchases(activity: Activity): Boolean')
+    expect(holder).toContain('private val lifecycleGeneration = java.util.concurrent.atomic.AtomicLong(0)')
+    expect(holder).toContain('lifecycleGeneration.incrementAndGet()')
+    expect(holder).toContain('if (requestGeneration != lifecycleGeneration.get()) return')
   })
 
   it('rejects calendar-provider failures instead of hanging the promise', async () => {
