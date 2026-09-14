@@ -837,8 +837,10 @@ class CraftBridge(
                 getHealthData: function() {
                     return Promise.reject(new Error('HealthKit is unavailable on Android'));
                 },
-                requestFitnessAuthorization: function() {
-                    return window.craft.health.requestAuthorization([]);
+                requestFitnessAuthorization: function(types) {
+                    return window.craft.health.requestAuthorization(types || [
+                        'steps', 'heartRate', 'activeEnergy', 'distance', 'workouts'
+                    ]);
                 },
                 getFitnessData: function(type, startDate, endDate) {
                     var start = startDate instanceof Date ? startDate.getTime() : startDate;

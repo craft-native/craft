@@ -46,7 +46,13 @@ class CraftHealthConnect(
         }
 
     fun requestAuthorization(typesJson: String) {
-        val requested = permissionsFor(JSONArray(typesJson))
+        val requested = try {
+            permissionsFor(JSONArray(typesJson)).also {
+                require(it.isNotEmpty()) { "At least one Health Connect permission type is required" }
+            }
+        } catch (error: Exception) {
+            return reject("_craftFitnessAuthReject", error.message ?: "Health permissions are invalid")
+        }
         val healthClient = client ?: return reject("_craftFitnessAuthReject", "Health Connect is unavailable or requires an update")
         scope.launch {
             try {
@@ -135,7 +141,7 @@ class CraftHealthConnect(
                     endTime = end,
                     endZoneOffset = zone,
                     exerciseType = exerciseType,
-                    title = "WildLoop",
+                    title = activity.applicationInfo.loadLabel(activity.packageManager).toString(),
                     metadata = Metadata.manualEntry(clientRecordId = activityId)
                 ))
                 val distance = data.optDouble("distanceMeters", 0.0)
@@ -183,6 +189,7 @@ class CraftHealthConnect(
                     permissions.add(HealthPermission.getWritePermission(ActiveCaloriesBurnedRecord::class))
                     permissions.add(HealthPermission.getWritePermission(DistanceRecord::class))
                 }
+                else -> throw IllegalArgumentException("Unsupported Health Connect permission type: ${types.optString(index)}")
             }
         }
         return permissions
