@@ -731,10 +731,10 @@ class CraftBridge(
                     return window.craft.notifications.schedule(notification);
                 },
                 cancelNotification: function(id) {
-                    return Promise.resolve(window.craft.notifications.cancel(id));
+                    return Promise.resolve().then(function() { return window.craft.notifications.cancel(id); });
                 },
                 cancelAllNotifications: function() {
-                    return Promise.resolve(window.craft.notifications.cancelAll());
+                    return Promise.resolve().then(function() { return window.craft.notifications.cancelAll(); });
                 },
                 getPendingNotifications: function() {
                     return Promise.reject(new Error('Pending notification queries are unavailable on Android'));
@@ -755,7 +755,7 @@ class CraftBridge(
                     return window.craft.bluetooth.startScan();
                 },
                 stopBluetoothScan: function() {
-                    return Promise.resolve(window.craft.bluetooth.stopScan());
+                    return Promise.resolve().then(function() { return window.craft.bluetooth.stopScan(); });
                 },
                 requestHealthAuthorization: function() {
                     return Promise.reject(new Error('HealthKit is unavailable on Android'));
@@ -979,7 +979,7 @@ class CraftBridge(
                         });
                     },
                     isReachable: function() {
-                        return Promise.resolve(CraftAndroid.isWatchReachable());
+                        return Promise.resolve().then(function() { return CraftAndroid.isWatchReachable(); });
                     }
                 },
 
@@ -1349,14 +1349,14 @@ class CraftBridge(
                 var legacySecureStore = craft.secureStore;
                 craft.contractVersion = '1.0.0';
                 craft.device = {
-                    getInfo: function() { return Promise.resolve(craft.getDeviceInfo()); },
+                    getInfo: function() { return Promise.resolve().then(function() { return craft.getDeviceInfo(); }); },
                     getCapabilities: function() { return Promise.resolve(Object.assign({}, craft.capabilities)); }
                 };
                 craft.haptics = {
-                    impact: function(style) { craft.haptic(style || 'medium'); return Promise.resolve(); },
-                    notification: function(type) { craft.haptic(type === 'error' ? 'heavy' : 'light'); return Promise.resolve(); },
-                    selection: function() { craft.haptic('selection'); return Promise.resolve(); },
-                    vibrate: function(pattern) { craft.vibrate(pattern || []); return Promise.resolve(); }
+                    impact: function(style) { return Promise.resolve().then(function() { craft.haptic(style || 'medium'); }); },
+                    notification: function(type) { return Promise.resolve().then(function() { craft.haptic(type === 'error' ? 'heavy' : 'light'); }); },
+                    selection: function() { return Promise.resolve().then(function() { craft.haptic('selection'); }); },
+                    vibrate: function(pattern) { return Promise.resolve().then(function() { craft.vibrate(pattern || []); }); }
                 };
                 craft.camera = {
                     takePicture: function() { return legacyOpenCamera().then(normalizePhoto); },
@@ -1370,10 +1370,10 @@ class CraftBridge(
                     authenticate: function(reason) { return legacyAuthenticate(reason); }
                 };
                 craft.secureStorage = {
-                    set: function(key, value) { return Promise.resolve(legacySecureStore.set(key, value)).then(function() {}); },
-                    get: function(key) { return Promise.resolve(legacySecureStore.get(key)); },
-                    delete: function(key) { return Promise.resolve(legacySecureStore.remove(key)).then(function() {}); },
-                    clear: function() { return Promise.resolve(CraftAndroid.secureClear()).then(function() {}); }
+                    set: function(key, value) { return Promise.resolve().then(function() { legacySecureStore.set(key, value); }); },
+                    get: function(key) { return Promise.resolve().then(function() { return legacySecureStore.get(key); }); },
+                    delete: function(key) { return Promise.resolve().then(function() { legacySecureStore.remove(key); }); },
+                    clear: function() { return Promise.resolve().then(function() { CraftAndroid.secureClear(); }); }
                 };
                 var permissionRequestSequence = 0;
                 var permissionRequests = Object.create(null);
@@ -1394,7 +1394,7 @@ class CraftBridge(
                 };
                 craft.permissions = {
                     check: function(permission) {
-                        return Promise.resolve(CraftAndroid.checkPermission(String(permission)));
+                        return Promise.resolve().then(function() { return CraftAndroid.checkPermission(String(permission)); });
                     },
                     request: function(permission) {
                         return new Promise(function(resolve, reject) {
@@ -1422,17 +1422,19 @@ class CraftBridge(
                     getCurrentPosition: craft.getCurrentPosition,
                     watchPosition: craft.watchPosition,
                     clearWatch: craft.clearWatch,
-                    startRecording: function(options) { return Promise.resolve(JSON.parse(CraftAndroid.startLocationRecording(JSON.stringify(options || {})))); },
-                    pauseRecording: function() { return Promise.resolve(JSON.parse(CraftAndroid.pauseLocationRecording())); },
-                    resumeRecording: function() { return Promise.resolve(JSON.parse(CraftAndroid.resumeLocationRecording())); },
-                    stopRecording: function() { return Promise.resolve(JSON.parse(CraftAndroid.stopLocationRecording())); },
-                    getRecordingState: function() { return Promise.resolve(JSON.parse(CraftAndroid.getLocationRecordingState())); },
-                    readRecording: function() { return Promise.resolve(JSON.parse(CraftAndroid.readLocationRecording())); }
+                    startRecording: function(options) { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.startLocationRecording(JSON.stringify(options || {}))); }); },
+                    pauseRecording: function() { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.pauseLocationRecording()); }); },
+                    resumeRecording: function() { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.resumeLocationRecording()); }); },
+                    stopRecording: function() { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.stopLocationRecording()); }); },
+                    getRecordingState: function() { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.getLocationRecordingState()); }); },
+                    readRecording: function() { return Promise.resolve().then(function() { return JSON.parse(CraftAndroid.readLocationRecording()); }); }
                 };
                 var shareApi = function(text, title) { return legacyShare(text, title); };
                 shareApi.share = function(options) {
                     options = options || {};
-                    return Promise.resolve(legacyShare([options.text, options.url].filter(Boolean).join(' '), options.title || ''));
+                    return Promise.resolve().then(function() {
+                        return legacyShare([options.text, options.url].filter(Boolean).join(' '), options.title || '');
+                    });
                 };
                 craft.share = shareApi;
                 craft.lifecycle = {

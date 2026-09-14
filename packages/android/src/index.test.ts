@@ -584,6 +584,23 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain("window.__craftRejectPermissionRequests('Android bridge closed')")
   })
 
+  it('turns synchronous native-call failures into Promise rejections', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-promise-call-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    expect(bridge).not.toMatch(/Promise\.resolve\((?:CraftAndroid|window\.craft|legacy)/)
+    expect(bridge).not.toContain('Promise.resolve(JSON.parse(CraftAndroid')
+    for (const guardedCall of [
+      'Promise.resolve().then(function() { return CraftAndroid.checkPermission(String(permission)); })',
+      'Promise.resolve().then(function() { return JSON.parse(CraftAndroid.startLocationRecording(JSON.stringify(options || {}))); })',
+      'Promise.resolve().then(function() { return legacySecureStore.get(key); })',
+      'Promise.resolve().then(function() { return window.craft.notifications.cancel(id); })',
+    ]) {
+      expect(bridge).toContain(guardedCall)
+    }
+  })
+
   it('rejects Bluetooth scans that never reach the platform scanner', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-bluetooth-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
