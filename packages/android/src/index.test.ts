@@ -578,6 +578,29 @@ describe('Craft Android builder', () => {
     for (const callbackName of nativeCallbackNames) {
       expect(bridge).toContain(`'${callbackName}'`)
     }
+    const registrations = [...bridge.matchAll(
+      /window\.__craftPromise\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'/g,
+    )].map(match => [match[1], match[2], match[3]] as const)
+    expect(registrations).toHaveLength(65)
+
+    const uniqueRegistrations = new Map(
+      registrations.map(registration => [registration.join('\0'), registration]),
+    )
+    expect(uniqueRegistrations.size).toBe(46)
+
+    const channels = new Set<string>()
+    const callbackOwners = new Map<string, string>()
+    for (const [channel, resolver, rejecter] of uniqueRegistrations.values()) {
+      expect(channels.has(channel)).toBe(false)
+      channels.add(channel)
+      expect(rejecter).toBe(resolver.replace(/Resolve$/, 'Reject'))
+      for (const callback of [resolver, rejecter]) {
+        expect(callbackOwners.has(callback)).toBe(false)
+        callbackOwners.set(callback, channel)
+      }
+    }
+    expect(channels.size).toBe(46)
+    expect(callbackOwners.size).toBe(92)
     expect(bridge.match(/webView\.evaluateJavascript\(\s*"window\._craft[A-Za-z]+(?:Resolve|Reject)/g)).toBeNull()
     expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
     expect(bridge).toContain('_craftShortcutsResolve({set: true, count: ${shortcuts.size}})')

@@ -545,6 +545,22 @@ foreground fixes, watches, and recording accept either grant, with accuracy
 controlled by Android. Obtaining a fix is still a separate operation. See the
 [Permissions API](../../docs/api/mobile/permissions.md) for status semantics.
 
+## Promise Lifecycle and Concurrency
+
+Promise-based bridge calls have one active request slot per native callback
+channel. A second request on the same channel rejects immediately with an
+`already in progress` error, without replacing the first request's callbacks.
+Calls on different channels can run concurrently. Some related methods share a
+channel—for example, shortcut mutations serialize with other shortcut
+mutations—so callers should await one before starting the next.
+
+Native success, error, cancellation, and timeout callbacks settle a request at
+most once. Synchronous JavaScript-interface failures are converted to Promise
+rejections. Permission requests use request IDs and a 30-second timeout, while
+one-shot location requests use a 15-second timeout. Destroying or reinjecting
+the bridge rejects all pending work and ignores callbacks queued by the old
+Activity lifecycle.
+
 ## Template Validation
 
 Android projects generated with the default and capability-heavy configurations
