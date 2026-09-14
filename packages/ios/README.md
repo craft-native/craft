@@ -591,6 +591,14 @@ Add to your Info.plist as needed:
 <string>This app accesses your calendar.</string>
 ```
 
+## Runtime Validation
+
+The Zig-native bridge rejects malformed values and overlapping interactive
+requests that the legacy Swift dispatcher could silently truncate, coerce, or
+abandon. See the
+[mobile runtime compatibility guide](../../docs/api/mobile/runtime-compatibility.md)
+for the affected input classes and migration guidance.
+
 ## Development Mode
 
 For hot-reload during development:

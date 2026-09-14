@@ -20,6 +20,7 @@ Complete API reference for the Craft framework.
 
 ## Mobile APIs
 
+- [Runtime Compatibility](./mobile/runtime-compatibility.md) - Intentional validation and migration guidance
 - [Device API](./mobile/device.md) - Device information and capabilities
 - [Haptics API](./mobile/haptics.md) - Haptic feedback
 - [Permissions API](./mobile/permissions.md) - Permission management
