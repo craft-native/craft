@@ -101,6 +101,72 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
+internal object CraftPermissionPolicy {
+    private fun permissionGroups(name: String, sdkInt: Int): List<List<String>>? = when (name) {
+        "camera" -> listOf(listOf(Manifest.permission.CAMERA))
+        "microphone" -> listOf(listOf(Manifest.permission.RECORD_AUDIO))
+        "photos" -> listOf(listOf(
+            if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+                Manifest.permission.READ_MEDIA_IMAGES
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+        ))
+        // Android presents precise and approximate location as one choice. A
+        // coarse grant is usable foreground location access even when the
+        // corresponding fine result is denied.
+        "location" -> listOf(listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ))
+        "locationAlways" -> if (sdkInt >= Build.VERSION_CODES.Q) {
+            listOf(
+                listOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            )
+        } else {
+            listOf(listOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+        }
+        "notifications" -> if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+            listOf(listOf(Manifest.permission.POST_NOTIFICATIONS))
+        } else {
+            emptyList()
+        }
+        "contacts" -> listOf(listOf(Manifest.permission.READ_CONTACTS))
+        "calendar" -> listOf(listOf(Manifest.permission.READ_CALENDAR))
+        "bluetooth" -> if (sdkInt >= Build.VERSION_CODES.S) {
+            listOf(listOf(Manifest.permission.BLUETOOTH_SCAN))
+        } else {
+            emptyList()
+        }
+        "motion" -> if (sdkInt >= Build.VERSION_CODES.Q) {
+            listOf(listOf(Manifest.permission.ACTIVITY_RECOGNITION))
+        } else {
+            emptyList()
+        }
+        else -> null
+    }
+
+    fun requiredPermissions(name: String, sdkInt: Int): Array<String>? =
+        permissionGroups(name, sdkInt)?.flatten()?.distinct()?.toTypedArray()
+
+    fun status(name: String, sdkInt: Int, isGranted: (String) -> Boolean): String {
+        val groups = permissionGroups(name, sdkInt) ?: return "undetermined"
+        return if (groups.all { group -> group.any(isGranted) }) "granted" else "denied"
+    }
+}
+
+private data class PendingPermissionRequest(
+    val callbackId: Int,
+    val permission: String
+)
+
 class CraftBridge(
     private val activity: Activity,
     private val webView: WebView,
@@ -117,7 +183,7 @@ class CraftBridge(
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
     private var watchId = 0
-    private val pendingPermissionRequests = mutableMapOf<Int, Int>()
+    private val pendingPermissionRequests = mutableMapOf<Int, PendingPermissionRequest>()
     private var nextPermissionRequestCode = PERMISSION_REQUEST_START
 
     // Network monitoring
@@ -1888,55 +1954,10 @@ class CraftBridge(
 
     // ==================== Geolocation ====================
 
-    private fun permissionsFor(name: String): Array<String>? = when (name) {
-        "camera" -> arrayOf(Manifest.permission.CAMERA)
-        "microphone" -> arrayOf(Manifest.permission.RECORD_AUDIO)
-        "photos" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-        } else {
-            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        "location" -> arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-        "locationAlways" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.ACCESS_BACKGROUND_LOCATION
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            )
-        }
-        "notifications" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            emptyArray()
-        }
-        "contacts" -> arrayOf(Manifest.permission.READ_CONTACTS)
-        "calendar" -> arrayOf(Manifest.permission.READ_CALENDAR)
-        "bluetooth" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN)
-        } else {
-            emptyArray()
-        }
-        "motion" -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            arrayOf(Manifest.permission.ACTIVITY_RECOGNITION)
-        } else {
-            emptyArray()
-        }
-        else -> null
-    }
-
     private fun nativePermissionStatus(name: String): String {
-        val required = permissionsFor(name) ?: return "undetermined"
-        return if (required.all {
-                ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED
-            }) "granted" else "denied"
+        return CraftPermissionPolicy.status(name, Build.VERSION.SDK_INT) {
+            ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED
+        }
     }
 
     @JavascriptInterface
@@ -1945,7 +1966,7 @@ class CraftBridge(
     @JavascriptInterface
     fun requestPermission(permission: String, callbackId: Int) {
         activity.runOnUiThread {
-            val required = permissionsFor(permission)
+            val required = CraftPermissionPolicy.requiredPermissions(permission, Build.VERSION.SDK_INT)
             if (required == null || required.isEmpty() || nativePermissionStatus(permission) == "granted") {
                 deliverPermissionResult(callbackId, nativePermissionStatus(permission))
                 return@runOnUiThread
@@ -1965,7 +1986,7 @@ class CraftBridge(
             } else {
                 requestCode + 1
             }
-            pendingPermissionRequests[requestCode] = callbackId
+            pendingPermissionRequests[requestCode] = PendingPermissionRequest(callbackId, permission)
             ActivityCompat.requestPermissions(activity, required, requestCode)
         }
     }
@@ -1982,13 +2003,12 @@ class CraftBridge(
     }
 
     fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean {
-        val callbackId = pendingPermissionRequests.remove(requestCode) ?: return false
-        val status = if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-            "granted"
-        } else {
-            "denied"
-        }
-        deliverPermissionResult(callbackId, status)
+        val pending = pendingPermissionRequests.remove(requestCode) ?: return false
+        // Re-read package state instead of interpreting the parallel callback
+        // arrays. In particular, an approximate-location choice returns a
+        // denied fine result and a granted coarse result, which is still a
+        // granted `location` permission in Craft's contract.
+        deliverPermissionResult(pending.callbackId, nativePermissionStatus(pending.permission))
         return true
     }
 
