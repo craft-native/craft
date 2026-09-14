@@ -204,7 +204,7 @@ object CraftNative {
      */
     @JvmStatic
     fun deliver(script: String) {
-        deliverer?.invoke(script)
+        runCatching { deliverer?.invoke(script) }
     }
 
     private external fun nativeGetDeviceInfo(activity: Activity): String?

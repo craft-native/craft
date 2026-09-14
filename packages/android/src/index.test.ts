@@ -879,6 +879,10 @@ describe('Craft Android builder', () => {
     const activity = readFileSync(join(sourceRoot, 'org/wildloop/app/MainActivity.kt'), 'utf8')
     const bridgeClose = bridge.slice(bridge.indexOf('fun close()'), bridge.indexOf('// ==================== Screen Capture'))
     const nativeClose = holder.slice(holder.indexOf('fun close(activity: Activity)'), holder.indexOf('/**\n     * Run `script`'))
+    const nativeDelivery = holder.slice(
+      holder.indexOf('fun deliver(script: String)'),
+      holder.indexOf('private external fun nativeGetDeviceInfo'),
+    )
     const bridgeInitialization = bridge.slice(
       bridge.indexOf('fun injectBridge()'),
       bridge.indexOf('fun markBridgeLoading()'),
@@ -890,6 +894,7 @@ describe('Craft Android builder', () => {
     expect(bridge.match(/webView\.evaluateJavascript\(/g)?.length).toBe(4)
     expect(bridge).toContain('private fun evaluateJavascriptUnlessClosed(script: String)')
     expect(bridge).toContain('evaluatePromiseJavascript(script: String) {\n        evaluateJavascriptUnlessClosed(script)')
+    expect(nativeDelivery).toContain('runCatching { deliverer?.invoke(script) }')
     for (const cleanup of [
       'window.__craftRejectPendingPromises',
       'CraftNative.close(activity)',
