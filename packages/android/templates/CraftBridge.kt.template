@@ -19,6 +19,8 @@ import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import com.craft.runtime.CraftNative
+import com.craft.runtime.CraftLocationRecordingStore
+import com.craft.runtime.LocationRecordingService
 import android.os.Bundle
 import android.os.Looper
 import android.os.VibrationEffect

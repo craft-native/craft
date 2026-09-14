@@ -11,12 +11,11 @@
 //!
 //! ## The service Intent is built by Kotlin
 //!
-//! `Intent(activity, LocationRecordingService::class.java)` names a class
-//! whose package is `{{PACKAGE_NAME}}` — templated per app, so `FindClass`
-//! here has no name to look up. Zig could assemble one from
-//! `getPackageName()`, and that is the same trap the widget broadcast action
-//! sits in: an `applicationIdSuffix` moves the runtime package and leaves the
-//! class where it was.
+//! `Intent(activity, LocationRecordingService::class.java)` names a class in
+//! `com.craft.runtime`, beside `CraftNative`. The fixed holder package is the
+//! stable boundary the prebuilt library already registers against; keeping
+//! the service there avoids guessing a generated app package or confusing it
+//! with an `applicationIdSuffix`.
 //!
 //! So `CraftNative` starts and stops the service with its own class
 //! reference, the way it passes its own broadcast constant across. One side

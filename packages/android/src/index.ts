@@ -250,6 +250,12 @@ export async function init(options: InitOptions): Promise<void> {
   const nativeDir = join(output, 'app/src/main/java/com/craft/runtime')
   mkdirSync(nativeDir, { recursive: true })
   writeFileSync(join(nativeDir, 'CraftNative.kt'), craftNative)
+  // The bridge and native holder both reference the recording store/service,
+  // even when the service is not registered in the manifest. Keep these
+  // support types in the same fixed package as CraftNative so every generated
+  // app compiles regardless of its chosen package name or feature flags.
+  const serviceTemplate = readFileSync(join(TEMPLATES_DIR, 'LocationRecordingService.kt.template'), 'utf-8')
+  writeFileSync(join(nativeDir, 'LocationRecordingService.kt'), serviceTemplate)
   const healthTemplate = readFileSync(join(
     TEMPLATES_DIR,
     config.enableHealthConnect ? 'CraftHealthConnect.kt.template' : 'CraftHealthConnectStub.kt.template',
@@ -258,14 +264,6 @@ export async function init(options: InitOptions): Promise<void> {
     join(output, 'app/src/main/java', packagePath, 'CraftHealthConnect.kt'),
     healthTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
   )
-  if (config.enableBackgroundLocation) {
-    const serviceTemplate = readFileSync(join(TEMPLATES_DIR, 'LocationRecordingService.kt.template'), 'utf-8')
-    writeFileSync(
-      join(output, 'app/src/main/java', packagePath, 'LocationRecordingService.kt'),
-      serviceTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
-    )
-  }
-
   // Create AndroidManifest.xml
   const manifestTemplate = readFileSync(join(TEMPLATES_DIR, 'AndroidManifest.xml.template'), 'utf-8')
   const manifest = manifestTemplate
@@ -275,7 +273,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{USES_CLEARTEXT\}\}/g, config.devServerURL?.startsWith('http://') ? 'true' : 'false')
     .replace(/\{\{DEEP_LINK_INTENT_FILTERS\}\}/g, renderAndroidDeepLinks(config))
     .replace(/\{\{BACKGROUND_SERVICE\}\}/g, config.enableBackgroundLocation
-      ? '        <service android:name=".LocationRecordingService" android:exported="false" android:foregroundServiceType="location" android:stopWithTask="false" />'
+      ? '        <service android:name="com.craft.runtime.LocationRecordingService" android:exported="false" android:foregroundServiceType="location" android:stopWithTask="false" />'
       : '')
     .replace(/\{\{HEALTH_CONNECT_QUERIES\}\}/g, config.enableHealthConnect
       ? '    <queries>\n        <package android:name="com.google.android.apps.healthdata" />\n    </queries>'

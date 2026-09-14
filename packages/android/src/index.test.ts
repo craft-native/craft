@@ -162,6 +162,7 @@ describe('Craft Android builder', () => {
     const sourceRoot = join(output, 'app/src/main/java/org/wildloop/app')
     const bridge = readFileSync(join(sourceRoot, 'CraftBridge.kt'), 'utf8')
     const activity = readFileSync(join(sourceRoot, 'MainActivity.kt'), 'utf8')
+    const service = join(output, 'app/src/main/java/com/craft/runtime/LocationRecordingService.kt')
 
     expect(bridge).toContain('craft.permissions = {')
     expect(bridge).toContain('CraftAndroid.checkPermission(String(permission))')
@@ -172,6 +173,8 @@ describe('Craft Android builder', () => {
     expect(bridge).not.toContain('grantResults.all { it == PackageManager.PERMISSION_GRANTED }')
     expect(bridge).toContain('fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean')
     expect(bridge).toContain('Settings.ACTION_APPLICATION_DETAILS_SETTINGS')
+    expect(existsSync(service)).toBe(true)
+    expect(readFileSync(service, 'utf8')).toContain('package com.craft.runtime')
     expect(activity).toContain('craftBridge.onRequestPermissionsResult(requestCode, grantResults)')
   })
 
@@ -184,13 +187,14 @@ describe('Craft Android builder', () => {
       config: { enableBackgroundLocation: true },
     })
 
-    const service = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/LocationRecordingService.kt'), 'utf8')
+    const service = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/LocationRecordingService.kt'), 'utf8')
     const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
     const manifest = readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')
     expect(service).toContain('START_STICKY')
     expect(service).toContain('CraftLocationRecordingStore.append')
     expect(bridge).toContain('startRecording: function(options)')
     expect(bridge).toContain('fun stopLocationRecording()')
+    expect(manifest).toContain('android:name="com.craft.runtime.LocationRecordingService"')
     expect(manifest).toContain('android:foregroundServiceType="location"')
   })
 

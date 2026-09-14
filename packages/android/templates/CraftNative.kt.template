@@ -1432,11 +1432,10 @@ object CraftNative {
      * Start and stop the recording service.
      *
      * Called from Zig, and here rather than there because
-     * `LocationRecordingService::class.java` names a class whose package is
-     * templated per app — `FindClass` on the native side has no name to look
-     * up, and assembling one from `getPackageName()` is the trap the widget
-     * broadcast action already documents: an `applicationIdSuffix` moves the
-     * runtime package and leaves the class where it was.
+     * `LocationRecordingService::class.java` names a class in this holder's
+     * fixed runtime package. Keeping both classes together lets the prebuilt
+     * native runtime call these helpers without guessing the generated app's
+     * package or confusing it with an `applicationIdSuffix`.
      */
     @JvmStatic
     fun startRecordingService(activity: Activity) {
