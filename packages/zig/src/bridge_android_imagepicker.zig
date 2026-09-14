@@ -14,10 +14,11 @@
 //! they are the addresses the template uses to send each result to the right
 //! decoder and page promise.
 //!
-//! `openCamera` also preserves the shim's permission behaviour. A denied call
-//! asks for CAMERA and returns without launching or settling the promise; the
-//! page has to call again after permission is granted. `pickImage` asks for no
-//! permission because the system picker grants access to the selected Uri.
+//! `openCamera` refuses a denied call so the Kotlin shim can both request the
+//! permission and reject the page promise with retry guidance. Launching a
+//! permission dialog from here and reporting success would leave that promise
+//! pending forever. `pickImage` asks for no permission because the system
+//! picker grants access to the selected Uri.
 
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
@@ -38,10 +39,6 @@ pub const request_camera: i32 = 1001;
 pub const request_gallery: i32 = 1002;
 pub const request_file: i32 = 1006;
 pub const request_video: i32 = 1008;
-
-/// The permission request code in the shim. Its result is deliberately not
-/// handled; granting it makes the next `openCamera` call pass the check.
-pub const request_camera_permission: i32 = 101;
 
 fn staticObject(
     j: Jni,
@@ -68,8 +65,7 @@ fn startActivityForResult(j: Jni, activity: jobject, intent: jobject, request_co
 /// Ask for CAMERA when needed; otherwise launch `ACTION_IMAGE_CAPTURE`.
 pub fn openCamera(j: Jni, activity: jobject) !void {
     if (!try permissions.isGranted(j, activity, permissions.camera)) {
-        try permissions.request(j, activity, permissions.camera, request_camera_permission);
-        return;
+        return error.CameraPermissionDenied;
     }
 
     try j.pushLocalFrame(12);
@@ -335,7 +331,7 @@ test "a granted camera call launches the capture intent with the camera result c
     try testing.expectEqual(@as(?jni.jint, request_camera), fake_request_code);
 }
 
-test "a denied camera call asks once and does not launch" {
+test "a denied camera call falls through without launching or requesting" {
     resetFakes();
     defer freeFakes();
     var table: jni.JNINativeInterface = undefined;
@@ -343,12 +339,12 @@ test "a denied camera call asks once and does not launch" {
     const ptr: *const jni.JNINativeInterface = &table;
     fake_permission = -1;
 
-    try openCamera(Jni.init(&ptr), obj(8));
+    try testing.expectError(error.CameraPermissionDenied, openCamera(Jni.init(&ptr), obj(8)));
 
-    try testing.expect(saw(fake_calls.items, "requestPermissions"));
+    try testing.expect(!saw(fake_calls.items, "requestPermissions"));
     try testing.expect(!saw(fake_calls.items, "startActivityForResult"));
     try testing.expect(saw(fake_strings.items, permissions.camera));
-    try testing.expectEqual(@as(?jni.jint, request_camera_permission), fake_request_code);
+    try testing.expectEqual(@as(?jni.jint, null), fake_request_code);
 }
 
 test "the gallery call uses the picker Uri and gallery result code" {
@@ -410,5 +406,4 @@ test "the action and request names match the Kotlin launchers" {
     try testing.expectEqual(@as(i32, 1002), request_gallery);
     try testing.expectEqual(@as(i32, 1006), request_file);
     try testing.expectEqual(@as(i32, 1008), request_video);
-    try testing.expectEqual(@as(i32, 101), request_camera_permission);
 }

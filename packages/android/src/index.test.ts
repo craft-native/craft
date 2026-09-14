@@ -347,6 +347,23 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('else -> healthConnect.onActivityResult(requestCode, resultCode, data)')
   })
 
+  it('settles camera calls that need permission or cannot launch', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-camera-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('fun openCamera()')
+    const end = bridge.indexOf('fun pickImage()', start)
+    const camera = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(camera.indexOf('checkSelfPermission')).toBeLessThan(camera.indexOf('CraftNative.openCamera'))
+    expect(camera).toContain('Camera permission is required; retry after granting it')
+    expect(camera).toContain('catch (error: Exception)')
+    expect(camera).toContain('Camera could not be opened')
+  })
+
   it('exposes native Android permission checks, requests, and settings', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-permissions-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

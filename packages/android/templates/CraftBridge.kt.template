@@ -1697,18 +1697,23 @@ class CraftBridge(
 
     @JavascriptInterface
     fun openCamera() {
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), 101)
+            rejectMediaPromise("_craftCamera", "Camera permission is required; retry after granting it")
+            return
+        }
+
         // The Activity result still returns to handleImageResult below; Zig
         // only launches it, using the same request code that routes it here.
         if (CraftNative.openCamera(activity)) return
 
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA)
-            != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.CAMERA), 101)
-            return
+        try {
+            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            activity.startActivityForResult(intent, REQUEST_CAMERA)
+        } catch (error: Exception) {
+            rejectMediaPromise("_craftCamera", error.message ?: "Camera could not be opened")
         }
-
-        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        activity.startActivityForResult(intent, REQUEST_CAMERA)
     }
 
     @JavascriptInterface
