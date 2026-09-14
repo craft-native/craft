@@ -1074,4 +1074,29 @@ describe('Craft Android builder', () => {
     expect(config.compileSdk).toBe(36)
     expect(config.minSdk).toBe(26)
   })
+
+  it('invalidates Health Connect replies in enabled and disabled builds', async () => {
+    const disabledOutput = mkdtempSync(join(tmpdir(), 'craft-android-health-disabled-close-'))
+    const enabledOutput = mkdtempSync(join(tmpdir(), 'craft-android-health-enabled-close-'))
+    await init({ name: 'DisabledHealth', packageName: 'org.health.disabled', output: disabledOutput })
+    await init({
+      name: 'EnabledHealth',
+      packageName: 'org.health.enabled',
+      output: enabledOutput,
+      config: { enableHealthConnect: true },
+    })
+
+    for (const [output, packagePath] of [
+      [disabledOutput, 'org/health/disabled'],
+      [enabledOutput, 'org/health/enabled'],
+    ]) {
+      const health = readFileSync(
+        join(output, `app/src/main/java/${packagePath}/CraftHealthConnect.kt`),
+        'utf8',
+      )
+      expect(health).toContain('private val closed = java.util.concurrent.atomic.AtomicBoolean(false)')
+      expect(health).toContain('closed.set(true)')
+      expect(health).toContain('if (closed.get()) return@runOnUiThread')
+    }
+  })
 })

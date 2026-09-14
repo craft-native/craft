@@ -9,6 +9,8 @@ class CraftHealthConnect(
     private val activity: Activity,
     private val webView: WebView
 ) {
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun requestAuthorization(typesJson: String) = reject("_craftFitnessAuthReject")
 
     fun getData(type: String, startDate: Long, endDate: Long) = reject("_craftFitnessDataReject")
@@ -17,10 +19,14 @@ class CraftHealthConnect(
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean = false
 
-    fun close() = Unit
+    fun close() {
+        closed.set(true)
+    }
 
     private fun reject(callback: String) {
+        if (closed.get()) return
         activity.runOnUiThread {
+            if (closed.get()) return@runOnUiThread
             val reason = JSONObject.quote("Health Connect is disabled")
             webView.evaluateJavascript("window.$callback && window.$callback($reason)", null)
         }
