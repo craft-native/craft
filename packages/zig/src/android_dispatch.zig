@@ -310,7 +310,7 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeRestoreReady", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeRestoreReady) },
     .{ .name = "nativeRestoreError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeRestoreError) },
     .{ .name = "nativeGetProducts", .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeGetProducts) },
-    .{ .name = "nativeRestorePurchases", .signature = "()Z", .fnPtr = @ptrCast(&nativeRestorePurchases) },
+    .{ .name = "nativeRestorePurchases", .signature = "(Landroid/app/Activity;)Z", .fnPtr = @ptrCast(&nativeRestorePurchases) },
     .{ .name = "nativeMlReady", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeMlReady) },
     .{ .name = "nativeMlError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeMlError) },
     .{ .name = "nativeClassifyImage", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeClassifyImage) },
@@ -1211,13 +1211,17 @@ fn nativeGetProducts(
     return jni.JNI_TRUE;
 }
 
-fn nativeRestorePurchases(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolean {
+fn nativeRestorePurchases(
+    env: jni.JNIEnv,
+    _: jni.jobject,
+    activity: jni.jobject,
+) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
     const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, "queryRestoredPurchases", "()V") catch return jni.JNI_FALSE,
-        &.{},
+        j.staticMethodId(holder, "queryRestoredPurchases", "(Landroid/app/Activity;)V") catch return jni.JNI_FALSE,
+        &.{.{ .l = activity }},
     ) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -3042,6 +3046,14 @@ test "the registered natives name methods the Kotlin actually declares" {
     try testing.expectEqualStrings(
         "(Landroid/app/Activity;)Ljava/lang/String;",
         std.mem.span(natives[0].signature),
+    );
+
+    const restore = for (natives) |native| {
+        if (std.mem.eql(u8, std.mem.span(native.name), "nativeRestorePurchases")) break native;
+    } else return error.TestExpectedEqual;
+    try testing.expectEqualStrings(
+        "(Landroid/app/Activity;)Z",
+        std.mem.span(restore.signature),
     );
 }
 

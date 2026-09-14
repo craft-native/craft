@@ -3122,14 +3122,40 @@ class CraftBridge(
 
     @JavascriptInterface
     fun restorePurchases() {
-        if (CraftNative.restorePurchases()) return
+        if (CraftNative.restorePurchases(activity)) return
 
-        val client = billingClient
-        if (client == null || !client.isReady) {
-            rejectRestore("Billing is not connected; load products before restoring purchases")
+        val connectedClient = billingClient
+        if (connectedClient != null && connectedClient.isReady) {
+            queryRestoredPurchases(connectedClient)
             return
         }
 
+        try {
+            val client = connectedClient ?: BillingClient.newBuilder(activity)
+                .setListener { _, _ -> }
+                .enablePendingPurchases()
+                .build()
+                .also { billingClient = it }
+
+            client.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        queryRestoredPurchases(client)
+                    } else {
+                        rejectRestore("Billing setup failed: ${billingResult.debugMessage}")
+                    }
+                }
+
+                override fun onBillingServiceDisconnected() {
+                    rejectRestore("Billing disconnected")
+                }
+            })
+        } catch (error: Exception) {
+            rejectRestore(error.message ?: "Billing connection failed")
+        }
+    }
+
+    private fun queryRestoredPurchases(client: BillingClient) {
         try {
             client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()

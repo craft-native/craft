@@ -706,7 +706,7 @@ describe('Craft Android builder', () => {
     ]) expect(nativeClose).toContain(cleanup)
   })
 
-  it('settles Play Billing setup and restore failure paths', async () => {
+  it('connects Play Billing for restores and settles failure paths', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-billing-errors-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
 
@@ -715,15 +715,18 @@ describe('Craft Android builder', () => {
     const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
 
     for (const source of [bridge, holder]) {
-      expect(source).toContain('if (client == null || !client.isReady) {')
-      expect(source).toContain('Billing is not connected; load products before restoring purchases')
+      expect(source).toContain('if (connectedClient != null && connectedClient.isReady) {')
+      expect(source).toContain('private fun queryRestoredPurchases(client: BillingClient)')
       expect(source).toContain('Billing setup failed: ${billingResult.debugMessage}')
       expect(source).toContain('Product query failed: ${result.debugMessage}')
       expect(source).toContain('Restore failed: ${result.debugMessage}')
       expect(source).not.toContain('billingClient?.queryPurchasesAsync(')
+      expect(source).not.toContain('load products before restoring purchases')
     }
+    expect(bridge).toContain('CraftNative.restorePurchases(activity)')
     expect(bridge).toContain('private fun rejectProducts(message: String)')
     expect(bridge).toContain('private fun rejectRestore(message: String)')
+    expect(holder).toContain('private external fun nativeRestorePurchases(activity: Activity): Boolean')
   })
 
   it('rejects calendar-provider failures instead of hanging the promise', async () => {

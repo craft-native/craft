@@ -231,7 +231,7 @@ object CraftNative {
     private external fun nativeRestoreReady(purchasesJson: String)
     private external fun nativeRestoreError(message: String)
     private external fun nativeGetProducts(activity: Activity, productIdsJson: String): Boolean
-    private external fun nativeRestorePurchases(): Boolean
+    private external fun nativeRestorePurchases(activity: Activity): Boolean
     private external fun nativeMlReady(resultsJson: String)
     private external fun nativeMlError(message: String)
     private external fun nativeClassifyImage(imageBase64: String): Boolean
@@ -755,13 +755,39 @@ object CraftNative {
     }
 
     @JvmStatic
-    fun queryRestoredPurchases() {
-        val client = billingClient
-        if (client == null || !client.isReady) {
-            nativeRestoreError("Billing is not connected; load products before restoring purchases")
+    fun queryRestoredPurchases(activity: Activity) {
+        val connectedClient = billingClient
+        if (connectedClient != null && connectedClient.isReady) {
+            queryRestoredPurchases(connectedClient)
             return
         }
 
+        try {
+            val client = connectedClient ?: BillingClient.newBuilder(activity)
+                .setListener { _, _ -> }
+                .enablePendingPurchases()
+                .build()
+                .also { billingClient = it }
+
+            client.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        queryRestoredPurchases(client)
+                    } else {
+                        nativeRestoreError("Billing setup failed: ${billingResult.debugMessage}")
+                    }
+                }
+
+                override fun onBillingServiceDisconnected() {
+                    nativeRestoreError("Billing disconnected")
+                }
+            })
+        } catch (error: Exception) {
+            nativeRestoreError(error.message ?: "Billing connection failed")
+        }
+    }
+
+    private fun queryRestoredPurchases(client: BillingClient) {
         try {
             client.queryPurchasesAsync(
                 QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
@@ -789,9 +815,9 @@ object CraftNative {
         return try { nativeGetProducts(activity, productIdsJson) } catch (e: UnsatisfiedLinkError) { false }
     }
 
-    fun restorePurchases(): Boolean {
+    fun restorePurchases(activity: Activity): Boolean {
         if (!isAvailable) return false
-        return try { nativeRestorePurchases() } catch (e: UnsatisfiedLinkError) { false }
+        return try { nativeRestorePurchases(activity) } catch (e: UnsatisfiedLinkError) { false }
     }
 
     // ==================== ML Kit ====================
