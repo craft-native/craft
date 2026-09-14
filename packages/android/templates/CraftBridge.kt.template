@@ -770,9 +770,7 @@ class CraftBridge(
 
                 // Screen Capture
                 takeScreenshot: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftScreenshotResolve = resolve;
-                        window._craftScreenshotReject = reject;
+                    return window.__craftPromise('screenshot', '_craftScreenshotResolve', '_craftScreenshotReject', function() {
                         CraftAndroid.takeScreenshot();
                     });
                 },
@@ -780,17 +778,13 @@ class CraftBridge(
                 // Background Tasks
                 backgroundTask: {
                     register: function(taskId) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftBgTaskResolve = resolve;
-                            window._craftBgTaskReject = reject;
+                        return window.__craftPromise('background task', '_craftBgTaskResolve', '_craftBgTaskReject', function() {
                             CraftAndroid.registerBackgroundTask(taskId);
                         });
                     },
                     schedule: function(taskId, options) {
                         options = options || {};
-                        return new Promise(function(resolve, reject) {
-                            window._craftBgTaskResolve = resolve;
-                            window._craftBgTaskReject = reject;
+                        return window.__craftPromise('background task', '_craftBgTaskResolve', '_craftBgTaskReject', function() {
                             CraftAndroid.scheduleBackgroundTask(
                                 taskId,
                                 options.delay || 900,
@@ -800,16 +794,12 @@ class CraftBridge(
                         });
                     },
                     cancel: function(taskId) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftBgTaskResolve = resolve;
-                            window._craftBgTaskReject = reject;
+                        return window.__craftPromise('background task', '_craftBgTaskResolve', '_craftBgTaskReject', function() {
                             CraftAndroid.cancelBackgroundTask(taskId);
                         });
                     },
                     cancelAll: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftBgTaskResolve = resolve;
-                            window._craftBgTaskReject = reject;
+                        return window.__craftPromise('background task', '_craftBgTaskResolve', '_craftBgTaskReject', function() {
                             CraftAndroid.cancelAllBackgroundTasks();
                         });
                     }
@@ -817,16 +807,12 @@ class CraftBridge(
 
                 // PDF Viewer
                 openPDF: function(source, page) {
-                    return new Promise(function(resolve, reject) {
-                        window._craftPDFResolve = resolve;
-                        window._craftPDFReject = reject;
+                    return window.__craftPromise('PDF', '_craftPDFResolve', '_craftPDFReject', function() {
                         CraftAndroid.openPDF(source, page || 0);
                     });
                 },
                 closePDF: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftPDFResolve = resolve;
-                        window._craftPDFReject = reject;
+                    return window.__craftPromise('PDF', '_craftPDFResolve', '_craftPDFReject', function() {
                         CraftAndroid.closePDF();
                     });
                 },
@@ -834,9 +820,7 @@ class CraftBridge(
                 // Contacts Picker
                 pickContact: function(options) {
                     options = options || {};
-                    return new Promise(function(resolve, reject) {
-                        window._craftPickContactResolve = resolve;
-                        window._craftPickContactReject = reject;
+                    return window.__craftPromise('contact picker', '_craftPickContactResolve', '_craftPickContactReject', function() {
                         CraftAndroid.pickContact(options.multiple || false);
                     });
                 },
@@ -844,16 +828,12 @@ class CraftBridge(
                 // App Shortcuts
                 shortcuts: {
                     set: function(shortcuts) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftShortcutsResolve = resolve;
-                            window._craftShortcutsReject = reject;
+                        return window.__craftPromise('shortcuts', '_craftShortcutsResolve', '_craftShortcutsReject', function() {
                             CraftAndroid.setShortcuts(JSON.stringify(shortcuts));
                         });
                     },
                     clear: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftShortcutsResolve = resolve;
-                            window._craftShortcutsReject = reject;
+                        return window.__craftPromise('shortcuts', '_craftShortcutsResolve', '_craftShortcutsReject', function() {
                             CraftAndroid.clearShortcuts();
                         });
                     },
@@ -865,23 +845,17 @@ class CraftBridge(
                 // Shared Preferences (Android equivalent of Keychain Sharing)
                 sharedKeychain: {
                     set: function(key, value, group) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftSharedKeychainResolve = resolve;
-                            window._craftSharedKeychainReject = reject;
+                        return window.__craftPromise('shared keychain', '_craftSharedKeychainResolve', '_craftSharedKeychainReject', function() {
                             CraftAndroid.setSharedItem(key, value, group || '');
                         });
                     },
                     get: function(key, group) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftSharedKeychainResolve = resolve;
-                            window._craftSharedKeychainReject = reject;
+                        return window.__craftPromise('shared keychain', '_craftSharedKeychainResolve', '_craftSharedKeychainReject', function() {
                             CraftAndroid.getSharedItem(key, group || '');
                         });
                     },
                     remove: function(key, group) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftSharedKeychainResolve = resolve;
-                            window._craftSharedKeychainReject = reject;
+                        return window.__craftPromise('shared keychain', '_craftSharedKeychainResolve', '_craftSharedKeychainReject', function() {
                             CraftAndroid.removeSharedItem(key, group || '');
                         });
                     }
@@ -890,30 +864,22 @@ class CraftBridge(
                 // Local Auth Persistence
                 authPersistence: {
                     enable: function(duration) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftAuthPersistResolve = resolve;
-                            window._craftAuthPersistReject = reject;
+                        return window.__craftPromise('auth persistence', '_craftAuthPersistResolve', '_craftAuthPersistReject', function() {
                             CraftAndroid.setAuthPersistence(true, duration || 300);
                         });
                     },
                     disable: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftAuthPersistResolve = resolve;
-                            window._craftAuthPersistReject = reject;
+                        return window.__craftPromise('auth persistence', '_craftAuthPersistResolve', '_craftAuthPersistReject', function() {
                             CraftAndroid.setAuthPersistence(false, 0);
                         });
                     },
                     check: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftAuthPersistResolve = resolve;
-                            window._craftAuthPersistReject = reject;
+                        return window.__craftPromise('auth persistence', '_craftAuthPersistResolve', '_craftAuthPersistReject', function() {
                             CraftAndroid.checkAuthPersistence();
                         });
                     },
                     clear: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftAuthPersistResolve = resolve;
-                            window._craftAuthPersistReject = reject;
+                        return window.__craftPromise('auth persistence', '_craftAuthPersistResolve', '_craftAuthPersistReject', function() {
                             CraftAndroid.clearAuthPersistence();
                         });
                     }
@@ -922,37 +888,27 @@ class CraftBridge(
                 // AR (ARCore) - Note: Full ARCore requires native Activity integration
                 ar: {
                     start: function(options) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftARResolve = resolve;
-                            window._craftARReject = reject;
+                        return window.__craftPromise('AR', '_craftARResolve', '_craftARReject', function() {
                             CraftAndroid.startAR(JSON.stringify(options || {}));
                         });
                     },
                     stop: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftARResolve = resolve;
-                            window._craftARReject = reject;
+                        return window.__craftPromise('AR', '_craftARResolve', '_craftARReject', function() {
                             CraftAndroid.stopAR();
                         });
                     },
                     placeObject: function(model, position) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftARResolve = resolve;
-                            window._craftARReject = reject;
+                        return window.__craftPromise('AR', '_craftARResolve', '_craftARReject', function() {
                             CraftAndroid.placeARObject(model, JSON.stringify(position || {}));
                         });
                     },
                     removeObject: function(objectId) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftARResolve = resolve;
-                            window._craftARReject = reject;
+                        return window.__craftPromise('AR', '_craftARResolve', '_craftARReject', function() {
                             CraftAndroid.removeARObject(objectId);
                         });
                     },
                     getPlanes: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftARResolve = resolve;
-                            window._craftARReject = reject;
+                        return window.__craftPromise('AR', '_craftARResolve', '_craftARReject', function() {
                             CraftAndroid.getARPlanes();
                         });
                     },
@@ -964,23 +920,17 @@ class CraftBridge(
                 // ML (ML Kit)
                 ml: {
                     classifyImage: function(imageBase64) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftMLResolve = resolve;
-                            window._craftMLReject = reject;
+                        return window.__craftPromise('ML', '_craftMLResolve', '_craftMLReject', function() {
                             CraftAndroid.classifyImage(imageBase64);
                         });
                     },
                     detectObjects: function(imageBase64) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftMLResolve = resolve;
-                            window._craftMLReject = reject;
+                        return window.__craftPromise('ML', '_craftMLResolve', '_craftMLReject', function() {
                             CraftAndroid.detectObjects(imageBase64);
                         });
                     },
                     recognizeText: function(imageBase64) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftMLResolve = resolve;
-                            window._craftMLReject = reject;
+                        return window.__craftPromise('ML', '_craftMLResolve', '_craftMLReject', function() {
                             CraftAndroid.recognizeText(imageBase64);
                         });
                     }
@@ -989,9 +939,7 @@ class CraftBridge(
                 // Deep Links
                 deepLinks: {
                     getInitialURL: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftDeepLinkResolve = resolve;
-                            window._craftDeepLinkReject = reject;
+                        return window.__craftPromise('initial URL', '_craftDeepLinkResolve', '_craftDeepLinkReject', function() {
                             CraftAndroid.getInitialURL();
                         });
                     },
@@ -1082,30 +1030,22 @@ class CraftBridge(
                         CraftAndroid.otaConfigure(JSON.stringify(options));
                     },
                     checkForUpdate: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftOTACheckResolve = resolve;
-                            window._craftOTACheckReject = reject;
+                        return window.__craftPromise('OTA check', '_craftOTACheckResolve', '_craftOTACheckReject', function() {
                             CraftAndroid.otaCheckForUpdate();
                         });
                     },
                     downloadUpdate: function(options) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftOTADownloadResolve = resolve;
-                            window._craftOTADownloadReject = reject;
+                        return window.__craftPromise('OTA download', '_craftOTADownloadResolve', '_craftOTADownloadReject', function() {
                             CraftAndroid.otaDownloadUpdate(JSON.stringify(options || {}));
                         });
                     },
                     applyUpdate: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftOTAApplyResolve = resolve;
-                            window._craftOTAApplyReject = reject;
+                        return window.__craftPromise('OTA apply', '_craftOTAApplyResolve', '_craftOTAApplyReject', function() {
                             CraftAndroid.otaApplyUpdate();
                         });
                     },
                     rollback: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftOTARollbackResolve = resolve;
-                            window._craftOTARollbackReject = reject;
+                        return window.__craftPromise('OTA rollback', '_craftOTARollbackResolve', '_craftOTARollbackReject', function() {
                             CraftAndroid.otaRollback();
                         });
                     },
@@ -1396,6 +1336,14 @@ class CraftBridge(
                     delete permissionRequests[id];
                     clearTimeout(pending.timeout);
                     pending.resolve(status || 'undetermined');
+                };
+                window.__craftRejectPermissionRequests = function(message) {
+                    Object.keys(permissionRequests).forEach(function(id) {
+                        var pending = permissionRequests[id];
+                        delete permissionRequests[id];
+                        clearTimeout(pending.timeout);
+                        pending.reject(new Error(message || 'Android bridge closed'));
+                    });
                 };
                 craft.permissions = {
                     check: function(permission) {
@@ -3697,7 +3645,8 @@ class CraftBridge(
         activity.runOnUiThread {
             runCatching {
                 webView.evaluateJavascript(
-                    "window.__craftRejectPendingPromises && window.__craftRejectPendingPromises('Android bridge closed')",
+                    "window.__craftRejectPendingPromises && window.__craftRejectPendingPromises('Android bridge closed');" +
+                        "window.__craftRejectPermissionRequests && window.__craftRejectPermissionRequests('Android bridge closed')",
                     null
                 )
             }

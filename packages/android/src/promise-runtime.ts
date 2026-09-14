@@ -1,4 +1,10 @@
 const ANDROID_PROMISE_RUNTIME = `
+if (window.__craftRejectPendingPromises) {
+    window.__craftRejectPendingPromises('Android bridge reinitialized');
+}
+if (window.__craftRejectPermissionRequests) {
+    window.__craftRejectPermissionRequests('Android bridge reinitialized');
+}
 window.__craftPendingPromises = Object.create(null);
 window.__craftPromise = function(channel, resolveName, rejectName, invoke, timeoutMs, timeoutError) {
     if (window.__craftPendingPromises[channel]) {

@@ -16,8 +16,7 @@ interface RuntimeWindow extends Record<string, unknown> {
   __craftRejectPendingPromises: (message?: string) => void
 }
 
-function installRuntime(): RuntimeWindow {
-  const runtimeWindow = {} as RuntimeWindow
+function installRuntime(runtimeWindow = {} as RuntimeWindow): RuntimeWindow {
   const install = new Function('window', ANDROID_PROMISE_RUNTIME)
   install(runtimeWindow)
   return runtimeWindow
@@ -76,6 +75,16 @@ describe('Android promise runtime', () => {
 
     await expect(camera).rejects.toThrow('Android bridge closed')
     await expect(review).rejects.toThrow('Android bridge closed')
+    expect(Object.keys(runtimeWindow.__craftPendingPromises)).toEqual([])
+  })
+
+  it('rejects active work before reinstalling the bridge runtime', async () => {
+    const runtimeWindow = installRuntime()
+    const pending = runtimeWindow.__craftPromise('camera', 'cameraResolve', 'cameraReject', () => {})
+
+    installRuntime(runtimeWindow)
+
+    await expect(pending).rejects.toThrow('Android bridge reinitialized')
     expect(Object.keys(runtimeWindow.__craftPendingPromises)).toEqual([])
   })
 

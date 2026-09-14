@@ -524,6 +524,35 @@ describe('Craft Android builder', () => {
     }
   })
 
+  it('guards lifecycle, utility, and update promise channels without ad hoc callback slots', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-promise-lifecycle-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    for (const [channel, resolver, uses] of [
+      ['screenshot', '_craftScreenshotResolve', 1],
+      ['background task', '_craftBgTaskResolve', 4],
+      ['PDF', '_craftPDFResolve', 2],
+      ['contact picker', '_craftPickContactResolve', 1],
+      ['shortcuts', '_craftShortcutsResolve', 2],
+      ['shared keychain', '_craftSharedKeychainResolve', 3],
+      ['auth persistence', '_craftAuthPersistResolve', 4],
+      ['AR', '_craftARResolve', 5],
+      ['ML', '_craftMLResolve', 3],
+      ['initial URL', '_craftDeepLinkResolve', 1],
+      ['OTA check', '_craftOTACheckResolve', 1],
+      ['OTA download', '_craftOTADownloadResolve', 1],
+      ['OTA apply', '_craftOTAApplyResolve', 1],
+      ['OTA rollback', '_craftOTARollbackResolve', 1],
+    ] as const) {
+      const call = `window.__craftPromise('${channel}', '${resolver}',`
+      expect(bridge.match(new RegExp(call.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(uses)
+    }
+    expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
+    expect(bridge).toContain('window.__craftRejectPermissionRequests = function(message)')
+    expect(bridge).toContain("window.__craftRejectPermissionRequests('Android bridge closed')")
+  })
+
   it('rejects Bluetooth scans that never reach the platform scanner', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-bluetooth-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
