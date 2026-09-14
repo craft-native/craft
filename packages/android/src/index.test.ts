@@ -176,14 +176,15 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('CraftAndroid.checkPermission(String(permission))')
     expect(bridge).toContain('CraftAndroid.requestPermission(String(permission), id)')
     expect(bridge).toContain('group.any(isGranted)')
-    expect(bridge).toContain('PendingPermissionRequest(callbackId, permission)')
+    expect(bridge).toContain('CraftPermissionPolicy.nextRequest(')
+    expect(bridge).toContain('pending.groupIndex + 1')
     expect(bridge).toContain('nativePermissionStatus(pending.permission)')
     expect(bridge).not.toContain('grantResults.all { it == PackageManager.PERMISSION_GRANTED }')
-    expect(bridge).toContain('fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean')
+    expect(bridge).toContain('fun onRequestPermissionsResult(requestCode: Int): Boolean')
     expect(bridge).toContain('Settings.ACTION_APPLICATION_DETAILS_SETTINGS')
     expect(existsSync(service)).toBe(true)
     expect(readFileSync(service, 'utf8')).toContain('package com.craft.runtime')
-    expect(activity).toContain('craftBridge.onRequestPermissionsResult(requestCode, grantResults)')
+    expect(activity).toContain('craftBridge.onRequestPermissionsResult(requestCode)')
   })
 
   it('generates a foreground service for durable background recording', async () => {

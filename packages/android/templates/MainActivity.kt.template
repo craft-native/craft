@@ -240,7 +240,7 @@ class MainActivity : AppCompatActivity() {
         permissions: Array<out String>,
         grantResults: IntArray
     ) {
-        if (craftBridge.onRequestPermissionsResult(requestCode, grantResults)) return
+        if (craftBridge.onRequestPermissionsResult(requestCode)) return
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 

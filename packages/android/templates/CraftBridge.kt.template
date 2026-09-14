@@ -104,6 +104,11 @@ import java.util.concurrent.TimeUnit
 import java.util.UUID
 
 internal object CraftPermissionPolicy {
+    data class Request(
+        val groupIndex: Int,
+        val permissions: Array<String>
+    )
+
     private fun permissionGroups(name: String, sdkInt: Int): List<List<String>>? = when (name) {
         "camera" -> listOf(listOf(Manifest.permission.CAMERA))
         "microphone" -> listOf(listOf(Manifest.permission.RECORD_AUDIO))
@@ -162,11 +167,34 @@ internal object CraftPermissionPolicy {
         val groups = permissionGroups(name, sdkInt) ?: return "undetermined"
         return if (groups.all { group -> group.any(isGranted) }) "granted" else "denied"
     }
+
+    fun nextRequest(
+        name: String,
+        sdkInt: Int,
+        startingAt: Int,
+        isGranted: (String) -> Boolean
+    ): Request? {
+        val groups = permissionGroups(name, sdkInt) ?: return null
+        val groupIndex = (startingAt until groups.size).firstOrNull { index ->
+            groups[index].none(isGranted)
+        } ?: return null
+        return Request(groupIndex, groups[groupIndex].toTypedArray())
+    }
+
+    fun groupIsGranted(
+        name: String,
+        sdkInt: Int,
+        groupIndex: Int,
+        isGranted: (String) -> Boolean
+    ): Boolean = permissionGroups(name, sdkInt)
+        ?.getOrNull(groupIndex)
+        ?.any(isGranted) == true
 }
 
 private data class PendingPermissionRequest(
     val callbackId: Int,
-    val permission: String
+    val permission: String,
+    val groupIndex: Int
 )
 
 class CraftBridge(
@@ -1957,9 +1985,46 @@ class CraftBridge(
     // ==================== Geolocation ====================
 
     private fun nativePermissionStatus(name: String): String {
-        return CraftPermissionPolicy.status(name, Build.VERSION.SDK_INT) {
-            ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED
+        return CraftPermissionPolicy.status(name, Build.VERSION.SDK_INT, ::isPermissionGranted)
+    }
+
+    private fun isPermissionGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun claimPermissionRequestCode(): Int? {
+        var requestCode = nextPermissionRequestCode
+        while (pendingPermissionRequests.containsKey(requestCode)) {
+            requestCode += 1
+            if (requestCode > PERMISSION_REQUEST_END) requestCode = PERMISSION_REQUEST_START
+            if (requestCode == nextPermissionRequestCode) return null
         }
+        nextPermissionRequestCode = if (requestCode == PERMISSION_REQUEST_END) {
+            PERMISSION_REQUEST_START
+        } else {
+            requestCode + 1
+        }
+        return requestCode
+    }
+
+    private fun enqueuePermissionRequest(
+        permission: String,
+        callbackId: Int,
+        startingAt: Int
+    ): Boolean {
+        val request = CraftPermissionPolicy.nextRequest(
+            permission,
+            Build.VERSION.SDK_INT,
+            startingAt,
+            ::isPermissionGranted
+        ) ?: return false
+        val requestCode = claimPermissionRequestCode() ?: return false
+        pendingPermissionRequests[requestCode] = PendingPermissionRequest(
+            callbackId,
+            permission,
+            request.groupIndex
+        )
+        ActivityCompat.requestPermissions(activity, request.permissions, requestCode)
+        return true
     }
 
     @JavascriptInterface
@@ -1968,28 +2033,10 @@ class CraftBridge(
     @JavascriptInterface
     fun requestPermission(permission: String, callbackId: Int) {
         activity.runOnUiThread {
-            val required = CraftPermissionPolicy.requiredPermissions(permission, Build.VERSION.SDK_INT)
-            if (required == null || required.isEmpty() || nativePermissionStatus(permission) == "granted") {
-                deliverPermissionResult(callbackId, nativePermissionStatus(permission))
-                return@runOnUiThread
+            val status = nativePermissionStatus(permission)
+            if (status == "granted" || !enqueuePermissionRequest(permission, callbackId, 0)) {
+                deliverPermissionResult(callbackId, status)
             }
-
-            var requestCode = nextPermissionRequestCode
-            while (pendingPermissionRequests.containsKey(requestCode)) {
-                requestCode += 1
-                if (requestCode > PERMISSION_REQUEST_END) requestCode = PERMISSION_REQUEST_START
-                if (requestCode == nextPermissionRequestCode) {
-                    deliverPermissionResult(callbackId, "denied")
-                    return@runOnUiThread
-                }
-            }
-            nextPermissionRequestCode = if (requestCode == PERMISSION_REQUEST_END) {
-                PERMISSION_REQUEST_START
-            } else {
-                requestCode + 1
-            }
-            pendingPermissionRequests[requestCode] = PendingPermissionRequest(callbackId, permission)
-            ActivityCompat.requestPermissions(activity, required, requestCode)
         }
     }
 
@@ -2004,13 +2051,26 @@ class CraftBridge(
         }
     }
 
-    fun onRequestPermissionsResult(requestCode: Int, grantResults: IntArray): Boolean {
+    fun onRequestPermissionsResult(requestCode: Int): Boolean {
         val pending = pendingPermissionRequests.remove(requestCode) ?: return false
         // Re-read package state instead of interpreting the parallel callback
         // arrays. In particular, an approximate-location choice returns a
         // denied fine result and a granted coarse result, which is still a
         // granted `location` permission in Craft's contract.
-        deliverPermissionResult(pending.callbackId, nativePermissionStatus(pending.permission))
+        val status = nativePermissionStatus(pending.permission)
+        val completedGroup = CraftPermissionPolicy.groupIsGranted(
+            pending.permission,
+            Build.VERSION.SDK_INT,
+            pending.groupIndex,
+            ::isPermissionGranted
+        )
+        if (status != "granted" && completedGroup && enqueuePermissionRequest(
+                pending.permission,
+                pending.callbackId,
+                pending.groupIndex + 1
+            )) return true
+
+        deliverPermissionResult(pending.callbackId, status)
         return true
     }
 

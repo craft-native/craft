@@ -72,4 +72,35 @@ class CraftPermissionPolicyTest {
             CraftPermissionPolicy.requiredPermissions("location", 35)
         )
     }
+
+    @Test
+    fun backgroundLocationRequestsAreSplitIntoPlatformStages() {
+        val foreground = CraftPermissionPolicy.nextRequest(
+            "locationAlways",
+            35,
+            0,
+            emptySet<String>()::contains
+        )!!
+        assertEquals(0, foreground.groupIndex)
+        assertArrayEquals(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ),
+            foreground.permissions
+        )
+
+        val approximate = setOf(Manifest.permission.ACCESS_COARSE_LOCATION)
+        val background = CraftPermissionPolicy.nextRequest(
+            "locationAlways",
+            35,
+            foreground.groupIndex + 1,
+            approximate::contains
+        )!!
+        assertEquals(1, background.groupIndex)
+        assertArrayEquals(
+            arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION),
+            background.permissions
+        )
+    }
 }
