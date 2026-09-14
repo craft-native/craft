@@ -586,68 +586,52 @@ class CraftBridge(
 
                 // QR/Barcode Scanner
                 scanQRCode: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftQRResolve = resolve;
-                        window._craftQRReject = reject;
+                    return window.__craftPromise('QR scan', '_craftQRResolve', '_craftQRReject', function() {
                         CraftAndroid.scanQRCode();
                     });
                 },
 
                 // File Picker
                 pickFile: function(types) {
-                    return new Promise(function(resolve, reject) {
-                        window._craftFileResolve = resolve;
-                        window._craftFileReject = reject;
+                    return window.__craftPromise('file picker', '_craftFileResolve', '_craftFileReject', function() {
                         CraftAndroid.pickFile(JSON.stringify(types || []));
                     });
                 },
 
                 // File Download
                 downloadFile: function(url, filename) {
-                    return new Promise(function(resolve, reject) {
-                        window._craftDownloadResolve = resolve;
-                        window._craftDownloadReject = reject;
+                    return window.__craftPromise('file download', '_craftDownloadResolve', '_craftDownloadReject', function() {
                         CraftAndroid.downloadFile(url, filename);
                     });
                 },
                 saveFile: function(data, filename) {
-                    return new Promise(function(resolve, reject) {
-                        window._craftSaveResolve = resolve;
-                        window._craftSaveReject = reject;
+                    return window.__craftPromise('file save', '_craftSaveResolve', '_craftSaveReject', function() {
                         CraftAndroid.saveFile(data, filename);
                     });
                 },
 
                 // Google Sign In
                 signInWithGoogle: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftGoogleResolve = resolve;
-                        window._craftGoogleReject = reject;
+                    return window.__craftPromise('Google sign in', '_craftGoogleResolve', '_craftGoogleReject', function() {
                         CraftAndroid.signInWithGoogle();
                     });
                 },
 
                 // Audio Recording
                 startAudioRecording: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftAudioResolve = resolve;
-                        window._craftAudioReject = reject;
+                    return window.__craftPromise('audio start', '_craftAudioResolve', '_craftAudioReject', function() {
                         CraftAndroid.startAudioRecording();
                     });
                 },
                 stopAudioRecording: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftAudioStopResolve = resolve;
-                        window._craftAudioStopReject = reject;
+                    return window.__craftPromise('audio stop', '_craftAudioStopResolve', '_craftAudioStopReject', function() {
                         CraftAndroid.stopAudioRecording();
                     });
                 },
 
                 // Video Recording
                 startVideoRecording: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftVideoResolve = resolve;
-                        window._craftVideoReject = reject;
+                    return window.__craftPromise('video recording', '_craftVideoResolve', '_craftVideoReject', function() {
                         CraftAndroid.startVideoRecording();
                     });
                 },
@@ -666,16 +650,12 @@ class CraftBridge(
                 // Local Database
                 db: {
                     execute: function(sql, params) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftDbExecResolve = resolve;
-                            window._craftDbExecReject = reject;
+                        return window.__craftPromise('database execute', '_craftDbExecResolve', '_craftDbExecReject', function() {
                             CraftAndroid.dbExecute(sql, JSON.stringify(params || []));
                         });
                     },
                     query: function(sql, params) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftDbQueryResolve = resolve;
-                            window._craftDbQueryReject = reject;
+                        return window.__craftPromise('database query', '_craftDbQueryResolve', '_craftDbQueryReject', function() {
                             CraftAndroid.dbQuery(sql, JSON.stringify(params || []));
                         });
                     }
@@ -684,9 +664,7 @@ class CraftBridge(
                 // Bluetooth
                 bluetooth: {
                     startScan: function() {
-                        return new Promise(function(resolve, reject) {
-                            window._craftBleResolve = resolve;
-                            window._craftBleReject = reject;
+                        return window.__craftPromise('Bluetooth scan', '_craftBleResolve', '_craftBleReject', function() {
                             CraftAndroid.startBluetoothScan();
                         });
                     },
@@ -700,9 +678,7 @@ class CraftBridge(
 
                 // NFC
                 scanNFC: function() {
-                    return new Promise(function(resolve, reject) {
-                        window._craftNfcResolve = resolve;
-                        window._craftNfcReject = reject;
+                    return window.__craftPromise('NFC scan', '_craftNfcResolve', '_craftNfcReject', function() {
                         CraftAndroid.scanNFC();
                     });
                 },
@@ -710,24 +686,18 @@ class CraftBridge(
                 // Fitness / Health
                 health: {
                     requestAuthorization: function(types) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftFitnessAuthResolve = resolve;
-                            window._craftFitnessAuthReject = reject;
+                        return window.__craftPromise('health authorization', '_craftFitnessAuthResolve', '_craftFitnessAuthReject', function() {
                             CraftAndroid.requestFitnessAuthorization(JSON.stringify(types || []));
                         });
                     },
                     getData: function(type, options) {
                         options = options || {};
-                        return new Promise(function(resolve, reject) {
-                            window._craftFitnessDataResolve = resolve;
-                            window._craftFitnessDataReject = reject;
+                        return window.__craftPromise('health read', '_craftFitnessDataResolve', '_craftFitnessDataReject', function() {
                             CraftAndroid.getFitnessData(type, options.startDate || 0, options.endDate || 0);
                         });
                     },
                     saveWorkout: function(workout) {
-                        return new Promise(function(resolve, reject) {
-                            window._craftFitnessSaveResolve = resolve;
-                            window._craftFitnessSaveReject = reject;
+                        return window.__craftPromise('health write', '_craftFitnessSaveResolve', '_craftFitnessSaveReject', function() {
                             CraftAndroid.saveHealthWorkout(JSON.stringify(workout || {}));
                         });
                     }

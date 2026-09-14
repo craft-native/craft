@@ -497,6 +497,33 @@ describe('Craft Android builder', () => {
     }
   })
 
+  it('guards file, media, database, radio, and health promise channels', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-promise-device-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    for (const [channel, resolver] of [
+      ['QR scan', '_craftQRResolve'],
+      ['file picker', '_craftFileResolve'],
+      ['file download', '_craftDownloadResolve'],
+      ['file save', '_craftSaveResolve'],
+      ['Google sign in', '_craftGoogleResolve'],
+      ['audio start', '_craftAudioResolve'],
+      ['audio stop', '_craftAudioStopResolve'],
+      ['video recording', '_craftVideoResolve'],
+      ['database execute', '_craftDbExecResolve'],
+      ['database query', '_craftDbQueryResolve'],
+      ['Bluetooth scan', '_craftBleResolve'],
+      ['NFC scan', '_craftNfcResolve'],
+      ['health authorization', '_craftFitnessAuthResolve'],
+      ['health read', '_craftFitnessDataResolve'],
+      ['health write', '_craftFitnessSaveResolve'],
+    ]) {
+      expect(bridge).toContain(`window.__craftPromise('${channel}', '${resolver}',`)
+      expect(bridge).not.toContain(`window.${resolver} = resolve`)
+    }
+  })
+
   it('rejects Bluetooth scans that never reach the platform scanner', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-bluetooth-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
