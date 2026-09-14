@@ -63,6 +63,7 @@ describe('Craft iOS builder', () => {
       bundleId: 'org.wildloop.app',
       associatedDomains: ['applinks:wildloop.org'],
       enableHealthKit: true,
+      enablePushNotifications: true,
       privacy: {
         collectedDataTypes: [{
           type: 'NSPrivacyCollectedDataTypePreciseLocation',
@@ -76,8 +77,11 @@ describe('Craft iOS builder', () => {
       },
     }
 
-    expect(renderEntitlements(config)).toContain('applinks:wildloop.org')
-    expect(renderEntitlements(config)).toContain('com.apple.developer.healthkit')
+    const entitlements = renderEntitlements(config)
+    expect(entitlements).toContain('applinks:wildloop.org')
+    expect(entitlements).toContain('com.apple.developer.healthkit')
+    expect(entitlements).toContain('<string>$(CRAFT_APNS_ENVIRONMENT)</string>')
+    expect(entitlements).not.toContain('<string>development</string>')
     expect(renderWatchEntitlements({ ...config, appGroups: ['group.org.wildloop.app'] })).toContain('group.org.wildloop.app')
     expect(renderPrivacyManifest(config)).toContain('NSPrivacyCollectedDataTypePreciseLocation')
     expect(renderPrivacyManifest(config)).toContain('CA92.1')
@@ -93,6 +97,7 @@ describe('Craft iOS builder', () => {
       config: {
         enableGeolocation: true,
         enableBackgroundLocation: true,
+        enablePushNotifications: true,
         enableHaptics: true,
         trustedOrigins: ['https://wildloop.org'],
         associatedDomains: ['applinks:wildloop.org'],
@@ -104,6 +109,7 @@ describe('Craft iOS builder', () => {
     const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
     const project = readFileSync(join(output, 'project.yml'), 'utf8')
     const generatedConfig = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    const entitlements = readFileSync(join(output, 'Craft.entitlements'), 'utf8')
     expect(swift).toContain('BundledAssetSchemeHandler')
     expect(swift).toContain('craft://app/index.html')
     expect(swift).toContain('bundle.url(forResource: "index", withExtension: "html", subdirectory: "dist")')
@@ -125,6 +131,9 @@ describe('Craft iOS builder', () => {
     expect(plist).toContain('<string>wildloop</string>')
     expect(project).not.toContain('    resources:')
     expect(project).toContain('      - path: dist\n        type: folder\n        buildPhase: resources')
+    expect(project).toContain('debug:\n      CRAFT_APNS_ENVIRONMENT: development')
+    expect(project).toContain('release:\n      CRAFT_APNS_ENVIRONMENT: production')
+    expect(entitlements).toContain('<string>$(CRAFT_APNS_ENVIRONMENT)</string>')
     expect(plist).toContain('<string>location</string>')
     expect(existsSync(join(output, 'Craft.entitlements'))).toBe(true)
     expect(existsSync(join(output, 'PrivacyInfo.xcprivacy'))).toBe(true)

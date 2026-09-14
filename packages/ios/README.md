@@ -143,6 +143,11 @@ Edit `craft.config.json` in your iOS project:
 }
 ```
 
+When push notifications are enabled, generated Debug builds use the APNs
+development environment and Release builds use the production environment.
+The generated entitlements select the correct value from the active Xcode
+build configuration automatically.
+
 ## JavaScript Bridge
 
 Once Craft is initialized, the `window.craft` object is available:

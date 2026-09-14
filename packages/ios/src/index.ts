@@ -269,7 +269,7 @@ export function renderEntitlements(config: CraftConfig): string {
     entries.push('    <key>com.apple.developer.healthkit</key>\n    <true/>')
   }
   if (config.enablePushNotifications) {
-    entries.push('    <key>aps-environment</key>\n    <string>development</string>')
+    entries.push('    <key>aps-environment</key>\n    <string>$(CRAFT_APNS_ENVIRONMENT)</string>')
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${entries.join('\n')}\n</dict>\n</plist>\n`

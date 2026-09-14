@@ -4,10 +4,16 @@ options:
   deploymentTarget:
     iOS: "{{IOS_VERSION}}"
 settings:
-  MARKETING_VERSION: "{{VERSION}}"
-  CURRENT_PROJECT_VERSION: "{{BUILD_NUMBER}}"
-  CODE_SIGN_STYLE: Automatic
-  DEVELOPMENT_TEAM: "{{TEAM_ID}}"
+  base:
+    MARKETING_VERSION: "{{VERSION}}"
+    CURRENT_PROJECT_VERSION: "{{BUILD_NUMBER}}"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: "{{TEAM_ID}}"
+  configs:
+    debug:
+      CRAFT_APNS_ENVIRONMENT: development
+    release:
+      CRAFT_APNS_ENVIRONMENT: production
 targets:
   {{APP_NAME}}:
     type: application
