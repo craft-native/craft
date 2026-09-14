@@ -3980,55 +3980,60 @@ class CraftBridge(
                 ContactsContract.Contacts.DISPLAY_NAME
             )
 
-            activity.contentResolver.query(contactUri, projection, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val contactId = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
-                    val displayName = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME))
+            val contact = activity.contentResolver.query(contactUri, projection, null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use null
 
-                    // Get phone numbers
-                    val phones = mutableListOf<Map<String, String>>()
-                    activity.contentResolver.query(
-                        ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                        arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER, ContactsContract.CommonDataKinds.Phone.TYPE),
-                        "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
-                        arrayOf(contactId),
-                        null
-                    )?.use { phoneCursor ->
-                        while (phoneCursor.moveToNext()) {
-                            val number = phoneCursor.getString(phoneCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
-                            phones.add(mapOf("number" to number))
-                        }
-                    }
+                val contactId = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts._ID))
+                val displayName = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.Contacts.DISPLAY_NAME))
 
-                    // Get emails
-                    val emails = mutableListOf<Map<String, String>>()
-                    activity.contentResolver.query(
-                        ContactsContract.CommonDataKinds.Email.CONTENT_URI,
-                        arrayOf(ContactsContract.CommonDataKinds.Email.ADDRESS),
-                        "${ContactsContract.CommonDataKinds.Email.CONTACT_ID} = ?",
-                        arrayOf(contactId),
-                        null
-                    )?.use { emailCursor ->
-                        while (emailCursor.moveToNext()) {
-                            val address = emailCursor.getString(emailCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Email.ADDRESS))
-                            emails.add(mapOf("address" to address))
-                        }
-                    }
-
-                    val result = JSONObject().apply {
-                        put("id", contactId)
-                        put("displayName", displayName)
-                        put("phoneNumbers", JSONArray(phones.map { JSONObject(it) }))
-                        put("emailAddresses", JSONArray(emails.map { JSONObject(it) }))
-                    }
-
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftPickContactResolve && window._craftPickContactResolve($result)",
-                            null
-                        )
+                // Get phone numbers
+                val phones = mutableListOf<Map<String, String>>()
+                activity.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER, ContactsContract.CommonDataKinds.Phone.TYPE),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )?.use { phoneCursor ->
+                    while (phoneCursor.moveToNext()) {
+                        val number = phoneCursor.getString(phoneCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
+                        phones.add(mapOf("number" to number))
                     }
                 }
+
+                // Get emails
+                val emails = mutableListOf<Map<String, String>>()
+                activity.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Email.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Email.ADDRESS),
+                    "${ContactsContract.CommonDataKinds.Email.CONTACT_ID} = ?",
+                    arrayOf(contactId),
+                    null
+                )?.use { emailCursor ->
+                    while (emailCursor.moveToNext()) {
+                        val address = emailCursor.getString(emailCursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Email.ADDRESS))
+                        emails.add(mapOf("address" to address))
+                    }
+                }
+
+                JSONObject().apply {
+                    put("id", contactId)
+                    put("displayName", displayName)
+                    put("phoneNumbers", JSONArray(phones.map { JSONObject(it) }))
+                    put("emailAddresses", JSONArray(emails.map { JSONObject(it) }))
+                }
+            }
+
+            if (contact == null) {
+                rejectContactPicker("Selected contact could not be read")
+                return
+            }
+
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftPickContactResolve && window._craftPickContactResolve($contact)",
+                    null
+                )
             }
         } catch (e: Exception) {
             activity.runOnUiThread {
