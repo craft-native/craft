@@ -134,6 +134,7 @@ object CraftNative {
     private var deliverer: ((String) -> Unit)? = null
 
     private val lifecycleGeneration = java.util.concurrent.atomic.AtomicLong(0)
+    private var biometricPrompt: BiometricPrompt? = null
 
     fun setDeliverer(deliver: ((String) -> Unit)?) {
         deliverer = deliver
@@ -147,6 +148,8 @@ object CraftNative {
         runCatching { speechRecognizer?.cancel() }
         runCatching { speechRecognizer?.destroy() }
         speechRecognizer = null
+        runCatching { biometricPrompt?.cancelAuthentication() }
+        biometricPrompt = null
 
         audioRecorder?.let { recorder ->
             runCatching { recorder.stop() }
@@ -459,25 +462,46 @@ object CraftNative {
 
     @JvmStatic
     fun startReviewFlow(activity: Activity) {
-        val reviewManager = ReviewManagerFactory.create(activity)
-        val request = reviewManager.requestReviewFlow()
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
 
-        request.addOnCompleteListener { task ->
-            if (task.isSuccessful) {
-                val flow = reviewManager.launchReviewFlow(activity, task.result)
-                flow.addOnCompleteListener {
+        fun resolveReviewRequest() {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            try {
+                nativeReviewSucceeded()
+            } catch (e: UnsatisfiedLinkError) {
+                // The library went away while Play owned the flow.
+            }
+        }
+
+        fun rejectReviewRequest(message: String) {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            try {
+                nativeReviewError(message)
+            } catch (e: UnsatisfiedLinkError) {
+            }
+        }
+
+        try {
+            val reviewManager = ReviewManagerFactory.create(activity)
+            val request = reviewManager.requestReviewFlow()
+
+            request.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
                     try {
-                        nativeReviewSucceeded()
-                    } catch (e: UnsatisfiedLinkError) {
-                        // The library went away while Play owned the flow.
+                        reviewManager.launchReviewFlow(activity, task.result)
+                            .addOnCompleteListener { resolveReviewRequest() }
+                    } catch (error: Exception) {
+                        rejectReviewRequest(error.message ?: "Review flow failed")
                     }
-                }
-            } else {
-                try {
-                    nativeReviewError(task.exception?.message ?: "Review flow failed")
-                } catch (e: UnsatisfiedLinkError) {
+                } else {
+                    rejectReviewRequest(task.exception?.message ?: "Review flow failed")
                 }
             }
+        } catch (error: Exception) {
+            rejectReviewRequest(error.message ?: "Review flow failed")
         }
     }
 
@@ -1021,39 +1045,63 @@ object CraftNative {
 
     @JvmStatic
     fun showBiometricPrompt(activity: Activity, reason: String) {
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveBiometricRequest() {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            biometricPrompt = null
+            try {
+                nativeBiometricSucceeded()
+            } catch (e: UnsatisfiedLinkError) {
+                // The library went away while the prompt was open.
+            }
+        }
+
+        fun rejectBiometricRequest(message: String) {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            biometricPrompt = null
+            try {
+                nativeBiometricError(message)
+            } catch (e: UnsatisfiedLinkError) {
+            }
+        }
+
         activity.runOnUiThread {
-            val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Authenticate")
-                .setSubtitle(reason)
-                .setNegativeButtonText("Cancel")
-                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .build()
+            if (requestGeneration != lifecycleGeneration.get()) return@runOnUiThread
+            try {
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Authenticate")
+                    .setSubtitle(reason)
+                    .setNegativeButtonText("Cancel")
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                    .build()
 
-            val prompt = BiometricPrompt(
-                activity as FragmentActivity,
-                ContextCompat.getMainExecutor(activity),
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        try {
-                            nativeBiometricSucceeded()
-                        } catch (e: UnsatisfiedLinkError) {
-                            // The library went away while the prompt was open.
+                runCatching { biometricPrompt?.cancelAuthentication() }
+                val prompt = BiometricPrompt(
+                    activity as FragmentActivity,
+                    ContextCompat.getMainExecutor(activity),
+                    object : BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                            resolveBiometricRequest()
+                        }
+
+                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                            rejectBiometricRequest(errString.toString())
+                        }
+
+                        override fun onAuthenticationFailed() {
+                            // Do not reject: the prompt remains open for a retry.
                         }
                     }
-
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        try {
-                            nativeBiometricError(errString.toString())
-                        } catch (e: UnsatisfiedLinkError) {
-                        }
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        // Do not reject: the prompt remains open for a retry.
-                    }
-                }
-            )
-            prompt.authenticate(promptInfo)
+                )
+                biometricPrompt = prompt
+                prompt.authenticate(promptInfo)
+            } catch (error: Exception) {
+                rejectBiometricRequest(error.message ?: "Biometric authentication failed")
+            }
         }
     }
 

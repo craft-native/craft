@@ -451,6 +451,7 @@ describe('Craft Android builder', () => {
     const appGradle = readFileSync(join(output, 'app/build.gradle.kts'), 'utf8')
     const projectGradle = readFileSync(join(output, 'build.gradle.kts'), 'utf8')
     expect(bridge).toContain('FirebaseMessaging.getInstance().token')
+    expect(bridge).toContain('evaluatePromiseJavascript("$callback && $callback($payload)")')
     expect(bridge).not.toContain('push-token-placeholder')
     expect(bridge).not.toContain('?: \\"Review flow failed\\"')
     expect(appGradle).toContain('com.google.firebase:firebase-messaging')
@@ -789,6 +790,7 @@ describe('Craft Android builder', () => {
       'window.__craftRejectPendingPromises',
       'CraftNative.close(activity)',
       'speechRecognizer?.destroy()',
+      'biometricPrompt?.cancelAuthentication()',
       'fusedLocationClient?.removeLocationUpdates(callback)',
       'manager.unregisterNetworkCallback(callback)',
       'sensorManager?.unregisterListener(listener)',
@@ -801,12 +803,51 @@ describe('Craft Android builder', () => {
     for (const cleanup of [
       'deliverer = null',
       'speechRecognizer?.destroy()',
+      'biometricPrompt?.cancelAuthentication()',
       'productBillingClient?.endConnection()',
       'restoreBillingClient?.endConnection()',
       'manager.unregisterNetworkCallback(watch)',
       'bleScanner?.stopScan(callback)',
       'sensorManager?.unregisterListener(listener)',
     ]) expect(nativeClose).toContain(cleanup)
+  })
+
+  it('settles review and biometric callbacks once across activity teardown', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-interactive-callbacks-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(sourceRoot, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+    const bridgeReview = bridge.slice(
+      bridge.indexOf('fun requestReview()'),
+      bridge.indexOf('// ==================== Flashlight', bridge.indexOf('fun requestReview()')),
+    )
+    const holderReview = holder.slice(
+      holder.indexOf('fun startReviewFlow('),
+      holder.indexOf('fun requestReview(', holder.indexOf('fun startReviewFlow(')),
+    )
+    const bridgeBiometric = bridge.slice(
+      bridge.indexOf('fun authenticate(reason: String)'),
+      bridge.indexOf('// ==================== Push Notifications', bridge.indexOf('fun authenticate(reason: String)')),
+    )
+    const holderBiometric = holder.slice(
+      holder.indexOf('fun showBiometricPrompt('),
+      holder.indexOf('fun authenticate(', holder.indexOf('fun showBiometricPrompt(')),
+    )
+
+    for (const source of [bridgeReview, holderReview, bridgeBiometric, holderBiometric]) {
+      expect(source).toContain('val settled = java.util.concurrent.atomic.AtomicBoolean(false)')
+      expect(source).toContain('if (!settled.compareAndSet(false, true)')
+      expect(source).toContain('catch (error: Exception)')
+    }
+    expect(bridgeReview).toContain('evaluatePromiseJavascript(')
+    expect(bridgeBiometric).toContain('biometricPrompt = prompt')
+    expect(bridgeBiometric).toContain('rejectBiometricRequest(error.message ?: "Biometric authentication failed")')
+    expect(holderReview).toContain('if (requestGeneration != lifecycleGeneration.get()) return')
+    expect(holderBiometric).toContain('if (requestGeneration != lifecycleGeneration.get()) return')
+    expect(holderBiometric).toContain('biometricPrompt = prompt')
+    expect(bridge).toContain('if (closed) return@runOnUiThread')
   })
 
   it('connects Play Billing for restores and settles failure paths', async () => {

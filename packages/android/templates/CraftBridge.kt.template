@@ -210,6 +210,7 @@ class CraftBridge(
     private var closed = false
     private var nativeDeepLinks = CraftNative.resetDeepLinks()
     private var speechRecognizer: SpeechRecognizer? = null
+    private var biometricPrompt: BiometricPrompt? = null
     private var isListening = false
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(activity)
     private var bridgeReady = false
@@ -1756,49 +1757,61 @@ class CraftBridge(
         // comes back through Zig, which settles the existing page promise.
         if (CraftNative.authenticate(activity, reason)) return
 
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveBiometricRequest() {
+            if (!settled.compareAndSet(false, true) || closed) return
+            biometricPrompt = null
+            evaluatePromiseJavascript("window._craftBiometricResolve && window._craftBiometricResolve(true)")
+        }
+
+        fun rejectBiometricRequest(message: String) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            biometricPrompt = null
+            evaluatePromiseJavascript(
+                "window._craftBiometricReject && window._craftBiometricReject(${jsQuote(message)})"
+            )
+        }
+
         if (activity !is FragmentActivity) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftBiometricReject && window._craftBiometricReject('Activity not supported')",
-                    null
-                )
-            }
+            rejectBiometricRequest("Activity not supported")
             return
         }
 
         activity.runOnUiThread {
-            val promptInfo = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Authenticate")
-                .setSubtitle(reason)
-                .setNegativeButtonText("Cancel")
-                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
-                .build()
+            if (closed) return@runOnUiThread
+            try {
+                val promptInfo = BiometricPrompt.PromptInfo.Builder()
+                    .setTitle("Authenticate")
+                    .setSubtitle(reason)
+                    .setNegativeButtonText("Cancel")
+                    .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                    .build()
 
-            val biometricPrompt = BiometricPrompt(
-                activity as FragmentActivity,
-                mainExecutor,
-                object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        webView.evaluateJavascript(
-                            "window._craftBiometricResolve && window._craftBiometricResolve(true)",
-                            null
-                        )
+                runCatching { biometricPrompt?.cancelAuthentication() }
+                val prompt = BiometricPrompt(
+                    activity as FragmentActivity,
+                    mainExecutor,
+                    object : BiometricPrompt.AuthenticationCallback() {
+                        override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                            resolveBiometricRequest()
+                        }
+
+                        override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                            rejectBiometricRequest(errString.toString())
+                        }
+
+                        override fun onAuthenticationFailed() {
+                            // Don't reject yet - user can retry
+                        }
                     }
+                )
 
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        webView.evaluateJavascript(
-                            "window._craftBiometricReject && window._craftBiometricReject(${jsQuote(errString)})",
-                            null
-                        )
-                    }
-
-                    override fun onAuthenticationFailed() {
-                        // Don't reject yet - user can retry
-                    }
-                }
-            )
-
-            biometricPrompt.authenticate(promptInfo)
+                biometricPrompt = prompt
+                prompt.authenticate(promptInfo)
+            } catch (error: Exception) {
+                rejectBiometricRequest(error.message ?: "Biometric authentication failed")
+            }
         }
     }
 
@@ -2386,30 +2399,38 @@ class CraftBridge(
     fun requestReview() {
         if (CraftNative.requestReview(activity)) return
 
-        val reviewManager = ReviewManagerFactory.create(activity)
-        val request = reviewManager.requestReviewFlow()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
 
-        request.addOnCompleteListener { task ->
-            if (task.isSuccessful) {
-                val reviewInfo = task.result
-                val flow = reviewManager.launchReviewFlow(activity, reviewInfo)
-                flow.addOnCompleteListener {
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftReviewResolve && window._craftReviewResolve(true)",
-                            null
-                        )
+        fun resolveReviewRequest() {
+            if (!settled.compareAndSet(false, true) || closed) return
+            evaluatePromiseJavascript("window._craftReviewResolve && window._craftReviewResolve(true)")
+        }
+
+        fun rejectReviewRequest(message: String) {
+            if (!settled.compareAndSet(false, true) || closed) return
+            evaluatePromiseJavascript(
+                "window._craftReviewReject && window._craftReviewReject(${jsQuote(message)})"
+            )
+        }
+
+        try {
+            val reviewManager = ReviewManagerFactory.create(activity)
+            val request = reviewManager.requestReviewFlow()
+
+            request.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    try {
+                        reviewManager.launchReviewFlow(activity, task.result)
+                            .addOnCompleteListener { resolveReviewRequest() }
+                    } catch (error: Exception) {
+                        rejectReviewRequest(error.message ?: "Review flow failed")
                     }
-                }
-            } else {
-                activity.runOnUiThread {
-                    val message = JSONObject.quote(task.exception?.message ?: "Review flow failed")
-                    webView.evaluateJavascript(
-                        "window._craftReviewReject && window._craftReviewReject($message)",
-                        null
-                    )
+                } else {
+                    rejectReviewRequest(task.exception?.message ?: "Review flow failed")
                 }
             }
+        } catch (error: Exception) {
+            rejectReviewRequest(error.message ?: "Review flow failed")
         }
     }
 
@@ -3697,6 +3718,8 @@ class CraftBridge(
         runCatching { speechRecognizer?.cancel() }
         runCatching { speechRecognizer?.destroy() }
         speechRecognizer = null
+        runCatching { biometricPrompt?.cancelAuthentication() }
+        biometricPrompt = null
 
         mediaRecorder?.let { recorder ->
             runCatching { recorder.stop() }
@@ -4710,8 +4733,16 @@ class CraftBridge(
     private fun installNativeDeliverer() {
         CraftNative.setDeliverer { script ->
             activity.runOnUiThread {
+                if (closed) return@runOnUiThread
                 webView.evaluateJavascript(script, null)
             }
+        }
+    }
+
+    private fun evaluatePromiseJavascript(script: String) {
+        activity.runOnUiThread {
+            if (closed) return@runOnUiThread
+            webView.evaluateJavascript(script, null)
         }
     }
 

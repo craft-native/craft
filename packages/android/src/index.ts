@@ -443,19 +443,16 @@ export async function init(options: InitOptions): Promise<void> {
                     val token = if (task.isSuccessful) task.result else null
                     val callback = if (token.isNullOrBlank()) "window._craftPushReject" else "window._craftPushResolve"
                     val payload = JSONObject.quote(token ?: task.exception?.message ?: "Firebase Cloud Messaging is not configured")
-                    webView.evaluateJavascript("$callback && $callback($payload)", null)
+                    evaluatePromiseJavascript("$callback && $callback($payload)")
                 }
             } catch (error: Exception) {
                 val payload = JSONObject.quote(error.message ?: "Firebase Cloud Messaging is not configured")
-                webView.evaluateJavascript("window._craftPushReject && window._craftPushReject($payload)", null)
+                evaluatePromiseJavascript("window._craftPushReject && window._craftPushReject($payload)")
             }
         }`
-      : `activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftPushReject && window._craftPushReject('Push notifications are disabled')",
-                null
-            )
-        }`)
+      : `evaluatePromiseJavascript(
+            "window._craftPushReject && window._craftPushReject('Push notifications are disabled')"
+        )`)
   writeFileSync(join(output, 'app/src/main/java', packagePath, 'CraftBridge.kt'), craftBridge)
 
   // CraftNative goes to a fixed package, not the app's. The prebuilt
