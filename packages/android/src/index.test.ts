@@ -40,6 +40,27 @@ describe('Craft Android builder', () => {
     })).toBe('')
   })
 
+  it('normalizes deep links and remote origins to the runtime trust contract', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-network-config-'))
+    await init({
+      name: 'Remote App',
+      output,
+      config: {
+        devServerURL: 'https://app.example.com/nested/path',
+        enableDeepLinks: true,
+        trustedOrigins: ['https://cdn.example.com/path', 'https://cdn.example.com'],
+        urlSchemes: [' Craft+Preview ', 'craft+preview'],
+      },
+    })
+
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.devServerURL).toBe('https://app.example.com/nested/path')
+    expect(config.trustedOrigins).toEqual(['https://cdn.example.com', 'https://app.example.com'])
+    expect(config.urlSchemes).toEqual(['craft+preview'])
+    expect(readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8'))
+      .toContain('android:scheme="craft+preview"')
+  })
+
   it('rejects metadata that would produce an invalid Android project', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-invalid-'))
 
@@ -55,6 +76,21 @@ describe('Craft Android builder', () => {
       output,
       config: { compileSdk: 34, targetSdk: 35 },
     })).rejects.toThrow('targetSdk must not exceed compileSdk')
+    await expect(init({
+      name: 'Missing Deep Link',
+      output,
+      config: { enableDeepLinks: true },
+    })).rejects.toThrow('deep links require at least one URL scheme')
+    await expect(init({
+      name: 'Insecure Remote',
+      output,
+      config: { devServerURL: 'http://example.com' },
+    })).rejects.toThrow('must use HTTPS or local HTTP')
+    await expect(init({
+      name: 'Missing Firebase Config',
+      output,
+      config: { enablePushNotifications: true },
+    })).rejects.toThrow('push notifications require a googleServicesFile')
   })
 
   it('escapes user-facing metadata without changing generator-owned identity', async () => {

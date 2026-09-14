@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path'
 import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
+const LOCAL_DEVELOPMENT_HOSTS = new Set(['localhost', '127.0.0.1', '10.0.2.2'])
 const KOTLIN_KEYWORDS = new Set([
   'as',
   'break',
@@ -151,6 +152,43 @@ function generatedGradleProjectName(name: string): string {
   return normalized || 'craft-app'
 }
 
+function androidWebUrl(value: string, field: string): URL {
+  let url: URL
+  try {
+    url = new URL(value)
+  }
+  catch {
+    throw new Error(`Invalid ${field}: ${value}`)
+  }
+
+  const localDevelopment = url.protocol === 'http:' && LOCAL_DEVELOPMENT_HOSTS.has(url.hostname)
+  if ((url.protocol !== 'https:' && !localDevelopment) || url.username || url.password) {
+    throw new Error(`${field} must use HTTPS or local HTTP without credentials: ${value}`)
+  }
+  return url
+}
+
+function normalizeAndroidNetworkConfig(config: CraftAndroidConfig): void {
+  const schemes = config.urlSchemes?.map(value => value.trim().toLowerCase()) ?? []
+  if (schemes.some(value => !/^[a-z][a-z0-9+.-]*$/.test(value))) {
+    throw new Error('Android deep-link schemes must be valid URI schemes')
+  }
+  config.urlSchemes = [...new Set(schemes)]
+  if (config.enableDeepLinks && config.urlSchemes.length === 0) {
+    throw new Error('Android deep links require at least one URL scheme')
+  }
+
+  const trustedOrigins = (config.trustedOrigins ?? []).map((value) => {
+    return androidWebUrl(value, 'Android trusted origin').origin
+  })
+  if (config.devServerURL) {
+    const devServer = androidWebUrl(config.devServerURL, 'Android dev server URL')
+    config.devServerURL = devServer.toString()
+    trustedOrigins.push(devServer.origin)
+  }
+  config.trustedOrigins = [...new Set(trustedOrigins)]
+}
+
 function validateAndroidConfig(config: CraftAndroidConfig): void {
   if (!config.appName.trim()) throw new Error('Android app name must not be empty')
 
@@ -262,7 +300,17 @@ export async function init(options: InitOptions): Promise<void> {
   }
   if (config.enableBackgroundLocation) config.enableGeolocation = true
   if (config.enableHealthConnect) config.compileSdk = Math.max(config.compileSdk ?? 36, 36)
+  normalizeAndroidNetworkConfig(config)
   validateAndroidConfig(config)
+  if (config.enablePushNotifications && !config.googleServicesFile) {
+    throw new Error('Android push notifications require a googleServicesFile')
+  }
+  if (config.googleServicesFile && !existsSync(config.googleServicesFile)) {
+    throw new Error(`Google services file not found: ${config.googleServicesFile}`)
+  }
+  if (config.appIconPath && !existsSync(config.appIconPath)) {
+    throw new Error(`App icon not found: ${config.appIconPath}`)
+  }
 
   // Create directory structure
   const dirs = [
@@ -287,7 +335,6 @@ export async function init(options: InitOptions): Promise<void> {
 
   const hasGoogleServices = Boolean(config.googleServicesFile)
   if (config.googleServicesFile) {
-    if (!existsSync(config.googleServicesFile)) throw new Error(`Google services file not found: ${config.googleServicesFile}`)
     cpSync(config.googleServicesFile, join(output, 'app/google-services.json'))
   }
 
@@ -479,7 +526,6 @@ zipStorePath=wrapper/dists
 </vector>
 `
   if (config.appIconPath) {
-    if (!existsSync(config.appIconPath)) throw new Error(`App icon not found: ${config.appIconPath}`)
     cpSync(config.appIconPath, join(output, 'app/src/main/res/drawable/craft_app_icon.png'))
   }
   else {
@@ -583,8 +629,12 @@ export async function build(options: BuildOptions): Promise<void> {
 
   // Update dev server URL if provided
   if (devServer) {
-    config.devServerURL = devServer
-    config.trustedOrigins = [...new Set([...(config.trustedOrigins ?? []), new URL(devServer).origin])]
+    const url = androidWebUrl(devServer, 'Android dev server URL')
+    config.devServerURL = url.toString()
+    config.trustedOrigins = [...new Set([
+      ...(config.trustedOrigins ?? []).map(value => androidWebUrl(value, 'Android trusted origin').origin),
+      url.origin,
+    ])]
     writeFileSync(configPath, JSON.stringify(config, null, 2))
     writeFileSync(join(output, 'app/src/main/assets/craft.config.json'), JSON.stringify(config, null, 2))
     console.log(`   Dev server: ${devServer}`)
