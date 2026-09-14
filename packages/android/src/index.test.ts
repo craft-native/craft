@@ -756,6 +756,23 @@ describe('Craft Android builder', () => {
     expect(getEvents).toContain('window._craftCalendarReject && window._craftCalendarReject(${jsQuote(e.message)})')
   })
 
+  it('rejects widget reload failures instead of hanging the promise', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-widget-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const start = bridge.indexOf('fun reloadWidgets()')
+    const end = bridge.indexOf('// ==================== Google Assistant', start)
+    const reload = bridge.slice(start, end)
+
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    expect(reload).toContain('try {')
+    expect(reload).toContain('activity.sendBroadcast(intent)')
+    expect(reload).toContain('window._craftWidgetReject')
+    expect(reload).toContain('Widget reload failed')
+  })
+
   it('reports SQLite changed rows instead of a constant', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-database-count-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

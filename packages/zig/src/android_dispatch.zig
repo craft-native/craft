@@ -1990,11 +1990,9 @@ fn nativeUpdateWidget(
 
 /// `nativeReloadWidgets(activity, action)`.
 ///
-/// The shim wraps none of `reloadWidgets` in a try/catch, so a `sendBroadcast`
-/// that throws escapes the `@JavascriptInterface` method and the promise
-/// hangs. Rejecting here diverges in the page's favour, and unlike
-/// `getCalendarEvents` there is nothing to fall through *to* — the shim would
-/// hang. So this one rejects, and says so rather than reproducing a hang.
+/// A failed native broadcast rejects here. If JNI cannot dispatch the call,
+/// Kotlin takes over and applies the same terminal rejection around its own
+/// broadcast rather than leaving the widget promise pending.
 fn nativeReloadWidgets(
     env: jni.JNIEnv,
     _: jni.jobject,

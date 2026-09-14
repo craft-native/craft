@@ -4609,15 +4609,24 @@ class CraftBridge(
     fun reloadWidgets() {
         if (CraftNative.reloadWidgets(activity, "{{PACKAGE_NAME}}.WIDGET_UPDATE")) return
 
-        val intent = Intent("{{PACKAGE_NAME}}.WIDGET_UPDATE")
-        intent.setPackage(activity.packageName)
-        activity.sendBroadcast(intent)
+        try {
+            val intent = Intent("{{PACKAGE_NAME}}.WIDGET_UPDATE")
+            intent.setPackage(activity.packageName)
+            activity.sendBroadcast(intent)
 
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftWidgetResolve && window._craftWidgetResolve({reloaded: true})",
-                null
-            )
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftWidgetResolve && window._craftWidgetResolve({reloaded: true})",
+                    null
+                )
+            }
+        } catch (error: Exception) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(error.message ?: "Widget reload failed")})",
+                    null
+                )
+            }
         }
     }
 
