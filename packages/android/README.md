@@ -57,7 +57,7 @@ Build native Android apps with web technologies using Craft.
 - **Vibration Pattern** - Custom vibration sequences
 - **App Review** - Google Play In-App Review prompt
 - **Screen Capture** - Take screenshots programmatically
-- **Health/Fitness** - Google Fit integration
+- **Health/Fitness** - Health Connect integration
 
 ## Installation
 
@@ -83,7 +83,7 @@ Replace `app/src/main/assets/index.html` with your web app, or point to a dev se
 ```bash
 craft android build --html-path ../dist/index.html
 # or
-craft android build --dev-server http://192.168.1.100:3456
+craft android build --dev-server http://10.0.2.2:3456
 ```
 
 ### 3. Open in Android Studio
@@ -133,11 +133,12 @@ Edit `craft.config.json` in your Android project:
 ```
 
 Only the fields shown above are generator options. Enabling background location
-also enables foreground geolocation. Push notifications require a
-`googleServicesFile` path when generating the project. Deep links require at
-least one valid URI scheme; scheme names are normalized to lowercase.
-Health Connect normalizes `minSdk` to at least 26 and `compileSdk` to at least
-36. Custom `appIconPath` files may use PNG, WebP, JPG, or GIF; their supported
+also enables foreground geolocation. Push notifications require a regular
+`googleServicesFile` whose JSON contains a client matching the generated
+Android package. Deep links require at least one valid URI scheme; scheme names
+are normalized to lowercase.
+Health Connect normalizes `minSdk` to at least 26 and `compileSdk` to at least 36.
+A custom `appIconPath` must be a regular PNG, WebP, JPG, or GIF file; its supported
 extension is preserved in the generated drawable resource.
 
 Remote app and trusted-origin URLs must use HTTPS. Local development may use
@@ -231,7 +232,7 @@ window.craft.bluetooth.stopScan();
 const nfcData = await window.craft.scanNFC();
 console.log(nfcData); // Tag content
 
-// Health/Fitness (Google Fit)
+// Health/Fitness (Health Connect)
 await window.craft.requestFitnessAuthorization();
 const steps = await window.craft.getFitnessData('steps', startDate, endDate);
 
@@ -563,14 +564,16 @@ For hot-reload during development:
 # Terminal 1: Start your dev server
 bun run dev  # e.g., http://localhost:3456
 
-# Terminal 2: Build Android with dev server (use your Mac's IP)
-craft android build --dev-server http://192.168.1.100:3456
+# Terminal 2: Build for an Android emulator
+craft android build --dev-server http://10.0.2.2:3456
 
 # Open in Android Studio and run on device
 craft android open
 ```
 
-The app will load from your dev server instead of bundled HTML.
+The emulator resolves `10.0.2.2` to the host machine. For a physical device,
+use an HTTPS development endpoint. The app will load from that server instead
+of bundled HTML.
 
 ## Publishing
 
@@ -586,6 +589,7 @@ This will:
 2. Output path for manual upload to Play Console
 
 For automated uploads, integrate with fastlane:
+
 ```bash
 fastlane supply --aab ./android/app/build/outputs/bundle/release/app-release.aab
 ```
