@@ -481,7 +481,9 @@ struct CraftWebView: UIViewRepresentable {
         // Location
         private var locationManager: CLLocationManager?
         private var singleLocationCallbackId: String?
+        private var singleLocationTimeoutWorkItem: DispatchWorkItem?
         private var locationPermissionCallbackId: String?
+        private var locationPermissionRequiresAlways = false
         private var isWatchingLocation = false
         private var isRecordingLocation = false
         private var isLocationRecordingPaused = false
@@ -764,7 +766,7 @@ struct CraftWebView: UIViewRepresentable {
             // Geolocation
             case "getCurrentPosition":
                 if config.enableGeolocation {
-                    getCurrentPosition(callbackId: callbackId)
+                    getCurrentPosition(body: body, callbackId: callbackId)
                 } else {
                     rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
                 }
@@ -2056,12 +2058,44 @@ struct CraftWebView: UIViewRepresentable {
 
                 // Geolocation
                 geolocation: {
-                    getCurrentPosition: function() {
+                    getCurrentPosition: function(options) {
+                        options = options || {};
                         var self = window.craft;
                         var id = 'cb_' + (++self._callbackId);
-                        window.webkit.messageHandlers.craft.postMessage({action: 'getCurrentPosition', callbackId: id});
+                        var requestedTimeout = Number(options.timeout);
+                        var timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout >= 0
+                            ? requestedTimeout
+                            : 30000;
                         return new Promise(function(resolve, reject) {
-                            self._callbacks[id] = {resolve: resolve, reject: reject};
+                            var timeout;
+                            self._callbacks[id] = {
+                                resolve: function(value) { clearTimeout(timeout); resolve(value); },
+                                reject: function(error) { clearTimeout(timeout); reject(error); }
+                            };
+                            timeout = setTimeout(function() {
+                                if (!self._callbacks[id]) return;
+                                delete self._callbacks[id];
+                                var error = new Error('Location request timed out after ' + timeoutMs + 'ms');
+                                error.name = 'GeolocationPositionError';
+                                error.code = 3;
+                                error.bridge = true;
+                                reject(error);
+                            }, timeoutMs);
+                            try {
+                                window.webkit.messageHandlers.craft.postMessage({
+                                    action: 'getCurrentPosition',
+                                    callbackId: id,
+                                    enableHighAccuracy: options.enableHighAccuracy === true,
+                                    timeout: timeoutMs,
+                                    maximumAge: Number.isFinite(Number(options.maximumAge))
+                                        ? Math.max(0, Number(options.maximumAge))
+                                        : 0
+                                });
+                            } catch (error) {
+                                clearTimeout(timeout);
+                                delete self._callbacks[id];
+                                reject(error);
+                            }
                         });
                     },
                     watchPosition: function(callback) {
@@ -3313,11 +3347,27 @@ struct CraftWebView: UIViewRepresentable {
             }
             switch permission {
             case "location", "locationAlways":
+                guard let manager = locationManager else {
+                    rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
+                    return
+                }
+                manager.delegate = self
+                let requiresAlways = permission == "locationAlways" || config.enableBackgroundLocation
+                let status = manager.authorizationStatus
+                let alreadyGranted = status == .authorizedAlways || (!requiresAlways && status == .authorizedWhenInUse)
+                if alreadyGranted || status == .denied || status == .restricted {
+                    resolveCallback(callbackId, result: permissionStatus(alreadyGranted, denied: status == .denied, restricted: status == .restricted))
+                    return
+                }
+                if let pendingCallbackId = locationPermissionCallbackId {
+                    rejectCallback(pendingCallbackId, error: "A newer location permission request replaced this request", code: "REQUEST_REPLACED")
+                }
                 locationPermissionCallbackId = callbackId
-                if permission == "locationAlways" || config.enableBackgroundLocation {
-                    locationManager?.requestAlwaysAuthorization()
+                locationPermissionRequiresAlways = requiresAlways
+                if requiresAlways {
+                    manager.requestAlwaysAuthorization()
                 } else {
-                    locationManager?.requestWhenInUseAuthorization()
+                    manager.requestWhenInUseAuthorization()
                 }
             case "camera":
                 AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -3363,11 +3413,59 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         // MARK: - Geolocation
-        private func getCurrentPosition(callbackId: String?) {
-            locationManager?.delegate = self
+        private func getCurrentPosition(body: [String: Any], callbackId: String?) {
+            guard let manager = locationManager else {
+                rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            manager.delegate = self
+            manager.desiredAccuracy = body["enableHighAccuracy"] as? Bool == true
+                ? kCLLocationAccuracyBest
+                : kCLLocationAccuracyHundredMeters
+
+            if let pendingCallbackId = singleLocationCallbackId {
+                finishSingleLocationRequest()
+                rejectCallback(pendingCallbackId, error: "A newer location request replaced this request", code: "POSITION_UNAVAILABLE")
+            }
             singleLocationCallbackId = callbackId
+            let maximumAge = max(0, (body["maximumAge"] as? NSNumber)?.doubleValue ?? 0)
+            if maximumAge > 0,
+               let cachedLocation = manager.location,
+               Date().timeIntervalSince(cachedLocation.timestamp) * 1000 <= maximumAge {
+                finishSingleLocationRequest()
+                resolveCallback(callbackId, result: locationData(cachedLocation))
+                return
+            }
+
+            let timeoutMs = max(0, (body["timeout"] as? NSNumber)?.doubleValue ?? 30_000)
+            let timeoutWorkItem = DispatchWorkItem { [weak self] in
+                guard let self, self.singleLocationCallbackId == callbackId else { return }
+                self.finishSingleLocationRequest()
+                self.rejectCallback(callbackId, error: "Location request timed out", code: "LOCATION_TIMEOUT")
+            }
+            singleLocationTimeoutWorkItem = timeoutWorkItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(min(timeoutMs + 100, Double(Int.max)))), execute: timeoutWorkItem)
             requestLocationAuthorization()
-            locationManager?.requestLocation()
+            manager.requestLocation()
+        }
+
+        private func finishSingleLocationRequest() {
+            singleLocationTimeoutWorkItem?.cancel()
+            singleLocationTimeoutWorkItem = nil
+            singleLocationCallbackId = nil
+        }
+
+        private func locationData(_ location: CLLocation) -> [String: Any] {
+            [
+                "latitude": location.coordinate.latitude,
+                "longitude": location.coordinate.longitude,
+                "altitude": location.altitude,
+                "accuracy": location.horizontalAccuracy,
+                "altitudeAccuracy": location.verticalAccuracy,
+                "heading": location.course,
+                "speed": location.speed,
+                "timestamp": location.timestamp.timeIntervalSince1970 * 1000
+            ]
         }
 
         private func watchPosition(callbackId: String?) {
@@ -3555,20 +3653,11 @@ struct CraftWebView: UIViewRepresentable {
 
         func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
             guard let location = locations.last else { return }
-            let data: [String: Any] = [
-                "latitude": location.coordinate.latitude,
-                "longitude": location.coordinate.longitude,
-                "altitude": location.altitude,
-                "accuracy": location.horizontalAccuracy,
-                "altitudeAccuracy": location.verticalAccuracy,
-                "heading": location.course,
-                "speed": location.speed,
-                "timestamp": location.timestamp.timeIntervalSince1970 * 1000
-            ]
+            let data = locationData(location)
 
             if let callbackId = singleLocationCallbackId {
+                finishSingleLocationRequest()
                 resolveCallback(callbackId, result: data)
-                singleLocationCallbackId = nil
             }
 
             appendRecordedLocation(data)
@@ -3578,8 +3667,9 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-            rejectCallback(singleLocationCallbackId, error: error.localizedDescription)
-            singleLocationCallbackId = nil
+            let callbackId = singleLocationCallbackId
+            finishSingleLocationRequest()
+            rejectCallback(callbackId, error: error.localizedDescription, code: "POSITION_UNAVAILABLE")
             sendToWeb("craftLocationError", data: ["message": error.localizedDescription])
         }
 
@@ -3587,9 +3677,11 @@ struct CraftWebView: UIViewRepresentable {
             guard let callbackId = locationPermissionCallbackId else { return }
             let status = manager.authorizationStatus
             if status == .notDetermined { return }
-            let granted = status == .authorizedAlways || status == .authorizedWhenInUse
+            if locationPermissionRequiresAlways && status == .authorizedWhenInUse { return }
+            let granted = status == .authorizedAlways || (!locationPermissionRequiresAlways && status == .authorizedWhenInUse)
             resolveCallback(callbackId, result: permissionStatus(granted, denied: status == .denied, restricted: status == .restricted))
             locationPermissionCallbackId = nil
+            locationPermissionRequiresAlways = false
         }
 
         // MARK: - Memory Usage (for Profiling)
