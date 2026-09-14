@@ -153,6 +153,7 @@ describe('Craft Android builder', () => {
     expect(gradle).not.toContain('<dir>_*')
     const proguard = readFileSync(join(output, 'app/proguard-rules.pro'), 'utf8')
     expect(proguard).toContain('android.webkit.JavascriptInterface')
+    expect(proguard).toContain('-keep class com.craft.runtime.CraftNative { *; }')
     expect(proguard).toContain('com.craft.runtime.LocationRecordingService')
     expect(proguard).not.toContain('org.wildloop.app.LocationRecordingService')
   })

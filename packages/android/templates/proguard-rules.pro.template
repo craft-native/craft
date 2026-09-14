@@ -6,4 +6,7 @@
 }
 -keep class {{PACKAGE_NAME}}.CraftBridge { *; }
 -keep class {{PACKAGE_NAME}}.CraftHealthConnect { *; }
+# libcraft.so finds this exact class and registers its private external methods
+# by their source names during JNI_OnLoad.
+-keep class com.craft.runtime.CraftNative { *; }
 -keep class com.craft.runtime.LocationRecordingService { *; }

@@ -103,6 +103,7 @@ try {
       '--no-daemon',
       '--stacktrace',
       ':app:assembleDebug',
+      ':app:assembleRelease',
       ':app:testDebugUnitTest',
     ], {
       cwd: output,
