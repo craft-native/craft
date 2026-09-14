@@ -1643,6 +1643,7 @@ class CraftBridge(
     }
 
     fun handleImageResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (closed) return
         val promise = if (requestCode == REQUEST_CAMERA) "_craftCamera" else "_craftGallery"
         if (resultCode != Activity.RESULT_OK) {
             rejectMediaPromise(promise, "Cancelled")
@@ -1679,24 +1680,19 @@ class CraftBridge(
     }
 
     private fun resolveMediaPromise(promise: String, value: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window.${promise}Resolve && window.${promise}Resolve(${jsQuote(value)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window.${promise}Resolve && window.${promise}Resolve(${jsQuote(value)})"
+        )
     }
 
     private fun rejectMediaPromise(promise: String, message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window.${promise}Reject && window.${promise}Reject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window.${promise}Reject && window.${promise}Reject(${jsQuote(message)})"
+        )
     }
 
     private fun handleFilePickerResult(resultCode: Int, data: Intent?) {
+        if (closed) return
         val uri = data?.data
         if (resultCode != Activity.RESULT_OK || uri == null) {
             rejectFilePicker("Cancelled")
@@ -1718,9 +1714,7 @@ class CraftBridge(
                     put("data", Base64.encodeToString(bytes, Base64.NO_WRAP))
                     put("mimeType", activity.contentResolver.getType(uri) ?: "application/octet-stream")
                 }
-                activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftFileResolve && window._craftFileResolve($result)", null)
-                }
+                evaluatePromiseJavascript("window._craftFileResolve && window._craftFileResolve($result)")
             } catch (e: Exception) {
                 rejectFilePicker(e.message ?: "Selected file could not be read")
             }
@@ -1728,29 +1722,22 @@ class CraftBridge(
     }
 
     private fun rejectFilePicker(message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftFileReject && window._craftFileReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftFileReject && window._craftFileReject(${jsQuote(message)})"
+        )
     }
 
     private fun handleVideoResult(resultCode: Int, data: Intent?) {
+        if (closed) return
         val uri = data?.data
         if (resultCode != Activity.RESULT_OK) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftVideoReject && window._craftVideoReject('Cancelled')", null)
-            }
+            evaluatePromiseJavascript("window._craftVideoReject && window._craftVideoReject('Cancelled')")
             return
         }
         if (uri == null) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftVideoReject && window._craftVideoReject('Video capture returned no file')",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftVideoReject && window._craftVideoReject('Video capture returned no file')"
+            )
             return
         }
 
@@ -1761,19 +1748,13 @@ class CraftBridge(
                 val mimeType = activity.contentResolver.getType(uri) ?: "video/mp4"
                 val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 val result = "data:$mimeType;base64,$encoded"
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftVideoResolve && window._craftVideoResolve(${jsQuote(result)})",
-                        null
-                    )
-                }
+                evaluatePromiseJavascript(
+                    "window._craftVideoResolve && window._craftVideoResolve(${jsQuote(result)})"
+                )
             } catch (e: Exception) {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftVideoReject && window._craftVideoReject(${jsQuote(e.message)})",
-                        null
-                    )
-                }
+                evaluatePromiseJavascript(
+                    "window._craftVideoReject && window._craftVideoReject(${jsQuote(e.message ?: "Recorded video could not be read")})"
+                )
             }
         }.start()
     }
@@ -3721,24 +3702,30 @@ class CraftBridge(
         healthConnect.saveWorkout(workoutJson)
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean = when (requestCode) {
-        REQUEST_CAMERA, REQUEST_GALLERY -> {
-            handleImageResult(requestCode, resultCode, data)
-            true
+    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
+        if (closed) return requestCode == REQUEST_CAMERA || requestCode == REQUEST_GALLERY ||
+            requestCode == REQUEST_FILE_PICKER || requestCode == REQUEST_VIDEO ||
+            requestCode == REQUEST_PICK_CONTACT
+
+        return when (requestCode) {
+            REQUEST_CAMERA, REQUEST_GALLERY -> {
+                handleImageResult(requestCode, resultCode, data)
+                true
+            }
+            REQUEST_FILE_PICKER -> {
+                handleFilePickerResult(resultCode, data)
+                true
+            }
+            REQUEST_VIDEO -> {
+                handleVideoResult(resultCode, data)
+                true
+            }
+            REQUEST_PICK_CONTACT -> {
+                handleContactPickerResult(resultCode, data)
+                true
+            }
+            else -> healthConnect.onActivityResult(requestCode, resultCode, data)
         }
-        REQUEST_FILE_PICKER -> {
-            handleFilePickerResult(resultCode, data)
-            true
-        }
-        REQUEST_VIDEO -> {
-            handleVideoResult(resultCode, data)
-            true
-        }
-        REQUEST_PICK_CONTACT -> {
-            handleContactPickerResult(resultCode, data)
-            true
-        }
-        else -> healthConnect.onActivityResult(requestCode, resultCode, data)
     }
 
     fun close() {
@@ -3953,6 +3940,7 @@ class CraftBridge(
     }
 
     fun handleContactPickerResult(resultCode: Int, data: Intent?) {
+        if (closed) return
         if (resultCode != Activity.RESULT_OK || data?.data == null) {
             rejectContactPicker("Cancelled")
             return
@@ -4014,29 +4002,20 @@ class CraftBridge(
                 return
             }
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftPickContactResolve && window._craftPickContactResolve($contact)",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftPickContactResolve && window._craftPickContactResolve($contact)"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(e.message ?: "Selected contact could not be read")})"
+            )
         }
     }
 
     private fun rejectContactPicker(message: String) {
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(message)})",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftPickContactReject && window._craftPickContactReject(${jsQuote(message)})"
+        )
     }
 
     // ==================== App Shortcuts ====================

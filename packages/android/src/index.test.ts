@@ -345,6 +345,13 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('resolveMediaPromise(promise, "data:$mimeType;base64,$encoded")')
     expect(bridge).toContain('rejectMediaPromise(promise, "Camera returned no image")')
     expect(bridge).toContain('else -> healthConnect.onActivityResult(requestCode, resultCode, data)')
+    expect(bridge).toContain('if (closed) return requestCode == REQUEST_CAMERA')
+    for (const handler of ['handleImageResult', 'handleFilePickerResult', 'handleVideoResult', 'handleContactPickerResult']) {
+      const start = bridge.indexOf(`fun ${handler}(`)
+      const end = bridge.indexOf('\n    }', start)
+      expect(bridge.slice(start, end)).toContain('if (closed) return')
+    }
+    expect(bridge).toContain('private fun evaluatePromiseJavascript(script: String)')
   })
 
   it('settles camera calls that need permission or cannot launch', async () => {
@@ -1038,6 +1045,12 @@ describe('Craft Android builder', () => {
     expect(health).toContain('At least one Health Connect permission type is required')
     expect(health).toContain('Unsupported Health Connect permission type:')
     expect(health).toContain('activity.applicationInfo.loadLabel(activity.packageManager).toString()')
+    expect(health).toContain('private val closed = java.util.concurrent.atomic.AtomicBoolean(false)')
+    expect(health).toContain('if (closed.get()) return@runOnUiThread')
+    expect(health).toContain('if (closed.get()) return true')
+    expect(health).toContain('closed.set(true)')
+    expect(health).toContain('pendingPermissions = emptySet()')
+    expect(health).toContain('error.message ?: "Health permissions could not be requested"')
     expect(health).not.toContain('title = "WildLoop"')
     expect(manifest).toContain('android.permission.health.WRITE_EXERCISE')
     expect(manifest).toContain('com.google.android.apps.healthdata')

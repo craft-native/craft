@@ -35,7 +35,9 @@ class CraftHealthConnect(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
     private val permissionContract = PermissionController.createRequestPermissionResultContract()
+    @Volatile
     private var pendingPermissions: Set<String> = emptySet()
 
     private val client: HealthConnectClient?
@@ -62,8 +64,17 @@ class CraftHealthConnect(
                 } else {
                     pendingPermissions = requested
                     activity.runOnUiThread {
-                        val intent = permissionContract.createIntent(activity, requested)
-                        activity.startActivityForResult(intent, PERMISSION_REQUEST_CODE)
+                        if (closed.get()) return@runOnUiThread
+                        try {
+                            val intent = permissionContract.createIntent(activity, requested)
+                            activity.startActivityForResult(intent, PERMISSION_REQUEST_CODE)
+                        } catch (error: Exception) {
+                            pendingPermissions = emptySet()
+                            reject(
+                                "_craftFitnessAuthReject",
+                                error.message ?: "Health permissions could not be requested"
+                            )
+                        }
                     }
                 }
             } catch (error: Exception) {
@@ -74,6 +85,7 @@ class CraftHealthConnect(
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != PERMISSION_REQUEST_CODE) return false
+        if (closed.get()) return true
         val granted = permissionContract.parseResult(resultCode, data)
         resolve("_craftFitnessAuthResolve", if (granted.containsAll(pendingPermissions)) "true" else "false")
         pendingPermissions = emptySet()
@@ -172,6 +184,8 @@ class CraftHealthConnect(
     }
 
     fun close() {
+        closed.set(true)
+        pendingPermissions = emptySet()
         scope.cancel()
     }
 
@@ -196,7 +210,9 @@ class CraftHealthConnect(
     }
 
     private fun resolve(callback: String, json: String) {
+        if (closed.get()) return
         activity.runOnUiThread {
+            if (closed.get()) return@runOnUiThread
             webView.evaluateJavascript("window.$callback && window.$callback($json)", null)
         }
     }
