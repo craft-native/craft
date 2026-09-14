@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: benchmarks-${{ github.head_ref || github.run_id }}
+  group: benchmarks-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 defaults:

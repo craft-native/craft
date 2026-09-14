@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: binary-size-${{ github.head_ref || github.run_id }}
+  group: binary-size-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 env:

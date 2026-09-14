@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: sbom-${{ github.head_ref || github.run_id }}
+  group: sbom-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
