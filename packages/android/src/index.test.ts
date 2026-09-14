@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
@@ -108,6 +108,31 @@ describe('Craft Android builder', () => {
       output,
       config: { enablePushNotifications: true },
     })).rejects.toThrow('push notifications require a googleServicesFile')
+    const googleServicesDirectory = join(output, 'google-services-directory')
+    mkdirSync(googleServicesDirectory)
+    await expect(init({
+      name: 'Firebase Directory',
+      output: join(output, 'firebase-directory-app'),
+      config: { enablePushNotifications: true, googleServicesFile: googleServicesDirectory },
+    })).rejects.toThrow('Google services file must be a file')
+    const malformedGoogleServices = join(output, 'malformed-google-services.json')
+    writeFileSync(malformedGoogleServices, '{')
+    await expect(init({
+      name: 'Malformed Firebase Config',
+      packageName: 'dev.craft.malformed',
+      output: join(output, 'malformed-firebase-app'),
+      config: { enablePushNotifications: true, googleServicesFile: malformedGoogleServices },
+    })).rejects.toThrow('Google services file must contain valid JSON')
+    const mismatchedGoogleServices = join(output, 'mismatched-google-services.json')
+    writeFileSync(mismatchedGoogleServices, JSON.stringify({
+      client: [{ client_info: { android_client_info: { package_name: 'dev.craft.other' } } }],
+    }))
+    await expect(init({
+      name: 'Mismatched Firebase Config',
+      packageName: 'dev.craft.expected',
+      output: join(output, 'mismatched-firebase-app'),
+      config: { enablePushNotifications: true, googleServicesFile: mismatchedGoogleServices },
+    })).rejects.toThrow('has no client for Android package dev.craft.expected')
     const unsupportedIcon = join(output, 'icon.svg')
     writeFileSync(unsupportedIcon, '<svg/>')
     await expect(init({
@@ -115,6 +140,17 @@ describe('Craft Android builder', () => {
       output: join(output, 'unsupported-icon-app'),
       config: { appIconPath: unsupportedIcon },
     })).rejects.toThrow('Unsupported Android app icon format')
+    const iconDirectory = join(output, 'icon.webp')
+    mkdirSync(iconDirectory)
+    await expect(init({
+      name: 'Icon Directory',
+      output: join(output, 'icon-directory-app'),
+      config: { appIconPath: iconDirectory },
+    })).rejects.toThrow('App icon must be a file')
+    const outputFile = join(output, 'occupied-output')
+    writeFileSync(outputFile, 'not a directory')
+    await expect(init({ name: 'Occupied Output', output: outputFile }))
+      .rejects.toThrow('Android project output must be a directory')
   })
 
   it('escapes user-facing metadata without changing generator-owned identity', async () => {
@@ -339,7 +375,12 @@ describe('Craft Android builder', () => {
     const root = mkdtempSync(join(tmpdir(), 'craft-android-push-'))
     const output = join(root, 'android')
     const googleServicesFile = join(root, 'google-services.json')
-    writeFileSync(googleServicesFile, JSON.stringify({ project_info: { project_number: '1' } }))
+    writeFileSync(googleServicesFile, JSON.stringify({
+      client: [{
+        client_info: { android_client_info: { package_name: 'org.wildloop.app' } },
+      }],
+      project_info: { project_number: '1' },
+    }))
     await init({
       name: 'WildLoop',
       packageName: 'org.wildloop.app',

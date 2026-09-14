@@ -152,6 +152,34 @@ function generatedGradleProjectName(name: string): string {
   return normalized || 'craft-app'
 }
 
+function requireRegularFile(path: string, label: string): void {
+  if (!existsSync(path)) throw new Error(`${label} not found: ${path}`)
+  if (!statSync(path).isFile()) throw new Error(`${label} must be a file: ${path}`)
+}
+
+function validateGoogleServicesFile(path: string, packageName: string): void {
+  requireRegularFile(path, 'Google services file')
+
+  let document: {
+    client?: Array<{
+      client_info?: { android_client_info?: { package_name?: string } }
+    }>
+  }
+  try {
+    document = JSON.parse(readFileSync(path, 'utf8'))
+  }
+  catch (error) {
+    throw new Error(`Google services file must contain valid JSON: ${path}`, { cause: error })
+  }
+
+  const matchingClient = document.client?.some((client) => {
+    return client.client_info?.android_client_info?.package_name === packageName
+  })
+  if (!matchingClient) {
+    throw new Error(`Google services file has no client for Android package ${packageName}: ${path}`)
+  }
+}
+
 function androidWebUrl(value: string, field: string): URL {
   let url: URL
   try {
@@ -323,12 +351,8 @@ export async function init(options: InitOptions): Promise<void> {
   if (config.enablePushNotifications && !config.googleServicesFile) {
     throw new Error('Android push notifications require a googleServicesFile')
   }
-  if (config.googleServicesFile && !existsSync(config.googleServicesFile)) {
-    throw new Error(`Google services file not found: ${config.googleServicesFile}`)
-  }
-  if (config.appIconPath && !existsSync(config.appIconPath)) {
-    throw new Error(`App icon not found: ${config.appIconPath}`)
-  }
+  if (config.googleServicesFile) validateGoogleServicesFile(config.googleServicesFile, finalPackageName)
+  if (config.appIconPath) requireRegularFile(config.appIconPath, 'App icon')
   const appIconExtension = config.appIconPath ? extname(config.appIconPath).toLowerCase() : undefined
   if (config.appIconPath && !['.gif', '.jpg', '.png', '.webp'].includes(appIconExtension ?? '')) {
     throw new Error(`Unsupported Android app icon format: ${appIconExtension || '(none)'}`)
@@ -344,6 +368,10 @@ export async function init(options: InitOptions): Promise<void> {
     join(output, 'app/src/main/assets'),
     join(output, 'gradle/wrapper'),
   ]
+
+  if (existsSync(output) && !statSync(output).isDirectory()) {
+    throw new Error(`Android project output must be a directory: ${output}`)
+  }
 
   for (const dir of dirs) {
     if (!existsSync(dir)) {
