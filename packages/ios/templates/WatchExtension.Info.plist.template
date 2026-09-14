@@ -20,9 +20,15 @@
     <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
     <string>$(CURRENT_PROJECT_VERSION)</string>
-    <key>WKCompanionAppBundleIdentifier</key>
-    <string>{{BUNDLE_ID}}</string>
-    <key>WKWatchKitApp</key>
-    <true/>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionAttributes</key>
+        <dict>
+            <key>WKAppBundleIdentifier</key>
+            <string>{{BUNDLE_ID}}.watchkitapp</string>
+        </dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.watchkit</string>
+    </dict>
 </dict>
 </plist>
