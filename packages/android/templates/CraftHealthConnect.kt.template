@@ -37,6 +37,7 @@ class CraftHealthConnect(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
     private val permissionContract = PermissionController.createRequestPermissionResultContract()
+    private val authorizationPending = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile
     private var pendingPermissions: Set<String> = emptySet()
 
@@ -63,12 +64,19 @@ class CraftHealthConnect(
                     resolve("_craftFitnessAuthResolve", "true")
                 } else {
                     pendingPermissions = requested
+                    authorizationPending.set(true)
+                    if (closed.get()) {
+                        authorizationPending.set(false)
+                        pendingPermissions = emptySet()
+                        return@launch
+                    }
                     activity.runOnUiThread {
                         if (closed.get()) return@runOnUiThread
                         try {
                             val intent = permissionContract.createIntent(activity, requested)
                             activity.startActivityForResult(intent, PERMISSION_REQUEST_CODE)
                         } catch (error: Exception) {
+                            authorizationPending.set(false)
                             pendingPermissions = emptySet()
                             reject(
                                 "_craftFitnessAuthReject",
@@ -86,9 +94,16 @@ class CraftHealthConnect(
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (requestCode != PERMISSION_REQUEST_CODE) return false
         if (closed.get()) return true
-        val granted = permissionContract.parseResult(resultCode, data)
-        resolve("_craftFitnessAuthResolve", if (granted.containsAll(pendingPermissions)) "true" else "false")
+        if (!authorizationPending.compareAndSet(true, false)) return true
+        val requested = pendingPermissions
         pendingPermissions = emptySet()
+        val granted = try {
+            permissionContract.parseResult(resultCode, data)
+        } catch (error: Exception) {
+            reject("_craftFitnessAuthReject", error.message ?: "Health permission result could not be read")
+            return true
+        }
+        resolve("_craftFitnessAuthResolve", if (granted.containsAll(requested)) "true" else "false")
         return true
     }
 
@@ -185,6 +200,7 @@ class CraftHealthConnect(
 
     fun close() {
         closed.set(true)
+        authorizationPending.set(false)
         pendingPermissions = emptySet()
         scope.cancel()
     }
