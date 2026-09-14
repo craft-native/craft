@@ -137,6 +137,45 @@ object CraftNative {
         deliverer = deliver
     }
 
+    /** Release platform objects owned by native-backed actions. */
+    fun close(activity: Activity) {
+        deliverer = null
+
+        runCatching { speechRecognizer?.cancel() }
+        runCatching { speechRecognizer?.destroy() }
+        speechRecognizer = null
+
+        audioRecorder?.let { recorder ->
+            runCatching { recorder.stop() }
+            runCatching { recorder.release() }
+        }
+        audioRecorder = null
+        audioFile?.delete()
+        audioFile = null
+
+        runCatching { billingClient?.endConnection() }
+        billingClient = null
+
+        networkWatch?.let { watch ->
+            val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            runCatching { manager.unregisterNetworkCallback(watch) }
+        }
+        networkWatch = null
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(appStateObserver)
+
+        bleScanCallback?.let { callback ->
+            runCatching { bleScanner?.stopScan(callback) }
+        }
+        bleScanCallback = null
+        bleScanner = null
+
+        motionListener?.let { listener ->
+            runCatching { sensorManager?.unregisterListener(listener) }
+        }
+        motionListener = null
+        sensorManager = null
+    }
+
     /**
      * Run `script` in the page. Called from Zig, on any thread.
      *

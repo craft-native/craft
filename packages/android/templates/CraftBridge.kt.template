@@ -2528,6 +2528,8 @@ class CraftBridge(
             }
         } catch (e: CameraAccessException) {
             false
+        } catch (e: SecurityException) {
+            false
         }
     }
 
@@ -3642,7 +3644,56 @@ class CraftBridge(
     }
 
     fun close() {
+        CraftNative.close(activity)
         healthConnect.close()
+
+        runCatching { speechRecognizer?.cancel() }
+        runCatching { speechRecognizer?.destroy() }
+        speechRecognizer = null
+
+        mediaRecorder?.let { recorder ->
+            runCatching { recorder.stop() }
+            runCatching { recorder.release() }
+        }
+        mediaRecorder = null
+        audioFile?.delete()
+        audioFile = null
+
+        locationCallbacks.values.forEach { callback ->
+            runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
+        }
+        locationCallbacks.clear()
+
+        networkCallback?.let { callback ->
+            val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            runCatching { manager.unregisterNetworkCallback(callback) }
+        }
+        networkCallback = null
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(appStateObserver)
+
+        sensorListener?.let { listener ->
+            runCatching { sensorManager?.unregisterListener(listener) }
+        }
+        sensorListener = null
+        sensorManager = null
+
+        bleScanCallback?.let { callback ->
+            runCatching { bluetoothScanner?.stopScan(callback) }
+        }
+        bleScanCallback = null
+        bluetoothScanner = null
+        bluetoothAdapter = null
+
+        runCatching { billingClient?.endConnection() }
+        billingClient = null
+        runCatching { database?.close() }
+        database = null
+
+        if (isFlashlightOn) setFlashlight(false)
+        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        isKeepingAwake = false
+        pendingPermissionRequests.clear()
+        pendingEvents.clear()
     }
 
     // ==================== Screen Capture ====================

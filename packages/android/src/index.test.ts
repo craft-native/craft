@@ -525,6 +525,39 @@ describe('Craft Android builder', () => {
     expect(authPersistence).not.toContain('private var authSessionExpiry')
   })
 
+  it('releases long-lived bridge and native-holder resources on destroy', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-close-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(sourceRoot, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+    const activity = readFileSync(join(sourceRoot, 'org/wildloop/app/MainActivity.kt'), 'utf8')
+    const bridgeClose = bridge.slice(bridge.indexOf('fun close()'), bridge.indexOf('// ==================== Screen Capture'))
+    const nativeClose = holder.slice(holder.indexOf('fun close(activity: Activity)'), holder.indexOf('/**\n     * Run `script`'))
+
+    expect(activity).toContain('craftBridge.close()')
+    for (const cleanup of [
+      'CraftNative.close(activity)',
+      'speechRecognizer?.destroy()',
+      'fusedLocationClient?.removeLocationUpdates(callback)',
+      'manager.unregisterNetworkCallback(callback)',
+      'sensorManager?.unregisterListener(listener)',
+      'bluetoothScanner?.stopScan(callback)',
+      'billingClient?.endConnection()',
+      'database?.close()',
+      'setFlashlight(false)',
+    ]) expect(bridgeClose).toContain(cleanup)
+    for (const cleanup of [
+      'deliverer = null',
+      'speechRecognizer?.destroy()',
+      'billingClient?.endConnection()',
+      'manager.unregisterNetworkCallback(watch)',
+      'bleScanner?.stopScan(callback)',
+      'sensorManager?.unregisterListener(listener)',
+    ]) expect(nativeClose).toContain(cleanup)
+  })
+
   it('rejects calendar-provider failures instead of hanging the promise', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-calendar-errors-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
