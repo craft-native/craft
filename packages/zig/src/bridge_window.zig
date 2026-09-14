@@ -32,6 +32,18 @@ fn parseWindowTitle(allocator: std.mem.Allocator, data: []const u8) BridgeError!
     return title;
 }
 
+/// Parse the SDK's `value` spelling and retain the older `opacity` spelling
+/// for raw bridge callers. JSON numbers may use signs and exponents; scanning
+/// only digits and `.` turns `1e-7` into `1`.
+fn parseOpacity(data: ?[]const u8) BridgeError!f64 {
+    const json_data = data orelse return 1.0;
+    const value = json_utils.getFloat(f64, json_data, "value") orelse
+        json_utils.getFloat(f64, json_data, "opacity") orelse
+        return BridgeError.InvalidParameter;
+    if (!std.math.isFinite(value)) return BridgeError.InvalidParameter;
+    return @max(0.0, @min(1.0, value));
+}
+
 /// Bridge handler for window control messages from JavaScript
 pub const WindowBridge = struct {
     allocator: std.mem.Allocator,
@@ -1051,27 +1063,9 @@ pub const WindowBridge = struct {
 
     fn setOpacity(self: *Self, data: ?[]const u8) !void {
         const handle = try self.requireWindowHandle(data);
-
-        var opacity: f64 = 1.0;
-        if (data) |json_data| {
-            // Parse {"opacity": 0.8}
-            // The page sends `{"value":0.4}`; this scanned for `"opacity":`,
-            // never matched, and left the default 1.0 — so every opacity was
-            // fully opaque and each value was indistinguishable from the next.
-            const key = if (std.mem.indexOf(u8, json_data, "\"value\":") != null) "\"value\":" else "\"opacity\":";
-            if (std.mem.indexOf(u8, json_data, key)) |idx| {
-                var start = idx + key.len;
-                while (start < json_data.len and (json_data[start] == ' ' or json_data[start] == '\t')) : (start += 1) {}
-                var end = start;
-                while (end < json_data.len and ((json_data[end] >= '0' and json_data[end] <= '9') or json_data[end] == '.')) : (end += 1) {}
-                if (end > start) {
-                    opacity = std.fmt.parseFloat(f64, json_data[start..end]) catch 1.0;
-                }
-            }
-        }
-
-        // Clamp to valid range
-        opacity = @max(0.0, @min(1.0, opacity));
+        // The SDK sends "value"; `parseOpacity` also accepts "opacity" from
+        // older raw bridge callers.
+        const opacity = try parseOpacity(data);
         log.debug("setOpacity: {d:.2}", .{opacity});
 
         if (builtin.os.tag == .macos) {
@@ -1643,6 +1637,23 @@ test "window titles reject malformed escapes and embedded NUL" {
         BridgeError.InvalidParameter,
         parseWindowTitle(testing.allocator, "{\"title\":\"shown\\u0000hidden\"}"),
     );
+}
+
+test "window opacity accepts the complete JSON number grammar" {
+    const testing = std.testing;
+
+    try testing.expectApproxEqAbs(@as(f64, 0.0000001), try parseOpacity("{\"value\":1e-7}"), 0.0000000001);
+    try testing.expectApproxEqAbs(@as(f64, 0.25), try parseOpacity("{\"opacity\":2.5E-1}"), 0.0000000001);
+    try testing.expectEqual(@as(f64, 0), try parseOpacity("{\"value\":-0.5}"));
+    try testing.expectEqual(@as(f64, 1), try parseOpacity("{\"value\":3}"));
+}
+
+test "window opacity rejects a missing or malformed numeric value" {
+    const testing = std.testing;
+
+    try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{}"));
+    try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{\"value\":null}"));
+    try testing.expectError(BridgeError.InvalidParameter, parseOpacity("{\"value\":\"0.5\"}"));
 }
 
 test "the current-window alias cannot name a child window" {
