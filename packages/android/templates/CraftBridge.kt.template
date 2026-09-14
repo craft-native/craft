@@ -941,6 +941,47 @@ class CraftBridge(
                     }
                 },
 
+                // Android home-screen widgets
+                widgets: {
+                    updateWidget: function(widgetId, data) {
+                        var payload = data === undefined ? (widgetId || {}) : Object.assign({}, data || {}, {widgetId: widgetId});
+                        return window.__craftPromise('widgets', '_craftWidgetResolve', '_craftWidgetReject', function() {
+                            CraftAndroid.updateWidget(JSON.stringify(payload));
+                        });
+                    },
+                    updateAllWidgets: function(widgetClass, data) {
+                        var payload = Object.assign({}, data || {}, {widgetClass: widgetClass});
+                        return window.__craftPromise('widgets', '_craftWidgetResolve', '_craftWidgetReject', function() {
+                            CraftAndroid.updateWidget(JSON.stringify(payload));
+                        });
+                    },
+                    reload: function() {
+                        return window.__craftPromise('widgets', '_craftWidgetResolve', '_craftWidgetReject', function() {
+                            CraftAndroid.reloadWidgets();
+                        });
+                    },
+                    getActiveWidgets: function() { return Promise.resolve([]); },
+                    requestPin: function() { return Promise.resolve(false); },
+                    isSupported: function() { return Promise.resolve(false); }
+                },
+
+                // Wear OS companion connectivity
+                watch: {
+                    send: function(message) {
+                        return window.__craftPromise('watch', '_craftWatchResolve', '_craftWatchReject', function() {
+                            CraftAndroid.sendToWatch(JSON.stringify(message));
+                        });
+                    },
+                    updateContext: function(context) {
+                        return window.__craftPromise('watch', '_craftWatchResolve', '_craftWatchReject', function() {
+                            CraftAndroid.updateWatchContext(JSON.stringify(context));
+                        });
+                    },
+                    isReachable: function() {
+                        return Promise.resolve(CraftAndroid.isWatchReachable());
+                    }
+                },
+
                 // Deep Links
                 deepLinks: {
                     getInitialURL: function() {
@@ -4525,19 +4566,13 @@ class CraftBridge(
             intent.setPackage(activity.packageName)
             activity.sendBroadcast(intent)
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftWidgetResolve && window._craftWidgetResolve({updated: true})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftWidgetResolve && window._craftWidgetResolve({updated: true})"
+            )
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(e.message ?: "Widget update failed")})"
+            )
         }
     }
 
@@ -4550,19 +4585,13 @@ class CraftBridge(
             intent.setPackage(activity.packageName)
             activity.sendBroadcast(intent)
 
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftWidgetResolve && window._craftWidgetResolve({reloaded: true})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftWidgetResolve && window._craftWidgetResolve({reloaded: true})"
+            )
         } catch (error: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(error.message ?: "Widget reload failed")})",
-                    null
-                )
-            }
+            evaluatePromiseJavascript(
+                "window._craftWidgetReject && window._craftWidgetReject(${jsQuote(error.message ?: "Widget reload failed")})"
+            )
         }
     }
 
@@ -4591,23 +4620,17 @@ class CraftBridge(
     fun sendToWatch(messageJson: String) {
         // Note: Full Wearable API requires separate Wear OS app
         // This provides placeholder API for future integration
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftWatchReject && window._craftWatchReject('Wear OS integration requires companion app setup')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftWatchReject && window._craftWatchReject('Wear OS integration requires companion app setup')"
+        )
     }
 
     @JavascriptInterface
     fun updateWatchContext(contextJson: String) {
         // Note: Full Wearable API requires Data Layer API setup
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftWatchReject && window._craftWatchReject('Wear OS integration requires companion app setup')",
-                null
-            )
-        }
+        evaluatePromiseJavascript(
+            "window._craftWatchReject && window._craftWatchReject('Wear OS integration requires companion app setup')"
+        )
     }
 
     @JavascriptInterface

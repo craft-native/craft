@@ -540,6 +540,8 @@ describe('Craft Android builder', () => {
       ['auth persistence', '_craftAuthPersistResolve', 4],
       ['AR', '_craftARResolve', 5],
       ['ML', '_craftMLResolve', 3],
+      ['widgets', '_craftWidgetResolve', 3],
+      ['watch', '_craftWatchResolve', 2],
       ['initial URL', '_craftDeepLinkResolve', 1],
       ['OTA check', '_craftOTACheckResolve', 1],
       ['OTA download', '_craftOTADownloadResolve', 1],
@@ -548,6 +550,13 @@ describe('Craft Android builder', () => {
     ] as const) {
       const call = `window.__craftPromise('${channel}', '${resolver}',`
       expect(bridge.match(new RegExp(call.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(uses)
+    }
+    const nativeCallbackNames = new Set(
+      [...bridge.matchAll(/window\.(_craft[A-Za-z]+(?:Resolve|Reject))\b/g)]
+        .map(match => match[1]),
+    )
+    for (const callbackName of nativeCallbackNames) {
+      expect(bridge).toContain(`'${callbackName}'`)
     }
     expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
     expect(bridge).toContain('window.__craftRejectPermissionRequests = function(message)')
