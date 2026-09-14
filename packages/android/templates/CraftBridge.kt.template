@@ -213,6 +213,7 @@ class CraftBridge(
     private var biometricPrompt: BiometricPrompt? = null
     private var isListening = false
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(activity)
+    @Volatile
     private var bridgeReady = false
     private val pendingEvents = mutableListOf<Pair<String, Map<String, Any>>>()
 
@@ -1456,7 +1457,9 @@ class CraftBridge(
         """.trimIndent()
 
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             webView.evaluateJavascript(script) {
+                if (closed) return@evaluateJavascript
                 bridgeReady = true
                 val events = pendingEvents.toList()
                 pendingEvents.clear()
@@ -2170,12 +2173,9 @@ class CraftBridge(
                     put("heading", location.bearing)
                     put("timestamp", location.time)
                 }
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftLocationWatch_$currentWatchId && window._craftLocationWatch_$currentWatchId($json)",
-                        null
-                    )
-                }
+                evaluateJavascriptUnlessClosed(
+                    "window._craftLocationWatch_$currentWatchId && window._craftLocationWatch_$currentWatchId($json)"
+                )
             }
         }
 
@@ -2408,12 +2408,9 @@ class CraftBridge(
 
     private fun sendNetworkChange() {
         val status = getNetworkStatus()
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftNetworkChangeCallback && window._craftNetworkChangeCallback($status)",
-                null
-            )
-        }
+        evaluateJavascriptUnlessClosed(
+            "window._craftNetworkChangeCallback && window._craftNetworkChangeCallback($status)"
+        )
     }
 
     // ==================== App Review ====================
@@ -2583,12 +2580,9 @@ class CraftBridge(
 
         if (newState != currentAppState) {
             currentAppState = newState
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftAppStateCallback && window._craftAppStateCallback(${jsQuote(currentAppState)})",
-                    null
-                )
-            }
+            evaluateJavascriptUnlessClosed(
+                "window._craftAppStateCallback && window._craftAppStateCallback(${jsQuote(currentAppState)})"
+            )
             sendEvent("craftAppStateChange", mapOf("state" to currentAppState))
         }
     }
@@ -4423,12 +4417,9 @@ class CraftBridge(
             val data = it.dataString
 
             if (action != null) {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('craftVoiceAction', {detail: {action: ${jsQuote(action)}, data: ${jsQuote(data)}}}));",
-                        null
-                    )
-                }
+                evaluateJavascriptUnlessClosed(
+                    "window.dispatchEvent(new CustomEvent('craftVoiceAction', {detail: {action: ${jsQuote(action)}, data: ${jsQuote(data)}}}));"
+                )
             }
         }
     }
@@ -4521,12 +4512,9 @@ class CraftBridge(
             put("queryParams", queryParams)
         }
 
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent('craftDeepLink', {detail: $json}));",
-                null
-            )
-        }
+        evaluateJavascriptUnlessClosed(
+            "window.dispatchEvent(new CustomEvent('craftDeepLink', {detail: $json}));"
+        )
     }
 
     // ==================== Performance Profiling ====================
@@ -4561,14 +4549,16 @@ class CraftBridge(
      */
     private fun installNativeDeliverer() {
         CraftNative.setDeliverer { script ->
-            activity.runOnUiThread {
-                if (closed) return@runOnUiThread
-                webView.evaluateJavascript(script, null)
-            }
+            evaluateJavascriptUnlessClosed(script)
         }
     }
 
     private fun evaluatePromiseJavascript(script: String) {
+        evaluateJavascriptUnlessClosed(script)
+    }
+
+    private fun evaluateJavascriptUnlessClosed(script: String) {
+        if (closed) return
         activity.runOnUiThread {
             if (closed) return@runOnUiThread
             webView.evaluateJavascript(script, null)
@@ -4577,12 +4567,9 @@ class CraftBridge(
 
     private fun sendEvent(event: String, data: Map<String, Any>) {
         val json = JSONObject(data).toString()
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent(${jsQuote(event)}, {detail: $json}));",
-                null
-            )
-        }
+        evaluateJavascriptUnlessClosed(
+            "window.dispatchEvent(new CustomEvent(${jsQuote(event)}, {detail: $json}));"
+        )
     }
 
     companion object {
