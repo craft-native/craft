@@ -1017,6 +1017,8 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('CraftNative.restorePurchases(activity)')
     expect(bridge).toContain('private fun rejectProducts(message: String)')
     expect(bridge).toContain('private fun rejectRestore(message: String)')
+    expect(bridge).toContain('put("title", details.name)')
+    expect(holder).toContain('put("title", details.name)')
     expect(bridge).toContain('private var closed = false')
     expect(bridge).toContain('closed = true')
     expect(holder).toContain('private external fun nativeRestorePurchases(activity: Activity): Boolean')

@@ -2988,6 +2988,7 @@ class CraftBridge(
                                     productDetailsList.forEach { details ->
                                         products.put(JSONObject().apply {
                                             put("id", details.productId)
+                                            put("title", details.name)
                                             put("displayName", details.name)
                                             put("description", details.description)
                                             put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
