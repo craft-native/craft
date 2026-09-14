@@ -5,7 +5,7 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, extname, join, resolve } from 'node:path'
 import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
@@ -314,7 +314,10 @@ export async function init(options: InitOptions): Promise<void> {
     packageName: finalPackageName,
   }
   if (config.enableBackgroundLocation) config.enableGeolocation = true
-  if (config.enableHealthConnect) config.compileSdk = Math.max(config.compileSdk ?? 36, 36)
+  if (config.enableHealthConnect) {
+    config.minSdk = Math.max(config.minSdk ?? 26, 26)
+    config.compileSdk = Math.max(config.compileSdk ?? 36, 36)
+  }
   normalizeAndroidNetworkConfig(config)
   validateAndroidConfig(config)
   if (config.enablePushNotifications && !config.googleServicesFile) {
@@ -325,6 +328,10 @@ export async function init(options: InitOptions): Promise<void> {
   }
   if (config.appIconPath && !existsSync(config.appIconPath)) {
     throw new Error(`App icon not found: ${config.appIconPath}`)
+  }
+  const appIconExtension = config.appIconPath ? extname(config.appIconPath).toLowerCase() : undefined
+  if (config.appIconPath && !['.gif', '.jpg', '.png', '.webp'].includes(appIconExtension ?? '')) {
+    throw new Error(`Unsupported Android app icon format: ${appIconExtension || '(none)'}`)
   }
 
   // Create directory structure
@@ -540,7 +547,10 @@ zipStorePath=wrapper/dists
 </vector>
 `
   if (config.appIconPath) {
-    cpSync(config.appIconPath, join(output, 'app/src/main/res/drawable/craft_app_icon.png'))
+    cpSync(
+      config.appIconPath,
+      join(output, `app/src/main/res/drawable/craft_app_icon${appIconExtension}`),
+    )
   }
   else {
     writeFileSync(join(output, 'app/src/main/res/drawable/craft_app_icon.xml'), appIconXml)

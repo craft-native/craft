@@ -108,6 +108,13 @@ describe('Craft Android builder', () => {
       output,
       config: { enablePushNotifications: true },
     })).rejects.toThrow('push notifications require a googleServicesFile')
+    const unsupportedIcon = join(output, 'icon.svg')
+    writeFileSync(unsupportedIcon, '<svg/>')
+    await expect(init({
+      name: 'Unsupported Icon',
+      output: join(output, 'unsupported-icon-app'),
+      config: { appIconPath: unsupportedIcon },
+    })).rejects.toThrow('Unsupported Android app icon format')
   })
 
   it('escapes user-facing metadata without changing generator-owned identity', async () => {
@@ -135,6 +142,21 @@ describe('Craft Android builder', () => {
     const generated = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
     expect(generated.appName).toBe('Rock & "Roll" $Build')
     expect(generated.packageName).toBe('dev.craft.metadata')
+  })
+
+  it('preserves a supported custom launcher icon format', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'craft-android-icon-'))
+    const icon = join(root, 'launcher.webp')
+    const output = join(root, 'android')
+    writeFileSync(icon, 'fixture webp bytes')
+    await init({ name: 'Icon App', output, config: { appIconPath: icon } })
+
+    expect(existsSync(join(output, 'app/src/main/res/drawable/craft_app_icon.webp'))).toBe(true)
+    expect(existsSync(join(output, 'app/src/main/res/drawable/craft_app_icon.png'))).toBe(false)
+    expect(JSON.parse(readFileSync(
+      join(output, 'app/src/main/assets/craft.config.json'),
+      'utf8',
+    ))).not.toHaveProperty('appIconPath')
   })
 
   it('emits the native holder to a fixed package, whatever the app is called', async () => {
@@ -608,7 +630,7 @@ describe('Craft Android builder', () => {
       name: 'WildLoop',
       packageName: 'org.wildloop.app',
       output,
-      config: { compileSdk: 34, enableHealthConnect: true },
+      config: { compileSdk: 34, enableHealthConnect: true, minSdk: 24 },
     })
 
     const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
@@ -624,6 +646,9 @@ describe('Craft Android builder', () => {
     expect(manifest).toContain('android.intent.category.HEALTH_PERMISSIONS')
     expect(gradle).toContain('androidx.health.connect:connect-client')
     expect(gradle).toContain('compileSdk = 36')
-    expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).compileSdk).toBe(36)
+    expect(gradle).toContain('minSdk = 26')
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(config.compileSdk).toBe(36)
+    expect(config.minSdk).toBe(26)
   })
 })
