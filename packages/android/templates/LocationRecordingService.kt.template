@@ -119,27 +119,49 @@ class LocationRecordingService : Service() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            else -> startUpdates()
+            else -> if (!startUpdates()) {
+                stopSelf()
+                return START_NOT_STICKY
+            }
         }
-        return if (CraftLocationRecordingStore.isActive(this)) START_STICKY else START_NOT_STICKY
+        return START_STICKY
     }
 
-    private fun startUpdates() {
-        if (callback != null || !CraftLocationRecordingStore.isActive(this)) return
+    private fun startUpdates(): Boolean {
+        if (callback != null) return true
+        if (!CraftLocationRecordingStore.isActive(this)) return false
         val hasForegroundLocation =
             ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
                 ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (!hasForegroundLocation) return
+        if (!hasForegroundLocation) {
+            CraftLocationRecordingStore.stop(this)
+            return false
+        }
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000)
             .setMinUpdateIntervalMillis(2_000)
             .setMaxUpdateDelayMillis(10_000)
             .build()
-        callback = object : LocationCallback() {
+        val nextCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 for (location in result.locations) CraftLocationRecordingStore.append(this@LocationRecordingService, location)
             }
         }
-        client.requestLocationUpdates(request, callback!!, Looper.getMainLooper())
+        callback = nextCallback
+        return try {
+            client.requestLocationUpdates(request, nextCallback, Looper.getMainLooper())
+                .addOnFailureListener {
+                    if (callback === nextCallback) {
+                        CraftLocationRecordingStore.stop(this)
+                        stopUpdates()
+                        stopSelf()
+                    }
+                }
+            true
+        } catch (error: Exception) {
+            callback = null
+            CraftLocationRecordingStore.stop(this)
+            false
+        }
     }
 
     private fun stopUpdates() {
