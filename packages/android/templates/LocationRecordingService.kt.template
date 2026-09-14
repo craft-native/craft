@@ -126,7 +126,10 @@ class LocationRecordingService : Service() {
 
     private fun startUpdates() {
         if (callback != null || !CraftLocationRecordingStore.isActive(this)) return
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        val hasForegroundLocation =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasForegroundLocation) return
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5_000)
             .setMinUpdateIntervalMillis(2_000)
             .setMaxUpdateDelayMillis(10_000)

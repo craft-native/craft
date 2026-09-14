@@ -2374,7 +2374,7 @@ fn nativeStartLocationRecording(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const granted = permissions.isGranted(j, activity, permissions.access_fine_location) catch
+    const granted = permissions.hasForegroundLocation(j, activity) catch
         return null;
 
     if (!granted) {
@@ -2894,15 +2894,15 @@ fn nativeGetCurrentPosition(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const granted = permissions.isGranted(j, activity, permissions.access_fine_location) catch |err| {
+    const granted = permissions.hasForegroundLocation(j, activity) catch |err| {
         std.log.warn("craft: getCurrentPosition fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
 
     if (!granted) {
         // The shim asks for both the fine and the coarse permission, so the
-        // holder does too — a request for one where the shim asked for two
-        // would leave a page permanently unable to get a coarse fix.
+        // holder does too. Either grant is usable; this path means neither is
+        // currently available.
         callHolderVoid(j, "requestLocationPermissions", activity) catch |err| {
             std.log.warn("craft: getCurrentPosition fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;

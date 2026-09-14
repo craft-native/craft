@@ -90,7 +90,9 @@ unsupported permission resolves `undetermined` rather than fabricating access.
 Android can grant either precise (`ACCESS_FINE_LOCATION`) or approximate
 (`ACCESS_COARSE_LOCATION`) foreground access. Craft reports `location` as
 `granted` when either permission is granted. A mixed Android request result—fine
-denied and coarse granted—is therefore also `granted`.
+denied and coarse granted—is therefore also `granted`. Foreground fixes,
+watches, and location recording accept either grant; Android limits the
+resulting accuracy when the user selects approximate access.
 
 `locationAlways` additionally requires background location on Android versions
 that expose it. Permission status does not imply that GPS, Google Play Services,

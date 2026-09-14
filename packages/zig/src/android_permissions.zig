@@ -41,6 +41,7 @@ pub const write_calendar = "android.permission.WRITE_CALENDAR";
 pub const read_contacts = "android.permission.READ_CONTACTS";
 pub const write_contacts = "android.permission.WRITE_CONTACTS";
 pub const access_fine_location = "android.permission.ACCESS_FINE_LOCATION";
+pub const access_coarse_location = "android.permission.ACCESS_COARSE_LOCATION";
 pub const camera = "android.permission.CAMERA";
 pub const record_audio = "android.permission.RECORD_AUDIO";
 
@@ -61,6 +62,13 @@ pub fn isGranted(j: Jni, activity: jobject, permission: [*:0]const u8) !bool {
         &.{.{ .l = name }},
     );
     return result == granted;
+}
+
+/// Android foreground location is usable when the user grants either the
+/// precise or approximate choice from the combined system prompt.
+pub fn hasForegroundLocation(j: Jni, activity: jobject) !bool {
+    if (try isGranted(j, activity, access_fine_location)) return true;
+    return isGranted(j, activity, access_coarse_location);
 }
 
 /// `activity.requestPermissions(new String[]{permission}, code)`.
@@ -101,6 +109,7 @@ test "the permission names match Manifest.permission exactly" {
     try testing.expectEqualStrings("android.permission.WRITE_CONTACTS", write_contacts);
     try testing.expectEqualStrings("android.permission.RECORD_AUDIO", record_audio);
     try testing.expectEqualStrings("android.permission.ACCESS_FINE_LOCATION", access_fine_location);
+    try testing.expectEqualStrings("android.permission.ACCESS_COARSE_LOCATION", access_coarse_location);
     try testing.expectEqualStrings("android.permission.CAMERA", camera);
     try testing.expectEqualStrings("android.permission.BLUETOOTH_SCAN", bluetooth_scan);
 }

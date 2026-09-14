@@ -23,6 +23,12 @@ class CraftPermissionPolicyTest {
             "denied",
             CraftPermissionPolicy.status("location", 35, emptySet<String>()::contains)
         )
+        assertEquals(true, CraftPermissionPolicy.foregroundLocationIsGranted(precise::contains))
+        assertEquals(true, CraftPermissionPolicy.foregroundLocationIsGranted(approximate::contains))
+        assertEquals(
+            false,
+            CraftPermissionPolicy.foregroundLocationIsGranted(emptySet<String>()::contains)
+        )
     }
 
     @Test

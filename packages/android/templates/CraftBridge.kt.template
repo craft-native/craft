@@ -189,6 +189,10 @@ internal object CraftPermissionPolicy {
     ): Boolean = permissionGroups(name, sdkInt)
         ?.getOrNull(groupIndex)
         ?.any(isGranted) == true
+
+    fun foregroundLocationIsGranted(isGranted: (String) -> Boolean): Boolean =
+        isGranted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)
 }
 
 private data class PendingPermissionRequest(
@@ -1991,6 +1995,9 @@ class CraftBridge(
     private fun isPermissionGranted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(activity, permission) == PackageManager.PERMISSION_GRANTED
 
+    private fun hasForegroundLocationPermission(): Boolean =
+        CraftPermissionPolicy.foregroundLocationIsGranted(::isPermissionGranted)
+
     private fun claimPermissionRequestCode(): Int? {
         var requestCode = nextPermissionRequestCode
         while (pendingPermissionRequests.containsKey(requestCode)) {
@@ -2091,8 +2098,7 @@ class CraftBridge(
         // a one-shot lookup cannot overwrite or clear a continuous watch.
         if (CraftNative.getCurrentPosition(activity)) return
 
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
+        if (!hasForegroundLocationPermission()) {
             ActivityCompat.requestPermissions(
                 activity,
                 arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
@@ -2150,7 +2156,7 @@ class CraftBridge(
     }
 
     private fun requestFreshLocation() {
-        if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasForegroundLocationPermission()) {
             return
         }
 
@@ -2190,8 +2196,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun watchPosition(optionsJson: String): Int {
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED) {
+        if (!hasForegroundLocationPermission()) {
             return -1
         }
         if (GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity) != ConnectionResult.SUCCESS) {
@@ -2226,7 +2231,7 @@ class CraftBridge(
             }
         }
 
-        if (ActivityCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        if (hasForegroundLocationPermission()) {
             fusedLocationClient?.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
             locationCallbacks[currentWatchId] = callback
         }
@@ -2247,7 +2252,7 @@ class CraftBridge(
         // is a state object saying so, and returning it here is the answer.
         CraftNative.startLocationRecording(activity)?.let { return it }
 
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasForegroundLocationPermission()) {
             return JSONObject().apply {
                 put("id", JSONObject.NULL)
                 put("active", false)

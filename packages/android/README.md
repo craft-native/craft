@@ -537,7 +537,8 @@ The generator adds manifest permissions from enabled capabilities:
 Use `permissions.check('location')` and `permissions.request('location')` from
 `craft-native/mobile` for runtime authorization. Android precise and
 approximate access both count as a granted foreground location permission;
-obtaining a GPS fix is a separate operation. See the
+foreground fixes, watches, and recording accept either grant, with accuracy
+controlled by Android. Obtaining a fix is still a separate operation. See the
 [Permissions API](../../docs/api/mobile/permissions.md) for status semantics.
 
 ## Template Validation
