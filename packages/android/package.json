@@ -19,7 +19,9 @@
     }
   },
   "scripts": {
-    "build": "bun build.ts"
+    "build": "bun build.ts",
+    "test": "bun test",
+    "test:templates": "bun scripts/compile-templates.ts"
   },
   "files": [
     "dist",

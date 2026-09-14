@@ -137,6 +137,50 @@ jobs:
         working-directory: packages/ios
         run: bun run build
 
+  android-builder:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Test Android builder
+        working-directory: packages/android
+        run: bun test
+
+      - name: Build Android builder
+        working-directory: packages/android
+        run: bun run build
+
+      # Compile both the default output and the capability-heavy output. The
+      # latter includes Firebase, Health Connect, and background location, so
+      # conditional imports and source templates cannot hide from the compiler.
+      - name: Compile generated Kotlin projects
+        working-directory: packages/android
+        run: bun run test:templates
+
   create-craft:
     runs-on: ubuntu-latest
 
@@ -247,7 +291,7 @@ jobs:
         run: bun run verify
 
   publish-commit:
-    needs: [zig-core, typescript-sdk, ios-builder, create-craft, ts-maps, lint, integration]
+    needs: [zig-core, typescript-sdk, ios-builder, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:
