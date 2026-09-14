@@ -420,6 +420,12 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain("message: 'Location request timed out; Google Play Services or a location provider may be unavailable'")
     expect(bridge).toContain('}, 15000);')
     expect(native).toContain('failLocation("Google Play Services is unavailable")')
+    expect(bridge).toContain('private val oneShotLocationCallbacks')
+    expect(bridge).toContain('oneShotLocationCallbacks.remove(callback)')
+    expect(bridge).toContain('rejectLocation(error.message ?: "Location request failed")')
+    expect(native).toContain('private val currentLocationCallbacks')
+    expect(native).toContain('currentLocationCallbacks.remove(callback)')
+    expect(native).toContain('failLocation(error.message)')
   })
 
   it('rejects background-task methods instead of fabricating success', async () => {

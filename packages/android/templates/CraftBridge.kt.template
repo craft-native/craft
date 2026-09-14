@@ -216,6 +216,7 @@ class CraftBridge(
     // Location tracking
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
+    private val oneShotLocationCallbacks = mutableSetOf<LocationCallback>()
     private var watchId = 0
     private val pendingPermissionRequests = mutableMapOf<Int, PendingPermissionRequest>()
     private var nextPermissionRequestCode = PERMISSION_REQUEST_START
@@ -2157,6 +2158,7 @@ class CraftBridge(
 
     private fun requestFreshLocation() {
         if (!hasForegroundLocationPermission()) {
+            rejectLocation("Location permission was revoked")
             return
         }
 
@@ -2170,6 +2172,7 @@ class CraftBridge(
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 fusedLocationClient?.removeLocationUpdates(this)
+                oneShotLocationCallbacks.remove(this)
                 val location = result.lastLocation
                 if (location != null) {
                     val json = JSONObject().apply {
@@ -2188,10 +2191,27 @@ class CraftBridge(
                         )
                     }
                 }
+                else {
+                    rejectLocation("Location provider returned no position")
+                }
             }
         }
 
+        oneShotLocationCallbacks.add(callback)
         fusedLocationClient?.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
+            ?.addOnFailureListener { error ->
+                oneShotLocationCallbacks.remove(callback)
+                rejectLocation(error.message ?: "Location request failed")
+            }
+    }
+
+    private fun rejectLocation(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftLocationReject && window._craftLocationReject({code: 2, message: ${jsQuote(message)}})",
+                null
+            )
+        }
     }
 
     @JavascriptInterface
@@ -3663,6 +3683,10 @@ class CraftBridge(
             runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
         }
         locationCallbacks.clear()
+        oneShotLocationCallbacks.forEach { callback ->
+            runCatching { fusedLocationClient?.removeLocationUpdates(callback) }
+        }
+        oneShotLocationCallbacks.clear()
 
         networkCallback?.let { callback ->
             val manager = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
