@@ -20,6 +20,18 @@ fn formatOpenResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     return json.toOwnedSlice(allocator);
 }
 
+/// Read a title as JSON text before it crosses AppKit's NUL-terminated string
+/// boundary. The caller owns the returned buffer.
+fn parseWindowTitle(allocator: std.mem.Allocator, data: []const u8) BridgeError![]u8 {
+    const decoded = json_utils.getStringDecoded(allocator, data, "title") catch
+        return BridgeError.InvalidJSON;
+    const title = decoded orelse return BridgeError.InvalidJSON;
+    errdefer allocator.free(title);
+    if (std.mem.indexOfScalar(u8, title, 0) != null)
+        return BridgeError.InvalidParameter;
+    return title;
+}
+
 /// Bridge handler for window control messages from JavaScript
 pub const WindowBridge = struct {
     allocator: std.mem.Allocator,
@@ -659,12 +671,10 @@ pub const WindowBridge = struct {
     fn setTitle(self: *Self, data: ?[]const u8) !void {
         const handle = try self.requireWindowHandle(data);
         const json_data = data orelse return BridgeError.MissingData;
-
-        // Use the shared getString helper (imported at module scope), which
-        // correctly respects backslash escapes — the old inline parser used
-        // indexOfPos for the closing quote and would truncate at the first
-        // `\"` inside the title.
-        const title = json_utils.getString(json_data, "title") orelse return BridgeError.InvalidJSON;
+        // The "title" field must be decoded, not copied from its raw JSON
+        // spelling: `\"`, `\\` and `\uXXXX` are data, not display text.
+        const title = try parseWindowTitle(self.allocator, json_data);
+        defer self.allocator.free(title);
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
@@ -1609,6 +1619,30 @@ test "open result preserves an app-chosen name as JSON data" {
     const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, result, .{});
     defer parsed.deinit();
     try testing.expectEqualStrings(name, parsed.value.object.get("name").?.string);
+}
+
+test "window titles cross the native boundary as decoded JSON text" {
+    const testing = std.testing;
+    const title = try parseWindowTitle(
+        testing.allocator,
+        "{\"title\":\"Settings \\\"A\\\\B\\\" \\u2603\\nnext\"}",
+    );
+    defer testing.allocator.free(title);
+
+    try testing.expectEqualStrings("Settings \"A\\B\" ☃\nnext", title);
+}
+
+test "window titles reject malformed escapes and embedded NUL" {
+    const testing = std.testing;
+
+    try testing.expectError(
+        BridgeError.InvalidJSON,
+        parseWindowTitle(testing.allocator, "{\"title\":\"bad\\q\"}"),
+    );
+    try testing.expectError(
+        BridgeError.InvalidParameter,
+        parseWindowTitle(testing.allocator, "{\"title\":\"shown\\u0000hidden\"}"),
+    );
 }
 
 test "the current-window alias cannot name a child window" {
