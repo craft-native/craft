@@ -2137,39 +2137,36 @@ class CraftBridge(
             return
         }
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(activity)
-        fusedLocationClient?.lastLocation?.addOnSuccessListener { location: Location? ->
-            if (location != null) {
-                val json = JSONObject().apply {
-                    put("latitude", location.latitude)
-                    put("longitude", location.longitude)
-                    put("accuracy", location.accuracy)
-                    put("altitude", location.altitude)
-                    put("speed", location.speed)
-                    put("heading", location.bearing)
-                    put("timestamp", location.time)
+        try {
+            val client = LocationServices.getFusedLocationProviderClient(activity)
+            fusedLocationClient = client
+            client.lastLocation.addOnSuccessListener { location: Location? ->
+                if (location != null) {
+                    val json = JSONObject().apply {
+                        put("latitude", location.latitude)
+                        put("longitude", location.longitude)
+                        put("accuracy", location.accuracy)
+                        put("altitude", location.altitude)
+                        put("speed", location.speed)
+                        put("heading", location.bearing)
+                        put("timestamp", location.time)
+                    }
+                    activity.runOnUiThread {
+                        webView.evaluateJavascript(
+                            "window._craftLocationResolve && window._craftLocationResolve($json)",
+                            null
+                        )
+                    }
+                } else {
+                    requestFreshLocation(client)
                 }
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftLocationResolve && window._craftLocationResolve($json)",
-                        null
-                    )
-                }
-            } else {
-                // Request fresh location if last location is null
-                requestFreshLocation()
-            }
-        }?.addOnFailureListener { e ->
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftLocationReject && window._craftLocationReject({code: 2, message: ${jsQuote(e.message)}})",
-                    null
-                )
-            }
+            }.addOnFailureListener { error -> rejectLocation(error.message ?: "Location lookup failed") }
+        } catch (error: Exception) {
+            rejectLocation(error.message ?: "Location lookup failed")
         }
     }
 
-    private fun requestFreshLocation() {
+    private fun requestFreshLocation(client: FusedLocationProviderClient) {
         if (!hasForegroundLocationPermission()) {
             rejectLocation("Location permission was revoked")
             return
@@ -2184,7 +2181,7 @@ class CraftBridge(
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                fusedLocationClient?.removeLocationUpdates(this)
+                client.removeLocationUpdates(this)
                 oneShotLocationCallbacks.remove(this)
                 val location = result.lastLocation
                 if (location != null) {
@@ -2211,11 +2208,16 @@ class CraftBridge(
         }
 
         oneShotLocationCallbacks.add(callback)
-        fusedLocationClient?.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
-            ?.addOnFailureListener { error ->
-                oneShotLocationCallbacks.remove(callback)
-                rejectLocation(error.message ?: "Location request failed")
-            }
+        try {
+            client.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
+                .addOnFailureListener { error ->
+                    oneShotLocationCallbacks.remove(callback)
+                    rejectLocation(error.message ?: "Location request failed")
+                }
+        } catch (error: Exception) {
+            oneShotLocationCallbacks.remove(callback)
+            rejectLocation(error.message ?: "Location request failed")
+        }
     }
 
     private fun rejectLocation(message: String) {

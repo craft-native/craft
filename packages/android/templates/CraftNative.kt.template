@@ -1912,16 +1912,20 @@ object CraftNative {
             failLocation("Google Play Services is unavailable")
             return
         }
-        val client = LocationServices.getFusedLocationProviderClient(activity)
-        client.lastLocation
-            .addOnSuccessListener { location: Location? ->
-                if (location != null) {
-                    deliverLocation(location)
-                } else {
-                    requestFreshPosition(activity, client)
+        try {
+            val client = LocationServices.getFusedLocationProviderClient(activity)
+            client.lastLocation
+                .addOnSuccessListener { location: Location? ->
+                    if (location != null) {
+                        deliverLocation(location)
+                    } else {
+                        requestFreshPosition(activity, client)
+                    }
                 }
-            }
-            .addOnFailureListener { e -> failLocation(e.message) }
+                .addOnFailureListener { error -> failLocation(error.message) }
+        } catch (error: Exception) {
+            failLocation(error.message)
+        }
     }
 
     /**
@@ -1951,11 +1955,16 @@ object CraftNative {
             }
         }
         currentLocationCallbacks[callback] = client
-        client.requestLocationUpdates(request, callback, activity.mainLooper)
-            .addOnFailureListener { error ->
-                currentLocationCallbacks.remove(callback)
-                failLocation(error.message)
-            }
+        try {
+            client.requestLocationUpdates(request, callback, activity.mainLooper)
+                .addOnFailureListener { error ->
+                    currentLocationCallbacks.remove(callback)
+                    failLocation(error.message)
+                }
+        } catch (error: Exception) {
+            currentLocationCallbacks.remove(callback)
+            failLocation(error.message)
+        }
     }
 
     private fun deliverLocation(location: Location) {

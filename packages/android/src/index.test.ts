@@ -535,6 +535,10 @@ describe('Craft Android builder', () => {
     const appSource = join(output, 'app/src/main/java')
     const bridge = readFileSync(join(appSource, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
     const native = readFileSync(join(appSource, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+    const currentPosition = bridge.slice(
+      bridge.indexOf('fun getCurrentPosition('),
+      bridge.indexOf('fun watchPosition('),
+    )
 
     expect(bridge).toContain('GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)')
     expect(native).toContain('GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(activity)')
@@ -544,6 +548,10 @@ describe('Craft Android builder', () => {
     expect(native).toContain('failLocation("Google Play Services is unavailable")')
     expect(bridge).toContain('private val oneShotLocationCallbacks')
     expect(bridge).toContain('oneShotLocationCallbacks.remove(callback)')
+    expect(currentPosition).toContain('private fun requestFreshLocation(client: FusedLocationProviderClient)')
+    expect(currentPosition).toContain('client.lastLocation.addOnSuccessListener')
+    expect(currentPosition).not.toContain('fusedLocationClient?.lastLocation')
+    expect(currentPosition).not.toContain('fusedLocationClient?.requestLocationUpdates(locationRequest, callback')
     expect(bridge).toContain('rejectLocation(error.message ?: "Location request failed")')
     expect(native).toContain('private val currentLocationCallbacks')
     expect(native).toContain('currentLocationCallbacks.remove(callback)')
