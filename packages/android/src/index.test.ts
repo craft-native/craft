@@ -599,6 +599,7 @@ describe('Craft Android builder', () => {
     ]) {
       expect(bridge).toContain(guardedCall)
     }
+    expect(bridge).toContain('return {reachable: CraftAndroid.isWatchReachable()};')
   })
 
   it('rejects Bluetooth scans that never reach the platform scanner', async () => {

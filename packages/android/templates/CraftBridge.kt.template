@@ -979,7 +979,9 @@ class CraftBridge(
                         });
                     },
                     isReachable: function() {
-                        return Promise.resolve().then(function() { return CraftAndroid.isWatchReachable(); });
+                        return Promise.resolve().then(function() {
+                            return {reachable: CraftAndroid.isWatchReachable()};
+                        });
                     }
                 },
 

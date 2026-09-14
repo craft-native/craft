@@ -24,13 +24,34 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import { normalizeDeepLinkURL } from '../api/mobile'
+import { normalizeDeepLinkURL, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
     expect(normalizeDeepLinkURL('wildloop://record')).toBe('wildloop://record')
     expect(normalizeDeepLinkURL({ url: 'wildloop://trail/42', scheme: 'wildloop' })).toBe('wildloop://trail/42')
     expect(normalizeDeepLinkURL({ scheme: 'wildloop' })).toBeNull()
+  })
+})
+
+describe('Mobile Android bridge promises', () => {
+  it('reads the typed watch reachability envelope', async () => {
+    const previousWindow = (globalThis as any).window
+    ;(globalThis as any).window = {
+      craft: {
+        watch: {
+          isReachable: async () => ({ reachable: true }),
+        },
+      },
+    }
+
+    try {
+      expect(await watchConnectivity.isReachable()).toBe(true)
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
   })
 })
 
