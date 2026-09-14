@@ -4,6 +4,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { build, init, renderAndroidDeepLinks, renderAndroidPermissions, syncAndroidWebAssets } from './index'
 
+function generatedFiles(path: string): string[] {
+  return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
+    const entryPath = join(path, entry.name)
+    return entry.isDirectory() ? generatedFiles(entryPath) : [entryPath]
+  })
+}
+
 describe('Craft Android builder', () => {
   it('routes every Kotlin template through the project generator', () => {
     const templates = readdirSync(join(import.meta.dir, '../templates'))
@@ -11,6 +18,16 @@ describe('Craft Android builder', () => {
     const generator = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
 
     for (const template of templates) expect(generator).toContain(`'${template}'`)
+  })
+
+  it('resolves every marker in a generated project', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-template-markers-'))
+    await init({ name: 'Marker Check', packageName: 'dev.craft.markers', output })
+
+    const unresolved = generatedFiles(output).filter((path) => {
+      return /\{\{[A-Z0-9_]+\}\}/.test(readFileSync(path, 'utf8'))
+    })
+    expect(unresolved).toEqual([])
   })
 
   it('renders only permissions required by enabled capabilities', () => {
