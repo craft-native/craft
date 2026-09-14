@@ -706,6 +706,26 @@ describe('Craft Android builder', () => {
     ]) expect(nativeClose).toContain(cleanup)
   })
 
+  it('settles Play Billing setup and restore failure paths', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-billing-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(sourceRoot, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    for (const source of [bridge, holder]) {
+      expect(source).toContain('if (client == null || !client.isReady) {')
+      expect(source).toContain('Billing is not connected; load products before restoring purchases')
+      expect(source).toContain('Billing setup failed: ${billingResult.debugMessage}')
+      expect(source).toContain('Product query failed: ${result.debugMessage}')
+      expect(source).toContain('Restore failed: ${result.debugMessage}')
+      expect(source).not.toContain('billingClient?.queryPurchasesAsync(')
+    }
+    expect(bridge).toContain('private fun rejectProducts(message: String)')
+    expect(bridge).toContain('private fun rejectRestore(message: String)')
+  })
+
   it('rejects calendar-provider failures instead of hanging the promise', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-calendar-errors-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

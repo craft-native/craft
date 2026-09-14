@@ -2,9 +2,9 @@
 //!
 //! Play Billing's client, builders and asynchronous listeners are Java
 //! objects and stay in `CraftNative`. Both actions enter Zig and every
-//! observable completion returns here. The holder intentionally keeps one
-//! shared client: calling restore before products still does nothing and
-//! leaves the promise pending, exactly as the shim's null-safe call does.
+//! observable completion returns here. The holder keeps one shared client;
+//! calling restore before products now rejects instead of leaving the promise
+//! pending, matching the generated shim's terminal failure path.
 
 const std = @import("std");
 const bridge_error = @import("bridge_error.zig");

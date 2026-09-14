@@ -702,12 +702,13 @@ object CraftNative {
             val productList = mutableListOf<String>()
             for (i in 0 until productIds.length()) productList.add(productIds.getString(i))
 
-            billingClient = BillingClient.newBuilder(activity)
+            val client = BillingClient.newBuilder(activity)
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
+            billingClient = client
 
-            billingClient?.startConnection(object : BillingClientStateListener {
+            client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                         val params = QueryProductDetailsParams.newBuilder()
@@ -719,22 +720,28 @@ object CraftNative {
                             })
                             .build()
 
-                        billingClient?.queryProductDetailsAsync(params) { result, detailsList ->
-                            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                                val products = org.json.JSONArray()
-                                detailsList.forEach { details ->
-                                    products.put(JSONObject().apply {
-                                        put("id", details.productId)
-                                        put("displayName", details.name)
-                                        put("description", details.description)
-                                        put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
-                                    })
+                        try {
+                            client.queryProductDetailsAsync(params) { result, detailsList ->
+                                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                                    val products = org.json.JSONArray()
+                                    detailsList.forEach { details ->
+                                        products.put(JSONObject().apply {
+                                            put("id", details.productId)
+                                            put("displayName", details.name)
+                                            put("description", details.description)
+                                            put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
+                                        })
+                                    }
+                                    nativeProductsReady(products.toString())
+                                } else {
+                                    nativeProductsError("Product query failed: ${result.debugMessage}")
                                 }
-                                nativeProductsReady(products.toString())
-                            } else {
-                                nativeProductsError("Query failed")
                             }
+                        } catch (error: Exception) {
+                            nativeProductsError(error.message ?: "Product query failed")
                         }
+                    } else {
+                        nativeProductsError("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
@@ -749,21 +756,31 @@ object CraftNative {
 
     @JvmStatic
     fun queryRestoredPurchases() {
-        billingClient?.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
-        ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                val restored = org.json.JSONArray()
-                purchases.forEach { purchase ->
-                    restored.put(JSONObject().apply {
-                        put("productId", purchase.products.firstOrNull())
-                        put("orderId", purchase.orderId)
-                    })
+        val client = billingClient
+        if (client == null || !client.isReady) {
+            nativeRestoreError("Billing is not connected; load products before restoring purchases")
+            return
+        }
+
+        try {
+            client.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
+            ) { result, purchases ->
+                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                    val restored = org.json.JSONArray()
+                    purchases.forEach { purchase ->
+                        restored.put(JSONObject().apply {
+                            put("productId", purchase.products.firstOrNull())
+                            put("orderId", purchase.orderId)
+                        })
+                    }
+                    nativeRestoreReady(restored.toString())
+                } else {
+                    nativeRestoreError("Restore failed: ${result.debugMessage}")
                 }
-                nativeRestoreReady(restored.toString())
-            } else {
-                nativeRestoreError("Restore failed")
             }
+        } catch (error: Exception) {
+            nativeRestoreError(error.message ?: "Restore failed")
         }
     }
 

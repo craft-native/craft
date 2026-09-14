@@ -3049,12 +3049,13 @@ class CraftBridge(
                 productList.add(productIds.getString(i))
             }
 
-            billingClient = BillingClient.newBuilder(activity)
+            val client = BillingClient.newBuilder(activity)
                 .setListener { _, _ -> }
                 .enablePendingPurchases()
                 .build()
+            billingClient = client
 
-            billingClient?.startConnection(object : BillingClientStateListener {
+            client.startConnection(object : BillingClientStateListener {
                 override fun onBillingSetupFinished(billingResult: BillingResult) {
                     if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
                         val params = QueryProductDetailsParams.newBuilder()
@@ -3066,39 +3067,48 @@ class CraftBridge(
                             })
                             .build()
 
-                        billingClient?.queryProductDetailsAsync(params) { result, productDetailsList ->
-                            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                                val products = JSONArray()
-                                productDetailsList.forEach { details ->
-                                    products.put(JSONObject().apply {
-                                        put("id", details.productId)
-                                        put("displayName", details.name)
-                                        put("description", details.description)
-                                        put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
-                                    })
-                                }
-                                activity.runOnUiThread {
-                                    webView.evaluateJavascript("window._craftProductsResolve && window._craftProductsResolve($products)", null)
-                                }
-                            } else {
-                                activity.runOnUiThread {
-                                    webView.evaluateJavascript("window._craftProductsReject && window._craftProductsReject('Query failed')", null)
+                        try {
+                            client.queryProductDetailsAsync(params) { result, productDetailsList ->
+                                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                                    val products = JSONArray()
+                                    productDetailsList.forEach { details ->
+                                        products.put(JSONObject().apply {
+                                            put("id", details.productId)
+                                            put("displayName", details.name)
+                                            put("description", details.description)
+                                            put("price", details.oneTimePurchaseOfferDetails?.formattedPrice ?: "")
+                                        })
+                                    }
+                                    activity.runOnUiThread {
+                                        webView.evaluateJavascript("window._craftProductsResolve && window._craftProductsResolve($products)", null)
+                                    }
+                                } else {
+                                    rejectProducts("Product query failed: ${result.debugMessage}")
                                 }
                             }
+                        } catch (error: Exception) {
+                            rejectProducts(error.message ?: "Product query failed")
                         }
+                    } else {
+                        rejectProducts("Billing setup failed: ${billingResult.debugMessage}")
                     }
                 }
 
                 override fun onBillingServiceDisconnected() {
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript("window._craftProductsReject && window._craftProductsReject('Billing disconnected')", null)
-                    }
+                    rejectProducts("Billing disconnected")
                 }
             })
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftProductsReject && window._craftProductsReject(${jsQuote(e.message)})", null)
-            }
+            rejectProducts(e.message ?: "Product query failed")
+        }
+    }
+
+    private fun rejectProducts(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftProductsReject && window._craftProductsReject(${jsQuote(message)})",
+                null
+            )
         }
     }
 
@@ -3114,25 +3124,42 @@ class CraftBridge(
     fun restorePurchases() {
         if (CraftNative.restorePurchases()) return
 
-        billingClient?.queryPurchasesAsync(
-            QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
-        ) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                val restored = JSONArray()
-                purchases.forEach { purchase ->
-                    restored.put(JSONObject().apply {
-                        put("productId", purchase.products.firstOrNull())
-                        put("orderId", purchase.orderId)
-                    })
-                }
-                activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)", null)
-                }
-            } else {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript("window._craftRestoreReject && window._craftRestoreReject('Restore failed')", null)
+        val client = billingClient
+        if (client == null || !client.isReady) {
+            rejectRestore("Billing is not connected; load products before restoring purchases")
+            return
+        }
+
+        try {
+            client.queryPurchasesAsync(
+                QueryPurchasesParams.newBuilder().setProductType(BillingClient.ProductType.INAPP).build()
+            ) { result, purchases ->
+                if (result.responseCode == BillingClient.BillingResponseCode.OK) {
+                    val restored = JSONArray()
+                    purchases.forEach { purchase ->
+                        restored.put(JSONObject().apply {
+                            put("productId", purchase.products.firstOrNull())
+                            put("orderId", purchase.orderId)
+                        })
+                    }
+                    activity.runOnUiThread {
+                        webView.evaluateJavascript("window._craftRestoreResolve && window._craftRestoreResolve($restored)", null)
+                    }
+                } else {
+                    rejectRestore("Restore failed: ${result.debugMessage}")
                 }
             }
+        } catch (error: Exception) {
+            rejectRestore(error.message ?: "Restore failed")
+        }
+    }
+
+    private fun rejectRestore(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftRestoreReject && window._craftRestoreReject(${jsQuote(message)})",
+                null
+            )
         }
     }
 
