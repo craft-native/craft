@@ -54,11 +54,9 @@ const testing = std.testing;
 /// worse than an acknowledged gap.
 const templates = [_]Template{
     .{ .name = "CraftBridge.kt.template", .source = @embedFile("CraftBridge.kt.template") },
-    .{ .name = "CraftBridgeExtensions.kt.template", .source = @embedFile("CraftBridgeExtensions.kt.template") },
     .{ .name = "CraftHealthConnect.kt.template", .source = @embedFile("CraftHealthConnect.kt.template") },
     .{ .name = "CraftHealthConnectStub.kt.template", .source = @embedFile("CraftHealthConnectStub.kt.template") },
     .{ .name = "CraftNative.kt.template", .source = @embedFile("CraftNative.kt.template") },
-    .{ .name = "CraftWidgetProvider.kt.template", .source = @embedFile("CraftWidgetProvider.kt.template") },
     .{ .name = "LocationRecordingService.kt.template", .source = @embedFile("LocationRecordingService.kt.template") },
     .{ .name = "MainActivity.kt.template", .source = @embedFile("MainActivity.kt.template") },
 };

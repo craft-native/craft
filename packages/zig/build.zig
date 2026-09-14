@@ -598,9 +598,6 @@ pub fn build(b: *std.Build) void {
     android_escaping_tests.root_module.addAnonymousImport("CraftBridge.kt.template", .{
         .root_source_file = b.path("../android/templates/CraftBridge.kt.template"),
     });
-    android_escaping_tests.root_module.addAnonymousImport("CraftBridgeExtensions.kt.template", .{
-        .root_source_file = b.path("../android/templates/CraftBridgeExtensions.kt.template"),
-    });
     android_escaping_tests.root_module.addAnonymousImport("CraftHealthConnect.kt.template", .{
         .root_source_file = b.path("../android/templates/CraftHealthConnect.kt.template"),
     });
@@ -609,9 +606,6 @@ pub fn build(b: *std.Build) void {
     });
     android_escaping_tests.root_module.addAnonymousImport("CraftNative.kt.template", .{
         .root_source_file = b.path("../android/templates/CraftNative.kt.template"),
-    });
-    android_escaping_tests.root_module.addAnonymousImport("CraftWidgetProvider.kt.template", .{
-        .root_source_file = b.path("../android/templates/CraftWidgetProvider.kt.template"),
     });
     android_escaping_tests.root_module.addAnonymousImport("LocationRecordingService.kt.template", .{
         .root_source_file = b.path("../android/templates/LocationRecordingService.kt.template"),
