@@ -483,6 +483,11 @@ const natives = [_]jni.JNINativeMethod{
         .fnPtr = @ptrCast(&nativeRunTask),
     },
     .{
+        .name = "nativeCancelTask",
+        .signature = "(J)V",
+        .fnPtr = @ptrCast(&nativeCancelTask),
+    },
+    .{
         .name = "nativeLockOrientation",
         .signature = "(Landroid/app/Activity;Ljava/lang/String;)Z",
         .fnPtr = @ptrCast(&nativeLockOrientation),
@@ -2167,6 +2172,19 @@ fn nativeRunTask(
     main_thread.run(Jni.init(env), activity, @bitCast(token));
 }
 
+/// Release a main-thread task that Kotlin invalidated during Activity teardown.
+///
+/// The matching Runnable still owns a live token. Taking the slot here keeps a
+/// destroyed Activity from receiving work without slowly filling the fixed
+/// task table with work that can never run.
+fn nativeCancelTask(
+    _: jni.JNIEnv,
+    _: jni.jobject,
+    token: jni.jlong,
+) callconv(.c) void {
+    main_thread.release(@bitCast(token));
+}
+
 /// `nativeLockOrientation(activity, orientation)`.
 ///
 /// True means the work is queued, not that the device has turned — which is
@@ -3034,7 +3052,7 @@ test "the registered natives name methods the Kotlin actually declares" {
     // A descriptor is checked by the JVM at registration, so a wrong one fails
     // at load rather than at call — but only if the *name* matches something.
     // These two strings are the contract with CraftBridge.kt.
-    try testing.expectEqual(@as(usize, 102), natives.len);
+    try testing.expectEqual(@as(usize, 103), natives.len);
     try testing.expectEqualStrings("nativeGetDeviceInfo", std.mem.span(natives[0].name));
 
     // And the class they bind to is the fixed one, not the templated bridge.

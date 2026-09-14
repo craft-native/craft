@@ -767,6 +767,17 @@ describe('Craft Android builder', () => {
     expect(picker.indexOf('checkSelfPermission')).toBeLessThan(picker.indexOf('CraftNative.pickContact'))
     expect(picker).toContain('Contacts permission is required; retry after granting it')
     expect(picker).toContain('Contact picker could not be opened')
+    const native = readFileSync(
+      join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt'),
+      'utf8',
+    )
+    const runOnMain = native.slice(
+      native.indexOf('fun runOnMain('),
+      native.indexOf('fun lockOrientation(', native.indexOf('fun runOnMain(')),
+    )
+    expect(runOnMain).toContain('taskGeneration != lifecycleGeneration.get()')
+    expect(runOnMain).toContain('activity.isFinishing || activity.isDestroyed')
+    expect(runOnMain).toContain('nativeCancelTask(token)')
     expect(pickerResult).toContain('if (!cursor.moveToFirst()) return@use null')
     expect(pickerResult).toContain('if (contact == null) {')
     expect(pickerResult).toContain('Selected contact could not be read')

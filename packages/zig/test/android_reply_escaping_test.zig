@@ -129,18 +129,22 @@ test "no Kotlin template interpolates a value into a single-quoted JavaScript st
 }
 
 test "the templates that answer the page are actually in the scanned set" {
-    // A floor, not a count: `CraftBridge.kt` alone holds 119 of these. If this
+    // A floor, not a count. Promise replies now go through the close-aware
+    // helper rather than calling the WebView directly, so count both the
+    // guarded call sites and the few direct non-promise emissions. If this
     // drops to zero the embed has gone stale — pointing at the wrong file, or
     // at a file that no longer talks to the WebView — and the escaping guard
     // above would pass on bytes nobody replies with.
     var emissions: usize = 0;
     for (templates) |template| {
         emissions += std.mem.count(u8, template.source, "evaluateJavascript(");
+        emissions += std.mem.count(u8, template.source, "evaluatePromiseJavascript(");
     }
     try testing.expect(emissions >= 100);
 
     // And the fix is present rather than the sites merely being deleted.
     const bridge = sourceOf("CraftBridge.kt.template").?;
+    try testing.expect(std.mem.count(u8, bridge, "evaluatePromiseJavascript(") >= 90);
     try testing.expect(std.mem.count(u8, bridge, "jsQuote(") >= 50);
 
     // `Any?`, not `String?`. The call sites replaced string interpolation,

@@ -278,6 +278,7 @@ object CraftNative {
     private external fun nativeClearShortcuts(activity: Activity): Boolean
     private external fun nativeScheduleNotification(activity: Activity, notificationJson: String): Boolean
     private external fun nativeRunTask(activity: Activity, token: Long)
+    private external fun nativeCancelTask(token: Long)
     private external fun nativeLockOrientation(activity: Activity, orientation: String): Boolean
     private external fun nativeUnlockOrientation(activity: Activity): Boolean
     private external fun nativeSetKeepAwake(activity: Activity, enabled: Boolean): Boolean
@@ -1547,8 +1548,13 @@ object CraftNative {
      */
     @JvmStatic
     fun runOnMain(activity: Activity, token: Long, delayMs: Long) {
+        val taskGeneration = lifecycleGeneration.get()
         val block = Runnable {
             try {
+                if (taskGeneration != lifecycleGeneration.get() || activity.isFinishing || activity.isDestroyed) {
+                    nativeCancelTask(token)
+                    return@Runnable
+                }
                 nativeRunTask(activity, token)
             } catch (e: UnsatisfiedLinkError) {
                 // The library went away between the post and the looper. There
