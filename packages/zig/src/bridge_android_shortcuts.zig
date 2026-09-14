@@ -305,10 +305,12 @@ fn launchIntent(
     return intent;
 }
 
-/// `{count: n}` — what `setShortcuts` resolves with.
-pub fn countPayload(allocator: std.mem.Allocator, count: usize) ![]u8 {
-    return std.fmt.allocPrint(allocator, "{{\"count\":{d}}}", .{count});
+/// `{set: true, count: n}` — the typed result plus the useful legacy count.
+pub fn setPayload(allocator: std.mem.Allocator, count: usize) ![]u8 {
+    return std.fmt.allocPrint(allocator, "{{\"set\":true,\"count\":{d}}}", .{count});
 }
+
+pub const cleared_result = "{\"cleared\":true}";
 
 /// `message` as a JSON string.
 pub fn jsonString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
@@ -431,15 +433,22 @@ test "an explicit null is the string null, here as everywhere else" {
     try testing.expectEqualStrings("null", shortcuts[0].subtitle.?);
 }
 
-test "the resolve carries the count the shim counts" {
+test "the set resolve carries its typed flag and the count" {
     for ([_]usize{ 0, 1, 4 }) |count| {
-        const payload = try countPayload(testing.allocator, count);
+        const payload = try setPayload(testing.allocator, count);
         defer testing.allocator.free(payload);
 
         var doc = try std.json.parseFromSlice(std.json.Value, testing.allocator, payload, .{});
         defer doc.deinit();
+        try testing.expect(doc.value.object.get("set").?.bool);
         try testing.expectEqual(@as(i64, @intCast(count)), doc.value.object.get("count").?.integer);
     }
+}
+
+test "the clear resolve uses its typed envelope" {
+    var doc = try std.json.parseFromSlice(std.json.Value, testing.allocator, cleared_result, .{});
+    defer doc.deinit();
+    try testing.expect(doc.value.object.get("cleared").?.bool);
 }
 
 test "the unsupported message is the shim's, character for character" {

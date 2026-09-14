@@ -580,6 +580,10 @@ describe('Craft Android builder', () => {
     }
     expect(bridge.match(/webView\.evaluateJavascript\(\s*"window\._craft[A-Za-z]+(?:Resolve|Reject)/g)).toBeNull()
     expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
+    expect(bridge).toContain('_craftShortcutsResolve({set: true, count: ${shortcuts.size}})')
+    expect(bridge.match(/_craftShortcutsResolve\(\{cleared: true\}\)/g)?.length).toBe(2)
+    expect(bridge).toContain('_craftSharedKeychainResolve({set: true, key: ${jsQuote(key)}})')
+    expect(bridge).toContain('_craftSharedKeychainResolve({removed: true, key: ${jsQuote(key)}})')
     expect(bridge).toContain('window.__craftRejectPermissionRequests = function(message)')
     expect(bridge).toContain("window.__craftRejectPermissionRequests('Android bridge closed')")
   })

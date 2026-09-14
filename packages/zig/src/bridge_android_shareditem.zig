@@ -19,8 +19,8 @@
 //!
 //! Both the resolve shapes name the key, so a page can tell which of several
 //! outstanding calls settled — which matters here more than elsewhere, since
-//! all three actions share one pair of globals and a second call overwrites
-//! the first's resolve function.
+//! all three actions share one pair of globals. The page-side request registry
+//! rejects a competing call rather than allowing that callback to be replaced.
 
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
@@ -56,13 +56,17 @@ pub fn prefsName(allocator: std.mem.Allocator, group: []const u8) ![:0]u8 {
     return name;
 }
 
-/// `{success: true, key: "<key>"}` — what `setSharedItem` and
-/// `removeSharedItem` resolve with.
-pub fn successPayload(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
+pub const Mutation = enum { set, remove };
+
+/// The public typed mutation result, with the key retained for diagnostics.
+pub fn mutationPayload(allocator: std.mem.Allocator, mutation: Mutation, key: []const u8) ![]u8 {
     var out: std.ArrayListUnmanaged(u8) = .empty;
     errdefer out.deinit(allocator);
 
-    try out.appendSlice(allocator, "{\"success\":true,\"key\":\"");
+    try out.appendSlice(
+        allocator,
+        if (mutation == .set) "{\"set\":true,\"key\":\"" else "{\"removed\":true,\"key\":\"",
+    );
     try bridge_error.appendJsonEscaped(allocator, &out, key);
     try out.appendSlice(allocator, "\"}");
     return out.toOwnedSlice(allocator);
@@ -179,10 +183,14 @@ test "the name is NUL-terminated, because FindClass's neighbour needs it" {
     try testing.expectEqual(@as(u8, 0), name.ptr[name.len]);
 }
 
-test "a set or remove resolves with the key it was given" {
-    const payload = try successPayload(testing.allocator, "token");
-    defer testing.allocator.free(payload);
-    try testing.expectEqualStrings("{\"success\":true,\"key\":\"token\"}", payload);
+test "set and remove use their typed mutation fields" {
+    const set_payload = try mutationPayload(testing.allocator, .set, "token");
+    defer testing.allocator.free(set_payload);
+    try testing.expectEqualStrings("{\"set\":true,\"key\":\"token\"}", set_payload);
+
+    const remove_payload = try mutationPayload(testing.allocator, .remove, "token");
+    defer testing.allocator.free(remove_payload);
+    try testing.expectEqualStrings("{\"removed\":true,\"key\":\"token\"}", remove_payload);
 }
 
 test "a get resolves with the value, or with a JSON null" {
@@ -216,12 +224,12 @@ test "a key or value carrying a quote survives as JSON" {
         parsed.value.object.get("value").?.string,
     );
 
-    const success = try successPayload(testing.allocator, "it's");
+    const success = try mutationPayload(testing.allocator, .set, "it's");
     defer testing.allocator.free(success);
     var parsed_success = try std.json.parseFromSlice(std.json.Value, testing.allocator, success, .{});
     defer parsed_success.deinit();
     try testing.expectEqualStrings("it's", parsed_success.value.object.get("key").?.string);
-    try testing.expect(parsed_success.value.object.get("success").?.bool);
+    try testing.expect(parsed_success.value.object.get("set").?.bool);
 }
 
 test "the actions and globals match the shim exactly" {

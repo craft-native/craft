@@ -1792,7 +1792,7 @@ fn nativeSetSharedItem(
         return jni.JNI_TRUE;
     };
 
-    const payload = shareditem.successPayload(allocator, key_text) catch return jni.JNI_FALSE;
+    const payload = shareditem.mutationPayload(allocator, .set, key_text) catch return jni.JNI_FALSE;
     events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -1848,7 +1848,7 @@ fn nativeRemoveSharedItem(
         return jni.JNI_TRUE;
     };
 
-    const payload = shareditem.successPayload(allocator, key_text) catch return jni.JNI_FALSE;
+    const payload = shareditem.mutationPayload(allocator, .remove, key_text) catch return jni.JNI_FALSE;
     events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -2067,7 +2067,7 @@ fn nativeSetShortcuts(
         return jni.JNI_TRUE;
     };
 
-    const payload = shortcuts.countPayload(allocator, list.len) catch return jni.JNI_FALSE;
+    const payload = shortcuts.setPayload(allocator, list.len) catch return jni.JNI_FALSE;
     events.settle(allocator, shortcuts.resolve_global, payload) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
@@ -2100,7 +2100,7 @@ fn nativeClearShortcuts(
         };
     }
 
-    events.settle(allocator, shortcuts.resolve_global, "true") catch return jni.JNI_FALSE;
+    events.settle(allocator, shortcuts.resolve_global, shortcuts.cleared_result) catch return jni.JNI_FALSE;
     return jni.JNI_TRUE;
 }
 
