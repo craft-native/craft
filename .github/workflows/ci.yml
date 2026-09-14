@@ -240,6 +240,9 @@ jobs:
       - name: Audit Zig C imports
         run: bun run verify:cimports
 
+      - name: Verify API documentation links
+        run: bun run verify:docs
+
       - name: Run pickier (lint + format check)
         run: bun run lint
 
