@@ -1720,8 +1720,12 @@ class CraftBridge(
     fun pickImage() {
         if (CraftNative.pickImage(activity)) return
 
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
-        activity.startActivityForResult(intent, REQUEST_GALLERY)
+        try {
+            val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
+            activity.startActivityForResult(intent, REQUEST_GALLERY)
+        } catch (error: Exception) {
+            rejectMediaPromise("_craftGallery", error.message ?: "Image picker could not be opened")
+        }
     }
 
     fun handleImageResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -1781,9 +1785,7 @@ class CraftBridge(
     private fun handleFilePickerResult(resultCode: Int, data: Intent?) {
         val uri = data?.data
         if (resultCode != Activity.RESULT_OK || uri == null) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript("window._craftFileReject && window._craftFileReject('Cancelled')", null)
-            }
+            rejectFilePicker("Cancelled")
             return
         }
 
@@ -1806,14 +1808,18 @@ class CraftBridge(
                     webView.evaluateJavascript("window._craftFileResolve && window._craftFileResolve($result)", null)
                 }
             } catch (e: Exception) {
-                activity.runOnUiThread {
-                    webView.evaluateJavascript(
-                        "window._craftFileReject && window._craftFileReject(${jsQuote(e.message)})",
-                        null
-                    )
-                }
+                rejectFilePicker(e.message ?: "Selected file could not be read")
             }
         }.start()
+    }
+
+    private fun rejectFilePicker(message: String) {
+        activity.runOnUiThread {
+            webView.evaluateJavascript(
+                "window._craftFileReject && window._craftFileReject(${jsQuote(message)})",
+                null
+            )
+        }
     }
 
     private fun handleVideoResult(resultCode: Int, data: Intent?) {
@@ -3194,14 +3200,32 @@ class CraftBridge(
 
     @JavascriptInterface
     fun pickFile(typesJson: String) {
-        // `typesJson` is ignored below too: this picker always asks for */*.
-        if (CraftNative.pickFile(activity)) return
-
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
+        val requestedTypes = try {
+            val values = JSONArray(typesJson)
+            (0 until values.length()).map { index -> values.getString(index) }.also { types ->
+                require(types.all { MIME_TYPE.matches(it) }) { "Invalid file-picker MIME type" }
+            }
+        } catch (error: Exception) {
+            rejectFilePicker(error.message ?: "File-picker types are invalid")
+            return
         }
-        activity.startActivityForResult(intent, REQUEST_FILE_PICKER)
+        // The native launcher has no MIME-type argument. It remains the fast
+        // path for an unrestricted picker; filtered requests stay here so the
+        // contract the page asked for reaches Android's document provider.
+        if (requestedTypes.isEmpty() && CraftNative.pickFile(activity)) return
+
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = if (requestedTypes.size == 1) requestedTypes[0] else "*/*"
+                if (requestedTypes.size > 1) {
+                    putExtra(Intent.EXTRA_MIME_TYPES, requestedTypes.toTypedArray())
+                }
+            }
+            activity.startActivityForResult(intent, REQUEST_FILE_PICKER)
+        } catch (error: Exception) {
+            rejectFilePicker(error.message ?: "File picker could not be opened")
+        }
     }
 
     // ==================== File Download ====================
@@ -3373,10 +3397,19 @@ class CraftBridge(
     fun startVideoRecording() {
         if (CraftNative.startVideoRecording(activity)) return
 
-        val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
-            putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+        try {
+            val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE).apply {
+                putExtra(MediaStore.EXTRA_VIDEO_QUALITY, 1)
+            }
+            activity.startActivityForResult(intent, REQUEST_VIDEO)
+        } catch (error: Exception) {
+            activity.runOnUiThread {
+                webView.evaluateJavascript(
+                    "window._craftVideoReject && window._craftVideoReject(${jsQuote(error.message ?: "Video capture could not be opened")})",
+                    null
+                )
+            }
         }
-        activity.startActivityForResult(intent, REQUEST_VIDEO)
     }
 
     // ==================== Motion Sensors ====================
@@ -4681,6 +4714,7 @@ class CraftBridge(
     }
 
     companion object {
+        private val MIME_TYPE = Regex("^[^\\s/]+/[^\\s/]+$")
         const val REQUEST_CAMERA = 1001
         const val REQUEST_GALLERY = 1002
         const val REQUEST_LOCATION = 1003

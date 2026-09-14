@@ -364,6 +364,19 @@ describe('Craft Android builder', () => {
     expect(camera).toContain('Camera could not be opened')
   })
 
+  it('passes file filters and settles failed media launchers', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-media-errors-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    expect(bridge).toContain('require(types.all { MIME_TYPE.matches(it) })')
+    expect(bridge).toContain('putExtra(Intent.EXTRA_MIME_TYPES, requestedTypes.toTypedArray())')
+    expect(bridge).toContain('if (requestedTypes.isEmpty() && CraftNative.pickFile(activity)) return')
+    expect(bridge).toContain('rejectFilePicker(error.message ?: "File picker could not be opened")')
+    expect(bridge).toContain('Image picker could not be opened')
+    expect(bridge).toContain('Video capture could not be opened')
+  })
+
   it('exposes native Android permission checks, requests, and settings', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-permissions-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
