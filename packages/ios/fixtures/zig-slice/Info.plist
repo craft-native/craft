@@ -18,5 +18,7 @@
 	<string>The slice fixture asks for speech recognition so startListening reaches SFSpeechRecognizer rather than stopping at the plist guard, which is the exact proxy this module reads for enableSpeechRecognition.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>The slice fixture asks for the microphone so startAudioRecording reaches AVAudioRecorder rather than stopping at the plist guard.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>The slice fixture asks for location so getCurrentPosition reaches Core Location and exercises option handling.</string>
 </dict>
 </plist>

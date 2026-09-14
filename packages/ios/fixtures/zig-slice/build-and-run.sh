@@ -65,7 +65,7 @@ swiftc -target "$TRIPLE" -sdk "$SDK" \
     -framework UIKit -framework WebKit -framework Foundation -framework Security \
     -framework Vision -framework LocalAuthentication -framework PDFKit \
     -framework WatchConnectivity -framework CoreBluetooth -framework AVFoundation -framework HealthKit \
-    -framework Speech \
+    -framework Speech -framework CoreLocation \
     -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker "$OUT/sim.entitlements" \
     -o "$APP/CraftSlice"
 
@@ -99,6 +99,8 @@ xcrun simctl install "$UDID" "$APP"
 # Granted before launch, because simctl terminates a running app on a
 # permission change.
 xcrun simctl privacy "$UDID" grant microphone "$BUNDLE_ID" 2>/dev/null || true
+xcrun simctl privacy "$UDID" grant location "$BUNDLE_ID" 2>/dev/null || true
+xcrun simctl location "$UDID" set 37.3317,-122.0307
 
 # And speech recognition, which needs the raw TCC identifier.
 #
@@ -127,7 +129,8 @@ for _ in $(seq 1 60); do
        && grep -q 'i=34' "$LOG" 2>/dev/null && grep -q 'i=38' "$LOG" 2>/dev/null \
        && grep -q 'i=46' "$LOG" 2>/dev/null && grep -q 'i=44' "$LOG" 2>/dev/null \
        && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null \
-       && grep -q 'i=72' "$LOG" 2>/dev/null; then sleep 1; break; fi
+       && grep -q 'i=72' "$LOG" 2>/dev/null && grep -q 'i=76' "$LOG" 2>/dev/null \
+       && grep -q 'i=78' "$LOG" 2>/dev/null && grep -q 'i=82' "$LOG" 2>/dev/null; then sleep 1; break; fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
@@ -416,5 +419,17 @@ C66="$(count 66)"
 # simctl has no HealthKit privacy service to pre-grant.
 [ "$C66" -ge 1 ] || { echo "FAIL: getHealthData neither answered nor failed — it hung"; exit 1; }
 echo "ok: health query answered rather than hanging (i=66 seen ${C66}x)"
+
+C76="$(count 76)"
+[ "$C76" -ge 1 ] || { echo "FAIL: getCurrentPosition did not return the simulated coordinate"; exit 1; }
+echo "ok: Core Location returned the simulator coordinate (i=76 seen ${C76}x)"
+
+C78="$(count 78)"
+[ "$C78" -ge 1 ] || { echo "FAIL: maximumAge did not reuse the fresh cached coordinate"; exit 1; }
+echo "ok: maximumAge reused the fresh native coordinate (i=78 seen ${C78}x)"
+
+C82="$(count 82)"
+[ "$C82" -ge 1 ] || { echo "FAIL: a zero-timeout location request neither timed out nor released its slot"; exit 1; }
+echo "ok: zero-timeout location request rejected with TIMEOUT (i=82 seen ${C82}x)"
 
 echo "PASS"

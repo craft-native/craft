@@ -10,7 +10,7 @@
   "enableBiometric": true,
   "enablePushNotifications": false,
   "enableSecureStorage": true,
-  "enableGeolocation": false,
+  "enableGeolocation": true,
   "enableClipboard": false,
   "enableContacts": false,
   "enableCalendar": false,
