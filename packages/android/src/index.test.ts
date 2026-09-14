@@ -850,6 +850,35 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('if (closed) return@runOnUiThread')
   })
 
+  it('settles ML task and serialization failures once and closes every client', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-ml-callbacks-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(sourceRoot, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+    const bridgeMl = bridge.slice(
+      bridge.indexOf('// ==================== ML Kit'),
+      bridge.indexOf('// ==================== Widget Support'),
+    )
+    const holderMl = holder.slice(
+      holder.indexOf('// ==================== ML Kit'),
+      holder.indexOf('// ==================== External PDF viewer'),
+    )
+
+    expect(bridgeMl).toContain('private fun createMlSettlement(): Pair<(JSONArray) -> Unit, (String) -> Unit>')
+    expect(holderMl).toContain('private fun createMlSettlement(): Pair<(String) -> Unit, (String) -> Unit>')
+    for (const source of [bridgeMl, holderMl]) {
+      expect(source.match(/val \(resolve, reject\) = createMlSettlement\(\)/g)?.length).toBe(3)
+      expect(source.match(/\.addOnCompleteListener \{/g)?.length).toBe(3)
+      expect(source.match(/\.close\(\)/g)?.length).toBe(3)
+      expect(source.match(/catch \(error: Exception\)/g)?.length).toBe(3)
+      expect(source).toContain('settled.compareAndSet(false, true)')
+    }
+    expect(bridgeMl).toContain('!closed && settled.compareAndSet(false, true)')
+    expect(holderMl).toContain('requestGeneration == lifecycleGeneration.get()')
+  })
+
   it('connects Play Billing for restores and settles failure paths', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-billing-errors-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

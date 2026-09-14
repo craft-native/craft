@@ -4328,9 +4328,28 @@ class CraftBridge(
 
     // ==================== ML Kit ====================
 
+    private fun createMlSettlement(): Pair<(JSONArray) -> Unit, (String) -> Unit> {
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val resolve: (JSONArray) -> Unit = { results ->
+            if (!closed && settled.compareAndSet(false, true)) {
+                evaluatePromiseJavascript("window._craftMLResolve && window._craftMLResolve($results)")
+            }
+        }
+        val reject: (String) -> Unit = { message ->
+            if (!closed && settled.compareAndSet(false, true)) {
+                evaluatePromiseJavascript(
+                    "window._craftMLReject && window._craftMLReject(${jsQuote(message)})"
+                )
+            }
+        }
+        return resolve to reject
+    }
+
     @JavascriptInterface
     fun classifyImage(imageBase64: String) {
         if (CraftNative.classifyImage(imageBase64)) return
+
+        val (resolve, reject) = createMlSettlement()
 
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
@@ -4340,42 +4359,32 @@ class CraftBridge(
             val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
             labeler.process(inputImage)
                 .addOnSuccessListener { labels ->
-                    val results = JSONArray()
-                    for (label in labels) {
-                        val obj = JSONObject()
-                        obj.put("label", label.text)
-                        obj.put("confidence", label.confidence)
-                        obj.put("index", label.index)
-                        results.put(obj)
-                    }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLResolve && window._craftMLResolve($results)",
-                            null
-                        )
-                    }
-                }
-                .addOnFailureListener { e ->
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                            null
-                        )
+                    try {
+                        val results = JSONArray()
+                        for (label in labels) {
+                            val obj = JSONObject()
+                            obj.put("label", label.text)
+                            obj.put("confidence", label.confidence)
+                            obj.put("index", label.index)
+                            results.put(obj)
+                        }
+                        resolve(results)
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Image classification failed")
                     }
                 }
+                .addOnFailureListener { error -> reject(error.message ?: "Image classification failed") }
+                .addOnCompleteListener { labeler.close() }
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            reject(e.message ?: "Image classification failed")
         }
     }
 
     @JavascriptInterface
     fun detectObjects(imageBase64: String) {
         if (CraftNative.detectObjects(imageBase64)) return
+
+        val (resolve, reject) = createMlSettlement()
 
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
@@ -4391,60 +4400,50 @@ class CraftBridge(
             val objectDetector = ObjectDetection.getClient(options)
             objectDetector.process(inputImage)
                 .addOnSuccessListener { detectedObjects ->
-                    val results = JSONArray()
-                    for (obj in detectedObjects) {
-                        val objJson = JSONObject()
+                    try {
+                        val results = JSONArray()
+                        for (obj in detectedObjects) {
+                            val objJson = JSONObject()
 
-                        // Bounding box
-                        val bbox = JSONObject()
-                        bbox.put("x", obj.boundingBox.left)
-                        bbox.put("y", obj.boundingBox.top)
-                        bbox.put("width", obj.boundingBox.width())
-                        bbox.put("height", obj.boundingBox.height())
-                        objJson.put("boundingBox", bbox)
+                            // Bounding box
+                            val bbox = JSONObject()
+                            bbox.put("x", obj.boundingBox.left)
+                            bbox.put("y", obj.boundingBox.top)
+                            bbox.put("width", obj.boundingBox.width())
+                            bbox.put("height", obj.boundingBox.height())
+                            objJson.put("boundingBox", bbox)
 
-                        // Labels
-                        val labels = JSONArray()
-                        for (label in obj.labels) {
-                            val labelJson = JSONObject()
-                            labelJson.put("label", label.text)
-                            labelJson.put("confidence", label.confidence)
-                            labelJson.put("index", label.index)
-                            labels.put(labelJson)
+                            // Labels
+                            val labels = JSONArray()
+                            for (label in obj.labels) {
+                                val labelJson = JSONObject()
+                                labelJson.put("label", label.text)
+                                labelJson.put("confidence", label.confidence)
+                                labelJson.put("index", label.index)
+                                labels.put(labelJson)
+                            }
+                            objJson.put("labels", labels)
+                            objJson.put("trackingId", obj.trackingId)
+
+                            results.put(objJson)
                         }
-                        objJson.put("labels", labels)
-                        objJson.put("trackingId", obj.trackingId)
-
-                        results.put(objJson)
-                    }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLResolve && window._craftMLResolve($results)",
-                            null
-                        )
+                        resolve(results)
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Object detection failed")
                     }
                 }
-                .addOnFailureListener { e ->
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                            null
-                        )
-                    }
-                }
+                .addOnFailureListener { error -> reject(error.message ?: "Object detection failed") }
+                .addOnCompleteListener { objectDetector.close() }
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            reject(e.message ?: "Object detection failed")
         }
     }
 
     @JavascriptInterface
     fun recognizeText(imageBase64: String) {
         if (CraftNative.recognizeText(imageBase64)) return
+
+        val (resolve, reject) = createMlSettlement()
 
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
@@ -4454,48 +4453,36 @@ class CraftBridge(
             val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
-                    val results = JSONArray()
-                    for (block in visionText.textBlocks) {
-                        for (line in block.lines) {
-                            val lineJson = JSONObject()
-                            lineJson.put("text", line.text)
-                            lineJson.put("confidence", line.confidence ?: 0.0)
+                    try {
+                        val results = JSONArray()
+                        for (block in visionText.textBlocks) {
+                            for (line in block.lines) {
+                                val lineJson = JSONObject()
+                                lineJson.put("text", line.text)
+                                lineJson.put("confidence", line.confidence ?: 0.0)
 
-                            val boundingBox = line.boundingBox
-                            if (boundingBox != null) {
-                                val bbox = JSONObject()
-                                bbox.put("x", boundingBox.left)
-                                bbox.put("y", boundingBox.top)
-                                bbox.put("width", boundingBox.width())
-                                bbox.put("height", boundingBox.height())
-                                lineJson.put("boundingBox", bbox)
+                                val boundingBox = line.boundingBox
+                                if (boundingBox != null) {
+                                    val bbox = JSONObject()
+                                    bbox.put("x", boundingBox.left)
+                                    bbox.put("y", boundingBox.top)
+                                    bbox.put("width", boundingBox.width())
+                                    bbox.put("height", boundingBox.height())
+                                    lineJson.put("boundingBox", bbox)
+                                }
+
+                                results.put(lineJson)
                             }
-
-                            results.put(lineJson)
                         }
-                    }
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLResolve && window._craftMLResolve($results)",
-                            null
-                        )
+                        resolve(results)
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Text recognition failed")
                     }
                 }
-                .addOnFailureListener { e ->
-                    activity.runOnUiThread {
-                        webView.evaluateJavascript(
-                            "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                            null
-                        )
-                    }
-                }
+                .addOnFailureListener { error -> reject(error.message ?: "Text recognition failed") }
+                .addOnCompleteListener { recognizer.close() }
         } catch (e: Exception) {
-            activity.runOnUiThread {
-                webView.evaluateJavascript(
-                    "window._craftMLReject && window._craftMLReject(${jsQuote(e.message)})",
-                    null
-                )
-            }
+            reject(e.message ?: "Text recognition failed")
         }
     }
 

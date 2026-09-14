@@ -888,32 +888,56 @@ object CraftNative {
 
     // ==================== ML Kit ====================
 
+    private fun createMlSettlement(): Pair<(String) -> Unit, (String) -> Unit> {
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+        val resolve: (String) -> Unit = { resultsJson ->
+            if (requestGeneration == lifecycleGeneration.get() && settled.compareAndSet(false, true)) {
+                nativeMlReady(resultsJson)
+            }
+        }
+        val reject: (String) -> Unit = { message ->
+            if (requestGeneration == lifecycleGeneration.get() && settled.compareAndSet(false, true)) {
+                nativeMlError(message)
+            }
+        }
+        return resolve to reject
+    }
+
     @JvmStatic
     fun runImageClassification(imageBase64: String) {
+        val (resolve, reject) = createMlSettlement()
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
             val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS).process(inputImage)
+            val labeler = ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS)
+            labeler.process(inputImage)
                 .addOnSuccessListener { labels ->
-                    val results = JSONArray()
-                    for (label in labels) {
-                        results.put(JSONObject().apply {
-                            put("label", label.text)
-                            put("confidence", label.confidence)
-                            put("index", label.index)
-                        })
+                    try {
+                        val results = JSONArray()
+                        for (label in labels) {
+                            results.put(JSONObject().apply {
+                                put("label", label.text)
+                                put("confidence", label.confidence)
+                                put("index", label.index)
+                            })
+                        }
+                        resolve(results.toString())
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Image classification failed")
                     }
-                    nativeMlReady(results.toString())
                 }
-                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+                .addOnFailureListener { error -> reject(error.message ?: "Image classification failed") }
+                .addOnCompleteListener { labeler.close() }
         } catch (e: Exception) {
-            nativeMlError(e.message ?: "null")
+            reject(e.message ?: "Image classification failed")
         }
     }
 
     @JvmStatic
     fun runObjectDetection(imageBase64: String) {
+        val (resolve, reject) = createMlSettlement()
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
             val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
@@ -924,67 +948,80 @@ object CraftNative {
                 .enableClassification()
                 .build()
 
-            ObjectDetection.getClient(options).process(inputImage)
+            val detector = ObjectDetection.getClient(options)
+            detector.process(inputImage)
                 .addOnSuccessListener { detectedObjects ->
-                    val results = JSONArray()
-                    for (obj in detectedObjects) {
-                        val objJson = JSONObject()
-                        objJson.put("boundingBox", JSONObject().apply {
-                            put("x", obj.boundingBox.left)
-                            put("y", obj.boundingBox.top)
-                            put("width", obj.boundingBox.width())
-                            put("height", obj.boundingBox.height())
-                        })
-                        val labels = JSONArray()
-                        for (label in obj.labels) {
-                            labels.put(JSONObject().apply {
-                                put("label", label.text)
-                                put("confidence", label.confidence)
-                                put("index", label.index)
+                    try {
+                        val results = JSONArray()
+                        for (obj in detectedObjects) {
+                            val objJson = JSONObject()
+                            objJson.put("boundingBox", JSONObject().apply {
+                                put("x", obj.boundingBox.left)
+                                put("y", obj.boundingBox.top)
+                                put("width", obj.boundingBox.width())
+                                put("height", obj.boundingBox.height())
                             })
+                            val labels = JSONArray()
+                            for (label in obj.labels) {
+                                labels.put(JSONObject().apply {
+                                    put("label", label.text)
+                                    put("confidence", label.confidence)
+                                    put("index", label.index)
+                                })
+                            }
+                            objJson.put("labels", labels)
+                            objJson.put("trackingId", obj.trackingId)
+                            results.put(objJson)
                         }
-                        objJson.put("labels", labels)
-                        objJson.put("trackingId", obj.trackingId)
-                        results.put(objJson)
+                        resolve(results.toString())
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Object detection failed")
                     }
-                    nativeMlReady(results.toString())
                 }
-                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+                .addOnFailureListener { error -> reject(error.message ?: "Object detection failed") }
+                .addOnCompleteListener { detector.close() }
         } catch (e: Exception) {
-            nativeMlError(e.message ?: "null")
+            reject(e.message ?: "Object detection failed")
         }
     }
 
     @JvmStatic
     fun runTextRecognition(imageBase64: String) {
+        val (resolve, reject) = createMlSettlement()
         try {
             val imageBytes = Base64.decode(imageBase64, Base64.DEFAULT)
             val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS).process(inputImage)
+            val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+            recognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
-                    val results = JSONArray()
-                    for (block in visionText.textBlocks) {
-                        for (line in block.lines) {
-                            val lineJson = JSONObject()
-                            lineJson.put("text", line.text)
-                            lineJson.put("confidence", line.confidence ?: 0.0)
-                            line.boundingBox?.let { box ->
-                                lineJson.put("boundingBox", JSONObject().apply {
-                                    put("x", box.left)
-                                    put("y", box.top)
-                                    put("width", box.width())
-                                    put("height", box.height())
-                                })
+                    try {
+                        val results = JSONArray()
+                        for (block in visionText.textBlocks) {
+                            for (line in block.lines) {
+                                val lineJson = JSONObject()
+                                lineJson.put("text", line.text)
+                                lineJson.put("confidence", line.confidence ?: 0.0)
+                                line.boundingBox?.let { box ->
+                                    lineJson.put("boundingBox", JSONObject().apply {
+                                        put("x", box.left)
+                                        put("y", box.top)
+                                        put("width", box.width())
+                                        put("height", box.height())
+                                    })
+                                }
+                                results.put(lineJson)
                             }
-                            results.put(lineJson)
                         }
+                        resolve(results.toString())
+                    } catch (error: Exception) {
+                        reject(error.message ?: "Text recognition failed")
                     }
-                    nativeMlReady(results.toString())
                 }
-                .addOnFailureListener { e -> nativeMlError(e.message ?: "null") }
+                .addOnFailureListener { error -> reject(error.message ?: "Text recognition failed") }
+                .addOnCompleteListener { recognizer.close() }
         } catch (e: Exception) {
-            nativeMlError(e.message ?: "null")
+            reject(e.message ?: "Text recognition failed")
         }
     }
 
