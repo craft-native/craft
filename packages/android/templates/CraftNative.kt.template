@@ -699,19 +699,38 @@ object CraftNative {
 
     @JvmStatic
     fun captureScreenshot(activity: Activity, webView: WebView) {
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolveScreenshotRequest(bytes: ByteArray) {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            nativeScreenshotReady(bytes)
+        }
+
+        fun rejectScreenshotRequest(message: String) {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            nativeScreenshotError(message)
+        }
+
         activity.runOnUiThread {
+            if (requestGeneration != lifecycleGeneration.get()) return@runOnUiThread
             try {
                 val view = webView.rootView
-                view.isDrawingCacheEnabled = true
-                view.buildDrawingCache()
-                val bitmap = Bitmap.createBitmap(view.drawingCache)
-                view.isDrawingCacheEnabled = false
+                val bitmap = try {
+                    view.isDrawingCacheEnabled = true
+                    view.buildDrawingCache()
+                    Bitmap.createBitmap(view.drawingCache)
+                } finally {
+                    view.isDrawingCacheEnabled = false
+                }
 
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
-                nativeScreenshotReady(outputStream.toByteArray())
+                resolveScreenshotRequest(outputStream.toByteArray())
             } catch (e: Exception) {
-                nativeScreenshotError(e.message ?: "null")
+                rejectScreenshotRequest(e.message ?: "Screenshot failed")
             }
         }
     }
@@ -1044,7 +1063,23 @@ object CraftNative {
 
     @JvmStatic
     fun openPdfExternal(activity: Activity, source: String) {
+        val requestGeneration = lifecycleGeneration.get()
+        val settled = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun resolvePdfRequest() {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            nativePdfOpened()
+        }
+
+        fun rejectPdfRequest(message: String) {
+            if (requestGeneration != lifecycleGeneration.get()) return
+            if (!settled.compareAndSet(false, true)) return
+            nativePdfError(message)
+        }
+
         activity.runOnUiThread {
+            if (requestGeneration != lifecycleGeneration.get()) return@runOnUiThread
             try {
                 val uri = if (source.startsWith("data:")) {
                     val base64Data = source.substringAfter(",")
@@ -1062,9 +1097,9 @@ object CraftNative {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 activity.startActivity(intent)
-                nativePdfOpened()
+                resolvePdfRequest()
             } catch (e: Exception) {
-                nativePdfError(e.message ?: "null")
+                rejectPdfRequest(e.message ?: "PDF could not be opened")
             }
         }
     }

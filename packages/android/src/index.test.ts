@@ -879,6 +879,47 @@ describe('Craft Android builder', () => {
     expect(holderMl).toContain('requestGeneration == lifecycleGeneration.get()')
   })
 
+  it('invalidates queued screenshot and PDF replies during teardown', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-queued-replies-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java')
+    const bridge = readFileSync(join(sourceRoot, 'org/wildloop/app/CraftBridge.kt'), 'utf8')
+    const holder = readFileSync(join(sourceRoot, 'com/craft/runtime/CraftNative.kt'), 'utf8')
+    const bridgeScreenshot = bridge.slice(
+      bridge.indexOf('fun takeScreenshot()'),
+      bridge.indexOf('// ==================== Background Tasks'),
+    )
+    const holderScreenshot = holder.slice(
+      holder.indexOf('fun captureScreenshot('),
+      holder.indexOf('fun takeScreenshot('),
+    )
+    const bridgePdf = bridge.slice(
+      bridge.indexOf('fun openPDF('),
+      bridge.indexOf('// ==================== Contact Picker'),
+    )
+    const holderPdf = holder.slice(
+      holder.indexOf('fun openPdfExternal('),
+      holder.indexOf('fun openPDF('),
+    )
+
+    for (const source of [holderScreenshot, holderPdf]) {
+      expect(source).toContain('val requestGeneration = lifecycleGeneration.get()')
+      expect(source).toContain('val settled = java.util.concurrent.atomic.AtomicBoolean(false)')
+      expect(source).toContain('if (requestGeneration != lifecycleGeneration.get()) return')
+      expect(source).toContain('if (!settled.compareAndSet(false, true)) return')
+      expect(source).toContain('return@runOnUiThread')
+    }
+    for (const source of [bridgeScreenshot, bridgePdf]) {
+      expect(source).toContain('if (closed) return@runOnUiThread')
+      expect(source).toContain('evaluatePromiseJavascript(')
+    }
+    for (const source of [bridgeScreenshot, holderScreenshot]) {
+      expect(source).toContain('finally {')
+      expect(source).toContain('view.isDrawingCacheEnabled = false')
+    }
+  })
+
   it('connects Play Billing for restores and settles failure paths', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-billing-errors-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

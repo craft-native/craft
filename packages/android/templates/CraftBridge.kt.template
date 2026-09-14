@@ -3779,20 +3779,28 @@ class CraftBridge(
         if (CraftNative.takeScreenshot(activity, webView)) return
 
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             try {
                 val view = webView.rootView
-                view.isDrawingCacheEnabled = true
-                view.buildDrawingCache()
-                val bitmap = Bitmap.createBitmap(view.drawingCache)
-                view.isDrawingCacheEnabled = false
+                val bitmap = try {
+                    view.isDrawingCacheEnabled = true
+                    view.buildDrawingCache()
+                    Bitmap.createBitmap(view.drawingCache)
+                } finally {
+                    view.isDrawingCacheEnabled = false
+                }
 
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
                 val base64 = "data:image/png;base64," + Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
 
-                webView.evaluateJavascript("window._craftScreenshotResolve && window._craftScreenshotResolve(${jsQuote(base64)})", null)
+                evaluatePromiseJavascript(
+                    "window._craftScreenshotResolve && window._craftScreenshotResolve(${jsQuote(base64)})"
+                )
             } catch (e: Exception) {
-                webView.evaluateJavascript("window._craftScreenshotReject && window._craftScreenshotReject(${jsQuote(e.message)})", null)
+                evaluatePromiseJavascript(
+                    "window._craftScreenshotReject && window._craftScreenshotReject(${jsQuote(e.message ?: "Screenshot failed")})"
+                )
             }
         }
     }
@@ -3841,6 +3849,7 @@ class CraftBridge(
         if (CraftNative.openPDF(activity, source, page)) return
 
         activity.runOnUiThread {
+            if (closed) return@runOnUiThread
             try {
                 val uri = if (source.startsWith("data:")) {
                     // Save base64 to temp file and open
@@ -3860,14 +3869,12 @@ class CraftBridge(
                 }
 
                 activity.startActivity(intent)
-                webView.evaluateJavascript(
-                    "window._craftPDFResolve && window._craftPDFResolve({opened: true})",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftPDFResolve && window._craftPDFResolve({opened: true})"
                 )
             } catch (e: Exception) {
-                webView.evaluateJavascript(
-                    "window._craftPDFReject && window._craftPDFReject(${jsQuote(e.message)})",
-                    null
+                evaluatePromiseJavascript(
+                    "window._craftPDFReject && window._craftPDFReject(${jsQuote(e.message ?: "PDF could not be opened")})"
                 )
             }
         }
@@ -3876,12 +3883,7 @@ class CraftBridge(
     @JavascriptInterface
     fun closePDF() {
         // PDFs are opened in external viewers, so we just acknowledge
-        activity.runOnUiThread {
-            webView.evaluateJavascript(
-                "window._craftPDFResolve && window._craftPDFResolve(true)",
-                null
-            )
-        }
+        evaluatePromiseJavascript("window._craftPDFResolve && window._craftPDFResolve(true)")
     }
 
     // ==================== Contacts Picker ====================
