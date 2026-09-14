@@ -192,8 +192,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun isTrustedUrl(value: String): Boolean {
         val uri = Uri.parse(value)
-        if (uri.scheme == "https" && uri.host == BUNDLED_APP_HOST) return true
         val origin = "${uri.scheme}://${uri.authority}"
+        if (origin == BUNDLED_APP_ORIGIN) return true
         val localDevelopment = uri.scheme == "http" && uri.host in setOf("localhost", "127.0.0.1", "10.0.2.2")
         return (uri.scheme == "https" || localDevelopment) && origin in trustedOrigins
     }
@@ -246,7 +246,8 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val BUNDLED_APP_HOST = "appassets.androidplatform.net"
-        private const val BUNDLED_APP_URL = "https://appassets.androidplatform.net/"
+        private const val BUNDLED_APP_ORIGIN = "https://appassets.androidplatform.net"
+        private const val BUNDLED_APP_URL = "$BUNDLED_APP_ORIGIN/"
         private const val SHORTCUT_TYPE_EXTRA = "shortcut_type"
     }
 }
