@@ -1,10 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { build, init, renderAndroidDeepLinks, renderAndroidPermissions, syncAndroidWebAssets } from './index'
 
 describe('Craft Android builder', () => {
+  it('routes every Kotlin template through the project generator', () => {
+    const templates = readdirSync(join(import.meta.dir, '../templates'))
+      .filter(name => name.endsWith('.kt.template'))
+    const generator = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
+
+    for (const template of templates) expect(generator).toContain(`'${template}'`)
+  })
+
   it('renders only permissions required by enabled capabilities', () => {
     const permissions = renderAndroidPermissions({
       appName: 'WildLoop',
