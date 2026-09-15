@@ -11,6 +11,8 @@ export interface RunnerOptions {
   runId: string
   /** Directory holding the Zig iOS simulator archives. */
   iosRuntimeDir: string | null
+  /** Directory holding the Zig Android `<abi>/libcraft.so` tree. */
+  androidRuntimeDir: string | null
 }
 
 export interface LegOutcome {

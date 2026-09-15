@@ -23,8 +23,38 @@ const CONFIG = {
 const PACKAGE = 'dev.craft.e2e.probe'
 const APP_NAME = 'CraftE2EProbe'
 
-/** Both tags matter: the bridge's own, and the WebView's for a page that never reached the bridge. */
-const LOGCAT_FILTER = ['CraftBridge:D', 'chromium:I', 'AndroidRuntime:E', '*:S']
+/**
+ * Tags worth reading. CraftBridge is the Kotlin shim's, CraftNative is Zig's
+ * own — that pair is how this leg tells which side answered — chromium carries
+ * the page's console for a run whose bridge never arrived, and AndroidRuntime
+ * carries the crash if it did not get that far.
+ */
+const LOGCAT_FILTER = ['CraftBridge:D', 'CraftNative:D', 'chromium:I', 'AndroidRuntime:E', '*:S']
+
+/**
+ * One leg is one answer to "who served the call".
+ *
+ * The same split the iOS suite runs, and it exists here for a sharper reason:
+ * until this change nothing copied libcraft.so into a generated app at all, so
+ * every Android app anyone has ever generated was the shim leg and the whole
+ * Zig bridge had never run. The runtime leg is what stops that being true
+ * again without anybody noticing.
+ */
+interface Leg {
+  name: 'shim' | 'runtime'
+  runtimeDir: string | null
+  requireZig: boolean
+}
+
+function legs(runtimeDir: string | null): Leg[] {
+  return [
+    { name: 'shim', runtimeDir: null, requireZig: false },
+    { name: 'runtime', runtimeDir, requireZig: true },
+  ]
+}
+
+/** What JNI_OnLoad logs once it has bound the natives. */
+const REGISTERED = /craft: registered (\d+) natives on com\/craft\/runtime\/CraftNative/
 
 async function adb(argv: string[], options: { serial: string, logPath?: string, allowFailure?: boolean }) {
   return command(['adb', '-s', options.serial, ...argv], { logPath: options.logPath, allowFailure: options.allowFailure })
@@ -45,8 +75,8 @@ async function resolveSerial(): Promise<string> {
   return serials[0]!
 }
 
-async function runLeg(options: RunnerOptions): Promise<LegOutcome> {
-  const label = 'android-shim'
+async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
+  const label = `android-${leg.name}`
   const evidence = join(options.evidenceDir, label)
   const project = join(options.workDir, label)
   const failures: string[] = []
@@ -59,6 +89,7 @@ async function runLeg(options: RunnerOptions): Promise<LegOutcome> {
     packageName: PACKAGE,
     output: project,
     config: CONFIG,
+    runtimeDir: leg.runtimeDir,
   })
 
   const nonce = `craft-e2e-${label}-${options.runId}`
@@ -81,23 +112,25 @@ async function runLeg(options: RunnerOptions): Promise<LegOutcome> {
     throw new Error(`gradle reported success but ${apk} is missing`)
 
   // Which side is about to answer, established from the APK rather than
-  // assumed. Nothing in the generator copies libcraft.so into jniLibs (#200),
-  // so `System.loadLibrary("craft")` throws, `CraftNative.isAvailable` is
-  // false, and Kotlin serves every action. The leg reports that as fact, so it
-  // checks it: when #200 lands this assertion fails, and whoever fixes it has
-  // to come back and teach this leg to assert the Zig path instead of
-  // declaring there isn't one.
+  // assumed. `System.loadLibrary("craft")` finding nothing is a designed
+  // no-op — CraftNative catches it and every action falls through to Kotlin —
+  // so a runtime leg whose library never shipped would look exactly like the
+  // shim leg and pass. The APK is the only place to see the difference before
+  // the app runs.
   const listed = await command(['unzip', '-l', apk], { logPath: join(evidence, 'apk.txt') })
   const zigLibraries = listed.stdout
     .split('\n')
     .map(line => line.trim().split(/\s+/).pop() ?? '')
     .filter(name => /^lib\/[^/]+\/libcraft\.so$/.test(name))
 
-  if (zigLibraries.length) {
+  if (leg.requireZig && !zigLibraries.some(name => name.includes('/x86_64/'))) {
     failures.push(
-      `the APK ships ${zigLibraries.join(', ')}, so the Zig runtime may be serving these calls. `
-      + 'This leg reports zigActions: [] on the basis that it never loads — teach it to assert which side answered before trusting that again.',
+      `the runtime leg's APK carries ${zigLibraries.length ? zigLibraries.join(', ') : 'no libcraft.so at all'}, `
+      + 'and nothing for x86_64 — which is the architecture every emulator runs, so the runtime could not load here whatever else shipped',
     )
+  }
+  if (!leg.requireZig && zigLibraries.length) {
+    failures.push(`the shim leg's APK ships ${zigLibraries.join(', ')}; it was generated with no runtime`)
   }
 
   const serial = await resolveSerial()
@@ -156,6 +189,34 @@ async function runLeg(options: RunnerOptions): Promise<LegOutcome> {
     failures.push(`the bridge reported sdkVersion ${observed[1]} but the device says ${sdk}`)
   }
 
+  // Did the Zig runtime actually load and bind? JNI_OnLoad says so itself, on
+  // the happy path as well as the failure ones — which is deliberate, because
+  // "loaded and bound" and "never shipped" are otherwise both silent, and this
+  // is also the only line that proves the log channel is working rather than
+  // merely quiet.
+  //
+  // There is no per-action dispatch line to count the way the iOS legs do.
+  // Binding is the gate instead: once the natives are registered, every
+  // CraftNative wrapper returns a value and the Kotlin falls through to Zig
+  // rather than the other way round.
+  const registered = logText.match(REGISTERED)
+  const zigActions: string[] = []
+
+  if (leg.requireZig) {
+    if (!registered) {
+      failures.push(
+        'the Zig runtime never reported registering its natives. Either libcraft.so did not load, '
+        + `or JNI_OnLoad refused a descriptor — see ${label}/logcat.txt under the CraftNative tag, which now carries the reason`,
+      )
+    }
+    else {
+      zigActions.push(`registered:${registered[1]}`)
+    }
+  }
+  else if (registered) {
+    failures.push(`the shim leg registered ${registered[1]} natives; it was generated with no runtime`)
+  }
+
   return {
     name: label,
     status: failures.length ? 'failed' : 'passed',
@@ -163,29 +224,47 @@ async function runLeg(options: RunnerOptions): Promise<LegOutcome> {
     planned: verdict.planned,
     passed: verdict.passed,
     failed: verdict.failed,
-    // Nothing copies libcraft.so into the generated app's jniLibs (#200), so
-    // CraftNative.isAvailable is always false and Kotlin serves every action.
-    // Reported as empty rather than omitted, so the report says which side
-    // answered instead of leaving it open.
-    zigActions: [],
+    zigActions,
     evidence: evidence.replace(`${options.root}/`, ''),
   }
 }
 
 export async function runAndroid(options: RunnerOptions): Promise<LegOutcome[]> {
-  try {
-    return [await runLeg(options)]
+  const runtimeDir = options.androidRuntimeDir
+  if (!runtimeDir) {
+    throw new Error(
+      'no Android Zig runtime directory; run `zig build build-android-all -Doptimize=ReleaseSafe` '
+      + 'in packages/zig and pass --android-runtime packages/zig/zig-out/android',
+    )
   }
-  catch (caught) {
-    return [{
-      name: 'android-shim',
-      status: 'failed',
-      failures: [caught instanceof Error ? caught.message : String(caught)],
-      planned: [],
-      passed: [],
-      failed: [],
-      zigActions: [],
-      evidence: join(options.evidenceDir, 'android-shim').replace(`${options.root}/`, ''),
-    }]
+
+  const abi = join(runtimeDir, 'x86_64', 'libcraft.so')
+  if (!existsSync(abi)) {
+    throw new Error(
+      `${abi} is missing. Every Android emulator is x86_64, so without it the runtime leg would `
+      + 'install an APK that cannot load the library and pass as though the shim were the only option. '
+      + 'Run `zig build build-android-all -Doptimize=ReleaseSafe` in packages/zig.',
+    )
   }
+
+  const outcomes: LegOutcome[] = []
+  for (const leg of legs(runtimeDir)) {
+    try {
+      outcomes.push(await runLeg(leg, options))
+    }
+    catch (caught) {
+      outcomes.push({
+        name: `android-${leg.name}`,
+        status: 'failed',
+        failures: [caught instanceof Error ? caught.message : String(caught)],
+        planned: [],
+        passed: [],
+        failed: [],
+        zigActions: [],
+        evidence: join(options.evidenceDir, `android-${leg.name}`).replace(`${options.root}/`, ''),
+      })
+    }
+  }
+
+  return outcomes
 }

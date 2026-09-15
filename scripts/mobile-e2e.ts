@@ -64,6 +64,9 @@ const options: RunnerOptions = {
   iosRuntimeDir: flag('ios-runtime')
     ? resolve(root, flag('ios-runtime')!)
     : (process.env.CRAFT_IOS_RUNTIME ? resolve(root, process.env.CRAFT_IOS_RUNTIME) : null),
+  androidRuntimeDir: flag('android-runtime')
+    ? resolve(root, flag('android-runtime')!)
+    : (process.env.CRAFT_ANDROID_RUNTIME ? resolve(root, process.env.CRAFT_ANDROID_RUNTIME) : null),
 }
 
 async function main(): Promise<void> {
