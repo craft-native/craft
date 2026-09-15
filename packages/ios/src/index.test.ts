@@ -237,6 +237,24 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain('try eventStore?.remove')
   })
 
+  it('settles contacts callbacks only after a real Contacts operation', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-contacts-'))
+    await init({
+      runtimeDir: null,
+      name: 'WildLoop',
+      bundleId: 'org.wildloop.app',
+      output,
+      config: { enableContacts: true },
+    })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    expect(swift).toContain('guard let store = contactStore else {')
+    expect(swift).toContain('try store.enumerateContacts(with: request)')
+    expect(swift).toContain('try store.execute(saveRequest)')
+    expect(swift).not.toContain('try self?.contactStore?.enumerateContacts')
+    expect(swift).not.toContain('try self?.contactStore?.execute')
+  })
+
   it('generates an embedded watchOS companion when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-watch-'))
     const iosOutput = mkdtempSync(join(tmpdir(), 'craft-ios-watch-sibling-'))

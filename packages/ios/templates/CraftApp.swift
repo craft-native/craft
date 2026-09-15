@@ -3818,7 +3818,11 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Contacts
         private func getContacts(callbackId: String?) {
-            contactStore?.requestAccess(for: .contacts) { [weak self] granted, error in
+            guard let store = contactStore else {
+                rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            store.requestAccess(for: .contacts) { [weak self] granted, error in
                 guard granted else {
                     self?.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
                     return
@@ -3829,7 +3833,7 @@ struct CraftWebView: UIViewRepresentable {
 
                 var contacts: [[String: Any]] = []
                 do {
-                    try self?.contactStore?.enumerateContacts(with: request) { contact, _ in
+                    try store.enumerateContacts(with: request) { contact, _ in
                         var phones: [String] = []
                         for phone in contact.phoneNumbers {
                             phones.append(phone.value.stringValue)
@@ -3855,9 +3859,13 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func addContact(_ data: [String: Any], callbackId: String?) {
-            contactStore?.requestAccess(for: .contacts) { [weak self] granted, error in
+            guard let store = contactStore else {
+                rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            store.requestAccess(for: .contacts) { [weak self] granted, error in
                 guard granted else {
-                    self?.rejectCallback(callbackId, error: "Permission denied")
+                    self?.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
                     return
                 }
 
@@ -3875,7 +3883,7 @@ struct CraftWebView: UIViewRepresentable {
                 saveRequest.add(contact, toContainerWithIdentifier: nil)
 
                 do {
-                    try self?.contactStore?.execute(saveRequest)
+                    try store.execute(saveRequest)
                     self?.resolveCallback(callbackId, result: contact.identifier)
                 } catch {
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
