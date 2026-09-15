@@ -110,10 +110,24 @@ object CraftNative {
      */
     val isAvailable: Boolean = try {
         System.loadLibrary("craft")
+        // Said out loud, because the two outcomes below are otherwise
+        // indistinguishable from outside: a library that never shipped and a
+        // library that loaded and then failed to bind both end with the shim
+        // answering every call. Zig logs its own registration under the same
+        // tag, so the pair reads as a sequence.
+        android.util.Log.i("CraftNative", "craft: libcraft.so loaded")
         true
     } catch (e: UnsatisfiedLinkError) {
+        // The reason, not just the fact. This used to be a bare `false`, and
+        // the first time the runtime was genuinely shipped and genuinely
+        // failed to load, the only evidence anywhere was that nothing
+        // happened — no linker line, no exception, nothing in logcat at all.
+        // The message carries the dynamic linker's own complaint, which is the
+        // one thing that says *why*.
+        android.util.Log.w("CraftNative", "craft: libcraft.so did not load: ${e.message}")
         false
     } catch (e: SecurityException) {
+        android.util.Log.w("CraftNative", "craft: libcraft.so was refused: ${e.message}")
         false
     }
 
