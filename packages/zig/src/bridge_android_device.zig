@@ -146,15 +146,53 @@ fn appendString(
 // The JNI half
 // =============================================================================
 
-/// `Build.FINGERPRINT.contains("generic") || contains("emulator")`.
+/// The `Build` fields the emulator test reads.
+pub const BuildIdentity = struct {
+    hardware: []const u8,
+    fingerprint: []const u8,
+    product: []const u8,
+    model: []const u8,
+    manufacturer: []const u8,
+    brand: []const u8,
+};
+
+/// Whether this is an emulator, asking exactly what `CraftBridge.isEmulator()`
+/// asks.
 ///
-/// Kotlin's own test, kept as a function so it can be asserted without a
-/// device. Deliberately not widened: the Kotlin does not check `"sdk"`,
-/// `"vbox"` or the other markers a more thorough emulator test would, and this
-/// answers the same question the shim answers.
-pub fn fingerprintLooksEmulated(fingerprint: []const u8) bool {
-    return std.mem.indexOf(u8, fingerprint, "generic") != null or
-        std.mem.indexOf(u8, fingerprint, "emulator") != null;
+/// Kept as a function so it can be asserted without a device, and kept in step
+/// with the Kotlin deliberately: the whole point of the hand-off is that a page
+/// cannot tell which side answered, and two emulator tests that disagree would
+/// make `isEmulator` depend on whether libcraft.so happened to load.
+///
+/// Both sides used to be `FINGERPRINT.contains("generic") ||
+/// contains("emulator")`, which answers false on the AVDs anyone actually runs
+/// - a current Google APIs image fingerprints as
+/// `google/sdk_gphone64_x86_64/emu64xa:14/...` and contains neither word. The
+/// mobile E2E suite caught it on an API 34 emulator.
+///
+/// Note the last line is case-sensitive on both sides. That is the Kotlin's
+/// behaviour, not an oversight here.
+pub fn looksEmulated(build: BuildIdentity) bool {
+    const ascii = std.ascii;
+
+    if (ascii.startsWithIgnoreCase(build.hardware, "goldfish") or
+        ascii.startsWithIgnoreCase(build.hardware, "ranchu")) return true;
+
+    if (ascii.startsWithIgnoreCase(build.fingerprint, "generic") or
+        ascii.startsWithIgnoreCase(build.fingerprint, "unknown")) return true;
+    if (ascii.findIgnoreCase(build.fingerprint, "emulator") != null or
+        ascii.findIgnoreCase(build.fingerprint, "sdk_gphone") != null) return true;
+
+    if (ascii.startsWithIgnoreCase(build.product, "sdk") or
+        ascii.findIgnoreCase(build.product, "_sdk") != null or
+        ascii.findIgnoreCase(build.product, "sdk_") != null) return true;
+
+    if (ascii.findIgnoreCase(build.model, "google_sdk") != null or
+        ascii.findIgnoreCase(build.model, "emulator") != null or
+        ascii.findIgnoreCase(build.model, "android sdk built for") != null) return true;
+
+    return std.mem.indexOf(u8, build.manufacturer, "Genymotion") != null or
+        std.mem.startsWith(u8, build.brand, "generic");
 }
 
 /// Read a `static final String` off a class, as UTF-8.
@@ -200,6 +238,10 @@ pub fn read(allocator: std.mem.Allocator, j: Jni, activity: jobject) !DeviceInfo
 
     const fingerprint = try staticString(allocator, j, build, "FINGERPRINT");
     defer allocator.free(fingerprint);
+    const hardware = try staticString(allocator, j, build, "HARDWARE");
+    defer allocator.free(hardware);
+    const product = try staticString(allocator, j, build, "PRODUCT");
+    defer allocator.free(product);
 
     // `Build$VERSION` — a nested class, and the `$` is not decoration: the JVM
     // knows this type by that binary name and `android/os/Build/VERSION` finds
@@ -227,7 +269,14 @@ pub fn read(allocator: std.mem.Allocator, j: Jni, activity: jobject) !DeviceInfo
         .screen_height = metrics.height,
         .density = metrics.density,
         .app_build = package.build,
-        .is_emulator = fingerprintLooksEmulated(fingerprint),
+        .is_emulator = looksEmulated(.{
+            .hardware = hardware,
+            .fingerprint = fingerprint,
+            .product = product,
+            .model = model,
+            .manufacturer = manufacturer,
+            .brand = brand,
+        }),
     };
 }
 
@@ -450,15 +499,73 @@ test "density renders the way JSONObject renders a float" {
 }
 
 test "the emulator test asks exactly what the Kotlin asks" {
-    // Real fingerprints, and the two markers the shim looks for.
-    try testing.expect(fingerprintLooksEmulated("generic/sdk_gphone64_arm64/emu64a:14/UE1A.230829.036/11228894:user/release-keys"));
-    try testing.expect(fingerprintLooksEmulated("Android/aosp_cf_x86_64_phone/emulator:13/x/y:userdebug/test-keys"));
-    try testing.expect(!fingerprintLooksEmulated("google/husky/husky:14/AP1A.240405.002/11480754:user/release-keys"));
-    try testing.expect(!fingerprintLooksEmulated("samsung/dm3qxxx/dm3q:14/UP1A.231005.007/S918BXXU4BWL5:user/release-keys"));
+    const phone: BuildIdentity = .{
+        .hardware = "husky",
+        .fingerprint = "google/husky/husky:14/AP1A.240405.002/11480754:user/release-keys",
+        .product = "husky",
+        .model = "Pixel 8 Pro",
+        .manufacturer = "Google",
+        .brand = "google",
+    };
+    try testing.expect(!looksEmulated(phone));
 
-    // Not widened past the shim: these are emulator markers this deliberately
-    // does not know about, because the Kotlin does not either.
-    try testing.expect(!fingerprintLooksEmulated("unknown/vbox86p/vbox86p:9/x/y:userdebug/test-keys"));
+    var samsung = phone;
+    samsung.hardware = "qcom";
+    samsung.fingerprint = "samsung/dm3qxxx/dm3q:14/UP1A.231005.007/S918BXXU4BWL5:user/release-keys";
+    samsung.product = "dm3qxxx";
+    samsung.model = "SM-S918B";
+    samsung.manufacturer = "samsung";
+    samsung.brand = "samsung";
+    try testing.expect(!looksEmulated(samsung));
+
+    // The image the E2E suite runs on, and the one the old fingerprint test
+    // answered `false` for: neither "generic" nor "emulator" appears anywhere
+    // in it. HARDWARE is what gives it away.
+    var avd = phone;
+    avd.hardware = "ranchu";
+    avd.fingerprint = "google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.036/11228894:user/release-keys";
+    avd.product = "sdk_gphone64_x86_64";
+    avd.model = "sdk_gphone64_x86_64";
+    try testing.expect(looksEmulated(avd));
+
+    // Each marker on its own, so a mutation to any one line fails.
+    var hardware_only = phone;
+    hardware_only.hardware = "goldfish";
+    try testing.expect(looksEmulated(hardware_only));
+
+    var fingerprint_only = phone;
+    fingerprint_only.fingerprint = "generic/sdk/generic:9/x/y:eng/test-keys";
+    try testing.expect(looksEmulated(fingerprint_only));
+
+    var cuttlefish = phone;
+    cuttlefish.fingerprint = "Android/aosp_cf_x86_64_phone/emulator:13/x/y:userdebug/test-keys";
+    try testing.expect(looksEmulated(cuttlefish));
+
+    var product_only = phone;
+    product_only.product = "sdk_google_phone_x86";
+    try testing.expect(looksEmulated(product_only));
+
+    var model_only = phone;
+    model_only.model = "Android SDK built for x86";
+    try testing.expect(looksEmulated(model_only));
+
+    var genymotion = phone;
+    genymotion.manufacturer = "Genymotion";
+    try testing.expect(looksEmulated(genymotion));
+
+    var brand_only = phone;
+    brand_only.brand = "generic_x86";
+    try testing.expect(looksEmulated(brand_only));
+
+    // Genymotion, which the old fingerprint test missed and the `unknown`
+    // prefix now catches on its own - before MANUFACTURER is even consulted.
+    var vbox = phone;
+    vbox.fingerprint = "unknown/vbox86p/vbox86p:9/x/y:userdebug/test-keys";
+    try testing.expect(looksEmulated(vbox));
+
+    // Still a hint and not a boundary, on both sides: anything that can rewrite
+    // these properties defeats it, and nothing here is proof of where the code
+    // is running.
 }
 
 test "the action name matches the Kotlin method exactly" {

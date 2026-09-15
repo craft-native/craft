@@ -123,14 +123,45 @@ LAUNCH_PID=$!
 
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
-for _ in $(seq 1 60); do
-    if grep -q 'i=26' "$LOG" 2>/dev/null && grep -q 'i=28' "$LOG" 2>/dev/null \
-       && grep -q 'i=32' "$LOG" 2>/dev/null && grep -q 'i=22' "$LOG" 2>/dev/null \
-       && grep -q 'i=34' "$LOG" 2>/dev/null && grep -q 'i=38' "$LOG" 2>/dev/null \
-       && grep -q 'i=46' "$LOG" 2>/dev/null && grep -q 'i=44' "$LOG" 2>/dev/null \
-       && grep -q 'i=24' "$LOG" 2>/dev/null && grep -q 'i=20' "$LOG" 2>/dev/null \
-       && grep -q 'i=72' "$LOG" 2>/dev/null && grep -q 'i=76' "$LOG" 2>/dev/null \
-       && grep -q 'i=78' "$LOG" 2>/dev/null && grep -q 'i=82' "$LOG" 2>/dev/null; then sleep 1; break; fi
+#
+# The budget is wall-clock, not iterations. It used to be `seq 1 60` around a
+# body that runs fourteen greps, which on this laptop is about a minute and on
+# a loaded CI runner is nearer three — and when it ran out the loop simply fell
+# through to the assertions below, which then failed on whichever late marker
+# had not arrived yet. That is a timeout wearing the costume of a wrong result:
+# the first CI run of this fixture reported "the deletion completion never
+# fired, or its reply was lost" when the truth was that the app was still
+# working through the ids before it.
+#
+# So: a deadline, and an explicit failure that names what is missing. The two
+# situations look nothing alike now.
+SLICE_TIMEOUT="${CRAFT_SLICE_TIMEOUT:-600}"
+AWAITED_IDS="20 22 24 26 28 32 34 38 44 46 72 76 78 82"
+DEADLINE=$(( $(date +%s) + SLICE_TIMEOUT ))
+
+missing_ids() {
+    local missing=""
+    for id in $AWAITED_IDS; do
+        # ERE with an explicit boundary rather than \b, which is a GNU
+        # extension this script cannot count on, and rather than a bare
+        # "i=$id", which matches i=260 when it is looking for i=26.
+        grep -qE "i=$id(\$|[^0-9])" "$LOG" 2>/dev/null || missing="$missing i=$id"
+    done
+    echo "$missing"
+}
+
+while :; do
+    MISSING="$(missing_ids)"
+    [ -z "$MISSING" ] && { sleep 1; break; }
+    if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+        echo "==> console"
+        cat "$LOG" || true
+        echo "FAIL: timed out after ${SLICE_TIMEOUT}s waiting for:$MISSING"
+        echo "      The app never got that far — this is a timeout, not a wrong answer."
+        echo "      Raise CRAFT_SLICE_TIMEOUT if the machine is simply slow."
+        kill "$LAUNCH_PID" 2>/dev/null || true
+        exit 1
+    fi
     sleep 1
 done
 kill "$LAUNCH_PID" 2>/dev/null || true
