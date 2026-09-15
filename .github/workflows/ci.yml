@@ -137,6 +137,30 @@ jobs:
         working-directory: packages/ios
         run: bun run build
 
+  ios-native-templates:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Install dependencies
+        run: bun install
+
+      # Build generated iOS, Live Activity, and Watch targets against device
+      # SDKs. A sibling iOS fixture avoids the embedded-Watch scheme's runtime
+      # requirement while compiling the same capability-heavy Swift source.
+      - name: Compile generated iOS and Watch projects
+        working-directory: packages/ios
+        run: bun run test:templates
+        env:
+          CRAFT_IOS_RUNTIME: ''
+
   android-builder:
     runs-on: ubuntu-latest
 
@@ -294,7 +318,7 @@ jobs:
         run: bun run verify
 
   publish-commit:
-    needs: [zig-core, typescript-sdk, ios-builder, android-builder, create-craft, ts-maps, lint, integration]
+    needs: [zig-core, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:

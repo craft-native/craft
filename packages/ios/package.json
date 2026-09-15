@@ -23,7 +23,8 @@
   },
   "scripts": {
     "build": "bun build.ts",
-    "dev": "bun --watch src/cli.ts"
+    "dev": "bun --watch src/cli.ts",
+    "test:templates": "bun scripts/compile-templates.ts"
   },
   "files": [
     "dist",

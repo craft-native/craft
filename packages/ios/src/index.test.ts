@@ -219,12 +219,20 @@ describe('Craft iOS builder', () => {
 
   it('generates an embedded watchOS companion when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-watch-'))
+    const iosOutput = mkdtempSync(join(tmpdir(), 'craft-ios-watch-sibling-'))
     await init({
       runtimeDir: null,
       name: 'WildLoop',
       bundleId: 'org.wildloop.app',
       output,
       config: { deviceFamilies: ['iphone'], enableWatchApp: true, watchosVersion: '9.0' },
+    })
+    await init({
+      runtimeDir: null,
+      name: 'WildLoop',
+      bundleId: 'org.wildloop.app',
+      output: iosOutput,
+      config: { deviceFamilies: ['iphone'], watchosVersion: '9.0' },
     })
 
     const project = readFileSync(join(output, 'project.yml'), 'utf8')
@@ -241,6 +249,7 @@ describe('Craft iOS builder', () => {
     expect(project).toContain('embed: true')
     expect(project).toContain('TARGETED_DEVICE_FAMILY: "1"')
     expect(swift).toContain('setupWatchConnectivity()')
+    expect(swift).toBe(readFileSync(join(iosOutput, 'Sources', 'WildLoopApp.swift'), 'utf8'))
     expect(watch).toContain('recording-control')
     expect(watch).toContain('WCSessionDelegate')
     expect(watch).toContain('sessionDidBecomeInactive')
