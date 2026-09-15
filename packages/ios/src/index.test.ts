@@ -217,6 +217,26 @@ describe('Craft iOS builder', () => {
     expect(existsSync(join(output, 'WidgetExtension', 'WildLoopLiveActivity.swift'))).toBe(true)
   })
 
+  it('settles calendar callbacks only after a real EventKit operation', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
+    await init({
+      runtimeDir: null,
+      name: 'WildLoop',
+      bundleId: 'org.wildloop.app',
+      output,
+      config: { enableCalendar: true },
+    })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    expect(swift).toContain('guard let store = eventStore else {')
+    expect(swift).toContain('try store.save(event, span: .thisEvent)')
+    expect(swift).toContain('guard let identifier = event.eventIdentifier else {')
+    expect(swift).toContain('try store.remove(event, span: .thisEvent)')
+    expect(swift).not.toContain('self!.eventStore!')
+    expect(swift).not.toContain('try self?.eventStore?.save')
+    expect(swift).not.toContain('try eventStore?.remove')
+  })
+
   it('generates an embedded watchOS companion when enabled', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-watch-'))
     const iosOutput = mkdtempSync(join(tmpdir(), 'craft-ios-watch-sibling-'))

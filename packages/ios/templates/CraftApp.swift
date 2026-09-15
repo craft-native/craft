@@ -197,7 +197,7 @@ class DeepLinkManager {
             initialURL = url
         }
 
-        if isReady, let webView = webView {
+        if isReady && webView != nil {
             dispatchDeepLink(url)
         } else {
             // Store for later when web view is ready
@@ -3313,7 +3313,7 @@ struct CraftWebView: UIViewRepresentable {
             }
             switch permission {
             case "location", "locationAlways":
-                let status = CLLocationManager.authorizationStatus()
+                let status = (locationManager ?? CLLocationManager()).authorizationStatus
                 let granted = status == .authorizedAlways || (permission == "location" && status == .authorizedWhenInUse)
                 resolveCallback(callbackId, result: permissionStatus(granted, denied: status == .denied, restricted: status == .restricted))
             case "camera":
@@ -3885,17 +3885,23 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Calendar
         private func getCalendarEvents(startDate: Double?, endDate: Double?, callbackId: String?) {
-            eventStore?.requestAccess(to: .event) { [weak self] granted, error in
+            guard let store = eventStore else {
+                rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            store.requestAccess(to: .event) { [weak self] granted, error in
                 guard granted else {
                     self?.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
                     return
                 }
 
-                let start = startDate != nil ? Date(timeIntervalSince1970: startDate! / 1000) : Date()
-                let end = endDate != nil ? Date(timeIntervalSince1970: endDate! / 1000) : Calendar.current.date(byAdding: .month, value: 1, to: Date())!
+                let start = startDate.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
+                let end = endDate.map { Date(timeIntervalSince1970: $0 / 1000) }
+                    ?? Calendar.current.date(byAdding: .month, value: 1, to: Date())
+                    ?? Date()
 
-                let predicate = self?.eventStore?.predicateForEvents(withStart: start, end: end, calendars: nil)
-                let events = self?.eventStore?.events(matching: predicate!) ?? []
+                let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+                let events = store.events(matching: predicate)
 
                 let eventData: [[String: Any]] = events.map { event in
                     return [
@@ -3914,13 +3920,17 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func createCalendarEvent(_ data: [String: Any], callbackId: String?) {
-            eventStore?.requestAccess(to: .event) { [weak self] granted, error in
+            guard let store = eventStore else {
+                rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            store.requestAccess(to: .event) { [weak self] granted, error in
                 guard granted else {
-                    self?.rejectCallback(callbackId, error: "Permission denied")
+                    self?.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
                     return
                 }
 
-                let event = EKEvent(eventStore: self!.eventStore!)
+                let event = EKEvent(eventStore: store)
                 event.title = data["title"] as? String ?? ""
                 event.location = data["location"] as? String
                 event.notes = data["notes"] as? String
@@ -3932,11 +3942,15 @@ struct CraftWebView: UIViewRepresentable {
                     event.endDate = Date(timeIntervalSince1970: end / 1000)
                 }
                 event.isAllDay = data["isAllDay"] as? Bool ?? false
-                event.calendar = self?.eventStore?.defaultCalendarForNewEvents
+                event.calendar = store.defaultCalendarForNewEvents
 
                 do {
-                    try self?.eventStore?.save(event, span: .thisEvent)
-                    self?.resolveCallback(callbackId, result: event.eventIdentifier)
+                    try store.save(event, span: .thisEvent)
+                    guard let identifier = event.eventIdentifier else {
+                        self?.rejectCallback(callbackId, error: "Saved event has no identifier")
+                        return
+                    }
+                    self?.resolveCallback(callbackId, result: identifier)
                 } catch {
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
                 }
@@ -3944,13 +3958,17 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func deleteCalendarEvent(_ eventId: String, callbackId: String?) {
-            guard let event = eventStore?.event(withIdentifier: eventId) else {
+            guard let store = eventStore else {
+                rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
+                return
+            }
+            guard let event = store.event(withIdentifier: eventId) else {
                 rejectCallback(callbackId, error: "Event not found")
                 return
             }
 
             do {
-                try eventStore?.remove(event, span: .thisEvent)
+                try store.remove(event, span: .thisEvent)
                 resolveCallback(callbackId, result: true)
             } catch {
                 rejectCallback(callbackId, error: error.localizedDescription)
