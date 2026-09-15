@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Craft mobile E2E</title>
+  <style>
+    body { font: 14px -apple-system, Roboto, sans-serif; background: #0b1712; color: #e6f2ec; padding: 16px; }
+    li { margin: 4px 0; font-family: ui-monospace, monospace; }
+    .pass { color: #7ee08a; }
+    .fail { color: #ff8a80; }
+  </style>
+</head>
+<body>
+  <h1 id="headline">Craft mobile E2E</h1>
+  <ul id="results"></ul>
+  <script>
+  // The page drives itself and reports through the bridge's own `log` action,
+  // which is the one channel both runtimes already forward off-device: iOS
+  // prints "[Craft Web] <message>" to the process stderr that
+  // `simctl launch --console-pty` captures, and Android writes it to logcat
+  // under the CraftBridge tag. Nothing else in the generated app reaches a
+  // host-side reader, so the harness would otherwise be watching a screenshot.
+  //
+  // Every line is CRAFT-E2E followed by one JSON object. The harness reads
+  // three kinds: `plan` (once, up front), `case` (once per case), and `done`.
+  // Announcing the plan before running anything is what lets the harness tell
+  // "this case failed" apart from "this case never ran" — a suite that dies
+  // halfway through is a failure, not a pass with fewer cases.
+  (function () {
+    var NONCE = '__CRAFT_E2E_NONCE__'
+    // Which platform the harness built this leg for. Substituted in from
+    // outside, because the page comparing window.craft.platform against a
+    // value it read out of window.craft.platform is a tautology - it was one,
+    // and bridge.ready passed unconditionally until this arrived.
+    var EXPECTED_PLATFORM = '__CRAFT_E2E_PLATFORM__'
+    var CASE_TIMEOUT_MS = 8000
+
+    function emit(payload) {
+      var line = 'CRAFT-E2E ' + JSON.stringify(payload)
+      // console.log first: on Android it reaches logcat under `chromium` even
+      // when the bridge never arrived, which is the case the harness most
+      // needs evidence for.
+      try { console.log(line) } catch (ignored) {}
+      try { if (window.craft && window.craft.log) window.craft.log(line) } catch (ignored) {}
+    }
+
+    function show(name, ok, detail) {
+      var li = document.createElement('li')
+      li.className = ok ? 'pass' : 'fail'
+      li.textContent = (ok ? 'PASS ' : 'FAIL ') + name + (detail ? ' — ' + detail : '')
+      document.getElementById('results').appendChild(li)
+    }
+
+    // Rejections arrive in three shapes across the two runtimes: an Error from
+    // iOS's _rejectCallback, a bare string from Android's named reject globals
+    // (promise-runtime.ts parks `window._craftPushReject` and Kotlin calls it
+    // with a quoted string), and an object with `code`/`message` from iOS's
+    // capability gate. Normalise once here so a case can assert on a code
+    // without caring which runtime produced it.
+    function describeError(error) {
+      if (error === null || error === undefined) return { code: '', message: '' }
+      if (typeof error === 'string') return { code: '', message: error }
+      return { code: String(error.code || ''), message: String(error.message || error) }
+    }
+
+    function withTimeout(run) {
+      return new Promise(function (resolve) {
+        var settled = false
+        var timer = setTimeout(function () {
+          if (settled) return
+          settled = true
+          resolve({ state: 'timeout' })
+        }, CASE_TIMEOUT_MS)
+
+        function finish(value) {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          resolve(value)
+        }
+
+        try {
+          Promise.resolve(run()).then(
+            function (value) { finish({ state: 'resolved', value: value }) },
+            function (error) { finish({ state: 'rejected', error: describeError(error) }) }
+          )
+        }
+        catch (thrown) {
+          finish({ state: 'rejected', error: describeError(thrown) })
+        }
+      })
+    }
+
+    // A case passes only by returning nothing. Returning a string is how it
+    // explains what it saw instead, and that string lands in the report — so a
+    // failure names the actual value rather than just the assertion that broke.
+    var CASES = [
+      {
+        name: 'bridge.ready',
+        platforms: ['ios', 'android'],
+        run: function () {
+          if (!window.craft) return 'window.craft is absent'
+          if (typeof window.craft.log !== 'function') return 'window.craft has no log function'
+          if (window.craft.platform !== EXPECTED_PLATFORM)
+            return 'platform is ' + window.craft.platform + ', expected ' + EXPECTED_PLATFORM
+        }
+      },
+      {
+        // Ground truth the page cannot invent: `isSimulator` comes from Swift's
+        // `#if targetEnvironment(simulator)`, decided by the compiler, and
+        // `isEmulator` from the device's own Build properties. A stubbed bridge
+        // that echoed plausible JSON would have to guess it right.
+        name: 'deviceInfo.isSimulator',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.getDeviceInfo() }).then(function (outcome) {
+            if (outcome.state !== 'resolved') return 'getDeviceInfo ' + outcome.state
+            if (!outcome.value) return 'getDeviceInfo resolved with nothing'
+            if (outcome.value.platform !== 'ios') return 'platform is ' + outcome.value.platform
+            if (outcome.value.isSimulator !== true) return 'isSimulator is ' + outcome.value.isSimulator
+          })
+        }
+      },
+      {
+        name: 'deviceInfo.isEmulator',
+        platforms: ['android'],
+        run: function () {
+          return withTimeout(function () { return window.craft.getDeviceInfo() }).then(function (outcome) {
+            if (outcome.state !== 'resolved') return 'getDeviceInfo ' + outcome.state
+            if (!outcome.value) return 'getDeviceInfo resolved with nothing'
+
+            // Reported before anything is asserted, so a failing assertion
+            // still leaves the values behind. The first run of this case said
+            // only "isEmulator is false" and the log did not say what the
+            // device had called itself, which is the one thing needed to fix
+            // it.
+            emit({ event: 'observed', name: 'sdkVersion', value: outcome.value.sdkVersion })
+            emit({ event: 'observed', name: 'model', value: outcome.value.model })
+            emit({ event: 'observed', name: 'manufacturer', value: outcome.value.manufacturer })
+            emit({ event: 'observed', name: 'device', value: outcome.value.device })
+
+            if (outcome.value.platform !== 'android') return 'platform is ' + outcome.value.platform
+            if (!outcome.value.sdkVersion) return 'sdkVersion is ' + outcome.value.sdkVersion
+            if (outcome.value.isEmulator !== true)
+              return 'isEmulator is ' + outcome.value.isEmulator + ' on model ' + outcome.value.model
+          })
+        }
+      },
+      {
+        // The success path. On iOS the harness then reads the device pasteboard
+        // from the host with `simctl pbpaste`, so the case asserts the value
+        // reached real system clipboard state rather than a variable the bridge
+        // handed back. Android has no equally cheap host-side read, so its
+        // external check is the sdkVersion cross-reference below instead.
+        name: 'clipboard.roundTrip',
+        platforms: ['ios', 'android'],
+        run: function () {
+          return withTimeout(function () { return window.craft.clipboard.write(NONCE) }).then(function (written) {
+            if (written.state !== 'resolved') return 'clipboard.write ' + written.state + ' ' + (written.error ? written.error.message : '')
+            return withTimeout(function () { return window.craft.clipboard.read() }).then(function (read) {
+              if (read.state !== 'resolved') return 'clipboard.read ' + read.state + ' ' + (read.error ? read.error.message : '')
+              if (read.value !== NONCE) return 'read back ' + JSON.stringify(read.value)
+            })
+          })
+        }
+      },
+      {
+        // The failure path. Geolocation is off in the harness config, so the
+        // native side must answer — with a code that names the configuration —
+        // rather than leave the promise pending. A dropped callback here is
+        // indistinguishable from a slow one to the page, which is exactly why
+        // the case asserts the rejection and not merely "did not resolve".
+        name: 'geolocation.disabled.rejects',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.getCurrentPosition() }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'getCurrentPosition never settled'
+            if (outcome.state === 'resolved') return 'getCurrentPosition resolved on a disabled capability'
+            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          })
+        }
+      },
+      {
+        // Android's equivalent gate. With push disabled the generator emits a
+        // literal reject call rather than a Firebase block, so the rejection
+        // string is fixed at generation time and is safe to match on.
+        name: 'push.disabled.rejects',
+        platforms: ['android'],
+        run: function () {
+          return withTimeout(function () { return window.craft.registerPush() }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'registerPush never settled'
+            if (outcome.state === 'resolved') return 'registerPush resolved while push is disabled'
+            if (outcome.error.message.indexOf('Push notifications are disabled') === -1)
+              return 'message is ' + JSON.stringify(outcome.error.message)
+          })
+        }
+      }
+    ]
+
+    function waitForBridge(attempt) {
+      if (window.craft && window.craft.getDeviceInfo) return Promise.resolve(true)
+      if (attempt >= 150) return Promise.resolve(false)
+      return new Promise(function (resolve) {
+        setTimeout(function () { resolve(waitForBridge(attempt + 1)) }, 100)
+      })
+    }
+
+    waitForBridge(0).then(function (ready) {
+      if (!ready) {
+        emit({ event: 'fatal', reason: 'window.craft never appeared' })
+        document.getElementById('headline').textContent = 'FATAL: no bridge'
+        return
+      }
+
+      var platform = window.craft.platform
+      var selected = CASES.filter(function (entry) { return entry.platforms.indexOf(platform) !== -1 })
+      emit({ event: 'plan', platform: platform, run: NONCE, cases: selected.map(function (entry) { return entry.name }) })
+
+      var passed = 0
+      var failed = 0
+
+      // Sequential, not Promise.all. Android's promise runtime is single-flight
+      // per channel and rejects a second in-flight request outright; running
+      // the suite in parallel would fail cases for colliding with each other.
+      function step(index) {
+        if (index >= selected.length) {
+          emit({ event: 'done', passed: passed, failed: failed })
+          document.getElementById('headline').textContent = failed ? 'FAILED' : 'PASSED'
+          return
+        }
+
+        var entry = selected[index]
+        Promise.resolve()
+          .then(function () { return entry.run() })
+          .then(
+            function (detail) { return detail ? String(detail) : '' },
+            function (thrown) { return 'threw: ' + describeError(thrown).message }
+          )
+          .then(function (detail) {
+            if (detail) failed++
+            else passed++
+            emit({ event: 'case', name: entry.name, status: detail ? 'fail' : 'pass', detail: detail })
+            show(entry.name, !detail, detail)
+            step(index + 1)
+          })
+      }
+
+      step(0)
+    })
+  })()
+  </script>
+</body>
+</html>
