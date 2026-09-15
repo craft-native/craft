@@ -1,5 +1,235 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.90...v0.0.91)
+
+## 🚀 Features
+
+- **android**: guard native promise channels ([4e99a29](https://github.com/craft-native/craft/commit/4e99a29)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: destroy typed child windows ([f757386](https://github.com/craft-native/craft/commit/f757386)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: execute scripts in typed handles ([ec98e12](https://github.com/craft-native/craft/commit/ec98e12)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: route child events to creator ([df6b01a](https://github.com/craft-native/craft/commit/df6b01a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile**: return typed Live Activity handles ([07f2342](https://github.com/craft-native/craft/commit/07f2342)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: open PDFs through Zig ([d750fe2](https://github.com/craft-native/craft/commit/d750fe2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: process ML images through Zig ([827bd81](https://github.com/craft-native/craft/commit/827bd81)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: query billing through Zig ([8b18448](https://github.com/craft-native/craft/commit/8b18448)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: capture screenshots through Zig ([6226eed](https://github.com/craft-native/craft/commit/6226eed)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: manage deep links in Zig ([446f9a7](https://github.com/craft-native/craft/commit/446f9a7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: record audio through Zig ([9ebc1e7](https://github.com/craft-native/craft/commit/9ebc1e7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: recognize speech through Zig ([236ccb6](https://github.com/craft-native/craft/commit/236ccb6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: request app reviews through Zig ([576317c](https://github.com/craft-native/craft/commit/576317c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: launch contact picker in Zig ([b6c35c4](https://github.com/craft-native/craft/commit/b6c35c4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: launch file and video pickers in Zig — ratchet 48 -> 46 ([5cf20dd](https://github.com/craft-native/craft/commit/5cf20dd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: authenticate through Zig — ratchet 49 -> 48 ([c743eaf](https://github.com/craft-native/craft/commit/c743eaf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: launch the image picker pair in Zig — ratchet 51 -> 49 ([2d2ba47](https://github.com/craft-native/craft/commit/2d2ba47)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: getCurrentPosition in Zig — ratchet 52 -> 51 (#188) ([c425a16](https://github.com/craft-native/craft/commit/c425a16)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#188](https://github.com/craft-native/craft/issues/188), [#188](https://github.com/craft-native/craft/issues/188))
+- **android**: the motion pair, and org.json's numbers — ratchet 54 -> 52 (#187) ([be465f9](https://github.com/craft-native/craft/commit/be465f9)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#187](https://github.com/craft-native/craft/issues/187), [#187](https://github.com/craft-native/craft/issues/187))
+- **android**: the Bluetooth scan pair in Zig — ratchet 56 -> 54 (#186) ([f4889d6](https://github.com/craft-native/craft/commit/f4889d6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#186](https://github.com/craft-native/craft/issues/186), [#186](https://github.com/craft-native/craft/issues/186))
+- **android**: the app-state trio in Zig — ratchet 59 -> 56 (#184) ([1c7a2c4](https://github.com/craft-native/craft/commit/1c7a2c4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#184](https://github.com/craft-native/craft/issues/184), [#184](https://github.com/craft-native/craft/issues/184))
+- **android**: the first listener shim, and network monitoring on it — 61 -> 59 (#183) ([346887c](https://github.com/craft-native/craft/commit/346887c)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#183](https://github.com/craft-native/craft/issues/183), [#183](https://github.com/craft-native/craft/issues/183))
+- **android**: the location-recording controls in Zig — ratchet 65 -> 61 (#181) ([b6eef54](https://github.com/craft-native/craft/commit/b6eef54)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#181](https://github.com/craft-native/craft/issues/181), [#181](https://github.com/craft-native/craft/issues/181))
+- **android**: the recording store's two reads in Zig — ratchet 67 -> 65 (#177) ([719f70a](https://github.com/craft-native/craft/commit/719f70a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#177](https://github.com/craft-native/craft/issues/177), [#177](https://github.com/craft-native/craft/issues/177))
+- **android**: downloadFile and saveFile in Zig — ratchet 69 -> 67 (#176) ([5849ef7](https://github.com/craft-native/craft/commit/5849ef7)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#176](https://github.com/craft-native/craft/issues/176), [#176](https://github.com/craft-native/craft/issues/176))
+- **android**: setKeepAwake through the trampoline — ratchet 70 -> 69 (#174) ([5f83fae](https://github.com/craft-native/craft/commit/5f83fae)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#174](https://github.com/craft-native/craft/issues/174), [#174](https://github.com/craft-native/craft/issues/174))
+- **android**: a main-thread trampoline, and the orientation pair to prove it (#173) ([a94ff26](https://github.com/craft-native/craft/commit/a94ff26)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#173](https://github.com/craft-native/craft/issues/173), [#173](https://github.com/craft-native/craft/issues/173))
+- **android**: the immediate half of scheduleNotification — ratchet 73 -> 72 (#172) ([f79018b](https://github.com/craft-native/craft/commit/f79018b)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#172](https://github.com/craft-native/craft/issues/172), [#172](https://github.com/craft-native/craft/issues/172))
+- **android**: the shortcut pair in Zig — ratchet 75 -> 73 (#171) ([084c56d](https://github.com/craft-native/craft/commit/084c56d)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#171](https://github.com/craft-native/craft/issues/171), [#171](https://github.com/craft-native/craft/issues/171))
+- **android**: the widget pair in Zig — ratchet 77 -> 75 (#167) ([be8d85c](https://github.com/craft-native/craft/commit/be8d85c)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#167](https://github.com/craft-native/craft/issues/167), [#167](https://github.com/craft-native/craft/issues/167))
+- **android**: the contacts pair in Zig — ratchet 79 → 77 (#166) ([15e65a5](https://github.com/craft-native/craft/commit/15e65a5)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#166](https://github.com/craft-native/craft/issues/166), [#166](https://github.com/craft-native/craft/issues/166))
+- **android**: the shared-item trio in Zig — ratchet 82 -> 79 (#161) ([f4cce95](https://github.com/craft-native/craft/commit/f4cce95)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#161](https://github.com/craft-native/craft/issues/161), [#161](https://github.com/craft-native/craft/issues/161))
+- **android**: dbExecute and dbQuery in Zig — ratchet 84 -> 82 (#160) ([1788f48](https://github.com/craft-native/craft/commit/1788f48)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#160](https://github.com/craft-native/craft/issues/160), [#160](https://github.com/craft-native/craft/issues/160))
+- **android**: getCalendarEvents and createCalendarEvent in Zig — ratchet 86 → 84 (#158) ([0ad9cfb](https://github.com/craft-native/craft/commit/0ad9cfb)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#158](https://github.com/craft-native/craft/issues/158), [#158](https://github.com/craft-native/craft/issues/158))
+- **android**: deleteCalendarEvent — the first action to answer through the channel (#155) ([c65c927](https://github.com/craft-native/craft/commit/c65c927)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#155](https://github.com/craft-native/craft/issues/155), [#155](https://github.com/craft-native/craft/issues/155))
+- **android**: the reply channel, so async actions become reachable (#152) ([4dc81da](https://github.com/craft-native/craft/commit/4dc81da)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#152](https://github.com/craft-native/craft/issues/152), [#152](https://github.com/craft-native/craft/issues/152))
+- **android**: the notification cancels, and the flashlight pair deferred (#151) ([699d961](https://github.com/craft-native/craft/commit/699d961)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#151](https://github.com/craft-native/craft/issues/151), [#151](https://github.com/craft-native/craft/issues/151))
+- **android**: haptic and vibrate — ratchet 91 -> 89 (#150) ([a6d9fe1](https://github.com/craft-native/craft/commit/a6d9fe1)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#150](https://github.com/craft-native/craft/issues/150), [#150](https://github.com/craft-native/craft/issues/150))
+- **android**: the secure-storage quartet — ratchet 95 -> 91 (#147) ([9cfb210](https://github.com/craft-native/craft/commit/9cfb210)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#147](https://github.com/craft-native/craft/issues/147), [#147](https://github.com/craft-native/craft/issues/147))
+- **android**: getNetworkStatus — the action iOS cannot serve (#146) ([88d589f](https://github.com/craft-native/craft/commit/88d589f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#146](https://github.com/craft-native/craft/issues/146), [#146](https://github.com/craft-native/craft/issues/146))
+- **android**: openURL and share — ratchet 98 -> 96 (#145) ([3d9f9f8](https://github.com/craft-native/craft/commit/3d9f9f8)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#145](https://github.com/craft-native/craft/issues/145), [#145](https://github.com/craft-native/craft/issues/145))
+- **android**: the clipboard pair — ratchet 100 -> 98 (#144) ([dcc457a](https://github.com/craft-native/craft/commit/dcc457a)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#144](https://github.com/craft-native/craft/issues/144), [#144](https://github.com/craft-native/craft/issues/144))
+- **android**: getMemoryUsage and log — ratchet 102 -> 100 (#143) ([dd4500b](https://github.com/craft-native/craft/commit/dd4500b)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#143](https://github.com/craft-native/craft/issues/143), [#143](https://github.com/craft-native/craft/issues/143))
+- **android**: the seam — Kotlin can now call into Zig (#138) ([5d58ad2](https://github.com/craft-native/craft/commit/5d58ad2)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#138](https://github.com/craft-native/craft/issues/138), [#138](https://github.com/craft-native/craft/issues/138))
+
+## 🐛 Bug Fixes
+
+- **ios**: require Contacts operations before settling callbacks ([32ac502](https://github.com/craft-native/craft/commit/32ac502)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: settle calendar callbacks after EventKit operations ([c67256f](https://github.com/craft-native/craft/commit/c67256f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- avoid obsolete Android SDK tools package in CI ([e032105](https://github.com/craft-native/craft/commit/e032105)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **macos**: map every typed vibrancy material ([00b0b21](https://github.com/craft-native/craft/commit/00b0b21)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **macos**: parse complete opacity numbers ([8c550cc](https://github.com/craft-native/craft/commit/8c550cc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **macos**: decode window titles before AppKit ([2db4045](https://github.com/craft-native/craft/commit/2db4045)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: generate complete Watch companion ([6bd84f4](https://github.com/craft-native/craft/commit/6bd84f4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: select APNs environment by build config ([611be12](https://github.com/craft-native/craft/commit/611be12)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: honor location request options ([c626116](https://github.com/craft-native/craft/commit/c626116)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: settle silent location requests ([4fe86f0](https://github.com/craft-native/craft/commit/4fe86f0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: contain page delivery failures ([092222d](https://github.com/craft-native/craft/commit/092222d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: claim health permission results once ([e636923](https://github.com/craft-native/craft/commit/e636923)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: release silent location requests ([4f4d581](https://github.com/craft-native/craft/commit/4f4d581)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject requests after bridge close ([14237ed](https://github.com/craft-native/craft/commit/14237ed)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: include product titles ([210a979](https://github.com/craft-native/craft/commit/210a979)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: align typed mutation replies ([e398e1d](https://github.com/craft-native/craft/commit/e398e1d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: type watch reachability replies ([af9ecf7](https://github.com/craft-native/craft/commit/af9ecf7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject eager native call failures ([dbde0b0](https://github.com/craft-native/craft/commit/dbde0b0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle before permission prompts ([25da993](https://github.com/craft-native/craft/commit/25da993)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: gate JavaScript delivery after close ([7e3529b](https://github.com/craft-native/craft/commit/7e3529b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: close permission request races ([bb77157](https://github.com/craft-native/craft/commit/bb77157)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: suppress stale health replies ([02f2dc4](https://github.com/craft-native/craft/commit/02f2dc4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: cancel stale main-thread tasks ([97439a8](https://github.com/craft-native/craft/commit/97439a8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: ignore late activity results ([14f1caa](https://github.com/craft-native/craft/commit/14f1caa)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: register orphaned promise channels ([e18993e](https://github.com/craft-native/craft/commit/e18993e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: invalidate queued promise replies ([e7fa1d6](https://github.com/craft-native/craft/commit/e7fa1d6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle ML promise tasks once ([d6f2975](https://github.com/craft-native/craft/commit/d6f2975)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: guard interactive promise callbacks ([4503dcc](https://github.com/craft-native/craft/commit/4503dcc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: isolate current location callbacks ([99d4208](https://github.com/craft-native/craft/commit/99d4208)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle billing callbacks once ([4b7de91](https://github.com/craft-native/craft/commit/4b7de91)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject unreadable picked contacts ([3b050ac](https://github.com/craft-native/craft/commit/3b050ac)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject widget reload failures ([d65efb0](https://github.com/craft-native/craft/commit/d65efb0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject location setup failures ([8fbb9e0](https://github.com/craft-native/craft/commit/8fbb9e0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: initialize billing restores ([422943d](https://github.com/craft-native/craft/commit/422943d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle billing failures ([9b6857c](https://github.com/craft-native/craft/commit/9b6857c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject contact provider failures ([8ed949f](https://github.com/craft-native/craft/commit/8ed949f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle contact picker failures ([8be1a62](https://github.com/craft-native/craft/commit/8be1a62)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle media launcher failures ([ba88e30](https://github.com/craft-native/craft/commit/ba88e30)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle denied camera requests ([25e08c9](https://github.com/craft-native/craft/commit/25e08c9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: require exact bundled app origin ([20aa59c](https://github.com/craft-native/craft/commit/20aa59c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: validate Health Connect authorization ([60d584d](https://github.com/craft-native/craft/commit/60d584d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: stop failed location recordings ([0e7c40d](https://github.com/craft-native/craft/commit/0e7c40d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: guard web asset replacement ([287b93a](https://github.com/craft-native/craft/commit/287b93a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: validate generator input files ([efd2e4d](https://github.com/craft-native/craft/commit/efd2e4d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: normalize SDK and icon inputs ([b137374](https://github.com/craft-native/craft/commit/b137374)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle and release fresh location requests ([23970c6](https://github.com/craft-native/craft/commit/23970c6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: release bridge resources on destroy ([c0cae51](https://github.com/craft-native/craft/commit/c0cae51)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: support approximate location operations ([3fa3b2d](https://github.com/craft-native/craft/commit/3fa3b2d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: omit local paths from app assets ([57a89ce](https://github.com/craft-native/craft/commit/57a89ce)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: validate remote project configuration ([34e5398](https://github.com/craft-native/craft/commit/34e5398)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: sanitize Gradle project names ([1ac7a80](https://github.com/craft-native/craft/commit/1ac7a80)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: preserve JNI bindings in release builds ([fb68aff](https://github.com/craft-native/craft/commit/fb68aff)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: validate generated project metadata ([e9f9118](https://github.com/craft-native/craft/commit/e9f9118)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: stage background location requests ([1289930](https://github.com/craft-native/craft/commit/1289930)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: always generate location support types ([2383abb](https://github.com/craft-native/craft/commit/2383abb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: accept approximate location grants ([780e952](https://github.com/craft-native/craft/commit/780e952)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: replace Quick Look items atomically ([e5e1a42](https://github.com/craft-native/craft/commit/e5e1a42)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: validate context menu payloads ([4b7e828](https://github.com/craft-native/craft/commit/4b7e828)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: validate component payload shapes ([e0e7e9e](https://github.com/craft-native/craft/commit/e0e7e9e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: validate space payload shapes ([9cb34ed](https://github.com/craft-native/craft/commit/9cb34ed)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: replace space list updates ([108c646](https://github.com/craft-native/craft/commit/108c646)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: replace space switchers atomically ([e6259b3](https://github.com/craft-native/craft/commit/e6259b3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: retain close event subscriptions ([c64acb2](https://github.com/craft-native/craft/commit/c64acb2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: decode typed window identities ([435569d](https://github.com/craft-native/craft/commit/435569d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: reject conflicting handle owners ([6aaa3b1](https://github.com/craft-native/craft/commit/6aaa3b1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: reserve the main handle ([6dcb8f4](https://github.com/craft-native/craft/commit/6dcb8f4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: retain content during restore ([fb37a06](https://github.com/craft-native/craft/commit/fb37a06)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: preserve ownership on failed mutations ([31db8d4](https://github.com/craft-native/craft/commit/31db8d4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: prepare typed open atomically ([481dc1d](https://github.com/craft-native/craft/commit/481dc1d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: own context menu lifetimes ([67ff699](https://github.com/craft-native/craft/commit/67ff699)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: enforce registry capacity ([c345ade](https://github.com/craft-native/craft/commit/c345ade)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: route gestures to their owner ([dd7dbb3](https://github.com/craft-native/craft/commit/dd7dbb3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: tear down component graphs safely ([10d84cb](https://github.com/craft-native/craft/commit/10d84cb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **native-ui**: make component creation transactional ([73a0bd7](https://github.com/craft-native/craft/commit/73a0bd7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: partition native sidebar state ([dcb063f](https://github.com/craft-native/craft/commit/dcb063f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: scope native UI key callbacks ([f47727a](https://github.com/craft-native/craft/commit/f47727a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: isolate native UI state ([2c2591f](https://github.com/craft-native/craft/commit/2c2591f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: preserve native UI primary target ([6079fad](https://github.com/craft-native/craft/commit/6079fad)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: pass sender to action selectors ([beff989](https://github.com/craft-native/craft/commit/beff989)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: balance sidebar WebKit ownership ([efee44a](https://github.com/craft-native/craft/commit/efee44a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: balance runtime WebKit ownership ([68c6b5d](https://github.com/craft-native/craft/commit/68c6b5d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: bind delegates to webview lifetime ([486d190](https://github.com/craft-native/craft/commit/486d190)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: release retained chrome observers ([2345dd3](https://github.com/craft-native/craft/commit/2345dd3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: preserve primary callback target ([2e63c40](https://github.com/craft-native/craft/commit/2e63c40)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: emit fullscreen lifecycle events ([29c1d4f](https://github.com/craft-native/craft/commit/29c1d4f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: revive retained handles on reopen ([7a16e82](https://github.com/craft-native/craft/commit/7a16e82)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: honor remaining creation styles ([82e88de](https://github.com/craft-native/craft/commit/82e88de)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: apply runtime size constraints ([b314bdf](https://github.com/craft-native/craft/commit/b314bdf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: honor runtime appearance options ([b2e47b5](https://github.com/craft-native/craft/commit/b2e47b5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: escape created handle names ([a560f85](https://github.com/craft-native/craft/commit/a560f85)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: route focused handle lookup ([669e8a6](https://github.com/craft-native/craft/commit/669e8a6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: settle unavailable location services ([6b080f6](https://github.com/craft-native/craft/commit/6b080f6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: expose native permissions bridge ([bb5c1b5](https://github.com/craft-native/craft/commit/bb5c1b5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: route content loads to handles ([d064807](https://github.com/craft-native/craft/commit/d064807)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: complete common handle mutations ([0d07cee](https://github.com/craft-native/craft/commit/0d07cee)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: implement typed handle getters ([ac1984c](https://github.com/craft-native/craft/commit/ac1984c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: route native surfaces to sender ([d02c4c3](https://github.com/craft-native/craft/commit/d02c4c3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: isolate sidebar material state ([1b2a185](https://github.com/craft-native/craft/commit/1b2a185)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: keep native events window-scoped ([f7989bc](https://github.com/craft-native/craft/commit/f7989bc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **sdk**: initialize window API without DOM globals ([a5f5ab4](https://github.com/craft-native/craft/commit/a5f5ab4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: address retained window handles ([c7909a0](https://github.com/craft-native/craft/commit/c7909a0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: route media activity results ([19dc04b](https://github.com/craft-native/craft/commit/19dc04b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: return completed video recordings ([61e86b0](https://github.com/craft-native/craft/commit/61e86b0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile**: deliver native event subscriptions ([c37c221](https://github.com/craft-native/craft/commit/c37c221)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile**: align typed bridge methods ([0e24305](https://github.com/craft-native/craft/commit/0e24305)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: remove redundant plist proxy gates ([c66f499](https://github.com/craft-native/craft/commit/c66f499)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: report app badges unsupported ([d677e1a](https://github.com/craft-native/craft/commit/d677e1a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: report database row counts ([a457fda](https://github.com/craft-native/craft/commit/a457fda)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject calendar provider failures ([1f7075e](https://github.com/craft-native/craft/commit/1f7075e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: persist local auth sessions ([cb9099c](https://github.com/craft-native/craft/commit/cb9099c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: batch contact provider queries ([691fb93](https://github.com/craft-native/craft/commit/691fb93)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: remove unreachable voice action registration ([b8812db](https://github.com/craft-native/craft/commit/b8812db)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject malformed save data URLs ([273bfa0](https://github.com/craft-native/craft/commit/273bfa0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: escape background task rejection ([3cb19a8](https://github.com/craft-native/craft/commit/3cb19a8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject unavailable background tasks ([e91c493](https://github.com/craft-native/craft/commit/e91c493)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: track location watches by id ([93923c3](https://github.com/craft-native/craft/commit/93923c3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: make network monitoring idempotent ([5cc3fd0](https://github.com/craft-native/craft/commit/5cc3fd0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: reject Bluetooth scans that do not start ([5c3fd3c](https://github.com/craft-native/craft/commit/5c3fd3c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **cli**: pin scaffolded SDK versions ([593cb04](https://github.com/craft-native/craft/commit/593cb04)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- support both Zig 0.17 mode spellings ([ac02206](https://github.com/craft-native/craft/commit/ac02206)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- preserve WindowBuilder options ([11b7071](https://github.com/craft-native/craft/commit/11b7071)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- support current Zig 0.17 optimize modes ([1f19050](https://github.com/craft-native/craft/commit/1f19050)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: text going to the JVM is modified UTF-8, and was not being (#168) ([d3be3e1](https://github.com/craft-native/craft/commit/d3be3e1)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#168](https://github.com/craft-native/craft/issues/168), [#168](https://github.com/craft-native/craft/issues/168))
+- **android**: jsQuote takes Any?, because three call sites are not strings (#164) ([d9ab3d4](https://github.com/craft-native/craft/commit/d9ab3d4)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#164](https://github.com/craft-native/craft/issues/164), [#164](https://github.com/craft-native/craft/issues/164))
+- **android**: an apostrophe in a reply hangs the page forever (#156) ([69b52de](https://github.com/craft-native/craft/commit/69b52de)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#156](https://github.com/craft-native/craft/issues/156), [#156](https://github.com/craft-native/craft/issues/156))
+- **build**: three test artifacts reach Carbon and none of them linked it (#139) ([c5b8146](https://github.com/craft-native/craft/commit/c5b8146)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#139](https://github.com/craft-native/craft/issues/139), [#139](https://github.com/craft-native/craft/issues/139))
+
+## ♻️ Code Refactoring
+
+- **android**: centralize promise delivery ([b58346a](https://github.com/craft-native/craft/commit/b58346a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: guard lifecycle promise channels ([1407390](https://github.com/craft-native/craft/commit/1407390)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: guard device promise channels ([a3ad578](https://github.com/craft-native/craft/commit/a3ad578)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: guard data promise channels ([3b2f560](https://github.com/craft-native/craft/commit/3b2f560)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: one SharedPreferences helper, after the third caller turned out to be dead (#170) ([38d1680](https://github.com/craft-native/craft/commit/38d1680)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#170](https://github.com/craft-native/craft/issues/170), [#170](https://github.com/craft-native/craft/issues/170))
+
+## 📚 Documentation
+
+- **ios**: define fail-closed bridge contract ([5140171](https://github.com/craft-native/craft/commit/5140171)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: align setup with generator validation ([5887eb9](https://github.com/craft-native/craft/commit/5887eb9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: document trusted remote configuration ([5d7a1eb](https://github.com/craft-native/craft/commit/5d7a1eb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: clarify permission and template checks ([2b199f2](https://github.com/craft-native/craft/commit/2b199f2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: record Touch Bar ownership ([2198ce0](https://github.com/craft-native/craft/commit/2198ce0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: map multi-window ownership ([84a87df](https://github.com/craft-native/craft/commit/84a87df)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: describe owned child events ([a0afb42](https://github.com/craft-native/craft/commit/a0afb42)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: classify generated bridge deferrals ([05fd2f7](https://github.com/craft-native/craft/commit/05fd2f7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: thirteen more deferrals, so the remaining 65 reads honestly (#180) ([b64db45](https://github.com/craft-native/craft/commit/b64db45)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#180](https://github.com/craft-native/craft/issues/180), [#180](https://github.com/craft-native/craft/issues/180))
+
+## 🧪 Tests
+
+- compile generated iOS and Watch templates in CI ([3c17591](https://github.com/craft-native/craft/commit/3c17591)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: exercise location settlement on simulator ([b8e7889](https://github.com/craft-native/craft/commit/b8e7889)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: inventory promise channels ([24a213d](https://github.com/craft-native/craft/commit/24a213d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: remove deleted template inputs ([baec126](https://github.com/craft-native/craft/commit/baec126)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: detect unresolved template markers ([611e738](https://github.com/craft-native/craft/commit/611e738)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: compile generated Kotlin projects ([6f3a4d7](https://github.com/craft-native/craft/commit/6f3a4d7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: cover recreation after destroy ([f972644](https://github.com/craft-native/craft/commit/f972644)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: classify permission bridge ownership ([bef28ac](https://github.com/craft-native/craft/commit/bef28ac)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **window**: type bridge routing mock ([dc10e91](https://github.com/craft-native/craft/commit/dc10e91)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: eleven refusals recorded, so the ratchet cannot be gamed (#153) ([1584d8f](https://github.com/craft-native/craft/commit/1584d8f)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#153](https://github.com/craft-native/craft/issues/153), [#153](https://github.com/craft-native/craft/issues/153))
+- **android**: the deferral table, and the no-op it was needed for (#149) ([bbbaf34](https://github.com/craft-native/craft/commit/bbbaf34)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#149](https://github.com/craft-native/craft/issues/149), [#149](https://github.com/craft-native/craft/issues/149))
+- **android**: the ratchet, and the two seams JNI leaves unchecked (#142) ([949f786](https://github.com/craft-native/craft/commit/949f786)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#142](https://github.com/craft-native/craft/issues/142), [#142](https://github.com/craft-native/craft/issues/142))
+- **bridge**: the other direction — what window.craft promises (#141) ([c5e4756](https://github.com/craft-native/craft/commit/c5e4756)) _(by Chris <chrisbreuer93@gmail.com>)_ ([#141](https://github.com/craft-native/craft/issues/141), [#141](https://github.com/craft-native/craft/issues/141))
+
+## 🤖 Continuous Integration
+
+- **docs**: reject broken API index links ([46181fa](https://github.com/craft-native/craft/commit/46181fa)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- cancel superseded branch workflows ([620975c](https://github.com/craft-native/craft/commit/620975c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: use current setup actions ([3d12299](https://github.com/craft-native/craft/commit/3d12299)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- **android**: remove unreachable Kotlin templates ([79127a0](https://github.com/craft-native/craft/commit/79127a0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.89...v0.0.90)
 
 ## 🐛 Bug Fixes
