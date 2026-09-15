@@ -2404,6 +2404,11 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .aarch64,
         .os_tag = .linux,
         .abi = .android,
+        // Named explicitly, because Zig's default is 29 and the stubs this
+        // links against come from the API-26 directory. A target and a sysroot
+        // that disagree is how a library binds a symbol the device does not
+        // have.
+        .android_api_level = android_api_level,
     });
 
     const android_arm64_lib = b.addLibrary(.{
@@ -2448,7 +2453,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
-        applyAndroidNdk(b, android_arm64_jni.root_module, ndk, "aarch64-linux-android");
+        linkAndroidLibc(b, android_arm64_jni, ndk, "aarch64-linux-android");
 
         const android_arm64_jni_install = b.addInstallArtifact(android_arm64_jni, .{
             .dest_dir = .{ .override = .{ .custom = "android/arm64-v8a" } },
@@ -2483,6 +2488,7 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .x86_64,
         .os_tag = .linux,
         .abi = .android,
+        .android_api_level = android_api_level,
     });
 
     if (android_ndk) |ndk| {
@@ -2495,7 +2501,7 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
             }),
         });
-        applyAndroidNdk(b, android_x86_jni.root_module, ndk, "x86_64-linux-android");
+        linkAndroidLibc(b, android_x86_jni, ndk, "x86_64-linux-android");
 
         // `x86_64`, matching the jniLibs directory the loader looks in — not
         // `x86`, which is the 32-bit ABI and would be silently ignored.
@@ -2575,46 +2581,67 @@ pub fn build(b: *std.Build) void {
 /// TypeScript one.
 const android_api_level: u32 = 26;
 
-/// Point a module at the NDK's sysroot for one Android triple.
+/// The NDK's sysroot, or a build error naming what was passed instead.
 ///
-/// Paths rather than `--sysroot`, matching `applySdkPaths` above and for the
-/// same reason: `--sysroot` breaks `@cImport` (ziglang/zig#22704, #25010).
-///
-/// The prebuilt directory is named for the *host*, and the NDK ships exactly
+/// The prebuilt directory is named for the *host* and the NDK ships exactly
 /// one, so the candidates are tried in turn rather than guessed from
 /// `builtin.os`. An Apple-silicon Mac still gets `darwin-x86_64` from most NDK
 /// releases, which is the guess that would have been wrong.
-fn applyAndroidNdk(b: *std.Build, module: *std.Build.Module, ndk: []const u8, triple: []const u8) void {
+fn androidSysroot(b: *std.Build, ndk: []const u8) []const u8 {
     const io = b.graph.io;
-    const hosts = [_][]const u8{ "darwin-x86_64", "darwin-arm64", "linux-x86_64", "windows-x86_64" };
+    for ([_][]const u8{ "darwin-x86_64", "darwin-arm64", "linux-x86_64", "windows-x86_64" }) |host| {
+        const candidate = b.pathJoin(&.{ ndk, "toolchains/llvm/prebuilt", host, "sysroot" });
+        std.Io.Dir.cwd().access(io, candidate, .{}) catch continue;
+        return candidate;
+    }
+    std.debug.panic(
+        "no toolchains/llvm/prebuilt/<host>/sysroot under {s}. " ++
+            "Point -Dandroid-ndk at an NDK root, not at the SDK.",
+        .{ndk},
+    );
+}
 
-    const sysroot = found: {
-        for (hosts) |host| {
-            const candidate = b.pathJoin(&.{ ndk, "toolchains/llvm/prebuilt", host, "sysroot" });
-            std.Io.Dir.cwd().access(io, candidate, .{}) catch continue;
-            break :found candidate;
-        }
-        std.debug.panic(
-            "no toolchains/llvm/prebuilt/<host>/sysroot under {s}. " ++
-                "Point -Dandroid-ndk at an NDK root, not at the SDK.",
-            .{ndk},
-        );
-    };
+/// Link one Android artifact against the NDK's bionic.
+///
+/// A `--libc` file, not include and library paths. Paths alone are what
+/// `applySdkPaths` does for Apple SDKs and they are not enough here: with
+/// `link_libc` set and no libc file, Zig looks the target up in its own table
+/// of libcs it can build, does not find android, and stops with
+///
+///     error: unable to provide libc for target "x86_64-linux...-android.29"
+///
+/// before it ever consults a search path. The libc file is how Zig is told the
+/// libc already exists — after which it asks for exactly what bionic has:
+/// crtbegin_so.o, crtend_so.o, -lm, -lc, -ldl, all of them in the API-level
+/// directory.
+///
+/// Still not `--sysroot`, which breaks `@cImport` (ziglang/zig#22704, #25010)
+/// and is why the Apple side takes the path route too.
+fn linkAndroidLibc(b: *std.Build, compile: *std.Build.Step.Compile, ndk: []const u8, triple: []const u8) void {
+    const sysroot = androidSysroot(b, ndk);
+    const api = b.fmt("{d}", .{android_api_level});
+    const lib_dir = b.pathJoin(&.{ sysroot, "usr/lib", triple, api });
 
-    module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr/include" }) });
-    // The triple-specific headers come second: bionic keeps its
-    // architecture-dependent definitions there and the generic ones include
-    // them by relative path.
-    module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr/include", triple }) });
-    // The API-level directory is where the versioned stubs live. Linking
-    // against `usr/lib/<triple>` directly finds nothing.
-    module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{
-        sysroot,
-        "usr/lib",
-        triple,
-        b.fmt("{d}", .{android_api_level}),
-    }) });
-    module.link_libc = true;
+    const libc_file = b.addWriteFile("android-libc.conf", b.fmt(
+        \\include_dir={s}
+        \\sys_include_dir={s}
+        \\crt_dir={s}
+        \\msvc_lib_dir=
+        \\kernel32_lib_dir=
+        \\gcc_dir=
+        \\
+    , .{
+        b.pathJoin(&.{ sysroot, "usr/include" }),
+        // The triple-specific headers: bionic keeps its architecture-dependent
+        // definitions there and the generic ones include them by relative path.
+        b.pathJoin(&.{ sysroot, "usr/include", triple }),
+        lib_dir,
+    }));
+
+    compile.setLibCFile(libc_file.getDirectory().path(b, "android-libc.conf"));
+    compile.step.dependOn(&libc_file.step);
+    compile.root_module.link_libc = true;
+    compile.root_module.addLibraryPath(.{ .cwd_relative = lib_dir });
 }
 
 /// The iOS SDK sysroot, resolved through xcrun at configure time.
