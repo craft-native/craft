@@ -77,6 +77,14 @@ export interface InitOptions {
   packageName?: string
   output: string
   config?: Partial<CraftAndroidConfig>
+  /**
+   * Where to find the Zig runtime's `<abi>/libcraft.so`.
+   *
+   * `null` means no runtime regardless of the environment; `undefined` falls
+   * through to `CRAFT_ANDROID_RUNTIME`. Same shape as the iOS builder's
+   * `runtimeDir`.
+   */
+  runtimeDir?: string | null
 }
 
 export interface BuildOptions {
@@ -85,6 +93,8 @@ export interface BuildOptions {
   output: string
   release?: boolean
   compile?: boolean
+  /** Same meaning as `InitOptions.runtimeDir`; refreshes what init installed. */
+  runtimeDir?: string | null
 }
 
 export interface OpenOptions {
@@ -341,6 +351,96 @@ export function renderAndroidDeepLinks(config: CraftAndroidConfig): string {
 /**
  * Initialize a new Android project
  */
+/**
+ * The ABI directories a runtime directory is expected to hold.
+ *
+ * These are Android's own names for the two architectures craft builds, and
+ * they are also `zig build build-android-all`'s output layout — `zig-out/android/`
+ * already contains `arm64-v8a/libcraft.so` and `x86_64/libcraft.so`, which is
+ * exactly the shape `app/src/main/jniLibs/` wants. So the install below is a
+ * copy and not a rearrangement.
+ *
+ * x86_64 is not optional-in-practice: every Android emulator anyone tests on
+ * is x86_64, so a runtime shipped for arm64 alone is one that never runs in
+ * CI and never runs on a developer's machine either.
+ */
+const RUNTIME_ABIS = ['arm64-v8a', 'x86_64'] as const
+
+/**
+ * Where the runtime directory comes from when the caller does not say.
+ *
+ * The same shape as `CRAFT_BIN` and the iOS builder's `CRAFT_IOS_RUNTIME`: an
+ * explicit override for the monorepo dev loop, not a lookup path. Shipping the
+ * runtime to real apps means putting these libraries in the pantry package
+ * beside the `craft` binary, which is a distribution decision this function
+ * does not make.
+ */
+export function resolveRuntimeDir(override?: string | null): string | null {
+  if (override === null) return null
+  const dir = override ?? process.env.CRAFT_ANDROID_RUNTIME
+  if (!dir) return null
+  if (!existsSync(dir)) {
+    const source = override === undefined ? 'CRAFT_ANDROID_RUNTIME points at' : 'runtimeDir is'
+    throw new Error(`${source} ${dir}, which does not exist.`)
+  }
+  return dir
+}
+
+/**
+ * Copy the Zig runtime into the generated project as
+ * `app/src/main/jniLibs/<abi>/libcraft.so`.
+ *
+ * That path is AGP's default `jniLibs.srcDirs`, so nothing in the Gradle
+ * templates has to know about it — the library is packaged into the APK and
+ * `System.loadLibrary("craft")` finds it because the file is named for the
+ * `craft` it asks for.
+ *
+ * Until this existed, nothing put the library anywhere. `CraftNative` caught
+ * the `UnsatisfiedLinkError`, set `isAvailable = false`, and every action fell
+ * through to the Kotlin shim — by design, so an app with no runtime still
+ * works, which is also why nobody noticed that *every* generated app was in
+ * that state and the whole Android half of the Zig bridge had never run.
+ *
+ * Returns true when a runtime was installed.
+ */
+export function installRuntime(output: string, runtimeDir: string): boolean {
+  // Every ABI resolved before anything is written, so a half-populated
+  // runtime directory cannot leave a project carrying one architecture and
+  // claiming both. A single-ABI APK installs fine and then fails to load on
+  // the other kind of device, which is the break that only shows up on
+  // somebody else's phone.
+  const found = RUNTIME_ABIS.map(abi => ({ abi, source: join(runtimeDir, abi, 'libcraft.so') }))
+    .filter(entry => existsSync(entry.source))
+
+  if (found.length === 0) {
+    throw new Error(
+      `${runtimeDir} has no <abi>/libcraft.so for any of ${RUNTIME_ABIS.join(', ')}. `
+      + 'Run `zig build build-android-all -Doptimize=ReleaseSafe` in packages/zig and point at its zig-out/android.',
+    )
+  }
+
+  if (found.length < RUNTIME_ABIS.length) {
+    const missing = RUNTIME_ABIS.filter(abi => !found.some(entry => entry.abi === abi))
+    console.warn(
+      `   ⚠ only ${found.map(entry => entry.abi).join(', ')} was found; ${missing.join(', ')} is missing. `
+      + 'The app will fall back to the Kotlin shim on those devices.',
+    )
+  }
+
+  const dest = join(output, 'app/src/main/jniLibs')
+  // Wiped rather than merged, so an ABI dropped from a later build does not
+  // linger in the project as a stale library the APK still ships.
+  rmSync(dest, { force: true, recursive: true })
+
+  for (const { abi, source } of found) {
+    const abiDir = join(dest, abi)
+    mkdirSync(abiDir, { recursive: true })
+    cpSync(source, join(abiDir, 'libcraft.so'))
+  }
+
+  return true
+}
+
 export async function init(options: InitOptions): Promise<void> {
   const { name, packageName, output } = options
 
@@ -670,6 +770,15 @@ zipStorePath=wrapper/dists
 
   writeFileSync(join(output, 'app/src/main/assets/index.html'), placeholderHtml)
 
+  // The Zig runtime, when one was configured. Absent, the generated app is the
+  // Kotlin shim and behaves exactly as it always has — which is the fallback
+  // `CraftNative` was written for, not a failure.
+  const runtimeDir = resolveRuntimeDir(options.runtimeDir)
+  if (runtimeDir) {
+    installRuntime(output, runtimeDir)
+    console.log('   Installed the Zig runtime from', runtimeDir)
+  }
+
   console.log('✅ Project initialized')
   console.log('')
   console.log('Next steps:')
@@ -695,6 +804,20 @@ export async function build(options: BuildOptions): Promise<void> {
   }
 
   const config: CraftAndroidConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+
+  // Refresh the runtime the same way the iOS builder does: only for a project
+  // that already has one, so `craft android build` in a shim-only project does
+  // not quietly acquire a native library it was never generated with.
+  if (existsSync(join(output, 'app/src/main/jniLibs'))) {
+    const runtimeDir = resolveRuntimeDir(options.runtimeDir)
+    if (runtimeDir) {
+      installRuntime(output, runtimeDir)
+      console.log('   Refreshed the Zig runtime from', runtimeDir)
+    }
+    else {
+      console.log('   Keeping the Zig runtime installed at init (no runtime directory configured)')
+    }
+  }
 
   // Update dev server URL if provided
   if (devServer) {

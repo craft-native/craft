@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { build, init, renderAndroidDeepLinks, renderAndroidPermissions, syncAndroidWebAssets } from './index'
+import { build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, syncAndroidWebAssets } from './index'
 
 function generatedFiles(path: string): string[] {
   return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
@@ -1186,5 +1186,142 @@ describe('Craft Android builder', () => {
       expect(health).toContain('closed.set(true)')
       expect(health).toContain('if (closed.get()) return@runOnUiThread')
     }
+  })
+})
+
+/**
+ * A runtime directory shaped like `zig build build-android-all`'s output.
+ *
+ * The contents are not a real ELF — nothing here loads it — but the layout is
+ * exactly `zig-out/android/<abi>/libcraft.so`, because the layout is the part
+ * the installer depends on.
+ */
+function fakeRuntime(abis: string[]): string {
+  const dir = mkdtempSync(join(tmpdir(), 'craft-android-runtime-'))
+  for (const abi of abis) {
+    mkdirSync(join(dir, abi), { recursive: true })
+    writeFileSync(join(dir, abi, 'libcraft.so'), `not-really-${abi}`)
+  }
+  return dir
+}
+
+describe('Zig runtime installation', () => {
+  it('lands the library where AGP already looks for it', () => {
+    // app/src/main/jniLibs is the default jniLibs.srcDirs, which is why no
+    // Gradle template has to know this happened.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-jnilibs-'))
+    installRuntime(output, fakeRuntime(['arm64-v8a', 'x86_64']))
+
+    expect(readFileSync(join(output, 'app/src/main/jniLibs/arm64-v8a/libcraft.so'), 'utf8')).toBe('not-really-arm64-v8a')
+    expect(readFileSync(join(output, 'app/src/main/jniLibs/x86_64/libcraft.so'), 'utf8')).toBe('not-really-x86_64')
+  })
+
+  it('installs what it has when an architecture is missing', () => {
+    // A one-ABI dev loop is legitimate; it just cannot run on the other kind
+    // of device, which the installer warns about rather than refusing.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-one-abi-'))
+    expect(installRuntime(output, fakeRuntime(['x86_64']))).toBe(true)
+
+    expect(existsSync(join(output, 'app/src/main/jniLibs/x86_64/libcraft.so'))).toBe(true)
+    expect(existsSync(join(output, 'app/src/main/jniLibs/arm64-v8a'))).toBe(false)
+  })
+
+  it('refuses a directory with no library at all, and names the build step', () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-no-abi-'))
+    const empty = mkdtempSync(join(tmpdir(), 'craft-android-empty-'))
+
+    expect(() => installRuntime(output, empty)).toThrow(/zig build build-android-all/)
+    // Nothing written on the way to throwing.
+    expect(existsSync(join(output, 'app/src/main/jniLibs'))).toBe(false)
+  })
+
+  it('does not leave an architecture behind that a later build dropped', () => {
+    // A stale .so still ships in the APK and still loads, so the app would run
+    // an architecture nobody built for this version.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-stale-'))
+    installRuntime(output, fakeRuntime(['arm64-v8a', 'x86_64']))
+    installRuntime(output, fakeRuntime(['x86_64']))
+
+    expect(existsSync(join(output, 'app/src/main/jniLibs/arm64-v8a'))).toBe(false)
+    expect(existsSync(join(output, 'app/src/main/jniLibs/x86_64/libcraft.so'))).toBe(true)
+  })
+
+  it('generates a shim-only app when no runtime is configured', async () => {
+    // The default, and the state every generated app was in before this
+    // existed: System.loadLibrary throws, isAvailable is false, Kotlin serves.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-shim-only-'))
+    await init({ name: 'ShimOnly', packageName: 'dev.craft.shimonly', output, runtimeDir: null })
+
+    expect(existsSync(join(output, 'app/src/main/jniLibs'))).toBe(false)
+  })
+
+  it('installs the runtime from init when one is given', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-with-runtime-'))
+    await init({
+      name: 'WithRuntime',
+      packageName: 'dev.craft.withruntime',
+      output,
+      runtimeDir: fakeRuntime(['arm64-v8a', 'x86_64']),
+    })
+
+    expect(existsSync(join(output, 'app/src/main/jniLibs/arm64-v8a/libcraft.so'))).toBe(true)
+    expect(existsSync(join(output, 'app/src/main/jniLibs/x86_64/libcraft.so'))).toBe(true)
+  })
+
+  it('reads CRAFT_ANDROID_RUNTIME only when the caller says nothing', () => {
+    const dir = fakeRuntime(['x86_64'])
+    const previous = process.env.CRAFT_ANDROID_RUNTIME
+    process.env.CRAFT_ANDROID_RUNTIME = dir
+
+    try {
+      expect(resolveRuntimeDir()).toBe(dir)
+      // null is a declaration, not a gap: no runtime whatever the environment
+      // says, which is what the E2E suite's shim leg depends on.
+      expect(resolveRuntimeDir(null)).toBe(null)
+    }
+    finally {
+      if (previous === undefined) delete process.env.CRAFT_ANDROID_RUNTIME
+      else process.env.CRAFT_ANDROID_RUNTIME = previous
+    }
+  })
+
+  it('names which knob pointed at a directory that is not there', () => {
+    const previous = process.env.CRAFT_ANDROID_RUNTIME
+    process.env.CRAFT_ANDROID_RUNTIME = '/craft/definitely/not/here'
+
+    try {
+      expect(() => resolveRuntimeDir()).toThrow(/CRAFT_ANDROID_RUNTIME points at/)
+      expect(() => resolveRuntimeDir('/craft/also/not/here')).toThrow(/runtimeDir is/)
+    }
+    finally {
+      if (previous === undefined) delete process.env.CRAFT_ANDROID_RUNTIME
+      else process.env.CRAFT_ANDROID_RUNTIME = previous
+    }
+  })
+})
+
+describe('the Zig library and the generated app agree on how old a device may be', () => {
+  it('builds the JNI library for no newer an API than minSdk', () => {
+    // One prebuilt libcraft.so serves every generated app, so it has to be
+    // linked against the *oldest* API craft's default configuration claims to
+    // support. Build it against a newer one and the linker happily binds
+    // symbols that are simply absent on an older phone — and the failure is
+    // dlopen refusing the library at startup, on exactly the devices the app
+    // said it ran on.
+    //
+    // Nothing else connects a Zig constant to a TypeScript one, so this reads
+    // build.zig and compares.
+    const buildZig = readFileSync(join(import.meta.dir, '../../zig/build.zig'), 'utf8')
+    const declared = buildZig.match(/const android_api_level: u32 = (\d+);/)
+
+    expect(declared).not.toBeNull()
+
+    // DEFAULT_CONFIG is not exported, so read it the same way: from the source
+    // that defines it, which is the thing that would have to change.
+    const generator = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
+    const minSdk = generator.match(/minSdk:\s*(\d+)/)
+
+    expect(minSdk).not.toBeNull()
+    expect(Number(declared![1])).toBeLessThanOrEqual(Number(minSdk![1]))
   })
 })

@@ -26,9 +26,13 @@
 //! which is the normal case for a callback arriving on a framework thread,
 //! exactly like a `CLLocationManager` delegate on iOS.
 //!
-//! A thread this file attaches, this file detaches. Leaving one attached keeps
-//! the JVM's thread record alive after the OS thread is gone, and the crash
-//! surfaces somewhere unrelated much later.
+//! A thread this file attaches, this file detaches: `jni.attachCurrentThread`
+//! reports whether the attachment was ours, and `Attachment.release` gives
+//! back only those. Leaving one attached keeps the JVM's thread record alive
+//! after the OS thread is gone, and the crash surfaces somewhere unrelated
+//! much later. That dance lives in `jni_runtime.zig` rather than here because
+//! the log channel needs it too, and a second copy of it is how the two would
+//! drift apart.
 
 const std = @import("std");
 const jni = @import("jni_runtime.zig");
@@ -66,34 +70,6 @@ pub fn resetDroppedForTest() void {
     dropped = 0;
 }
 
-/// This thread's env, attaching if it has none.
-///
-/// Returns whether the caller must detach. A thread the JVM created — the UI
-/// thread, a binder thread — is already attached and must **not** be detached
-/// by us; a thread Zig or a native library created must be.
-const Attachment = struct {
-    env: jni.JNIEnv,
-    owned: bool,
-};
-
-fn attach(vm: jni.JavaVM) ?Attachment {
-    if (jni.envForThisThread(vm)) |env| return .{ .env = env, .owned = false };
-
-    const attach_fn: *const fn (jni.JavaVM, *?*anyopaque, ?*anyopaque) callconv(.c) jni.jint =
-        @ptrCast(vm.*.AttachCurrentThread orelse return null);
-
-    var env_ptr: ?*anyopaque = null;
-    if (attach_fn(vm, &env_ptr, null) != jni.JNI_OK) return null;
-    const env: jni.JNIEnv = @ptrCast(@alignCast(env_ptr orelse return null));
-    return .{ .env = env, .owned = true };
-}
-
-fn detach(vm: jni.JavaVM) void {
-    const detach_fn: *const fn (jni.JavaVM) callconv(.c) jni.jint =
-        @ptrCast(vm.*.DetachCurrentThread orelse return);
-    _ = detach_fn(vm);
-}
-
 /// Hand `script` to `CraftNative.deliver`, from any thread.
 ///
 /// Silent on every failure, and deliberately: the caller is a device callback
@@ -105,11 +81,11 @@ pub fn evaluate(allocator: std.mem.Allocator, script: []const u8) void {
         return;
     };
 
-    const attachment = attach(vm) orelse {
+    const attachment = jni.attachCurrentThread(vm) orelse {
         dropped += 1;
         return;
     };
-    defer if (attachment.owned) detach(vm);
+    defer attachment.release(vm);
 
     deliverThrough(allocator, attachment.env, script) catch {
         dropped += 1;

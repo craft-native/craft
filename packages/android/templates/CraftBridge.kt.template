@@ -2366,8 +2366,47 @@ class CraftBridge(
                     activity.packageManager.getPackageInfo(activity.packageName, 0).versionCode
                 }
             } catch (e: Exception) { 0 })
-            put("isEmulator", Build.FINGERPRINT.contains("generic") || Build.FINGERPRINT.contains("emulator"))
+            put("isEmulator", isEmulator())
         }.toString()
+    }
+
+    /**
+     * Whether this is an emulator rather than a phone.
+     *
+     * This used to be `FINGERPRINT.contains("generic") ||
+     * FINGERPRINT.contains("emulator")`, and it answered false on the AVDs
+     * anyone actually runs. A current Google APIs image fingerprints as
+     *
+     *     google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.036/...:user/release-keys
+     *
+     * which contains neither word. The mobile E2E suite caught it on an API 34
+     * x86_64 emulator, reporting `isEmulator is false` from inside one.
+     *
+     * `HARDWARE` is the reliable signal and leads here: the AVD's virtual board
+     * is `goldfish` on the old QEMU pipeline and `ranchu` on the current one,
+     * and has been one of those two for over a decade. The rest are kept as
+     * secondary evidence for images that report something else - Genymotion,
+     * and the older `generic`/`sdk` products.
+     *
+     * Note this is a hint, not a security boundary. Anything that can rewrite
+     * these properties can defeat it, and nothing here should be treated as
+     * proof of where the code is running.
+     */
+    private fun isEmulator(): Boolean {
+        val hardware = Build.HARDWARE.lowercase()
+        if (hardware.startsWith("goldfish") || hardware.startsWith("ranchu")) return true
+
+        val fingerprint = Build.FINGERPRINT.lowercase()
+        if (fingerprint.startsWith("generic") || fingerprint.startsWith("unknown")) return true
+        if (fingerprint.contains("emulator") || fingerprint.contains("sdk_gphone")) return true
+
+        val product = Build.PRODUCT.lowercase()
+        if (product.startsWith("sdk") || product.contains("_sdk") || product.contains("sdk_")) return true
+
+        val model = Build.MODEL.lowercase()
+        if (model.contains("google_sdk") || model.contains("emulator") || model.contains("android sdk built for")) return true
+
+        return Build.MANUFACTURER.contains("Genymotion") || Build.BRAND.startsWith("generic")
     }
 
     // ==================== Network Status ====================

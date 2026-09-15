@@ -35,6 +35,8 @@
     "test": "command -v zig >/dev/null 2>&1 || eval \"$(pantry env | sed -n '/^export /,$p')\"; cd packages/zig && zig build test",
     "test:sdk": "cd packages/typescript && bun test",
     "test:native-lifecycle": "bun scripts/native-lifecycle.ts",
+    "test:mobile-e2e:ios": "bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib",
+    "test:mobile-e2e:android": "bun scripts/mobile-e2e.ts --platform android --android-runtime packages/zig/zig-out/android",
     "typecheck": "cd packages/typescript && bun run typecheck && cd ../create-craft && bun run typecheck && cd ../ts-maps && bun run typecheck",
     "run": "command -v zig >/dev/null 2>&1 || eval \"$(pantry env | sed -n '/^export /,$p')\"; cd packages/zig && zig build run",
     "run:demo": "command -v zig >/dev/null 2>&1 || eval \"$(pantry env | sed -n '/^export /,$p')\"; cd packages/zig && zig build run-demo",

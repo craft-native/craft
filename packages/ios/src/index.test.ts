@@ -350,6 +350,23 @@ describe('choosing a simulator', () => {
     expect(chosen?.name).toBe('iPhone 17 Pro')
   })
 
+  it('ignores simulators that cannot run an iOS app', () => {
+    // Booted sorts ahead of everything, so an open Apple Watch or Apple TV
+    // simulator would otherwise be handed back as the place to install an
+    // iphonesimulator build.
+    const chosen = orderSimulators([
+      device('Apple Watch Series 10', 'watchOS-11-0', 'Booted'),
+      device('Apple TV 4K', 'tvOS-18-0', 'Booted'),
+      device('iPhone 17', 'iOS-27-0'),
+    ])[0]
+
+    expect(chosen?.name).toBe('iPhone 17')
+  })
+
+  it('returns nothing when only non-iOS simulators exist', () => {
+    expect(orderSimulators([device('Apple Watch Series 10', 'watchOS-11-0', 'Booted')])[0]).toBeUndefined()
+  })
+
   it('and never invents one that is not installed', () => {
     // The regression in one line: no devices means no device, rather than a
     // hard-coded name xcodebuild will refuse.

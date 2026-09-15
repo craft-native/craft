@@ -36,6 +36,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const jni = @import("jni_runtime.zig");
+const android_log = @import("android_log.zig");
 const permissions = @import("android_permissions.zig");
 const device = @import("bridge_android_device.zig");
 const system = @import("bridge_android_system.zig");
@@ -76,12 +77,24 @@ const Jni = jni.Jni;
 
 /// The allocator every reply is built with.
 ///
-/// `page_allocator`, and the choice is a build constraint rather than a
-/// preference. `c_allocator` would pull in bionic, and Zig cannot provide
-/// bionic — a static Android library links nothing and builds anyway, but this
-/// one is shared and has to resolve its symbols, so libc here means the whole
-/// library needs the NDK to build at all. Standing free of libc keeps it
-/// buildable with nothing but Zig.
+/// This used to carry a note explaining that `page_allocator` was chosen over
+/// `c_allocator` to keep the library buildable with nothing but Zig, since
+/// bionic would mean needing the NDK. That reasoning was sound and the
+/// conclusion was wrong: standing free of libc does not make the references go
+/// away, it only defers them. `page_allocator` needs `getauxval` for the page
+/// size, any `threadlocal` needs `__tls_get_addr`, and so does `std.fmt` — so
+/// the library linked clean, shipped, and then failed at `dlopen` with
+///
+///     cannot locate symbol "__tls_get_addr" referenced by ".../libcraft.so"
+///
+/// which `CraftNative` caught as an `UnsatisfiedLinkError` and turned into a
+/// silent fallback to the Kotlin shim. Every generated Android app was in that
+/// state; the mobile E2E suite is what finally said so out loud.
+///
+/// So the library links bionic now and `build-android` requires the NDK
+/// (`build.zig`'s -Dandroid-ndk). The allocator is free to be whichever one
+/// suits; it stays `page_allocator` because the arena below wants pages
+/// anyway.
 ///
 /// Every native call wraps this in an arena, so the page granularity costs one
 /// page per call rather than one per allocation, and nothing has to be freed
@@ -97,6 +110,17 @@ const backing = std.heap.page_allocator;
 const request_calendar: i32 = 1005;
 
 /// The shim's default event length: `System.currentTimeMillis() + 3600000`.
+/// The log handler, installed here because this file is the root module of the
+/// JNI library and `std_options` only takes effect from a root.
+///
+/// Without it every `std.log` line below goes to stderr, which ART discards —
+/// including `JNI_OnLoad`'s report of a refused registration, which is the one
+/// message worth having. `android_log.zig` says more about why it routes
+/// through `android.util.Log` rather than liblog.
+pub const std_options: std.Options = .{
+    .logFn = android_log.logFn,
+};
+
 const one_hour_ms: i64 = 60 * 60 * 1000;
 
 /// `CraftBridge.REQUEST_CONTACTS`.
@@ -137,13 +161,27 @@ pub const holder_class = "com/craft/runtime/CraftNative";
 /// linked.
 pub export fn JNI_OnLoad(vm_handle: jni.JavaVM, _: ?*anyopaque) callconv(.c) jni.jint {
     java_vm = vm_handle;
+    // The log channel first, so the registration report below has somewhere to
+    // go. It is the only diagnosis available for a library that loaded and
+    // failed to bind.
+    android_log.setVm(vm_handle);
     // The reply channel needs the same handle, and needs it before any action
     // runs: a callback that fires between load and the first native call has
     // nowhere to deliver otherwise.
     events.setVm(vm_handle);
 
     switch (bindNatives(vm_handle)) {
-        .registered => {},
+        // Said out loud on the happy path, not only on the failures below.
+        // "The library is loaded and bound" and "the library was never
+        // shipped" are otherwise both silent, and they are the two states
+        // anyone debugging this needs to tell apart first. It is also the only
+        // line that proves the log channel itself works: a diagnostic that
+        // only speaks when something is wrong cannot be trusted when it says
+        // nothing.
+        .registered => std.log.info(
+            "craft: registered {d} natives on {s}",
+            .{ natives.len, holder_class },
+        ),
         .no_env => std.log.err(
             "craft: no JNIEnv at load; every action stays on the Kotlin shim",
             .{},
