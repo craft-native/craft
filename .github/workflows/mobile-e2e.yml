@@ -1,39 +1,121 @@
 name: Mobile E2E Testing
 
-# Manual only. This workflow has been red since May and cannot go green from
-# a workflow edit: the iOS Zig sources stopped compiling in the 0.17 migration
-# (1b6f285) and need real source work — see the notes in the PR that made this
-# manual. It also runs no end-to-end tests today; every step that would has an
-# `if: hashFiles(...)` guard pointing at a TestApp/project that is not in the
-# tree, so they all skip. Firing it on push meant a red X on unrelated commits
-# for a signal nobody could act on, and two of its path filters
-# (packages/zig/src/ios/**, packages/zig/src/android/**) match directories that
-# do not exist at all.
+# Runs a generated Craft app on a real iOS simulator and a real Android
+# emulator and asserts that a call made from JavaScript reached native code and
+# came back.
+#
+# The version this replaces asserted nothing. Every iOS step that would have
+# tested something was guarded by
+# `if: hashFiles('packages/ios/TestApp/TestApp.xcodeproj') != ''` against a
+# project that has never existed in the tree, and the Android job's only test
+# invocation was gated on `packages/android/gradlew`, which the generator does
+# not write. Both skipped on every run, and the job reported success. Its
+# header also blamed the iOS Zig sources for not compiling since the 0.17
+# migration (1b6f285); that is no longer true —
+# `zig build build-ios-simulator` succeeds at this commit, and the iOS job
+# below depends on it.
+#
+# What the harness asserts, per platform, is in scripts/mobile-e2e/protocol.ts:
+# a required list of cases that must all run and all pass, covering at least
+# one success path and one rejection path. Nothing here skips. A missing
+# toolchain, an absent device, or an app that printed nothing is a failure with
+# a named cause.
+
+# GitHub Actions does not resolve YAML anchors, so the two path filters are
+# written out rather than shared. Keep them identical.
 on:
+  push:
+    branches: [main]
+    paths:
+      - packages/ios/**
+      - packages/android/**
+      # The mobile Zig sources are flat files under src/, not src/ios/ and
+      # src/android/ as the previous filters claimed — those two directories
+      # have never existed, so the filter matched nothing.
+      - packages/zig/src/ios*.zig
+      - packages/zig/src/android*.zig
+      - packages/zig/src/mobile*.zig
+      - packages/zig/src/bridge_mobile_*.zig
+      - packages/zig/src/bridge_android_*.zig
+      - packages/zig/src/jni*.zig
+      - packages/zig/build.zig
+      - scripts/mobile-e2e.ts
+      - scripts/mobile-e2e/**
+      - .github/workflows/mobile-e2e.yml
+  pull_request:
+    paths:
+      - packages/ios/**
+      - packages/android/**
+      - packages/zig/src/ios*.zig
+      - packages/zig/src/android*.zig
+      - packages/zig/src/mobile*.zig
+      - packages/zig/src/bridge_mobile_*.zig
+      - packages/zig/src/bridge_android_*.zig
+      - packages/zig/src/jni*.zig
+      - packages/zig/build.zig
+      - scripts/mobile-e2e.ts
+      - scripts/mobile-e2e/**
+      - .github/workflows/mobile-e2e.yml
   workflow_dispatch:
 
 concurrency:
   group: mobile-e2e-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
 
 jobs:
-  ios-simulator:
-    # name: iOS Simulator Tests
-    runs-on: macos-14  # M1 runner for better iOS simulator performance
+  # The transcript reader and the required-case list are the part of this
+  # harness that can be tested without a device, and nothing ran those tests:
+  # every `bun test` in this repository is scoped to a package directory or to
+  # one explicit file, and the root `test` script is the Zig suite. So the
+  # ratchet that stops the suite being hollowed out was itself unenforced.
+  harness:
+    name: Harness unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Zig
+      - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
-      - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # The explicit path is load-bearing: a bare filter makes bun walk the
+      # repository and run out of file descriptors under the hoisted linker.
+      # See the note in native-lifecycle.yml.
+      - name: Test the report protocol
+        run: bun test ./scripts/mobile-e2e/protocol.test.ts
+
+  ios-simulator:
+    name: iOS simulator
+    runs-on: macos-15
+    # A hung simulator launch would otherwise burn the six-hour default. The
+    # harness has its own per-app timeout; this is the backstop for everything
+    # around it.
+    timeout-minutes: 45
+    env:
+      CRAFT_EVIDENCE_LABEL: ios-simulator
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Cache Zig artifacts
         uses: actions/cache@v5
@@ -41,153 +123,86 @@ jobs:
           path: |
             ~/.cache/zig
             packages/zig/.zig-cache
-          key: ios-${{ runner.os }}-zig-master-${{ hashFiles('packages/zig/build.zig') }}
-
-      - name: List available simulators
-        run: |
-          xcrun simctl list devices available
-
-      - name: Boot iOS Simulator
-        run: |
-          # Find an iPhone 15 simulator
-          DEVICE_ID=$(xcrun simctl list devices available | grep "iPhone 15" | head -1 | grep -oE '[0-9A-F-]{36}')
-
-          if [ -z "$DEVICE_ID" ]; then
-            # Create one if not found
-            DEVICE_ID=$(xcrun simctl create "iPhone 15 Test" "iPhone 15" "iOS17.0")
-          fi
-
-          echo "DEVICE_ID=$DEVICE_ID" >> $GITHUB_ENV
-
-          # Boot the simulator
-          xcrun simctl boot "$DEVICE_ID" || true
-
-          # Wait for simulator to finish booting. `bootstatus -b` blocks until
-          # the device reaches a Booted state, eliminating the flaky fixed sleep.
-          xcrun simctl bootstatus "$DEVICE_ID" -b
+          key: mobile-e2e-ios-${{ runner.os }}-${{ hashFiles('packages/zig/build.zig') }}
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
 
-      - name: Build iOS library
+      # build-ios-all, not build-ios-simulator: installRuntime() resolves every
+      # SDK in RUNTIME_ARCHIVES before it writes anything and throws when one
+      # has no archive at all, so a zig-out holding only the simulator slices
+      # fails at project generation. It passes locally only because a device
+      # archive is usually already sitting there from an earlier build.
+      #
+      # No -Dmacos-sdk: the iOS steps resolve their SDK through xcrun at
+      # configure time (build.zig's iosSdkPath), and the option is read only by
+      # desktop and host-test artifacts, so passing it was a no-op.
+      - name: Build the Zig iOS runtime
         working-directory: packages/zig
-        run: |
-          # Build iOS simulator static libraries using dedicated build step
-          # (not the default target which builds macOS executables)
-          zig build build-ios-simulator -Doptimize=ReleaseSafe -Dmacos-sdk="$(xcrun --sdk iphonesimulator --show-sdk-path)"
+        run: zig build build-ios-all -Doptimize=ReleaseSafe
 
-      - name: First-party Zig dependencies
-        uses: ./.github/actions/first-party-zig-deps
+      - name: Run mobile E2E on the simulator
+        id: harness
+        run: bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib
 
-      - name: Run iOS unit tests
-        working-directory: packages/zig
-        run: |
-          # `zig build test` reports through its exit code. The old form piped
-          # it to a file and grepped for "mobile"/"ios", which fails under
-          # `set -e` whenever the run is clean and the file is therefore empty.
-          zig build test
-
-      - name: Build iOS test app
-        if: hashFiles('packages/ios/TestApp/TestApp.xcodeproj') != ''
-        run: |
-          cd packages/ios/TestApp
-          xcodebuild build-for-testing \
-            -scheme TestApp \
-            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
-            -configuration Debug \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO
-
-      - name: Run iOS E2E tests
-        if: hashFiles('packages/ios/TestApp/TestApp.xcodeproj') != ''
-        run: |
-          cd packages/ios/TestApp
-          xcodebuild test-without-building \
-            -scheme TestApp \
-            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
-            -configuration Debug
-
-      - name: Capture iOS screenshots
-        run: |
-          mkdir -p screenshots/ios
-
-          # Take a screenshot of the simulator
-          xcrun simctl io "$DEVICE_ID" screenshot screenshots/ios/simulator.png || true
-
-      - name: Shutdown simulator
-        if: always()
-        run: |
-          xcrun simctl shutdown "$DEVICE_ID" || true
-
-      - name: Upload iOS screenshots
+      - name: Upload iOS evidence
+        # Not a bare `always()`: when an earlier step fails the harness never
+        # runs, the evidence directory is never created, and `if-no-files-found:
+        # error` would then add a "No files were found" error on top of the real
+        # one. Skipped-means-skipped; ran-and-produced-nothing still fails.
+        if: always() && steps.harness.conclusion != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: ios-screenshots
-          path: screenshots/ios/
-          retention-days: 7
-
-      - name: Generate iOS test report
-        run: |
-          echo "## iOS Simulator Tests" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Simulator: iPhone 15" >> $GITHUB_STEP_SUMMARY
-          echo "- iOS Version: 17.0" >> $GITHUB_STEP_SUMMARY
-          echo "- Status: Completed" >> $GITHUB_STEP_SUMMARY
+          name: mobile-e2e-ios
+          # Console logs, build logs, screenshots, the generated project.yml and
+          # the exact page that ran. Excludes work/ — the generated projects and
+          # their DerivedData are hundreds of megabytes and the interesting
+          # parts are copied out.
+          path: |
+            artifacts/mobile-e2e/ios-simulator/**
+            !artifacts/mobile-e2e/ios-simulator/work/**
+          # A run that produced no evidence is a broken harness, not a pass.
+          if-no-files-found: error
+          retention-days: 30
 
   android-emulator:
-    # name: Android Emulator Tests
+    name: Android emulator
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CRAFT_EVIDENCE_LABEL: android-emulator
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Zig
+      - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Cache Zig artifacts
-        uses: actions/cache@v5
+        uses: android-actions/setup-android@v4
         with:
-          path: |
-            ~/.cache/zig
-            packages/zig/.zig-cache
-          key: android-${{ runner.os }}-zig-master-${{ hashFiles('packages/zig/build.zig') }}
+          # The action defaults to `tools platform-tools`, but the obsolete
+          # `tools` package is no longer offered by the Android SDK repository.
+          packages: platform-tools
 
-      - name: Install Android NDK
-        run: |
-          sdkmanager --install "ndk;26.1.10909125"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
+      # Same platform and build-tools as ci.yml's android-builder, so the
+      # emulator job and the compile gate cannot drift onto different SDKs.
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: First-party Zig dependencies
-        uses: ./.github/actions/first-party-zig-deps
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.11.1'
 
-      - name: Build Android library
-        working-directory: packages/zig
-        run: |
-          # Use the dedicated android step, which resolves its own target.
-          # Passing -Dtarget steers the *default* install step instead, which
-          # builds the desktop binaries — and since an android triple reports
-          # os_tag == .linux, that links GTK3/WebKit2GTK against a sysroot that
-          # does not exist for Android.
-          zig build build-android -Doptimize=ReleaseSafe
-
-      - name: First-party Zig dependencies
-        uses: ./.github/actions/first-party-zig-deps
-
-      - name: Run Android unit tests
-        working-directory: packages/zig
-        run: |
-          # `zig build test` reports through its exit code. The old form piped
-          # it to a file and grepped for "mobile"/"android", which fails under
-          # `set -e` whenever the run is clean and the file is therefore empty.
-          zig build test
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
       - name: Enable KVM
         run: |
@@ -202,9 +217,17 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-api-34-${{ runner.os }}
+          # The device, not just the API level. With force-avd-creation off the
+          # action reuses whatever the cache restored, so a key that ignores
+          # arch and profile would keep testing the old device after someone
+          # changed them.
+          key: avd-api-34-x86_64-pixel_6-${{ runner.os }}
 
-      - name: Create AVD and run tests
+      # `script:` is the only place a command can run with the emulator
+      # attached, so the harness is invoked from inside it rather than as its
+      # own step.
+      - name: Run mobile E2E on the emulator
+        id: harness
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -214,56 +237,110 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            echo "Emulator started"
             adb wait-for-device
-            mkdir -p screenshots/android
-            adb exec-out screencap -p > screenshots/android/emulator.png || true
-            if [ -x "packages/android/gradlew" ]; then
-              cd packages/android
-              ./gradlew test
-            else
-              echo "Android Gradle wrapper not present; skipping project-level tests"
-            fi
+            bun scripts/mobile-e2e.ts --platform android
 
-      - name: Upload Android screenshots
+      - name: Upload Android evidence
+        if: always() && steps.harness.conclusion != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: android-screenshots
-          path: screenshots/android/
-          retention-days: 7
+          name: mobile-e2e-android
+          path: |
+            artifacts/mobile-e2e/android-emulator/**
+            !artifacts/mobile-e2e/android-emulator/work/**
+          if-no-files-found: error
+          retention-days: 30
 
-      - name: Generate Android test report
+  # The Zig runtime's own simulator fixture: a hand-linked four-file app that
+  # drives libcraft-ios-simulator directly, with assertions the generated-app
+  # suite cannot make — the host hand-off, the error route's escaping, a
+  # Keychain round trip, in-process SQLite, and a sensor the simulator does not
+  # have refusing rather than fabricating a stream. It has been in the tree,
+  # passing, and wired into no workflow.
+  ios-zig-slice:
+    name: iOS Zig runtime slice
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: Cache Zig artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/zig
+            packages/zig/.zig-cache
+          key: mobile-e2e-slice-${{ runner.os }}-${{ hashFiles('packages/zig/build.zig') }}
+
+      - name: First-party Zig dependencies
+        uses: ./.github/actions/first-party-zig-deps
+
+      # The script defaults CRAFT_ZIG to a pinned toolchain under
+      # ~/.cache/craft-ci-local, which exists on the author's machine and not on
+      # a runner. Point it at the one pantry provides.
+      - name: Exercise the Zig runtime on a simulator
+        id: harness
+        # The fixture polls for its late markers against a wall-clock deadline.
+        # A runner is several times slower than a laptop here — the first CI run
+        # of this job reached marker 36 of 42 before the old iteration-count
+        # budget ran out — so give it room. It exits as soon as the markers
+        # arrive; the budget only matters when something is genuinely stuck.
+        env:
+          CRAFT_SLICE_TIMEOUT: '900'
         run: |
-          echo "## Android Emulator Tests" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- Emulator: Pixel 6" >> $GITHUB_STEP_SUMMARY
-          echo "- API Level: 34" >> $GITHUB_STEP_SUMMARY
-          echo "- Status: Completed" >> $GITHUB_STEP_SUMMARY
+          CRAFT_ZIG="$(command -v zig)" \
+            packages/ios/fixtures/zig-slice/build-and-run.sh \
+            "$PWD/artifacts/mobile-e2e/ios-zig-slice"
+
+      - name: Upload slice evidence
+        if: always() && steps.harness.conclusion != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-e2e-ios-zig-slice
+          path: |
+            artifacts/mobile-e2e/ios-zig-slice/console.log
+            artifacts/mobile-e2e/ios-zig-slice/console.plain
+          if-no-files-found: error
+          retention-days: 30
 
   mobile-summary:
-    # name: Mobile Test Summary
-    needs: [ios-simulator, android-emulator]
+    name: Mobile E2E summary
+    needs: [harness, ios-simulator, android-emulator, ios-zig-slice]
     runs-on: ubuntu-latest
     if: always()
 
     steps:
-      - name: Check test results
+      - name: Report
         run: |
-          echo "## Mobile E2E Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| iOS Simulator | ${{ needs.ios-simulator.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Android Emulator | ${{ needs.android-emulator.result }} |" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Mobile E2E"
+            echo
+            echo "| Leg | Result |"
+            echo "|-----|--------|"
+            echo "| Harness unit tests | ${{ needs.harness.result }} |"
+            echo "| iOS simulator (generated app) | ${{ needs.ios-simulator.result }} |"
+            echo "| Android emulator (generated app) | ${{ needs.android-emulator.result }} |"
+            echo "| iOS Zig runtime slice | ${{ needs.ios-zig-slice.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Download all screenshots
-        uses: actions/download-artifact@v4
-        with:
-          path: all-screenshots
-
-      - name: Upload combined screenshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-screenshots
-          path: all-screenshots/
-          retention-days: 30
+      # The summary job used to be the whole story, and it reported whatever it
+      # was given without ever failing. `needs` does not fail a job on a failed
+      # dependency when `if: always()` is set, so say it explicitly.
+      #
+      # `failure` and `skipped`, not `!= success`: with cancel-in-progress on,
+      # pushing twice in quick succession cancels the first run, and treating
+      # `cancelled` as a failure would put a red X on it — a signal about
+      # nothing, which is how the workflow this replaces earned its reputation.
+      - name: Fail if any leg failed
+        if: >-
+          contains(fromJSON('["failure", "skipped"]'), needs.harness.result)
+          || contains(fromJSON('["failure", "skipped"]'), needs.ios-simulator.result)
+          || contains(fromJSON('["failure", "skipped"]'), needs.android-emulator.result)
+          || contains(fromJSON('["failure", "skipped"]'), needs.ios-zig-slice.result)
+        run: |
+          echo "::error::at least one mobile E2E leg did not succeed"
+          exit 1
