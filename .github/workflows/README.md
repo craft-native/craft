@@ -35,10 +35,18 @@ ok   ios-runtime — 4/4 cases, zig served clipboardRead, clipboardWrite, getCur
 ```
 
 Android needs JDK 17, Gradle 8.11.1, an Android SDK with `platforms;android-36`
-and `build-tools;36.0.0`, and a booted emulator or attached device:
+and `build-tools;36.0.0`, a booted emulator or attached device, and the Zig
+Android libraries — it runs twice as well, once with `libcraft.so` packaged
+into the APK and once without:
 
 ```bash
+cd packages/zig && zig build build-android-all -Doptimize=ReleaseSafe && cd -
 bun run test:mobile-e2e:android
+```
+
+```
+ok   android-shim    — 4/4 cases, no zig
+ok   android-runtime — 4/4 cases, zig served registered:59
 ```
 
 Both write everything they saw — console logs, build logs, a screenshot, the
