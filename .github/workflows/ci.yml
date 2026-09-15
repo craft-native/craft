@@ -178,6 +178,10 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          # The action defaults to `tools platform-tools`, but the obsolete
+          # `tools` package is no longer offered by the Android SDK repository.
+          packages: platform-tools
 
       - name: Install Android platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
