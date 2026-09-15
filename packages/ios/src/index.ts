@@ -819,23 +819,30 @@ export interface SimulatorDevice {
 }
 
 /**
- * Every available simulator, newest runtime first, iPhones before iPads.
+ * Every available *iOS* simulator, newest runtime first, iPhones before iPads.
  *
  * Exported because the choice is worth testing without a simulator present -
  * `pickSimulator` is the policy and this is the data it reads.
  */
 export function orderSimulators(devices: SimulatorDevice[]): SimulatorDevice[] {
-  return [...devices].sort((left, right) => {
-    const booted = Number(right.state === 'Booted') - Number(left.state === 'Booted')
-    if (booted !== 0)
-      return booted
+  // iOS runtimes only, before anything else is considered. A booted device
+  // sorts ahead of every shut-down one, and a developer with an Apple Watch or
+  // Apple TV simulator open would otherwise have it handed back as the place
+  // to install an iphonesimulator build - which fails at `simctl install`,
+  // naming a device nobody asked for.
+  return devices
+    .filter(device => device.runtime.startsWith('iOS'))
+    .sort((left, right) => {
+      const booted = Number(right.state === 'Booted') - Number(left.state === 'Booted')
+      if (booted !== 0)
+        return booted
 
-    const phone = Number(right.name.startsWith('iPhone')) - Number(left.name.startsWith('iPhone'))
-    if (phone !== 0)
-      return phone
+      const phone = Number(right.name.startsWith('iPhone')) - Number(left.name.startsWith('iPhone'))
+      if (phone !== 0)
+        return phone
 
-    return right.runtime.localeCompare(left.runtime)
-  })
+      return right.runtime.localeCompare(left.runtime)
+    })
 }
 
 /**

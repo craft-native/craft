@@ -1445,11 +1445,29 @@ struct CraftWebView: UIViewRepresentable {
 
         private func isTrustedURL(_ url: URL?) -> Bool {
             guard let url = url else { return false }
-            if url.scheme == "craft" && url.host == "app" { return true }
             return isTrustedOrigin(scheme: url.scheme ?? "", host: url.host ?? "", port: url.port ?? 0)
         }
 
+        /// The single answer to "may this origin reach native?".
+        ///
+        /// The bundled app is served from craft://app by
+        /// `BundledAssetSchemeHandler`, and it is the only content a generated
+        /// app loads when no dev server is configured. That origin used to be
+        /// trusted for *navigation* only: `isTrustedURL` carried the clause,
+        /// while the `userContentController` guard called this function
+        /// directly and fell through to the https/localhost check. So every
+        /// bridge call from the app's own page was answered with
+        ///
+        ///     Blocked Craft bridge message from untrusted origin: craft://app
+        ///
+        /// and its promise never settled — the whole native surface was dead
+        /// in the default configuration, which is the one every generated app
+        /// ships with. Two guards that had to agree, and did not. There is one
+        /// now, and `scripts/mobile-e2e.ts` runs a real round trip on a booted
+        /// simulator so a future hardening pass cannot quietly take the bridge
+        /// away again.
         private func isTrustedOrigin(scheme: String, host: String, port: Int) -> Bool {
+            if scheme == "craft" && host == "app" { return true }
             if scheme == "file" { return true }
             guard scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)) else { return false }
             let defaultPort = scheme == "https" ? 443 : 80
