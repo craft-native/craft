@@ -39,8 +39,12 @@ and `build-tools;36.0.0`, a booted emulator or attached device, and the Zig
 Android libraries — it runs twice as well, once with `libcraft.so` packaged
 into the APK and once without:
 
+The Zig Android library links bionic, so building it needs the NDK —
+`sdkmanager --install "ndk;26.1.10909125"`. Without it `build-android` refuses
+rather than producing a library that installs and then fails to load.
+
 ```bash
-cd packages/zig && zig build build-android-all -Doptimize=ReleaseSafe && cd -
+cd packages/zig && zig build build-android-all -Doptimize=ReleaseSafe -Dandroid-ndk="$ANDROID_NDK_HOME" && cd -
 bun run test:mobile-e2e:android
 ```
 
