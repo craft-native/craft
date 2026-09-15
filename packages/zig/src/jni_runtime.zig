@@ -437,6 +437,42 @@ pub fn envForThisThread(vm: JavaVM) ?JNIEnv {
     return @ptrCast(@alignCast(env orelse return null));
 }
 
+/// A `JNIEnv` for this thread, and whether this code owes the JVM a detach.
+///
+/// A thread the JVM created — the UI thread, a binder thread — is already
+/// attached and must **not** be detached by us; a thread Zig or a native
+/// library created must be. Getting that backwards either leaks the attachment
+/// or detaches a thread still using it, and neither fails at the call site.
+pub const Attachment = struct {
+    env: JNIEnv,
+    owned: bool,
+
+    /// Give the attachment back, if it was ours to give.
+    pub fn release(self: Attachment, vm: JavaVM) void {
+        if (!self.owned) return;
+        const detach: *const fn (JavaVM) callconv(.c) jint =
+            @ptrCast(vm.*.DetachCurrentThread orelse return);
+        _ = detach(vm);
+    }
+};
+
+/// This thread's `JNIEnv`, attaching the thread if it has none.
+///
+/// Lives here rather than beside either caller because there are two of them —
+/// the reply channel and the log channel — and a second copy of a JNI dance
+/// this subtle is how the two drift apart.
+pub fn attachCurrentThread(vm: JavaVM) ?Attachment {
+    if (envForThisThread(vm)) |env| return .{ .env = env, .owned = false };
+
+    const attach: *const fn (JavaVM, *?*anyopaque, ?*anyopaque) callconv(.c) jint =
+        @ptrCast(vm.*.AttachCurrentThread orelse return null);
+
+    var env_ptr: ?*anyopaque = null;
+    if (attach(vm, &env_ptr, null) != JNI_OK) return null;
+    const env: JNIEnv = @ptrCast(@alignCast(env_ptr orelse return null));
+    return .{ .env = env, .owned = true };
+}
+
 /// Bind native implementations to a Java class's `external`/`native` methods.
 ///
 /// The alternative is exporting a symbol named
