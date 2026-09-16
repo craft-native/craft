@@ -118,11 +118,16 @@ export interface CraftBridge {
   haptic(style: HapticStyle): void;
 
   /**
-   * Open native share sheet
+   * Open the native share sheet.
+   *
+   * Resolves `true` when the person shares — finishes an activity on iOS,
+   * picks an app on Android — and `false` when they dismiss the sheet.
+   * Rejects when there is nothing to share, when the sheet cannot open, and on
+   * iOS when `enableShare` is off (`CAPABILITY_DISABLED`).
    * @param text - Text to share
    * @param title - Optional title
    */
-  share(text: string, title?: string): void;
+  share(text: string, title?: string): Promise<boolean>;
 
   /**
    * Log message to native console (Xcode/Logcat)

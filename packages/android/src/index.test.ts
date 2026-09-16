@@ -567,6 +567,7 @@ describe('Craft Android builder', () => {
       ['OTA download', '_craftOTADownloadResolve', 1],
       ['OTA apply', '_craftOTAApplyResolve', 1],
       ['OTA rollback', '_craftOTARollbackResolve', 1],
+      ['share', '_craftShareResolve', 1],
     ] as const) {
       const call = `window.__craftPromise('${channel}', '${resolver}',`
       expect(bridge.match(new RegExp(call.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(uses)
@@ -581,12 +582,12 @@ describe('Craft Android builder', () => {
     const registrations = [...bridge.matchAll(
       /window\.__craftPromise\(\s*'([^']+)'\s*,\s*'([^']+)'\s*,\s*'([^']+)'/g,
     )].map(match => [match[1], match[2], match[3]] as const)
-    expect(registrations).toHaveLength(65)
+    expect(registrations).toHaveLength(66)
 
     const uniqueRegistrations = new Map(
       registrations.map(registration => [registration.join('\0'), registration]),
     )
-    expect(uniqueRegistrations.size).toBe(46)
+    expect(uniqueRegistrations.size).toBe(47)
 
     const channels = new Set<string>()
     const callbackOwners = new Map<string, string>()
@@ -599,8 +600,8 @@ describe('Craft Android builder', () => {
         callbackOwners.set(callback, channel)
       }
     }
-    expect(channels.size).toBe(46)
-    expect(callbackOwners.size).toBe(92)
+    expect(channels.size).toBe(47)
+    expect(callbackOwners.size).toBe(94)
     expect(bridge.match(/webView\.evaluateJavascript\(\s*"window\._craft[A-Za-z]+(?:Resolve|Reject)/g)).toBeNull()
     expect(bridge.match(/window\._craft[A-Za-z]+(?:Resolve|Reject) = (?:resolve|reject)/g)).toBeNull()
     expect(bridge).toContain('_craftShortcutsResolve({set: true, count: ${shortcuts.size}})')

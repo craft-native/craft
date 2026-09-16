@@ -1050,20 +1050,33 @@ export const share = {
   /**
    * Open native share dialog.
    *
+   * Resolves `true` when the person shared and `false` when they dismissed the
+   * dialog, on the native bridges and in the browser alike.
+   *
    * @param options - Share options
    */
-  async share(options: ShareOptions): Promise<void> {
+  async share(options: ShareOptions): Promise<boolean> {
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.share) {
       return craft.share.share(options)
     }
     // Web Share API fallback
     if (navigator.share) {
-      await navigator.share({
-        title: options.title,
-        text: options.text,
-        url: options.url
-      })
+      try {
+        await navigator.share({
+          title: options.title,
+          text: options.text,
+          url: options.url
+        })
+        return true
+      }
+      catch (error) {
+        // A dismissed dialog rejects with AbortError here. The native bridges
+        // answer false for the same thing, so this does too rather than
+        // turning a person's choice into an exception.
+        if (error instanceof DOMException && error.name === 'AbortError') return false
+        throw error
+      }
     }
 else {
       throw new Error('Share API not available')
@@ -1580,7 +1593,7 @@ interface CraftMobileBridge {
     readRecording?(): Promise<Location[]>
   }
   share?: {
-    share(options: ShareOptions): Promise<void>
+    share(options: ShareOptions): Promise<boolean>
   }
   lifecycle?: {
     getState(): AppState
