@@ -283,7 +283,7 @@ const natives = [_]jni.JNINativeMethod{
     },
     .{
         .name = "nativeShare",
-        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)Z",
+        .signature = "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;Landroid/content/IntentSender;I)Z",
         .fnPtr = @ptrCast(&nativeShare),
     },
     .{
@@ -879,6 +879,8 @@ fn nativeShare(
     activity: jni.jobject,
     text: jni.jstring,
     title: jni.jstring,
+    chosen: jni.jobject,
+    request_code: jni.jint,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
     var arena = std.heap.ArenaAllocator.init(backing);
@@ -888,7 +890,7 @@ fn nativeShare(
     const body = j.stringToUtf8(allocator, text) catch |err| return fellThrough("share", err, jni.JNI_FALSE);
     const subject = j.stringToUtf8(allocator, title) catch |err| return fellThrough("share", err, jni.JNI_FALSE);
 
-    intents.share(j, allocator, activity, body, subject) catch |err| {
+    intents.share(j, allocator, activity, body, subject, chosen, request_code) catch |err| {
         std.log.warn("craft: share fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };

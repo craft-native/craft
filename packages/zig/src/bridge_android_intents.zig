@@ -5,18 +5,23 @@
 //! module — they share every JNI call between them, and the only thing that
 //! differs is which extras go on the intent.
 //!
-//! ## Neither reports whether anything happened
+//! ## What each one can find out
 //!
 //! `startActivity` throws `ActivityNotFoundException` when nothing on the
 //! device handles the intent, and the Kotlin's `openURL` catches it and answers
-//! `false`. That is the *only* failure either action can see. Once another app
-//! is launched, whether the user did anything with it is unobservable from
-//! here — `share` in particular returns before the chooser is even drawn.
+//! `false`. That is the only failure `openURL` can see: once another app is
+//! launched, whether the user did anything with it is unobservable from here.
 //!
-//! So `true` means "the intent was accepted", never "the user shared
-//! something", and a page that treats it as the latter is wrong on both
-//! platforms. Kept as-is rather than improved: the shim's answer is the
-//! contract while the shim still exists.
+//! `share` can find out one thing more, and has to, because the page's promise
+//! resolves with it (#203). The chooser reports a pick through the
+//! `IntentSender` passed to `createChooser`, and reports a dismissal not at
+//! all. Its activity result arrives in both cases, and is `RESULT_CANCELED` in
+//! both. So neither signal answers alone, and the Kotlin combines them: the
+//! sender marks a pick, and the result, which always comes, settles the promise
+//! with whatever was marked. This module launches the chooser with both halves
+//! wired. It does not own either, which is why the sender and the request code
+//! arrive as arguments rather than being built here: `CraftBridge` receives the
+//! result, so `CraftBridge` chooses the code it routes on.
 //!
 //! ## `share` has one branch, and it is the empty title
 //!
@@ -89,11 +94,21 @@ pub fn openUrl(j: Jni, allocator: std.mem.Allocator, activity: jobject, url: []c
     try startActivity(j, activity, intent);
 }
 
-/// `startActivity(Intent.createChooser(Intent(ACTION_SEND)…, "Share"))`.
+/// `startActivityForResult(Intent.createChooser(Intent(ACTION_SEND)…, "Share", chosen), request_code)`.
 ///
 /// An empty `title` skips `EXTRA_SUBJECT` entirely rather than setting it to
-/// the empty string — see the module comment.
-pub fn share(j: Jni, allocator: std.mem.Allocator, activity: jobject, text: []const u8, title: []const u8) !void {
+/// the empty string — see the module comment. `chosen` is the `IntentSender`
+/// the chooser fires when the person picks an app, and `request_code` is the
+/// one `CraftBridge.onActivityResult` settles the page's promise on.
+pub fn share(
+    j: Jni,
+    allocator: std.mem.Allocator,
+    activity: jobject,
+    text: []const u8,
+    title: []const u8,
+    chosen: jobject,
+    request_code: i32,
+) !void {
     try j.pushLocalFrame(24);
     defer _ = j.popLocalFrame(null);
 
@@ -139,12 +154,20 @@ pub fn share(j: Jni, allocator: std.mem.Allocator, activity: jobject, text: []co
         try j.staticMethodId(
             intent_cls,
             "createChooser",
-            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+            "(Landroid/content/Intent;Ljava/lang/CharSequence;Landroid/content/IntentSender;)Landroid/content/Intent;",
         ),
-        &.{ .{ .l = intent }, .{ .l = chooser_label } },
+        &.{ .{ .l = intent }, .{ .l = chooser_label }, .{ .l = chosen } },
     );
 
-    try startActivity(j, activity, chooser);
+    // For a result, not a plain start: the result is the only signal that
+    // arrives when the person dismisses the chooser, and without it the page's
+    // promise would wait for a pick that is never coming.
+    const activity_cls = try j.objectClass(activity);
+    try j.callVoidMethodA(
+        activity,
+        try j.methodId(activity_cls, "startActivityForResult", "(Landroid/content/Intent;I)V"),
+        &.{ .{ .l = chooser }, .{ .i = request_code } },
+    );
 }
 
 // =============================================================================
@@ -163,6 +186,9 @@ var fake_field_names: std.ArrayListUnmanaged([]const u8) = .empty;
 var fake_strings: std.ArrayListUnmanaged([]const u8) = .empty;
 var fake_throw_on_start = false;
 var fake_pending: jobject = null;
+/// The last arguments `createChooser` and `startActivityForResult` received.
+var fake_chooser_sender: jobject = null;
+var fake_request_code: ?jni.jint = null;
 
 fn obj(tag: usize) jobject {
     return @ptrCast(&fake_storage[tag]);
@@ -196,8 +222,9 @@ fn fNewStringUTF(_: jni.JNIEnv, text: [*:0]const u8) callconv(.c) jni.jstring {
     fake_strings.append(testing.allocator, copy) catch testing.allocator.free(copy);
     return obj(3);
 }
-fn fCallStaticObjectMethodA(_: jni.JNIEnv, _: jni.jclass, id: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) jobject {
+fn fCallStaticObjectMethodA(_: jni.JNIEnv, _: jni.jclass, id: jni.jmethodID, args: [*]const jni.jvalue) callconv(.c) jobject {
     fake_calls.append(testing.allocator, nameOf(id)) catch {};
+    if (std.mem.eql(u8, nameOf(id), "createChooser")) fake_chooser_sender = args[2].l;
     return obj(4);
 }
 fn fCallObjectMethodA(_: jni.JNIEnv, _: jobject, id: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) jobject {
@@ -208,8 +235,9 @@ fn fNewObjectA(_: jni.JNIEnv, _: jni.jclass, id: jni.jmethodID, _: [*]const jni.
     fake_calls.append(testing.allocator, nameOf(id)) catch {};
     return obj(6);
 }
-fn fCallVoidMethodA(_: jni.JNIEnv, _: jobject, id: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) void {
+fn fCallVoidMethodA(_: jni.JNIEnv, _: jobject, id: jni.jmethodID, args: [*]const jni.jvalue) callconv(.c) void {
     fake_calls.append(testing.allocator, nameOf(id)) catch {};
+    if (std.mem.eql(u8, nameOf(id), "startActivityForResult")) fake_request_code = args[1].i;
     if (fake_throw_on_start) fake_pending = obj(7);
 }
 fn fExceptionOccurred(_: jni.JNIEnv) callconv(.c) jobject {
@@ -255,6 +283,8 @@ fn resetFakes() void {
     fake_strings.clearRetainingCapacity();
     fake_throw_on_start = false;
     fake_pending = null;
+    fake_chooser_sender = null;
+    fake_request_code = null;
 }
 
 fn freeFakes() void {
@@ -321,7 +351,7 @@ test "share sets the text extra and the chooser" {
     fakeEnv(&table);
     const ptr: *const jni.JNINativeInterface = &table;
 
-    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "Subject");
+    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "Subject", obj(9), 1011);
 
     try testing.expect(sawField("ACTION_SEND"));
     try testing.expect(sawField("EXTRA_TEXT"));
@@ -329,9 +359,43 @@ test "share sets the text extra and the chooser" {
     try testing.expect(sawCall("setType"));
     try testing.expect(sawCall("putExtra"));
     try testing.expect(sawCall("createChooser"));
-    try testing.expect(sawCall("startActivity"));
     try testing.expect(sawString("text/plain"));
     try testing.expect(sawString("Share"));
+}
+
+test "share launches for a result, with the sender and code it was given" {
+    // Both halves of how the page learns what happened. A plain startActivity
+    // gets no result, so a dismissed chooser would leave the promise waiting
+    // for ever; a chooser without the sender reports no pick, so every share
+    // would resolve false.
+    resetFakes();
+    defer freeFakes();
+    var table: jni.JNINativeInterface = undefined;
+    fakeEnv(&table);
+    const ptr: *const jni.JNINativeInterface = &table;
+
+    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "", obj(9), 1011);
+
+    try testing.expect(sawCall("startActivityForResult"));
+    try testing.expect(!sawCall("startActivity"));
+    try testing.expectEqual(obj(9), fake_chooser_sender);
+    try testing.expectEqual(@as(?jni.jint, 1011), fake_request_code);
+}
+
+test "a chooser that cannot start reports the exception rather than success" {
+    // CraftBridge rejects the page's promise on this; swallowing it would
+    // leave the promise waiting on a result for an activity that never began.
+    resetFakes();
+    defer freeFakes();
+    var table: jni.JNINativeInterface = undefined;
+    fakeEnv(&table);
+    const ptr: *const jni.JNINativeInterface = &table;
+
+    fake_throw_on_start = true;
+    try testing.expectError(
+        jni.JniError.JavaException,
+        share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "", obj(9), 1011),
+    );
 }
 
 test "an empty title omits the subject rather than setting it empty" {
@@ -344,13 +408,13 @@ test "an empty title omits the subject rather than setting it empty" {
     fakeEnv(&table);
     const ptr: *const jni.JNINativeInterface = &table;
 
-    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "");
+    try share(Jni.init(&ptr), testing.allocator, obj(8), "hello", "", obj(9), 1011);
 
     try testing.expect(sawField("EXTRA_TEXT"));
     try testing.expect(!sawField("EXTRA_SUBJECT"));
     // And the rest of the intent is still built.
     try testing.expect(sawCall("createChooser"));
-    try testing.expect(sawCall("startActivity"));
+    try testing.expect(sawCall("startActivityForResult"));
 }
 
 test "the action names match the Kotlin methods exactly" {

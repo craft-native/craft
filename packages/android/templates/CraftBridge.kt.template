@@ -2,10 +2,13 @@ package {{PACKAGE_NAME}}
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.hardware.camera2.CameraAccessException
@@ -365,9 +368,14 @@ class CraftBridge(
                     CraftAndroid.stopListening();
                 },
 
-                // Share
+                // Share. Resolves true when the person picks an app, false
+                // when they dismiss the menu, and rejects when there is
+                // nothing to share or the menu cannot open. No timeout: the
+                // menu waits on a person, not on the device.
                 share: function(text, title) {
-                    CraftAndroid.share(text, title || '');
+                    return window.__craftPromise('share', '_craftShareResolve', '_craftShareReject', function() {
+                        CraftAndroid.share(text == null ? '' : String(text), title == null ? '' : String(title));
+                    });
                 },
 
                 // Camera
@@ -1610,18 +1618,95 @@ class CraftBridge(
 
     // ==================== Share ====================
 
+    // Whether the person picked an app from the share menu that is open now.
+    //
+    // The chooser says so through the IntentSender below and says nothing at
+    // all when it is dismissed, while its activity result comes back
+    // RESULT_CANCELED either way. Neither signal answers on its own, so the
+    // pick marks this and the result, which always arrives, settles the page's
+    // promise with it. Everything that touches it runs on the main thread: the
+    // launch is posted there, and receivers and results are delivered there.
+    private var shareChosen = false
+    private var shareReceiverRegistered = false
+    private val shareChosenAction by lazy { "${activity.packageName}.CRAFT_SHARE_CHOSEN" }
+    private val shareChosenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            shareChosen = true
+        }
+    }
+
     @JavascriptInterface
     fun share(text: String, title: String) {
-        if (CraftNative.share(activity, text, title)) return
+        // The same line iOS draws: an empty string is nothing to share, and a
+        // chooser opened over nothing would offer apps a blank message.
+        if (text.isEmpty()) {
+            rejectShare("Nothing to share")
+            return
+        }
 
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            if (title.isNotEmpty()) {
-                putExtra(Intent.EXTRA_SUBJECT, title)
+        activity.runOnUiThread {
+            if (closed) return@runOnUiThread
+            shareChosen = false
+
+            val chosen = try {
+                shareChosenSender()
+            } catch (error: Exception) {
+                rejectShare(error.message ?: "Unable to open the share menu")
+                return@runOnUiThread
+            }
+
+            // Zig launches the same chooser for the same result; the answer
+            // still comes back through onActivityResult below.
+            if (CraftNative.share(activity, text, title, chosen, REQUEST_SHARE)) return@runOnUiThread
+
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                if (title.isNotEmpty()) {
+                    putExtra(Intent.EXTRA_SUBJECT, title)
+                }
+            }
+            try {
+                activity.startActivityForResult(Intent.createChooser(intent, "Share", chosen), REQUEST_SHARE)
+            } catch (error: Exception) {
+                rejectShare(error.message ?: "Unable to open the share menu")
             }
         }
-        activity.startActivity(Intent.createChooser(intent, "Share"))
+    }
+
+    // The IntentSender the chooser fires on a pick.
+    //
+    // Immutable: the chooser adds the chosen component to the intent it
+    // fires, and this only needs to know that it fired. Explicit, by package,
+    // so the broadcast reaches this app and nothing else, and so the
+    // not-exported receiver accepts it.
+    private fun shareChosenSender(): IntentSender {
+        if (!shareReceiverRegistered) {
+            ContextCompat.registerReceiver(
+                activity,
+                shareChosenReceiver,
+                IntentFilter(shareChosenAction),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            shareReceiverRegistered = true
+        }
+        val pick = Intent(shareChosenAction).setPackage(activity.packageName)
+        return PendingIntent.getBroadcast(
+            activity,
+            REQUEST_SHARE,
+            pick,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        ).intentSender
+    }
+
+    private fun handleShareResult() {
+        val chosen = shareChosen
+        shareChosen = false
+        evaluatePromiseJavascript("window._craftShareResolve && window._craftShareResolve($chosen)")
+    }
+
+    private fun rejectShare(message: String) {
+        evaluatePromiseJavascript("window._craftShareReject && window._craftShareReject(${jsQuote(message)})")
     }
 
     // ==================== Camera & Gallery ====================
@@ -3698,7 +3783,7 @@ class CraftBridge(
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         if (closed) return requestCode == REQUEST_CAMERA || requestCode == REQUEST_GALLERY ||
             requestCode == REQUEST_FILE_PICKER || requestCode == REQUEST_VIDEO ||
-            requestCode == REQUEST_PICK_CONTACT
+            requestCode == REQUEST_PICK_CONTACT || requestCode == REQUEST_SHARE
 
         return when (requestCode) {
             REQUEST_CAMERA, REQUEST_GALLERY -> {
@@ -3715,6 +3800,10 @@ class CraftBridge(
             }
             REQUEST_PICK_CONTACT -> {
                 handleContactPickerResult(resultCode, data)
+                true
+            }
+            REQUEST_SHARE -> {
+                handleShareResult()
                 true
             }
             else -> healthConnect.onActivityResult(requestCode, resultCode, data)
@@ -3735,6 +3824,11 @@ class CraftBridge(
         }
         CraftNative.close(activity)
         healthConnect.close()
+
+        if (shareReceiverRegistered) {
+            runCatching { activity.unregisterReceiver(shareChosenReceiver) }
+            shareReceiverRegistered = false
+        }
 
         runCatching { speechRecognizer?.cancel() }
         runCatching { speechRecognizer?.destroy() }
@@ -4670,6 +4764,7 @@ class CraftBridge(
         const val REQUEST_VIDEO = 1008
         const val REQUEST_BLUETOOTH = 1009
         const val REQUEST_PICK_CONTACT = 1010
+        const val REQUEST_SHARE = 1011
         private const val PERMISSION_REQUEST_START = 2000
         private const val PERMISSION_REQUEST_END = 2999
         private const val LOCATION_REQUEST_TIMEOUT_MS = 15_000L

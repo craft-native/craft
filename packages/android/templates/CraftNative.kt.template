@@ -1,6 +1,7 @@
 package com.craft.runtime
 
 import android.app.Activity
+import android.content.IntentSender
 import com.google.android.gms.location.Priority
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationResult
@@ -227,7 +228,7 @@ object CraftNative {
     private external fun nativeClipboardRead(activity: Activity): String?
     private external fun nativeClipboardWrite(activity: Activity, text: String): Boolean
     private external fun nativeOpenUrl(activity: Activity, url: String): Boolean
-    private external fun nativeShare(activity: Activity, text: String, title: String): Boolean
+    private external fun nativeShare(activity: Activity, text: String, title: String, chosen: IntentSender, requestCode: Int): Boolean
     private external fun nativeOpenCamera(activity: Activity): Boolean
     private external fun nativePickImage(activity: Activity): Boolean
     private external fun nativePickFile(activity: Activity): Boolean
@@ -425,11 +426,15 @@ object CraftNative {
         }
     }
 
-    /** Returns whether Zig launched the share sheet; false falls through. */
-    fun share(activity: Activity, text: String, title: String): Boolean {
+    /**
+     * Returns whether Zig launched the share menu for a result; false falls
+     * through. `chosen` fires on a pick and `requestCode` routes the result
+     * back to CraftBridge, which settles the page's promise from the two.
+     */
+    fun share(activity: Activity, text: String, title: String, chosen: IntentSender, requestCode: Int): Boolean {
         if (!isAvailable) return false
         return try {
-            nativeShare(activity, text, title)
+            nativeShare(activity, text, title, chosen, requestCode)
         } catch (e: UnsatisfiedLinkError) {
             false
         }
