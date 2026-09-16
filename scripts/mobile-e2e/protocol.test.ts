@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -280,6 +280,42 @@ describe('zig attribution', () => {
   it('expects refusals only for actions the suite actually exercises', () => {
     for (const action of ZIG_REFUSED_ACTIONS)
       expect(ZIG_TESTED_ACTIONS).toContain(action)
+  })
+})
+
+describe('share menu', () => {
+  it('reads what the page is waiting for, once, from either log channel', () => {
+    const awaiting = JSON.stringify({ event: 'awaiting', name: 'share.dismissed.resolvesFalse', need: DISMISS_SHARE_MENU })
+    const text = [
+      `09-16 11:29:25.000  2611  2611 I CraftBridge: CRAFT-E2E ${awaiting}`,
+      `09-16 11:29:25.001  2611  2611 I chromium: [INFO:CONSOLE(1)] "CRAFT-E2E ${awaiting}", source: https://appassets.androidplatform.net/ (1)`,
+    ].join('\n')
+
+    expect(awaitedNeeds(text)).toEqual([DISMISS_SHARE_MENU])
+    expect(awaitedNeeds('CRAFT-E2E {"event":"case","name":"a","status":"pass"}')).toEqual([])
+  })
+
+  // Both spellings the chooser has had, as `dumpsys window` prints them.
+  it('sees the menu holding focus on Android 14 and on 13', () => {
+    expect(shareMenuInFront([
+      '  mCurrentFocus=Window{56c630c u0 com.android.intentresolver/com.android.intentresolver.ChooserActivity}',
+      '  mFocusedApp=ActivityRecord{144007559 u0 com.android.intentresolver/.ChooserActivity t7}',
+    ].join('\n'))).toBe(true)
+
+    expect(shareMenuInFront(
+      '  mCurrentFocus=Window{2b7a1f u0 android/com.android.internal.app.ChooserActivity}',
+    )).toBe(true)
+  })
+
+  it('does not see a menu that is resumed but not yet focused', () => {
+    // The gap the first CI run fell into. The activity manager already calls
+    // the chooser the focused app while the probe's window still has input
+    // focus, so Back here would close the app rather than the menu.
+    const dumpsys = [
+      '  mCurrentFocus=Window{77aa u0 dev.craft.e2e.probe/dev.craft.e2e.probe.MainActivity}',
+      '  mFocusedApp=ActivityRecord{144007559 u0 com.android.intentresolver/.ChooserActivity t7}',
+    ].join('\n')
+    expect(shareMenuInFront(dumpsys)).toBe(false)
   })
 })
 

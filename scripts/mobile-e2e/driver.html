@@ -64,14 +64,14 @@
       return { code: String(error.code || ''), message: String(error.message || error) }
     }
 
-    function withTimeout(run) {
+    function withTimeout(run, timeoutMs) {
       return new Promise(function (resolve) {
         var settled = false
         var timer = setTimeout(function () {
           if (settled) return
           settled = true
           resolve({ state: 'timeout' })
-        }, CASE_TIMEOUT_MS)
+        }, timeoutMs || CASE_TIMEOUT_MS)
 
         function finish(value) {
           if (settled) return
@@ -195,6 +195,43 @@
             if (outcome.state === 'timeout') return 'share never settled'
             if (outcome.state === 'resolved') return 'share resolved with ' + JSON.stringify(outcome.value) + ' while sharing is disabled'
             if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          })
+        }
+      },
+      {
+        // Android does not gate sharing on a flag, so its refusal is the one
+        // both platforms share: an empty string is nothing to share. It is
+        // refused before any menu opens, and used to be refused by nobody -
+        // the call returned undefined whatever happened (#203).
+        name: 'share.empty.rejects',
+        platforms: ['android'],
+        run: function () {
+          return withTimeout(function () { return window.craft.share('') }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'share never settled'
+            if (outcome.state === 'resolved') return 'share resolved with ' + JSON.stringify(outcome.value) + ' for an empty string'
+            if (outcome.error.message.indexOf('Nothing to share') === -1)
+              return 'message is ' + JSON.stringify(outcome.error.message)
+          })
+        }
+      },
+      {
+        // The cancellation path, and the one case that needs a person. The
+        // page announces that it is about to open the share menu, the harness
+        // waits until the menu is really in front, screenshots it and presses
+        // Back, and the promise has to resolve false. False, not a rejection:
+        // dismissing the menu is a choice the person made, not an error.
+        //
+        // A share that resolved false on its own would pass this without a
+        // menu ever appearing, which is why the harness also fails the run
+        // when it was asked to dismiss a menu and never saw one.
+        name: 'share.dismissed.resolvesFalse',
+        platforms: ['android'],
+        run: function () {
+          emit({ event: 'awaiting', name: 'share.dismissed.resolvesFalse', need: 'dismiss-share-menu' })
+          return withTimeout(function () { return window.craft.share('craft e2e ' + NONCE, 'Craft E2E') }, 60000).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'share never settled after the menu was dismissed'
+            if (outcome.state === 'rejected') return 'share rejected: ' + outcome.error.message
+            if (outcome.value !== false) return 'share resolved with ' + JSON.stringify(outcome.value) + ', expected false for a dismissed menu'
           })
         }
       },

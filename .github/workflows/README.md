@@ -49,9 +49,15 @@ bun run test:mobile-e2e:android
 ```
 
 ```
-ok   android-shim    — 4/4 cases, no zig
-ok   android-runtime — 4/4 cases, zig served registered:103, declines:0
+ok   android-shim    — 6/6 cases, no zig
+ok   android-runtime — 6/6 cases, zig served registered:103, declines:0
 ```
+
+One Android case needs a person: `share.dismissed.resolvesFalse` opens the
+real share menu and expects `false` once it is dismissed. The harness plays
+that part. It waits until `dumpsys window` shows the chooser holding input
+focus, saves `share-menu.png`, presses Back, and fails the run if the page asked
+for a dismissal and no menu ever appeared.
 
 The runtime leg fails on any line where a Zig native gave up — "fell through
 to the shim", "failed with no fallback" or "could not reach the page" — because
