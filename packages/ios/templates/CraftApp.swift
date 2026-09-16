@@ -2008,7 +2008,28 @@ struct CraftWebView: UIViewRepresentable {
                 },
 
                 share: function(text) {
-                    window.webkit.messageHandlers.craft.postMessage({action: 'share', text: text});
+                    return this._share({text: text});
+                },
+
+                // Both share entry points come through here, because the
+                // native side answers them the same way: `true` when the
+                // person finished an activity, `false` when they dismissed
+                // the sheet, a rejection when sharing is disabled or there is
+                // nothing to share. The flat `share` used to post with no
+                // callbackId, so every one of those answers stopped at the nil
+                // guard in resolveCallback and the page got `undefined`.
+                //
+                // No timeout, unlike `_invoke`'s thirty seconds. The sheet
+                // waits on a person, and someone slower than that to pick an
+                // app would be told the share failed while it was still on
+                // screen, with the real answer then dropped.
+                _share: function(payload) {
+                    var self = this;
+                    var id = 'cb_' + (++this._callbackId);
+                    window.webkit.messageHandlers.craft.postMessage(Object.assign({}, payload, {action: 'share', callbackId: id}));
+                    return new Promise(function(resolve, reject) {
+                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                    });
                 },
 
                 openCamera: function() {
@@ -2919,7 +2940,7 @@ struct CraftWebView: UIViewRepresentable {
                     }
                 };
                 var shareApi = function(text) { return legacyShare(text); };
-                shareApi.share = function(options) { return craft._invoke('share', {options: options || {}}); };
+                shareApi.share = function(options) { return craft._share({options: options || {}}); };
                 craft.share = shareApi;
                 craft.lifecycle = {
                     getState: function() { return document.visibilityState === 'visible' ? 'active' : 'background'; },

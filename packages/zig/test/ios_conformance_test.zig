@@ -1643,3 +1643,232 @@ test "the SDK's event map declares everything that does fire" {
         }
     }
 }
+
+// ## Answers the page never receives
+//
+// The other half of the `ota*` bug that opens this file. That was a promise
+// with nothing to answer it; this is an answer with no promise to take it.
+// `resolveCallback` and `rejectCallback` both begin
+// `guard let id = callbackId else { return }`, so a page method that posts
+// without a callbackId throws away whatever the dispatcher says, and the page
+// gets `undefined`.
+//
+// `share` was one (#203). Its case resolves whether the person shared and
+// rejects `CAPABILITY_DISABLED` and `INVALID_ARGUMENT`, and `craft.share(text)`
+// posted `{action: 'share', text}`, so an app with sharing switched off called
+// it, heard nothing and carried on as if it had worked.
+
+/// Actions the page still posts without a callbackId even though the spec
+/// answers them. Tracked in #207. This list may only shrink: the second test
+/// below fails when one of them is fixed and left here.
+const unanswered_posts = [_][]const u8{
+    "haptic",
+    "startListening",
+    "watchPosition",
+    "clearWatch",
+    "vibrate",
+};
+
+/// One `postMessage(...)` call in the page script.
+const Post = struct {
+    /// The literal action it names, or null when the message is built
+    /// elsewhere — `_invoke` posts a variable, and always adds a callbackId.
+    action: ?[]const u8,
+    carries_callback: bool,
+};
+
+/// The `postMessage(` call whose opening parenthesis is at `open`, with its
+/// argument read to the matching parenthesis.
+///
+/// Balanced rather than cut at the first `}` or `)`. A cut is what the first
+/// version of this scan did, and it misread
+/// `{action: 'startAR', options: options || {}, callbackId: id}` as a post
+/// with no callbackId, because the `{}` ended the object early.
+fn postAt(source: []const u8, open: usize) ?Post {
+    var depth: usize = 0;
+    var i = open;
+    while (i < source.len) : (i += 1) {
+        switch (source[i]) {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if (depth == 0) {
+                    const argument = source[open + 1 .. i];
+                    return .{
+                        .action = literalAction(argument),
+                        .carries_callback = std.mem.indexOf(u8, argument, "callbackId") != null,
+                    };
+                }
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn literalAction(argument: []const u8) ?[]const u8 {
+    const needle = "action: '";
+    const at = std.mem.indexOf(u8, argument, needle) orelse return null;
+    const start = at + needle.len;
+    const end = std.mem.indexOfScalarPos(u8, argument, start, '\'') orelse return null;
+    return argument[start..end];
+}
+
+/// Iterates every `postMessage(` call in `source`.
+const PostIterator = struct {
+    source: []const u8,
+    search: usize = 0,
+
+    const needle = "postMessage(";
+
+    fn next(self: *PostIterator) ?Post {
+        while (std.mem.indexOfPos(u8, self.source, self.search, needle)) |at| {
+            self.search = at + needle.len;
+            if (postAt(self.source, at + needle.len - 1)) |post| return post;
+        }
+        return null;
+    }
+};
+
+/// Whether the dispatcher's `case` for `action` answers through the callback.
+///
+/// The case runs from its label to the next line at the same indentation that
+/// starts another case, a `default:` or the closing brace. Nested switches sit
+/// deeper and stay inside it. Comment lines are skipped so a remark that
+/// mentions callbackId cannot pass for code that uses it.
+fn specAnswers(region: []const u8, action: []const u8) bool {
+    var lines = std.mem.splitScalar(u8, region, '\n');
+    var case_indent: ?usize = null;
+    while (lines.next()) |line| {
+        const body = std.mem.trimStart(u8, line, " \t");
+        if (body.len == 0) continue;
+        const indent = line.len - body.len;
+
+        if (case_indent) |at| {
+            const closes = indent <= at and (std.mem.startsWith(u8, body, "case ") or
+                std.mem.startsWith(u8, body, "default") or body[0] == '}');
+            if (closes) return false;
+            if (std.mem.startsWith(u8, body, "//")) continue;
+            if (std.mem.indexOf(u8, body, "callbackId") != null) return true;
+            continue;
+        }
+
+        if (std.mem.startsWith(u8, body, "case ") and labels(body, action)) case_indent = indent;
+    }
+    return false;
+}
+
+/// Whether a `case` line lists `action` among its labels.
+fn labels(case_line: []const u8, action: []const u8) bool {
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, case_line, search, action)) |at| {
+        search = at + action.len;
+        if (at == 0 or case_line[at - 1] != '"') continue;
+        if (search < case_line.len and case_line[search] == '"') return true;
+    }
+    return false;
+}
+
+fn isRecordedUnanswered(action: []const u8) bool {
+    for (unanswered_posts) |recorded| {
+        if (std.mem.eql(u8, recorded, action)) return true;
+    }
+    return false;
+}
+
+test "the post scan tells a call that waits from one that does not" {
+    // Shown both answers before it is trusted with the real file. A scanner
+    // that finds nothing proves nothing.
+    const cases = [_]struct { line: []const u8, action: ?[]const u8, waits: bool }{
+        .{ .line = "postMessage({action: 'share', text: text});", .action = "share", .waits = false },
+        .{ .line = "postMessage(Object.assign({}, payload, {action: 'share', callbackId: id}));", .action = "share", .waits = true },
+        .{ .line = "postMessage({action: 'startAR', options: options || {}, callbackId: id});", .action = "startAR", .waits = true },
+        .{ .line = "postMessage(message);", .action = null, .waits = false },
+    };
+    for (cases) |expected| {
+        var it = PostIterator{ .source = expected.line };
+        const post = it.next() orelse return error.ScanMissedAPost;
+        try testing.expect(it.next() == null);
+        if (expected.action) |name| {
+            try testing.expectEqualStrings(name, post.action orelse return error.ScanMissedTheAction);
+        } else {
+            try testing.expect(post.action == null);
+        }
+        try testing.expectEqual(expected.waits, post.carries_callback);
+    }
+
+    const dispatcher =
+        \\            case "stopListening":
+        \\                stopSpeechRecognition()
+        \\            case "haptic", "buzz":
+        \\                switch style {
+        \\                case "heavy":
+        \\                    break
+        \\                default:
+        \\                    // callbackId is not used here
+        \\                    break
+        \\                }
+        \\                rejectCallback(callbackId, error: "Haptics is disabled")
+        \\            case "log":
+        \\                print(message)
+        \\            }
+    ;
+    try testing.expect(specAnswers(dispatcher, "haptic"));
+    try testing.expect(specAnswers(dispatcher, "buzz"));
+    try testing.expect(!specAnswers(dispatcher, "stopListening"));
+    try testing.expect(!specAnswers(dispatcher, "log"));
+    try testing.expect(!specAnswers(dispatcher, "hap"));
+}
+
+test "every call the spec answers carries a callbackId to answer it on" {
+    const region = dispatcherRegion();
+    var it = PostIterator{ .source = swift_spec };
+    var literal_posts: usize = 0;
+    while (it.next()) |post| {
+        const action = post.action orelse continue;
+        literal_posts += 1;
+        if (post.carries_callback) continue;
+        if (!specAnswers(region, action)) continue;
+        if (isRecordedUnanswered(action)) continue;
+
+        std.debug.print(
+            "the page posts `{s}` with no callbackId, and the spec answers it.\n" ++
+                "  resolveCallback and rejectCallback return early on a nil id, so the\n" ++
+                "  answer is dropped and the page gets undefined. Post a callbackId and\n" ++
+                "  return the promise, the way openCamera does.\n",
+            .{action},
+        );
+        return error.PageDropsTheSpecsAnswer;
+    }
+    // Non-vacuity: a renamed handler or reshaped post would find nothing.
+    try testing.expect(literal_posts >= 40);
+}
+
+test "every recorded unanswered post is real, and still unanswered" {
+    const region = dispatcherRegion();
+    for (unanswered_posts) |action| {
+        if (!specAnswers(region, action)) {
+            std.debug.print(
+                "`{s}` is recorded as unanswered, but the spec no longer answers it.\n" ++
+                    "  Take it off unanswered_posts.\n",
+                .{action},
+            );
+            return error.RecordedPostIsNotAnswered;
+        }
+
+        var it = PostIterator{ .source = swift_spec };
+        const still_dropped = while (it.next()) |post| {
+            const name = post.action orelse continue;
+            if (std.mem.eql(u8, name, action) and !post.carries_callback) break true;
+        } else false;
+
+        if (!still_dropped) {
+            std.debug.print(
+                "every post of `{s}` carries a callbackId now.\n" ++
+                    "  Take it off unanswered_posts so it cannot regress unnoticed.\n",
+                .{action},
+            );
+            return error.RecordedPostIsFixed;
+        }
+    }
+}
