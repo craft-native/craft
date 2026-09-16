@@ -2,7 +2,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { init } from '../../packages/android/src/index'
-import { evaluateRun, hasTerminated } from './protocol'
+import { androidDeclines, evaluateRun, hasTerminated } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
@@ -189,17 +189,23 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     failures.push(`the bridge reported sdkVersion ${observed[1]} but the device says ${sdk}`)
   }
 
-  // Did the Zig runtime actually load and bind? JNI_OnLoad says so itself, on
-  // the happy path as well as the failure ones — which is deliberate, because
-  // "loaded and bound" and "never shipped" are otherwise both silent, and this
-  // is also the only line that proves the log channel is working rather than
-  // merely quiet.
+  // Did the Zig runtime load, bind — and then actually answer? JNI_OnLoad
+  // reports the first two on the happy path as well as the failure ones, and
+  // every way a native can give up now says so too (android_dispatch.zig's
+  // fellThrough / failedWithoutFallback / undelivered).
   //
-  // There is no per-action dispatch line to count the way the iOS legs do.
-  // Binding is the gate instead: once the natives are registered, every
-  // CraftNative wrapper returns a value and the Kotlin falls through to Zig
-  // rather than the other way round.
+  // Registration alone is not enough, and the first run that loaded this
+  // library showed why: "registered 103 natives", every case passed, and
+  // getDeviceInfo threw NoSuchFieldError on every call and handed it to Kotlin.
+  // The page could not tell. So the runtime leg asks for both halves: bound,
+  // and not one decline while the page ran.
+  //
+  // Read from the full buffer, not the filtered dump: the stack trace ART
+  // prints for the underlying Java exception is under System.err, which is
+  // the part worth quoting back.
   const registered = logText.match(REGISTERED)
+  const fullLog = existsSync(join(evidence, 'logcat-full.txt')) ? readFileSync(join(evidence, 'logcat-full.txt'), 'utf8') : logText
+  const declines = androidDeclines(fullLog)
   const zigActions: string[] = []
 
   if (leg.requireZig) {
@@ -212,6 +218,14 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     else {
       zigActions.push(`registered:${registered[1]}`)
     }
+
+    for (const decline of declines) {
+      failures.push(
+        `Zig declined while the page ran — ${decline}. The case still passed because Kotlin answered instead, `
+        + `which is exactly what this leg exists to see; the Java exception, if any, is under System.err in ${label}/logcat-full.txt`,
+      )
+    }
+    if (registered && !declines.length) zigActions.push('declines:0')
   }
   else if (registered) {
     failures.push(`the shim leg registered ${registered[1]} natives; it was generated with no runtime`)

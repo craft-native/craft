@@ -50,8 +50,13 @@ bun run test:mobile-e2e:android
 
 ```
 ok   android-shim    — 4/4 cases, no zig
-ok   android-runtime — 4/4 cases, zig served registered:59
+ok   android-runtime — 4/4 cases, zig served registered:103, declines:0
 ```
+
+The runtime leg fails on any line where a Zig native gave up — "fell through
+to the shim", "failed with no fallback" or "could not reach the page" — because
+Kotlin answering in its place is invisible to the page, and a runtime that has
+loaded but is not answering would otherwise pass.
 
 Both write everything they saw — console logs, build logs, a screenshot, the
 exact page that ran and a `report.json` — to

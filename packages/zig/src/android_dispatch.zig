@@ -101,6 +101,46 @@ const Jni = jni.Jni;
 /// individually on the way out.
 const backing = std.heap.page_allocator;
 
+// =============================================================================
+// Declines, said out loud
+// =============================================================================
+//
+// Every way a native can give up goes through one of these three, and each
+// says something different because each *means* something different:
+//
+// - `fellThrough`: a native with a return value gave the action back to the
+//   Kotlin shim. The page still gets an answer; Zig just did not produce it.
+// - `failedWithoutFallback`: a callback into Zig gave up early. Zig owns the
+//   operation by then, so nothing picks it up, and whatever the page is waiting
+//   on will not arrive.
+// - `undelivered`: Zig had an answer and could not get it to the page — the
+//   settle, reject or event failed, and that promise will not settle.
+//
+// These used to be ~170 bare `catch return null` / `catch {}`. On a device
+// they were indistinguishable from a native doing its job, which is how
+// `getDeviceInfo` ran on its first emulator for a whole CI cycle throwing
+// `NoSuchFieldError` and handing every call to Kotlin without the page, the
+// suite or the logs noticing. `test/android_declines_test.zig` keeps them from
+// coming back, and the mobile E2E runtime leg fails on any of these lines.
+
+/// A native handing the action back to Kotlin because something it needed
+/// failed. Returns `declined` — null or `JNI_FALSE` — so it reads as the value
+/// the native was always going to return.
+fn fellThrough(comptime action: []const u8, err: anyerror, declined: anytype) @TypeOf(declined) {
+    std.log.warn("craft: " ++ action ++ " fell through to the shim ({s})", .{@errorName(err)});
+    return declined;
+}
+
+/// A callback into Zig giving up with nothing to fall back to.
+fn failedWithoutFallback(comptime action: []const u8, err: anyerror) void {
+    std.log.err("craft: " ++ action ++ " failed with no fallback ({s})", .{@errorName(err)});
+}
+
+/// An answer that could not be delivered to the page.
+fn undelivered(comptime action: []const u8, err: anyerror) void {
+    std.log.err("craft: " ++ action ++ " could not reach the page ({s})", .{@errorName(err)});
+}
+
 /// `CraftBridge.REQUEST_CALENDAR`, the request code the shim passes.
 ///
 /// It has to match, because it is the only thing that would tell an
@@ -721,12 +761,12 @@ fn nativeGetDeviceInfo(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
         return null;
     };
 
-    const json = device.render(allocator, info) catch return null;
+    const json = device.render(allocator, info) catch |err| return fellThrough("getDeviceInfo", err, @as(jni.jstring, null));
 
     // Re-encoded rather than handed over: this JSON carries device text — a
     // model name, a carrier — and `NewStringUTF` reads modified UTF-8, where a
     // NUL is two bytes and an astral character is a surrogate pair.
-    return j.newStringUtf8(allocator, json) catch null;
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("getDeviceInfo", err, @as(jni.jstring, null));
 }
 
 /// `nativeGetMemoryUsage()` — the JVM heap, as JSON.
@@ -742,8 +782,8 @@ fn nativeGetMemoryUsage(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstrin
         return null;
     };
 
-    const json = system.renderMemory(allocator, usage) catch return null;
-    return j.newStringUtf8(allocator, json) catch null;
+    const json = system.renderMemory(allocator, usage) catch |err| return fellThrough("getMemoryUsage", err, @as(jni.jstring, null));
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("getMemoryUsage", err, @as(jni.jstring, null));
 }
 
 /// `nativeLog(message)` — returns whether Zig wrote the line.
@@ -758,7 +798,7 @@ fn nativeLog(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c)
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, message) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, message) catch |err| return fellThrough("log", err, jni.JNI_FALSE);
 
     system.writeLog(j, allocator, text) catch |err| {
         std.log.warn("craft: log fell through to the shim ({s})", .{@errorName(err)});
@@ -784,7 +824,7 @@ fn nativeClipboardRead(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject) c
         return null;
     };
 
-    return j.newStringUtf8(allocator, text) catch null;
+    return j.newStringUtf8(allocator, text) catch |err| fellThrough("clipboardRead", err, @as(jni.jstring, null));
 }
 
 /// `nativeClipboardWrite(activity, text)`.
@@ -800,22 +840,13 @@ fn nativeClipboardWrite(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const value = j.stringToUtf8(allocator, text) catch return jni.JNI_FALSE;
+    const value = j.stringToUtf8(allocator, text) catch |err| return fellThrough("clipboardWrite", err, jni.JNI_FALSE);
 
     clipboard.write(j, allocator, activity, value) catch |err| {
         std.log.warn("craft: clipboardWrite fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
     };
     return jni.JNI_TRUE;
-}
-
-/// A `jstring` as arena-owned UTF-8, or null.
-///
-/// Every native below needs this and none of them can share the result, since
-/// each arena dies with its call. A plain slice: the JNI side re-encodes on
-/// the way back out, so nothing here has to carry a terminator.
-fn ownedUtf8(j: Jni, allocator: std.mem.Allocator, str: jni.jstring) ?[]u8 {
-    return j.stringToUtf8(allocator, str) catch null;
 }
 
 fn nativeOpenUrl(
@@ -830,7 +861,7 @@ fn nativeOpenUrl(
 
     const allocator = arena.allocator();
 
-    const value = ownedUtf8(j, allocator, url) orelse return jni.JNI_FALSE;
+    const value = j.stringToUtf8(allocator, url) catch |err| return fellThrough("openUrl", err, jni.JNI_FALSE);
     intents.openUrl(j, allocator, activity, value) catch |err| {
         // Not a warning. `openURL` answering false is the documented outcome
         // when nothing on the device handles the scheme, and the Kotlin
@@ -854,8 +885,8 @@ fn nativeShare(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const body = ownedUtf8(j, allocator, text) orelse return jni.JNI_FALSE;
-    const subject = ownedUtf8(j, allocator, title) orelse return jni.JNI_FALSE;
+    const body = j.stringToUtf8(allocator, text) catch |err| return fellThrough("share", err, jni.JNI_FALSE);
+    const subject = j.stringToUtf8(allocator, title) catch |err| return fellThrough("share", err, jni.JNI_FALSE);
 
     intents.share(j, allocator, activity, body, subject) catch |err| {
         std.log.warn("craft: share fell through to the shim ({s})", .{@errorName(err)});
@@ -917,7 +948,7 @@ fn nativeStartVideoRecording(
 }
 
 fn nativeReviewSucceeded(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
-    events.settle(backing, review.resolve_global, "true") catch {};
+    events.settle(backing, review.resolve_global, "true") catch |err| undelivered("reviewSucceeded", err);
 }
 
 fn nativeReviewError(
@@ -930,9 +961,9 @@ fn nativeReviewError(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = review.rejectionPayload(allocator, text) catch return;
-    events.settle(allocator, review.reject_global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("reviewError", err);
+    const payload = review.rejectionPayload(allocator, text) catch |err| return failedWithoutFallback("reviewError", err);
+    events.settle(allocator, review.reject_global, payload) catch |err| undelivered("reviewError", err);
 }
 
 fn nativeRequestReview(
@@ -948,7 +979,8 @@ fn nativeRequestReview(
 }
 
 fn speechHaptic(j: Jni, activity: jni.jobject) void {
-    haptics.play(j, activity, haptics.effectForStyle("light")) catch {};
+    haptics.play(j, activity, haptics.effectForStyle("light")) catch |err|
+        std.log.warn("craft: speech start haptic skipped ({s})", .{@errorName(err)});
 }
 
 fn nativeSpeechReady(
@@ -956,7 +988,7 @@ fn nativeSpeechReady(
     _: jni.jobject,
     activity: jni.jobject,
 ) callconv(.c) void {
-    events.emitEvent(backing, speech.start_event, "{}") catch {};
+    events.emitEvent(backing, speech.start_event, "{}") catch |err| undelivered("speechReady", err);
     speechHaptic(Jni.init(env), activity);
 }
 
@@ -970,8 +1002,8 @@ fn nativeSpeechError(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const detail = speech.errorDetail(allocator, speech.errorMessage(error_code)) catch return;
-    events.emitEvent(allocator, speech.error_event, detail) catch {};
+    const detail = speech.errorDetail(allocator, speech.errorMessage(error_code)) catch |err| return failedWithoutFallback("speechError", err);
+    events.emitEvent(allocator, speech.error_event, detail) catch |err| undelivered("speechError", err);
     speechHaptic(Jni.init(env), activity);
 }
 
@@ -987,12 +1019,12 @@ fn nativeSpeechResult(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, transcript) catch return;
+    const text = j.stringToUtf8(allocator, transcript) catch |err| return failedWithoutFallback("speechResult", err);
     const final = is_final == jni.JNI_TRUE;
-    const detail = speech.resultDetail(allocator, text, final) catch return;
-    events.emitEvent(allocator, speech.result_event, detail) catch {};
+    const detail = speech.resultDetail(allocator, text, final) catch |err| return failedWithoutFallback("speechResult", err);
+    events.emitEvent(allocator, speech.result_event, detail) catch |err| undelivered("speechResult", err);
     if (final) {
-        events.emitEvent(allocator, speech.end_event, "{}") catch {};
+        events.emitEvent(allocator, speech.end_event, "{}") catch |err| undelivered("speechResult", err);
         speechHaptic(j, activity);
     }
 }
@@ -1007,19 +1039,19 @@ fn nativeStartListening(
         var arena = std.heap.ArenaAllocator.init(backing);
         defer arena.deinit();
         const allocator = arena.allocator();
-        const detail = speech.errorDetail(allocator, speech.unavailable) catch return jni.JNI_FALSE;
-        events.emitEvent(allocator, speech.error_event, detail) catch return jni.JNI_FALSE;
+        const detail = speech.errorDetail(allocator, speech.unavailable) catch |err| return fellThrough("startListening", err, jni.JNI_FALSE);
+        events.emitEvent(allocator, speech.error_event, detail) catch |err| return fellThrough("startListening", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("startListening", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
         j.staticMethodId(holder, "beginSpeechRecognition", "(Landroid/app/Activity;)V") catch
             return jni.JNI_FALSE,
         &.{.{ .l = activity }},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("startListening", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1029,18 +1061,18 @@ fn nativeStopListening(
     activity: jni.jobject,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("stopListening", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
         j.staticMethodId(holder, "endSpeechRecognition", "(Landroid/app/Activity;)V") catch
             return jni.JNI_FALSE,
         &.{.{ .l = activity }},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("stopListening", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
 fn nativeAudioStarted(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
-    events.settle(backing, audio.start_resolve_global, "true") catch {};
+    events.settle(backing, audio.start_resolve_global, "true") catch |err| undelivered("audioStarted", err);
 }
 
 fn settleAudioError(env: jni.JNIEnv, global: []const u8, message: jni.jstring) void {
@@ -1049,9 +1081,9 @@ fn settleAudioError(env: jni.JNIEnv, global: []const u8, message: jni.jstring) v
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = audio.stringPayload(allocator, text) catch return;
-    events.settle(allocator, global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("settleAudioError", err);
+    const payload = audio.stringPayload(allocator, text) catch |err| return failedWithoutFallback("settleAudioError", err);
+    events.settle(allocator, global, payload) catch |err| undelivered("settleAudioError", err);
 }
 
 fn nativeAudioStartError(
@@ -1072,9 +1104,9 @@ fn nativeAudioStopped(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const raw = j.byteArrayToOwned(allocator, bytes) catch return;
-    const payload = audio.recordingPayload(allocator, raw) catch return;
-    events.settle(allocator, audio.stop_resolve_global, payload) catch {};
+    const raw = j.byteArrayToOwned(allocator, bytes) catch |err| return failedWithoutFallback("audioStopped", err);
+    const payload = audio.recordingPayload(allocator, raw) catch |err| return failedWithoutFallback("audioStopped", err);
+    events.settle(allocator, audio.stop_resolve_global, payload) catch |err| undelivered("audioStopped", err);
 }
 
 fn nativeAudioStopError(
@@ -1105,13 +1137,13 @@ fn nativeStartAudioRecording(
         return jni.JNI_TRUE;
     }
 
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("startAudioRecording", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
         j.staticMethodId(holder, "beginAudioRecording", "(Landroid/app/Activity;)V") catch
             return jni.JNI_FALSE,
         &.{.{ .l = activity }},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("startAudioRecording", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1121,12 +1153,12 @@ fn nativeStopAudioRecording(
     _: jni.jobject,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("stopAudioRecording", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, "endAudioRecording", "()V") catch return jni.JNI_FALSE,
+        j.staticMethodId(holder, "endAudioRecording", "()V") catch |err| return fellThrough("stopAudioRecording", err, jni.JNI_FALSE),
         &.{},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("stopAudioRecording", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1137,13 +1169,13 @@ fn nativeResetDeepLinks(_: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolean
 
 fn nativeSetInitialURL(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) callconv(.c) jni.jboolean {
     if (url == null) {
-        deeplink.set(null) catch return jni.JNI_FALSE;
+        deeplink.set(null) catch |err| return fellThrough("setInitialURL", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
-    const text = Jni.init(env).stringToUtf8(arena.allocator(), url) catch return jni.JNI_FALSE;
-    deeplink.set(text) catch return jni.JNI_FALSE;
+    const text = Jni.init(env).stringToUtf8(arena.allocator(), url) catch |err| return fellThrough("setInitialURL", err, jni.JNI_FALSE);
+    deeplink.set(text) catch |err| return fellThrough("setInitialURL", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1152,9 +1184,9 @@ fn nativeGetInitialURL(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolea
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const url = deeplink.snapshot(allocator) catch return jni.JNI_FALSE;
-    const result = if (url) |text| deeplink.payload(j, allocator, text) catch return jni.JNI_FALSE else "null";
-    events.settle(allocator, deeplink.resolve_global, result) catch return jni.JNI_FALSE;
+    const url = deeplink.snapshot(allocator) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE);
+    const result = if (url) |text| deeplink.payload(j, allocator, text) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE) else "null";
+    events.settle(allocator, deeplink.resolve_global, result) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1163,10 +1195,10 @@ fn nativeDispatchDeepLink(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) cal
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const text = j.stringToUtf8(allocator, url) catch return jni.JNI_FALSE;
-    deeplink.rememberFirst(text) catch return jni.JNI_FALSE;
-    const detail = deeplink.payload(j, allocator, text) catch return jni.JNI_FALSE;
-    events.emitEvent(allocator, deeplink.event_name, detail) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, url) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
+    deeplink.rememberFirst(text) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
+    const detail = deeplink.payload(j, allocator, text) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
+    events.emitEvent(allocator, deeplink.event_name, detail) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1175,9 +1207,9 @@ fn nativeScreenshotReady(env: jni.JNIEnv, _: jni.jobject, bytes: jni.jobject) ca
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const raw = j.byteArrayToOwned(allocator, bytes) catch return;
-    const payload = screenshot.imagePayload(allocator, raw) catch return;
-    events.settle(allocator, screenshot.resolve_global, payload) catch {};
+    const raw = j.byteArrayToOwned(allocator, bytes) catch |err| return failedWithoutFallback("screenshotReady", err);
+    const payload = screenshot.imagePayload(allocator, raw) catch |err| return failedWithoutFallback("screenshotReady", err);
+    events.settle(allocator, screenshot.resolve_global, payload) catch |err| undelivered("screenshotReady", err);
 }
 
 fn nativeScreenshotError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
@@ -1185,9 +1217,9 @@ fn nativeScreenshotError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) 
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = screenshot.errorPayload(allocator, text) catch return;
-    events.settle(allocator, screenshot.reject_global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("screenshotError", err);
+    const payload = screenshot.errorPayload(allocator, text) catch |err| return failedWithoutFallback("screenshotError", err);
+    events.settle(allocator, screenshot.reject_global, payload) catch |err| undelivered("screenshotError", err);
 }
 
 fn nativeTakeScreenshot(
@@ -1197,13 +1229,13 @@ fn nativeTakeScreenshot(
     web_view: jni.jobject,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("takeScreenshot", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
         j.staticMethodId(holder, "captureScreenshot", "(Landroid/app/Activity;Landroid/webkit/WebView;)V") catch
             return jni.JNI_FALSE,
         &.{ .{ .l = activity }, .{ .l = web_view } },
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("takeScreenshot", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1211,8 +1243,8 @@ fn settleRawString(env: jni.JNIEnv, global: []const u8, value: jni.jstring) void
     const j = Jni.init(env);
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
-    const text = j.stringToUtf8(arena.allocator(), value) catch return;
-    events.settle(arena.allocator(), global, text) catch {};
+    const text = j.stringToUtf8(arena.allocator(), value) catch |err| return failedWithoutFallback("settleRawString", err);
+    events.settle(arena.allocator(), global, text) catch |err| undelivered("settleRawString", err);
 }
 
 fn settleBillingError(env: jni.JNIEnv, global: []const u8, value: jni.jstring) void {
@@ -1220,9 +1252,9 @@ fn settleBillingError(env: jni.JNIEnv, global: []const u8, value: jni.jstring) v
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const text = j.stringToUtf8(allocator, value) catch return;
-    const payload = billing.errorPayload(allocator, text) catch return;
-    events.settle(allocator, global, payload) catch {};
+    const text = j.stringToUtf8(allocator, value) catch |err| return failedWithoutFallback("settleBillingError", err);
+    const payload = billing.errorPayload(allocator, text) catch |err| return failedWithoutFallback("settleBillingError", err);
+    events.settle(allocator, global, payload) catch |err| undelivered("settleBillingError", err);
 }
 
 fn nativeProductsReady(env: jni.JNIEnv, _: jni.jobject, json: jni.jstring) callconv(.c) void {
@@ -1245,12 +1277,12 @@ fn nativeGetProducts(
     ids_json: jni.jstring,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("getProducts", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, "queryProducts", "(Landroid/app/Activity;Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        j.staticMethodId(holder, "queryProducts", "(Landroid/app/Activity;Ljava/lang/String;)V") catch |err| return fellThrough("getProducts", err, jni.JNI_FALSE),
         &.{ .{ .l = activity }, .{ .l = ids_json } },
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("getProducts", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1260,12 +1292,12 @@ fn nativeRestorePurchases(
     activity: jni.jobject,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("restorePurchases", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, "queryRestoredPurchases", "(Landroid/app/Activity;)V") catch return jni.JNI_FALSE,
+        j.staticMethodId(holder, "queryRestoredPurchases", "(Landroid/app/Activity;)V") catch |err| return fellThrough("restorePurchases", err, jni.JNI_FALSE),
         &.{.{ .l = activity }},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("restorePurchases", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1278,19 +1310,19 @@ fn nativeMlError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = ml.errorPayload(allocator, text) catch return;
-    events.settle(allocator, ml.reject_global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("mlError", err);
+    const payload = ml.errorPayload(allocator, text) catch |err| return failedWithoutFallback("mlError", err);
+    events.settle(allocator, ml.reject_global, payload) catch |err| undelivered("mlError", err);
 }
 
 fn startMl(env: jni.JNIEnv, method: [*:0]const u8, image: jni.jstring) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("startMl", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, method, "(Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        j.staticMethodId(holder, method, "(Ljava/lang/String;)V") catch |err| return fellThrough("startMl", err, jni.JNI_FALSE),
         &.{.{ .l = image }},
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("startMl", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1307,7 +1339,7 @@ fn nativeRecognizeText(env: jni.JNIEnv, _: jni.jobject, image: jni.jstring) call
 }
 
 fn nativePdfOpened(_: jni.JNIEnv, _: jni.jobject) callconv(.c) void {
-    events.settle(backing, pdf.resolve_global, pdf.opened_payload) catch {};
+    events.settle(backing, pdf.resolve_global, pdf.opened_payload) catch |err| undelivered("pdfOpened", err);
 }
 
 fn nativePdfError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callconv(.c) void {
@@ -1315,9 +1347,9 @@ fn nativePdfError(env: jni.JNIEnv, _: jni.jobject, message: jni.jstring) callcon
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = pdf.errorPayload(allocator, text) catch return;
-    events.settle(allocator, pdf.reject_global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("pdfError", err);
+    const payload = pdf.errorPayload(allocator, text) catch |err| return failedWithoutFallback("pdfError", err);
+    events.settle(allocator, pdf.reject_global, payload) catch |err| undelivered("pdfError", err);
 }
 
 fn nativeOpenPDF(
@@ -1328,12 +1360,12 @@ fn nativeOpenPDF(
     _: jni.jint,
 ) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("openPDF", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
-        j.staticMethodId(holder, "openPdfExternal", "(Landroid/app/Activity;Ljava/lang/String;)V") catch return jni.JNI_FALSE,
+        j.staticMethodId(holder, "openPdfExternal", "(Landroid/app/Activity;Ljava/lang/String;)V") catch |err| return fellThrough("openPDF", err, jni.JNI_FALSE),
         &.{ .{ .l = activity }, .{ .l = source } },
-    ) catch return jni.JNI_FALSE;
+    ) catch |err| return fellThrough("openPDF", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1341,7 +1373,7 @@ fn nativeBiometricSucceeded(
     _: jni.JNIEnv,
     _: jni.jobject,
 ) callconv(.c) void {
-    events.settle(backing, biometric.resolve_global, "true") catch {};
+    events.settle(backing, biometric.resolve_global, "true") catch |err| undelivered("biometricSucceeded", err);
 }
 
 fn nativeBiometricError(
@@ -1354,9 +1386,9 @@ fn nativeBiometricError(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, message) catch return;
-    const payload = biometric.rejectionPayload(allocator, text) catch return;
-    events.settle(allocator, biometric.reject_global, payload) catch {};
+    const text = j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("biometricError", err);
+    const payload = biometric.rejectionPayload(allocator, text) catch |err| return failedWithoutFallback("biometricError", err);
+    events.settle(allocator, biometric.reject_global, payload) catch |err| undelivered("biometricError", err);
 }
 
 fn nativeAuthenticate(
@@ -1374,18 +1406,18 @@ fn nativeAuthenticate(
         const allocator = arena.allocator();
         const payload = biometric.rejectionPayload(allocator, biometric.unsupported_activity) catch
             return jni.JNI_FALSE;
-        events.settle(allocator, biometric.reject_global, payload) catch return jni.JNI_FALSE;
+        events.settle(allocator, biometric.reject_global, payload) catch |err| return fellThrough("authenticate", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
-    const holder = j.findClass(holder_class) catch return jni.JNI_FALSE;
+    const holder = j.findClass(holder_class) catch |err| return fellThrough("authenticate", err, jni.JNI_FALSE);
     j.callStaticVoidMethodA(
         holder,
         j.staticMethodId(
             holder,
             "showBiometricPrompt",
             "(Landroid/app/Activity;Ljava/lang/String;)V",
-        ) catch return jni.JNI_FALSE,
+        ) catch |err| return fellThrough("authenticate", err, jni.JNI_FALSE),
         &.{ .{ .l = activity }, .{ .l = reason } },
     ) catch |err| {
         std.log.warn("craft: authenticate fell through to the shim ({s})", .{@errorName(err)});
@@ -1405,8 +1437,8 @@ fn nativeGetNetworkStatus(env: jni.JNIEnv, _: jni.jobject, activity: jni.jobject
         return null;
     };
 
-    const json = network.render(allocator, status) catch return null;
-    return j.newStringUtf8(allocator, json) catch null;
+    const json = network.render(allocator, status) catch |err| return fellThrough("getNetworkStatus", err, @as(jni.jstring, null));
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("getNetworkStatus", err, @as(jni.jstring, null));
 }
 
 fn nativeSecureSet(
@@ -1421,8 +1453,8 @@ fn nativeSecureSet(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const k = ownedUtf8(j, allocator, key) orelse return jni.JNI_FALSE;
-    const v = ownedUtf8(j, allocator, value) orelse return jni.JNI_FALSE;
+    const k = j.stringToUtf8(allocator, key) catch |err| return fellThrough("secureSet", err, jni.JNI_FALSE);
+    const v = j.stringToUtf8(allocator, value) catch |err| return fellThrough("secureSet", err, jni.JNI_FALSE);
 
     securestore.set(j, allocator, prefs, k, v) catch |err| {
         std.log.warn("craft: secureSet fell through to the shim ({s})", .{@errorName(err)});
@@ -1447,14 +1479,14 @@ fn nativeSecureGet(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const k = ownedUtf8(j, allocator, key) orelse return null;
+    const k = j.stringToUtf8(allocator, key) catch |err| return fellThrough("secureGet", err, @as(jni.jstring, null));
     const value = securestore.get(allocator, j, prefs, k) catch |err| {
         std.log.warn("craft: secureGet fell through to the shim ({s})", .{@errorName(err)});
         return null;
     };
 
-    const json = securestore.renderRead(allocator, value) catch return null;
-    return j.newStringUtf8(allocator, json) catch null;
+    const json = securestore.renderRead(allocator, value) catch |err| return fellThrough("secureGet", err, @as(jni.jstring, null));
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("secureGet", err, @as(jni.jstring, null));
 }
 
 fn nativeSecureRemove(
@@ -1469,7 +1501,7 @@ fn nativeSecureRemove(
 
     const allocator = arena.allocator();
 
-    const k = ownedUtf8(j, allocator, key) orelse return jni.JNI_FALSE;
+    const k = j.stringToUtf8(allocator, key) catch |err| return fellThrough("secureRemove", err, jni.JNI_FALSE);
     securestore.remove(j, allocator, prefs, k) catch |err| {
         std.log.warn("craft: secureRemove fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
@@ -1496,7 +1528,7 @@ fn nativeHaptic(
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
 
-    const text = j.stringToUtf8(arena.allocator(), style) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(arena.allocator(), style) catch |err| return fellThrough("haptic", err, jni.JNI_FALSE);
     haptics.play(j, activity, haptics.effectForStyle(text)) catch |err| {
         std.log.warn("craft: haptic fell through to the shim ({s})", .{@errorName(err)});
         return jni.JNI_FALSE;
@@ -1515,12 +1547,12 @@ fn nativeVibrate(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const json = j.stringToUtf8(allocator, pattern_json) catch return jni.JNI_FALSE;
+    const json = j.stringToUtf8(allocator, pattern_json) catch |err| return fellThrough("vibrate", err, jni.JNI_FALSE);
 
     // Null is a pattern the shim would throw on. Declining lets it throw, log
     // "Vibration error", and vibrate nothing — the same outcome with the log
     // kept. See bridge_android_haptics.parsePattern.
-    const timings = haptics.parsePattern(allocator, json) catch return jni.JNI_FALSE;
+    const timings = haptics.parsePattern(allocator, json) catch |err| return fellThrough("vibrate", err, jni.JNI_FALSE);
     if (timings == null) return jni.JNI_FALSE;
 
     haptics.play(j, activity, .{ .waveform = timings.? }) catch |err| {
@@ -1573,7 +1605,7 @@ fn nativeDeleteCalendarEvent(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, event_id) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, event_id) catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
 
     const id = calendar.parseEventId(text) orelse {
         // What the shim's NumberFormatException produces, with the message it
@@ -1581,11 +1613,11 @@ fn nativeDeleteCalendarEvent(
         // of hanging the promise. See #154.
         var message: std.ArrayListUnmanaged(u8) = .empty;
         defer message.deinit(allocator);
-        message.appendSlice(allocator, "For input string: \"") catch return jni.JNI_FALSE;
-        message.appendSlice(allocator, text) catch return jni.JNI_FALSE;
-        message.append(allocator, '"') catch return jni.JNI_FALSE;
+        message.appendSlice(allocator, "For input string: \"") catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
+        message.appendSlice(allocator, text) catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
+        message.append(allocator, '"') catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
 
-        calendar.rejectWith(allocator, message.items) catch return jni.JNI_FALSE;
+        calendar.rejectWith(allocator, message.items) catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     };
 
@@ -1594,11 +1626,11 @@ fn nativeDeleteCalendarEvent(
         // here, as it lands in the shim's catch. The error name rather than
         // the Java message: the throwable was already described to logcat and
         // cleared by `Jni.check`, so its text is gone by now.
-        calendar.rejectWith(allocator, @errorName(err)) catch {};
+        calendar.rejectWith(allocator, @errorName(err)) catch |inner| undelivered("deleteCalendarEvent", inner);
         return jni.JNI_TRUE;
     };
 
-    events.settle(allocator, calendar.resolve_global, "true") catch return jni.JNI_FALSE;
+    events.settle(allocator, calendar.resolve_global, "true") catch |err| return fellThrough("deleteCalendarEvent", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1644,7 +1676,7 @@ fn nativeGetCalendarEvents(
             std.log.warn("craft: getCalendarEvents fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;
         };
-        events.settle(allocator, calendar.list_reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        events.settle(allocator, calendar.list_reject_global, "\"Permission denied\"") catch |err| return fellThrough("getCalendarEvents", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
@@ -1661,7 +1693,7 @@ fn nativeGetCalendarEvents(
         return jni.JNI_FALSE;
     };
 
-    events.settle(allocator, calendar.list_resolve_global, payload.items) catch return jni.JNI_FALSE;
+    events.settle(allocator, calendar.list_resolve_global, payload.items) catch |err| return fellThrough("getCalendarEvents", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1693,11 +1725,11 @@ fn nativeCreateCalendarEvent(
             std.log.warn("craft: createCalendarEvent fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;
         };
-        events.settle(allocator, calendar.create_reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        events.settle(allocator, calendar.create_reject_global, "\"Permission denied\"") catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
-    const text = j.stringToUtf8(allocator, event_json) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, event_json) catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
 
     // `JSONTokener` is lenient where `std.json` is strict — unquoted keys,
     // single quotes, a trailing comma. Everything strict JSON accepts it
@@ -1706,8 +1738,8 @@ fn nativeCreateCalendarEvent(
         return jni.JNI_FALSE;
     defer parsed.deinit();
 
-    const start_default = calendar.currentTimeMillis(j) catch return jni.JNI_FALSE;
-    const end_default = calendar.currentTimeMillis(j) catch return jni.JNI_FALSE;
+    const start_default = calendar.currentTimeMillis(j) catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
+    const end_default = calendar.currentTimeMillis(j) catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
     const event = calendar.parseNewEvent(
         parsed.value,
         start_default,
@@ -1718,12 +1750,12 @@ fn nativeCreateCalendarEvent(
         // The shim catches here and rejects with the exception's message. The
         // throwable was described to logcat and cleared by `Jni.check` before
         // this point, so the error name is what is left to say.
-        calendar.rejectOn(allocator, calendar.create_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, calendar.create_reject_global, @errorName(err)) catch |inner| undelivered("createCalendarEvent", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = calendar.jsonString(allocator, id) catch return jni.JNI_FALSE;
-    events.settle(allocator, calendar.create_resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = calendar.jsonString(allocator, id) catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
+    events.settle(allocator, calendar.create_resolve_global, payload) catch |err| return fellThrough("createCalendarEvent", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1763,19 +1795,19 @@ fn nativeDbExecute(
     const allocator = arena.allocator();
 
     var parsed: std.json.Parsed(std.json.Value) = undefined;
-    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch return jni.JNI_FALSE) orelse
+    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch |err| return fellThrough("dbExecute", err, jni.JNI_FALSE)) orelse
         return jni.JNI_FALSE;
 
     const rows_affected = db.execute(j, allocator, database, call.sql, call.args) catch |err| {
         // The shim catches and rejects with the exception's message; the
         // throwable was described to logcat and cleared by `Jni.check` before
         // this point, so the error name is what is left to say.
-        calendar.rejectOn(allocator, db.exec_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, db.exec_reject_global, @errorName(err)) catch |inner| undelivered("dbExecute", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = db.renderExecResult(allocator, rows_affected) catch return jni.JNI_FALSE;
-    events.settle(allocator, db.exec_resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = db.renderExecResult(allocator, rows_affected) catch |err| return fellThrough("dbExecute", err, jni.JNI_FALSE);
+    events.settle(allocator, db.exec_resolve_global, payload) catch |err| return fellThrough("dbExecute", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1793,17 +1825,17 @@ fn nativeDbQuery(
     const allocator = arena.allocator();
 
     var parsed: std.json.Parsed(std.json.Value) = undefined;
-    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch return jni.JNI_FALSE) orelse
+    const call = (dbCall(j, allocator, sql, params_json, &parsed) catch |err| return fellThrough("dbQuery", err, jni.JNI_FALSE)) orelse
         return jni.JNI_FALSE;
 
     var payload: std.ArrayListUnmanaged(u8) = .empty;
     defer payload.deinit(allocator);
     db.query(j, allocator, database, call.sql, call.args, &payload) catch |err| {
-        calendar.rejectOn(allocator, db.query_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, db.query_reject_global, @errorName(err)) catch |inner| undelivered("dbQuery", inner);
         return jni.JNI_TRUE;
     };
 
-    events.settle(allocator, db.query_resolve_global, payload.items) catch return jni.JNI_FALSE;
+    events.settle(allocator, db.query_resolve_global, payload.items) catch |err| return fellThrough("dbQuery", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1821,17 +1853,17 @@ fn nativeSetSharedItem(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
-    const value_text = j.stringToUtf8(allocator, value) catch return jni.JNI_FALSE;
-    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+    const key_text = j.stringToUtf8(allocator, key) catch |err| return fellThrough("setSharedItem", err, jni.JNI_FALSE);
+    const value_text = j.stringToUtf8(allocator, value) catch |err| return fellThrough("setSharedItem", err, jni.JNI_FALSE);
+    const group_text = j.stringToUtf8(allocator, group) catch |err| return fellThrough("setSharedItem", err, jni.JNI_FALSE);
 
     shareditem.set(j, allocator, activity, group_text, key_text, value_text) catch |err| {
-        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch |inner| undelivered("setSharedItem", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = shareditem.mutationPayload(allocator, .set, key_text) catch return jni.JNI_FALSE;
-    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = shareditem.mutationPayload(allocator, .set, key_text) catch |err| return fellThrough("setSharedItem", err, jni.JNI_FALSE);
+    events.settle(allocator, shareditem.resolve_global, payload) catch |err| return fellThrough("setSharedItem", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1852,16 +1884,16 @@ fn nativeGetSharedItem(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
-    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+    const key_text = j.stringToUtf8(allocator, key) catch |err| return fellThrough("getSharedItem", err, jni.JNI_FALSE);
+    const group_text = j.stringToUtf8(allocator, group) catch |err| return fellThrough("getSharedItem", err, jni.JNI_FALSE);
 
     const value = shareditem.get(j, allocator, activity, group_text, key_text) catch |err| {
-        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch |inner| undelivered("getSharedItem", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = shareditem.valuePayload(allocator, key_text, value) catch return jni.JNI_FALSE;
-    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = shareditem.valuePayload(allocator, key_text, value) catch |err| return fellThrough("getSharedItem", err, jni.JNI_FALSE);
+    events.settle(allocator, shareditem.resolve_global, payload) catch |err| return fellThrough("getSharedItem", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1878,16 +1910,16 @@ fn nativeRemoveSharedItem(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const key_text = j.stringToUtf8(allocator, key) catch return jni.JNI_FALSE;
-    const group_text = j.stringToUtf8(allocator, group) catch return jni.JNI_FALSE;
+    const key_text = j.stringToUtf8(allocator, key) catch |err| return fellThrough("removeSharedItem", err, jni.JNI_FALSE);
+    const group_text = j.stringToUtf8(allocator, group) catch |err| return fellThrough("removeSharedItem", err, jni.JNI_FALSE);
 
     shareditem.remove(j, allocator, activity, group_text, key_text) catch |err| {
-        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, shareditem.reject_global, @errorName(err)) catch |inner| undelivered("removeSharedItem", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = shareditem.mutationPayload(allocator, .remove, key_text) catch return jni.JNI_FALSE;
-    events.settle(allocator, shareditem.resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = shareditem.mutationPayload(allocator, .remove, key_text) catch |err| return fellThrough("removeSharedItem", err, jni.JNI_FALSE);
+    events.settle(allocator, shareditem.resolve_global, payload) catch |err| return fellThrough("removeSharedItem", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1916,7 +1948,7 @@ fn nativeGetContacts(
             std.log.warn("craft: getContacts fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;
         };
-        events.settle(allocator, contacts.reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        events.settle(allocator, contacts.reject_global, "\"Permission denied\"") catch |err| return fellThrough("getContacts", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
@@ -1927,7 +1959,7 @@ fn nativeGetContacts(
         return jni.JNI_FALSE;
     };
 
-    events.settle(allocator, contacts.resolve_global, payload.items) catch return jni.JNI_FALSE;
+    events.settle(allocator, contacts.resolve_global, payload.items) catch |err| return fellThrough("getContacts", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -1957,11 +1989,11 @@ fn nativeAddContact(
             std.log.warn("craft: addContact fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;
         };
-        events.settle(allocator, contacts.add_reject_global, "\"Permission denied\"") catch return jni.JNI_FALSE;
+        events.settle(allocator, contacts.add_reject_global, "\"Permission denied\"") catch |err| return fellThrough("addContact", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
-    const text = j.stringToUtf8(allocator, contact_json) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, contact_json) catch |err| return fellThrough("addContact", err, jni.JNI_FALSE);
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
         return jni.JNI_FALSE;
     defer parsed.deinit();
@@ -1969,14 +2001,14 @@ fn nativeAddContact(
     const contact = contacts.parseNewContact(parsed.value) orelse return jni.JNI_FALSE;
 
     const id = contacts.addContact(j, allocator, activity, contact) catch |err| {
-        calendar.rejectOn(allocator, contacts.add_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, contacts.add_reject_global, @errorName(err)) catch |inner| undelivered("addContact", inner);
         return jni.JNI_TRUE;
     };
 
     var buf: [24]u8 = undefined;
-    const digits = std.fmt.bufPrint(&buf, "{d}", .{id}) catch return jni.JNI_FALSE;
-    const payload = calendar.jsonString(allocator, digits) catch return jni.JNI_FALSE;
-    events.settle(allocator, contacts.add_resolve_global, payload) catch return jni.JNI_FALSE;
+    const digits = std.fmt.bufPrint(&buf, "{d}", .{id}) catch |err| return fellThrough("addContact", err, jni.JNI_FALSE);
+    const payload = calendar.jsonString(allocator, digits) catch |err| return fellThrough("addContact", err, jni.JNI_FALSE);
+    events.settle(allocator, contacts.add_resolve_global, payload) catch |err| return fellThrough("addContact", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2009,20 +2041,20 @@ fn nativeUpdateWidget(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, data_json) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, data_json) catch |err| return fellThrough("updateWidget", err, jni.JNI_FALSE);
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
         return jni.JNI_FALSE;
     defer parsed.deinit();
 
     const update = widgets.parseUpdate(parsed.value) orelse return jni.JNI_FALSE;
-    const action_text = j.stringToUtf8(allocator, action) catch return jni.JNI_FALSE;
+    const action_text = j.stringToUtf8(allocator, action) catch |err| return fellThrough("updateWidget", err, jni.JNI_FALSE);
 
     widgets.writeUpdate(j, allocator, activity, update) catch |err| {
-        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch |inner| undelivered("updateWidget", inner);
         return jni.JNI_TRUE;
     };
     widgets.broadcast(j, allocator, activity, action_text) catch |err| {
-        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch |inner| undelivered("updateWidget", inner);
         return jni.JNI_TRUE;
     };
 
@@ -2047,10 +2079,10 @@ fn nativeReloadWidgets(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const action_text = j.stringToUtf8(allocator, action) catch return jni.JNI_FALSE;
+    const action_text = j.stringToUtf8(allocator, action) catch |err| return fellThrough("reloadWidgets", err, jni.JNI_FALSE);
 
     widgets.broadcast(j, allocator, activity, action_text) catch |err| {
-        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, widgets.reject_global, @errorName(err)) catch |inner| undelivered("reloadWidgets", inner);
         return jni.JNI_TRUE;
     };
 
@@ -2079,11 +2111,11 @@ fn nativeSetShortcuts(
     if (sdk < shortcuts.n_mr1) {
         const payload = shortcuts.jsonString(allocator, shortcuts.unsupported_message) catch
             return jni.JNI_FALSE;
-        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch |err| return fellThrough("setShortcuts", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
-    const text = j.stringToUtf8(allocator, shortcuts_json) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, shortcuts_json) catch |err| return fellThrough("setShortcuts", err, jni.JNI_FALSE);
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{}) catch
         return jni.JNI_FALSE;
     defer parsed.deinit();
@@ -2094,19 +2126,19 @@ fn nativeSetShortcuts(
     const list = shortcuts.parseShortcuts(allocator, parsed.value) catch |err| {
         const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
             return jni.JNI_FALSE;
-        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch |inner| return fellThrough("setShortcuts", inner, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     } orelse return jni.JNI_FALSE;
 
     shortcuts.set(j, allocator, activity, list) catch |err| {
         const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
             return jni.JNI_FALSE;
-        events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+        events.settle(allocator, shortcuts.reject_global, payload) catch |inner| return fellThrough("setShortcuts", inner, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     };
 
-    const payload = shortcuts.setPayload(allocator, list.len) catch return jni.JNI_FALSE;
-    events.settle(allocator, shortcuts.resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = shortcuts.setPayload(allocator, list.len) catch |err| return fellThrough("setShortcuts", err, jni.JNI_FALSE);
+    events.settle(allocator, shortcuts.resolve_global, payload) catch |err| return fellThrough("setShortcuts", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2133,12 +2165,12 @@ fn nativeClearShortcuts(
         shortcuts.clear(j, activity) catch |err| {
             const payload = shortcuts.jsonString(allocator, @errorName(err)) catch
                 return jni.JNI_FALSE;
-            events.settle(allocator, shortcuts.reject_global, payload) catch return jni.JNI_FALSE;
+            events.settle(allocator, shortcuts.reject_global, payload) catch |inner| return fellThrough("clearShortcuts", inner, jni.JNI_FALSE);
             return jni.JNI_TRUE;
         };
     }
 
-    events.settle(allocator, shortcuts.resolve_global, shortcuts.cleared_result) catch return jni.JNI_FALSE;
+    events.settle(allocator, shortcuts.resolve_global, shortcuts.cleared_result) catch |err| return fellThrough("clearShortcuts", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2160,7 +2192,7 @@ fn nativeScheduleNotification(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const text = j.stringToUtf8(allocator, notification_json) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(allocator, notification_json) catch |err| return fellThrough("scheduleNotification", err, jni.JNI_FALSE);
 
     // `JSONObject(notificationJson)` throwing is the shim's first catch, so a
     // payload this cannot parse goes back rather than being rejected here.
@@ -2168,25 +2200,25 @@ fn nativeScheduleNotification(
         return jni.JNI_FALSE;
     defer parsed.deinit();
 
-    const default_id = notifications.defaultId(j, allocator) catch return jni.JNI_FALSE;
+    const default_id = notifications.defaultId(j, allocator) catch |err| return fellThrough("scheduleNotification", err, jni.JNI_FALSE);
     const notification = notifications.parseNotification(parsed.value, default_id) orelse
         return jni.JNI_FALSE;
 
     if (!notifications.servesImmediately(notification)) return jni.JNI_FALSE;
 
     notifications.ensureChannel(j, activity) catch |err| {
-        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch |inner| undelivered("scheduleNotification", inner);
         return jni.JNI_TRUE;
     };
 
     _ = notifications.post(j, allocator, activity, notification) catch |err| {
-        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, notifications.schedule_reject_global, @errorName(err)) catch |inner| undelivered("scheduleNotification", inner);
         return jni.JNI_TRUE;
     };
 
     // The id, not the hash: the page sent a string and gets the same string
     // back, which is what it needs to cancel with later.
-    const payload = calendar.jsonString(allocator, notification.id) catch return jni.JNI_FALSE;
+    const payload = calendar.jsonString(allocator, notification.id) catch |err| return fellThrough("scheduleNotification", err, jni.JNI_FALSE);
     events.settle(allocator, notifications.schedule_resolve_global, payload) catch
         return jni.JNI_FALSE;
     return jni.JNI_TRUE;
@@ -2237,7 +2269,7 @@ fn nativeLockOrientation(
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
 
-    const text = j.stringToUtf8(arena.allocator(), name) catch return jni.JNI_FALSE;
+    const text = j.stringToUtf8(arena.allocator(), name) catch |err| return fellThrough("lockOrientation", err, jni.JNI_FALSE);
 
     screen.apply(j, activity, screen.modeFor(text)) catch |err| {
         std.log.warn("craft: lockOrientation fell through to the shim ({s})", .{@errorName(err)});
@@ -2298,18 +2330,18 @@ fn nativeDownloadFile(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const url_text = j.stringToUtf8(allocator, url) catch return jni.JNI_FALSE;
-    const name_text = j.stringToUtf8(allocator, filename) catch return jni.JNI_FALSE;
+    const url_text = j.stringToUtf8(allocator, url) catch |err| return fellThrough("downloadFile", err, jni.JNI_FALSE);
+    const name_text = j.stringToUtf8(allocator, filename) catch |err| return fellThrough("downloadFile", err, jni.JNI_FALSE);
 
     const id = files.download(j, allocator, activity, url_text, name_text) catch |err| {
-        calendar.rejectOn(allocator, files.download_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, files.download_reject_global, @errorName(err)) catch |inner| undelivered("downloadFile", inner);
         return jni.JNI_TRUE;
     };
 
     var buf: [24]u8 = undefined;
-    const digits = std.fmt.bufPrint(&buf, "{d}", .{id}) catch return jni.JNI_FALSE;
-    const payload = files.jsonString(allocator, digits) catch return jni.JNI_FALSE;
-    events.settle(allocator, files.download_resolve_global, payload) catch return jni.JNI_FALSE;
+    const digits = std.fmt.bufPrint(&buf, "{d}", .{id}) catch |err| return fellThrough("downloadFile", err, jni.JNI_FALSE);
+    const payload = files.jsonString(allocator, digits) catch |err| return fellThrough("downloadFile", err, jni.JNI_FALSE);
+    events.settle(allocator, files.download_resolve_global, payload) catch |err| return fellThrough("downloadFile", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2326,20 +2358,20 @@ fn nativeSaveFile(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const data_text = j.stringToUtf8(allocator, data) catch return jni.JNI_FALSE;
-    const name_text = j.stringToUtf8(allocator, filename) catch return jni.JNI_FALSE;
+    const data_text = j.stringToUtf8(allocator, data) catch |err| return fellThrough("saveFile", err, jni.JNI_FALSE);
+    const name_text = j.stringToUtf8(allocator, filename) catch |err| return fellThrough("saveFile", err, jni.JNI_FALSE);
 
     const plan = files.planFor(data_text) catch {
-        calendar.rejectOn(allocator, files.save_reject_global, files.malformed_data_url) catch {};
+        calendar.rejectOn(allocator, files.save_reject_global, files.malformed_data_url) catch |err| undelivered("saveFile", err);
         return jni.JNI_TRUE;
     };
     const path = files.save(j, allocator, activity, name_text, plan) catch |err| {
-        calendar.rejectOn(allocator, files.save_reject_global, @errorName(err)) catch {};
+        calendar.rejectOn(allocator, files.save_reject_global, @errorName(err)) catch |inner| undelivered("saveFile", inner);
         return jni.JNI_TRUE;
     };
 
-    const payload = files.jsonString(allocator, path) catch return jni.JNI_FALSE;
-    events.settle(allocator, files.save_resolve_global, payload) catch return jni.JNI_FALSE;
+    const payload = files.jsonString(allocator, path) catch |err| return fellThrough("saveFile", err, jni.JNI_FALSE);
+    events.settle(allocator, files.save_resolve_global, payload) catch |err| return fellThrough("saveFile", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2364,7 +2396,7 @@ fn nativeGetLocationRecordingState(
 
     // A line the shim would drop and this cannot parse: hand the whole read
     // back rather than disagreeing about how many samples there are.
-    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+    const locations = (locationstore.renderLocations(allocator, contents) catch |err| return fellThrough("getLocationRecordingState", err, @as(jni.jstring, null))) orelse
         return null;
 
     const state = locationstore.readState(j, allocator, activity, locations.count) catch |err| {
@@ -2372,8 +2404,8 @@ fn nativeGetLocationRecordingState(
         return null;
     };
 
-    const json = locationstore.renderState(allocator, state) catch return null;
-    return j.newStringUtf8(allocator, json) catch null;
+    const json = locationstore.renderState(allocator, state) catch |err| return fellThrough("getLocationRecordingState", err, @as(jni.jstring, null));
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("getLocationRecordingState", err, @as(jni.jstring, null));
 }
 
 /// `nativeReadLocationRecording(activity)`.
@@ -2392,9 +2424,9 @@ fn nativeReadLocationRecording(
         return null;
     };
 
-    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+    const locations = (locationstore.renderLocations(allocator, contents) catch |err| return fellThrough("readLocationRecording", err, @as(jni.jstring, null))) orelse
         return null;
-    return j.newStringUtf8(allocator, locations.json) catch null;
+    return j.newStringUtf8(allocator, locations.json) catch |err| fellThrough("readLocationRecording", err, @as(jni.jstring, null));
 }
 
 /// The current state as a Java String, or null if any part of the read
@@ -2405,17 +2437,17 @@ fn recordingStateString(
     activity: jni.jobject,
     include_locations: bool,
 ) jni.jstring {
-    const contents = locationstore.readFile(j, allocator, activity) catch return null;
-    const locations = (locationstore.renderLocations(allocator, contents) catch return null) orelse
+    const contents = locationstore.readFile(j, allocator, activity) catch |err| return fellThrough("recordingStateString", err, @as(jni.jstring, null));
+    const locations = (locationstore.renderLocations(allocator, contents) catch |err| return fellThrough("recordingStateString", err, @as(jni.jstring, null))) orelse
         return null;
-    const state = locationstore.readState(j, allocator, activity, locations.count) catch return null;
+    const state = locationstore.readState(j, allocator, activity, locations.count) catch |err| return fellThrough("recordingStateString", err, @as(jni.jstring, null));
 
     const json = locationstore.renderStateWith(
         allocator,
         state,
         if (include_locations) locations.json else null,
-    ) catch return null;
-    return j.newStringUtf8(allocator, json) catch null;
+    ) catch |err| return fellThrough("recordingStateString", err, @as(jni.jstring, null));
+    return j.newStringUtf8(allocator, json) catch |err| fellThrough("recordingStateString", err, @as(jni.jstring, null));
 }
 
 /// `nativeStartLocationRecording(activity)`.
@@ -2436,16 +2468,16 @@ fn nativeStartLocationRecording(
         // A different object from "never recorded": this path builds a fresh
         // JSONObject with an explicit JSONObject.NULL id, so the key is
         // present and null rather than absent.
-        const json = locationstore.renderDenied(allocator) catch return null;
-        return j.newStringUtf8(allocator, json) catch null;
+        const json = locationstore.renderDenied(allocator) catch |err| return fellThrough("startLocationRecording", err, @as(jni.jstring, null));
+        return j.newStringUtf8(allocator, json) catch |err| fellThrough("startLocationRecording", err, @as(jni.jstring, null));
     }
 
-    const id = locationstore.newRecordingId(j, allocator) catch return null;
-    const started_at = locationstore.nowMillis(j) catch return null;
-    locationstore.startStore(j, allocator, activity, id, started_at) catch return null;
+    const id = locationstore.newRecordingId(j, allocator) catch |err| return fellThrough("startLocationRecording", err, @as(jni.jstring, null));
+    const started_at = locationstore.nowMillis(j) catch |err| return fellThrough("startLocationRecording", err, @as(jni.jstring, null));
+    locationstore.startStore(j, allocator, activity, id, started_at) catch |err| return fellThrough("startLocationRecording", err, @as(jni.jstring, null));
 
     // Kotlin names the service class, because its package is templated.
-    startRecordingService(j, activity) catch return null;
+    startRecordingService(j, activity) catch |err| return fellThrough("startLocationRecording", err, @as(jni.jstring, null));
 
     return recordingStateString(j, allocator, activity, false);
 }
@@ -2464,14 +2496,14 @@ fn nativeStopLocationRecording(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    locationstore.stopStore(j, allocator, activity) catch return null;
+    locationstore.stopStore(j, allocator, activity) catch |err| return fellThrough("stopLocationRecording", err, @as(jni.jstring, null));
 
     // Declining after the store write is safe: `stop` is idempotent, so the
     // shim runs the whole method again and reaches `stopService` itself.
     const result = recordingStateString(j, allocator, activity, true);
     if (result == null) return null;
 
-    stopRecordingService(j, activity) catch return null;
+    stopRecordingService(j, activity) catch |err| return fellThrough("stopLocationRecording", err, @as(jni.jstring, null));
     return result;
 }
 
@@ -2486,7 +2518,7 @@ fn nativePauseLocationRecording(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    locationstore.setPaused(j, allocator, activity, true) catch return null;
+    locationstore.setPaused(j, allocator, activity, true) catch |err| return fellThrough("pauseLocationRecording", err, @as(jni.jstring, null));
     return recordingStateString(j, allocator, activity, false);
 }
 
@@ -2505,10 +2537,10 @@ fn nativeResumeLocationRecording(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    locationstore.setPaused(j, allocator, activity, false) catch return null;
+    locationstore.setPaused(j, allocator, activity, false) catch |err| return fellThrough("resumeLocationRecording", err, @as(jni.jstring, null));
 
-    const active = locationstore.isActive(j, allocator, activity) catch return null;
-    if (active) startRecordingService(j, activity) catch return null;
+    const active = locationstore.isActive(j, allocator, activity) catch |err| return fellThrough("resumeLocationRecording", err, @as(jni.jstring, null));
+    if (active) startRecordingService(j, activity) catch |err| return fellThrough("resumeLocationRecording", err, @as(jni.jstring, null));
 
     return recordingStateString(j, allocator, activity, false);
 }
@@ -2540,9 +2572,9 @@ fn nativeNetworkChanged(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const status = network.read(j, activity) catch return;
-    const json = network.render(allocator, status) catch return;
-    events.settle(allocator, network.change_global, json) catch {};
+    const status = network.read(j, activity) catch |err| return failedWithoutFallback("networkChanged", err);
+    const json = network.render(allocator, status) catch |err| return failedWithoutFallback("networkChanged", err);
+    events.settle(allocator, network.change_global, json) catch |err| undelivered("networkChanged", err);
 }
 
 /// `nativeStartNetworkMonitoring(activity)`.
@@ -2613,12 +2645,12 @@ fn nativeAppStateEvent(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const name = j.stringToUtf8(allocator, event_name) catch return;
+    const name = j.stringToUtf8(allocator, event_name) catch |err| return failedWithoutFallback("appStateEvent", err);
 
     // Null covers both "this event carries no state" and "it carries the one
     // already held", and the shim announces neither.
     const changed = appstate.apply(name) orelse return;
-    appstate.announce(allocator, changed) catch {};
+    appstate.announce(allocator, changed) catch |err| undelivered("appStateEvent", err);
 }
 
 /// `nativeStartAppStateMonitoring(activity)`.
@@ -2667,7 +2699,7 @@ fn nativeGetAppState(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jstring {
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
 
-    return j.newStringUtf8(arena.allocator(), appstate.state().name()) catch null;
+    return j.newStringUtf8(arena.allocator(), appstate.state().name()) catch |err| fellThrough("getAppState", err, @as(jni.jstring, null));
 }
 
 /// `nativeBluetoothDevice(address, name, rssi)` — one scan result.
@@ -2683,16 +2715,16 @@ fn nativeBluetoothDevice(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const address_text = j.stringToUtf8(allocator, address) catch return;
+    const address_text = j.stringToUtf8(allocator, address) catch |err| return failedWithoutFallback("bluetoothDevice", err);
 
     // Null is a device advertising no name, which is the common case rather
     // than the edge one — `bluetooth.announce` applies the shim's "Unknown".
     const name_text: ?[]const u8 = if (name == null)
         null
     else
-        j.stringToUtf8(allocator, name) catch return;
+        j.stringToUtf8(allocator, name) catch |err| return failedWithoutFallback("bluetoothDevice", err);
 
-    bluetooth.announce(allocator, address_text, name_text, rssi) catch {};
+    bluetooth.announce(allocator, address_text, name_text, rssi) catch |err| undelivered("bluetoothDevice", err);
 }
 
 /// `nativeStartBluetoothScan(activity)`.
@@ -2723,7 +2755,7 @@ fn nativeStartBluetoothScan(
             std.log.warn("craft: startBluetoothScan fell through to the shim ({s})", .{@errorName(err)});
             return jni.JNI_FALSE;
         };
-        calendar.rejectOn(allocator, bluetooth.reject_global, "Permission denied") catch {};
+        calendar.rejectOn(allocator, bluetooth.reject_global, "Permission denied") catch |err| undelivered("startBluetoothScan", err);
         return jni.JNI_TRUE;
     }
 
@@ -2733,11 +2765,11 @@ fn nativeStartBluetoothScan(
     };
 
     if (bluetooth.startError(start_status)) |message| {
-        calendar.rejectOn(allocator, bluetooth.reject_global, message) catch return jni.JNI_FALSE;
+        calendar.rejectOn(allocator, bluetooth.reject_global, message) catch |err| return fellThrough("startBluetoothScan", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
-    events.settle(allocator, bluetooth.resolve_global, "true") catch return jni.JNI_FALSE;
+    events.settle(allocator, bluetooth.resolve_global, "true") catch |err| return fellThrough("startBluetoothScan", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
@@ -2787,15 +2819,15 @@ fn nativeMotionSample(
     // `Float.toString` is not a format string — see `android_json_number`.
     var printed: [6][]const u8 = undefined;
     inline for (0..3) |i| {
-        printed[i] = json_number.fromFloat(j, allocator, acceleration[i]) catch return;
-        printed[i + 3] = json_number.fromFloat(j, allocator, rotation[i]) catch return;
+        printed[i] = json_number.fromFloat(j, allocator, acceleration[i]) catch |err| return failedWithoutFallback("motionSample", err);
+        printed[i + 3] = json_number.fromFloat(j, allocator, rotation[i]) catch |err| return failedWithoutFallback("motionSample", err);
     }
 
     motion.announce(
         allocator,
         .{ printed[0], printed[1], printed[2] },
         .{ printed[3], printed[4], printed[5] },
-    ) catch {};
+    ) catch |err| undelivered("motionSample", err);
 }
 
 /// `nativeStartMotionUpdates(activity, intervalMs)`.
@@ -2900,20 +2932,20 @@ fn nativeLocationResult(
 
     var timestamp: [24]u8 = undefined;
     const printed: position.Printed = .{
-        .latitude = json_number.fromDouble(j, allocator, latitude) catch return,
-        .longitude = json_number.fromDouble(j, allocator, longitude) catch return,
-        .accuracy = json_number.fromDouble(j, allocator, accuracy) catch return,
-        .altitude = json_number.fromDouble(j, allocator, altitude) catch return,
-        .speed = json_number.fromDouble(j, allocator, speed) catch return,
-        .heading = json_number.fromDouble(j, allocator, bearing) catch return,
+        .latitude = json_number.fromDouble(j, allocator, latitude) catch |err| return failedWithoutFallback("locationResult", err),
+        .longitude = json_number.fromDouble(j, allocator, longitude) catch |err| return failedWithoutFallback("locationResult", err),
+        .accuracy = json_number.fromDouble(j, allocator, accuracy) catch |err| return failedWithoutFallback("locationResult", err),
+        .altitude = json_number.fromDouble(j, allocator, altitude) catch |err| return failedWithoutFallback("locationResult", err),
+        .speed = json_number.fromDouble(j, allocator, speed) catch |err| return failedWithoutFallback("locationResult", err),
+        .heading = json_number.fromDouble(j, allocator, bearing) catch |err| return failedWithoutFallback("locationResult", err),
         // A long, not a double: `put(String, long)` boxes a Long, and
         // `numberToString` prints one with `Long.toString` — which needs no
         // JNI call, because there is no float format to reproduce.
-        .timestamp = std.fmt.bufPrint(&timestamp, "{d}", .{time}) catch return,
+        .timestamp = std.fmt.bufPrint(&timestamp, "{d}", .{time}) catch |err| return failedWithoutFallback("locationResult", err),
     };
 
-    const json = position.renderPosition(allocator, printed) catch return;
-    events.settle(allocator, position.resolve_global, json) catch {};
+    const json = position.renderPosition(allocator, printed) catch |err| return failedWithoutFallback("locationResult", err);
+    events.settle(allocator, position.resolve_global, json) catch |err| undelivered("locationResult", err);
 }
 
 /// `nativeLocationFailed(message)` — the failure listener.
@@ -2932,10 +2964,10 @@ fn nativeLocationFailed(
     const text: []const u8 = if (message == null)
         "null"
     else
-        j.stringToUtf8(allocator, message) catch return;
+        j.stringToUtf8(allocator, message) catch |err| return failedWithoutFallback("locationFailed", err);
 
-    const json = position.renderRejection(allocator, position.code_client_failure, text) catch return;
-    events.settle(allocator, position.reject_global, json) catch {};
+    const json = position.renderRejection(allocator, position.code_client_failure, text) catch |err| return failedWithoutFallback("locationFailed", err);
+    events.settle(allocator, position.reject_global, json) catch |err| undelivered("locationFailed", err);
 }
 
 /// `nativeGetCurrentPosition(activity)`.
@@ -2967,8 +2999,8 @@ fn nativeGetCurrentPosition(
             allocator,
             position.code_permission_denied,
             position.permission_denied_message,
-        ) catch return jni.JNI_FALSE;
-        events.settle(allocator, position.reject_global, json) catch return jni.JNI_FALSE;
+        ) catch |err| return fellThrough("getCurrentPosition", err, jni.JNI_FALSE);
+        events.settle(allocator, position.reject_global, json) catch |err| return fellThrough("getCurrentPosition", err, jni.JNI_FALSE);
         return jni.JNI_TRUE;
     }
 
