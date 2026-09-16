@@ -171,8 +171,8 @@ function firstJsonObject(text: string): string | null {
 /**
  * Pull the driver's events out of a device log.
  *
- * The log is not ours: on iOS it is the app's whole stderr as
- * `simctl launch --console-pty` saw it, on Android a logcat slice, both
+ * The log is not ours: on iOS it is the app's whole stdout and stderr as
+ * `simctl launch --stdout --stderr` wrote them, on Android a logcat slice, both
  * carrying unrelated system chatter and, on iOS, ANSI colouring. So lines are
  * found by marker rather than by position, colour codes are stripped first,
  * and a marker line with no readable event is reported rather than skipped -

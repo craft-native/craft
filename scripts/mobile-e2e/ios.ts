@@ -1,5 +1,5 @@
 import type { LegOutcome, RunnerOptions } from './types'
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
 import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
@@ -120,30 +120,53 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   // this run never wrote.
   await command(['xcrun', 'simctl', 'pbcopy', device.udid], { stdin: 'craft-e2e-pasteboard-cleared', allowFailure: true })
 
-  // The app's own stdout and stderr, straight to a file. `--console-pty` is
-  // what makes Swift's `print` - and therefore the page's `craft.log` - leave
-  // the device at all; without it the launch returns a pid and says nothing.
-  // A raw descriptor rather than a pipe, so the writing outlives this process
-  // reading it and the poll below sees the file grow.
+  // The app's stdout and stderr, each to its own file, read back while it
+  // runs. Swift's `print` carries the page's `craft.log`; Zig's logger writes
+  // to stderr.
+  //
+  // Not `simctl launch --console-pty`, which is what this was. On a freshly
+  // booted simulator the first pty launch took about 200 seconds to start the
+  // app, measured on a new device, against 10 for a plain launch. The clock
+  // below used to start at that spawn, so the shim leg, always the first
+  // launch after boot, could spend its whole budget waiting for the app to
+  // exist and fail with "the test page never announced a plan". It did, on
+  // main (run 35091847509) and on #208 and #210. The runtime leg, second on
+  // the same device, never did.
+  //
+  // `NSUnbufferedIO=YES` is what makes plain files usable. A pty is line
+  // buffered and a file is not: without the variable, `print` wrote nothing
+  // at all, not even once the app was terminated. Xcode sets it for the same
+  // reason. `SIMCTL_CHILD_` is how simctl hands a variable to the app.
+  //
+  // And the launch now fails on its own terms. `simctl launch` returns once
+  // the app has a pid, so a launch that cannot happen is an exception naming
+  // simctl's error, not a timeout blamed on the page.
+  const stdoutPath = join(evidence, 'app-stdout.log')
+  const stderrPath = join(evidence, 'app-stderr.log')
   const consolePath = join(evidence, 'console.log')
-  const consoleFd = openSync(consolePath, 'w')
-  const launched = Bun.spawn(['xcrun', 'simctl', 'launch', '--console-pty', device.udid, BUNDLE_ID], {
-    stdout: consoleFd,
-    stderr: consoleFd,
-  })
+  const readConsole = () => [stdoutPath, stderrPath]
+    .map(path => existsSync(path) ? readFileSync(path, 'utf8') : '')
+    .join('')
 
-  // The suite is quick once the app is up, but a cold simulator is not, so
-  // poll for the terminator rather than sleeping a fixed amount.
+  await command([
+    'xcrun', 'simctl', 'launch', '--terminate-running-process',
+    `--stdout=${stdoutPath}`, `--stderr=${stderrPath}`,
+    device.udid, BUNDLE_ID,
+  ], { env: { SIMCTL_CHILD_NSUnbufferedIO: 'YES' }, logPath: join(evidence, 'simctl.log') })
+
+  // The suite is quick once the app is up, so poll for the terminator rather
+  // than sleeping a fixed amount.
   //
   // `hasTerminated` parses rather than matching a substring, because the very
   // next statement kills the writer: a poll landing mid-write of the final
   // line would otherwise leave a truncated event in the file and turn a
   // passing suite into "driver emitted an unparseable event".
-  const finished = await waitForFile(consolePath, options.timeoutMs, hasTerminated)
+  const finished = await waitForFile(consolePath, options.timeoutMs, hasTerminated, async () => {
+    writeFileSync(consolePath, readConsole())
+  })
 
-  launched.kill()
-  closeSync(consoleFd)
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
+  writeFileSync(consolePath, readConsole())
 
   // Evidence before assertions, always: a leg that dies here is the one whose
   // screenshot is worth the most.

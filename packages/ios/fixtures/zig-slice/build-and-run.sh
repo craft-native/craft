@@ -22,6 +22,9 @@ echo "==> building the craft iOS simulator library"
 SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 APP="$OUT/CraftSlice.app"
 rm -rf "$OUT"; mkdir -p "$APP"
+# Absolute, because the app writes its console to paths under here and resolves
+# them from its own working directory, not this script's.
+OUT="$(cd "$OUT" && pwd)"; APP="$OUT/CraftSlice.app"
 
 echo "==> compiling the fixture"
 # The ObjC translation units first, then swiftc drives the link. swiftc is the
@@ -117,9 +120,22 @@ xcrun simctl location "$UDID" set 37.3317,-122.0307
 # i=68 assertion below fails loudly, which is the right way round.
 xcrun simctl privacy "$UDID" grant kTCCServiceSpeechRecognition "$BUNDLE_ID" 2>/dev/null || true
 
+# The app's stdout and stderr, each to a file, gathered into $LOG as it runs.
+#
+# Not `simctl launch --console-pty`, for the reason scripts/mobile-e2e/ios.ts
+# gives: the first pty launch after a cold boot took about 200 seconds to start
+# the app, against 10 for a plain launch, and that wait came out of this
+# script's budget. `NSUnbufferedIO=YES` is what lets a file see the output
+# while the app runs; without it nothing arrives. And no pty means no CRLF, so
+# the lines grepped below end where they appear to.
+STDOUT_LOG="$OUT/app-stdout.log"
+STDERR_LOG="$OUT/app-stderr.log"
 LOG="$OUT/console.log"
-xcrun simctl launch --console-pty "$UDID" "$BUNDLE_ID" > "$LOG" 2>&1 &
-LAUNCH_PID=$!
+: > "$LOG"
+SIMCTL_CHILD_NSUnbufferedIO=YES xcrun simctl launch --terminate-running-process \
+    --stdout="$STDOUT_LOG" --stderr="$STDERR_LOG" "$UDID" "$BUNDLE_ID"
+
+gather_log() { cat "$STDOUT_LOG" "$STDERR_LOG" > "$LOG" 2>/dev/null || true; }
 
 # The round trip is fast, but a cold simulator is not. Poll rather than sleep a
 # fixed amount, so a slow boot does not read as a failure.
@@ -141,6 +157,7 @@ DEADLINE=$(( $(date +%s) + SLICE_TIMEOUT ))
 
 missing_ids() {
     local missing=""
+    gather_log
     for id in $AWAITED_IDS; do
         # ERE with an explicit boundary rather than \b, which is a GNU
         # extension this script cannot count on, and rather than a bare
@@ -159,12 +176,13 @@ while :; do
         echo "FAIL: timed out after ${SLICE_TIMEOUT}s waiting for:$MISSING"
         echo "      The app never got that far — this is a timeout, not a wrong answer."
         echo "      Raise CRAFT_SLICE_TIMEOUT if the machine is simply slow."
-        kill "$LAUNCH_PID" 2>/dev/null || true
+        xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
         exit 1
     fi
     sleep 1
 done
-kill "$LAUNCH_PID" 2>/dev/null || true
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
+gather_log
 
 echo "==> console"
 cat "$LOG" || true
@@ -200,7 +218,12 @@ echo "==> assertions"
 PLAIN="$OUT/console.plain"
 sed -e $'s/\x1b\[[0-9;]*m//g' -e 's/\r$//' "$LOG" > "$PLAIN"
 
-count() { grep -cE "craft-bridge dispatch t=mobile a=[A-Za-z]+ i=$1\$" "$PLAIN" || true; }
+# The same boundary missing_ids waits on. This used to demand the id end the
+# line, while the wait accepted any non-digit after it, so a line the loop had
+# already counted as arrived could fail its assertion here: on main, run
+# 35094828558 waited for i=76, found it, and then reported that
+# getCurrentPosition "did not return the simulated coordinate".
+count() { grep -cE "craft-bridge dispatch t=mobile a=[A-Za-z]+ i=$1(\$|[^0-9])" "$PLAIN" || true; }
 
 C1="$(count 1)"; C2="$(count 2)"; C3="$(count 3)"
 

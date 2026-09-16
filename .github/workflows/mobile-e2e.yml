@@ -330,6 +330,8 @@ jobs:
           path: |
             artifacts/mobile-e2e/ios-zig-slice/console.log
             artifacts/mobile-e2e/ios-zig-slice/console.plain
+            artifacts/mobile-e2e/ios-zig-slice/app-stdout.log
+            artifacts/mobile-e2e/ios-zig-slice/app-stderr.log
           if-no-files-found: error
           retention-days: 30
 
