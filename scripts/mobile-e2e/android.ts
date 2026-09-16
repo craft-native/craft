@@ -2,7 +2,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { init } from '../../packages/android/src/index'
-import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, shareMenuInFront } from './protocol'
+import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, runtimePermissionGranted, shareMenuInFront } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
@@ -15,10 +15,28 @@ import { command, driverPage, waitForFile } from './support'
  * Clipboard is not a configurable capability on Android - CraftBridge serves
  * clipboardRead/clipboardWrite unconditionally - so the success case needs no
  * flag, and asking for one would imply a gate that is not there.
+ *
+ * Geolocation on, because that is what puts the location permissions in the
+ * manifest, and `pm grant` refuses a permission the manifest does not declare.
+ * The Kotlin does not otherwise read the flag (#209).
  */
 const CONFIG = {
   enablePushNotifications: false,
+  enableGeolocation: true,
 }
+
+/**
+ * The one location permission the harness grants: approximate, and not
+ * precise.
+ *
+ * #192 was a device with location granted that still reported something
+ * else. Granting both permissions would pass against a bridge that required
+ * either one, and that is not the contract. Android 12 onwards lets a person
+ * choose approximate only, and CraftPermissionPolicy counts that as `granted`
+ * (780e952). Coarse alone is the stricter of the two tests: anything this
+ * passes, a device with both permissions granted passes too.
+ */
+const GRANTED_LOCATION_PERMISSION = 'android.permission.ACCESS_COARSE_LOCATION'
 
 const PACKAGE = 'dev.craft.e2e.probe'
 const APP_NAME = 'CraftE2EProbe'
@@ -141,6 +159,19 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
 
   await adb(['uninstall', PACKAGE], { serial, allowFailure: true })
   await adb(['install', '-r', apk], { serial, logPath: join(evidence, 'adb.log') })
+
+  // Granted from the host before launch, so no dialog waits on a person.
+  await adb(['shell', 'pm', 'grant', PACKAGE, GRANTED_LOCATION_PERMISSION], { serial, logPath: join(evidence, 'adb.log') })
+
+  // And read back, because the case is only as strict as the device state it
+  // ran against: approximate granted, precise not. A device that had precise
+  // granted as well would pass against a bridge requiring precise.
+  const packageState = (await adb(['shell', 'dumpsys', 'package', PACKAGE], { serial })).stdout
+  writeFileSync(join(evidence, 'package-permissions.txt'), packageState)
+  if (runtimePermissionGranted(packageState, GRANTED_LOCATION_PERMISSION) !== true)
+    failures.push(`${GRANTED_LOCATION_PERMISSION} is not granted after pm grant; see ${label}/package-permissions.txt`)
+  if (runtimePermissionGranted(packageState, 'android.permission.ACCESS_FINE_LOCATION') === true)
+    failures.push('ACCESS_FINE_LOCATION is granted too, so the location case cannot tell approximate-only from precise')
 
   // Not best-effort: the ring buffer outlives an uninstall, and a transcript
   // left in it would otherwise be read as this run's. The plan event carries
