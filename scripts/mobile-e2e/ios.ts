@@ -2,27 +2,41 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
  * The app the suite runs against.
  *
- * Clipboard on, geolocation and sharing off, and that pairing is the whole
- * point: the success case needs a capability that is enabled and reachable
- * without a permission prompt, and the rejection cases need ones that are
- * switched off so the refusal is a property of the configuration rather than
- * of the machine. Reading a pasteboard the app itself just wrote raises no iOS
- * paste prompt, which is what makes the round trip scriptable.
+ * Clipboard and geolocation on, sharing off. The success cases need
+ * capabilities that are enabled and reachable without a prompt, and the
+ * rejection case needs one that is switched off so the refusal is a property
+ * of the configuration rather than of the machine. Reading a pasteboard the
+ * app itself just wrote raises no iOS paste prompt, and location is granted
+ * from the host with `simctl privacy` before launch, so nothing waits on a
+ * person.
+ *
+ * Geolocation used to be the switched-off capability. It is on because #197
+ * was a location promise that never settled with location *enabled*, and a
+ * disabled capability cannot reach that code. Sharing took over the rejection.
  *
  * `enableShare` is spelled out although false is the default, because the
  * share case depends on it and a default is not something this file controls.
  */
 const CONFIG = {
   enableClipboard: true,
-  enableGeolocation: false,
+  enableGeolocation: true,
   enableShare: false,
 }
+
+/**
+ * Where the simulator is told it is, for the page to report back.
+ *
+ * Nowhere near the simulator's default, which is Apple Park, so a position
+ * served from a cache or a stale scenario cannot pass for this one.
+ */
+const SIMULATED_POSITION = { latitude: 51.5007, longitude: -0.1246 }
+const POSITION_TOLERANCE = 0.001
 
 const BUNDLE_ID = 'dev.craft.e2e.probe'
 const APP_NAME = 'CraftE2EProbe'
@@ -115,6 +129,14 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   await command(['xcrun', 'simctl', 'uninstall', device.udid, BUNDLE_ID], { allowFailure: true })
   await command(['xcrun', 'simctl', 'install', device.udid, app])
 
+  // Location answered from the host, before launch: permission granted so no
+  // prompt waits on a person, and a coordinate the page cannot know. Not
+  // best-effort. Without either, the location cases fail for a reason that
+  // has nothing to do with the bridge.
+  const coordinate = `${SIMULATED_POSITION.latitude},${SIMULATED_POSITION.longitude}`
+  await command(['xcrun', 'simctl', 'privacy', device.udid, 'grant', 'location', BUNDLE_ID], { logPath: join(evidence, 'simctl.log') })
+  await command(['xcrun', 'simctl', 'location', device.udid, 'set', coordinate], { logPath: join(evidence, 'simctl.log') })
+
   // Clear the pasteboard first. Without this a nonce left by the previous leg
   // would still be there, and the external check below would pass on a value
   // this run never wrote.
@@ -187,8 +209,25 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   if (!pasteboard.stdout.includes(nonce))
     failures.push(`the simulator pasteboard does not hold the nonce this run wrote; it holds ${JSON.stringify(pasteboard.stdout.trim().slice(0, 80))}`)
 
+  // The position the page reported against the one the host set. Resolving
+  // is not enough: a bridge that answered with a cached or default fix would
+  // resolve too.
+  const reported = (name: string) => consoleText.match(new RegExp(`"event":"observed","name":"${name}","value":(-?[\\d.]+)`))?.[1]
+  const latitude = Number(reported('latitude'))
+  const longitude = Number(reported('longitude'))
+  if (verdict.planned.includes('geolocation.currentPosition')) {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      failures.push('the page never reported the position getCurrentPosition gave it')
+    }
+    else if (Math.abs(latitude - SIMULATED_POSITION.latitude) > POSITION_TOLERANCE
+      || Math.abs(longitude - SIMULATED_POSITION.longitude) > POSITION_TOLERANCE) {
+      failures.push(`getCurrentPosition answered ${latitude},${longitude} but the simulator was set to ${SIMULATED_POSITION.latitude},${SIMULATED_POSITION.longitude}`)
+    }
+  }
+
   const dispatched = zigDispatchedActions(consoleText)
   const refused = zigRefusals(consoleText)
+  const handedBack = zigHandBacks(consoleText)
 
   if (leg.requireZigDispatch) {
     const missing = ZIG_TESTED_ACTIONS.filter(action => !dispatched.includes(action))
@@ -201,12 +240,20 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     // saw came off Zig's error route.
     for (const action of ZIG_REFUSED_ACTIONS.filter(action => !refused.includes(action)))
       failures.push(`Zig never refused ${action}; the rejection the page saw came from Swift, not from the Zig gate`)
+
+    // Offered is not served. Zig logs the dispatch line on entry and then
+    // hands an action it does not own back to Swift, which answers with the
+    // same shape, so a case passing says nothing about which side answered.
+    for (const action of ZIG_SERVED_ACTIONS.filter(action => handedBack.includes(action)))
+      failures.push(`Zig handed ${action} back to Swift; the runtime leg expects Zig to serve it`)
   }
   else {
     if (dispatched.length)
       failures.push(`the shim leg reached the Zig dispatcher for ${dispatched.join(', ')}; it was supposed to link no runtime`)
     if (refused.length)
       failures.push(`the shim leg saw Zig refuse ${refused.join(', ')}; it was supposed to link no runtime`)
+    if (handedBack.length)
+      failures.push(`the shim leg saw Zig hand back ${handedBack.join(', ')}; it was supposed to link no runtime`)
   }
 
   return {

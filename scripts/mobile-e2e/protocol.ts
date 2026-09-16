@@ -78,7 +78,8 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'bridge.ready',
     'deviceInfo.isSimulator',
     'clipboard.roundTrip',
-    'geolocation.disabled.rejects',
+    'permissions.location.granted',
+    'geolocation.currentPosition',
     'share.disabled.rejects',
   ],
   android: [
@@ -400,18 +401,44 @@ export function zigRefusals(text: string): string[] {
  * reducing what the assertion covers.
  */
 export const ZIG_TESTED_ACTIONS = [
+  'checkPermission',
   'clipboardRead',
   'clipboardWrite',
   'getCurrentPosition',
   'getDeviceInfo',
+  'requestPermission',
   'share',
 ]
 
+/**
+ * The tested actions Zig must answer itself rather than hand back to Swift.
+ *
+ * Everything in ZIG_TESTED_ACTIONS except `requestPermission`, which Zig
+ * deliberately leaves to Swift for location (`bridge_mobile_permissions.zig`
+ * explains why: the answer arrives through the app's own
+ * `CLLocationManagerDelegate`).
+ */
+export const ZIG_SERVED_ACTIONS = ZIG_TESTED_ACTIONS.filter(action => action !== 'requestPermission')
+
 /** The actions the suite configures off, so Zig must refuse each by name. */
 export const ZIG_REFUSED_ACTIONS = [
-  'getCurrentPosition',
   'share',
 ]
+
+/**
+ * The actions Zig was offered and handed back to the Swift host.
+ *
+ * Swift answers those with the same shapes, so the page cannot tell, and a
+ * dispatch line is logged whether or not Zig then serves the call. This is
+ * the line that says it did not.
+ */
+export function zigHandBacks(text: string): string[] {
+  const plain = text.replace(ANSI, '')
+  const seen = new Set<string>()
+  for (const match of plain.matchAll(/ios: (\w+) (?:is not served here; handing it back|is declared unavailable; leaving it) to the host/g))
+    seen.add(match[1]!)
+  return [...seen].sort()
+}
 
 /**
  * The three ways an Android native says it gave up, as `android_dispatch.zig`

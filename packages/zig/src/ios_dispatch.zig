@@ -588,7 +588,15 @@ export fn craft_ios_handle_action(
         // is a served action with an unhappy result, not an unserved one.
         return true;
     };
-    return offer == .answered;
+    if (offer == .answered) return true;
+
+    // Said out loud for the same reason the dispatch line is. The page gets
+    // the same answer from Swift and cannot tell, so without this an action
+    // Zig has quietly stopped serving looks exactly like one it serves - the
+    // dispatch line above is logged either way. The mobile E2E runtime leg
+    // fails when an action it expects Zig to serve shows up here.
+    std.log.info("ios: {s} is not served here; handing it back to the host", .{action});
+    return false;
 }
 
 /// Deliver a result the host shim produced.
