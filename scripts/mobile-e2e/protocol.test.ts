@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -138,7 +138,7 @@ describe('evaluateRun', () => {
   it('fails when the suite is hollowed out to the easy cases', () => {
     const verdict = evaluateRun('ios', iosTranscript({ cases: ['bridge.ready'] }))
     expect(verdict.ok).toBe(false)
-    expect(verdict.failures).toContain('required case geolocation.disabled.rejects is not in the suite the page ran')
+    expect(verdict.failures).toContain('required case share.disabled.rejects is not in the suite the page ran')
     expect(verdict.failures).toContain('required case clipboard.roundTrip is not in the suite the page ran')
   })
 
@@ -270,11 +270,26 @@ describe('zig attribution', () => {
   })
 
   it('reads the refusal Zig writes through its own capability gate', () => {
-    const text = [
-      'info: ios: refusing share; enableShare is not enabled in craft.config.json',
-      'info: ios: refusing getCurrentPosition; enableGeolocation is not enabled in craft.config.json',
-    ].join('\n')
+    const text = 'info: ios: refusing share; enableShare is not enabled in craft.config.json'
     expect(zigRefusals(text)).toEqual(ZIG_REFUSED_ACTIONS)
+  })
+
+  it('reads both ways Zig hands an action back to Swift', () => {
+    const text = [
+      'info: craft-bridge dispatch t=mobile a=requestPermission i=9',
+      'info: ios: requestPermission is not served here; handing it back to the host',
+      `${ESC}[32minfo: ios: openSettings is declared unavailable; leaving it to the host${ESC}[0m`,
+      'info: craft-bridge dispatch t=mobile a=getCurrentPosition i=10',
+    ].join('\n')
+
+    expect(zigHandBacks(text)).toEqual(['openSettings', 'requestPermission'])
+    expect(zigHandBacks(iosTranscript())).toEqual([])
+  })
+
+  // The one deliberate hand-back. Swift owns location authorization, and
+  // listing it as served would fail every run for doing what it was designed to.
+  it('expects Zig to serve every tested action except the one it leaves to Swift', () => {
+    expect(ZIG_TESTED_ACTIONS.filter(action => !ZIG_SERVED_ACTIONS.includes(action))).toEqual(['requestPermission'])
   })
 
   it('expects refusals only for actions the suite actually exercises', () => {

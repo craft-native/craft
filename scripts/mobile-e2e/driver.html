@@ -166,18 +166,43 @@
         }
       },
       {
-        // The failure path. Geolocation is off in the harness config, so the
-        // native side must answer — with a code that names the configuration —
-        // rather than leave the promise pending. A dropped callback here is
-        // indistinguishable from a slow one to the page, which is exactly why
-        // the case asserts the rejection and not merely "did not resolve".
-        name: 'geolocation.disabled.rejects',
+        // The second half of #197: asking for location permission the app
+        // already holds used to wait for an authorization change that never
+        // comes, because nothing changes. The harness grants it with
+        // `simctl privacy` before launch, so both calls must answer at once.
+        name: 'permissions.location.granted',
         platforms: ['ios'],
         run: function () {
-          return withTimeout(function () { return window.craft.getCurrentPosition() }).then(function (outcome) {
-            if (outcome.state === 'timeout') return 'getCurrentPosition never settled'
-            if (outcome.state === 'resolved') return 'getCurrentPosition resolved on a disabled capability'
-            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          return withTimeout(function () { return window.craft.permissions.check('location') }).then(function (checked) {
+            if (checked.state !== 'resolved') return 'permissions.check ' + checked.state + ' ' + (checked.error ? checked.error.message : '')
+            if (checked.value !== 'granted') return 'permissions.check answered ' + JSON.stringify(checked.value)
+            return withTimeout(function () { return window.craft.permissions.request('location') }).then(function (requested) {
+              if (requested.state === 'timeout') return 'permissions.request never settled for a permission already granted'
+              if (requested.state !== 'resolved') return 'permissions.request rejected: ' + requested.error.message
+              if (requested.value !== 'granted') return 'permissions.request answered ' + JSON.stringify(requested.value)
+            })
+          })
+        }
+      },
+      {
+        // #197 as reported: high accuracy, no cached fix, a fifteen-second
+        // timeout, on a simulator with an explicit coordinate. It never
+        // settled. The harness sets the coordinate with `simctl location`
+        // and compares it with what the page reports, so a position the
+        // bridge invented would not match.
+        name: 'geolocation.currentPosition',
+        platforms: ['ios'],
+        run: function () {
+          var options = { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+          return withTimeout(function () { return window.craft.location.getCurrentPosition(options) }, 20000).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'getCurrentPosition never settled, not even by its own 15s timeout'
+            if (outcome.state === 'rejected')
+              return 'getCurrentPosition rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (!outcome.value) return 'getCurrentPosition resolved with nothing'
+            emit({ event: 'observed', name: 'latitude', value: outcome.value.latitude })
+            emit({ event: 'observed', name: 'longitude', value: outcome.value.longitude })
+            if (typeof outcome.value.latitude !== 'number' || typeof outcome.value.longitude !== 'number')
+              return 'position is ' + JSON.stringify(outcome.value)
           })
         }
       },

@@ -30,9 +30,16 @@ bun run test:mobile-e2e:ios
 ```
 
 ```
-ok   ios-shim — 5/5 cases, no zig
-ok   ios-runtime — 5/5 cases, zig served clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log, share
+ok   ios-shim — 6/6 cases, no zig
+ok   ios-runtime — 6/6 cases, zig served checkPermission, clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log, requestPermission, share
 ```
+
+Before launch the harness grants the app location permission with
+`simctl privacy` and puts the simulator at a fixed coordinate with
+`simctl location`. The page must report that coordinate back from
+`getCurrentPosition`. On the runtime leg, Zig must also serve every action
+under test itself: its log names each action it hands back to Swift, and only
+`requestPermission`, whose location answer Swift owns, may appear there.
 
 Android needs JDK 17, Gradle 8.11.1, an Android SDK with `platforms;android-36`
 and `build-tools;36.0.0`, a booted emulator or attached device, and the Zig
