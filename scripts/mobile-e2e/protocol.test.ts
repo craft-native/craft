@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, ZIG_REFUSED_ACTION, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, ZIG_REFUSED_ACTION, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -276,3 +278,44 @@ describe('zig attribution', () => {
     expect(ZIG_TESTED_ACTIONS).toContain(ZIG_REFUSED_ACTION)
   })
 })
+
+describe('android declines', () => {
+  // The lines the first Android runtime run actually produced, plus the two
+  // decline kinds it did not hit, so all three are read the way they are
+  // written.
+  const logcat = [
+    '09-16 11:29:24.000  2611  2611 I CraftNative: craft: libcraft.so loaded',
+    '09-16 11:29:24.001  2611  2611 I CraftNative: craft: registered 103 natives on com/craft/runtime/CraftNative',
+    '09-16 11:29:24.535  2611  2705 W System.err: java.lang.NoSuchFieldError: no "J" field "longVersionCode"',
+    '09-16 11:29:24.535  2611  2705 W CraftNative: craft: getDeviceInfo fell through to the shim (JavaException)',
+    '09-16 11:29:25.000  2611  2705 E CraftNative: craft: locationResult failed with no fallback (OutOfMemory)',
+    '09-16 11:29:26.000  2611  2705 E CraftNative: craft: reviewError could not reach the page (NoWebView)',
+    '09-16 11:29:26.100  2611  2705 D CraftBridge: CRAFT-E2E {"event":"done","passed":4,"failed":0}',
+  ].join('\n')
+
+  it('reads every kind of decline, and names the action and the error', () => {
+    expect(androidDeclines(logcat)).toEqual([
+      'getDeviceInfo: fell through to the shim (JavaException)',
+      'locationResult: failed with no fallback (OutOfMemory)',
+      'reviewError: could not reach the page (NoWebView)',
+    ])
+  })
+
+  // The case that shipped: bound, every page case passing, and Kotlin
+  // answering. Registration is not a decline and must not be read as one —
+  // and a run with nothing but registration is the clean result.
+  it('does not mistake loading or registration for a decline', () => {
+    const clean = logcat.split('\n').filter(line => !/fell through|no fallback|reach the page/.test(line)).join('\n')
+    expect(androidDeclines(clean)).toEqual([])
+  })
+
+  it('matches the wording android_dispatch.zig actually writes', () => {
+    // Read from the Zig source rather than trusted, because each side alone
+    // would let a reworded helper turn the runtime leg blind: Zig would log a
+    // phrase this suite no longer matched, and every decline would pass.
+    const dispatch = readFileSync(join(import.meta.dir, '../../packages/zig/src/android_dispatch.zig'), 'utf8')
+    for (const phrase of ANDROID_DECLINE_PHRASES)
+      expect(dispatch).toContain(`" ${phrase} ({s})"`)
+  })
+})
+

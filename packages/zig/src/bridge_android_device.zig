@@ -373,11 +373,23 @@ fn readPackageInfo(allocator: std.mem.Allocator, j: Jni, activity: jobject, sdk:
     errdefer allocator.free(version_name);
     allocator.free(fallback.version_name);
 
-    // API 28 split the build number in two: `longVersionCode` is the whole
-    // value, `versionCode` its low 32 bits. Reading the wrong one on a modern
-    // app truncates rather than failing.
+    // API 28 split the build number in two: `getLongVersionCode()` is the
+    // whole value, `versionCode` its low 32 bits. Reading the wrong one on a
+    // modern app truncates rather than failing.
+    //
+    // A method, not a field. The Kotlin shim writes `.longVersionCode`, which
+    // Kotlin compiles to a call to the getter — there is no `longVersionCode`
+    // field on PackageInfo at all. This used to ask for one, and the first
+    // time it ran on a device, every call ended in
+    //
+    //     java.lang.NoSuchFieldError: no "J" field "longVersionCode" in class
+    //       "Landroid/content/pm/PackageInfo;" or its superclasses
+    //
+    // and fell through to the shim. It had never run anywhere before, because
+    // no generated app had ever loaded this library. `versionCode` below is a
+    // genuine public field, deprecated but present.
     const build: i64 = if (sdk >= 28)
-        try j.longField(info, try j.fieldId(info_cls, "longVersionCode", "J"))
+        try j.callLongMethod(info, try j.methodId(info_cls, "getLongVersionCode", "()J"))
     else
         try j.intField(info, try j.fieldId(info_cls, "versionCode", "I"));
 

@@ -357,3 +357,40 @@ export const ZIG_TESTED_ACTIONS = [
 
 /** The one action the suite configures off, so Zig must refuse it by name. */
 export const ZIG_REFUSED_ACTION = 'getCurrentPosition'
+
+/**
+ * The three ways an Android native says it gave up, as `android_dispatch.zig`
+ * writes them.
+ *
+ * - fell through to the shim: Kotlin served the action instead of Zig.
+ * - failed with no fallback: a callback into Zig gave up, and nothing will.
+ * - could not reach the page: Zig had the answer and could not deliver it.
+ *
+ * `test/android_declines_test.zig` keeps every decline routed through one of
+ * these, and `protocol.test.ts` reads the Zig source to check the wording has
+ * not drifted from what is matched here. Either half alone would let the suite
+ * stop seeing declines and keep passing.
+ */
+export const ANDROID_DECLINE_PHRASES = [
+  'fell through to the shim',
+  'failed with no fallback',
+  'could not reach the page',
+]
+
+/**
+ * Every Android decline line in a logcat dump, as `action: phrase (error)`.
+ *
+ * Why the runtime leg needs this rather than the registration line alone: the
+ * first run in which the Zig library loaded reported "registered 103 natives"
+ * and passed every case — while `getDeviceInfo` threw `NoSuchFieldError` on
+ * every call and Kotlin quietly answered instead. Registration proves the
+ * library bound. Only the absence of declines, with every decline made to
+ * speak, proves Zig answered.
+ */
+export function androidDeclines(text: string): string[] {
+  const plain = text.replace(ANSI, '')
+  const phrases = ANDROID_DECLINE_PHRASES.map(phrase => phrase.replace(/ /g, '\\s')).join('|')
+  const pattern = new RegExp(`craft: (\\w+) (${phrases}) \\(([^)]*)\\)`, 'g')
+  return [...plain.matchAll(pattern)].map(match => `${match[1]}: ${match[2]} (${match[3]})`)
+}
+

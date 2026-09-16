@@ -628,6 +628,21 @@ pub fn build(b: *std.Build) void {
     });
     const run_android_escaping_tests = b.addRunArtifact(android_escaping_tests);
 
+    // Every way a native gives up has to say so. See the file for why: a
+    // decline to the Kotlin shim is invisible to the page, which made
+    // ~170 silent `catch return null` paths invisible to everyone.
+    const android_declines_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/android_declines_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    android_declines_tests.root_module.addAnonymousImport("android_dispatch.zig", .{
+        .root_source_file = b.path("src/android_dispatch.zig"),
+    });
+    const run_android_declines_tests = b.addRunArtifact(android_declines_tests);
+
     ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
         .root_source_file = b.path("../ios/templates/CraftApp.swift"),
     });
@@ -1799,6 +1814,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_android_conformance_tests.step);
     test_step.dependOn(&run_android_bridge_tests.step);
     test_step.dependOn(&run_android_escaping_tests.step);
+    test_step.dependOn(&run_android_declines_tests.step);
     test_step.dependOn(&run_menubar_tests.step);
     test_step.dependOn(&run_components_tests.step);
     test_step.dependOn(&run_gpu_tests.step);
@@ -2562,6 +2578,7 @@ pub fn build(b: *std.Build) void {
     test_android_step.dependOn(&run_android_conformance_tests.step);
     test_android_step.dependOn(&run_android_bridge_tests.step);
     test_android_step.dependOn(&run_android_escaping_tests.step);
+    test_android_step.dependOn(&run_android_declines_tests.step);
 
     // Add Android tests to the main test step
     test_step.dependOn(&run_android_tests.step);
