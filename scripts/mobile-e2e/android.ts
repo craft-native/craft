@@ -2,7 +2,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { init } from '../../packages/android/src/index'
-import { androidDeclines, evaluateRun, hasTerminated } from './protocol'
+import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, shareMenuInFront } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
@@ -149,6 +149,24 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   await adb(['shell', 'am', 'force-stop', PACKAGE], { serial, allowFailure: true })
   await adb(['shell', 'am', 'start', '-n', `${PACKAGE}/.MainActivity`], { serial, logPath: join(evidence, 'adb.log') })
 
+  // The share case needs its menu dismissed, and nothing on the device will
+  // do that: the harness plays the person. It acts only once the page has
+  // asked and the menu is really in front, and it keeps a screenshot of the
+  // menu, which is the evidence that there was one to dismiss.
+  let shareMenu: 'not asked' | 'asked' | 'dismissed' = 'not asked'
+
+  async function dismissShareMenuWhenAsked(log: string): Promise<void> {
+    if (shareMenu === 'dismissed' || !awaitedNeeds(log).includes(DISMISS_SHARE_MENU)) return
+    shareMenu = 'asked'
+
+    const windows = await command(['adb', '-s', serial, 'shell', 'dumpsys', 'window'], { allowFailure: true })
+    if (!shareMenuInFront(windows.stdout)) return
+
+    await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, 'share-menu.png') })
+    await adb(['shell', 'input', 'keyevent', 'KEYCODE_BACK'], { serial, logPath: join(evidence, 'adb.log') })
+    shareMenu = 'dismissed'
+  }
+
   // logcat -d dumps and exits, so poll it into the evidence file rather than
   // streaming: a stream would have to be killed at exactly the right moment,
   // and the dump is cheap.
@@ -156,6 +174,7 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   const finished = await waitForFile(logPath, options.timeoutMs, hasTerminated, async () => {
     const dumped = await command(['adb', '-s', serial, 'logcat', '-d', ...LOGCAT_FILTER], { allowFailure: true })
     writeFileSync(logPath, dumped.stdout)
+    await dismissShareMenuWhenAsked(dumped.stdout)
   })
 
   await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, 'screen.png') })
@@ -169,6 +188,16 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
 
   const verdict = evaluateRun('android', logText, nonce)
   failures.push(...verdict.failures)
+
+  // The page's case only sees that share resolved false. That is also what a
+  // share that never opened a menu at all would resolve, so the harness says
+  // whether there was a menu to dismiss.
+  if (verdict.planned.includes('share.dismissed.resolvesFalse')) {
+    if (shareMenu === 'not asked')
+      failures.push('the page never asked for the share menu to be dismissed, so the dismissal case did not reach the menu')
+    else if (shareMenu === 'asked')
+      failures.push('the page asked for the share menu to be dismissed, and no share menu ever came to the front')
+  }
 
   // The page reported the SDK level the bridge told it; the host asked the
   // device directly. Agreement means the value crossed the bridge rather than

@@ -43,7 +43,19 @@ export interface ObservedEvent {
   value: unknown
 }
 
-export type DriverEvent = PlanEvent | CaseEvent | DoneEvent | FatalEvent | ObservedEvent
+/**
+ * The page asking the harness to do what a person would. Emitted just before
+ * the call that needs it, because the page cannot tap the device itself.
+ */
+export interface AwaitingEvent {
+  event: 'awaiting'
+  /** The case that is waiting. */
+  name: string
+  /** What it is waiting for, one of the needs the harness knows how to meet. */
+  need: string
+}
+
+export type DriverEvent = PlanEvent | CaseEvent | DoneEvent | FatalEvent | ObservedEvent | AwaitingEvent
 
 export type MobilePlatform = 'ios' | 'android'
 
@@ -74,6 +86,8 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'deviceInfo.isEmulator',
     'clipboard.roundTrip',
     'push.disabled.rejects',
+    'share.empty.rejects',
+    'share.dismissed.resolvesFalse',
   ],
 }
 
@@ -301,6 +315,42 @@ export function evaluateRun(platform: MobilePlatform, text: string, expectedRun?
     failures.push(`done says ${done.passed} passed / ${done.failed} failed, transcript shows ${passed.length} / ${failed.length}`)
 
   return { ok: failures.length === 0, failures, planned, passed, failed }
+}
+
+/** The need the Android share case announces before it opens the menu. */
+export const DISMISS_SHARE_MENU = 'dismiss-share-menu'
+
+/** The needs the page has announced so far, in order, without repeats. */
+export function awaitedNeeds(text: string): string[] {
+  const needs: string[] = []
+  for (const event of parseDriverOutput(text).events) {
+    if (event.event === 'awaiting' && !needs.includes(event.need))
+      needs.push(event.need)
+  }
+  return needs
+}
+
+/**
+ * Whether Android's share menu holds input focus, read from
+ * `adb shell dumpsys window`.
+ *
+ * The harness presses Back only once this is true, because Back goes to the
+ * focused window. Focus rather than the activity being *resumed*, which is
+ * what this first checked: the activity manager marks the chooser resumed
+ * before its process has even created it. On the first CI run the chooser was
+ * resumed at 50.37s and took focus at 52.63s. Back pressed in that gap goes to
+ * the app, which closes, and the page never reports anything. That run passed
+ * only because the harness happened to poll late.
+ *
+ * Matched by class name rather than by package, because the chooser moved:
+ * `android/com.android.internal.app.ChooserActivity` up to Android 13, and
+ * `com.android.intentresolver/com.android.intentresolver.ChooserActivity` from
+ * 14.
+ */
+export function shareMenuInFront(dumpsysWindow: string): boolean {
+  return dumpsysWindow
+    .split('\n')
+    .some(line => /mCurrentFocus=/.test(line) && /ChooserActivity/.test(line))
 }
 
 /**
