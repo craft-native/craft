@@ -89,6 +89,7 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'push.disabled.rejects',
     'share.empty.rejects',
     'share.dismissed.resolvesFalse',
+    'permissions.location.granted',
   ],
 }
 
@@ -352,6 +353,23 @@ export function shareMenuInFront(dumpsysWindow: string): boolean {
   return dumpsysWindow
     .split('\n')
     .some(line => /mCurrentFocus=/.test(line) && /ChooserActivity/.test(line))
+}
+
+/**
+ * Whether `dumpsys package` says a runtime permission is granted, or
+ * `undefined` when the output does not mention it at all.
+ *
+ * Three answers rather than two, because "not mentioned" usually means the
+ * manifest never declared the permission, and reading that as "not granted"
+ * would hide the cause.
+ */
+export function runtimePermissionGranted(dumpsysPackage: string, permission: string): boolean | undefined {
+  const escaped = permission.replaceAll('.', '\\.')
+  // Whitespace or line start before the name, not a word boundary, which sits
+  // after every dot, so `permission.CAMERA` would match inside
+  // `android.permission.CAMERA`.
+  const match = dumpsysPackage.match(new RegExp(`(?:^|\\s)${escaped}: granted=(true|false)`, 'm'))
+  return match ? match[1] === 'true' : undefined
 }
 
 /**

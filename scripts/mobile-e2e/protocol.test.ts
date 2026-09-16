@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -331,6 +331,32 @@ describe('share menu', () => {
       '  mFocusedApp=ActivityRecord{144007559 u0 com.android.intentresolver/.ChooserActivity t7}',
     ].join('\n')
     expect(shareMenuInFront(dumpsys)).toBe(false)
+  })
+})
+
+describe('runtime permission state', () => {
+  // As `dumpsys package` prints a coarse-only grant on Android 14.
+  const dumpsys = [
+    '    runtime permissions:',
+    '      android.permission.ACCESS_FINE_LOCATION: granted=false, flags=[ USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]',
+    '      android.permission.ACCESS_COARSE_LOCATION: granted=true, flags=[ USER_SET|USER_SENSITIVE_WHEN_GRANTED|USER_SENSITIVE_WHEN_DENIED]',
+    '      android.permission.ACCESS_BACKGROUND_LOCATION: granted=false, flags=[ RESTRICTION_INSTALLER_EXEMPT]',
+  ].join('\n')
+
+  it('reads granted and not granted apart', () => {
+    expect(runtimePermissionGranted(dumpsys, 'android.permission.ACCESS_COARSE_LOCATION')).toBe(true)
+    expect(runtimePermissionGranted(dumpsys, 'android.permission.ACCESS_FINE_LOCATION')).toBe(false)
+  })
+
+  it('says nothing about a permission the output never mentions', () => {
+    expect(runtimePermissionGranted(dumpsys, 'android.permission.CAMERA')).toBeUndefined()
+  })
+
+  it('does not read one permission as another that ends the same way', () => {
+    // A dot left unescaped would match any character, and a name without a
+    // boundary would match inside a longer one.
+    expect(runtimePermissionGranted(dumpsys, 'permission.ACCESS_COARSE_LOCATION')).toBeUndefined()
+    expect(runtimePermissionGranted('androidXpermissionXCAMERA: granted=true', 'android.permission.CAMERA')).toBeUndefined()
   })
 })
 

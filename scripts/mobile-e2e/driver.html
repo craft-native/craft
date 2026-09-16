@@ -170,8 +170,13 @@
         // already holds used to wait for an authorization change that never
         // comes, because nothing changes. The harness grants it with
         // `simctl privacy` before launch, so both calls must answer at once.
+        //
+        // And #192 on Android, where a device with location granted reported
+        // something other than `granted`. The harness grants approximate
+        // location only, with `pm grant`, which is the case a bridge
+        // requiring precise location gets wrong.
         name: 'permissions.location.granted',
-        platforms: ['ios'],
+        platforms: ['ios', 'android'],
         run: function () {
           return withTimeout(function () { return window.craft.permissions.check('location') }).then(function (checked) {
             if (checked.state !== 'resolved') return 'permissions.check ' + checked.state + ' ' + (checked.error ? checked.error.message : '')

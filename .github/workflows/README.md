@@ -56,8 +56,8 @@ bun run test:mobile-e2e:android
 ```
 
 ```
-ok   android-shim    — 6/6 cases, no zig
-ok   android-runtime — 6/6 cases, zig served registered:103, declines:0
+ok   android-shim    — 7/7 cases, no zig
+ok   android-runtime — 7/7 cases, zig served registered:103, declines:0
 ```
 
 One Android case needs a person: `share.dismissed.resolvesFalse` opens the
