@@ -2,8 +2,11 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
+
+/** The scheme the probe registers, and the one its cold-start link uses. */
+const DEEP_LINK_SCHEME = 'crafte2eprobe'
 
 /**
  * The app the suite runs against.
@@ -27,6 +30,9 @@ const CONFIG = {
   enableClipboard: true,
   enableGeolocation: true,
   enableShare: false,
+  // For the cold-start link (#198), which the harness opens from an XCUITest.
+  enableDeepLinks: true,
+  urlSchemes: [DEEP_LINK_SCHEME],
 }
 
 /**
@@ -40,6 +46,16 @@ const POSITION_TOLERANCE = 0.001
 
 const BUNDLE_ID = 'dev.craft.e2e.probe'
 const APP_NAME = 'CraftE2EProbe'
+
+/**
+ * The UI test target the harness adds to the generated project.
+ *
+ * Added here rather than by the generator, because no app wants it: it exists
+ * to cold-start the probe through a link, which is the one thing neither
+ * `simctl launch` nor `simctl openurl` can do unattended. See
+ * `ios-uitests/DeepLinkColdStartTests.swift` for why.
+ */
+const UI_TESTS = `${APP_NAME}UITests`
 
 /**
  * One leg is one answer to "who served the call".
@@ -93,6 +109,33 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   if (!leg.requireZigDispatch && linksRuntime)
     failures.push(`the ${leg.name} leg was supposed to have no runtime but its project links one`)
 
+  // The cold-start UI test, as a target in the generated project.
+  mkdirSync(join(project, 'UITests'), { recursive: true })
+  copyFileSync(join(import.meta.dir, 'ios-uitests', 'DeepLinkColdStartTests.swift'), join(project, 'UITests', 'DeepLinkColdStartTests.swift'))
+  writeFileSync(join(project, 'project.yml'), `${projectYml.trimEnd()}
+  ${UI_TESTS}:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    settings:
+      TEST_TARGET_NAME: ${APP_NAME}
+      PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_ID}.uitests
+      GENERATE_INFOPLIST_FILE: YES
+      SWIFT_VERSION: "5.0"
+    dependencies:
+      - target: ${APP_NAME}
+schemes:
+  ${APP_NAME}:
+    build:
+      targets:
+        ${APP_NAME}: all
+        ${UI_TESTS}: [test]
+    test:
+      targets:
+        - ${UI_TESTS}
+`)
+
   const nonce = `craft-e2e-${label}-${options.runId}`
   writeFileSync(join(project, 'dist', 'index.html'), driverPage(nonce, 'ios'))
   copyFileSync(join(project, 'dist', 'index.html'), join(evidence, 'index.html'))
@@ -111,9 +154,12 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     // gate compiles -sdk iphoneos only. A generated app that links for a
     // device and not for a simulator would have gone unnoticed.
     '-sdk', 'iphonesimulator',
+    '-destination', 'generic/platform=iOS Simulator',
     '-derivedDataPath', derived,
     'CODE_SIGNING_ALLOWED=NO',
-    'build',
+    // The app and the UI test runner together, so the cold-start step below
+    // runs what was built here rather than building again.
+    'build-for-testing',
   ], { cwd: project, logPath: join(evidence, 'xcodebuild.log') })
 
   const app = join(derived, 'Build', 'Products', 'Debug-iphonesimulator', `${APP_NAME}.app`)
@@ -224,6 +270,30 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
       failures.push(`getCurrentPosition answered ${latitude},${longitude} but the simulator was set to ${SIMULATED_POSITION.latitude},${SIMULATED_POSITION.longitude}`)
     }
   }
+
+  // #198: cold-start the app through a link, twice, and judge what the page
+  // received. After the suite and its evidence, because the UI test
+  // terminates and relaunches the app.
+  const link = `${DEEP_LINK_SCHEME}://e2e/cold?run=${encodeURIComponent(nonce)}`
+  const coldStart = await command([
+    'xcodebuild',
+    '-project', `${APP_NAME}.xcodeproj`,
+    '-scheme', APP_NAME,
+    '-destination', `id=${device.udid}`,
+    '-derivedDataPath', derived,
+    'CODE_SIGNING_ALLOWED=NO',
+    'test-without-building',
+  ], {
+    cwd: project,
+    // xcodebuild hands TEST_RUNNER_-prefixed variables to the runner without
+    // the prefix.
+    env: { TEST_RUNNER_PROBE_BUNDLE_ID: BUNDLE_ID, TEST_RUNNER_PROBE_LINK: link },
+    logPath: join(evidence, 'xcodebuild-deeplink.log'),
+    allowFailure: true,
+  })
+  await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'deeplink-screen.png')], { allowFailure: true })
+  await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
+  failures.push(...deepLinkProblems(deepLinkResults(`${coldStart.stdout}\n${coldStart.stderr}`), link))
 
   const dispatched = zigDispatchedActions(consoleText)
   const refused = zigRefusals(consoleText)

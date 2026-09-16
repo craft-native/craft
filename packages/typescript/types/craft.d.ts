@@ -819,10 +819,18 @@ export interface CraftBridge {
     getInitialURL(): Promise<DeepLinkData | null>;
 
     /**
-     * Listen for deep link events while app is running
+     * Listen for deep links.
+     *
+     * On iOS the first subscriber is also handed, once, every link that
+     * arrived before anything was subscribed, including the link that
+     * launched the app (`initial: true`). A page that calls `getInitialURL()`
+     * before subscribing, or in the same tick, gets the launch link from there
+     * instead and not a second time here. Android does not replay yet (#215).
+     *
      * @param callback - Called when a deep link is received
+     * @returns On iOS, a function that unsubscribes
      */
-    onLink(callback: (data: DeepLinkData) => void): void;
+    onLink(callback: (data: DeepLinkData) => void): (() => void) | void;
   };
 
   // ==================== OTA Updates ====================
@@ -1005,6 +1013,8 @@ export interface DeepLinkData {
   query: string;
   /** Parsed query parameters */
   queryParams?: Record<string, string>;
+  /** True for the link that launched the app (iOS) */
+  initial?: boolean;
 }
 
 export interface ProfilingCallTiming {

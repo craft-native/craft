@@ -319,6 +319,75 @@ export function evaluateRun(platform: MobilePlatform, text: string, expectedRun?
   return { ok: failures.length === 0, failures, planned, passed, failed }
 }
 
+/** What one cold start through a link saw, as the XCUITest printed it. */
+export interface DeepLinkResult {
+  receive: 'subscribe' | 'both'
+  link: string
+  launch: string | null
+  onLink: { url?: string, initial?: boolean }[]
+  initialURL: string | null
+}
+
+/**
+ * The page reports the UI test printed, read out of xcodebuild's output.
+ *
+ * `ios-uitests/DeepLinkColdStartTests.swift` writes one
+ * `CRAFT-E2E-DEEPLINK-RESULT <receive> <link> CRAFT-E2E-DEEPLINK {json}` line
+ * per cold start. A line whose JSON does not parse is skipped here and
+ * surfaces as that mode being missing.
+ */
+export function deepLinkResults(output: string): DeepLinkResult[] {
+  const results: DeepLinkResult[] = []
+  for (const line of output.split('\n')) {
+    const match = line.match(/CRAFT-E2E-DEEPLINK-RESULT (subscribe|both) (\S+) CRAFT-E2E-DEEPLINK (\{.*\})\s*$/)
+    if (!match) continue
+    try {
+      const report = JSON.parse(match[3]!) as Omit<DeepLinkResult, 'receive' | 'link'>
+      results.push({ receive: match[1] as DeepLinkResult['receive'], link: `${match[2]}`, ...report })
+    }
+    catch {}
+  }
+  return results
+}
+
+/**
+ * Why the cold-start runs are not a pass, one line per reason.
+ *
+ * `subscribe` is #198 itself: a page that only subscribes, seconds after the
+ * bridge appeared, must be handed the launch link once, marked initial.
+ * `both` is the guard on the fix: a page that also calls getInitialURL must
+ * get the link from there and not a second time from onLink.
+ */
+export function deepLinkProblems(results: DeepLinkResult[], link: string): string[] {
+  const problems: string[] = []
+  for (const receive of ['subscribe', 'both'] as const) {
+    const result = results.find(entry => entry.receive === receive)
+    const expectedLink = `${link}&receive=${receive}`
+    if (!result) {
+      problems.push(`the ${receive} cold start never reported; see xcodebuild-deeplink.log`)
+      continue
+    }
+    if (result.launch !== expectedLink) {
+      problems.push(`the ${receive} cold start was not launched by its link: the page saw ${JSON.stringify(result.launch)}`)
+      continue
+    }
+    if (receive === 'subscribe') {
+      const delivered = result.onLink.filter(entry => entry.url === expectedLink)
+      if (delivered.length !== 1 || result.onLink.length !== 1)
+        problems.push(`a page that only subscribes received ${JSON.stringify(result.onLink)} from onLink, expected the launch link once`)
+      else if (delivered[0]!.initial !== true)
+        problems.push('the launch link reached onLink without initial: true')
+    }
+    else {
+      if (result.initialURL !== expectedLink)
+        problems.push(`getInitialURL answered ${JSON.stringify(result.initialURL)}, expected the launch link`)
+      if (result.onLink.length)
+        problems.push(`a page that called getInitialURL was handed the launch link again by onLink: ${JSON.stringify(result.onLink)}`)
+    }
+  }
+  return problems
+}
+
 /** The need the Android share case announces before it opens the menu. */
 export const DISMISS_SHARE_MENU = 'dismiss-share-menu'
 
