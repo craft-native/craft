@@ -2,22 +2,26 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTION, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
  * The app the suite runs against.
  *
- * Clipboard on, geolocation off, and that pairing is the whole point: the
- * success case needs a capability that is enabled and reachable without a
- * permission prompt, and the rejection case needs one that is switched off so
- * the refusal is a property of the configuration rather than of the machine.
- * Reading a pasteboard the app itself just wrote raises no iOS paste prompt,
- * which is what makes the round trip scriptable.
+ * Clipboard on, geolocation and sharing off, and that pairing is the whole
+ * point: the success case needs a capability that is enabled and reachable
+ * without a permission prompt, and the rejection cases need ones that are
+ * switched off so the refusal is a property of the configuration rather than
+ * of the machine. Reading a pasteboard the app itself just wrote raises no iOS
+ * paste prompt, which is what makes the round trip scriptable.
+ *
+ * `enableShare` is spelled out although false is the default, because the
+ * share case depends on it and a default is not something this file controls.
  */
 const CONFIG = {
   enableClipboard: true,
   enableGeolocation: false,
+  enableShare: false,
 }
 
 const BUNDLE_ID = 'dev.craft.e2e.probe'
@@ -172,8 +176,8 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     // the action, so it alone does not prove Zig answered. The refusal line is
     // written by Zig's own capability gate, which means the rejection the page
     // saw came off Zig's error route.
-    if (!refused.includes(ZIG_REFUSED_ACTION))
-      failures.push(`Zig never refused ${ZIG_REFUSED_ACTION}; the rejection the page saw came from Swift, not from the Zig gate`)
+    for (const action of ZIG_REFUSED_ACTIONS.filter(action => !refused.includes(action)))
+      failures.push(`Zig never refused ${action}; the rejection the page saw came from Swift, not from the Zig gate`)
   }
   else {
     if (dispatched.length)

@@ -30,8 +30,8 @@ bun run test:mobile-e2e:ios
 ```
 
 ```
-ok   ios-shim — 4/4 cases, no zig
-ok   ios-runtime — 4/4 cases, zig served clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log
+ok   ios-shim — 5/5 cases, no zig
+ok   ios-runtime — 5/5 cases, zig served clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log, share
 ```
 
 Android needs JDK 17, Gradle 8.11.1, an Android SDK with `platforms;android-36`

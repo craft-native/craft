@@ -67,6 +67,7 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'deviceInfo.isSimulator',
     'clipboard.roundTrip',
     'geolocation.disabled.rejects',
+    'share.disabled.rejects',
   ],
   android: [
     'bridge.ready',
@@ -353,10 +354,14 @@ export const ZIG_TESTED_ACTIONS = [
   'clipboardWrite',
   'getCurrentPosition',
   'getDeviceInfo',
+  'share',
 ]
 
-/** The one action the suite configures off, so Zig must refuse it by name. */
-export const ZIG_REFUSED_ACTION = 'getCurrentPosition'
+/** The actions the suite configures off, so Zig must refuse each by name. */
+export const ZIG_REFUSED_ACTIONS = [
+  'getCurrentPosition',
+  'share',
+]
 
 /**
  * The three ways an Android native says it gave up, as `android_dispatch.zig`

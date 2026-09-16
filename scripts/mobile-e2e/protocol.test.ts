@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, ZIG_REFUSED_ACTION, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, ZIG_REFUSED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -151,14 +151,14 @@ describe('evaluateRun', () => {
 
   it('fails when the tally disagrees with the transcript', () => {
     const text = [
-      'CRAFT-E2E {"event":"plan","platform":"ios","cases":["bridge.ready","deviceInfo.isSimulator","clipboard.roundTrip","geolocation.disabled.rejects"]}',
+      `CRAFT-E2E ${JSON.stringify({ event: 'plan', platform: 'ios', cases: REQUIRED_CASES.ios })}`,
       ...REQUIRED_CASES.ios.map(name => `CRAFT-E2E {"event":"case","name":"${name}","status":"pass","detail":""}`),
       'CRAFT-E2E {"event":"done","passed":99,"failed":0}',
     ].join('\n')
 
     const verdict = evaluateRun('ios', text)
     expect(verdict.ok).toBe(false)
-    expect(verdict.failures).toContain('done says 99 passed / 0 failed, transcript shows 4 / 0')
+    expect(verdict.failures).toEqual([`done says 99 passed / 0 failed, transcript shows ${REQUIRED_CASES.ios.length} / 0`])
   })
 
   it('fails when the app is not the platform the leg was built for', () => {
@@ -270,12 +270,16 @@ describe('zig attribution', () => {
   })
 
   it('reads the refusal Zig writes through its own capability gate', () => {
-    const text = 'info: ios: refusing getCurrentPosition; enableGeolocation is not enabled in craft.config.json'
-    expect(zigRefusals(text)).toEqual([ZIG_REFUSED_ACTION])
+    const text = [
+      'info: ios: refusing share; enableShare is not enabled in craft.config.json',
+      'info: ios: refusing getCurrentPosition; enableGeolocation is not enabled in craft.config.json',
+    ].join('\n')
+    expect(zigRefusals(text)).toEqual(ZIG_REFUSED_ACTIONS)
   })
 
-  it('expects a refusal for an action the suite actually exercises', () => {
-    expect(ZIG_TESTED_ACTIONS).toContain(ZIG_REFUSED_ACTION)
+  it('expects refusals only for actions the suite actually exercises', () => {
+    for (const action of ZIG_REFUSED_ACTIONS)
+      expect(ZIG_TESTED_ACTIONS).toContain(action)
   })
 })
 

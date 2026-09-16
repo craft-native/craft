@@ -182,6 +182,23 @@
         }
       },
       {
+        // Sharing is off too, and this is the call that used to answer
+        // nothing: `craft.share(text)` posted no callbackId, so Swift's
+        // CAPABILITY_DISABLED stopped at a nil guard and the page got
+        // `undefined`, which a caller awaiting it reads as success (#203).
+        // The refusal settles long before any sheet could appear, so the case
+        // needs nobody at the simulator.
+        name: 'share.disabled.rejects',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.share('craft e2e ' + NONCE) }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'share never settled'
+            if (outcome.state === 'resolved') return 'share resolved with ' + JSON.stringify(outcome.value) + ' while sharing is disabled'
+            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          })
+        }
+      },
+      {
         // Android's equivalent gate. With push disabled the generator emits a
         // literal reject call rather than a Firebase block, so the rejection
         // string is fixed at generation time and is safe to match on.
