@@ -77,12 +77,24 @@ const Jni = jni.Jni;
 
 /// The allocator every reply is built with.
 ///
-/// `page_allocator`, and the choice is a build constraint rather than a
-/// preference. `c_allocator` would pull in bionic, and Zig cannot provide
-/// bionic — a static Android library links nothing and builds anyway, but this
-/// one is shared and has to resolve its symbols, so libc here means the whole
-/// library needs the NDK to build at all. Standing free of libc keeps it
-/// buildable with nothing but Zig.
+/// This used to carry a note explaining that `page_allocator` was chosen over
+/// `c_allocator` to keep the library buildable with nothing but Zig, since
+/// bionic would mean needing the NDK. That reasoning was sound and the
+/// conclusion was wrong: standing free of libc does not make the references go
+/// away, it only defers them. `page_allocator` needs `getauxval` for the page
+/// size, any `threadlocal` needs `__tls_get_addr`, and so does `std.fmt` — so
+/// the library linked clean, shipped, and then failed at `dlopen` with
+///
+///     cannot locate symbol "__tls_get_addr" referenced by ".../libcraft.so"
+///
+/// which `CraftNative` caught as an `UnsatisfiedLinkError` and turned into a
+/// silent fallback to the Kotlin shim. Every generated Android app was in that
+/// state; the mobile E2E suite is what finally said so out loud.
+///
+/// So the library links bionic now and `build-android` requires the NDK
+/// (`build.zig`'s -Dandroid-ndk). The allocator is free to be whichever one
+/// suits; it stays `page_allocator` because the arena below wants pages
+/// anyway.
 ///
 /// Every native call wraps this in an arena, so the page granularity costs one
 /// page per call rather than one per allocation, and nothing has to be freed

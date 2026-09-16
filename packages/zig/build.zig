@@ -15,6 +15,19 @@ pub fn build(b: *std.Build) void {
     // to avoid Zig bug where --sysroot breaks @cImport (ziglang/zig#22704, #25010)
     const macos_sdk = b.option([]const u8, "macos-sdk", "macOS SDK path for cross-compilation");
 
+    // The Android NDK, needed by the JNI library and nothing else. An explicit
+    // path rather than a read of ANDROID_NDK_HOME, matching -Dmacos-sdk: the
+    // caller passes "$ANDROID_NDK_HOME" when that is what they mean, and a
+    // build that depends on an environment variable is a build that behaves
+    // differently in two shells for reasons neither of them shows.
+    //
+    // It stopped being optional because without bionic the library builds,
+    // ships, and then fails to load — std references getauxval and
+    // __tls_get_addr, both of which live there, and Zig answers "unable to
+    // provide libc" for an android target. The failure was a silent fallback
+    // to the Kotlin shim, which is the quietest of the three outcomes.
+    const android_ndk = b.option([]const u8, "android-ndk", "Android NDK root, required by build-android");
+
     // Set when the opt-in JavaScript tests are wired up, so `test` can include
     // them without the declaration being scoped inside the `if`.
     var js_test_run: ?*std.Build.Step.Run = null;
@@ -2391,6 +2404,11 @@ pub fn build(b: *std.Build) void {
         .cpu_arch = .aarch64,
         .os_tag = .linux,
         .abi = .android,
+        // Named explicitly, because Zig's default is 29 and the stubs this
+        // links against come from the API-26 directory. A target and a sysroot
+        // that disagree is how a library binds a symbol the device does not
+        // have.
+        .android_api_level = android_api_level,
     });
 
     const android_arm64_lib = b.addLibrary(.{
@@ -2425,46 +2443,74 @@ pub fn build(b: *std.Build) void {
     // the arch-suffixed name beside it: the loader picks the ABI directory,
     // and a per-arch name would make the Kotlin need to know its own
     // architecture.
-    const android_arm64_jni = b.addLibrary(.{
-        .linkage = .dynamic,
-        .name = "craft",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/android_dispatch.zig"),
-            .target = android_arm64_target,
-            .optimize = optimize,
-        }),
-    });
+    if (android_ndk) |ndk| {
+        const android_arm64_jni = b.addLibrary(.{
+            .linkage = .dynamic,
+            .name = "craft",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/android_dispatch.zig"),
+                .target = android_arm64_target,
+                .optimize = optimize,
+            }),
+        });
+        linkAndroidLibc(b, android_arm64_jni, ndk, "aarch64-linux-android");
 
-    const android_arm64_jni_install = b.addInstallArtifact(android_arm64_jni, .{
-        .dest_dir = .{ .override = .{ .custom = "android/arm64-v8a" } },
-    });
-    build_android.dependOn(&android_arm64_jni_install.step);
-    build_android_all.dependOn(&android_arm64_jni_install.step);
+        const android_arm64_jni_install = b.addInstallArtifact(android_arm64_jni, .{
+            .dest_dir = .{ .override = .{ .custom = "android/arm64-v8a" } },
+        });
+        build_android.dependOn(&android_arm64_jni_install.step);
+        build_android_all.dependOn(&android_arm64_jni_install.step);
+    } else {
+        // Not built at all rather than built without bionic. The library would
+        // compile, install, ship in the APK and then fail at `dlopen` with two
+        // unresolved symbols, at which point `CraftNative` catches the
+        // `UnsatisfiedLinkError` and every action quietly uses the Kotlin shim.
+        // A step that refuses, naming the flag, is the same information
+        // delivered where someone can act on it.
+        //
+        // A `Fail` step rather than a panic, so this is only reached by
+        // *asking* for an Android build: `zig build test` on a machine with no
+        // NDK must still work, and it did not while this was a configure-time
+        // panic.
+        const missing = b.addFail(
+            "build-android needs the NDK: pass -Dandroid-ndk=\"$ANDROID_NDK_HOME\" " ++
+                "(sdkmanager --install \"ndk;26.1.10909125\"). Without bionic the JNI library " ++
+                "builds and then loads nowhere — std references getauxval and __tls_get_addr, " ++
+                "both of which live there, and Zig cannot supply libc for an android target.",
+        );
+        build_android.dependOn(&missing.step);
+        build_android_x86.dependOn(&missing.step);
+        build_android_all.dependOn(&missing.step);
+    }
 
     // Android Emulator (x86_64)
     const android_x86_target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
         .os_tag = .linux,
         .abi = .android,
+        .android_api_level = android_api_level,
     });
 
-    const android_x86_jni = b.addLibrary(.{
-        .linkage = .dynamic,
-        .name = "craft",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/android_dispatch.zig"),
-            .target = android_x86_target,
-            .optimize = optimize,
-        }),
-    });
+    if (android_ndk) |ndk| {
+        const android_x86_jni = b.addLibrary(.{
+            .linkage = .dynamic,
+            .name = "craft",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/android_dispatch.zig"),
+                .target = android_x86_target,
+                .optimize = optimize,
+            }),
+        });
+        linkAndroidLibc(b, android_x86_jni, ndk, "x86_64-linux-android");
 
-    // `x86_64`, matching the jniLibs directory the loader looks in — not
-    // `x86`, which is the 32-bit ABI and would be silently ignored.
-    const android_x86_jni_install = b.addInstallArtifact(android_x86_jni, .{
-        .dest_dir = .{ .override = .{ .custom = "android/x86_64" } },
-    });
-    build_android_x86.dependOn(&android_x86_jni_install.step);
-    build_android_all.dependOn(&android_x86_jni_install.step);
+        // `x86_64`, matching the jniLibs directory the loader looks in — not
+        // `x86`, which is the 32-bit ABI and would be silently ignored.
+        const android_x86_jni_install = b.addInstallArtifact(android_x86_jni, .{
+            .dest_dir = .{ .override = .{ .custom = "android/x86_64" } },
+        });
+        build_android_x86.dependOn(&android_x86_jni_install.step);
+        build_android_all.dependOn(&android_x86_jni_install.step);
+    }
 
     const android_x86_lib = b.addLibrary(.{
         .linkage = .static,
@@ -2524,6 +2570,112 @@ pub fn build(b: *std.Build) void {
 /// Link platform-specific system libraries for a build module.
 /// Centralizes the per-OS library linking that is shared across exe, craft_exe,
 /// lib_unit_tests, and cross-compilation targets.
+/// The Android API level the JNI library targets.
+///
+/// Must not exceed the generator's default `minSdk`, because one prebuilt
+/// library serves every generated app: building against a newer API would let
+/// the linker bind symbols that are simply absent on an older device, and the
+/// failure is `dlopen` refusing the library at startup on exactly the phones
+/// the app claims to support. `packages/android/src/index.test.ts` asserts the
+/// two numbers agree, since nothing else connects a Zig constant to a
+/// TypeScript one.
+const android_api_level: u32 = 26;
+
+/// The NDK's sysroot, or null when `ndk` does not contain one.
+///
+/// The prebuilt directory is named for the *host* and the NDK ships exactly
+/// one, so the candidates are tried in turn rather than guessed from
+/// `builtin.os`. An Apple-silicon Mac still gets `darwin-x86_64` from most NDK
+/// releases, which is the guess that would have been wrong.
+///
+/// Null rather than a panic: this runs at configure time, so a panic here
+/// would break `zig build test` for anyone who passed a wrong -Dandroid-ndk,
+/// not just the Android steps.
+fn androidSysroot(b: *std.Build, ndk: []const u8) ?[]const u8 {
+    const io = b.graph.io;
+    for ([_][]const u8{ "darwin-x86_64", "darwin-arm64", "linux-x86_64", "windows-x86_64" }) |host| {
+        const candidate = b.pathJoin(&.{ ndk, "toolchains/llvm/prebuilt", host, "sysroot" });
+        std.Io.Dir.cwd().access(io, candidate, .{}) catch continue;
+        return candidate;
+    }
+    return null;
+}
+
+/// Link one Android artifact against the NDK's bionic.
+///
+/// A `--libc` file, not include and library paths. Paths alone are what
+/// `applySdkPaths` does for Apple SDKs and they are not enough here: with
+/// `link_libc` set and no libc file, Zig looks the target up in its own table
+/// of libcs it can build, does not find android, and stops with
+///
+///     error: unable to provide libc for target "x86_64-linux...-android.29"
+///
+/// before it ever consults a search path. The libc file is how Zig is told the
+/// libc already exists.
+///
+/// `gcc_dir` is not optional, and its absence is reported under the wrong
+/// name. For any `.linux` target — Android is one — Zig takes crtbegin and
+/// crtend from `gcc_dir`, not `crt_dir`, and returns
+/// `LibCInstallationMissingCrtDir` when `gcc_dir` is empty
+/// (std/zig/LibCInstallation.zig, `resolveCrtPaths`). So a file with a correct
+/// `crt_dir` and a blank `gcc_dir` fails with "libc installation is missing crt
+/// directory", which sends you checking a directory that is fine. Bionic keeps
+/// crtbegin_so.o and crtend_so.o beside its stubs, so both fields point at the
+/// same API-level directory. Zig 0.17.0-dev.1441 read them from `crt_dir`,
+/// which is why this passed locally and failed on CI's 1963.
+///
+/// Still not `--sysroot`, which breaks `@cImport` (ziglang/zig#22704, #25010)
+/// and is why the Apple side takes the path route too.
+fn linkAndroidLibc(b: *std.Build, compile: *std.Build.Step.Compile, ndk: []const u8, triple: []const u8) void {
+    const io = b.graph.io;
+
+    const sysroot = androidSysroot(b, ndk) orelse {
+        compile.step.dependOn(&b.addFail(b.fmt(
+            "-Dandroid-ndk={s} has no toolchains/llvm/prebuilt/<host>/sysroot. " ++
+                "Point it at an NDK root, not at the SDK.",
+            .{ndk},
+        )).step);
+        return;
+    };
+
+    const api = b.fmt("{d}", .{android_api_level});
+    const lib_dir = b.pathJoin(&.{ sysroot, "usr/lib", triple, api });
+
+    // Checked here so a missing API level fails with the path and the fix,
+    // rather than as a linker error about crtbegin_so.o. Lazy, like the NDK
+    // check: only a build that asks for this artifact is refused.
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ lib_dir, "crtbegin_so.o" }), .{}) catch {
+        compile.step.dependOn(&b.addFail(b.fmt(
+            "no crtbegin_so.o in {s}: this NDK does not carry API {s} for {s}. " ++
+                "Install one that does, or lower android_api_level.",
+            .{ lib_dir, api, triple },
+        )).step);
+        return;
+    };
+
+    const libc_file = b.addWriteFile("android-libc.conf", b.fmt(
+        \\include_dir={s}
+        \\sys_include_dir={s}
+        \\crt_dir={s}
+        \\msvc_lib_dir=
+        \\kernel32_lib_dir=
+        \\gcc_dir={s}
+        \\
+    , .{
+        b.pathJoin(&.{ sysroot, "usr/include" }),
+        // The triple-specific headers: bionic keeps its architecture-dependent
+        // definitions there and the generic ones include them by relative path.
+        b.pathJoin(&.{ sysroot, "usr/include", triple }),
+        lib_dir,
+        lib_dir,
+    }));
+
+    compile.setLibCFile(libc_file.getDirectory().path(b, "android-libc.conf"));
+    compile.step.dependOn(&libc_file.step);
+    compile.root_module.link_libc = true;
+    compile.root_module.addLibraryPath(.{ .cwd_relative = lib_dir });
+}
+
 /// The iOS SDK sysroot, resolved through xcrun at configure time.
 ///
 /// Needed because the iOS archives compile the vendored sqlite3.c, and C

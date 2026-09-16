@@ -215,13 +215,20 @@ jobs:
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
 
+      # The NDK is what supplies bionic. Without it the JNI library builds and
+      # then fails at dlopen with `cannot locate symbol "__tls_get_addr"`, which
+      # CraftNative catches and turns into a silent fallback to the Kotlin shim
+      # — the failure this whole leg exists to catch.
+      - name: Install the Android NDK
+        run: |
+          sdkmanager --install "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> "$GITHUB_ENV"
+
       # Both ABIs. x86_64 is the one the emulator actually loads; arm64-v8a is
       # built so the runtime leg installs the same APK a phone would get.
-      # No NDK: the JNI library links no libc on purpose, which is what lets
-      # Zig build it alone (android_dispatch.zig records why).
       - name: Build the Zig Android runtime
         working-directory: packages/zig
-        run: zig build build-android-all -Doptimize=ReleaseSafe
+        run: zig build build-android-all -Doptimize=ReleaseSafe -Dandroid-ndk="$ANDROID_NDK_HOME"
 
       - name: Enable KVM
         run: |

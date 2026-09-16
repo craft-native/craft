@@ -1299,3 +1299,29 @@ describe('Zig runtime installation', () => {
     }
   })
 })
+
+describe('the Zig library and the generated app agree on how old a device may be', () => {
+  it('builds the JNI library for no newer an API than minSdk', () => {
+    // One prebuilt libcraft.so serves every generated app, so it has to be
+    // linked against the *oldest* API craft's default configuration claims to
+    // support. Build it against a newer one and the linker happily binds
+    // symbols that are simply absent on an older phone — and the failure is
+    // dlopen refusing the library at startup, on exactly the devices the app
+    // said it ran on.
+    //
+    // Nothing else connects a Zig constant to a TypeScript one, so this reads
+    // build.zig and compares.
+    const buildZig = readFileSync(join(import.meta.dir, '../../zig/build.zig'), 'utf8')
+    const declared = buildZig.match(/const android_api_level: u32 = (\d+);/)
+
+    expect(declared).not.toBeNull()
+
+    // DEFAULT_CONFIG is not exported, so read it the same way: from the source
+    // that defines it, which is the thing that would have to change.
+    const generator = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
+    const minSdk = generator.match(/minSdk:\s*(\d+)/)
+
+    expect(minSdk).not.toBeNull()
+    expect(Number(declared![1])).toBeLessThanOrEqual(Number(minSdk![1]))
+  })
+})
