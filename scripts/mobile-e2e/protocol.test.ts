@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkResults, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -369,6 +369,65 @@ describe('cold-start deep links', () => {
       'the subscribe cold start was not launched by its link: the page saw "crafte2eprobe://e2e/cold?run=an-earlier-run&receive=subscribe"',
       'the both cold start never reported; see xcodebuild-deeplink.log',
     ])
+  })
+})
+
+/** A minimal ELF64 little-endian file whose section header table names `sections`. */
+function elfWith(sections: string[]): Uint8Array {
+  const names = ['', ...sections, '.shstrtab']
+  const strtab = new TextEncoder().encode(`${names.join('\0')}\0`)
+  const headerSize = 64
+  const entrySize = 64
+  const tableOffset = headerSize + strtab.length
+  const bytes = new Uint8Array(tableOffset + entrySize * names.length)
+  const view = new DataView(bytes.buffer)
+  bytes.set([0x7F, 0x45, 0x4C, 0x46, 2, 1, 1], 0)
+  view.setBigUint64(0x28, BigInt(tableOffset), true)
+  view.setUint16(0x3A, entrySize, true)
+  view.setUint16(0x3C, names.length, true)
+  view.setUint16(0x3E, names.length - 1, true)
+  bytes.set(strtab, headerSize)
+  let nameOffset = 0
+  names.forEach((name, index) => {
+    const at = tableOffset + entrySize * index
+    view.setUint32(at, nameOffset, true)
+    nameOffset += new TextEncoder().encode(name).length + 1
+    if (name === '.shstrtab') {
+      view.setBigUint64(at + 0x18, BigInt(headerSize), true)
+      view.setBigUint64(at + 0x20, BigInt(strtab.length), true)
+    }
+  })
+  return bytes
+}
+
+describe('the shipped Android library', () => {
+  const stripped = ['.dynsym', '.text', '.symtab', '.gnu_debuglink']
+  const debug = ['.debug_info', '.debug_line', '.symtab']
+
+  it('reads section names out of an ELF64 file, and refuses anything else', () => {
+    expect(elfSectionNames(elfWith(['.text', '.debug_info']))).toEqual(['', '.text', '.debug_info', '.shstrtab'])
+    expect(elfSectionNames(new Uint8Array([0x7F, 0x45, 0x4C, 0x46]))).toBeNull()
+    expect(elfSectionNames(new TextEncoder().encode('not an elf file at all, but long enough to have a header, surely'))).toBeNull()
+  })
+
+  it('passes a stripped library with its DWARF moved beside it', () => {
+    expect(strippedLibraryProblems(elfSectionNames(elfWith(stripped)), elfSectionNames(elfWith(debug)))).toEqual([])
+  })
+
+  // #204 as found: the release library still carrying its debug info.
+  it('fails a library that still ships DWARF', () => {
+    const unstripped = elfSectionNames(elfWith(['.dynsym', '.text', '.debug_info', '.debug_str', '.symtab']))
+    expect(strippedLibraryProblems(unstripped, elfSectionNames(elfWith(debug)))).toEqual([
+      'libcraft.so still carries .debug_info, .debug_str; release builds ship without DWARF (#204)',
+      'libcraft.so has no .gnu_debuglink, so nothing ties it to its symbols file',
+    ])
+  })
+
+  it('fails a strip that threw the DWARF away instead of keeping it', () => {
+    expect(strippedLibraryProblems(elfSectionNames(elfWith(stripped)), null))
+      .toEqual(['android-symbols has no libcraft.so.debug beside the stripped library'])
+    expect(strippedLibraryProblems(elfSectionNames(elfWith(stripped)), elfSectionNames(elfWith(['.symtab']))))
+      .toEqual(['libcraft.so.debug holds no .debug_info; the strip discarded the DWARF instead of moving it'])
   })
 })
 

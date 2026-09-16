@@ -2471,11 +2471,9 @@ pub fn build(b: *std.Build) void {
         });
         linkAndroidLibc(b, android_arm64_jni, ndk, "aarch64-linux-android");
 
-        const android_arm64_jni_install = b.addInstallArtifact(android_arm64_jni, .{
-            .dest_dir = .{ .override = .{ .custom = "android/arm64-v8a" } },
-        });
-        build_android.dependOn(&android_arm64_jni_install.step);
-        build_android_all.dependOn(&android_arm64_jni_install.step);
+        const android_arm64_jni_install = installAndroidJni(b, android_arm64_jni, ndk, "arm64-v8a", debug_build);
+        build_android.dependOn(android_arm64_jni_install);
+        build_android_all.dependOn(android_arm64_jni_install);
     } else {
         // Not built at all rather than built without bionic. The library would
         // compile, install, ship in the APK and then fail at `dlopen` with two
@@ -2521,11 +2519,9 @@ pub fn build(b: *std.Build) void {
 
         // `x86_64`, matching the jniLibs directory the loader looks in — not
         // `x86`, which is the 32-bit ABI and would be silently ignored.
-        const android_x86_jni_install = b.addInstallArtifact(android_x86_jni, .{
-            .dest_dir = .{ .override = .{ .custom = "android/x86_64" } },
-        });
-        build_android_x86.dependOn(&android_x86_jni_install.step);
-        build_android_all.dependOn(&android_x86_jni_install.step);
+        const android_x86_jni_install = installAndroidJni(b, android_x86_jni, ndk, "x86_64", debug_build);
+        build_android_x86.dependOn(android_x86_jni_install);
+        build_android_all.dependOn(android_x86_jni_install);
     }
 
     const android_x86_lib = b.addLibrary(.{
@@ -2616,6 +2612,82 @@ fn androidSysroot(b: *std.Build, ndk: []const u8) ?[]const u8 {
         return candidate;
     }
     return null;
+}
+
+/// A tool from the NDK's LLVM toolchain, or null when this NDK has none for
+/// this host. Found the way `androidSysroot` finds the sysroot, and for the
+/// same reason.
+fn androidTool(b: *std.Build, ndk: []const u8, name: []const u8) ?[]const u8 {
+    const io = b.graph.io;
+    for ([_][]const u8{ "darwin-x86_64", "darwin-arm64", "linux-x86_64", "windows-x86_64" }) |host| {
+        const exe = if (std.mem.startsWith(u8, host, "windows")) b.fmt("{s}.exe", .{name}) else name;
+        const candidate = b.pathJoin(&.{ ndk, "toolchains/llvm/prebuilt", host, "bin", exe });
+        std.Io.Dir.cwd().access(io, candidate, .{}) catch continue;
+        return candidate;
+    }
+    return null;
+}
+
+/// Install a JNI library where the Android generator looks for it, without its
+/// DWARF, and install the DWARF beside it for symbolication (#204).
+///
+/// Every generated app's APK carries this library, and at `ReleaseSafe` each
+/// one was about 5.5 MB, most of it debug info nothing read: AGP strips native
+/// libraries by running the NDK's strip, and a generated project configures no
+/// NDK, so it never did. So it happens here, with the same tool AGP would use.
+///
+/// `--strip-debug` and not `--strip-all`. The symbol table stays, which is what
+/// turns a native crash tombstone's addresses into function names, and it is a
+/// small fraction of what the DWARF was. The DWARF goes to
+/// `android-symbols/<abi>/libcraft.so.debug`, linked from the stripped library
+/// by `.gnu_debuglink`, which is the shape `ndk-stack` and Play Console's
+/// native debug symbols both take.
+///
+/// `llvm-objcopy` rather than Zig's own ObjCopy step, because ELF to ELF
+/// copying is `fatal("unimplemented")` in `zig objcopy` at 0.17.0-dev.1963;
+/// every strip mode fails. The NDK is already required to build these at all.
+///
+/// A Debug build installs the library as built: whoever asked for Debug wants
+/// the debug info in place.
+fn installAndroidJni(
+    b: *std.Build,
+    lib: *std.Build.Step.Compile,
+    ndk: []const u8,
+    abi: []const u8,
+    keep_debug_info: bool,
+) *std.Build.Step {
+    const dest = b.fmt("android/{s}", .{abi});
+    if (keep_debug_info) {
+        const install = b.addInstallArtifact(lib, .{ .dest_dir = .{ .override = .{ .custom = dest } } });
+        return &install.step;
+    }
+
+    const objcopy = androidTool(b, ndk, "llvm-objcopy") orelse {
+        return &b.addFail(b.fmt(
+            "-Dandroid-ndk={s} has no toolchains/llvm/prebuilt/<host>/bin/llvm-objcopy, " ++
+                "which strips libcraft.so's debug info for release builds. " ++
+                "Point it at an NDK root, or build with -Doptimize=Debug to keep it.",
+            .{ndk},
+        )).step;
+    };
+
+    const keep = b.addSystemCommand(&.{ objcopy, "--only-keep-debug" });
+    keep.addFileArg(lib.getEmittedBin());
+    const debug_info = keep.addOutputFileArg("libcraft.so.debug");
+
+    const strip = b.addSystemCommand(&.{ objcopy, "--strip-debug" });
+    strip.addPrefixedFileArg("--add-gnu-debuglink=", debug_info);
+    strip.addFileArg(lib.getEmittedBin());
+    const stripped = strip.addOutputFileArg("libcraft.so");
+
+    const install = b.addInstallFileWithDir(stripped, .{ .custom = dest }, "libcraft.so");
+    const symbols = b.addInstallFileWithDir(
+        debug_info,
+        .{ .custom = b.fmt("android-symbols/{s}", .{abi}) },
+        "libcraft.so.debug",
+    );
+    install.step.dependOn(&symbols.step);
+    return &install.step;
 }
 
 /// Link one Android artifact against the NDK's bionic.

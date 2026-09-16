@@ -55,7 +55,10 @@ into the APK and once without:
 
 The Zig Android library links bionic, so building it needs the NDK —
 `sdkmanager --install "ndk;26.1.10909125"`. Without it `build-android` refuses
-rather than producing a library that installs and then fails to load.
+rather than producing a library that installs and then fails to load. The NDK's
+`llvm-objcopy` also strips each release library's DWARF into
+`zig-out/android-symbols/`, and the suite refuses to start on a `libcraft.so`
+that still carries any.
 
 ```bash
 cd packages/zig && zig build build-android-all -Doptimize=ReleaseSafe -Dandroid-ndk="$ANDROID_NDK_HOME" && cd -

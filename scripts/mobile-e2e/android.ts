@@ -1,8 +1,8 @@
 import type { LegOutcome, RunnerOptions } from './types'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { init } from '../../packages/android/src/index'
-import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, runtimePermissionGranted, shareMenuInFront } from './protocol'
+import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
@@ -320,6 +320,20 @@ export async function runAndroid(options: RunnerOptions): Promise<LegOutcome[]> 
       + 'Run `zig build build-android-all -Doptimize=ReleaseSafe` in packages/zig.',
     )
   }
+
+  // What every generated app will ship, checked before any leg uses it. The
+  // runtime leg asserts the library loads and answers; this asserts it is the
+  // release shape #204 settled on, stripped with its DWARF kept beside it,
+  // because a regression there costs every APK megabytes and fails no case.
+  const symbolsPath = join(runtimeDir, '..', 'android-symbols', 'x86_64', 'libcraft.so.debug')
+  const libraryProblems = strippedLibraryProblems(
+    elfSectionNames(new Uint8Array(readFileSync(abi))),
+    existsSync(symbolsPath) ? elfSectionNames(new Uint8Array(readFileSync(symbolsPath))) : null,
+  )
+  if (libraryProblems.length)
+    throw new Error(`${abi}: ${libraryProblems.join('; ')}`)
+  const megabytes = (path: string) => `${(statSync(path).size / 1024 / 1024).toFixed(2)} MB`
+  console.log(`x86_64/libcraft.so ships at ${megabytes(abi)}; its symbols are ${megabytes(symbolsPath)} beside it`)
 
   const outcomes: LegOutcome[] = []
   for (const leg of legs(runtimeDir)) {

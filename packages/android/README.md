@@ -611,6 +611,20 @@ For automated uploads, integrate with fastlane:
 fastlane supply --aab ./android/app/build/outputs/bundle/release/app-release.aab
 ```
 
+### Native crash symbols
+
+`zig build build-android-all` strips the DWARF out of each release
+`libcraft.so` before the generator copies it into `jniLibs`. With it, the
+library was about 5.5 MB per ABI in every APK. The symbol table stays, so a
+native crash tombstone still names functions. The DWARF goes to
+`zig-out/android-symbols/<abi>/libcraft.so.debug`, linked from the library by
+`.gnu_debuglink`.
+
+To symbolicate a crash, point `ndk-stack -sym` at that directory. To have Play
+Console symbolicate for you, upload the `.debug` files as the release's native
+debug symbols. A `-Doptimize=Debug` build keeps the debug info in the library
+itself.
+
 ## License
 
 MIT
