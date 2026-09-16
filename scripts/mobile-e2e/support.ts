@@ -10,6 +10,8 @@ export interface CommandOptions {
   /** Record the failure and carry on, for teardown steps whose failure is not the story. */
   allowFailure?: boolean
   stdin?: string
+  /** Added to the inherited environment, not a replacement for it. */
+  env?: Record<string, string>
   /**
    * Write raw stdout bytes here instead of returning them as text.
    *
@@ -36,6 +38,7 @@ export interface CommandResult {
 export async function command(argv: string[], options: CommandOptions = {}): Promise<CommandResult> {
   const spawned = Bun.spawn(argv, {
     cwd: options.cwd,
+    env: options.env ? { ...process.env, ...options.env } : undefined,
     stdin: options.stdin === undefined ? 'ignore' : new TextEncoder().encode(options.stdin),
     stdout: 'pipe',
     stderr: 'pipe',
