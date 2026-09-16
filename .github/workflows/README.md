@@ -2,7 +2,7 @@
 
 | Workflow | What it proves |
 |---|---|
-| [CI](./ci.yml) | Lint, typecheck, the Zig and TypeScript suites, and that the generated iOS, Watch, Live Activity and Android projects still **compile** |
+| [CI](./ci.yml) | Lint, typecheck, the Zig and TypeScript suites, and that the generated iOS, Watch, Live Activity and Android projects still **compile**; that a Watch-enabled iOS app **installs** on a simulator; and that release builds sign the production APNs environment |
 | [Mobile E2E Testing](./mobile-e2e.yml) | That a generated app **runs**: a call from JavaScript reaches native code and comes back, on a real simulator and a real emulator |
 | [Native Package Lifecycle](./native-lifecycle.yml) | Install, update, rollback and uninstall of the packaged app on macOS, Linux and Windows |
 | [Benchmark](./benchmarks.yml) | Startup and runtime numbers, tracked over time |
