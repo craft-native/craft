@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkResults, DISMISS_SHARE_MENU, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -331,6 +331,44 @@ describe('share menu', () => {
       '  mFocusedApp=ActivityRecord{144007559 u0 com.android.intentresolver/.ChooserActivity t7}',
     ].join('\n')
     expect(shareMenuInFront(dumpsys)).toBe(false)
+  })
+})
+
+describe('cold-start deep links', () => {
+  const LINK = 'crafte2eprobe://e2e/cold?run=craft-e2e-ios-shim-1'
+  const line = (receive: string, report: object) =>
+    `CRAFT-E2E-DEEPLINK-RESULT ${receive} ${LINK}&receive=${receive} CRAFT-E2E-DEEPLINK ${JSON.stringify(report)}`
+  const passing = [
+    'Test Case started.',
+    line('subscribe', { launch: `${LINK}&receive=subscribe`, receive: 'subscribe', onLink: [{ url: `${LINK}&receive=subscribe`, initial: true }], initialURL: null }),
+    line('both', { launch: `${LINK}&receive=both`, receive: 'both', onLink: [], initialURL: `${LINK}&receive=both` }),
+  ].join('\n')
+
+  it('passes a page that got the launch link once either way', () => {
+    expect(deepLinkProblems(deepLinkResults(passing), LINK)).toEqual([])
+  })
+
+  // The bug: the link was dispatched before onLink could exist.
+  it('fails a subscriber that never received the launch link', () => {
+    const text = line('subscribe', { launch: `${LINK}&receive=subscribe`, receive: 'subscribe', onLink: [], initialURL: null })
+    expect(deepLinkProblems(deepLinkResults(`${text}\n${passing.split('\n')[2]}`), LINK))
+      .toEqual(['a page that only subscribes received [] from onLink, expected the launch link once'])
+  })
+
+  // The guard on the fix: replaying to subscribers must not double-deliver.
+  it('fails a page handed the launch link by both getInitialURL and onLink', () => {
+    const text = line('both', { launch: `${LINK}&receive=both`, receive: 'both', onLink: [{ url: `${LINK}&receive=both`, initial: true }], initialURL: `${LINK}&receive=both` })
+    const problems = deepLinkProblems(deepLinkResults(`${passing.split('\n')[1]}\n${text}`), LINK)
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('handed the launch link again by onLink')
+  })
+
+  it('names a cold start that never reported, and one launched by something else', () => {
+    const stale = line('subscribe', { launch: 'crafte2eprobe://e2e/cold?run=an-earlier-run&receive=subscribe', receive: 'subscribe', onLink: [], initialURL: null })
+    expect(deepLinkProblems(deepLinkResults(stale), LINK)).toEqual([
+      'the subscribe cold start was not launched by its link: the page saw "crafte2eprobe://e2e/cold?run=an-earlier-run&receive=subscribe"',
+      'the both cold start never reported; see xcodebuild-deeplink.log',
+    ])
   })
 })
 

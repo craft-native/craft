@@ -172,9 +172,16 @@ class DeepLinkManager {
     static let shared = DeepLinkManager()
 
     private var initialURL: URL?
-    private var pendingURL: URL?
+    // Every link that arrived while no page could receive it, in order. This
+    // was a single slot, so a second link before the bridge was ready replaced
+    // the first; on a cold start, that could be the link that launched the app.
+    private var pendingURLs: [URL] = []
     private weak var webView: WKWebView?
     private var isReady = false
+    // Whether a page has ever become ready. A link that arrives before that is
+    // the one the app was opened with; a link that arrives later is not, and
+    // is no answer to getInitialURL.
+    private var hasBeenReady = false
 
     private init() {}
 
@@ -182,26 +189,33 @@ class DeepLinkManager {
         self.webView = webView
     }
 
+    // A navigation started, so the page that would have received a link is
+    // going away. Without this a link arriving during a reload was dispatched
+    // into the page being torn down and lost.
+    func setLoading() {
+        isReady = false
+    }
+
     func setReady() {
         isReady = true
-        // If there's a pending URL, dispatch it now
-        if let url = pendingURL {
-            dispatchDeepLink(url)
-            pendingURL = nil
+        let firstPage = !hasBeenReady
+        hasBeenReady = true
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        for url in urls {
+            dispatchDeepLink(url, initial: firstPage && url == initialURL)
         }
     }
 
     func handleURL(_ url: URL) {
-        // Store as initial URL if this is the first one
-        if initialURL == nil {
+        if initialURL == nil && !hasBeenReady {
             initialURL = url
         }
 
         if isReady && webView != nil {
-            dispatchDeepLink(url)
+            dispatchDeepLink(url, initial: false)
         } else {
-            // Store for later when web view is ready
-            pendingURL = url
+            pendingURLs.append(url)
         }
     }
 
@@ -209,7 +223,7 @@ class DeepLinkManager {
         return initialURL
     }
 
-    private func dispatchDeepLink(_ url: URL) {
+    private func dispatchDeepLink(_ url: URL, initial: Bool) {
         guard let webView = webView else { return }
 
         // Parse URL components
@@ -218,7 +232,10 @@ class DeepLinkManager {
             "scheme": url.scheme ?? "",
             "host": url.host ?? "",
             "path": url.path,
-            "query": url.query ?? ""
+            "query": url.query ?? "",
+            // Lets the page tell the launch link apart from later ones, so a
+            // page that reads getInitialURL is not also handed it again.
+            "initial": initial
         ]
 
         // Parse query parameters
@@ -1400,6 +1417,7 @@ struct CraftWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             CraftEventManager.shared.setLoading()
+            DeepLinkManager.shared.setLoading()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -2433,7 +2451,7 @@ struct CraftWebView: UIViewRepresentable {
 
                 // Deep Links
                 onDeepLink: function(callback) {
-                    window.addEventListener('craftDeepLink', function(e) { callback(e.detail); });
+                    return window.craft._subscribeDeepLinks(callback);
                 },
 
                 // Background Tasks
@@ -2761,6 +2779,7 @@ struct CraftWebView: UIViewRepresentable {
                 deepLinks: {
                     getInitialURL: function() {
                         var self = window.craft;
+                        self._claimInitialDeepLink();
                         var id = 'cb_' + (++self._callbackId);
                         window.webkit.messageHandlers.craft.postMessage({action: 'getInitialURL', callbackId: id});
                         return new Promise(function(resolve, reject) {
@@ -2768,7 +2787,7 @@ struct CraftWebView: UIViewRepresentable {
                         });
                     },
                     onLink: function(callback) {
-                        window.addEventListener('craftDeepLink', function(e) { callback(e.detail); });
+                        return window.craft._subscribeDeepLinks(callback);
                     }
                 },
 
@@ -2831,6 +2850,49 @@ struct CraftWebView: UIViewRepresentable {
             // Stable, versioned mobile contract consumed by craft-native/mobile.
             // Legacy flat methods remain available while every public SDK method
             // is routed through this nested contract.
+            // Links that arrive before anything is listening (#198).
+            //
+            // The native side dispatches a link the moment this script has
+            // run, and on a cold start that is the link the app was opened
+            // with. No page code can have called onLink by then: onLink is
+            // defined by this very script. So every such link was dispatched
+            // to nobody, and a page that subscribes, rather than asking
+            // getInitialURL, never learned how it was opened.
+            //
+            // Held here instead, and handed to the first subscriber on the
+            // next turn, so an unsubscribe returned in the same tick still
+            // applies. The launch link is withdrawn when the page calls
+            // getInitialURL, its other way of receiving it, so a page that
+            // does both in the same tick, in either order, gets it once.
+            (function installDeepLinkReplay(craft) {
+                var undelivered = [];
+                var subscribed = false;
+                window.addEventListener('craftDeepLink', function(e) {
+                    if (!subscribed) undelivered.push(e.detail);
+                });
+                craft._subscribeDeepLinks = function(callback) {
+                    var active = true;
+                    var listener = function(e) { callback(e.detail); };
+                    window.addEventListener('craftDeepLink', listener);
+                    if (!subscribed) {
+                        subscribed = true;
+                        setTimeout(function() {
+                            var pending = undelivered;
+                            undelivered = [];
+                            if (!active) return;
+                            pending.forEach(function(detail) { callback(detail); });
+                        }, 0);
+                    }
+                    return function() {
+                        active = false;
+                        window.removeEventListener('craftDeepLink', listener);
+                    };
+                };
+                craft._claimInitialDeepLink = function() {
+                    undelivered = undelivered.filter(function(detail) { return !(detail && detail.initial); });
+                };
+            })(window.craft);
+
             (function installCraftMobileContract(craft) {
                 var legacyShare = craft.share.bind(craft);
                 var legacyOpenCamera = craft.openCamera.bind(craft);

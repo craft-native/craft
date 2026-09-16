@@ -14,6 +14,7 @@
 <body>
   <h1 id="headline">Craft mobile E2E</h1>
   <ul id="results"></ul>
+  <p id="deeplink"></p>
   <script>
   // The page drives itself and reports through the bridge's own `log` action,
   // which is the one channel both runtimes already forward off-device: iOS
@@ -28,6 +29,13 @@
   // "this case failed" apart from "this case never ran" — a suite that dies
   // halfway through is a failure, not a pass with fewer cases.
   (function () {
+    // Every deep link the native side dispatches, recorded from the first line
+    // of the page, before the bridge exists. This is how the page knows it was
+    // opened by a link without asking getInitialURL, which would claim the
+    // launch link and change what onLink receives.
+    var dispatchedLinks = []
+    window.addEventListener('craftDeepLink', function (event) { dispatchedLinks.push(event.detail || {}) })
+
     var NONCE = '__CRAFT_E2E_NONCE__'
     // Which platform the harness built this leg for. Substituted in from
     // outside, because the page comparing window.craft.platform against a
@@ -282,6 +290,34 @@
       }
     ]
 
+    // #198: a cold-start link reaches a page that subscribes late.
+    //
+    // Runs after the suite, so the subscription is seconds after the bridge
+    // appeared, the way an app that hydrates before wiring its router
+    // subscribes. The harness cold-starts the app through a link from an
+    // XCUITest, which reads this paragraph back. The app's console is not
+    // captured on that launch; SpringBoard started it, not simctl.
+    //
+    // The link says which way to receive it. `receive=subscribe` only
+    // subscribes, and must get the launch link exactly once. `receive=both`
+    // calls getInitialURL and subscribes in the same tick, and must get it
+    // from getInitialURL alone, not twice. On an ordinary launch there is no
+    // link, and the paragraph says so.
+    function probeDeepLinks() {
+      var launch = dispatchedLinks.filter(function (detail) { return detail.initial === true })[0] || null
+      var receive = launch && launch.url.indexOf('receive=both') !== -1 ? 'both' : 'subscribe'
+      var seen = { launch: launch ? launch.url : null, receive: receive, onLink: [], initialURL: null }
+      if (receive === 'both') {
+        window.craft.deepLinks.getInitialURL().then(function (value) { seen.initialURL = value && value.url })
+      }
+      window.craft.deepLinks.onLink(function (detail) {
+        seen.onLink.push({ url: detail && detail.url, initial: detail && detail.initial })
+      })
+      setTimeout(function () {
+        document.getElementById('deeplink').textContent = 'CRAFT-E2E-DEEPLINK ' + JSON.stringify(seen)
+      }, 1500)
+    }
+
     function waitForBridge(attempt) {
       if (window.craft && window.craft.getDeviceInfo) return Promise.resolve(true)
       if (attempt >= 150) return Promise.resolve(false)
@@ -311,6 +347,7 @@
         if (index >= selected.length) {
           emit({ event: 'done', passed: passed, failed: failed })
           document.getElementById('headline').textContent = failed ? 'FAILED' : 'PASSED'
+          if (platform === 'ios') probeDeepLinks()
           return
         }
 

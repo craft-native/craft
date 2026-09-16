@@ -34,6 +34,13 @@ ok   ios-shim — 6/6 cases, no zig
 ok   ios-runtime — 6/6 cases, zig served checkPermission, clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log, requestPermission, share
 ```
 
+After the suite, each leg cold-starts the app through a link twice, from an
+XCUITest (`scripts/mobile-e2e/ios-uitests`). Only a UI test can answer the
+"Open in …?" prompt iOS shows for a custom scheme, and read the page back from
+an app SpringBoard launched, since that app has no console. One page only
+subscribes to `onLink`, seconds late, and must be handed the launch link once.
+The other also calls `getInitialURL`, and must not get the link twice.
+
 Before launch the harness grants the app location permission with
 `simctl privacy` and puts the simulator at a fixed coordinate with
 `simctl location`. The page must report that coordinate back from
