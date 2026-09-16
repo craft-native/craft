@@ -442,6 +442,65 @@ export function runtimePermissionGranted(dumpsysPackage: string, permission: str
 }
 
 /**
+ * The section names in an ELF file, or null when `bytes` is not a 64-bit
+ * little-endian ELF.
+ *
+ * Read directly rather than through `readelf`, which a macOS host does not
+ * have and a Linux runner has only by accident. Every Android ABI the harness
+ * ships (arm64-v8a, x86_64) is ELF64 little-endian, so that is all this reads.
+ */
+export function elfSectionNames(bytes: Uint8Array): string[] | null {
+  const ELF_MAGIC = [0x7F, 0x45, 0x4C, 0x46]
+  if (bytes.length < 64 || ELF_MAGIC.some((byte, index) => bytes[index] !== byte)) return null
+  if (bytes[4] !== 2 || bytes[5] !== 1) return null
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const sectionTable = Number(view.getBigUint64(0x28, true))
+  const entrySize = view.getUint16(0x3A, true)
+  const count = view.getUint16(0x3C, true)
+  const namesIndex = view.getUint16(0x3E, true)
+  if (entrySize < 0x28 || sectionTable + entrySize * count > bytes.length || namesIndex >= count) return null
+
+  const header = (index: number) => sectionTable + entrySize * index
+  const namesOffset = Number(view.getBigUint64(header(namesIndex) + 0x18, true))
+  const namesSize = Number(view.getBigUint64(header(namesIndex) + 0x20, true))
+  if (namesOffset + namesSize > bytes.length) return null
+
+  const names: string[] = []
+  for (let index = 0; index < count; index++) {
+    const start = namesOffset + view.getUint32(header(index), true)
+    let end = start
+    while (end < namesOffset + namesSize && bytes[end] !== 0) end++
+    names.push(new TextDecoder().decode(bytes.subarray(start, end)))
+  }
+  return names
+}
+
+/**
+ * Why a shipped `libcraft.so` and its symbols file are not what #204 settled
+ * on, one line per reason.
+ *
+ * The library must carry no DWARF: every generated app's APK includes it, and
+ * with DWARF it was about 5.5 MB per ABI. It must carry `.gnu_debuglink`, so a
+ * crash can be matched to the symbols file. And the symbols file must actually
+ * hold the DWARF, or the strip threw it away rather than moving it.
+ */
+export function strippedLibraryProblems(library: string[] | null, symbols: string[] | null): string[] {
+  const problems: string[] = []
+  if (!library) return ['libcraft.so is not an ELF64 little-endian file']
+  const dwarf = library.filter(name => name.startsWith('.debug_'))
+  if (dwarf.length)
+    problems.push(`libcraft.so still carries ${dwarf.join(', ')}; release builds ship without DWARF (#204)`)
+  if (!library.includes('.gnu_debuglink'))
+    problems.push('libcraft.so has no .gnu_debuglink, so nothing ties it to its symbols file')
+  if (!symbols)
+    problems.push('android-symbols has no libcraft.so.debug beside the stripped library')
+  else if (!symbols.includes('.debug_info'))
+    problems.push('libcraft.so.debug holds no .debug_info; the strip discarded the DWARF instead of moving it')
+  return problems
+}
+
+/**
  * The actions the Zig dispatcher saw, by name.
  *
  * Zig and the platform shim answer the same actions with the same shapes -
