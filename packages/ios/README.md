@@ -620,10 +620,21 @@ On macOS with Xcode and XcodeGen installed, run `bun run test:templates` from
 `packages/ios`. It generates a minimal app, a capability-heavy iOS app, and the
 same capability-heavy app with a Watch companion. It builds iOS, Live Activity,
 Watch extension, and Watch app targets against device SDKs with code signing
-disabled. The Watch-enabled iOS target is not built because Xcode requires a
-watchOS runtime to resolve its embedded-app graph; its identical Swift source
-is built in the sibling capability fixture. This checks the actual generated
-Swift and Xcode projects; `bun test` checks the builder's behavior separately.
+disabled.
+
+The Watch-enabled app is also built the way Xcode builds it for a person, with
+the Watch app embedded. The script checks that the bundle carries
+`Watch/<App>Watch.app` with `WKWatchKitApp` and its WatchKit extension, then
+installs the app on an iOS simulator. That needs a watchOS simulator runtime
+matching the selected Xcode (`xcodebuild -downloadPlatform watchOS`), and the
+script fails without one rather than skipping.
+
+Finally, a push-enabled app is built for the simulator in Debug and Release with
+ad-hoc signing. The script reads the `aps-environment` Xcode actually signed
+into each: `development` for Debug, `production` for Release.
+
+This checks the actual generated Swift and Xcode projects; `bun test` checks the
+builder's behavior separately.
 Temporary projects are removed after the run. Pass `--keep` to retain them for
 debugging.
 

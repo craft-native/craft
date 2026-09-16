@@ -153,8 +153,10 @@ jobs:
         run: bun install
 
       # Build generated iOS, Live Activity, and Watch targets against device
-      # SDKs. A sibling iOS fixture avoids the embedded-Watch scheme's runtime
-      # requirement while compiling the same capability-heavy Swift source.
+      # SDKs; build the Watch-enabled app with its Watch app embedded and
+      # install it on an iOS simulator, using the watchOS simulator runtime the
+      # macOS image ships (#193, #194, #195); and read the aps-environment
+      # Debug and Release builds actually sign with (#196).
       - name: Compile generated iOS and Watch projects
         working-directory: packages/ios
         run: bun run test:templates
