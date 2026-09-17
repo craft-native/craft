@@ -270,7 +270,10 @@ describe('zig attribution', () => {
   })
 
   it('reads the refusal Zig writes through its own capability gate', () => {
-    const text = 'info: ios: refusing share; enableShare is not enabled in craft.config.json'
+    const text = [
+      'info: ios: refusing startListening; enableSpeechRecognition is not enabled in craft.config.json',
+      'info: ios: refusing share; enableShare is not enabled in craft.config.json',
+    ].join('\n')
     expect(zigRefusals(text)).toEqual(ZIG_REFUSED_ACTIONS)
   })
 

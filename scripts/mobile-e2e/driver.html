@@ -220,6 +220,87 @@
         }
       },
       {
+        // #207. `craft.geolocation.watchPosition` posted no callbackId, so a
+        // page could not tell a watch that started from one refused. It
+        // answers once updates have started; fixes still arrive as events.
+        // After currentPosition, so authorization is already settled.
+        name: 'geolocation.watchPosition.resolvesTrue',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.geolocation.watchPosition(function () {}) }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'watchPosition never settled'
+            if (outcome.state === 'rejected') return 'watchPosition rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (outcome.value !== true) return 'watchPosition resolved with ' + JSON.stringify(outcome.value)
+          })
+        }
+      },
+      {
+        name: 'geolocation.clearWatch.resolvesTrue',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.geolocation.clearWatch() }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'clearWatch never settled'
+            if (outcome.state === 'rejected') return 'clearWatch rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (outcome.value !== true) return 'clearWatch resolved with ' + JSON.stringify(outcome.value)
+          })
+        }
+      },
+      {
+        // #207 again, and the half a callbackId alone would have broken.
+        // Haptics is on, and native used to answer an enabled haptic with
+        // nothing at all; it only ever rejected. So a page that awaited it
+        // would wait for ever on every call that worked.
+        name: 'haptic.resolvesTrue',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.haptic('light') }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'haptic never settled with haptics enabled'
+            if (outcome.state === 'rejected') return 'haptic rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (outcome.value !== true) return 'haptic resolved with ' + JSON.stringify(outcome.value)
+          })
+        }
+      },
+      {
+        name: 'vibrate.resolvesTrue',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.vibrate([]) }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'vibrate never settled'
+            if (outcome.state === 'rejected') return 'vibrate rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (outcome.value !== true) return 'vibrate resolved with ' + JSON.stringify(outcome.value)
+          })
+        }
+      },
+      {
+        // Speech recognition is off, and `startListening` used to drop the
+        // refusal: the page got undefined and no craftSpeechError either.
+        // Refused before any authorization prompt, so nothing waits on a
+        // microphone the simulator does not have.
+        name: 'speech.disabled.rejects',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.startListening() }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'startListening never settled'
+            if (outcome.state === 'resolved') return 'startListening resolved with ' + JSON.stringify(outcome.value) + ' while speech recognition is disabled'
+            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          })
+        }
+      },
+      {
+        // stopListening is not gated, so it runs with speech off, and it is
+        // the one speech call whose success path a simulator can reach
+        // without a microphone. It used to answer nothing on either side.
+        name: 'speech.stopListening.resolvesTrue',
+        platforms: ['ios'],
+        run: function () {
+          return withTimeout(function () { return window.craft.stopListening() }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'stopListening never settled'
+            if (outcome.state === 'rejected') return 'stopListening rejected: ' + outcome.error.code + ' ' + outcome.error.message
+            if (outcome.value !== true) return 'stopListening resolved with ' + JSON.stringify(outcome.value)
+          })
+        }
+      },
+      {
         // Sharing is off too, and this is the call that used to answer
         // nothing: `craft.share(text)` posted no callbackId, so Swift's
         // CAPABILITY_DISABLED stopped at a nil guard and the page got

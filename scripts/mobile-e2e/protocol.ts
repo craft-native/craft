@@ -80,7 +80,13 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'clipboard.roundTrip',
     'permissions.location.granted',
     'geolocation.currentPosition',
+    'geolocation.watchPosition.resolvesTrue',
+    'geolocation.clearWatch.resolvesTrue',
+    'haptic.resolvesTrue',
+    'vibrate.resolvesTrue',
     'share.disabled.rejects',
+    'speech.disabled.rejects',
+    'speech.stopListening.resolvesTrue',
   ],
   android: [
     'bridge.ready',
@@ -548,12 +554,18 @@ export function zigRefusals(text: string): string[] {
  */
 export const ZIG_TESTED_ACTIONS = [
   'checkPermission',
+  'clearWatch',
   'clipboardRead',
   'clipboardWrite',
   'getCurrentPosition',
   'getDeviceInfo',
+  'haptic',
   'requestPermission',
   'share',
+  'startListening',
+  'stopListening',
+  'vibrate',
+  'watchPosition',
 ]
 
 /**
@@ -569,6 +581,7 @@ export const ZIG_SERVED_ACTIONS = ZIG_TESTED_ACTIONS.filter(action => action !==
 /** The actions the suite configures off, so Zig must refuse each by name. */
 export const ZIG_REFUSED_ACTIONS = [
   'share',
+  'startListening',
 ]
 
 /**

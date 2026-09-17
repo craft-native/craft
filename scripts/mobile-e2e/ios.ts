@@ -23,13 +23,18 @@ const DEEP_LINK_SCHEME = 'crafte2eprobe'
  * was a location promise that never settled with location *enabled*, and a
  * disabled capability cannot reach that code. Sharing took over the rejection.
  *
- * `enableShare` is spelled out although false is the default, because the
- * share case depends on it and a default is not something this file controls.
+ * `enableShare` and `enableSpeechRecognition` are spelled out although false
+ * is the default, because the refusal cases depend on them and a default is
+ * not something this file controls.
  */
 const CONFIG = {
   enableClipboard: true,
   enableGeolocation: true,
+  // On so the success path is exercised: an enabled haptic used to answer
+  // nothing at all (#207).
+  enableHaptics: true,
   enableShare: false,
+  enableSpeechRecognition: false,
   // For the cold-start link (#198), which the harness opens from an XCUITest.
   enableDeepLinks: true,
   urlSchemes: [DEEP_LINK_SCHEME],
