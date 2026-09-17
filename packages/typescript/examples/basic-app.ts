@@ -51,6 +51,9 @@ function setupEventListeners(): void {
   // Deep link handling
   if (craft.deepLinks) {
     craft.deepLinks.onLink((data: DeepLinkData) => {
+      // initializeFeatures() asks getInitialURL() for the launch link after
+      // other awaits, so it would arrive here too.
+      if (data.initial) return;
       console.log('Deep link received:', data.url);
       console.log('Host:', data.host);
       console.log('Path:', data.path);

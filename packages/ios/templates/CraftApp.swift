@@ -2907,24 +2907,35 @@ struct CraftWebView: UIViewRepresentable {
             //
             // Held here instead, and handed to the first subscriber on the
             // next turn, so an unsubscribe returned in the same tick still
-            // applies. The launch link is withdrawn when the page calls
-            // getInitialURL, its other way of receiving it, so a page that
-            // does both in the same tick, in either order, gets it once.
+            // applies. The launch link belongs to getInitialURL once the page
+            // has called it, whether native has dispatched it yet or not, so a
+            // page that does both in the same tick, in either order, gets it
+            // once. That includes a craftReady handler, which runs before
+            // native dispatches anything. A page that asks getInitialURL only
+            // later, after an await, should skip `initial` in onLink.
+            //
+            // The same block runs on Android (#215), where this script can run
+            // twice in one document, so its state lives on window.
             (function installDeepLinkReplay(craft) {
-                var undelivered = [];
-                var subscribed = false;
-                window.addEventListener('craftDeepLink', function(e) {
-                    if (!subscribed) undelivered.push(e.detail);
-                });
+                var replay = window.__craftDeepLinkReplay;
+                if (!replay) {
+                    replay = window.__craftDeepLinkReplay = {undelivered: [], subscribed: false, initialClaimed: false};
+                    window.addEventListener('craftDeepLink', function(e) {
+                        if (!replay.subscribed && !claimed(e.detail)) replay.undelivered.push(e.detail);
+                    });
+                }
+                function claimed(detail) {
+                    return replay.initialClaimed && detail && detail.initial;
+                }
                 craft._subscribeDeepLinks = function(callback) {
                     var active = true;
-                    var listener = function(e) { callback(e.detail); };
+                    var listener = function(e) { if (!claimed(e.detail)) callback(e.detail); };
                     window.addEventListener('craftDeepLink', listener);
-                    if (!subscribed) {
-                        subscribed = true;
+                    if (!replay.subscribed) {
+                        replay.subscribed = true;
                         setTimeout(function() {
-                            var pending = undelivered;
-                            undelivered = [];
+                            var pending = replay.undelivered;
+                            replay.undelivered = [];
                             if (!active) return;
                             pending.forEach(function(detail) { callback(detail); });
                         }, 0);
@@ -2935,7 +2946,8 @@ struct CraftWebView: UIViewRepresentable {
                     };
                 };
                 craft._claimInitialDeepLink = function() {
-                    undelivered = undelivered.filter(function(detail) { return !(detail && detail.initial); });
+                    replay.initialClaimed = true;
+                    replay.undelivered = replay.undelivered.filter(function(detail) { return !(detail && detail.initial); });
                 };
             })(window.craft);
 

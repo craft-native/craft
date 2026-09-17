@@ -23,17 +23,22 @@ function pageScript(): string {
 
 interface Post { action: string, callbackId?: string, [key: string]: unknown }
 
-function loadPage() {
+type Listener = (event: { type: string, detail: unknown }) => void
+
+/** `beforeInject` runs first, the way a page's own script runs before WebKit's didFinish injects the bridge. */
+function loadPage(beforeInject?: (page: Record<string, any>) => void) {
   const posts: Post[] = []
-  const listeners: Record<string, ((event: { type: string, detail: unknown }) => void)[]> = {}
+  const listeners: Record<string, Listener[]> = {}
   const page: Record<string, any> = {
     webkit: { messageHandlers: { craft: { postMessage: (message: Post) => posts.push(message) } } },
-    addEventListener: (type: string, listener: (event: { type: string, detail: unknown }) => void) => {
+    addEventListener: (type: string, listener: Listener) => {
       (listeners[type] ||= []).push(listener)
     },
-    removeEventListener: () => {},
+    removeEventListener: (type: string, listener: Listener) => {
+      listeners[type] = (listeners[type] || []).filter(existing => existing !== listener)
+    },
     dispatchEvent: (event: { type: string, detail: unknown }) => {
-      for (const listener of listeners[event.type] || []) listener(event)
+      for (const listener of [...(listeners[event.type] || [])]) listener(event)
       return true
     },
     location: { href: 'craft://app/' },
@@ -47,6 +52,7 @@ function loadPage() {
     }
   }
   const quiet = { log() {}, warn() {}, error() {} }
+  beforeInject?.(page)
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'navigator', 'CustomEvent', 'console', pageScript())(
     page,
@@ -69,6 +75,9 @@ function loadPage() {
     // What Swift's resolveCallback and rejectCallback evaluate.
     answer: (action: string, value: unknown) => craft._resolveCallback(last(action).callbackId, value),
     refuse: (action: string, message: string, code: string) => craft._rejectCallback(last(action).callbackId, message, code),
+    // What DeepLinkManager.dispatchDeepLink evaluates, once the script has run.
+    link: (url: string, initial: boolean) =>
+      page.dispatchEvent(new CustomEvent('craftDeepLink', { detail: { url, initial } })),
   }
 }
 
@@ -144,4 +153,36 @@ describe('the injected iOS page script', () => {
       await expect(settled).rejects.toMatchObject({ code: 'NATIVE_CALL_FAILED' })
     })
   }
+
+  // #198 and #215. The Android page script runs the same block; its own test
+  // covers the rest of the contract.
+  const tick = () => new Promise(resolve => setTimeout(resolve, 5))
+
+  it('hands the launch link to a page that subscribes after it arrived', async () => {
+    const page = loadPage()
+    page.link('app://launch', true)
+
+    const seen: unknown[] = []
+    page.craft.deepLinks.onLink((detail: unknown) => seen.push(detail))
+    await tick()
+
+    expect(seen).toEqual([{ url: 'app://launch', initial: true }])
+  })
+
+  it('delivers the launch link once to a craftReady handler that asks for it both ways', async () => {
+    // The handler runs inside the script, before native has dispatched the
+    // link at all, so there is nothing held yet for getInitialURL to claim.
+    const seen: unknown[] = []
+    const page = loadPage((window) => {
+      window.addEventListener('craftReady', () => {
+        void window.craft.deepLinks.getInitialURL()
+        window.craft.deepLinks.onLink((detail: unknown) => seen.push(detail))
+      })
+    })
+    page.link('app://launch', true)
+    await tick()
+
+    expect(seen).toEqual([])
+    expect(page.last('getInitialURL').callbackId).toMatch(/^cb_\d+$/)
+  })
 })

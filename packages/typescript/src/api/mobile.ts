@@ -1286,18 +1286,24 @@ export const deepLinks = {
   async getInitialURL(): Promise<string | null> {
     return normalizeDeepLinkURL(await getCraftRoot()?.deepLinks?.getInitialURL?.())
   },
-  onLink(callback: (url: string) => void): () => void {
+  /**
+   * The second argument says whether this is the link that launched the app.
+   * A page that also calls `getInitialURL()` after an await gets that link
+   * from both, and can skip it here when `initial` is true.
+   */
+  onLink(callback: (url: string, link: { initial: boolean }) => void): () => void {
     const craft = getCraftRoot()
     if (craft?.deepLinks?.onLink) {
       return craft.deepLinks.onLink((value: unknown) => {
         const url = normalizeDeepLinkURL(value)
-        if (url) callback(url)
+        if (url) callback(url, { initial: (value as { initial?: unknown } | null)?.initial === true })
       }) ?? (() => {})
     }
     if (typeof globalThis === 'undefined') return () => {}
     const listener = (event: Event) => {
-      const url = normalizeDeepLinkURL((event as CustomEvent<unknown>).detail)
-      if (url) callback(url)
+      const detail = (event as CustomEvent<unknown>).detail
+      const url = normalizeDeepLinkURL(detail)
+      if (url) callback(url, { initial: (detail as { initial?: unknown } | null)?.initial === true })
     }
     globalThis.addEventListener('craftDeepLink', listener)
     return () => globalThis.removeEventListener('craftDeepLink', listener)
