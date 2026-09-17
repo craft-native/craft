@@ -49,18 +49,6 @@ pub fn set(url: ?[]const u8) !void {
     if (old) |bytes| std.heap.page_allocator.free(bytes);
 }
 
-pub fn rememberFirst(url: []const u8) !void {
-    const candidate = try std.heap.page_allocator.dupe(u8, url);
-    lock();
-    if (initial_url == null) {
-        initial_url = candidate;
-        unlock();
-    } else {
-        unlock();
-        std.heap.page_allocator.free(candidate);
-    }
-}
-
 pub fn snapshot(allocator: std.mem.Allocator) !?[]u8 {
     lock();
     defer unlock();
@@ -81,7 +69,12 @@ fn stringOrEmpty(j: Jni, value: jobject) !jobject {
 }
 
 /// Build the exact object both Kotlin paths built for one URL.
-pub fn payload(j: Jni, allocator: std.mem.Allocator, url: []const u8) ![]u8 {
+///
+/// `initial` is set for a dispatched `craftDeepLink` event, and says whether
+/// this link launched the app (#215), which the page uses to hand it to its
+/// first subscriber once. `getInitialURL`'s answer passes null and carries no
+/// such field, as on iOS.
+pub fn payload(j: Jni, allocator: std.mem.Allocator, url: []const u8, initial: ?bool) ![]u8 {
     try j.pushLocalFrame(32);
     defer _ = j.popLocalFrame(null);
 
@@ -137,17 +130,27 @@ pub fn payload(j: Jni, allocator: std.mem.Allocator, url: []const u8) ![]u8 {
     }
     try jsonPut(j, root, "queryParams", query_params);
 
+    if (initial) |flag| {
+        const put_result = try j.callObjectMethodA(
+            root,
+            try j.methodId(json_cls, "put", "(Ljava/lang/String;Z)Lorg/json/JSONObject;"),
+            &.{ .{ .l = try j.newStringUtf8(allocator, "initial") }, .{ .z = if (flag) jni.JNI_TRUE else jni.JNI_FALSE } },
+        );
+        j.deleteLocalRef(put_result);
+    }
+
     const rendered = try j.callObjectMethod(root, try j.methodId(json_cls, "toString", "()Ljava/lang/String;"));
     return j.stringToUtf8(allocator, rendered);
 }
 
 const testing = std.testing;
 
-test "reset, set and first-only storage preserve the bridge lifetime" {
+test "reset and set preserve the bridge lifetime" {
+    // Only Kotlin decides which link is the launch link now, so a dispatched
+    // link no longer becomes the initial URL here as a side effect (#215).
     reset();
     try testing.expect(try snapshot(testing.allocator) == null);
-    try rememberFirst("craft://first");
-    try rememberFirst("craft://second");
+    try set("craft://first");
     const first = (try snapshot(testing.allocator)).?;
     defer testing.allocator.free(first);
     try testing.expectEqualStrings("craft://first", first);
