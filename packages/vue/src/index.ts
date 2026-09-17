@@ -128,7 +128,14 @@ export function useHaptic() {
       console.warn('Craft not ready');
       return;
     }
-    await craft.value.haptic(type);
+    try {
+      await craft.value.haptic(type);
+    }
+    catch (error) {
+      // Feedback: an app built with haptics off plays nothing, the same as
+      // Craft not being ready. Any other failure still reaches the caller.
+      if ((error as { code?: string } | null)?.code !== 'CAPABILITY_DISABLED') throw error;
+    }
   };
 
   return { haptic };

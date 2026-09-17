@@ -2,6 +2,13 @@
 
 Provide tactile feedback through device vibrations.
 
+Haptics are feedback, so these methods never stop a flow for a capability the
+app left off. On iOS, with `enableHaptics` off in `craft.config.json`, they
+resolve without playing anything, the way the web fallback does on a device
+with no vibration motor. They reject only when the native call itself fails.
+The raw `window.craft.haptic()` is different: it rejects with
+`CAPABILITY_DISABLED`, for code that needs to know.
+
 ## Import
 
 ```typescript
