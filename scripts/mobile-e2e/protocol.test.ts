@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -372,6 +372,46 @@ describe('cold-start deep links', () => {
       'the subscribe cold start was not launched by its link: the page saw "crafte2eprobe://e2e/cold?run=an-earlier-run&receive=subscribe"',
       'the both cold start never reported; see xcodebuild-deeplink.log',
     ])
+  })
+
+  it('fails an onLink that returns no way to unsubscribe, and ignores a report that predates the field', () => {
+    const noUnsubscribe = line('subscribe', { launch: `${LINK}&receive=subscribe`, receive: 'subscribe', onLink: [{ url: `${LINK}&receive=subscribe`, initial: true }], initialURL: null, unsubscribe: 'undefined' })
+    expect(deepLinkProblems(deepLinkResults(`${noUnsubscribe}\n${passing.split('\n')[2]}`), LINK))
+      .toEqual(['onLink returned undefined in the subscribe cold start, expected a function that unsubscribes'])
+    expect(deepLinkProblems(deepLinkResults(passing), LINK)).toEqual([])
+  })
+})
+
+describe('cold-start deep links on Android', () => {
+  const LINK = 'crafte2eprobe://e2e/cold?run=craft-e2e-android-shim-1'
+  const report = { launch: `${LINK}&receive=subscribe`, receive: 'subscribe', onLink: [{ url: `${LINK}&receive=subscribe`, initial: true }], initialURL: null, unsubscribe: 'function' }
+  const json = JSON.stringify(report)
+
+  it('reads the report once, from either log channel', () => {
+    // console.log reaches logcat under chromium, quoted, with its source; the
+    // same line through craft.log arrives under the bridge's tag.
+    const text = [
+      `09-17 11:29:25.000  2611  2611 I chromium: [INFO:CONSOLE(1)] "CRAFT-E2E-DEEPLINK ${json}", source: https://appassets.androidplatform.net/ (1)`,
+      `09-17 11:29:25.001  2611  2611 D CraftBridge: CRAFT-E2E-DEEPLINK ${json}`,
+    ].join('\n')
+
+    expect(deepLinkReports(text)).toEqual([report])
+  })
+
+  it('keeps two different reports apart, so the runner can refuse them', () => {
+    const other = JSON.stringify({ ...report, onLink: [] })
+    expect(deepLinkReports(`D CraftBridge: CRAFT-E2E-DEEPLINK ${json}\nD CraftBridge: CRAFT-E2E-DEEPLINK ${other}`)).toHaveLength(2)
+  })
+
+  it('is not mistaken for a driver event, or a malformed one, by the run verdict', () => {
+    const lines = parseDriverOutput(`D CraftBridge: CRAFT-E2E-DEEPLINK ${json}`)
+    expect(lines.events).toEqual([])
+    expect(lines.malformed).toEqual([])
+  })
+
+  it('names the logcat file for a cold start that never reported', () => {
+    expect(deepLinkProblems([{ ...report, receive: 'subscribe', link: `${LINK}&receive=subscribe` }], LINK, receive => `android-shim/deeplink-${receive}-logcat.txt`))
+      .toEqual(['the both cold start never reported; see android-shim/deeplink-both-logcat.txt'])
   })
 })
 

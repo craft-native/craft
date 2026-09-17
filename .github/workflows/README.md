@@ -76,6 +76,14 @@ that part. It waits until `dumpsys window` shows the chooser holding input
 focus, saves `share-menu.png`, presses Back, and fails the run if the page asked
 for a dismissal and no menu ever appeared.
 
+After the suite, each leg also cold-starts the app through a link twice, the
+same two ways as iOS, with `adb shell am start -W -a android.intent.action.VIEW
+-d '<link>' <package>`. Naming the package rather than the activity means the
+link is resolved through the generated manifest's intent filter, and `-W` must
+report `LaunchState: COLD`, so a link delivered to an app that was still
+running cannot pass for one that launched it. The page writes its report to
+logcat, and each launch keeps its own `deeplink-<mode>-logcat.txt`.
+
 The runtime leg fails on any line where a Zig native gave up — "fell through
 to the shim", "failed with no fallback" or "could not reach the page" — because
 Kotlin answering in its place is invisible to the page, and a runtime that has

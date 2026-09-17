@@ -375,9 +375,11 @@
     //
     // Runs after the suite, so the subscription is seconds after the bridge
     // appeared, the way an app that hydrates before wiring its router
-    // subscribes. The harness cold-starts the app through a link from an
-    // XCUITest, which reads this paragraph back. The app's console is not
-    // captured on that launch; SpringBoard started it, not simctl.
+    // subscribes. On iOS the harness cold-starts the app through a link from
+    // an XCUITest, which reads this paragraph back: the app's console is not
+    // captured on that launch, because SpringBoard started it, not simctl. On
+    // Android (#215) `am start` opens the link and the harness reads the same
+    // line from logcat.
     //
     // The link says which way to receive it. `receive=subscribe` only
     // subscribes, and must get the launch link exactly once. `receive=both`
@@ -387,16 +389,30 @@
     function probeDeepLinks() {
       var launch = dispatchedLinks.filter(function (detail) { return detail.initial === true })[0] || null
       var receive = launch && launch.url.indexOf('receive=both') !== -1 ? 'both' : 'subscribe'
-      var seen = { launch: launch ? launch.url : null, receive: receive, onLink: [], initialURL: null }
+      var seen = { launch: launch ? launch.url : null, receive: receive, onLink: [], initialURL: null, unsubscribe: null }
+      var answered = receive !== 'both'
       if (receive === 'both') {
-        window.craft.deepLinks.getInitialURL().then(function (value) { seen.initialURL = value && value.url })
+        window.craft.deepLinks.getInitialURL().then(
+          function (value) { seen.initialURL = value && value.url; answered = true },
+          function () { answered = true }
+        )
       }
-      window.craft.deepLinks.onLink(function (detail) {
+      var unsubscribe = window.craft.deepLinks.onLink(function (detail) {
         seen.onLink.push({ url: detail && detail.url, initial: detail && detail.initial })
       })
-      setTimeout(function () {
-        document.getElementById('deeplink').textContent = 'CRAFT-E2E-DEEPLINK ' + JSON.stringify(seen)
-      }, 1500)
+      seen.unsubscribe = typeof unsubscribe
+      // Long enough for a replay, or a second delivery, to have arrived, and
+      // for getInitialURL to answer on a slow emulator.
+      var waited = 0
+      function report() {
+        waited += 250
+        if ((!answered || waited < 1500) && waited < 6000) { setTimeout(report, 250); return }
+        var line = 'CRAFT-E2E-DEEPLINK ' + JSON.stringify(seen)
+        document.getElementById('deeplink').textContent = line
+        try { console.log(line) } catch (ignored) {}
+        try { if (window.craft && window.craft.log) window.craft.log(line) } catch (ignored) {}
+      }
+      setTimeout(report, 250)
     }
 
     function waitForBridge(attempt) {
@@ -428,7 +444,7 @@
         if (index >= selected.length) {
           emit({ event: 'done', passed: passed, failed: failed })
           document.getElementById('headline').textContent = failed ? 'FAILED' : 'PASSED'
-          if (platform === 'ios') probeDeepLinks()
+          probeDeepLinks()
           return
         }
 

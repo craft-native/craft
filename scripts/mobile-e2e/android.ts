@@ -2,7 +2,8 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { init } from '../../packages/android/src/index'
-import { androidDeclines, awaitedNeeds, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems } from './protocol'
+import type { DeepLinkResult } from './protocol'
+import { androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /**
@@ -19,10 +20,17 @@ import { command, driverPage, waitForFile } from './support'
  * Geolocation on, because that is what puts the location permissions in the
  * manifest, and `pm grant` refuses a permission the manifest does not declare.
  * The Kotlin does not otherwise read the flag (#209).
+ *
+ * Deep links on, with a scheme of the probe's own, for the cold starts through
+ * a link (#215). The generator refuses the flag without a scheme.
  */
+const DEEP_LINK_SCHEME = 'crafte2eprobe'
+
 const CONFIG = {
   enablePushNotifications: false,
   enableGeolocation: true,
+  enableDeepLinks: true,
+  urlSchemes: [DEEP_LINK_SCHEME],
 }
 
 /**
@@ -74,6 +82,11 @@ function legs(runtimeDir: string | null): Leg[] {
 /** What JNI_OnLoad logs once it has bound the natives. */
 const REGISTERED = /craft: registered (\d+) natives on com\/craft\/runtime\/CraftNative/
 
+/** Whether the page gave up before it could report anything. */
+function parseFatal(text: string): boolean {
+  return hasTerminated(text) && /"event":"fatal"/.test(text)
+}
+
 async function adb(argv: string[], options: { serial: string, logPath?: string, allowFailure?: boolean }) {
   return command(['adb', '-s', options.serial, ...argv], { logPath: options.logPath, allowFailure: options.allowFailure })
 }
@@ -115,6 +128,14 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   writeFileSync(join(assets, 'index.html'), driverPage(nonce, 'android'))
   copyFileSync(join(assets, 'index.html'), join(evidence, 'index.html'))
   copyFileSync(join(assets, 'craft.config.json'), join(evidence, 'craft.config.json'))
+
+  // The intent filter the cold starts depend on, checked where it is written.
+  // `am start` below names the package, not the activity, so it resolves the
+  // link through this filter the way a browser would.
+  const manifest = readFileSync(join(project, 'app', 'src', 'main', 'AndroidManifest.xml'), 'utf8')
+  writeFileSync(join(evidence, 'AndroidManifest.xml'), manifest)
+  if (!manifest.includes(`android:scheme="${DEEP_LINK_SCHEME}"`))
+    failures.push(`the generated manifest declares no ${DEEP_LINK_SCHEME}:// intent filter, so no link can open the app`)
 
   // The generator writes gradle-wrapper.properties but never gradlew, so there
   // is no wrapper to invoke. Call Gradle directly, the way the templates gate
@@ -173,47 +194,78 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   if (runtimePermissionGranted(packageState, 'android.permission.ACCESS_FINE_LOCATION') === true)
     failures.push('ACCESS_FINE_LOCATION is granted too, so the location case cannot tell approximate-only from precise')
 
-  // Not best-effort: the ring buffer outlives an uninstall, and a transcript
-  // left in it would otherwise be read as this run's. The plan event carries
-  // this run's nonce as a second guard.
-  await adb(['logcat', '-c'], { serial })
-  await adb(['shell', 'am', 'force-stop', PACKAGE], { serial, allowFailure: true })
-  await adb(['shell', 'am', 'start', '-n', `${PACKAGE}/.MainActivity`], { serial, logPath: join(evidence, 'adb.log') })
+  // One launch of the app: stopped first, then started with `start`, then
+  // read until `isDone`. The suite runs on every launch, the share case
+  // included, so every launch dismisses the menu when the page asks.
+  async function launch(prefix: string, start: string[], isDone: (text: string) => boolean) {
+    // Stopped and gone before the buffer is cleared, so nothing the previous
+    // launch logs late lands in this one's. Not best-effort: the ring buffer
+    // outlives an uninstall, and a transcript left in it would otherwise be
+    // read as this run's. The plan event carries this run's nonce as a
+    // second guard.
+    await adb(['shell', 'am', 'force-stop', PACKAGE], { serial, allowFailure: true })
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const running = await adb(['shell', 'pidof', PACKAGE], { serial, allowFailure: true })
+      if (!running.stdout.trim()) break
+      await Bun.sleep(500)
+    }
+    await adb(['logcat', '-c'], { serial })
+    const started = await adb(['shell', 'am', 'start', ...start], { serial, logPath: join(evidence, 'adb.log'), allowFailure: true })
+    const startedText = `${started.stdout}\n${started.stderr}`
+    // `am start` exits 0 for most refusals and prints `Error:` instead, so
+    // both are checked. Nothing to wait for when nothing started.
+    const refused = started.exitCode !== 0 || /^Error:/m.test(startedText)
 
-  // The share case needs its menu dismissed, and nothing on the device will
-  // do that: the harness plays the person. It acts only once the page has
-  // asked and the menu is really in front, and it keeps a screenshot of the
-  // menu, which is the evidence that there was one to dismiss.
-  let shareMenu: 'not asked' | 'asked' | 'dismissed' = 'not asked'
+    // The share case needs its menu dismissed, and nothing on the device will
+    // do that: the harness plays the person. It acts only once the page has
+    // asked and the menu is really in front, and it keeps a screenshot of the
+    // menu, which is the evidence that there was one to dismiss.
+    let shareMenu: 'not asked' | 'asked' | 'dismissed' = 'not asked'
 
-  async function dismissShareMenuWhenAsked(log: string): Promise<void> {
-    if (shareMenu === 'dismissed' || !awaitedNeeds(log).includes(DISMISS_SHARE_MENU)) return
-    shareMenu = 'asked'
+    async function dismissShareMenuWhenAsked(log: string): Promise<void> {
+      if (shareMenu === 'dismissed' || !awaitedNeeds(log).includes(DISMISS_SHARE_MENU)) return
+      shareMenu = 'asked'
 
-    const windows = await command(['adb', '-s', serial, 'shell', 'dumpsys', 'window'], { allowFailure: true })
-    if (!shareMenuInFront(windows.stdout)) return
+      const windows = await command(['adb', '-s', serial, 'shell', 'dumpsys', 'window'], { allowFailure: true })
+      if (!shareMenuInFront(windows.stdout)) return
 
-    await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, 'share-menu.png') })
-    await adb(['shell', 'input', 'keyevent', 'KEYCODE_BACK'], { serial, logPath: join(evidence, 'adb.log') })
-    shareMenu = 'dismissed'
+      await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, `${prefix}share-menu.png`) })
+      await adb(['shell', 'input', 'keyevent', 'KEYCODE_BACK'], { serial, logPath: join(evidence, 'adb.log') })
+      shareMenu = 'dismissed'
+    }
+
+    // logcat -d dumps and exits, so poll it into the evidence file rather than
+    // streaming: a stream would have to be killed at exactly the right moment,
+    // and the dump is cheap.
+    const logPath = join(evidence, `${prefix}logcat.txt`)
+    const finished = !refused && await waitForFile(logPath, options.timeoutMs, isDone, async () => {
+      const dumped = await command(['adb', '-s', serial, 'logcat', '-d', ...LOGCAT_FILTER], { allowFailure: true })
+      writeFileSync(logPath, dumped.stdout)
+      await dismissShareMenuWhenAsked(dumped.stdout)
+    })
+
+    await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, `${prefix}screen.png`) })
+    const full = await command(['adb', '-s', serial, 'logcat', '-d', '-b', 'all'], { allowFailure: true })
+    writeFileSync(join(evidence, `${prefix}logcat-full.txt`), full.stdout)
+    await adb(['shell', 'am', 'force-stop', PACKAGE], { serial, allowFailure: true })
+
+    return {
+      started: startedText,
+      refused,
+      finished,
+      shareMenu,
+      log: existsSync(logPath) ? readFileSync(logPath, 'utf8') : '',
+      full: full.stdout,
+    }
   }
 
-  // logcat -d dumps and exits, so poll it into the evidence file rather than
-  // streaming: a stream would have to be killed at exactly the right moment,
-  // and the dump is cheap.
-  const logPath = join(evidence, 'logcat.txt')
-  const finished = await waitForFile(logPath, options.timeoutMs, hasTerminated, async () => {
-    const dumped = await command(['adb', '-s', serial, 'logcat', '-d', ...LOGCAT_FILTER], { allowFailure: true })
-    writeFileSync(logPath, dumped.stdout)
-    await dismissShareMenuWhenAsked(dumped.stdout)
-  })
+  const main = await launch('', ['-n', `${PACKAGE}/.MainActivity`], hasTerminated)
+  if (main.refused)
+    throw new Error(`am start refused to launch the app: ${main.started.trim()}`)
+  const finished = main.finished
+  const shareMenu = main.shareMenu
 
-  await command(['adb', '-s', serial, 'exec-out', 'screencap', '-p'], { allowFailure: true, outPath: join(evidence, 'screen.png') })
-  const full = await command(['adb', '-s', serial, 'logcat', '-d', '-b', 'all'], { allowFailure: true })
-  writeFileSync(join(evidence, 'logcat-full.txt'), full.stdout)
-  await adb(['shell', 'am', 'force-stop', PACKAGE], { serial, allowFailure: true })
-
-  const logText = existsSync(logPath) ? readFileSync(logPath, 'utf8') : ''
+  const logText = main.log
   if (!finished)
     failures.push(`the app produced no terminating event within ${options.timeoutMs}ms; see ${label}/logcat.txt`)
 
@@ -249,6 +301,55 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     failures.push(`the bridge reported sdkVersion ${observed[1]} but the device says ${sdk}`)
   }
 
+  // #215: cold-start the app through a link, twice, and judge what the page
+  // received, with the same judgement the iOS legs use. Through
+  // `am start -a VIEW -d`, which Android resolves through the manifest's
+  // intent filter with no prompt; the package names which app, not which
+  // activity, so the filter is what is tested. Quoted, because `adb shell`
+  // hands the device shell one string and `&` would end the command there.
+  const coldLink = `${DEEP_LINK_SCHEME}://e2e/cold?run=${encodeURIComponent(nonce)}`
+  const coldStarts: DeepLinkResult[] = []
+  const coldLogs: string[] = []
+  // Modes that already failed for a reason of their own, so the verdict below
+  // does not also call them "never reported".
+  const coldFailed = new Set<DeepLinkResult['receive']>()
+  for (const receive of ['subscribe', 'both'] as const) {
+    const link = `${coldLink}&receive=${receive}`
+    const prefix = `deeplink-${receive}-`
+    const cold = await launch(
+      prefix,
+      ['-W', '-a', 'android.intent.action.VIEW', '-c', 'android.intent.category.BROWSABLE', '-d', `'${link}'`, PACKAGE],
+      text => deepLinkReports(text).length > 0 || parseFatal(text),
+    )
+    coldLogs.push(cold.full)
+    writeFileSync(join(evidence, `${prefix}am-start.txt`), cold.started)
+
+    // `am start -W` says how the activity started. Anything but a cold launch
+    // means the link went to a running app through onNewIntent, which is the
+    // warm path, not the one under test.
+    if (cold.refused || !/Status: ok/.test(cold.started) || !/LaunchState: COLD/.test(cold.started)) {
+      failures.push(`the ${receive} cold start did not launch the app cold: ${cold.started.trim().split('\n').slice(-3).join(' / ')}`)
+      coldFailed.add(receive)
+      continue
+    }
+
+    const reports = deepLinkReports(cold.log)
+    if (reports.length > 1) {
+      failures.push(`the ${receive} cold start reported ${reports.length} different results; see ${label}/${prefix}logcat.txt`)
+      coldFailed.add(receive)
+    }
+    else if (reports.length === 1)
+      coldStarts.push({ ...reports[0]!, receive, link })
+
+    const coldRegistered = REGISTERED.test(cold.log)
+    if (leg.requireZig && !coldRegistered)
+      failures.push(`the Zig runtime did not register its natives on the ${receive} cold start; see ${label}/${prefix}logcat.txt`)
+    if (!leg.requireZig && coldRegistered)
+      failures.push(`the shim leg registered natives on the ${receive} cold start; it was generated with no runtime`)
+  }
+  failures.push(...deepLinkProblems(coldStarts, coldLink, receive => `${label}/deeplink-${receive}-logcat.txt`)
+    .filter(problem => ![...coldFailed].some(receive => problem.startsWith(`the ${receive} cold start never reported`))))
+
   // Did the Zig runtime load, bind — and then actually answer? JNI_OnLoad
   // reports the first two on the happy path as well as the failure ones, and
   // every way a native can give up now says so too (android_dispatch.zig's
@@ -265,7 +366,9 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   // the part worth quoting back.
   const registered = logText.match(REGISTERED)
   const fullLog = existsSync(join(evidence, 'logcat-full.txt')) ? readFileSync(join(evidence, 'logcat-full.txt'), 'utf8') : logText
-  const declines = androidDeclines(fullLog)
+  // The cold starts too: a link Zig failed to dispatch falls through to
+  // Kotlin, and the page could not tell.
+  const declines = [fullLog, ...coldLogs].flatMap(text => androidDeclines(text))
   const zigActions: string[] = []
 
   if (leg.requireZig) {
