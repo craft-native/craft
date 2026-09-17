@@ -56,6 +56,7 @@ const capabilities = @import("capabilities.zig");
 const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
+const compat = @import("compat.zig");
 const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
@@ -121,12 +122,24 @@ pub const SiriBridge = struct {
         bridge_error.sendResultToJS(self.allocator, A.register_siri_shortcut, out.items);
     }
 
-    /// Delete a donated activity, and answer when the deletion is done.
+    /// Delete a donated activity, and answer when the deletion is done, or
+    /// with `TIMEOUT` if it has not said so within `removal_deadline_ms`.
     ///
     /// `deleteSavedUserActivitiesWithPersistentIdentifiers:completionHandler:`
     /// takes a `void (^)(void)`, and Swift replies from inside it. Replying
     /// before it fired would tell the page a shortcut is gone while Siri can
     /// still match it — the window is small and the claim is still false.
+    ///
+    /// The completion comes from a system daemon, and on a freshly booted
+    /// simulator it sometimes never comes (#211). Nothing else would ever
+    /// settle the call, so the deadline does, and never with `removed: true`:
+    /// the deletion may or may not have happened, and a second removal is
+    /// harmless.
+    ///
+    /// Every step that can fail comes before the reply slot is leased, except
+    /// claiming a completion block, whose refusal the two `errdefer`s undo.
+    /// Once a block holds the parked reply, nothing may fail until Foundation
+    /// has it.
     fn removeShortcut(self: *Self, data: []const u8) !void {
         if (!is_darwin) return BridgeError.PlatformNotSupported;
 
@@ -136,6 +149,9 @@ pub const SiriBridge = struct {
         const NSUserActivity = objc.objc_getClass("NSUserActivity") orelse
             return BridgeError.PlatformNotSupported;
         const identifiers = try singletonArray(self.allocator, fields.action);
+        const sel = objc.sel_registerName(
+            "deleteSavedUserActivitiesWithPersistentIdentifiers:completionHandler:",
+        ) orelse return BridgeError.NativeCallFailed;
 
         // The reply names the action, so it is shaped before the ticket exists
         // and handed to the slot: the completion carries no arguments at all
@@ -159,14 +175,20 @@ pub const SiriBridge = struct {
         };
         errdefer ios_async.abandon(ticket);
 
-        publishPendingCall(ticket, reply);
+        const block = claimBlock(ticket, reply) orelse {
+            std.log.warn(
+                "removeSiriShortcut: all {d} completion blocks are still owed a completion " ++
+                    "Foundation never delivered; refusing rather than reusing one",
+                .{block_count},
+            );
+            return BridgeError.NativeCallFailed;
+        };
 
-        const sel = objc.sel_registerName(
-            "deleteSavedUserActivitiesWithPersistentIdentifiers:completionHandler:",
-        ) orelse return BridgeError.NativeCallFailed;
+        ios_async.scheduleDeadline(ticket, removal_deadline_ms, removalTimedOut);
+
         const DeleteFn = *const fn (objc.Class, objc.SEL, Id, *anyopaque) callconv(.c) void;
         const deleteFn: DeleteFn = @ptrCast(&objc.objc_msgSend);
-        deleteFn(NSUserActivity, sel, identifiers, doneBlock(ticket));
+        deleteFn(NSUserActivity, sel, identifiers, @ptrCast(&done_blocks[block]));
     }
 };
 
@@ -353,36 +375,107 @@ fn release(object: Id) void {
 // The deletion completion
 // ---------------------------------------------------------------------------
 
-/// The reply a slot's completion will send.
+/// How long a removal waits for its completion before answering `TIMEOUT`.
+///
+/// For `craft.siri.remove`, which arms no timeout of its own, this is the only
+/// thing that settles the call; for `_invoke` and `craft-bridge.js`, it is
+/// well under their 30 s, so the page hears the native answer rather than its
+/// own. It is the same budget the slice fixture
+/// gives a daemon-served location fix on the same simulator. A completion
+/// that arrives in time logs how long it took, so the number can be checked
+/// against CI.
+const removal_deadline_ms: u32 = 15_000;
+
+/// A removal waiting on its completion.
 ///
 /// `void (^)(void)` carries nothing — not even a success flag — so everything
 /// the reply needs is shaped before the call and parked here. The ticket is
-/// stored rather than rebuilt from the slot index, because a `Ticket` is an
-/// index *and* a generation and inventing the generation would defeat the
-/// check that stops a late completion answering whoever holds the slot now.
+/// stored rather than rebuilt, because a `Ticket` is an index *and* a
+/// generation, and the deadline matches on both.
 const PendingCall = struct {
     ticket: ios_async.Ticket,
-    /// Owned, `c_allocator`. Freed when the completion fires.
+    /// Owned, `c_allocator`. Freed by whichever of the completion and the
+    /// deadline takes the call.
     reply: []u8,
+    started_ms: i64,
 };
 
-var pending_calls: [ios_async.max_in_flight]?PendingCall = @splat(null);
+/// One per completion block, not per reply slot.
+///
+/// A block knows only its own index. If blocks were chosen by reply slot, a
+/// deadline would release slot k, the next removal would lease slot k and get
+/// the same block, and the first removal's late completion would then answer
+/// the second with `removed: true` before its deletion had finished. So a
+/// block whose call the deadline answered stays `owed` until Foundation calls
+/// it, and is never handed to another call in the meantime.
+const BlockState = union(enum) {
+    free,
+    waiting: PendingCall,
+    /// Answered by the deadline. Foundation still holds this block and may
+    /// call it; when it does, that call is ignored and the block is freed.
+    /// Carries when the call started, so a late completion can say how late.
+    owed: i64,
+};
+
+/// Twice the reply slots, so every slot can be waiting while as many blocks
+/// again are still owed a completion that has not come.
+const block_count = 2 * ios_async.max_in_flight;
+
+var blocks: [block_count]BlockState = @splat(.free);
 var pending_mutex: compat_mutex.Mutex = .{};
 
-fn publishPendingCall(ticket: ios_async.Ticket, reply: []u8) void {
+/// Park `reply` on the first free block. Null when every block is waiting or
+/// owed, which the caller refuses rather than reusing an owed block.
+fn claimBlock(ticket: ios_async.Ticket, reply: []u8) ?u5 {
     pending_mutex.lock();
     defer pending_mutex.unlock();
-    pending_calls[ticket.index] = .{ .ticket = ticket, .reply = reply };
+    for (&blocks, 0..) |*state, i| {
+        if (state.* != .free) continue;
+        state.* = .{ .waiting = .{ .ticket = ticket, .reply = reply, .started_ms = compat.milliTimestamp() } };
+        return @intCast(i);
+    }
+    return null;
 }
 
-/// Read and clear. Clearing is what makes a second fire of the same completion
-/// a no-op rather than a second reply and a double free.
-fn takePendingCall(index: u5) ?PendingCall {
+/// The deadline's half: take the call `ticket` names if it is still waiting,
+/// and leave its block owed. Matching the whole ticket is what stops a timer
+/// from expiring a newer call that leased the same reply slot.
+fn expireIfWaiting(ticket: ios_async.Ticket) ?PendingCall {
     pending_mutex.lock();
     defer pending_mutex.unlock();
-    const call = pending_calls[index];
-    pending_calls[index] = null;
-    return call;
+    for (&blocks) |*state| {
+        const call = switch (state.*) {
+            .waiting => |call| call,
+            else => continue,
+        };
+        if (call.ticket.index != ticket.index or call.ticket.generation != ticket.generation) continue;
+        state.* = .{ .owed = call.started_ms };
+        return call;
+    }
+    return null;
+}
+
+const Settled = union(enum) {
+    /// The completion arrived first: answer with this call.
+    reply: PendingCall,
+    /// The deadline already answered. Nothing to send. When the call started.
+    late: i64,
+    /// No call was ever parked on this block.
+    stray,
+};
+
+/// The completion's half. Each block leaves `waiting` or `owed` exactly once,
+/// under the lock, so the completion and the deadline cannot both answer.
+fn settleBlock(block: u5) Settled {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    const state = blocks[block];
+    blocks[block] = .free;
+    return switch (state) {
+        .waiting => |call| .{ .reply = call },
+        .owed => |started_ms| .{ .late = started_ms },
+        .free => .stray,
+    };
 }
 
 const BlockDescriptor = extern struct {
@@ -408,17 +501,17 @@ const done_block_descriptor = BlockDescriptor{ .size = @sizeOf(DoneBlock) };
 
 extern var _NSConcreteGlobalBlock: anyopaque;
 
-fn makeDoneInvoke(comptime index: u5) *const anyopaque {
+fn makeDoneInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const DoneBlock) callconv(.c) void {
-            deletionFired(index);
+            deletionFired(block);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeDoneBlocks() [ios_async.max_in_flight]DoneBlock {
-    var out: [ios_async.max_in_flight]DoneBlock = undefined;
+fn makeDoneBlocks() [block_count]DoneBlock {
+    var out: [block_count]DoneBlock = undefined;
     for (&out, 0..) |*b, i| {
         b.* = .{
             .isa = &_NSConcreteGlobalBlock,
@@ -430,28 +523,52 @@ fn makeDoneBlocks() [ios_async.max_in_flight]DoneBlock {
     return out;
 }
 
-var done_blocks: [ios_async.max_in_flight]DoneBlock =
+var done_blocks: [block_count]DoneBlock =
     if (is_darwin) makeDoneBlocks() else undefined;
-
-fn doneBlock(ticket: ios_async.Ticket) *anyopaque {
-    return @ptrCast(&done_blocks[ticket.index]);
-}
 
 /// Runs on whatever queue Foundation chose. `ios_async.deliverJson` copies the
 /// payload and hops to the main queue, where `evaluateJavaScript:` is legal.
-fn deletionFired(index: u5) void {
+fn deletionFired(block: u5) void {
     if (!is_darwin) return;
 
-    const call = takePendingCall(index) orelse {
-        std.log.warn(
-            "removeSiriShortcut completion fired for slot {d} with no call recorded; ignored",
-            .{index},
-        );
-        return;
-    };
+    switch (settleBlock(block)) {
+        .reply => |call| {
+            defer std.heap.c_allocator.free(call.reply);
+            std.log.info(
+                "removeSiriShortcut: the deletion completion arrived after {d} ms",
+                .{compat.milliTimestamp() - call.started_ms},
+            );
+            ios_async.deliverJson(call.ticket, call.reply);
+        },
+        .late => |started_ms| std.log.warn(
+            "removeSiriShortcut: a deletion completion arrived {d} ms after the call, after " ++
+                "its deadline had answered; ignored",
+            .{compat.milliTimestamp() - started_ms},
+        ),
+        .stray => std.log.warn(
+            "removeSiriShortcut completion fired for block {d} with no call recorded; ignored",
+            .{block},
+        ),
+    }
+}
+
+/// On the main queue, `removal_deadline_ms` after the call. Does nothing when
+/// the completion got there first, which is the usual case: the timer cannot be
+/// cancelled.
+fn removalTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+
+    const call = expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
     defer std.heap.c_allocator.free(call.reply);
 
-    ios_async.deliverJson(call.ticket, call.reply);
+    // The page's message is fixed by the error code, so the framework is named
+    // here. No `i=` in this line: the slice fixture greps for markers by it.
+    std.log.warn(
+        "removeSiriShortcut: +[NSUserActivity deleteSavedUserActivitiesWithPersistentIdentifiers:" ++
+            "completionHandler:] did not call its completion within {d} ms; answering TIMEOUT",
+        .{removal_deadline_ms},
+    );
+    ios_async.deliverErrorCode(call.ticket, BridgeError.Timeout);
 }
 
 const testing = std.testing;
@@ -526,6 +643,7 @@ test "every declared action dispatches to something" {
 
 test "a refused removal leases no reply slot" {
     if (!is_darwin) return error.SkipZigTest;
+    resetBlocks();
 
     var bridge = SiriBridge.init(testing.allocator);
     defer bridge.deinit();
@@ -534,10 +652,10 @@ test "a refused removal leases no reply slot" {
 
     pending_mutex.lock();
     defer pending_mutex.unlock();
-    for (pending_calls) |entry| try testing.expect(entry == null);
+    for (blocks) |state| try testing.expect(state == .free);
 }
 
-test "each slot's completion block is global and has its own invoke" {
+test "each completion block is global and has its own invoke" {
     if (!is_darwin) return error.SkipZigTest;
 
     for (&done_blocks) |*b| {
@@ -546,18 +664,156 @@ test "each slot's completion block is global and has its own invoke" {
         try testing.expectEqual(@sizeOf(DoneBlock), @as(usize, @intCast(b.descriptor.size)));
     }
     try testing.expect(done_blocks[0].invoke != done_blocks[1].invoke);
+    try testing.expect(done_blocks[0].invoke != done_blocks[block_count - 1].invoke);
 }
 
-test "a completion for a slot with no recorded call is ignored" {
+test "a completion for a block with no recorded call is ignored" {
     // `void (^)(void)` carries nothing, so a stray fire has no way to identify
-    // itself. Clearing the entry on take is what makes the second fire a
+    // itself. Freeing the block on settle is what makes the second fire a
     // no-op rather than a double free of the parked reply.
     if (!is_darwin) return error.SkipZigTest;
+    resetBlocks();
+
+    deletionFired(0);
+    deletionFired(0);
+}
+
+// The deadline (#211). None of these reach `ios_async.deliver*`: they drive
+// the block table the deadline and the completion race over, which is where
+// "exactly one answer, to the right call" is decided. A host test has no main
+// queue for the timer or the hop.
+
+/// Free every block, and any reply a previous test left parked.
+fn resetBlocks() void {
+    pending_mutex.lock();
+    defer pending_mutex.unlock();
+    for (&blocks) |*state| {
+        switch (state.*) {
+            .waiting => |call| std.heap.c_allocator.free(call.reply),
+            else => {},
+        }
+        state.* = .free;
+    }
+}
+
+fn parkedReply(text: []const u8) ![]u8 {
+    return std.heap.c_allocator.dupe(u8, text);
+}
+
+test "a deadline answers a waiting removal once, and leaves its block owed" {
+    resetBlocks();
+    defer resetBlocks();
+
+    const ticket: ios_async.Ticket = .{ .index = 3, .generation = 7 };
+    const block = claimBlock(ticket, try parkedReply("{\"removed\":true}")) orelse return error.NoBlock;
+
+    const call = expireIfWaiting(ticket) orelse return error.DeadlineFoundNothing;
+    defer std.heap.c_allocator.free(call.reply);
+    try testing.expectEqualStrings("{\"removed\":true}", call.reply);
+    try testing.expect(blocks[block] == .owed);
+
+    // A second expiry of the same call finds nothing to answer.
+    try testing.expect(expireIfWaiting(ticket) == null);
+}
+
+test "a completion after its deadline is ignored, and frees its block" {
+    resetBlocks();
+    defer resetBlocks();
+
+    const ticket: ios_async.Ticket = .{ .index = 3, .generation = 7 };
+    const block = claimBlock(ticket, try parkedReply("r")) orelse return error.NoBlock;
+    const call = expireIfWaiting(ticket) orelse return error.DeadlineFoundNothing;
+    std.heap.c_allocator.free(call.reply);
+
+    try testing.expect(settleBlock(block) == .late);
+    try testing.expect(blocks[block] == .free);
+    try testing.expect(settleBlock(block) == .stray);
+}
+
+test "a deadline that fires after the completion does nothing" {
+    // The usual case: the timer cannot be cancelled, so it fires for every
+    // removal, including the ones that were answered long ago.
+    resetBlocks();
+    defer resetBlocks();
+
+    const ticket: ios_async.Ticket = .{ .index = 3, .generation = 7 };
+    const block = claimBlock(ticket, try parkedReply("r")) orelse return error.NoBlock;
+    switch (settleBlock(block)) {
+        .reply => |call| std.heap.c_allocator.free(call.reply),
+        else => return error.CompletionFoundNothing,
+    }
+
+    try testing.expect(expireIfWaiting(ticket) == null);
+    try testing.expect(blocks[block] == .free);
+}
+
+test "a stale deadline cannot expire a newer removal on the same reply slot" {
+    resetBlocks();
+    defer resetBlocks();
+
+    const first: ios_async.Ticket = .{ .index = 3, .generation = 7 };
+    const block = claimBlock(first, try parkedReply("first")) orelse return error.NoBlock;
+    switch (settleBlock(block)) {
+        .reply => |call| std.heap.c_allocator.free(call.reply),
+        else => return error.CompletionFoundNothing,
+    }
+
+    const second: ios_async.Ticket = .{ .index = 3, .generation = 9 };
+    const again = claimBlock(second, try parkedReply("second")) orelse return error.NoBlock;
+
+    try testing.expect(expireIfWaiting(first) == null);
+    switch (blocks[again]) {
+        .waiting => |call| try testing.expectEqual(@as(u32, 9), call.ticket.generation),
+        else => return error.NewerCallWasExpired,
+    }
+}
+
+test "a reply slot reused after a deadline never gets the block still owed" {
+    // The mix-up a deadline keyed only by reply slot would ship: the first
+    // removal's late completion answering the second with `removed: true`
+    // before the second deletion had finished.
+    resetBlocks();
+    defer resetBlocks();
+
+    const first: ios_async.Ticket = .{ .index = 0, .generation = 1 };
+    const first_block = claimBlock(first, try parkedReply("first")) orelse return error.NoBlock;
+    const expired = expireIfWaiting(first) orelse return error.DeadlineFoundNothing;
+    std.heap.c_allocator.free(expired.reply);
+
+    // The same slot index, as `ios_async.acquire` hands out the lowest free one.
+    const second: ios_async.Ticket = .{ .index = 0, .generation = 3 };
+    const second_block = claimBlock(second, try parkedReply("second")) orelse return error.NoBlock;
+    try testing.expect(second_block != first_block);
+
+    // The late completion for the first removal answers nobody.
+    try testing.expect(settleBlock(first_block) == .late);
+    switch (settleBlock(second_block)) {
+        .reply => |call| {
+            defer std.heap.c_allocator.free(call.reply);
+            try testing.expectEqual(@as(u32, 3), call.ticket.generation);
+            try testing.expectEqualStrings("second", call.reply);
+        },
+        else => return error.SecondCallLost,
+    }
+}
+
+test "with every block still owed, a removal is refused rather than reusing one" {
+    resetBlocks();
+    defer resetBlocks();
 
     pending_mutex.lock();
-    for (&pending_calls) |*entry| entry.* = null;
+    for (&blocks) |*state| state.* = .{ .owed = 0 };
     pending_mutex.unlock();
 
-    deletionFired(0);
-    deletionFired(0);
+    const reply = try parkedReply("r");
+    defer std.heap.c_allocator.free(reply);
+    try testing.expect(claimBlock(.{ .index = 0, .generation = 1 }, reply) == null);
+    for (blocks) |state| try testing.expect(state == .owed);
+}
+
+test "the deadline answers before the page's own request timeout" {
+    // `craft-bridge.js` and `_invoke` give up after 30 s with a message that
+    // names no framework and no code. (`craft.siri.remove` never gives up, so
+    // for it this deadline is the only answer there is.)
+    try testing.expect(removal_deadline_ms < 30_000);
 }

@@ -328,6 +328,47 @@ pub fn deliverErrorCode(ticket: Ticket, err: bridge_error.BridgeError) void {
     dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
 }
 
+// ---------------------------------------------------------------------------
+// Deadlines: a reply for a framework that may never call back.
+// ---------------------------------------------------------------------------
+
+extern "c" fn dispatch_time(when: u64, delta: i64) u64;
+extern "c" fn dispatch_after_f(when: u64, queue: *anyopaque, context: ?*anyopaque, work: dispatch_function_t) void;
+
+/// Run `work` on the main queue after `timeout_ms`, with `ticket` as its
+/// context. Read it back with `ticketFromDeadline`.
+///
+/// The timer cannot be cancelled, so it always fires, and `work` must do
+/// nothing for a call that has already been answered. The module decides that
+/// under its own lock, by comparing the whole ticket, index and generation:
+/// `deliver*` checks the generation only when it queues the hop, so it cannot
+/// stop two answers on its own.
+///
+/// The clock is uptime, which pauses only while the device sleeps. A suspended
+/// app cannot run `work`, but a deadline that passed meanwhile fires as soon as
+/// the app resumes, and can race a completion that was also held back.
+pub fn scheduleDeadline(ticket: Ticket, timeout_ms: u32, work: dispatch_function_t) void {
+    if (!is_darwin) return;
+    const delay_ns: i64 = @as(i64, timeout_ms) * 1_000_000;
+    dispatch_after_f(dispatch_time(0, delay_ns), &_dispatch_main_q, deadlineContext(ticket), work);
+}
+
+/// The ticket a deadline's `work` was scheduled for.
+pub fn ticketFromDeadline(context: ?*anyopaque) Ticket {
+    const encoded = @intFromPtr(context orelse unreachable) - 1;
+    return .{
+        .index = @intCast(encoded & 31),
+        .generation = @intCast(encoded >> 5),
+    };
+}
+
+/// The whole ticket in the context pointer, plus one so it is never null.
+/// Relies on 64-bit pointers: a `u32` generation shifted past the index bits.
+fn deadlineContext(ticket: Ticket) ?*anyopaque {
+    const encoded = (@as(usize, ticket.generation) << 5) | @as(usize, ticket.index);
+    return @ptrFromInt(encoded + 1);
+}
+
 /// Reply to a captured call with an error rather than a result.
 ///
 /// A module's own completion can fail to shape its answer — a nil object where
@@ -485,4 +526,11 @@ test "the generic deliverError still means a native failure" {
     slots[ticket.index].failed = false;
     slots[ticket.index].in_use = false;
     slots[ticket.index].generation +%= 1;
+}
+
+test "a deadline's context carries the complete ticket" {
+    const original: Ticket = .{ .index = 31, .generation = 0xfedcba98 };
+    const decoded = ticketFromDeadline(deadlineContext(original));
+    try testing.expectEqual(original.index, decoded.index);
+    try testing.expectEqual(original.generation, decoded.generation);
 }

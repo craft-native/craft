@@ -152,7 +152,10 @@ gather_log() { cat "$STDOUT_LOG" "$STDERR_LOG" > "$LOG" 2>/dev/null || true; }
 # So: a deadline, and an explicit failure that names what is missing. The two
 # situations look nothing alike now.
 SLICE_TIMEOUT="${CRAFT_SLICE_TIMEOUT:-600}"
-AWAITED_IDS="20 22 24 26 28 32 34 38 44 46 72 76 78 82"
+# `38|84|86` is one wait: the Siri removal settles as its completion, its
+# deadline, or something else, and the assertions below tell them apart. 54
+# is awaited because openSettings now waits for that removal.
+AWAITED_IDS="20 22 24 26 28 32 34 38|84|86 44 46 54 72 76 78 82"
 DEADLINE=$(( $(date +%s) + SLICE_TIMEOUT ))
 
 missing_ids() {
@@ -162,7 +165,8 @@ missing_ids() {
         # ERE with an explicit boundary rather than \b, which is a GNU
         # extension this script cannot count on, and rather than a bare
         # "i=$id", which matches i=260 when it is looking for i=26.
-        grep -qE "i=$id(\$|[^0-9])" "$LOG" 2>/dev/null || missing="$missing i=$id"
+        # Grouped, so an alternation cannot match a bare "84" elsewhere.
+        grep -qE "i=($id)(\$|[^0-9])" "$LOG" 2>/dev/null || missing="$missing i=$id"
     done
     echo "$missing"
 }
@@ -181,6 +185,18 @@ while :; do
     fi
     sleep 1
 done
+
+# A removal its deadline answered can still be completed later, and when it is,
+# Zig logs how late. Give that line a little while before judging i=84 below,
+# so the report says which it was.
+LATE_PATTERN='a deletion completion arrived [0-9]+ ms after the call'
+if grep -qE "i=84(\$|[^0-9])" "$LOG" 2>/dev/null; then
+    for _ in $(seq 1 15); do
+        gather_log
+        grep -qE "$LATE_PATTERN" "$LOG" 2>/dev/null && break
+        sleep 1
+    done
+fi
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 gather_log
 
@@ -359,12 +375,49 @@ C36="$(count 36)"
 [ "$C36" -ge 1 ] || { echo "FAIL: registerSiriShortcut did not echo the donated shortcut"; exit 1; }
 echo "ok: NSUserActivity donated and echoed back (i=36 seen ${C36}x)"
 
-C38="$(count 38)"
+C38="$(count 38)"; C84="$(count 84)"; C86="$(count 86)"
 # removeSiriShortcut answers from a void(^)(void) completion that carries no
 # arguments at all, so this reply arriving proves Foundation fired the block
 # and the parked payload was delivered under the right request id.
-[ "$C38" -ge 1 ] || { echo "FAIL: the deletion completion never fired, or its reply was lost"; exit 1; }
-echo "ok: argument-free completion block delivered its parked reply (i=38 seen ${C38}x)"
+#
+# The completion comes from a system daemon (#211), and whether it comes is
+# the simulator's business. Locally it lands in tens of milliseconds. On CI's
+# macOS runners, three runs of this fixture saw none at all: not within 75 s in
+# the foreground, and not within 30 s after the app was backgrounded. Before
+# the deadline, the runs that passed did so because openSettings happened to
+# background the app while the call was still waiting.
+#
+# So this asserts what #211 is about, which the app controls: the call
+# settles. i=38 is the completion; i=84 is the 15 s deadline answering TIMEOUT
+# instead of the page waiting for ever, which passes with a warning that the
+# completion path went unexercised on this run. What that path needs from Zig
+# (a global block per call, and exactly one answer when it races the deadline)
+# is covered by bridge_mobile_siri.zig's host tests, and any run where the
+# simulator does call it, as it does locally, still goes through i=38.
+#
+# Settling twice is caught here only when both answers land before the app is
+# backgrounded, which is rare by construction: the Zig host tests in
+# bridge_mobile_siri.zig are what guard "exactly one answer". This is a cheap
+# extra look, not that guarantee.
+SIRI_KINDS=$(( (C38 > 0) + (C84 > 0) + (C86 > 0) ))
+if [ "$SIRI_KINDS" -ge 2 ]; then
+    echo "FAIL: removeSiriShortcut settled more than one way (i=38 ${C38}x, i=84 ${C84}x, i=86 ${C86}x)"
+    exit 1
+elif [ "$C38" -ge 1 ]; then
+    echo "ok: argument-free completion block delivered its parked reply (i=38 seen ${C38}x)"
+elif [ "$C84" -ge 1 ]; then
+    LATE="$(grep -oE "$LATE_PATTERN" "$PLAIN" | head -1 || true)"
+    echo "ok: removeSiriShortcut settled with TIMEOUT from its native deadline instead of hanging (i=84 seen ${C84}x)"
+    NOTE="the simulator never called the NSUserActivity deletion completion, so this run did not exercise that path"
+    [ -n "$LATE" ] && NOTE="the simulator called the NSUserActivity deletion completion only after the deadline (${LATE}), and it was ignored"
+    echo "note: $NOTE"
+    # A GitHub annotation, so an unexercised path shows on the run page rather
+    # than only in the log.
+    if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::warning title=removeSiriShortcut completion::$NOTE"; fi
+else
+    echo "FAIL: removeSiriShortcut settled with neither {removed: true} nor TIMEOUT (i=86 seen ${C86}x)"
+    exit 1
+fi
 
 C46="$(count 46)"
 # pageCount is PDFKit's answer for the bytes the page sent, so it cannot be
