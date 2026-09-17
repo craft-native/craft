@@ -1,5 +1,50 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.91...v0.0.92)
+
+## 🚀 Features
+
+- **android**: actually ship the Zig runtime, and let it speak ([911016e](https://github.com/craft-native/craft/commit/911016e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **deep-links**: deliver the launch link once to a craftReady handler ([82399ca](https://github.com/craft-native/craft/commit/82399ca)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: hand the launch link to the page that subscribes for it ([077fcac](https://github.com/craft-native/craft/commit/077fcac)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: settle a Siri shortcut removal whose completion never comes ([7dac516](https://github.com/craft-native/craft/commit/7dac516)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **haptics**: keep the framework haptic helpers from failing on haptics left off ([d60e2fd](https://github.com/craft-native/craft/commit/d60e2fd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: hand the page the answers native was already sending ([484a652](https://github.com/craft-native/craft/commit/484a652)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: hand a cold-start link to the page that subscribes for it ([7ac9408](https://github.com/craft-native/craft/commit/7ac9408)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: launch iOS apps without a pty, so a cold simulator cannot eat the budget ([29d48fe](https://github.com/craft-native/craft/commit/29d48fe)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: resolve share() with whether the person picked an app ([c7e9465](https://github.com/craft-native/craft/commit/c7e9465)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: let share() settle the promise its native side answers ([cc3c769](https://github.com/craft-native/craft/commit/cc3c769)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: make every Zig decline speak, and prove Zig answers ([b81fd40](https://github.com/craft-native/craft/commit/b81fd40)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: link bionic, so the Zig runtime actually loads ([2bb2f56](https://github.com/craft-native/craft/commit/2bb2f56)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile**: six defects the new end-to-end suite found on real devices ([080e5ae](https://github.com/craft-native/craft/commit/080e5ae)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## ⚡ Performance Improvements
+
+- **android**: ship libcraft.so without its DWARF, and keep the DWARF for symbols ([44ce7b8](https://github.com/craft-native/craft/commit/44ce7b8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧪 Tests
+
+- **mobile-e2e**: cold-start Android through a link, both ways iOS does ([ccb14c1](https://github.com/craft-native/craft/commit/ccb14c1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: hear haptic, vibrate, speech and watch answers on a simulator ([71c8a31](https://github.com/craft-native/craft/commit/71c8a31)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: install the Watch-enabled app and read the APNs environment it signs ([8f5f536](https://github.com/craft-native/craft/commit/8f5f536)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: prove Android reports approximate location as granted ([dd278b7](https://github.com/craft-native/craft/commit/dd278b7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: prove iOS location settles, and that Zig served it ([3fc2f94](https://github.com/craft-native/craft/commit/3fc2f94)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: dismiss the real Android share menu and require false ([9c88cc6](https://github.com/craft-native/craft/commit/9c88cc6)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: run the Android suite twice, and say which side answered ([598128d](https://github.com/craft-native/craft/commit/598128d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: put the suite on a real simulator and a real emulator ([d2bc33b](https://github.com/craft-native/craft/commit/d2bc33b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile-e2e**: a self-driving page, and rules for reading what it says ([2466726](https://github.com/craft-native/craft/commit/2466726)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.92 ([1ee996b](https://github.com/craft-native/craft/commit/1ee996b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## Contributors
+
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.90...v0.0.91)
 
 ## 🚀 Features
