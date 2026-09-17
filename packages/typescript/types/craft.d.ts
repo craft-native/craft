@@ -114,8 +114,11 @@ export interface CraftBridge {
   /**
    * Trigger haptic feedback
    * @param style - Feedback style: 'light', 'medium', 'heavy', 'success', 'warning', 'error', 'selection'
+   * @returns On iOS, a promise that resolves `true` once UIKit has taken the
+   * haptic, and rejects with `CAPABILITY_DISABLED` when `enableHaptics` is off.
+   * Android returns nothing yet (#219).
    */
-  haptic(style: HapticStyle): void;
+  haptic(style: HapticStyle): Promise<boolean> | void;
 
   /**
    * Open the native share sheet.
@@ -189,13 +192,20 @@ export interface CraftBridge {
 
   /**
    * Start speech recognition
+   * @returns On iOS, a promise that resolves `true` once native has taken the
+   * request, and rejects with `CAPABILITY_DISABLED` when
+   * `enableSpeechRecognition` is off. `true` does not mean audio is flowing:
+   * a declined prompt or a missing recognizer still arrives as
+   * `craftSpeechError`, and transcripts as `craftSpeechResult`. Android returns
+   * nothing yet (#219).
    */
-  startListening(): void;
+  startListening(): Promise<boolean> | void;
 
   /**
    * Stop speech recognition
+   * @returns On iOS, a promise that resolves `true`. Android returns nothing yet (#219).
    */
-  stopListening(): void;
+  stopListening(): Promise<boolean> | void;
 
   // ==================== Files ====================
 
@@ -478,8 +488,10 @@ export interface CraftBridge {
   /**
    * Vibrate with pattern
    * @param pattern - Array of durations in ms [on, off, on, off, ...]
+   * @returns On iOS, a promise that resolves `true` once the pattern is
+   * scheduled. Android returns nothing yet (#219).
    */
-  vibrate(pattern: number[]): void;
+  vibrate(pattern: number[]): Promise<boolean> | void;
 
   /**
    * Open URL in external browser

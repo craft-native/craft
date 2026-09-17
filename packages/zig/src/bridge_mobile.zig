@@ -20,9 +20,9 @@ const objc = objc_runtime.objc;
 /// `{success:true, browser:true}` and made "the bridge worked" and "there is no
 /// bridge" identical to the caller.
 ///
-/// `haptic` would have been the obvious first pick and is the wrong one: it is
-/// fire-and-forget, so it exercises no reply path, and Core Haptics is a silent
-/// no-op on the simulator — it would have passed while doing nothing.
+/// `haptic` would have been the obvious first pick and is the wrong one: Core
+/// Haptics is a silent no-op on the simulator, so its `true` says only that
+/// UIKit took the call — it would have passed while doing nothing.
 pub const A = struct {
     pub const get_device_info = "getDeviceInfo";
 };

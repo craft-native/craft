@@ -644,6 +644,41 @@ test "the gate table has no entry for an action Zig does not serve" {
     }
 }
 
+/// The `capability_actions` array of one mobile module, or null when it has
+/// none.
+///
+/// Bounded to the array, not the whole file: prose quotes declarations —
+/// `bridge_mobile_haptics.zig`'s header describes one it removed — and a scan
+/// that read comments would attribute that sentence to whichever entry
+/// preceded it.
+fn manifestTable(source: []const u8) ?[]const u8 {
+    const table_start = std.mem.indexOf(u8, source, "pub const capability_actions = [_]capabilities.ActionDecl{") orelse
+        return null;
+    const table_end = std.mem.indexOfPos(u8, source, table_start, "\n};") orelse return null;
+    return source[table_start..table_end];
+}
+
+/// The action named by the manifest entry that contains offset `at`.
+///
+/// The entry names its action as `A.some_const`; this resolves it back through
+/// the `A` block to the string the spec spells.
+fn declaredActionBefore(source: []const u8, table: []const u8, at: usize) ?[]const u8 {
+    const name_at = std.mem.lastIndexOf(u8, table[0..at], ".name = A.") orelse return null;
+    const const_start = name_at + ".name = A.".len;
+    var const_end = const_start;
+    while (const_end < table.len and (std.ascii.isAlphanumeric(table[const_end]) or
+        table[const_end] == '_')) : (const_end += 1)
+    {}
+
+    var needle_buf: [96]u8 = undefined;
+    const member = table[const_start..const_end];
+    const decl = std.fmt.bufPrint(&needle_buf, "const {s} = \"", .{member}) catch return null;
+    const decl_at = std.mem.indexOf(u8, source, decl) orelse return null;
+    const value_start = decl_at + decl.len;
+    const value_end = std.mem.indexOfScalarPos(u8, source, value_start, '"') orelse return null;
+    return source[value_start..value_end];
+}
+
 /// The `.reason` text of every `.status = .unavailable` entry, by action.
 ///
 /// The reason is what a reader trusts, so it is what has to be checked. A
@@ -656,36 +691,12 @@ fn collectUnavailableReasons(allocator: std.mem.Allocator) !std.StringHashMap([]
     errdefer map.deinit();
 
     for (zig_sources) |source| {
-        // Bounded to the manifest array, not the whole file: prose quotes
-        // `.status = .unavailable` — `bridge_mobile_haptics.zig`'s header does,
-        // describing the declaration it removed — and a scan that read comments
-        // would attribute that sentence to whichever entry preceded it.
-        const table_start = std.mem.indexOf(u8, source, "pub const capability_actions = [_]capabilities.ActionDecl{") orelse
-            continue;
-        const table_end = std.mem.indexOfPos(u8, source, table_start, "\n};") orelse continue;
-        const table = source[table_start..table_end];
+        const table = manifestTable(source) orelse continue;
 
         var search: usize = 0;
         while (std.mem.indexOfPos(u8, table, search, ".status = .unavailable")) |at| {
             search = at + 1;
-
-            // The entry names its action as `A.some_const`; resolve it back
-            // through the `A` block to the string the spec spells.
-            const name_at = std.mem.lastIndexOf(u8, table[0..at], ".name = A.") orelse continue;
-            const const_start = name_at + ".name = A.".len;
-            var const_end = const_start;
-            while (const_end < table.len and (std.ascii.isAlphanumeric(table[const_end]) or
-                table[const_end] == '_')) : (const_end += 1)
-            {}
-
-            var needle_buf: [96]u8 = undefined;
-            const member = table[const_start..const_end];
-            if (member.len + 16 > needle_buf.len) continue;
-            const decl = try std.fmt.bufPrint(&needle_buf, "const {s} = \"", .{member});
-            const decl_at = std.mem.indexOf(u8, source, decl) orelse continue;
-            const value_start = decl_at + decl.len;
-            const value_end = std.mem.indexOfScalarPos(u8, source, value_start, '"') orelse continue;
-            const action = source[value_start..value_end];
+            const action = declaredActionBefore(source, table, at) orelse continue;
 
             // The reason, inline or by name.
             const reason_at = std.mem.indexOfPos(u8, table, at, ".reason = ") orelse continue;
@@ -1656,18 +1667,16 @@ test "the SDK's event map declares everything that does fire" {
 // `share` was one (#203). Its case resolves whether the person shared and
 // rejects `CAPABILITY_DISABLED` and `INVALID_ARGUMENT`, and `craft.share(text)`
 // posted `{action: 'share', text}`, so an app with sharing switched off called
-// it, heard nothing and carried on as if it had worked.
-
-/// Actions the page still posts without a callbackId even though the spec
-/// answers them. Tracked in #207. This list may only shrink: the second test
-/// below fails when one of them is fixed and left here.
-const unanswered_posts = [_][]const u8{
-    "haptic",
-    "startListening",
-    "watchPosition",
-    "clearWatch",
-    "vibrate",
-};
+// it, heard nothing and carried on as if it had worked. `haptic`,
+// `startListening`, `watchPosition`, `clearWatch` and `vibrate` were five more
+// (#207).
+//
+// Fixing those by adding a callbackId turns the bug around rather than
+// removing it: `haptic` and `startListening` only ever *rejected*, so a page
+// that waited on them would have waited for ever on every call that worked.
+// So the checks run both ways. A call the spec answers must carry an id, a
+// call that carries an id must have a case that can resolve it, and no Zig
+// module may declare a reply the page is waiting for as `.none`.
 
 /// One `postMessage(...)` call in the page script.
 const Post = struct {
@@ -1730,13 +1739,45 @@ const PostIterator = struct {
     }
 };
 
-/// Whether the dispatcher's `case` for `action` answers through the callback.
+/// Every action the page waits on an answer for: literal posts that carry a
+/// callbackId, and every `_invoke('name'`, which always adds one.
+fn collectAwaitedActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    var it = PostIterator{ .source = swift_spec };
+    while (it.next()) |post| {
+        const action = post.action orelse continue;
+        if (post.carries_callback) try set.put(action, {});
+    }
+
+    const needle = "_invoke('";
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, swift_spec, search, needle)) |at| {
+        const name_start = at + needle.len;
+        const name_end = std.mem.indexOfScalarPos(u8, swift_spec, name_start, '\'') orelse break;
+        try set.put(swift_spec[name_start..name_end], {});
+        search = name_end;
+    }
+    return set;
+}
+
+/// What a `case` has to do with its callbackId to count.
+const CaseUse = enum {
+    /// Anything: resolve, reject, or hand it to a helper that will.
+    answers,
+    /// Something other than `rejectCallback`, so a call that succeeds settles.
+    resolves,
+};
+
+/// Whether the dispatcher's `case` for `action` uses the callback the way
+/// `use` asks.
 ///
 /// The case runs from its label to the next line at the same indentation that
 /// starts another case, a `default:` or the closing brace. Nested switches sit
 /// deeper and stay inside it. Comment lines are skipped so a remark that
 /// mentions callbackId cannot pass for code that uses it.
-fn specAnswers(region: []const u8, action: []const u8) bool {
+fn caseUsesCallback(region: []const u8, action: []const u8, use: CaseUse) bool {
     var lines = std.mem.splitScalar(u8, region, '\n');
     var case_indent: ?usize = null;
     while (lines.next()) |line| {
@@ -1749,13 +1790,22 @@ fn specAnswers(region: []const u8, action: []const u8) bool {
                 std.mem.startsWith(u8, body, "default") or body[0] == '}');
             if (closes) return false;
             if (std.mem.startsWith(u8, body, "//")) continue;
-            if (std.mem.indexOf(u8, body, "callbackId") != null) return true;
-            continue;
+            if (std.mem.indexOf(u8, body, "callbackId") == null) continue;
+            if (use == .resolves and std.mem.indexOf(u8, body, "rejectCallback(") != null) continue;
+            return true;
         }
 
         if (std.mem.startsWith(u8, body, "case ") and labels(body, action)) case_indent = indent;
     }
     return false;
+}
+
+fn specAnswers(region: []const u8, action: []const u8) bool {
+    return caseUsesCallback(region, action, .answers);
+}
+
+fn specResolves(region: []const u8, action: []const u8) bool {
+    return caseUsesCallback(region, action, .resolves);
 }
 
 /// Whether a `case` line lists `action` among its labels.
@@ -1765,13 +1815,6 @@ fn labels(case_line: []const u8, action: []const u8) bool {
         search = at + action.len;
         if (at == 0 or case_line[at - 1] != '"') continue;
         if (search < case_line.len and case_line[search] == '"') return true;
-    }
-    return false;
-}
-
-fn isRecordedUnanswered(action: []const u8) bool {
-    for (unanswered_posts) |recorded| {
-        if (std.mem.eql(u8, recorded, action)) return true;
     }
     return false;
 }
@@ -1818,6 +1861,23 @@ test "the post scan tells a call that waits from one that does not" {
     try testing.expect(!specAnswers(dispatcher, "stopListening"));
     try testing.expect(!specAnswers(dispatcher, "log"));
     try testing.expect(!specAnswers(dispatcher, "hap"));
+
+    // The shape #207 would have left behind: a case that answers, but only
+    // ever with a rejection.
+    try testing.expect(!specResolves(dispatcher, "haptic"));
+    const resolving =
+        \\            case "vibrate":
+        \\                pendingCallbackId = callbackId
+        \\            case "haptic":
+        \\                if enabled {
+        \\                    resolveCallback(callbackId, result: true)
+        \\                } else {
+        \\                    rejectCallback(callbackId, error: "Haptics is disabled")
+        \\                }
+        \\            }
+    ;
+    try testing.expect(specResolves(resolving, "vibrate"));
+    try testing.expect(specResolves(resolving, "haptic"));
 }
 
 test "every call the spec answers carries a callbackId to answer it on" {
@@ -1829,7 +1889,6 @@ test "every call the spec answers carries a callbackId to answer it on" {
         literal_posts += 1;
         if (post.carries_callback) continue;
         if (!specAnswers(region, action)) continue;
-        if (isRecordedUnanswered(action)) continue;
 
         std.debug.print(
             "the page posts `{s}` with no callbackId, and the spec answers it.\n" ++
@@ -1844,31 +1903,56 @@ test "every call the spec answers carries a callbackId to answer it on" {
     try testing.expect(literal_posts >= 40);
 }
 
-test "every recorded unanswered post is real, and still unanswered" {
+test "every call the page waits on has a case that can resolve it" {
     const region = dispatcherRegion();
-    for (unanswered_posts) |action| {
-        if (!specAnswers(region, action)) {
-            std.debug.print(
-                "`{s}` is recorded as unanswered, but the spec no longer answers it.\n" ++
-                    "  Take it off unanswered_posts.\n",
-                .{action},
-            );
-            return error.RecordedPostIsNotAnswered;
+    var awaited = try collectAwaitedActions(testing.allocator);
+    defer awaited.deinit();
+    // Non-vacuity: every `_invoke` and callback post counts, and there are
+    // far more than this.
+    try testing.expect(awaited.count() >= 80);
+
+    var it = awaited.keyIterator();
+    while (it.next()) |action| {
+        if (specResolves(region, action.*)) continue;
+        std.debug.print(
+            "the page waits on `{s}`, and the spec's case never resolves it.\n" ++
+                "  If the case only rejects (or has no case at all), every call that\n" ++
+                "  works leaves the page's promise open. Resolve it once the work is\n" ++
+                "  done, or once the request is taken if the outcome comes later.\n",
+            .{action.*},
+        );
+        return error.PageWaitsOnAnAnswerThatNeverComes;
+    }
+}
+
+test "no Zig module declares a reply the page waits on as none" {
+    // `.reply = .none` is a promise from the module that nothing is sent on
+    // success. For an action the page awaits, that is the same hang as a Swift
+    // case that only rejects, in the half that serves the call first.
+    var awaited = try collectAwaitedActions(testing.allocator);
+    defer awaited.deinit();
+
+    var declarations: usize = 0;
+    for (zig_sources) |source| {
+        const table = manifestTable(source) orelse continue;
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, table, search, ".name = A.")) |at| {
+            search = at + 1;
+            declarations += 1;
         }
 
-        var it = PostIterator{ .source = swift_spec };
-        const still_dropped = while (it.next()) |post| {
-            const name = post.action orelse continue;
-            if (std.mem.eql(u8, name, action) and !post.carries_callback) break true;
-        } else false;
-
-        if (!still_dropped) {
+        search = 0;
+        while (std.mem.indexOfPos(u8, table, search, ".reply = .none")) |at| {
+            search = at + 1;
+            const action = declaredActionBefore(source, table, at) orelse return error.ManifestEntryUnreadable;
+            if (!awaited.contains(action)) continue;
             std.debug.print(
-                "every post of `{s}` carries a callbackId now.\n" ++
-                    "  Take it off unanswered_posts so it cannot regress unnoticed.\n",
+                "`{s}` is declared `.reply = .none`, and the page waits on its answer.\n" ++
+                    "  Send the result from the handler and declare `.result`.\n",
                 .{action},
             );
-            return error.RecordedPostIsFixed;
+            return error.ZigLeavesAnAwaitedCallUnanswered;
         }
     }
+    try testing.expect(declarations >= 80);
 }

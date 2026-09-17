@@ -1,8 +1,8 @@
 //! The haptics half of the `mobile` namespace: `haptic` and `vibrate`.
 //!
-//! Split out of `bridge_mobile.zig` because the two actions have opposite
-//! contracts: `haptic` is fire-and-forget and gated on `config.enableHaptics`,
-//! `vibrate` replies and is gated on nothing.
+//! Split out of `bridge_mobile.zig` because the two actions are gated
+//! differently: `haptic` on `config.enableHaptics`, `vibrate` on nothing. Both
+//! answer `true` once UIKit has taken the call.
 //!
 //! ## The refusal that used to live here
 //!
@@ -83,23 +83,21 @@ fn hapticTypeIn(allocator: std.mem.Allocator, data: []const u8) !HapticType {
 /// `craft.vibrate([100])` fires impacts on an app with haptics "disabled".
 /// Adding a gate here would be a divergence dressed as a tidy-up.
 pub const capability_actions = [_]capabilities.ActionDecl{
-    // `.none` is the contract: the page's `craft.haptic()` returns undefined
-    // and the spec's `case "haptic"` never touches `resolveCallback`. An error
-    // still reaches the page — with no pending entry to settle,
-    // `craft-bridge.js` reports it to the console — so a refusal is logged
-    // rather than swallowed.
-    .{ .name = A.haptic, .reply = .none },
+    // `.result`, the same `true` as `vibrate`. The page's `craft.haptic()`
+    // awaits it, so a refusal from the gate reaches the caller, and `.none`
+    // would leave that promise open on every call that succeeds (#207).
+    .{ .name = A.haptic, .reply = .result },
     // `.result` carrying the JSON literal `true`. Not a shape worth improving:
     // the hand-off path already delivers exactly this today, and `.none` would
     // park any `_req`-based caller for the full 30s timeout.
     .{ .name = A.vibrate, .reply = .result },
 };
 
-/// The reply `vibrate` sends, byte-identical to what the hand-off path delivers
-/// today. A bare `true`, not an object — the spec serialises with
+/// The reply `haptic` and `vibrate` send, byte-identical to what the hand-off
+/// path delivers. A bare `true`, not an object — the spec serialises with
 /// `.fragmentsAllowed`. It stays truthy on purpose: `craft-bridge.js` resolves
 /// with `payload || {}`, so `false` or `0` would arrive as `{}`.
-const vibrate_reply = "true";
+const success_reply = "true";
 
 pub const HapticsBridge = struct {
     allocator: std.mem.Allocator,
@@ -136,12 +134,13 @@ pub const HapticsBridge = struct {
     /// unrecognised style to `.impact_medium` as well, matching the spec's
     /// `default:` arm, and this path exercises the same branch.
     ///
-    /// No reply on success, matching `.none` and the spec. The error from
-    /// `triggerHapticChecked` is the one thing that can come back, and it means
-    /// UIKit was not there to accept the call — never that the device stayed
-    /// still, which no iOS API reports.
+    /// `true` once UIKit has accepted the call, as the spec's `case "haptic"`
+    /// answers. The error from `triggerHapticChecked` means UIKit was not there
+    /// to accept it — never that the device stayed still, which no iOS API
+    /// reports.
     fn haptic(self: *Self, data: []const u8) !void {
         try triggerHapticChecked(try hapticTypeIn(self.allocator, data));
+        bridge_error.sendResultToJS(self.allocator, A.haptic, success_reply);
     }
 
     /// `case "vibrate"` (`CraftApp.swift:685-691`).
@@ -176,7 +175,7 @@ pub const HapticsBridge = struct {
             try triggerHapticChecked(.impact_medium);
         }
 
-        bridge_error.sendResultToJS(self.allocator, A.vibrate, vibrate_reply);
+        bridge_error.sendResultToJS(self.allocator, A.vibrate, success_reply);
     }
 };
 
@@ -282,8 +281,7 @@ fn schedulePattern(items: []const std.json.Value) !usize {
 /// Engine is absent on the simulator and on iPad, and System Haptics can be off
 /// in Settings — all three are silent no-ops with no API that reports them. So
 /// "returned without error" means "UIKit accepted the call", never "the device
-/// buzzed", which is the other half of why `haptic` has no success reply to
-/// fabricate.
+/// buzzed", and that is all the `true` `haptic` answers with claims.
 ///
 /// `pub` for one caller outside this file. `bridge_mobile_speech.zig` fires a
 /// light impact on start and on stop because `CraftApp.swift:2544` and `:2558`
@@ -384,8 +382,8 @@ pub fn triggerHapticChecked(haptic_type: HapticType) !void {
 ///    tag, so honouring `'soft'` as `UIImpactFeedbackStyleSoft` would mean
 ///    widening the enum *and* changing what the shipped API does.
 ///  - **An unknown style is absorbed, not rejected.** A typo is indistinguishable
-///    from `"medium"`. With no reply channel there is nowhere to report it, and
-///    the spec's `default:` swallows it too.
+///    from `"medium"`, because the spec's `default:` swallows it and rejecting
+///    it here would be stricter than the surface pages are written against.
 ///
 /// The field is `style`. Not `type` — `examples/web_to_native/app.html` posts
 /// `{type: ...}` but through a local `invoke` shim that never reaches this
@@ -482,9 +480,8 @@ test "the table declares exactly the two actions the dispatcher serves" {
     try testing.expectEqualStrings(A.vibrate, capability_actions[1].name);
 
     // The replies are the halves that go wrong invisibly: a `.result` that
-    // never replies parks the caller for 30s, and a `.none` that is awaited
-    // resolves immediately and means nothing.
-    try testing.expectEqual(capabilities.Reply.none, capability_actions[0].reply);
+    // never replies leaves the page's promise open. Both are awaited (#207).
+    try testing.expectEqual(capabilities.Reply.result, capability_actions[0].reply);
     try testing.expectEqual(capabilities.Reply.result, capability_actions[1].reply);
 }
 
@@ -548,7 +545,7 @@ test "haptic reads the style the way the spec's cast reads it" {
 
     // `as? String` fails for each of these, and `?? "medium"` catches them all.
     // A page posting `{style: 2}` gets a medium impact, not an error — matching
-    // the spec, which cannot report one either: `case "haptic"` has no reply.
+    // the spec, whose cast takes the same default.
     try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{}"));
     try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":null}"));
     try testing.expectEqual(HapticType.impact_medium, try hapticTypeIn(alloc, "{\"style\":2}"));
@@ -584,8 +581,7 @@ test "the spec's default arm absorbs everything else, including 'soft'" {
     // because fixing it is a behaviour change, not a port.
     try testing.expectEqual(HapticType.impact_medium, hapticTypeForStyle("soft"));
     try testing.expectEqual(HapticType.impact_medium, hapticTypeForStyle("rigid"));
-    // A typo is indistinguishable from "medium". There is no reply channel to
-    // say otherwise on, which is exactly what the spec does too.
+    // A typo is indistinguishable from "medium", exactly as in the spec.
     try testing.expectEqual(HapticType.impact_medium, hapticTypeForStyle("mediuim"));
     try testing.expectEqual(HapticType.impact_medium, hapticTypeForStyle(""));
 }
@@ -688,14 +684,14 @@ test "an absurd duration saturates instead of panicking" {
     );
 }
 
-test "the vibrate reply is the bare JSON literal the hand-off path already sends" {
+test "the haptic and vibrate reply is the bare JSON literal the hand-off path sends" {
     // Not `{"success":true}`. The spec serialises with `.fragmentsAllowed`, so
     // a page on the hand-off path receives `true` today, and it must keep
     // receiving `true`. Truthy also matters: `craft-bridge.js` resolves with
     // `payload || {}`, which would turn `false` into an empty object.
-    try testing.expectEqualStrings("true", vibrate_reply);
+    try testing.expectEqualStrings("true", success_reply);
 
-    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, vibrate_reply, .{});
+    const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, success_reply, .{});
     defer parsed.deinit();
     try testing.expectEqual(true, parsed.value.bool);
 }
