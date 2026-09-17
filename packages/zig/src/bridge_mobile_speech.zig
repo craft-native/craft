@@ -1,13 +1,12 @@
 //! The `mobile` namespace's speech pair: `startListening` and `stopListening`.
 //!
-//! Neither action replies. Both are raw `postMessage` calls with no
-//! `callbackId` (`CraftApp.swift:1562-1568`), so nothing on the page is
-//! awaiting an answer and every outcome — success, refusal, transcript, end —
-//! travels as a `craftSpeech*` event. That is why both are declared
-//! `.reply = .none` below, and why no path in this file returns an error to
-//! `ios_dispatch`: an error there would call `sendErrorToJS` under a request
-//! id no page is holding, which is console noise standing in for the event a
-//! page is actually listening for.
+//! Both actions answer `true` as soon as the request is taken, and nothing
+//! more. The page awaits that answer (#207), but everything that happens after
+//! it — a declined prompt, no recognizer, a transcript, the end — travels as a
+//! `craftSpeech*` event, because none of it is known while the dispatch frame
+//! is still open. No path in this file returns an error to `ios_dispatch`
+//! either: a failure is reported as the event a page is listening for, and
+//! the promise has already been answered.
 //!
 //! ## What this round changed
 //!
@@ -188,25 +187,28 @@ pub const A = struct {
     pub const stop_listening = "stopListening";
 };
 
-/// `.none` for both, and the distinction matters.
+/// `.result` for both: `true`, sent from `handleMessage` while the dispatch
+/// frame still holds the page's request id.
 ///
-/// `.result` would tell an app to await a reply that never comes: neither
-/// action calls `sendResultToJS` on any path, because neither has a page-side
-/// promise to settle. Everything observable leaves through `ios_events`.
+/// Settling on the outcome instead would leave the promise open. The
+/// authorization answer arrives after `ios_dispatch` has popped the request
+/// context, so a reply sent from there carries no id and the page drops it,
+/// and a start while authorization is already in flight has no outcome of its
+/// own. Everything after the `true` leaves through `ios_events`.
 ///
 /// `.live` for both. A refusal here is a specific condition — speech not
 /// configured, authorization declined, no input route — and never the normal
 /// answer, which is what `.unavailable` would claim.
 pub const capability_actions = [_]capabilities.ActionDecl{
-    .{ .name = A.start_listening, .reply = .none },
-    .{ .name = A.stop_listening, .reply = .none },
+    .{ .name = A.start_listening, .reply = .result },
+    .{ .name = A.stop_listening, .reply = .result },
 };
 
 pub const SpeechBridge = struct {
-    /// Held for the interface `ios_dispatch` builds every mobile bridge with.
-    /// Unused: nothing in a dispatch allocates, and the two paths that do —
-    /// shaping a transcript and shaping an error — run from callbacks where
-    /// this bridge is long gone, so they take the C allocator instead.
+    /// Shapes the `true` each action answers with. The two other paths that
+    /// allocate — shaping a transcript and shaping an error — run from
+    /// callbacks where this bridge is long gone, so they take the C allocator
+    /// instead.
     allocator: std.mem.Allocator,
 
     const Self = @This();
@@ -218,15 +220,17 @@ pub const SpeechBridge = struct {
     pub fn deinit(_: *Self) void {}
 
     /// The payload is ignored, deliberately: Swift reads no field from either
-    /// action, and the injected JS posts neither a body nor a `callbackId`.
-    /// Parsing it would only create a way to fail that the spec has not got.
-    pub fn handleMessage(_: *Self, action: []const u8, _: []const u8) !void {
+    /// action, and the injected JS posts only a `callbackId`. Parsing it would
+    /// only create a way to fail that the spec has not got.
+    pub fn handleMessage(self: *Self, action: []const u8, _: []const u8) !void {
         if (std.mem.eql(u8, action, A.start_listening)) {
             startListening();
+            bridge_error.sendResultToJS(self.allocator, A.start_listening, "true");
             return;
         }
         if (std.mem.eql(u8, action, A.stop_listening)) {
             stopListening();
+            bridge_error.sendResultToJS(self.allocator, A.stop_listening, "true");
             return;
         }
         return BridgeError.UnknownAction;
@@ -1184,11 +1188,12 @@ test "the action names match the Swift case labels exactly" {
     try testing.expectEqualStrings("stopListening", A.stop_listening);
 }
 
-test "both actions are declared, and neither promises a reply" {
+test "both actions are declared, and both answer the promise the page awaits" {
     try testing.expectEqual(@as(usize, 2), capability_actions.len);
     for (capability_actions) |decl| {
-        // `.result` would tell an app to await something no path here sends.
-        try testing.expectEqual(capabilities.Reply.none, decl.reply);
+        // The page posts a callbackId for both (#207), so `.none` would be a
+        // promise that never settles.
+        try testing.expectEqual(capabilities.Reply.result, decl.reply);
         try testing.expectEqual(capabilities.ActionStatus.live, decl.status);
     }
 }
@@ -1207,8 +1212,7 @@ test "an unrelated action falls through rather than being refused" {
 
 test "a malformed payload is not a reason to refuse either action" {
     // Neither action reads a field, so neither parses one. A parser here would
-    // invent a failure the spec has not got — and it would surface as a
-    // dispatcher error under a request id no page holds.
+    // invent a failure the spec has not got.
     var bridge = SpeechBridge.init(testing.allocator);
     defer bridge.deinit();
 

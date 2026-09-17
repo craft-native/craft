@@ -667,16 +667,23 @@ struct CraftWebView: UIViewRepresentable {
             switch action {
             case "startListening":
                 if config.enableSpeechRecognition {
+                    // Answers that the request was taken. Authorization and the
+                    // recognizer answer later, as craftSpeech* events; waiting
+                    // for them here would leave the promise open on every path
+                    // that ends without one.
                     startSpeechRecognition()
+                    resolveCallback(callbackId, result: true)
                 } else {
                     rejectCallback(callbackId, error: "Speech recognition is disabled", code: "CAPABILITY_DISABLED")
                 }
             case "stopListening":
                 stopSpeechRecognition()
+                resolveCallback(callbackId, result: true)
             case "haptic":
                 if config.enableHaptics {
                     let style = body["style"] as? String ?? "medium"
                     triggerHaptic(style: style)
+                    resolveCallback(callbackId, result: true)
                 } else {
                     rejectCallback(callbackId, error: "Haptics is disabled", code: "CAPABILITY_DISABLED")
                 }
@@ -2013,16 +2020,37 @@ struct CraftWebView: UIViewRepresentable {
                     return Promise.reject(new Error('Android fitness APIs are unavailable on iOS'));
                 },
 
+                // Resolves true once UIKit has taken the haptic, and rejects
+                // CAPABILITY_DISABLED when enableHaptics is off.
                 haptic: function(style) {
-                    window.webkit.messageHandlers.craft.postMessage({action: 'haptic', style: style || 'medium'});
+                    var self = window.craft;
+                    var id = 'cb_' + (++self._callbackId);
+                    window.webkit.messageHandlers.craft.postMessage({action: 'haptic', style: style || 'medium', callbackId: id});
+                    return new Promise(function(resolve, reject) {
+                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                    });
                 },
 
+                // Resolves true once native has taken the request, not once
+                // audio is flowing. What happens next (a prompt declined, no
+                // recognizer, a transcript) still arrives as craftSpeech*
+                // events, because none of it is known when this answers.
                 startListening: function() {
-                    window.webkit.messageHandlers.craft.postMessage({action: 'startListening'});
+                    var self = window.craft;
+                    var id = 'cb_' + (++self._callbackId);
+                    window.webkit.messageHandlers.craft.postMessage({action: 'startListening', callbackId: id});
+                    return new Promise(function(resolve, reject) {
+                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                    });
                 },
 
                 stopListening: function() {
-                    window.webkit.messageHandlers.craft.postMessage({action: 'stopListening'});
+                    var self = window.craft;
+                    var id = 'cb_' + (++self._callbackId);
+                    window.webkit.messageHandlers.craft.postMessage({action: 'stopListening', callbackId: id});
+                    return new Promise(function(resolve, reject) {
+                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                    });
                 },
 
                 share: function(text) {
@@ -2169,12 +2197,25 @@ struct CraftWebView: UIViewRepresentable {
                             }
                         });
                     },
+                    // Resolves true once updates have started, before any
+                    // authorization answer. A later refusal arrives as a
+                    // craftLocationError event.
                     watchPosition: function(callback) {
+                        var self = window.craft;
+                        var id = 'cb_' + (++self._callbackId);
                         window.addEventListener('craftLocationUpdate', function(e) { callback(e.detail); });
-                        window.webkit.messageHandlers.craft.postMessage({action: 'watchPosition'});
+                        window.webkit.messageHandlers.craft.postMessage({action: 'watchPosition', callbackId: id});
+                        return new Promise(function(resolve, reject) {
+                            self._callbacks[id] = {resolve: resolve, reject: reject};
+                        });
                     },
                     clearWatch: function() {
-                        window.webkit.messageHandlers.craft.postMessage({action: 'clearWatch'});
+                        var self = window.craft;
+                        var id = 'cb_' + (++self._callbackId);
+                        window.webkit.messageHandlers.craft.postMessage({action: 'clearWatch', callbackId: id});
+                        return new Promise(function(resolve, reject) {
+                            self._callbacks[id] = {resolve: resolve, reject: reject};
+                        });
                     }
                 },
 
@@ -2274,7 +2315,12 @@ struct CraftWebView: UIViewRepresentable {
 
                 // Vibrate
                 vibrate: function(pattern) {
-                    window.webkit.messageHandlers.craft.postMessage({action: 'vibrate', pattern: pattern});
+                    var self = window.craft;
+                    var id = 'cb_' + (++self._callbackId);
+                    window.webkit.messageHandlers.craft.postMessage({action: 'vibrate', pattern: pattern, callbackId: id});
+                    return new Promise(function(resolve, reject) {
+                        self._callbacks[id] = {resolve: resolve, reject: reject};
+                    });
                 },
 
                 // Open URL
@@ -2924,14 +2970,25 @@ struct CraftWebView: UIViewRepresentable {
                     getInfo: function() { return craft.getDeviceInfo(); },
                     getCapabilities: function() { return Promise.resolve(Object.assign({}, craft.capabilities)); }
                 };
+                // Feedback, as on Android and the web, where there is no
+                // motor to fire: an app that left enableHaptics off gets
+                // nothing played and a settled promise, so `await
+                // haptics.selection()` in the middle of a flow does not stop
+                // the flow. A native failure still rejects, and
+                // craft.haptic() itself reports the refusal.
+                function hapticFeedback(answer) {
+                    return answer.then(function() {}, function(error) {
+                        if (error && error.code === 'CAPABILITY_DISABLED') return;
+                        throw error;
+                    });
+                }
                 craft.haptics = {
-                    impact: function(style) { craft.haptic(style || 'medium'); return Promise.resolve(); },
+                    impact: function(style) { return hapticFeedback(craft.haptic(style || 'medium')); },
                     notification: function(type) {
-                        craft.haptic(type === 'error' ? 'heavy' : type === 'warning' ? 'medium' : 'light');
-                        return Promise.resolve();
+                        return hapticFeedback(craft.haptic(type === 'error' ? 'heavy' : type === 'warning' ? 'medium' : 'light'));
                     },
-                    selection: function() { craft.haptic('soft'); return Promise.resolve(); },
-                    vibrate: function(pattern) { craft.vibrate(pattern || []); return Promise.resolve(); }
+                    selection: function() { return hapticFeedback(craft.haptic('soft')); },
+                    vibrate: function(pattern) { return hapticFeedback(craft.vibrate(pattern || [])); }
                 };
                 craft.permissions = {
                     check: function(permission) { return craft._invoke('checkPermission', {permission: permission}); },
@@ -2971,9 +3028,7 @@ struct CraftWebView: UIViewRepresentable {
                     },
                     clearWatch: function(id) {
                         locationWatchCallbacks.delete(id);
-                        if (locationWatchCallbacks.size === 0) {
-                            window.webkit.messageHandlers.craft.postMessage({action: 'clearWatch'});
-                        }
+                        if (locationWatchCallbacks.size === 0) void craft._invoke('clearWatch');
                     },
                     startRecording: function() { return craft._invoke('startLocationRecording'); },
                     pauseRecording: function() { return craft._invoke('pauseLocationRecording'); },
