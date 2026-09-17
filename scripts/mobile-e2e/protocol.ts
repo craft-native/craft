@@ -325,13 +325,45 @@ export function evaluateRun(platform: MobilePlatform, text: string, expectedRun?
   return { ok: failures.length === 0, failures, planned, passed, failed }
 }
 
-/** What one cold start through a link saw, as the XCUITest printed it. */
+/** What one cold start through a link saw, as the page reported it. */
 export interface DeepLinkResult {
   receive: 'subscribe' | 'both'
   link: string
   launch: string | null
   onLink: { url?: string, initial?: boolean }[]
   initialURL: string | null
+  /** `typeof` what onLink returned. Absent from reports older than #215. */
+  unsubscribe?: string
+}
+
+/** The report the page writes, without the label the harness adds. */
+export type DeepLinkReport = Omit<DeepLinkResult, 'receive' | 'link'>
+
+/**
+ * The page's deep-link reports in an Android log, one per distinct report.
+ *
+ * On Android the page logs its `CRAFT-E2E-DEEPLINK {json}` line through both
+ * console.log, which logcat carries under `chromium` wrapped in quotes and a
+ * source suffix, and craft.log, under the bridge's own tag. The same report
+ * arriving twice is one report; two different ones means the page reported
+ * twice, which the caller treats as a failure.
+ */
+export function deepLinkReports(text: string): DeepLinkReport[] {
+  const reports: DeepLinkReport[] = []
+  const seen = new Set<string>()
+  for (const line of text.replace(ANSI, '').split('\n')) {
+    const at = line.indexOf('CRAFT-E2E-DEEPLINK ')
+    if (at === -1 || line.includes('CRAFT-E2E-DEEPLINK-RESULT')) continue
+    const json = firstJsonObject(line.slice(at + 'CRAFT-E2E-DEEPLINK '.length))
+    if (!json || seen.has(json)) continue
+    seen.add(json)
+    try {
+      const report = JSON.parse(json) as DeepLinkReport
+      if (Array.isArray(report.onLink)) reports.push(report)
+    }
+    catch {}
+  }
+  return reports
 }
 
 /**
@@ -364,15 +396,21 @@ export function deepLinkResults(output: string): DeepLinkResult[] {
  * `both` is the guard on the fix: a page that also calls getInitialURL must
  * get the link from there and not a second time from onLink.
  */
-export function deepLinkProblems(results: DeepLinkResult[], link: string): string[] {
+export function deepLinkProblems(
+  results: DeepLinkResult[],
+  link: string,
+  evidence: (receive: DeepLinkResult['receive']) => string = () => 'xcodebuild-deeplink.log',
+): string[] {
   const problems: string[] = []
   for (const receive of ['subscribe', 'both'] as const) {
     const result = results.find(entry => entry.receive === receive)
     const expectedLink = `${link}&receive=${receive}`
     if (!result) {
-      problems.push(`the ${receive} cold start never reported; see xcodebuild-deeplink.log`)
+      problems.push(`the ${receive} cold start never reported; see ${evidence(receive)}`)
       continue
     }
+    if (result.unsubscribe !== undefined && result.unsubscribe !== 'function')
+      problems.push(`onLink returned ${result.unsubscribe} in the ${receive} cold start, expected a function that unsubscribes`)
     if (result.launch !== expectedLink) {
       problems.push(`the ${receive} cold start was not launched by its link: the page saw ${JSON.stringify(result.launch)}`)
       continue
