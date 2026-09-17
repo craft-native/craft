@@ -5608,9 +5608,42 @@ struct CraftWebView: UIViewRepresentable {
             resolveCallback(callbackId, result: ["registered": true, "action": action, "phrase": phrase])
         }
 
+        // Removals waiting on their completion, each under a token of its own:
+        // callbackId can be nil, and restarts when the page reloads.
+        private var pendingSiriRemovals: [UUID: DispatchWorkItem] = [:]
+        // The only thing that settles craft.siri.remove, which arms no timeout
+        // of its own; the same as Zig's.
+        private static let siriRemovalDeadline: TimeInterval = 15
+
         private func removeSiriShortcut(action: String, callbackId: String?) {
+            // The completion comes from a system daemon, and sometimes it never
+            // comes (#211). The deadline settles the call instead, and never
+            // with removed: true, because the deletion may still have happened.
+            // Both run on the main queue and remove the same entry, so only one
+            // of them answers.
+            let token = UUID()
+            let deadline = DispatchWorkItem { [weak self] in
+                guard let self, self.pendingSiriRemovals.removeValue(forKey: token) != nil else { return }
+                self.rejectCallback(
+                    callbackId,
+                    error: "NSUserActivity.deleteSavedUserActivities did not call its completion handler within \(Int(Coordinator.siriRemovalDeadline))s",
+                    code: "TIMEOUT"
+                )
+            }
+            pendingSiriRemovals[token] = deadline
+            DispatchQueue.main.asyncAfter(deadline: .now() + Coordinator.siriRemovalDeadline, execute: deadline)
+
             NSUserActivity.deleteSavedUserActivities(withPersistentIdentifiers: [action]) {
-                self.resolveCallback(callbackId, result: ["removed": true, "action": action])
+                // The queue this runs on is not documented, and a zig: hand-off
+                // reply goes to evaluateJavaScript without a hop of its own.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, let pending = self.pendingSiriRemovals.removeValue(forKey: token) else {
+                        print("removeSiriShortcut: the completion for \(action) arrived after its deadline; ignored")
+                        return
+                    }
+                    pending.cancel()
+                    self.resolveCallback(callbackId, result: ["removed": true, "action": action])
+                }
             }
         }
 

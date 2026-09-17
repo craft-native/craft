@@ -1788,42 +1788,16 @@ fn takePendingFixIf(ticket: ios_async.Ticket) ?PendingFix {
     return call;
 }
 
-const dispatch_function_t = *const fn (?*anyopaque) callconv(.c) void;
-extern "c" fn dispatch_time(when: u64, delta: i64) u64;
-extern "c" fn dispatch_after_f(
-    when: u64,
-    queue: *anyopaque,
-    context: ?*anyopaque,
-    work: dispatch_function_t,
-) void;
-extern var _dispatch_main_q: anyopaque;
-
-fn timeoutContext(ticket: ios_async.Ticket) ?*anyopaque {
-    const encoded = (@as(usize, ticket.generation) << 5) | @as(usize, ticket.index);
-    return @ptrFromInt(encoded + 1);
-}
-
-fn ticketFromTimeoutContext(context: ?*anyopaque) ios_async.Ticket {
-    const encoded = @intFromPtr(context orelse unreachable) - 1;
-    return .{
-        .index = @intCast(encoded & 31),
-        .generation = @intCast(encoded >> 5),
-    };
-}
-
 fn positionTimedOut(context: ?*anyopaque) callconv(.c) void {
     if (!is_darwin) return;
-    const ticket = ticketFromTimeoutContext(context);
+    const ticket = ios_async.ticketFromDeadline(context);
     const call = takePendingFixIf(ticket) orelse return;
     restoreBestAccuracy();
     ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.Timeout);
 }
 
 fn schedulePositionTimeout(ticket: ios_async.Ticket, timeout_ms: u32) void {
-    if (!is_darwin) return;
-    const delay_ns: i64 = @as(i64, timeout_ms) * 1_000_000;
-    const deadline = dispatch_time(0, delay_ns);
-    dispatch_after_f(deadline, &_dispatch_main_q, timeoutContext(ticket), positionTimedOut);
+    ios_async.scheduleDeadline(ticket, timeout_ms, positionTimedOut);
 }
 
 /// Record the running watch. Overwriting is the whole behaviour: a second
@@ -2978,13 +2952,6 @@ test "cache age is explicit, inclusive and future-safe" {
     try testing.expect(cacheAgeIsAcceptable(10_000, 9_000, 1_000));
     try testing.expect(!cacheAgeIsAcceptable(10_000, 8_999, 1_000));
     try testing.expect(cacheAgeIsAcceptable(10_000, 11_000, 1));
-}
-
-test "position timeout contexts retain the complete async ticket" {
-    const original: ios_async.Ticket = .{ .index = 15, .generation = 0xfedcba98 };
-    const decoded = ticketFromTimeoutContext(timeoutContext(original));
-    try testing.expectEqual(original.index, decoded.index);
-    try testing.expectEqual(original.generation, decoded.generation);
 }
 
 test "watch payloads remain ignored" {

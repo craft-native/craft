@@ -173,6 +173,29 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain("addEventListener('craftOTAStatus'")
   })
 
+  it('settles a Siri shortcut removal whose completion never comes', async () => {
+    // #211: the deletion completion comes from a system daemon, and on a
+    // fresh simulator it sometimes never does. The Swift arm only runs in
+    // apps without the Zig runtime, so no simulator suite reaches it.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-siri-removal-'))
+    await init({ runtimeDir: null, name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    const start = swift.indexOf('private func removeSiriShortcut(')
+    const removal = swift.slice(start, swift.indexOf('// MARK: - Watch Connectivity', start))
+
+    expect(start).toBeGreaterThan(-1)
+    expect(removal).toContain('DispatchQueue.main.asyncAfter(deadline: .now() + Coordinator.siriRemovalDeadline, execute: deadline)')
+    expect(removal).toContain('code: "TIMEOUT"')
+    // Exactly one answer: both halves take the same entry, and only the one
+    // that finds it replies.
+    expect(removal.split('self.pendingSiriRemovals.removeValue(forKey: token)')).toHaveLength(3)
+    expect(removal).toContain('pending.cancel()')
+    // The deadline never claims the shortcut is gone.
+    const deadline = removal.slice(removal.indexOf('let deadline'), removal.indexOf('pendingSiriRemovals[token] = deadline'))
+    expect(deadline).not.toContain('"removed": true')
+  })
+
   it('returns completed video recordings as the documented base64 string', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-video-recording-'))
     await init({
