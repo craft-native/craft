@@ -159,14 +159,17 @@ window.addEventListener('craftReady', (e) => {
   console.log('Capabilities:', e.detail.capabilities);
 });
 
-// Haptic feedback
-window.craft.haptic('light');   // light, medium, heavy
-window.craft.haptic('success'); // success, warning, error
-window.craft.haptic('selection');
+// Haptic feedback. Resolves true, and rejects with CAPABILITY_DISABLED when
+// enableHaptics is off.
+await window.craft.haptic('light');   // light, medium, heavy
+await window.craft.haptic('success'); // success, warning, error
+await window.craft.haptic('selection');
 
-// Speech recognition
-window.craft.startListening();
-window.craft.stopListening();
+// Speech recognition. startListening resolves true once the request is
+// taken; whether listening actually began arrives as the events below
+// (craftSpeechError for a declined prompt or no recognizer).
+await window.craft.startListening();
+await window.craft.stopListening();
 
 // Listen for speech events
 window.addEventListener('craftSpeechStart', () => { /* recording started */ });
