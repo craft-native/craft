@@ -30,8 +30,8 @@ bun run test:mobile-e2e:ios
 ```
 
 ```
-ok   ios-shim — 6/6 cases, no zig
-ok   ios-runtime — 6/6 cases, zig served checkPermission, clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, log, requestPermission, share
+ok   ios-shim — 12/12 cases, no zig
+ok   ios-runtime — 12/12 cases, zig served checkPermission, clearWatch, clipboardRead, clipboardWrite, getCurrentPosition, getDeviceInfo, haptic, log, requestPermission, share, startListening, stopListening, vibrate, watchPosition
 ```
 
 After the suite, each leg cold-starts the app through a link twice, from an
