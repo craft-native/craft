@@ -327,6 +327,38 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('craft.ar.onPlaneDetected is unavailable because ARCore requires native Activity integration')
   })
 
+  it('queues deep links until the bridge is injected, and marks only the launch link initial', async () => {
+    // #215: the launch link used to go only to getInitialURL, and a warm link
+    // replaced the launch link as getInitialURL's answer.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-deep-links-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const sourceRoot = join(output, 'app/src/main/java/org/wildloop/app')
+    const bridge = readFileSync(join(sourceRoot, 'CraftBridge.kt'), 'utf8')
+    const activity = readFileSync(join(sourceRoot, 'MainActivity.kt'), 'utf8')
+    const holder = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')
+
+    expect(activity).not.toContain('dispatch = false')
+    expect(activity).toContain('craftBridge.receiveDeepLink(launchLink)')
+    expect(activity).toContain('Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY')
+    expect(activity).toContain('intent.data?.toString()?.let(craftBridge::receiveDeepLink)')
+    // A recreated activity restores what the bridge saved, not getIntent(),
+    // which onNewIntent may have replaced with a warm link.
+    expect(activity).toContain('craftBridge.saveDeepLinks(outState)')
+    expect(activity).toContain('craftBridge.restoreDeepLinks(savedInstanceState)')
+
+    // Flushed in the injection's completion, after the page's replay exists.
+    const injected = bridge.slice(bridge.indexOf('webView.evaluateJavascript(script) {'))
+    const flush = injected.slice(0, injected.indexOf('fun markBridgeLoading()'))
+    expect(flush.indexOf('bridgeReady = true')).toBeLessThan(flush.indexOf('links.forEach { (url, initial) -> dispatchDeepLink(url, initial) }'))
+
+    expect(bridge).toContain('val initial = !hasBeenReady && !initialAssigned')
+    expect(bridge).toContain('put("initial", initial)')
+    expect(bridge).not.toContain('if (initialURL == null)')
+    expect(bridge).toContain('pendingDeepLinks.clear()\n    }')
+    expect(holder).toContain('private external fun nativeDispatchDeepLink(url: String, initial: Boolean): Boolean')
+  })
+
   it('routes external Activity results back to every pending media promise', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-activity-results-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

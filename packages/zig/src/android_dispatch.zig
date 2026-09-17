@@ -379,7 +379,7 @@ const natives = [_]jni.JNINativeMethod{
     .{ .name = "nativeResetDeepLinks", .signature = "()Z", .fnPtr = @ptrCast(&nativeResetDeepLinks) },
     .{ .name = "nativeSetInitialURL", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeSetInitialURL) },
     .{ .name = "nativeGetInitialURL", .signature = "()Z", .fnPtr = @ptrCast(&nativeGetInitialURL) },
-    .{ .name = "nativeDispatchDeepLink", .signature = "(Ljava/lang/String;)Z", .fnPtr = @ptrCast(&nativeDispatchDeepLink) },
+    .{ .name = "nativeDispatchDeepLink", .signature = "(Ljava/lang/String;Z)Z", .fnPtr = @ptrCast(&nativeDispatchDeepLink) },
     .{ .name = "nativeScreenshotReady", .signature = "([B)V", .fnPtr = @ptrCast(&nativeScreenshotReady) },
     .{ .name = "nativeScreenshotError", .signature = "(Ljava/lang/String;)V", .fnPtr = @ptrCast(&nativeScreenshotError) },
     .{ .name = "nativeTakeScreenshot", .signature = "(Landroid/app/Activity;Landroid/webkit/WebView;)Z", .fnPtr = @ptrCast(&nativeTakeScreenshot) },
@@ -1187,19 +1187,18 @@ fn nativeGetInitialURL(env: jni.JNIEnv, _: jni.jobject) callconv(.c) jni.jboolea
     defer arena.deinit();
     const allocator = arena.allocator();
     const url = deeplink.snapshot(allocator) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE);
-    const result = if (url) |text| deeplink.payload(j, allocator, text) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE) else "null";
+    const result = if (url) |text| deeplink.payload(j, allocator, text, null) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE) else "null";
     events.settle(allocator, deeplink.resolve_global, result) catch |err| return fellThrough("getInitialURL", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
 
-fn nativeDispatchDeepLink(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring) callconv(.c) jni.jboolean {
+fn nativeDispatchDeepLink(env: jni.JNIEnv, _: jni.jobject, url: jni.jstring, initial: jni.jboolean) callconv(.c) jni.jboolean {
     const j = Jni.init(env);
     var arena = std.heap.ArenaAllocator.init(backing);
     defer arena.deinit();
     const allocator = arena.allocator();
     const text = j.stringToUtf8(allocator, url) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
-    deeplink.rememberFirst(text) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
-    const detail = deeplink.payload(j, allocator, text) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
+    const detail = deeplink.payload(j, allocator, text, initial == jni.JNI_TRUE) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
     events.emitEvent(allocator, deeplink.event_name, detail) catch |err| return fellThrough("dispatchDeepLink", err, jni.JNI_FALSE);
     return jni.JNI_TRUE;
 }
@@ -3142,6 +3141,17 @@ test "the registered natives name methods the Kotlin actually declares" {
     try testing.expectEqualStrings(
         "(Landroid/app/Activity;)Z",
         std.mem.span(restore.signature),
+    );
+
+    // `CraftNative.nativeDispatchDeepLink(url: String, initial: Boolean)`. A
+    // descriptor that disagrees fails RegisterNatives for all of them, which
+    // only the emulator's runtime leg would show.
+    const deep_link = for (natives) |native| {
+        if (std.mem.eql(u8, std.mem.span(native.name), "nativeDispatchDeepLink")) break native;
+    } else return error.TestExpectedEqual;
+    try testing.expectEqualStrings(
+        "(Ljava/lang/String;Z)Z",
+        std.mem.span(deep_link.signature),
     );
 }
 

@@ -44,7 +44,19 @@ class MainActivity : AppCompatActivity() {
 
         webView = findViewById(R.id.webview)
         craftBridge = CraftBridge(this, webView, CraftHealthConnect(this, webView))
-        handleIncomingDeepLink(intent, dispatch = false)
+        // The link that launched the app (#215). Queued until the page's bridge
+        // is injected, then dispatched once with `initial: true`, so a page that
+        // subscribes rather than calling getInitialURL still hears it. A
+        // relaunch from Recents carries the old intent, and was not opened by it.
+        // A recreated activity restores what the bridge saved: its intent may
+        // be a later warm link that onNewIntent set.
+        if (savedInstanceState == null) {
+            val launchLink = intent.data?.toString()
+            val launchedFromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+            if (launchLink != null && !launchedFromHistory) craftBridge.receiveDeepLink(launchLink)
+        } else {
+            craftBridge.restoreDeepLinks(savedInstanceState)
+        }
         if (savedInstanceState == null) handleIncomingShortcut(intent)
 
         setupWebView()
@@ -150,12 +162,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleIncomingDeepLink(source: Intent?, dispatch: Boolean) {
-        val url = source?.data?.toString() ?: return
-        craftBridge.setInitialURL(url)
-        if (dispatch) craftBridge.dispatchDeepLink(url)
-    }
-
     private fun handleIncomingShortcut(source: Intent?) {
         source?.getStringExtra(SHORTCUT_TYPE_EXTRA)?.let(craftBridge::dispatchShortcut)
     }
@@ -198,10 +204,15 @@ class MainActivity : AppCompatActivity() {
         return (uri.scheme == "https" || localDevelopment) && origin in trustedOrigins
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        craftBridge.saveDeepLinks(outState)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleIncomingDeepLink(intent, dispatch = true)
+        intent.data?.toString()?.let(craftBridge::receiveDeepLink)
         handleIncomingShortcut(intent)
     }
 

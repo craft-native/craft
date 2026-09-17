@@ -221,6 +221,14 @@ class CraftBridge(
     private var bridgeReady = false
     private val pendingEvents = mutableListOf<Pair<String, Map<String, Any>>>()
 
+    // Deep links (#215), on the UI thread only, the way iOS's DeepLinkManager
+    // holds them: a link that arrives before the first page has its bridge is
+    // the launch link, and every link waits for an injected bridge.
+    private var hasBeenReady = false
+    private var initialAssigned = false
+    private var launchURL: String? = null
+    private val pendingDeepLinks = mutableListOf<Pair<String, Boolean>>()
+
     // Location tracking
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private val locationCallbacks = mutableMapOf<Int, LocationCallback>()
@@ -310,6 +318,10 @@ class CraftBridge(
         // still loading has somewhere to go rather than being counted as
         // dropped.
         installNativeDeliverer()
+        // A page is about to exist, so no later link launched the app, even
+        // one that arrives before this script's completion runs. iOS marks
+        // the same moment.
+        hasBeenReady = true
 
         val script = """
 {{PROMISE_RUNTIME}}
@@ -598,7 +610,7 @@ class CraftBridge(
 
                 // Deep Links
                 onDeepLink: function(callback) {
-                    window.addEventListener('craftDeepLink', function(e) { callback(e.detail); });
+                    return window.craft._subscribeDeepLinks(callback);
                 },
 
                 // QR/Barcode Scanner
@@ -999,12 +1011,13 @@ class CraftBridge(
                 // Deep Links
                 deepLinks: {
                     getInitialURL: function() {
+                        window.craft._claimInitialDeepLink();
                         return window.__craftPromise('initial URL', '_craftDeepLinkResolve', '_craftDeepLinkReject', function() {
                             CraftAndroid.getInitialURL();
                         });
                     },
                     onLink: function(callback) {
-                        window.addEventListener('craftDeepLink', function(e) { callback(e.detail); });
+                        return window.craft._subscribeDeepLinks(callback);
                     }
                 },
 
@@ -1354,6 +1367,62 @@ class CraftBridge(
                 }
             };
 
+            // Links that arrive before anything is listening (#215, as iOS
+            // does since #198).
+            //
+            // Native dispatches a link once this script has run, and on a cold
+            // start that is the link the app was opened with. Only a craftReady
+            // handler can have called onLink by then, since onLink is defined
+            // by this very script. So such a link used to reach nobody, and a
+            // page that subscribes later, rather than asking getInitialURL,
+            // never learned how it was opened.
+            //
+            // Held here instead, and handed to the first subscriber on the
+            // next turn, so an unsubscribe returned in the same tick still
+            // applies. The launch link belongs to getInitialURL once the page
+            // has called it, whether native has dispatched it yet or not, so a
+            // page that does both in the same tick or in a craftReady handler,
+            // in either order, gets it once. A page that asks getInitialURL
+            // only later, after an await, should skip `initial` in onLink.
+            //
+            // The state lives on window, not in this function, because this
+            // script can run twice in one document, and a second copy must
+            // neither reset it nor buffer every link a second time.
+            (function installDeepLinkReplay(craft) {
+                var replay = window.__craftDeepLinkReplay;
+                if (!replay) {
+                    replay = window.__craftDeepLinkReplay = {undelivered: [], subscribed: false, initialClaimed: false};
+                    window.addEventListener('craftDeepLink', function(e) {
+                        if (!replay.subscribed && !claimed(e.detail)) replay.undelivered.push(e.detail);
+                    });
+                }
+                function claimed(detail) {
+                    return replay.initialClaimed && detail && detail.initial;
+                }
+                craft._subscribeDeepLinks = function(callback) {
+                    var active = true;
+                    var listener = function(e) { if (!claimed(e.detail)) callback(e.detail); };
+                    window.addEventListener('craftDeepLink', listener);
+                    if (!replay.subscribed) {
+                        replay.subscribed = true;
+                        setTimeout(function() {
+                            var pending = replay.undelivered;
+                            replay.undelivered = [];
+                            if (!active) return;
+                            pending.forEach(function(detail) { callback(detail); });
+                        }, 0);
+                    }
+                    return function() {
+                        active = false;
+                        window.removeEventListener('craftDeepLink', listener);
+                    };
+                };
+                craft._claimInitialDeepLink = function() {
+                    replay.initialClaimed = true;
+                    replay.undelivered = replay.undelivered.filter(function(detail) { return !(detail && detail.initial); });
+                };
+            })(window.craft);
+
             (function installCraftMobileContract(craft) {
                 var legacyShare = craft.share.bind(craft);
                 var legacyOpenCamera = craft.openCamera.bind(craft);
@@ -1485,6 +1554,11 @@ class CraftBridge(
                 val events = pendingEvents.toList()
                 pendingEvents.clear()
                 events.forEach { (name, data) -> sendEvent(name, data) }
+                // After the script, so the page's replay listener exists and
+                // the native deliverer is installed.
+                val links = pendingDeepLinks.toList()
+                pendingDeepLinks.clear()
+                links.forEach { (url, initial) -> dispatchDeepLink(url, initial) }
             }
         }
     }
@@ -3314,18 +3388,6 @@ class CraftBridge(
         return true
     }
 
-    // ==================== Deep Links ====================
-
-    fun handleDeepLink(uri: android.net.Uri) {
-        sendEvent("craftDeepLink", mapOf(
-            "url" to uri.toString(),
-            "scheme" to (uri.scheme ?: ""),
-            "host" to (uri.host ?: ""),
-            "path" to (uri.path ?: ""),
-            "query" to (uri.query ?: "")
-        ))
-    }
-
     // ==================== QR/Barcode Scanner ====================
 
     @JavascriptInterface
@@ -3889,6 +3951,7 @@ class CraftBridge(
         isKeepingAwake = false
         pendingPermissionRequests.clear()
         pendingEvents.clear()
+        pendingDeepLinks.clear()
     }
 
     // ==================== Screen Capture ====================
@@ -4662,13 +4725,44 @@ class CraftBridge(
         }
     }
 
-    fun dispatchDeepLink(url: String) {
-        if (nativeDeepLinks && CraftNative.dispatchDeepLink(url)) return
-
-        // Store as initial URL if this is the first one
-        if (initialURL == null) {
-            initialURL = url
+    /**
+     * A link the activity received. The first one before any page was ready
+     * launched the app: it becomes getInitialURL's answer and is dispatched
+     * with `initial: true`. Every later link is `initial: false` and leaves
+     * getInitialURL alone, as on iOS.
+     */
+    fun receiveDeepLink(url: String) {
+        val initial = !hasBeenReady && !initialAssigned
+        if (initial) {
+            initialAssigned = true
+            launchURL = url
+            setInitialURL(url)
         }
+        if (bridgeReady) dispatchDeepLink(url, false) else pendingDeepLinks.add(url to initial)
+    }
+
+    fun saveDeepLinks(outState: Bundle) {
+        outState.putBoolean(STATE_LAUNCH_ASSIGNED, initialAssigned)
+        outState.putBoolean(STATE_PAGE_WAS_READY, hasBeenReady)
+        outState.putString(STATE_LAUNCH_URL, launchURL)
+    }
+
+    /**
+     * A recreated activity loads a new WebView and a fresh document, so the
+     * launch link is queued again for that document's first subscriber, the
+     * way it was for the first one; a page that called getInitialURL claims
+     * it as before. Links that arrive now are never the launch link.
+     */
+    fun restoreDeepLinks(savedState: Bundle) {
+        initialAssigned = savedState.getBoolean(STATE_LAUNCH_ASSIGNED, true)
+        hasBeenReady = savedState.getBoolean(STATE_PAGE_WAS_READY, true)
+        launchURL = savedState.getString(STATE_LAUNCH_URL)
+        setInitialURL(launchURL)
+        launchURL?.let { pendingDeepLinks.add(it to true) }
+    }
+
+    private fun dispatchDeepLink(url: String, initial: Boolean) {
+        if (nativeDeepLinks && CraftNative.dispatchDeepLink(url, initial)) return
 
         val uri = Uri.parse(url)
         val json = JSONObject().apply {
@@ -4683,6 +4777,7 @@ class CraftBridge(
                 queryParams.put(name, uri.getQueryParameter(name) ?: "")
             }
             put("queryParams", queryParams)
+            put("initial", initial)
         }
 
         evaluateJavascriptUnlessClosed(
@@ -4753,6 +4848,9 @@ class CraftBridge(
     }
 
     companion object {
+        private const val STATE_LAUNCH_ASSIGNED = "craft.deepLinks.launchAssigned"
+        private const val STATE_PAGE_WAS_READY = "craft.deepLinks.pageWasReady"
+        private const val STATE_LAUNCH_URL = "craft.deepLinks.launchURL"
         private val MIME_TYPE = Regex("^[^\\s/]+/[^\\s/]+$")
         const val REQUEST_CAMERA = 1001
         const val REQUEST_GALLERY = 1002
