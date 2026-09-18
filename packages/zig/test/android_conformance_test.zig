@@ -18,13 +18,17 @@
 //!
 //!   1. **the action**, `@JavascriptInterface fun getDeviceInfo()` against the
 //!      `A` block of whichever Zig module serves it;
-//!   2. **the binding**, the `name` in `android_dispatch.natives` against the
-//!      `external fun` that `CraftNative.kt` declares.
+//!   2. **the binding**, the `name` *and the JNI descriptor* in
+//!      `android_dispatch.natives` against the `external fun` that
+//!      `CraftNative.kt` declares.
 //!
 //! The second has no compiler behind it at all. `RegisterNatives` matches by
 //! string at load, so renaming one side and not the other fails at
 //! `System.loadLibrary` — in the app, on a device, with a message that names
-//! the method and nothing about where the other half went.
+//! the method and nothing about where the other half went. A descriptor that
+//! disagrees is quieter still: the batch is refused, every action falls back
+//! to Kotlin, and only the runtime E2E leg notices, as a missing
+//! `registered N natives` line after a full emulator run (#230).
 
 const std = @import("std");
 const testing = std.testing;
@@ -563,6 +567,191 @@ test "every native the Kotlin holder declares is one Zig registers" {
                 .{name.*},
             );
             return error.DeclaredNativeNotRegistered;
+        }
+    }
+}
+
+/// The `signature` of every entry in `android_dispatch.natives`, by name.
+fn collectRegisteredDescriptors(allocator: std.mem.Allocator) !std.StringHashMap([]const u8) {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    errdefer map.deinit();
+
+    const table_start = std.mem.indexOf(u8, dispatch_source, "const natives = [_]jni.JNINativeMethod{") orelse
+        return error.NativesTableNotFound;
+    const table_end = std.mem.indexOfPos(u8, dispatch_source, table_start, "\n};") orelse
+        return error.NativesTableNotFound;
+    const table = dispatch_source[table_start..table_end];
+
+    const name_needle = ".name = \"";
+    const signature_needle = ".signature = \"";
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, table, search, name_needle)) |at| {
+        const name_start = at + name_needle.len;
+        const name_end = std.mem.indexOfScalarPos(u8, table, name_start, '"') orelse break;
+        // The signature of this entry, which is the next one after its name.
+        const signature_at = std.mem.indexOfPos(u8, table, name_end, signature_needle) orelse
+            return error.EntryWithoutSignature;
+        const signature_start = signature_at + signature_needle.len;
+        const signature_end = std.mem.indexOfScalarPos(u8, table, signature_start, '"') orelse
+            return error.EntryWithoutSignature;
+        try map.put(table[name_start..name_end], table[signature_start..signature_end]);
+        search = signature_end;
+    }
+    return map;
+}
+
+/// The descriptor for a Kotlin type the holder writes without importing it.
+fn builtinDescriptor(kotlin_type: []const u8) ?[]const u8 {
+    const table = .{
+        .{ "Boolean", "Z" },
+        .{ "Int", "I" },
+        .{ "Long", "J" },
+        .{ "Float", "F" },
+        .{ "Double", "D" },
+        .{ "ByteArray", "[B" },
+        .{ "String", "Ljava/lang/String;" },
+        .{ "Unit", "V" },
+    };
+    inline for (table) |row| {
+        if (std.mem.eql(u8, kotlin_type, row[0])) return row[1];
+    }
+    return null;
+}
+
+/// `Landroid/app/Activity;` for `Activity`, read from the holder's own
+/// imports, so a class this file starts using needs no table here.
+fn importedDescriptor(allocator: std.mem.Allocator, simple: []const u8) !?[]u8 {
+    var lines = std.mem.splitScalar(u8, native_holder, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (!std.mem.startsWith(u8, trimmed, "import ")) continue;
+        const path = std.mem.trim(u8, trimmed["import ".len..], " \t\r");
+        // `import com.android.billingclient.api.*` names no class.
+        const dot = std.mem.lastIndexOfScalar(u8, path, '.') orelse continue;
+        if (!std.mem.eql(u8, path[dot + 1 ..], simple)) continue;
+
+        const descriptor = try allocator.alloc(u8, path.len + 2);
+        descriptor[0] = 'L';
+        @memcpy(descriptor[1 .. path.len + 1], path);
+        descriptor[path.len + 1] = ';';
+        for (descriptor) |*character| {
+            if (character.* == '.') character.* = '/';
+        }
+        return descriptor;
+    }
+    return null;
+}
+
+/// One `external fun`'s descriptor, or an error naming the type that stopped it.
+fn descriptorFor(allocator: std.mem.Allocator, kotlin_type: []const u8) ![]u8 {
+    // `String?` and `String` are one descriptor: nullability is Kotlin's, not
+    // the JVM's.
+    const bare = if (std.mem.endsWith(u8, kotlin_type, "?"))
+        kotlin_type[0 .. kotlin_type.len - 1]
+    else
+        kotlin_type;
+    if (builtinDescriptor(bare)) |descriptor| return allocator.dupe(u8, descriptor);
+    if (try importedDescriptor(allocator, bare)) |descriptor| return descriptor;
+    std.debug.print(
+        "CraftNative.kt uses the type '{s}', which this test cannot turn into a\n" ++
+            "  JNI descriptor: it is neither a Kotlin builtin nor a class the file imports.\n" ++
+            "  Add it to builtinDescriptor, or import it in CraftNative.kt.\n",
+        .{bare},
+    );
+    return error.UnknownKotlinType;
+}
+
+/// Every `external fun` in the holder, as the descriptor JNI expects for it.
+fn collectDeclaredDescriptors(allocator: std.mem.Allocator) !std.StringHashMap([]u8) {
+    var map = std.StringHashMap([]u8).init(allocator);
+    errdefer {
+        var stale = map.valueIterator();
+        while (stale.next()) |descriptor| allocator.free(descriptor.*);
+        map.deinit();
+    }
+
+    const needle = "external fun ";
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, native_holder, search, needle)) |at| {
+        const name_start = at + needle.len;
+        var name_end = name_start;
+        while (name_end < native_holder.len and
+            (std.ascii.isAlphanumeric(native_holder[name_end]) or native_holder[name_end] == '_')) : (name_end += 1)
+        {}
+        if (name_end == name_start or name_end >= native_holder.len or native_holder[name_end] != '(') {
+            search = name_end;
+            continue;
+        }
+        const params_end = std.mem.indexOfScalarPos(u8, native_holder, name_end, ')') orelse
+            return error.DeclarationNotClosed;
+        search = params_end;
+
+        var descriptor: std.ArrayListUnmanaged(u8) = .empty;
+        errdefer descriptor.deinit(allocator);
+        try descriptor.append(allocator, '(');
+
+        // `name: Type` pairs, across lines for the declarations that wrap.
+        var params = std.mem.splitScalar(u8, native_holder[name_end + 1 .. params_end], ',');
+        while (params.next()) |param| {
+            const colon = std.mem.indexOfScalar(u8, param, ':') orelse continue;
+            const written = try descriptorFor(allocator, std.mem.trim(u8, param[colon + 1 ..], " \t\r\n"));
+            defer allocator.free(written);
+            try descriptor.appendSlice(allocator, written);
+        }
+        try descriptor.append(allocator, ')');
+
+        // `): Type`, or nothing at all, which is Unit.
+        var after = params_end + 1;
+        while (after < native_holder.len and (native_holder[after] == ' ' or native_holder[after] == '\t')) : (after += 1) {}
+        var returns: []const u8 = "Unit";
+        if (after < native_holder.len and native_holder[after] == ':') {
+            var type_start = after + 1;
+            while (type_start < native_holder.len and native_holder[type_start] == ' ') : (type_start += 1) {}
+            var type_end = type_start;
+            while (type_end < native_holder.len and
+                (std.ascii.isAlphanumeric(native_holder[type_end]) or native_holder[type_end] == '?')) : (type_end += 1)
+            {}
+            returns = native_holder[type_start..type_end];
+        }
+        const written = try descriptorFor(allocator, returns);
+        defer allocator.free(written);
+        try descriptor.appendSlice(allocator, written);
+
+        try map.put(native_holder[name_start..name_end], try descriptor.toOwnedSlice(allocator));
+    }
+    return map;
+}
+
+test "every registered descriptor is the one its external fun declares" {
+    // The quietest of the three. A descriptor that disagrees with its Kotlin
+    // makes RegisterNatives refuse the whole table, so the library loads, no
+    // native binds, and every action falls back to the Kotlin shim: the shim
+    // leg of the E2E suite still passes, and only the runtime leg notices.
+    // #215 changed one descriptor and could only pin the string itself.
+    var registered = try collectRegisteredDescriptors(testing.allocator);
+    defer registered.deinit();
+    var declared = try collectDeclaredDescriptors(testing.allocator);
+    defer {
+        var descriptors = declared.valueIterator();
+        while (descriptors.next()) |descriptor| testing.allocator.free(descriptor.*);
+        declared.deinit();
+    }
+
+    // Non-vacuity: both scans read a file that could stop matching.
+    try testing.expect(registered.count() >= 100);
+    try testing.expect(declared.count() >= 100);
+
+    var it = registered.iterator();
+    while (it.next()) |entry| {
+        const expected = declared.get(entry.key_ptr.*) orelse continue; // the name tests own this
+        if (!std.mem.eql(u8, expected, entry.value_ptr.*)) {
+            std.debug.print(
+                "android_dispatch registers '{s}' as\n    {s}\n" ++
+                    "  but CraftNative.kt declares it as\n    {s}\n" ++
+                    "  RegisterNatives refuses the whole table, and every action stays on the shim.\n",
+                .{ entry.key_ptr.*, entry.value_ptr.*, expected },
+            );
+            return error.DescriptorDoesNotMatchKotlin;
         }
     }
 }
