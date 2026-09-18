@@ -274,12 +274,23 @@ pub const NotificationsBridge = struct {
         errdefer schedule.deinit(self.allocator);
 
         const ticket = ios_async.acquire(A.schedule_notification) orelse return poolFull();
+        errdefer ios_async.abandon(ticket);
 
-        publishScheduleCall(ticket, sels, schedule);
+        const block = schedule_calls.claim(ticket, .{ .sels = sels, .schedule = schedule }) orelse {
+            std.log.warn(
+                "scheduleNotification: all {d} completion blocks are still owed a completion " ++
+                    "UserNotifications never delivered; refusing rather than reusing one",
+                .{ios_pending.block_count},
+            );
+            return poolFull();
+        };
 
+        // No deadline yet. Stage one is the authorization prompt, and there is
+        // a person reading it; `authorizationFired` starts the clock on the
+        // grant, over the write that nobody is waiting in front of.
         const Fn = *const fn (Id, Id, c_ulong, *anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&objc.objc_msgSend);
-        func(center, sel_request, un_options_alert_sound_badge, boolErrorBlock(ticket));
+        func(center, sel_request, un_options_alert_sound_badge, boolErrorBlock(block));
     }
 };
 
@@ -842,32 +853,25 @@ const ScheduleSels = struct {
 };
 
 const ScheduleCall = struct {
-    ticket: ios_async.Ticket,
     sels: ScheduleSels,
     schedule: Schedule,
 };
 
-var schedule_calls: [ios_async.max_in_flight]?ScheduleCall = @splat(null);
-/// Still the old shape: `scheduleNotification` is two stages, and its deadline
-/// has to start after the authorization prompt rather than at dispatch, which
-/// is its own change (#223).
-var pending_mutex: compat_mutex.Mutex = .{};
+/// Both stages park here, for the reason `getPendingNotifications` does:
+/// keyed by reply-slot index, a deadline would free slot k, the next schedule
+/// would lease slot k and get the same block, and the first one's late
+/// completion would answer it (#223).
+var schedule_calls: ios_pending.Table(ScheduleCall) = .{};
 
-fn publishScheduleCall(ticket: ios_async.Ticket, sels: ScheduleSels, schedule: Schedule) void {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    schedule_calls[ticket.index] = .{ .ticket = ticket, .sels = sels, .schedule = schedule };
-}
+/// The deadline covers `addNotificationRequest:` only.
+///
+/// Stage one is `requestAuthorizationWithOptions:`, which puts a prompt on
+/// someone's screen — timing that out would answer a question they are still
+/// reading. Only the write afterwards is unattended, so the clock starts on
+/// the grant rather than at dispatch, which is what #223 asks for.
+const schedule_deadline_ms: u32 = 10_000;
 
-fn takeScheduleCall(index: u5) ?ScheduleCall {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    const call = schedule_calls[index];
-    schedule_calls[index] = null;
-    return call;
-}
-
-/// `void (^)(BOOL, NSError *)` — the authorization completion.
+/// `void (^)(BOOL, NSError *)` — `requestAuthorizationWithOptions:`'s completion.
 const BoolErrorBlock = extern struct {
     isa: ?*anyopaque,
     flags: c_int,
@@ -888,17 +892,17 @@ const ErrorBlock = extern struct {
 const bool_error_block_descriptor = BlockDescriptor{ .size = @sizeOf(BoolErrorBlock) };
 const error_block_descriptor = BlockDescriptor{ .size = @sizeOf(ErrorBlock) };
 
-fn makeBoolErrorInvoke(comptime index: u5) *const anyopaque {
+fn makeBoolErrorInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const BoolErrorBlock, granted: bool, _: Id) callconv(.c) void {
-            authorizationFired(index, granted);
+            authorizationFired(block, granted);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeBoolErrorBlocks() [ios_async.max_in_flight]BoolErrorBlock {
-    var out: [ios_async.max_in_flight]BoolErrorBlock = undefined;
+fn makeBoolErrorBlocks() [ios_pending.block_count]BoolErrorBlock {
+    var out: [ios_pending.block_count]BoolErrorBlock = undefined;
     for (&out, 0..) |*b, i| {
         b.* = .{
             .isa = &_NSConcreteGlobalBlock,
@@ -910,17 +914,17 @@ fn makeBoolErrorBlocks() [ios_async.max_in_flight]BoolErrorBlock {
     return out;
 }
 
-fn makeErrorInvoke(comptime index: u5) *const anyopaque {
+fn makeErrorInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const ErrorBlock, err: Id) callconv(.c) void {
-            addFired(index, err);
+            addFired(block, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeErrorBlocks() [ios_async.max_in_flight]ErrorBlock {
-    var out: [ios_async.max_in_flight]ErrorBlock = undefined;
+fn makeErrorBlocks() [ios_pending.block_count]ErrorBlock {
+    var out: [ios_pending.block_count]ErrorBlock = undefined;
     for (&out, 0..) |*b, i| {
         b.* = .{
             .isa = &_NSConcreteGlobalBlock,
@@ -932,17 +936,17 @@ fn makeErrorBlocks() [ios_async.max_in_flight]ErrorBlock {
     return out;
 }
 
-var bool_error_blocks: [ios_async.max_in_flight]BoolErrorBlock =
+var bool_error_blocks: [ios_pending.block_count]BoolErrorBlock =
     if (is_darwin) makeBoolErrorBlocks() else undefined;
-var error_blocks: [ios_async.max_in_flight]ErrorBlock =
+var error_blocks: [ios_pending.block_count]ErrorBlock =
     if (is_darwin) makeErrorBlocks() else undefined;
 
-fn boolErrorBlock(ticket: ios_async.Ticket) *anyopaque {
-    return @ptrCast(&bool_error_blocks[ticket.index]);
+fn boolErrorBlock(block: u5) *anyopaque {
+    return @ptrCast(&bool_error_blocks[block]);
 }
 
-fn errorBlock(ticket: ios_async.Ticket) *anyopaque {
-    return @ptrCast(&error_blocks[ticket.index]);
+fn errorBlock(block: u5) *anyopaque {
+    return @ptrCast(&error_blocks[block]);
 }
 
 /// Stage one, on whatever queue UserNotifications chose.
@@ -950,64 +954,120 @@ fn errorBlock(ticket: ios_async.Ticket) *anyopaque {
 /// A refusal answers `PERMISSION_DENIED`, where the spec rejects with the
 /// string "Permission denied" — the typed code every other migrated module
 /// uses, carrying the same meaning in a form a page can branch on.
-fn authorizationFired(index: u5, granted: bool) void {
+fn authorizationFired(block: u5, granted: bool) void {
     if (!is_darwin) return;
 
-    var call = takeScheduleCall(index) orelse {
-        std.log.warn(
-            "scheduleNotification authorization fired for slot {d} with no call recorded; ignored",
-            .{index},
-        );
-        return;
+    const entry = switch (schedule_calls.settle(block)) {
+        .reply => |parked| parked,
+        // Stage one arms no deadline, so `owed` can only mean the reply slot
+        // was answered some other way. Nothing here to add.
+        .late => return,
+        .stray => {
+            std.log.warn(
+                "scheduleNotification authorization fired for block {d} with no call recorded; ignored",
+                .{block},
+            );
+            return;
+        },
     };
+    var call = entry.call;
+    const ticket = entry.ticket;
     const allocator = std.heap.c_allocator;
 
     if (!granted) {
         call.schedule.deinit(allocator);
-        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.PermissionDenied);
+        ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.PermissionDenied);
         return;
     }
 
     const request = buildRequest(&call.schedule, call.sels) catch |err| {
         std.log.err("scheduleNotification could not build its request ({}); rejecting", .{err});
         call.schedule.deinit(allocator);
-        ios_async.deliverError(call.ticket);
+        ios_async.deliverError(ticket);
         return;
     };
 
     const center = notificationCenter() catch {
         call.schedule.deinit(allocator);
-        ios_async.deliverError(call.ticket);
+        ios_async.deliverError(ticket);
         return;
     };
 
-    // Republished before the add, for the reason the first publish exists: the
-    // completion can fire before `msgSend` returns.
-    publishScheduleCall(call.ticket, call.sels, call.schedule);
+    // A *fresh* block for stage two, claimed before the add for the reason the
+    // first claim exists: the completion can fire before `msgSend` returns.
+    // Fresh rather than the same one, because stage one's block was settled
+    // above and may already belong to another call.
+    const add_block = schedule_calls.claim(ticket, call) orelse {
+        std.log.warn(
+            "scheduleNotification: all {d} completion blocks are still owed a completion " ++
+                "UserNotifications never delivered; the request was built but not filed",
+            .{ios_pending.block_count},
+        );
+        call.schedule.deinit(allocator);
+        ios_async.deliverError(ticket);
+        return;
+    };
+
+    // The clock starts here (#223): the prompt above had a person in front of
+    // it, and only this write is unattended.
+    ios_async.scheduleDeadline(ticket, schedule_deadline_ms, scheduleTimedOut);
 
     const Fn = *const fn (Id, Id, Id, *anyopaque) callconv(.c) void;
     const func: Fn = @ptrCast(&objc.objc_msgSend);
-    func(center, call.sels.add_request, request, errorBlock(call.ticket));
+    func(center, call.sels.add_request, request, errorBlock(add_block));
+}
+
+/// On the main queue, `schedule_deadline_ms` after the add. Does nothing when
+/// the completion got there first, which is the usual case: the timer cannot
+/// be cancelled, so it always fires.
+fn scheduleTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+
+    var entry = schedule_calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    // The schedule is this call's to free once the deadline has taken it: the
+    // completion that eventually fires will find the block owed and stop.
+    entry.call.schedule.deinit(std.heap.c_allocator);
+    std.log.warn(
+        "scheduleNotification: addNotificationRequest:withCompletionHandler: did not call its " ++
+            "completion within {d} ms; answering TIMEOUT",
+        .{schedule_deadline_ms},
+    );
+    ios_async.deliverErrorCode(entry.ticket, bridge_error.BridgeError.Timeout);
 }
 
 /// Stage two. Answers the identifier the request was filed under, which is what
 /// the page needs to cancel it later.
-fn addFired(index: u5, err: Id) void {
+fn addFired(block: u5, err: Id) void {
     if (!is_darwin) return;
 
-    var call = takeScheduleCall(index) orelse {
-        std.log.warn(
-            "scheduleNotification add fired for slot {d} with no call recorded; ignored",
-            .{index},
-        );
-        return;
+    const entry = switch (schedule_calls.settle(block)) {
+        .reply => |parked| parked,
+        .late => |started_ms| {
+            // The deadline answered and freed the schedule; this completion
+            // owns nothing and must not touch it.
+            std.log.warn(
+                "scheduleNotification: an add completion arrived {d} ms after the call, after " ++
+                    "its deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn(
+                "scheduleNotification add fired for block {d} with no call recorded; ignored",
+                .{block},
+            );
+            return;
+        },
     };
+    var call = entry.call;
+    const ticket = entry.ticket;
     const allocator = std.heap.c_allocator;
     defer call.schedule.deinit(allocator);
 
     if (err != null) {
         std.log.warn("scheduleNotification: addNotificationRequest reported an error", .{});
-        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
+        ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
         return;
     }
 
@@ -1016,7 +1076,7 @@ fn addFired(index: u5, err: Id) void {
         // here means the request was filed under an identifier nothing kept.
         // Answering anyway would hand the page a value it cannot cancel with.
         std.log.err("scheduleNotification: the request was added with no identifier recorded", .{});
-        ios_async.deliverError(call.ticket);
+        ios_async.deliverError(ticket);
         return;
     };
 
@@ -1024,12 +1084,12 @@ fn addFired(index: u5, err: Id) void {
     // page-supplied identifier can contain a quote.
     var out: std.ArrayListUnmanaged(u8) = .empty;
     defer out.deinit(allocator);
-    out.append(allocator, '"') catch return ios_async.deliverError(call.ticket);
+    out.append(allocator, '"') catch return ios_async.deliverError(ticket);
     bridge_error.appendJsonEscaped(allocator, &out, id) catch
-        return ios_async.deliverError(call.ticket);
-    out.append(allocator, '"') catch return ios_async.deliverError(call.ticket);
+        return ios_async.deliverError(ticket);
+    out.append(allocator, '"') catch return ios_async.deliverError(ticket);
 
-    ios_async.deliverJson(call.ticket, out.items);
+    ios_async.deliverJson(ticket, out.items);
 }
 
 /// Build `UNNotificationRequest` from the parsed schedule.
@@ -1348,14 +1408,77 @@ test "each schedule slot has its own block, and a call is taken once" {
     try testing.expect(bool_error_blocks[0].invoke != bool_error_blocks[1].invoke);
     try testing.expect(error_blocks[0].invoke != error_blocks[1].invoke);
 
-    // Take-and-clear is what makes a double-fired completion a no-op rather
+    // Settle-and-free is what makes a double-fired completion a no-op rather
     // than a second reply.
     const allocator = testing.allocator;
     var schedule = try parseSchedule(allocator, "{\"notification\":{\"title\":\"t\"}}");
     defer schedule.deinit(allocator);
-    publishScheduleCall(.{ .index = 2, .generation = 9 }, undefined, schedule);
-    try testing.expect(takeScheduleCall(2) != null);
-    try testing.expect(takeScheduleCall(2) == null);
+    const ticket: ios_async.Ticket = .{ .index = 2, .generation = 9 };
+    const block = schedule_calls.claim(ticket, .{ .sels = undefined, .schedule = schedule }) orelse
+        return error.NoFreeBlock;
+    try testing.expect(schedule_calls.settle(block) == .reply);
+    try testing.expect(schedule_calls.settle(block) == .stray);
+}
+
+test "the add's deadline answers once, and the completion it beat is ignored" {
+    // #223: stage two is `addNotificationRequest:`, which no person is waiting
+    // in front of. Without the table a deadline would free the reply slot, the
+    // next schedule would lease it and get the same block, and this late
+    // completion would answer that call.
+    const allocator = testing.allocator;
+    var schedule = try parseSchedule(allocator, "{\"notification\":{\"title\":\"t\"}}");
+    defer schedule.deinit(allocator);
+
+    const ticket: ios_async.Ticket = .{ .index = 4, .generation = 21 };
+    const block = schedule_calls.claim(ticket, .{ .sels = undefined, .schedule = schedule }) orelse
+        return error.NoFreeBlock;
+
+    const expired = schedule_calls.expireIfWaiting(ticket) orelse return error.DeadlineFoundNothing;
+    try testing.expectEqual(@as(u32, 21), expired.ticket.generation);
+
+    // Owed, not free: the next schedule must not be given this block.
+    const next: ios_async.Ticket = .{ .index = 4, .generation = 22 };
+    var other = try parseSchedule(allocator, "{\"notification\":{\"title\":\"u\"}}");
+    defer other.deinit(allocator);
+    const elsewhere = schedule_calls.claim(next, .{ .sels = undefined, .schedule = other }) orelse
+        return error.NoFreeBlock;
+    try testing.expect(elsewhere != block);
+
+    try testing.expect(schedule_calls.settle(block) == .late);
+    _ = schedule_calls.settle(elsewhere);
+}
+
+test "the authorization prompt is not on a clock, but the write after it is" {
+    // Stage one puts a prompt on someone's screen; timing that out would
+    // answer a question they are still reading. Only the add is unattended,
+    // which is why the deadline is armed in `authorizationFired` rather than
+    // in the dispatch above it.
+    const source = @embedFile("bridge_mobile_notifications.zig");
+
+    // Split, and joined at comptime. Written whole, the needle would appear in
+    // this test's own source and `indexOf` would match *that* — the assertion
+    // below then passes with the real call deleted, which is exactly what it
+    // did before this comment existed.
+    const needle = "scheduleDeadline(ticket, " ++ "schedule_deadline_ms";
+    var found: usize = 0;
+    var armed_at: usize = 0;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, source, search, needle)) |at| {
+        found += 1;
+        armed_at = at;
+        search = at + needle.len;
+    }
+    // Exactly one: a second would mean the needle matched something other than
+    // the call, and the ordering below would be about the wrong thing.
+    try testing.expectEqual(@as(usize, 1), found);
+
+    const dispatch_at = std.mem.indexOf(u8, source, "un_options_alert_sound_badge") orelse
+        return error.DispatchNotFound;
+    try testing.expect(armed_at > dispatch_at);
+
+    // And well under the 30s `_invoke` gives up after, so the caller hears
+    // this answer rather than its own timeout.
+    try testing.expect(schedule_deadline_ms < 30_000);
 }
 
 test "the payload is ignored, not parsed" {
