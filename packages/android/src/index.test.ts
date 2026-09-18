@@ -377,6 +377,42 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('if (!keepAwakeEnabled && disabled("keepAwake", "setKeepAwake")) return false')
   })
 
+  it('answers the page from haptic, vibrate and the speech calls', async () => {
+    // #219: all four returned Unit, so the page got undefined where iOS
+    // returns a promise, and a grant of RECORD_AUDIO went nowhere.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-feedback-answers-'))
+    await init({
+      name: 'WildLoop',
+      packageName: 'org.wildloop.app',
+      output,
+      config: { enableHaptics: true, enableSpeechRecognition: true },
+    })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    for (const signature of [
+      'fun haptic(style: String): Boolean',
+      'fun vibrate(patternJson: String): Boolean',
+      'fun startListening(): Boolean',
+      'fun stopListening(): Boolean',
+    ]) {
+      expect(bridge).toContain(signature)
+    }
+
+    // The page reads that return value rather than dropping it.
+    expect(bridge).toContain("return CraftAndroid.haptic(style || 'medium') === true;")
+    expect(bridge).toContain('return CraftAndroid.startListening() === true;')
+
+    // The microphone grant starts the recogniser, the way iOS starts from
+    // inside its authorization callback, and a denial is not silence.
+    expect(bridge).toContain('private fun beginSpeechRecognition()')
+    expect(bridge).toContain('if (requestCode == REQUEST_SPEECH) {')
+    expect(bridge).toContain('if (isPermissionGranted(Manifest.permission.RECORD_AUDIO)) beginSpeechRecognition()')
+    expect(bridge).toContain('"Microphone permission denied"')
+
+    // And stopping says the session ended, once, as iOS does.
+    expect(bridge).toContain('sendEvent("craftSpeechEnd", emptyMap())')
+  })
+
   it('routes external Activity results back to every pending media promise', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-activity-results-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })

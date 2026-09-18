@@ -33,6 +33,9 @@ const CONFIG = {
   enablePushNotifications: false,
   enableSecureStorage: false,
   enableShare: true,
+  // On, so haptic and vibrate have a success path to answer from (#219),
+  // and speech stays off so startListening has a refusal to carry.
+  enableHaptics: true,
   enableGeolocation: true,
   enableDeepLinks: true,
   urlSchemes: [DEEP_LINK_SCHEME],

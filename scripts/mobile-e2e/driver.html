@@ -250,8 +250,10 @@
         // Haptics is on, and native used to answer an enabled haptic with
         // nothing at all; it only ever rejected. So a page that awaited it
         // would wait for ever on every call that worked.
+        //
+        // Android answered nothing at all until #219, on every path.
         name: 'haptic.resolvesTrue',
-        platforms: ['ios'],
+        platforms: ['ios', 'android'],
         run: function () {
           return withTimeout(function () { return window.craft.haptic('light') }).then(function (outcome) {
             if (outcome.state === 'timeout') return 'haptic never settled with haptics enabled'
@@ -262,9 +264,13 @@
       },
       {
         name: 'vibrate.resolvesTrue',
-        platforms: ['ios'],
+        platforms: ['ios', 'android'],
         run: function () {
-          return withTimeout(function () { return window.craft.vibrate([]) }).then(function (outcome) {
+          // Android hands the pattern to VibrationEffect.createWaveform,
+          // which rejects an empty one, so the two platforms send what each
+          // actually accepts rather than agreeing on a value neither uses.
+          var pattern = EXPECTED_PLATFORM === 'android' ? [100, 50, 100] : []
+          return withTimeout(function () { return window.craft.vibrate(pattern) }).then(function (outcome) {
             if (outcome.state === 'timeout') return 'vibrate never settled'
             if (outcome.state === 'rejected') return 'vibrate rejected: ' + outcome.error.code + ' ' + outcome.error.message
             if (outcome.value !== true) return 'vibrate resolved with ' + JSON.stringify(outcome.value)
@@ -276,8 +282,11 @@
         // refusal: the page got undefined and no craftSpeechError either.
         // Refused before any authorization prompt, so nothing waits on a
         // microphone the simulator does not have.
+        //
+        // Android refuses from the same gate since #209, but could not carry
+        // the refusal until #219 gave the call a promise to reject.
         name: 'speech.disabled.rejects',
-        platforms: ['ios'],
+        platforms: ['ios', 'android'],
         run: function () {
           return withTimeout(function () { return window.craft.startListening() }).then(function (outcome) {
             if (outcome.state === 'timeout') return 'startListening never settled'
@@ -287,11 +296,12 @@
         }
       },
       {
-        // stopListening is not gated, so it runs with speech off, and it is
-        // the one speech call whose success path a simulator can reach
-        // without a microphone. It used to answer nothing on either side.
+        // stopListening is not gated on either platform, so it runs with
+        // speech off, and it is the one speech call whose success path a
+        // simulator or emulator can reach without a microphone. It used to
+        // answer nothing on either side.
         name: 'speech.stopListening.resolvesTrue',
-        platforms: ['ios'],
+        platforms: ['ios', 'android'],
         run: function () {
           return withTimeout(function () { return window.craft.stopListening() }).then(function (outcome) {
             if (outcome.state === 'timeout') return 'stopListening never settled'

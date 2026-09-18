@@ -114,11 +114,13 @@ export interface CraftBridge {
   /**
    * Trigger haptic feedback
    * @param style - Feedback style: 'light', 'medium', 'heavy', 'success', 'warning', 'error', 'selection'
-   * @returns On iOS, a promise that resolves `true` once UIKit has taken the
-   * haptic, and rejects with `CAPABILITY_DISABLED` when `enableHaptics` is off.
-   * Android returns nothing yet (#219).
+   * @returns A promise that rejects with `CAPABILITY_DISABLED` when
+   * `enableHaptics` is off. Otherwise it resolves `true` on iOS once UIKit has
+   * taken the haptic, and on Android whether the device played it — Android
+   * answers `false` for a vibrator that refused, which is not an error
+   * because a haptic decorates a flow rather than carries it.
    */
-  haptic(style: HapticStyle): Promise<boolean> | void;
+  haptic(style: HapticStyle): Promise<boolean>;
 
   /**
    * Open the native share sheet.
@@ -192,20 +194,23 @@ export interface CraftBridge {
 
   /**
    * Start speech recognition
-   * @returns On iOS, a promise that resolves `true` once native has taken the
+   * @returns A promise that resolves `true` once native has taken the
    * request, and rejects with `CAPABILITY_DISABLED` when
    * `enableSpeechRecognition` is off. `true` does not mean audio is flowing:
    * a declined prompt or a missing recognizer still arrives as
-   * `craftSpeechError`, and transcripts as `craftSpeechResult`. Android returns
-   * nothing yet (#219).
+   * `craftSpeechError`, and transcripts as `craftSpeechResult`. Android answers
+   * the same way, including while it asks for the microphone: it starts once
+   * that is granted, and sends `craftSpeechError` when it is not.
    */
-  startListening(): Promise<boolean> | void;
+  startListening(): Promise<boolean>;
 
   /**
    * Stop speech recognition
-   * @returns On iOS, a promise that resolves `true`. Android returns nothing yet (#219).
+   * @returns A promise that resolves `true`. Never refused on either
+   * platform: stopping what an app was built without is a no-op, so a page
+   * tearing a screen down need not know which build it is running on.
    */
-  stopListening(): Promise<boolean> | void;
+  stopListening(): Promise<boolean>;
 
   // ==================== Files ====================
 
@@ -488,10 +493,11 @@ export interface CraftBridge {
   /**
    * Vibrate with pattern
    * @param pattern - Array of durations in ms [on, off, on, off, ...]
-   * @returns On iOS, a promise that resolves `true` once the pattern is
-   * scheduled. Android returns nothing yet (#219).
+   * @returns A promise that rejects with `CAPABILITY_DISABLED` when
+   * `enableHaptics` is off, resolves `true` on iOS once the pattern is
+   * scheduled, and on Android whether the device played it.
    */
-  vibrate(pattern: number[]): Promise<boolean> | void;
+  vibrate(pattern: number[]): Promise<boolean>;
 
   /**
    * Open URL in external browser
