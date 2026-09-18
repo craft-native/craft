@@ -46,18 +46,25 @@ class MainActivity : AppCompatActivity() {
         craftBridge = CraftBridge(this, webView, CraftHealthConnect(this, webView))
         // The link that launched the app (#215). Queued until the page's bridge
         // is injected, then dispatched once with `initial: true`, so a page that
-        // subscribes rather than calling getInitialURL still hears it. A
-        // relaunch from Recents carries the old intent, and was not opened by it.
-        // A recreated activity restores what the bridge saved: its intent may
-        // be a later warm link that onNewIntent set.
+        // subscribes rather than calling getInitialURL still hears it.
+        //
+        // A relaunch from Recents carries the intent the app was first opened
+        // with. The person picked the task out of a list, not the link or the
+        // shortcut inside it, and neither is news the second time — so both
+        // are skipped, not just the link (#229).
+        //
+        // A recreated activity restores what the bridge saved rather than
+        // reading its intent, which onNewIntent may have replaced with a
+        // later warm link.
+        val launchedFromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
         if (savedInstanceState == null) {
-            val launchLink = intent.data?.toString()
-            val launchedFromHistory = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
-            if (launchLink != null && !launchedFromHistory) craftBridge.receiveDeepLink(launchLink)
+            if (!launchedFromHistory) {
+                intent.data?.toString()?.let(craftBridge::receiveDeepLink)
+                handleIncomingShortcut(intent)
+            }
         } else {
             craftBridge.restoreDeepLinks(savedInstanceState)
         }
-        if (savedInstanceState == null) handleIncomingShortcut(intent)
 
         setupWebView()
         loadContent()
