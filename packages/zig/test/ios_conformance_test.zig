@@ -1800,6 +1800,74 @@ fn caseUsesCallback(region: []const u8, action: []const u8, use: CaseUse) bool {
     return false;
 }
 
+/// The lines of the dispatcher's `case` for `action`, label excluded.
+///
+/// Same boundary rule as `caseUsesCallback`: from the label to the next line
+/// at or above its indentation that starts another case, a `default:` or the
+/// closing brace.
+fn caseBody(region: []const u8, action: []const u8) ?[]const u8 {
+    var case_indent: ?usize = null;
+    var body_start: usize = 0;
+    var offset: usize = 0;
+    var lines = std.mem.splitScalar(u8, region, '\n');
+    while (lines.next()) |line| {
+        const next_offset = offset + line.len + 1;
+        defer offset = next_offset;
+        const body = std.mem.trimStart(u8, line, " \t");
+        if (body.len == 0) continue;
+        const indent = line.len - body.len;
+
+        if (case_indent) |at| {
+            const closes = indent <= at and (std.mem.startsWith(u8, body, "case ") or
+                std.mem.startsWith(u8, body, "default") or body[0] == '}');
+            if (closes) return region[body_start..offset];
+            continue;
+        }
+        if (std.mem.startsWith(u8, body, "case ") and labels(body, action)) {
+            case_indent = indent;
+            body_start = next_offset;
+        }
+    }
+    if (case_indent != null) return region[body_start..];
+    return null;
+}
+
+/// Whether every `if let` written directly in this case has an `else`.
+///
+/// A case that casts its argument and answers only inside the `if` leaves the
+/// page waiting for ever on a malformed one: `craft.setBadge('3')` posted a
+/// callbackId and nothing settled it, on any path (#221). The `else` does not
+/// have to reject — `caseUsesCallback` is what checks the case answers at all
+/// — but a branch that simply is not there cannot.
+///
+/// Only the `if let`s at the case's own indentation are read. One nested
+/// inside a closure or a helper belongs to that closure's contract, not to
+/// this dispatch.
+fn caseAnswersEveryPath(region: []const u8, action: []const u8) bool {
+    const body = caseBody(region, action) orelse return true;
+
+    var if_indent: ?usize = null;
+    var lines = std.mem.splitScalar(u8, body, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (trimmed.len == 0 or std.mem.startsWith(u8, trimmed, "//")) continue;
+        const indent = line.len - trimmed.len;
+
+        if (if_indent) |at| {
+            if (indent != at) continue;
+            // The line that closes it. `} else` in any form is the branch
+            // this is looking for; a bare `}` is the gap.
+            if (!std.mem.startsWith(u8, trimmed, "}")) continue;
+            if (std.mem.indexOf(u8, trimmed, "else") == null) return false;
+            if_indent = null;
+            continue;
+        }
+        if (std.mem.startsWith(u8, trimmed, "if let ")) if_indent = indent;
+    }
+    // An `if let` still open at the end of the case never closed with an else.
+    return if_indent == null;
+}
+
 fn specAnswers(region: []const u8, action: []const u8) bool {
     return caseUsesCallback(region, action, .answers);
 }
@@ -1901,6 +1969,48 @@ test "every call the spec answers carries a callbackId to answer it on" {
     }
     // Non-vacuity: a renamed handler or reshaped post would find nothing.
     try testing.expect(literal_posts >= 40);
+}
+
+test "no case the page waits on casts its argument without answering the other way" {
+    // #221: three cases — openURL, setBadge, setFlashlight — cast and then
+    // answered only inside the `if`, so `craft.setBadge('3')` posted a
+    // callbackId that nothing ever settled. The Siri pair had the same shape.
+    // Zig refuses all five, so this is the path an app with no Zig runtime
+    // takes, and the one a Zig build falls back to when the payload will not
+    // serialize.
+    const region = dispatcherRegion();
+    var awaited = try collectAwaitedActions(testing.allocator);
+    defer awaited.deinit();
+    try testing.expect(awaited.count() >= 80);
+
+    // Cases still missing an `else`. It may only shrink: an entry here is a
+    // page promise that never settles for a malformed argument.
+    const known_gaps = [_][]const u8{};
+
+    // Every gap, not the first: one case at a time would hide the rest of a
+    // class the whole point of this check is to see all of.
+    var gaps: usize = 0;
+    var it = awaited.keyIterator();
+    while (it.next()) |action| {
+        if (caseAnswersEveryPath(region, action.*)) continue;
+        for (known_gaps) |allowed| {
+            if (std.mem.eql(u8, allowed, action.*)) break;
+        } else {
+            gaps += 1;
+            std.debug.print(
+                "the page waits on `{s}`, and its case has an `if let` with no `else`.\n",
+                .{action.*},
+            );
+        }
+    }
+    if (gaps > 0) {
+        std.debug.print(
+            "  An argument that does not cast settles nothing at all, and the page waits\n" ++
+                "  out its own timeout instead of hearing INVALID_ARGUMENT.\n",
+            .{},
+        );
+        return error.CaseLeavesAMalformedArgumentUnanswered;
+    }
 }
 
 test "every call the page waits on has a case that can resolve it" {
