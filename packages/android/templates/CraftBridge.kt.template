@@ -221,6 +221,20 @@ class CraftBridge(
     private var bridgeReady = false
     private val pendingEvents = mutableListOf<Pair<String, Map<String, Any>>>()
 
+    // What the app was built with (#209). The page refuses a disabled call
+    // before it gets here; these are the second check, for a caller that
+    // reaches CraftAndroid directly, on the capabilities Android itself does
+    // not gate with a permission.
+    private val hapticsEnabled = {{ENABLE_HAPTICS}}
+    private val speechEnabled = {{ENABLE_SPEECH}}
+    private val shareEnabled = {{ENABLE_SHARE}}
+    private val keepAwakeEnabled = {{ENABLE_KEEP_AWAKE}}
+
+    private fun disabled(capability: String, call: String): Boolean {
+        android.util.Log.d("CraftBridge", "$call refused: $capability is disabled in craft.config.json")
+        return true
+    }
+
     // Deep links (#215), on the UI thread only, the way iOS's DeepLinkManager
     // holds them: a link that arrives before the first page has its bridge is
     // the launch link, and every link waits for an injected bridge.
@@ -1367,6 +1381,70 @@ class CraftBridge(
                 }
             };
 
+            // What the app was built with, enforced and not just reported
+            // (#209). iOS refuses a call whose capability is off with
+            // CAPABILITY_DISABLED, in Swift and in Zig; Android shaped the
+            // manifest and craft.capabilities from the same flags and then
+            // served the call anyway, so a page that feature-detected and a
+            // page that just called got different behaviour.
+            //
+            // The refusal is made here, from the same capabilities object the
+            // page can read, because that object is what this bridge promises.
+            // Calls that answer nothing yet (#219) cannot carry a refusal, so
+            // they do nothing and say so on the console, which is what a
+            // capability the app never asked for should do.
+            //
+            // Kotlin refuses the ungated-by-Android ones a second time, for a
+            // caller that reaches CraftAndroid without going through here.
+            (function installCapabilityGates(craft) {
+                var gated = [
+                    ['haptic', 'haptics'],
+                    ['vibrate', 'haptics'],
+                    ['startListening', 'speechRecognition'],
+                    ['stopListening', 'speechRecognition'],
+                    ['setFlashlight', 'flashlight'],
+                    ['toggleFlashlight', 'flashlight'],
+                    ['setKeepAwake', 'keepAwake'],
+                    ['watchPosition', 'geolocation'],
+                    ['clearWatch', 'geolocation'],
+                    ['share', 'share', true],
+                    ['openCamera', 'camera', true],
+                    ['pickImage', 'camera', true],
+                    ['startVideoRecording', 'camera', true],
+                    ['authenticate', 'biometric', true],
+                    ['registerPush', 'pushNotifications', true],
+                    ['getCurrentPosition', 'geolocation', true],
+                    ['secureStore.set', 'secureStorage', true],
+                    ['secureStore.get', 'secureStorage', true],
+                    ['secureStore.remove', 'secureStorage', true],
+                    ['notifications.schedule', 'localNotifications', true],
+                    ['notifications.cancel', 'localNotifications', true],
+                    ['notifications.cancelAll', 'localNotifications', true],
+                    ['deepLinks.getInitialURL', 'deepLinks', true]
+                ];
+                function refusal(capability) {
+                    var error = new Error(capability + ' is disabled: this app was built without it');
+                    error.code = 'CAPABILITY_DISABLED';
+                    error.bridge = true;
+                    return error;
+                }
+                gated.forEach(function(entry) {
+                    var path = entry[0].split('.');
+                    var capability = entry[1];
+                    var awaited = entry[2] === true;
+                    var owner = path.length > 1 ? craft[path[0]] : craft;
+                    var name = path[path.length - 1];
+                    if (!owner || typeof owner[name] !== 'function') { return; }
+                    var served = owner[name];
+                    owner[name] = function() {
+                        if (craft.capabilities[capability]) { return served.apply(this, arguments); }
+                        if (awaited) { return Promise.reject(refusal(capability)); }
+                        console.warn('craft: ' + name + ' did nothing because ' + capability + ' is disabled');
+                        return undefined;
+                    };
+                });
+            })(window.craft);
+
             // Links that arrive before anything is listening (#215, as iOS
             // does since #198).
             //
@@ -1571,6 +1649,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun haptic(style: String) {
+        if (!hapticsEnabled && disabled("haptics", "haptic")) return
         if (CraftNative.haptic(activity, style)) return
 
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -1603,6 +1682,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun startListening() {
+        if (!speechEnabled && disabled("speechRecognition", "startListening")) return
         if (CraftNative.startListening(activity)) return
 
         if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
@@ -1711,6 +1791,11 @@ class CraftBridge(
 
     @JavascriptInterface
     fun share(text: String, title: String) {
+        if (!shareEnabled) {
+            rejectShare("share is disabled: this app was built without it")
+            disabled("share", "share")
+            return
+        }
         // The same line iOS draws: an empty string is nothing to share, and a
         // chooser opened over nothing would offer apps a blank message.
         if (text.isEmpty()) {
@@ -2743,6 +2828,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun vibrate(patternJson: String) {
+        if (!hapticsEnabled && disabled("haptics", "vibrate")) return
         if (CraftNative.vibrate(activity, patternJson)) return
 
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -3342,6 +3428,7 @@ class CraftBridge(
 
     @JavascriptInterface
     fun setKeepAwake(enabled: Boolean): Boolean {
+        if (!keepAwakeEnabled && disabled("keepAwake", "setKeepAwake")) return false
         // Zig queues the same window call on the same looper. isKeepingAwake
         // below is written here and read nowhere, so the Kotlin body not
         // running leaves nothing stale — unlike the flashlight pair.

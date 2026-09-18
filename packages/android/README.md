@@ -132,6 +132,14 @@ Edit `craft.config.json` in your Android project:
 }
 ```
 
+Every `enable*` flag is enforced, not only reported. A call whose capability is
+off rejects with `CAPABILITY_DISABLED`, as it does on iOS, and
+`window.craft.capabilities` reports the same answer, so a page that
+feature-detects and a page that just calls behave the same. Calls that answer
+nothing yet, such as `haptic` and `vibrate`, do nothing and say so on the
+console. Every flag defaults to off, so an app that shipped without setting one
+and relied on Android serving it anyway has to turn it on.
+
 Only the fields shown above are generator options. Enabling background location
 also enables foreground geolocation. Push notifications require a regular
 `googleServicesFile` whose JSON contains a client matching the generated

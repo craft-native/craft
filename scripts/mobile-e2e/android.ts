@@ -27,7 +27,12 @@ import { command, driverPage, waitForFile } from './support'
 const DEEP_LINK_SCHEME = 'crafte2eprobe'
 
 const CONFIG = {
+  // Off, so the capability gate has something to refuse (#209), and on, so it
+  // has something to serve: the share cases below need sharing enabled now
+  // that the flag is enforced.
   enablePushNotifications: false,
+  enableSecureStorage: false,
+  enableShare: true,
   enableGeolocation: true,
   enableDeepLinks: true,
   urlSchemes: [DEEP_LINK_SCHEME],

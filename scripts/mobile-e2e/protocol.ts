@@ -96,6 +96,7 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'share.empty.rejects',
     'share.dismissed.resolvesFalse',
     'permissions.location.granted',
+    'capabilities.match.behaviour',
   ],
 }
 

@@ -355,17 +355,38 @@
         }
       },
       {
-        // Android's equivalent gate. With push disabled the generator emits a
-        // literal reject call rather than a Firebase block, so the rejection
-        // string is fixed at generation time and is safe to match on.
+        // Android's equivalent gate, and since #209 the same code iOS sends:
+        // push is off in this app's config, so the call is refused rather
+        // than reaching Firebase. capabilities says so too, and the case
+        // checks that the two agree.
         name: 'push.disabled.rejects',
         platforms: ['android'],
         run: function () {
+          if (window.craft.capabilities.pushNotifications !== false)
+            return 'capabilities.pushNotifications is ' + JSON.stringify(window.craft.capabilities.pushNotifications)
           return withTimeout(function () { return window.craft.registerPush() }).then(function (outcome) {
             if (outcome.state === 'timeout') return 'registerPush never settled'
             if (outcome.state === 'resolved') return 'registerPush resolved while push is disabled'
-            if (outcome.error.message.indexOf('Push notifications are disabled') === -1)
-              return 'message is ' + JSON.stringify(outcome.error.message)
+            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
+          })
+        }
+      },
+      {
+        // #209: a capability the app was built with is served, and the page
+        // can tell which is which from capabilities alone. Sharing is on in
+        // this app precisely so the refusal above is not the only answer the
+        // gate can give.
+        name: 'capabilities.match.behaviour',
+        platforms: ['android'],
+        run: function () {
+          if (window.craft.capabilities.share !== true)
+            return 'capabilities.share is ' + JSON.stringify(window.craft.capabilities.share)
+          if (window.craft.capabilities.secureStorage !== false)
+            return 'capabilities.secureStorage is ' + JSON.stringify(window.craft.capabilities.secureStorage)
+          return withTimeout(function () { return window.craft.secureStore.set('craft-e2e', NONCE) }).then(function (outcome) {
+            if (outcome.state === 'timeout') return 'secureStore.set never settled'
+            if (outcome.state === 'resolved') return 'secureStore.set resolved while secure storage is disabled'
+            if (outcome.error.code !== 'CAPABILITY_DISABLED') return 'code is ' + JSON.stringify(outcome.error.code)
           })
         }
       }

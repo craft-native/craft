@@ -9,8 +9,8 @@ import { renderAndroidPromiseRuntime } from './promise-runtime'
 
 const template = readFileSync(join(import.meta.dir, '../templates/CraftBridge.kt.template'), 'utf8')
 
-/** The page script, as Kotlin evaluates it, with every flag off. */
-function pageScript(): string {
+/** The page script, as Kotlin evaluates it, with every capability on or off. */
+function pageScript(enabled = true): string {
   const opening = '        val script = """\n'
   const start = template.indexOf(opening)
   if (start === -1) throw new Error('CraftBridge.kt.template no longer builds `val script = """`')
@@ -18,7 +18,7 @@ function pageScript(): string {
   const script = template
     .slice(start + opening.length, end)
     .replace(/\{\{PROMISE_RUNTIME\}\}/g, () => renderAndroidPromiseRuntime('            '))
-    .replace(/\{\{ENABLE_[A-Z_]+\}\}/g, 'false')
+    .replace(/\{\{ENABLE_[A-Z_]+\}\}/g, String(enabled))
     // Kotlin string templates, `${isBiometricAvailable()}` and the like. Each
     // is a Boolean in the capabilities object.
     .replace(/\$\{(?:[^{}]|\{[^{}]*\})*\}/g, 'false')
@@ -29,7 +29,7 @@ function pageScript(): string {
 type Listener = (event: { type: string, detail: unknown }) => void
 
 /** `beforeInject` runs first, the way a page's own script runs before Android injects the bridge. */
-function loadPage(beforeInject?: (page: Record<string, any>) => void) {
+function loadPage(beforeInject?: (page: Record<string, any>) => void, enabled = true) {
   const calls: string[] = []
   const listeners: Record<string, Listener[]> = {}
   const page: Record<string, any> = {
@@ -66,7 +66,7 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void) {
 
   const inject = () => {
     // eslint-disable-next-line no-new-func
-    new Function('window', 'document', 'CraftAndroid', 'CustomEvent', 'console', pageScript())(
+    new Function('window', 'document', 'CraftAndroid', 'CustomEvent', 'console', pageScript(enabled))(
       page,
       document,
       CraftAndroid,
@@ -195,6 +195,43 @@ describe('the injected Android page script', () => {
     page.link('app://warm', false)
 
     expect(seen).toEqual([{ url: 'app://warm', initial: false }])
+  })
+
+  // #209: the flags craft.capabilities reports are enforced, as on iOS.
+  it('refuses a call whose capability the app was not built with', async () => {
+    const page = loadPage(undefined, false)
+
+    expect(page.craft.capabilities.share).toBe(false)
+    await expect(page.craft.share('hello')).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
+    await expect(page.craft.deepLinks.getInitialURL()).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
+    await expect(page.craft.secureStore.set('k', 'v')).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
+    expect(page.calls).toEqual([])
+  }, 5000)
+
+  it('refuses through the v1 contract as well, since it wraps the same call', async () => {
+    const page = loadPage(undefined, false)
+    await expect(page.craft.share.share({ text: 'hello' })).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
+  }, 5000)
+
+  it('does nothing, rather than refusing, for a call with no answer to give', async () => {
+    // haptic and vibrate still return undefined (#219), so there is no
+    // promise to reject; native must not be asked to buzz either.
+    const page = loadPage(undefined, false)
+
+    expect(page.craft.haptic('light')).toBeUndefined()
+    expect(page.craft.vibrate([100])).toBeUndefined()
+    expect(page.calls).toEqual([])
+  })
+
+  it('serves the same calls when the app was built with them', async () => {
+    const page = loadPage()
+
+    expect(page.craft.capabilities.share).toBe(true)
+    void page.craft.share('hello')
+    void page.craft.secureStore.set('k', 'v')
+    page.craft.haptic('light')
+
+    expect(page.calls).toEqual(['share', 'secureSet', 'haptic'])
   })
 
   it('does not hand a link to a second subscriber after the script runs again in the same page', async () => {
