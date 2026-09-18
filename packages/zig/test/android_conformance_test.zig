@@ -38,6 +38,7 @@ const testing = std.testing;
 const android_spec = @embedFile("CraftBridge.kt");
 const native_holder = @embedFile("CraftNative.kt");
 const dispatch_source = @embedFile("src/android_dispatch.zig");
+const events_source = @embedFile("src/android_events.zig");
 
 /// Every Zig module serving part of the Android bridge. A module migrating
 /// actions adds itself here — and the ratchet is what forces that, because
@@ -753,6 +754,34 @@ test "every registered descriptor is the one its external fun declares" {
             );
             return error.DescriptorDoesNotMatchKotlin;
         }
+    }
+}
+
+test "the one Kotlin method Zig calls back is declared the way Zig calls it" {
+    // The descriptor tests above cover Zig's natives — the calls that go
+    // Kotlin to Zig. `deliver` goes the other way, and nothing checks it: a
+    // mismatch here is a NoSuchMethodError on the first reply, long after
+    // load, on whichever device thread a callback arrived on.
+    //
+    // It returns Z rather than V since #231, because a script handed over
+    // before the WebView exists was dropped by Kotlin and reported as
+    // delivered to Zig.
+    const call = std.mem.indexOf(u8, events_source, "\"deliver\", \"") orelse
+        return error.DeliverCallNotFound;
+    const descriptor_start = call + "\"deliver\", \"".len;
+    const descriptor_end = std.mem.indexOfScalarPos(u8, events_source, descriptor_start, '"') orelse
+        return error.DeliverCallNotFound;
+    const descriptor = events_source[descriptor_start..descriptor_end];
+
+    const declared = std.mem.indexOf(u8, native_holder, "fun deliver(script: String): Boolean") != null;
+    if (!std.mem.eql(u8, descriptor, "(Ljava/lang/String;)Z") or !declared) {
+        std.debug.print(
+            "android_events calls CraftNative.deliver as '{s}', and CraftNative.kt declares it\n" ++
+                "  as {s}. They have to agree: a mismatch is a NoSuchMethodError on the first\n" ++
+                "  reply, and a V return is a drop the caller cannot see (#231).\n",
+            .{ descriptor, if (declared) "(Ljava/lang/String;)Z" else "something else" },
+        );
+        return error.DeliverDescriptorDoesNotMatchKotlin;
     }
 }
 

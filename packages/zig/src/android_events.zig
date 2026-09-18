@@ -62,12 +62,37 @@ pub fn clearVm() void {
 /// being diagnosed.
 var dropped: usize = 0;
 
+/// Whether the first drop has been said out loud.
+///
+/// Counting alone left the whole thing invisible: nothing reads `dropped` on a
+/// device, and the runtime E2E leg scans the log. So the first drop of a
+/// process logs, in the same words the other three decline paths use, and the
+/// rest are counted (#231). One line cannot drown a diagnosis; silence hid a
+/// script nobody delivered behind one that arrived.
+var drop_announced = false;
+
 pub fn droppedCount() usize {
     return dropped;
 }
 
 pub fn resetDroppedForTest() void {
     dropped = 0;
+    drop_announced = false;
+}
+
+/// Count a script that never reached the page, and say so the first time.
+fn dropScript(reason: []const u8) void {
+    dropped += 1;
+    if (drop_announced) return;
+    drop_announced = true;
+    // `warn`, the level `fellThrough` uses, for the same reason: a drop before
+    // the WebView exists is ordinary, and one after it is not, and this side
+    // cannot tell which it is looking at. The E2E scan matches the phrase, not
+    // the level, and fails the runtime leg on either.
+    std.log.warn(
+        "craft: deliver could not reach the page ({s}); further drops are counted, not logged",
+        .{reason},
+    );
 }
 
 /// Hand `script` to `CraftNative.deliver`, from any thread.
@@ -77,18 +102,18 @@ pub fn resetDroppedForTest() void {
 /// or an error nobody reads. `droppedCount` is what a diagnosis reads instead.
 pub fn evaluate(allocator: std.mem.Allocator, script: []const u8) void {
     const vm = java_vm orelse {
-        dropped += 1;
+        dropScript("NoVm");
         return;
     };
 
     const attachment = jni.attachCurrentThread(vm) orelse {
-        dropped += 1;
+        dropScript("NotAttached");
         return;
     };
     defer attachment.release(vm);
 
-    deliverThrough(allocator, attachment.env, script) catch {
-        dropped += 1;
+    deliverThrough(allocator, attachment.env, script) catch |err| {
+        dropScript(@errorName(err));
     };
 }
 
@@ -109,8 +134,12 @@ fn deliverThrough(allocator: std.mem.Allocator, env: jni.JNIEnv, script: []const
     // halves rather than one four-byte sequence.
     const text = try j.newStringUtf8(allocator, script);
 
-    const deliver = try j.staticMethodId(cls, "deliver", "(Ljava/lang/String;)V");
-    try j.callStaticVoidMethodA(cls, deliver, &.{.{ .l = text }});
+    // `Z`, not `V`: the answer is whether a deliverer took the script. It
+    // returned void until #231, so a script handed over before the WebView
+    // existed was dropped by Kotlin and reported as delivered here.
+    const deliver = try j.staticMethodId(cls, "deliver", "(Ljava/lang/String;)Z");
+    const took = try j.callStaticBooleanMethodA(cls, deliver, &.{.{ .l = text }});
+    if (took == jni.JNI_FALSE) return error.NoDeliverer;
 }
 
 /// `window.dispatchEvent(new CustomEvent('name', {detail: json}))`.
@@ -185,6 +214,7 @@ var fake_detach_calls: usize = 0;
 var fake_already_attached = true;
 var fake_attach_succeeds = true;
 var fake_find_class_succeeds = true;
+var fake_deliverer_installed = true;
 
 fn eobj(tag: usize) jni.jobject {
     return @ptrCast(&fake_storage[tag]);
@@ -218,7 +248,9 @@ fn eNewStringUTF(_: jni.JNIEnv, text: [*:0]const u8) callconv(.c) jni.jstring {
     @memcpy(fake_delivered[0..fake_delivered_len], span[0..fake_delivered_len]);
     return eobj(2);
 }
-fn eCallStaticVoidMethodA(_: jni.JNIEnv, _: jni.jclass, _: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) void {}
+fn eCallStaticBooleanMethodA(_: jni.JNIEnv, _: jni.jclass, _: jni.jmethodID, _: [*]const jni.jvalue) callconv(.c) jni.jboolean {
+    return if (fake_deliverer_installed) jni.JNI_TRUE else jni.JNI_FALSE;
+}
 fn eExceptionOccurred(_: jni.JNIEnv) callconv(.c) jni.jobject {
     return null;
 }
@@ -234,7 +266,7 @@ fn fakeVm(invoke: *jni.JNIInvokeInterface) void {
     fake_env_table.FindClass = @ptrCast(&eFindClass);
     fake_env_table.GetStaticMethodID = @ptrCast(&eStaticMethodId);
     fake_env_table.NewStringUTF = @ptrCast(&eNewStringUTF);
-    fake_env_table.CallStaticVoidMethodA = @ptrCast(&eCallStaticVoidMethodA);
+    fake_env_table.CallStaticBooleanMethodA = @ptrCast(&eCallStaticBooleanMethodA);
     fake_env_table.ExceptionOccurred = @ptrCast(&eExceptionOccurred);
     fake_env_table.PushLocalFrame = @ptrCast(&ePush);
     fake_env_table.PopLocalFrame = @ptrCast(&ePop);
@@ -251,6 +283,7 @@ fn fakeVm(invoke: *jni.JNIInvokeInterface) void {
     fake_already_attached = true;
     fake_attach_succeeds = true;
     fake_find_class_succeeds = true;
+    fake_deliverer_installed = true;
     resetDroppedForTest();
 }
 
@@ -293,7 +326,7 @@ test "a detached thread is attached and then detached again" {
     try testing.expectEqual(@as(usize, 1), fake_detach_calls);
 }
 
-test "every way delivery can fail is counted, not logged and not crashed" {
+test "every way delivery can fail is counted, said once, and not crashed" {
     var invoke: jni.JNIInvokeInterface = undefined;
     fakeVm(&invoke);
     const ptr: *const jni.JNIInvokeInterface = &invoke;
@@ -322,6 +355,38 @@ test "every way delivery can fail is counted, not logged and not crashed" {
     resetDroppedForTest();
     evaluate(testing.allocator, "window.z = 3;");
     try testing.expectEqual(@as(usize, 1), droppedCount());
+
+    // #231: Kotlin has no deliverer, which is every moment before the WebView
+    // exists. `deliver` returned void, so this arrived here as a success and
+    // the script was gone — the page waiting on a promise nothing settles.
+    fake_find_class_succeeds = true;
+    fake_deliverer_installed = false;
+    resetDroppedForTest();
+    evaluate(testing.allocator, "window.z = 3;");
+    try testing.expectEqual(@as(usize, 1), droppedCount());
+}
+
+test "a run of drops is announced once and counted the rest of the way" {
+    // The count exists because a device that drops drops in bulk, and the
+    // announcement exists because nothing on a device reads the count. Both,
+    // or the drop is either invisible or drowns what it is being read for.
+    var invoke: jni.JNIInvokeInterface = undefined;
+    fakeVm(&invoke);
+    const ptr: *const jni.JNIInvokeInterface = &invoke;
+    setVm(&ptr);
+    defer clearVm();
+
+    fake_deliverer_installed = false;
+    for (0..5) |_| evaluate(testing.allocator, "window.z = 3;");
+
+    try testing.expectEqual(@as(usize, 5), droppedCount());
+    try testing.expect(drop_announced);
+
+    // And delivery resumes without the counter moving.
+    fake_deliverer_installed = true;
+    evaluate(testing.allocator, "window.ok = 1;");
+    try testing.expectEqual(@as(usize, 5), droppedCount());
+    try testing.expectEqualStrings("window.ok = 1;", delivered());
 }
 
 test "an attached thread is detached even when delivery fails" {

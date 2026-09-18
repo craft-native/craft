@@ -451,6 +451,9 @@ pub fn build(b: *std.Build) void {
     android_conformance_tests.root_module.addAnonymousImport("src/android_dispatch.zig", .{
         .root_source_file = b.path("src/android_dispatch.zig"),
     });
+    android_conformance_tests.root_module.addAnonymousImport("src/android_events.zig", .{
+        .root_source_file = b.path("src/android_events.zig"),
+    });
     android_conformance_tests.root_module.addAnonymousImport("src/bridge_android_device.zig", .{
         .root_source_file = b.path("src/bridge_android_device.zig"),
     });
