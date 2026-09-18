@@ -240,6 +240,27 @@ describe('Craft iOS builder', () => {
     expect(existsSync(join(output, 'WidgetExtension', 'WildLoopLiveActivity.swift'))).toBe(true)
   })
 
+  it('seeds each page load\'s callback ids above every id already handed out', async () => {
+    // #226: the page's counter restarted at 0 on every injection, and native
+    // recorded nothing about which load a call came from — so an answer owed
+    // to a call made before a reload settled whichever call on the new page
+    // drew the same number.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-callback-ids-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+    expect(swift).toContain('private var highestCallbackId = 0')
+    expect(swift).toContain('_callbackId: \\(highestCallbackId)')
+    expect(swift).not.toContain('_callbackId: 0,')
+
+    // Raised from the message handler, so it covers the ids Zig serves too,
+    // and before `offer` rather than after it.
+    expect(swift).toContain('noteCallbackId(callbackId)')
+    expect(swift).toContain('if drawn > highestCallbackId { highestCallbackId = drawn }')
+    expect(swift.indexOf('noteCallbackId(callbackId)'))
+      .toBeLessThan(swift.indexOf('if CraftZigRuntime.offer('))
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({
