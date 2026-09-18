@@ -382,6 +382,47 @@
         }
       },
       {
+        // #228: Chromium calls onPageFinished without a matching
+        // onPageStarted for a same-document navigation, and MainActivity
+        // injects the bridge on every one of them. Whether this emulator
+        // does it is what the issue asked to find out; either way the page
+        // must come out of it with the bridge it started with, because a
+        // second run of the script replaces window.craft, fires craftReady
+        // again, and rejects everything in flight.
+        //
+        // The wait is what makes this a real check: onPageFinished arrives
+        // asynchronously, so a case that asserted immediately would pass
+        // without having given the WebView a chance to re-inject.
+        name: 'bridge.survivesSameDocumentNavigation',
+        platforms: ['android'],
+        run: function () {
+          var installed = window.craft
+          // The runtime that holds every pending promise. A second injection
+          // replaces it, and on the way out rejects them all with "Android
+          // bridge reinitialized" — which is the damage this case is about,
+          // and is visible here without needing a call that stays pending
+          // for the whole wait.
+          var runtime = window.__craftPromise
+          var readyAgain = 0
+          var onReady = function () { readyAgain += 1 }
+          window.addEventListener('craftReady', onReady)
+
+          history.pushState({}, '', location.pathname + '?craft-e2e-pushstate=1')
+
+          return new Promise(function (resolve) { setTimeout(resolve, 2000) }).then(function () {
+            window.removeEventListener('craftReady', onReady)
+            if (window.craft !== installed) return 'window.craft was replaced by a second injection'
+            if (window.__craftPromise !== runtime) return 'the promise runtime was replaced, rejecting everything in flight'
+            if (readyAgain !== 0) return 'craftReady fired ' + readyAgain + ' more time(s) in the same document'
+            // And the bridge still works afterwards, so the guard cannot pass
+            // by having stopped the bridge from existing at all.
+            return withTimeout(function () { return window.craft.clipboard.read() }).then(function (outcome) {
+              if (outcome.state !== 'resolved') return 'the bridge stopped answering after the navigation'
+            })
+          })
+        }
+      },
+      {
         // #209: a capability the app was built with is served, and the page
         // can tell which is which from capabilities alone. Sharing is on in
         // this app precisely so the refusal above is not the only answer the

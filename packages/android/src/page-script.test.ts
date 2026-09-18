@@ -30,6 +30,18 @@ function pageScript(enabled = true): string {
   return script
 }
 
+/**
+ * The script as Kotlin actually evaluates it: wrapped by `onlyOnce`, which is
+ * what keeps a second injection into the same document from tearing the
+ * bridge down and building it again (#228).
+ */
+function injectedScript(enabled = true): string {
+  const wrapper = template.match(/private fun onlyOnce\(script: String\): String =\n\s*"([^"]*)\$script([^"]*)"/)
+  if (!wrapper) throw new Error('CraftBridge.kt.template no longer guards the script with onlyOnce')
+  const unescape = (part: string) => part.replace(/\\n/g, '\n')
+  return `${unescape(wrapper[1]!)}${pageScript(enabled)}${unescape(wrapper[2]!)}`
+}
+
 type Listener = (event: { type: string, detail: unknown }) => void
 
 /**
@@ -84,7 +96,7 @@ function loadPage(
 
   const inject = () => {
     // eslint-disable-next-line no-new-func
-    new Function('window', 'document', 'CraftAndroid', 'CustomEvent', 'console', pageScript(enabled))(
+    new Function('window', 'document', 'CraftAndroid', 'CustomEvent', 'console', injectedScript(enabled))(
       page,
       document,
       CraftAndroid,
@@ -370,5 +382,41 @@ describe('the injected Android page script', () => {
     // buffered it again would replay it to the next subscriber as well.
     expect(first).toEqual([{ url: 'app://warm', initial: false }])
     expect(second).toEqual([])
+  })
+
+  // #228: Chromium calls onPageFinished without onPageStarted for a
+  // same-document navigation — a fragment change, a history.pushState — and
+  // MainActivity injects on every one. Running the script again used to
+  // replace window.craft, fire craftReady twice, and reject everything in
+  // flight with "Android bridge reinitialized".
+  it('leaves the bridge alone when the same document is injected again', async () => {
+    const page = loadPage()
+    const installed = page.craft
+    let readyAgain = 0
+    page.page.addEventListener('craftReady', () => { readyAgain += 1 })
+
+    page.inject()
+
+    expect(page.craft).toBe(installed)
+    expect(readyAgain).toBe(0)
+  })
+
+  it('does not reject an in-flight promise when the same document is injected again', async () => {
+    const page = loadPage()
+    const pending = page.craft.share('hello')
+    page.inject()
+
+    // Settle it the way Kotlin does. A second injection used to reject this
+    // first, and the page would have seen a share it never cancelled fail.
+    page.page._craftShareResolve(true)
+    expect(await pending).toBe(true)
+  })
+
+  it('installs into a document that has never had it', async () => {
+    // The other half: a real navigation gets a new window, so the flag is
+    // absent and the guard must not stop the bridge appearing at all.
+    const page = loadPage()
+    expect(typeof page.craft).toBe('object')
+    expect(page.page.__craftBridgeInstalled).toBe(true)
   })
 })

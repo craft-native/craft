@@ -348,7 +348,7 @@ describe('Craft Android builder', () => {
     expect(activity).toContain('craftBridge.restoreDeepLinks(savedInstanceState)')
 
     // Flushed in the injection's completion, after the page's replay exists.
-    const injected = bridge.slice(bridge.indexOf('webView.evaluateJavascript(script) {'))
+    const injected = bridge.slice(bridge.indexOf('webView.evaluateJavascript(onlyOnce(script)) {'))
     const flush = injected.slice(0, injected.indexOf('fun markBridgeLoading()'))
     expect(flush.indexOf('bridgeReady = true')).toBeLessThan(flush.indexOf('links.forEach { (url, initial) -> dispatchDeepLink(url, initial) }'))
 
@@ -411,6 +411,31 @@ describe('Craft Android builder', () => {
 
     // And stopping says the session ended, once, as iOS does.
     expect(bridge).toContain('sendEvent("craftSpeechEnd", emptyMap())')
+  })
+
+  it('marks ready only the page its injection ran in, and injects a document once', async () => {
+    // #228, two halves. The evaluateJavascript completion is posted, so it
+    // can land after the next navigation has started and mark a page that
+    // was never injected as ready — flushing the deep-link and shortcut
+    // queues into a document with no bridge. And onPageFinished arrives
+    // without onPageStarted for a same-document navigation, so the script
+    // could run twice in one document.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-injection-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    expect(bridge).toContain('private var navigationGeneration = 0')
+    expect(bridge).toContain('navigationGeneration += 1')
+    expect(bridge).toContain('val generation = navigationGeneration')
+    expect(bridge).toContain('if (generation != navigationGeneration) return@evaluateJavascript')
+    // The generation is taken before the script is handed over, and compared
+    // after; either order alone leaves the race open.
+    expect(bridge.indexOf('val generation = navigationGeneration'))
+      .toBeLessThan(bridge.indexOf('if (generation != navigationGeneration)'))
+
+    expect(bridge).toContain('private fun onlyOnce(script: String): String')
+    expect(bridge).toContain('evaluateJavascript(onlyOnce(script))')
+    expect(bridge).toContain('if (!window.__craftBridgeInstalled)')
   })
 
   it('routes external Activity results back to every pending media promise', async () => {
