@@ -38,9 +38,13 @@ const compat_mutex = @import("compat_mutex.zig");
 const objc = objc_runtime.objc;
 const is_darwin = builtin.target.os.tag.isDarwin();
 
-/// How many async calls may be in flight at once. A page that exceeds this
-/// gets an explicit Busy error, which is an answer — the alternative was a
-/// silently dropped reply.
+/// How many async calls may be in flight at once.
+///
+/// A page that exceeds it gets an answer rather than silence, which was the
+/// point: `acquire` returns null and every caller reports `NativeCallFailed`.
+/// Not the `Busy` this comment used to promise — no such code exists, and
+/// adding one touches every caller's `poolFull`, so it is filed rather than
+/// smuggled in here (#225).
 pub const max_in_flight = 16;
 
 const Slot = struct {
@@ -72,7 +76,29 @@ const Slot = struct {
     /// `"denied"` for a caller expecting an array. That is a wrong answer
     /// reported as success, and the page's catch never runs.
     failed: bool = false,
+    /// Whether this lease has handed a pool block to a framework and is still
+    /// waiting for it. Cleared by the first fire, so a framework that calls
+    /// its completion twice queues one hop rather than two.
+    completion_armed: bool = false,
 };
+
+/// Clear everything a lease may have written, so the next one starts clean.
+///
+/// Both release paths call it — the hop that delivered, and `abandon` — so a
+/// slot is never handed out carrying the last lease's answer. `abandon` did
+/// not free a stashed payload before, which leaked it whenever a module
+/// abandoned a ticket it had already filled (#225).
+///
+/// Call with the mutex held, and move `json` out first if you are delivering
+/// it: this frees whatever is still there.
+fn resetReply(slot: *Slot) void {
+    if (slot.json) |owned| std.heap.c_allocator.free(owned);
+    slot.json = null;
+    slot.failed = false;
+    slot.fail_code = bridge_error.BridgeError.NativeCallFailed;
+    slot.granted = false;
+    slot.completion_armed = false;
+}
 
 var slots: [max_in_flight]Slot = @splat(.{});
 var slots_mutex: compat_mutex.Mutex = .{};
@@ -114,6 +140,7 @@ pub fn abandon(ticket: Ticket) void {
     defer slots_mutex.unlock();
     const slot = &slots[ticket.index];
     if (slot.generation != ticket.generation or !slot.in_use) return;
+    resetReply(slot);
     slot.in_use = false;
     slot.generation +%= 1;
 }
@@ -188,14 +215,30 @@ fn makeBlocks(comptime maker: fn (comptime u5) *const anyopaque) [max_in_flight]
 var bool_blocks: [max_in_flight]BoolBlock = if (is_darwin) makeBlocks(makeBoolInvoke) else undefined;
 var bool_error_blocks: [max_in_flight]BoolBlock = if (is_darwin) makeBlocks(makeBoolErrorInvoke) else undefined;
 
+/// Mark this lease as waiting for its pool block to fire.
+///
+/// There is one block per *slot*, not per lease, so the block itself cannot
+/// say which call it belongs to. This is what lets the first fire be told
+/// from the second: the fire consumes the arming, and a framework that calls
+/// its completion twice gets one hop.
+fn armCompletion(ticket: Ticket) void {
+    slots_mutex.lock();
+    defer slots_mutex.unlock();
+    const slot = &slots[ticket.index];
+    if (!slot.in_use or slot.generation != ticket.generation) return;
+    slot.completion_armed = true;
+}
+
 /// The block to pass as a `void (^)(BOOL)` completion handler for the call
 /// this ticket was acquired for.
 pub fn boolBlock(ticket: Ticket) *anyopaque {
+    armCompletion(ticket);
     return @ptrCast(&bool_blocks[ticket.index]);
 }
 
 /// The block to pass as a `void (^)(BOOL, NSError *)` completion handler.
 pub fn boolErrorBlock(ticket: Ticket) *anyopaque {
+    armCompletion(ticket);
     return @ptrCast(&bool_error_blocks[ticket.index]);
 }
 
@@ -212,21 +255,27 @@ fn completionFired(index: u5, granted: bool) void {
     // Record the outcome under the lock, but deliver from the main queue:
     // the reply ends in `evaluateJavaScript`, which is main-thread-only, and
     // this may be running on whatever queue the framework chose.
+    var ticket: Ticket = undefined;
     {
         slots_mutex.lock();
         defer slots_mutex.unlock();
         const slot = &slots[index];
         if (!slot.in_use) return; // stale fire for an abandoned slot
+        // A second fire for the same lease, or a fire for a lease that never
+        // armed a pool block. Either way the answer is not this one's to give.
+        if (!slot.completion_armed) return;
+        slot.completion_armed = false;
         slot.granted = granted;
+        ticket = .{ .index = index, .generation = slot.generation };
     }
 
-    // The context pointer carries only the slot index; everything else stays
-    // in the slot, guarded by its generation.
-    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, index) + 1), deliverOnMain);
+    // The lease the outcome belongs to, not just the slot: by the time this
+    // hop runs, the slot may have been answered and re-leased (#225).
+    dispatch_async_f(&_dispatch_main_q, ticketContext(ticket), deliverOnMain);
 }
 
 fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
-    const index: usize = @intFromPtr(context orelse return) - 1;
+    const ticket = ticketFromContext(context) orelse return;
 
     var action_buf: [64]u8 = undefined;
     var action_len: usize = 0;
@@ -238,8 +287,12 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
     {
         slots_mutex.lock();
         defer slots_mutex.unlock();
-        const slot = &slots[index];
-        if (!slot.in_use) return;
+        const slot = &slots[ticket.index];
+        // The slot being in use is not enough: it may be in use by a *later*
+        // call. Two deliver* calls for one ticket could both pass their own
+        // check before the first hop ran, and the second would then answer
+        // whoever leased the slot next, with the first one's outcome (#225).
+        if (!slot.in_use or slot.generation != ticket.generation) return;
         action_len = slot.action_len;
         @memcpy(action_buf[0..action_len], slot.action_buf[0..action_len]);
         request_id = slot.request_id;
@@ -247,9 +300,9 @@ fn deliverOnMain(context: ?*anyopaque) callconv(.c) void {
         json = slot.json;
         failed = slot.failed;
         fail_code = slot.fail_code;
+        // Moved out, so the reset below has nothing left to free.
         slot.json = null;
-        slot.failed = false;
-        slot.fail_code = bridge_error.BridgeError.NativeCallFailed;
+        resetReply(slot);
         slot.in_use = false;
         slot.generation +%= 1;
     }
@@ -305,7 +358,7 @@ pub fn deliverJson(ticket: Ticket, json: []const u8) void {
     slots_mutex.unlock();
 
     if (!valid) return;
-    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
+    dispatch_async_f(&_dispatch_main_q, ticketContext(ticket), deliverOnMain);
 }
 
 /// Reply to a captured call with a *specific* error.
@@ -325,7 +378,7 @@ pub fn deliverErrorCode(ticket: Ticket, err: bridge_error.BridgeError) void {
     slots_mutex.unlock();
 
     if (!valid) return;
-    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
+    dispatch_async_f(&_dispatch_main_q, ticketContext(ticket), deliverOnMain);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,23 +403,31 @@ extern "c" fn dispatch_after_f(when: u64, queue: *anyopaque, context: ?*anyopaqu
 pub fn scheduleDeadline(ticket: Ticket, timeout_ms: u32, work: dispatch_function_t) void {
     if (!is_darwin) return;
     const delay_ns: i64 = @as(i64, timeout_ms) * 1_000_000;
-    dispatch_after_f(dispatch_time(0, delay_ns), &_dispatch_main_q, deadlineContext(ticket), work);
+    dispatch_after_f(dispatch_time(0, delay_ns), &_dispatch_main_q, ticketContext(ticket), work);
 }
 
 /// The ticket a deadline's `work` was scheduled for.
 pub fn ticketFromDeadline(context: ?*anyopaque) Ticket {
-    const encoded = @intFromPtr(context orelse unreachable) - 1;
-    return .{
-        .index = @intCast(encoded & 31),
-        .generation = @intCast(encoded >> 5),
-    };
+    return ticketFromContext(context) orelse unreachable;
 }
 
 /// The whole ticket in the context pointer, plus one so it is never null.
 /// Relies on 64-bit pointers: a `u32` generation shifted past the index bits.
-fn deadlineContext(ticket: Ticket) ?*anyopaque {
+///
+/// Used by the main-queue hop as well as the deadline. Both need to say which
+/// *lease* they are for, and a pointer-sized context is the only thing either
+/// `dispatch_async_f` or `dispatch_after_f` will carry.
+fn ticketContext(ticket: Ticket) ?*anyopaque {
     const encoded = (@as(usize, ticket.generation) << 5) | @as(usize, ticket.index);
     return @ptrFromInt(encoded + 1);
+}
+
+fn ticketFromContext(context: ?*anyopaque) ?Ticket {
+    const encoded = @intFromPtr(context orelse return null) - 1;
+    return .{
+        .index = @intCast(encoded & 31),
+        .generation = @intCast(encoded >> 5),
+    };
 }
 
 /// Reply to a captured call with an error rather than a result.
@@ -382,7 +443,7 @@ pub fn deliverError(ticket: Ticket) void {
     slots_mutex.unlock();
 
     if (!valid) return;
-    dispatch_async_f(&_dispatch_main_q, @ptrFromInt(@as(usize, ticket.index) + 1), deliverOnMain);
+    dispatch_async_f(&_dispatch_main_q, ticketContext(ticket), deliverOnMain);
 }
 
 const testing = std.testing;
@@ -528,9 +589,89 @@ test "the generic deliverError still means a native failure" {
     slots[ticket.index].generation +%= 1;
 }
 
+test "a hop for a lease that has ended cannot answer the call that replaced it" {
+    // The race #225 is about. Two deliver* calls for one ticket can both pass
+    // their own generation check before the first hop runs: the first hop
+    // answers and releases the slot, a new call leases it, and the second hop
+    // then hands that call the first one's outcome.
+    request_context.push(7);
+    const first = acquire("pickImage") orelse return error.PoolUnexpectedlyFull;
+    request_context.pop();
+
+    deliverJson(first, "\"first\"");
+    deliverOnMain(ticketContext(first));
+    try testing.expect(!slots[first.index].in_use);
+
+    const second = acquire("getContacts") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(second);
+    // Not incidental: `acquire` hands out the lowest free slot, so the call
+    // that follows a released one takes its place. That is the whole setup.
+    try testing.expectEqual(first.index, second.index);
+
+    // The stale hop arrives. It must find the lease gone and do nothing.
+    deliverOnMain(ticketContext(first));
+    try testing.expect(slots[second.index].in_use);
+    try testing.expectEqualStrings(
+        "getContacts",
+        slots[second.index].action_buf[0..slots[second.index].action_len],
+    );
+}
+
+test "abandoning a ticket that already has an answer takes the answer with it" {
+    // A module can fill a ticket and then abandon it — a completion that
+    // shaped its reply and then found the call already settled. `abandon`
+    // only flipped the flags, so the payload leaked and the flags stayed for
+    // whoever leased the slot next.
+    const first = acquire("getPendingNotifications") orelse return error.PoolUnexpectedlyFull;
+    deliverJson(first, "[{\"id\":\"orphan\"}]");
+    deliverErrorCode(first, bridge_error.BridgeError.Cancelled);
+    try testing.expect(slots[first.index].json != null);
+
+    abandon(first);
+    try testing.expect(slots[first.index].json == null);
+    try testing.expect(!slots[first.index].failed);
+    try testing.expectEqual(bridge_error.BridgeError.NativeCallFailed, slots[first.index].fail_code);
+
+    // And the next lease of that slot sees none of it.
+    const second = acquire("getContacts") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(second);
+    try testing.expectEqual(first.index, second.index);
+    try testing.expect(slots[second.index].json == null);
+    try testing.expect(!slots[second.index].granted);
+}
+
+test "a completion that fires twice answers with the first outcome, once" {
+    // One block per slot, not per lease, so the block cannot tell its own
+    // second fire from its first. The arming can: it is consumed by the fire.
+    const ticket = acquire("requestPermission") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(ticket);
+
+    _ = boolBlock(ticket);
+    try testing.expect(slots[ticket.index].completion_armed);
+
+    completionFired(ticket.index, true);
+    try testing.expect(!slots[ticket.index].completion_armed);
+    try testing.expect(slots[ticket.index].granted);
+
+    // The framework calls back again, with the opposite answer.
+    completionFired(ticket.index, false);
+    try testing.expect(slots[ticket.index].granted);
+}
+
+test "a fire for a lease that armed no block is not its answer to give" {
+    // A module that shapes its own reply through deliverJson never arms a
+    // pool block. A stray fire on its slot must not resolve it.
+    const ticket = acquire("getContacts") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(ticket);
+
+    try testing.expect(!slots[ticket.index].completion_armed);
+    completionFired(ticket.index, true);
+    try testing.expect(!slots[ticket.index].granted);
+}
+
 test "a deadline's context carries the complete ticket" {
     const original: Ticket = .{ .index = 31, .generation = 0xfedcba98 };
-    const decoded = ticketFromDeadline(deadlineContext(original));
+    const decoded = ticketFromDeadline(ticketContext(original));
     try testing.expectEqual(original.index, decoded.index);
     try testing.expectEqual(original.generation, decoded.generation);
 }
