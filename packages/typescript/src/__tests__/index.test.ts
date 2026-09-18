@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'bun:test'
-import { CraftApp, createApp, parseCraftVersionOutput, type WindowOptions, type AppConfig } from '../index'
+import { CraftApp, craftProcessFailedMessage, createApp, parseCraftVersionOutput, type WindowOptions, type AppConfig } from '../index'
 
 describe('CraftApp', () => {
   describe('constructor', () => {
@@ -94,6 +94,46 @@ describe('Helper functions', () => {
 
     it('accepts compact registry binaries that print only a version', () => {
       expect(parseCraftVersionOutput('v0.0.64\n')).toBe('0.0.64')
+    })
+
+    // #236: this is the CLI's own form, and the platform suffix used to
+    // survive the strip, so the whole line was compared against a semver.
+    // Two halves of one checkout were reported as drift — and that warning
+    // was the only signal a user got for a failure it had nothing to do with.
+    it('reads the CLI form, whose version is followed by the platform', () => {
+      expect(parseCraftVersionOutput('craft/0.0.92 darwin-arm64 bun-v1.4.1\n')).toBe('0.0.92')
+    })
+
+    it('reads a bare name and version, and a bare version', () => {
+      expect(parseCraftVersionOutput('craft 0.0.92\n')).toBe('0.0.92')
+      expect(parseCraftVersionOutput('0.0.92\n')).toBe('0.0.92')
+    })
+
+    it('answers nothing for output that carries no version at all', () => {
+      expect(parseCraftVersionOutput('')).toBe('')
+    })
+  })
+
+  describe('craftProcessFailedMessage', () => {
+    // #236: `quiet` mapped to stdio: 'ignore', so the child's explanation was
+    // discarded and the error then told the caller to read output that no
+    // longer existed. A dashboard passing `quiet: !verbose` saw only the code.
+    it('leads with what the child said, when it said anything', () => {
+      const message = craftProcessFailedMessage(1, '"/Users/me/.bun/bin/craft" on PATH is the Craft CLI\n', true)
+      expect(message).toContain('exited with code 1')
+      expect(message).toContain('on PATH is the Craft CLI')
+      expect(message).not.toContain('console output above')
+    })
+
+    it('does not point a quiet caller at output that was never printed', () => {
+      const message = craftProcessFailedMessage(1, '', true)
+      expect(message).not.toContain('console output above')
+      expect(message).toContain('quiet')
+    })
+
+    it('still points an inheriting caller at its own console', () => {
+      const message = craftProcessFailedMessage(1, '', false)
+      expect(message).toContain('console output above')
     })
   })
 

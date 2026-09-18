@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { craftBinaryNotFoundMessage, resolveCraftBinary } from './binary-resolver.js'
+import { CRAFT_CLI_SPAWN_MARKER, craftBinaryNotFoundMessage, resolveCraftBinary } from './binary-resolver.js'
 import type { AppConfig, WindowOptions } from './types.js'
 
 const execFileAsync = promisify(execFile)
@@ -55,9 +55,51 @@ async function probeBinaryVersion(craftPath: string): Promise<void> {
   }
 }
 
+/**
+ * The version a `craft --version` first line reports, whichever form it takes:
+ * `craft version 0.0.92`, `craft/0.0.92 darwin-arm64 bun-v1.4.1`,
+ * `craft 0.0.92`, `v0.0.92`, or a bare `0.0.92`.
+ *
+ * The slash form is the CLI's own, and used to survive the strip intact, so
+ * the whole line was compared against a semver and never matched — two
+ * identical versions reported as drift, on the one path where the real fault
+ * was that PATH had resolved to the CLI at all (#236).
+ */
 export function parseCraftVersionOutput(output: string): string {
   const firstLine = output.trim().split(/\r?\n/, 1)[0] ?? ''
-  return firstLine.replace(/^craft version\s+/i, '').replace(/^v/, '').trim()
+  const withoutName = firstLine.replace(/^craft(?:\s+version)?[\s/]+/i, '').trim()
+  const firstToken = withoutName.split(/\s+/, 1)[0] ?? ''
+  return firstToken.replace(/^v/, '').trim()
+}
+
+/** How much of a quiet child's stderr is kept for its failure message. */
+const STDERR_TAIL_LIMIT = 4000
+
+/**
+ * The rejection for a child that exited non-zero.
+ *
+ * Whatever the child managed to say comes first, because it is the only part
+ * that can name the actual fault. `quiet` used to map to `stdio: 'ignore'`,
+ * which threw that away and then told the caller to read output that no
+ * longer existed — leaving `exited with code 1` as the whole of the error
+ * (#236).
+ */
+export function craftProcessFailedMessage(code: number | null, stderr: string, quiet: boolean): string {
+  const said = stderr.trim()
+  const header = `❌ Craft process exited with code ${code}`
+  if (said) return `${header}\n\n${said}`
+
+  const where = quiet
+    ? 'It wrote nothing to stderr. Re-run without `quiet` to see its full output.'
+    : 'Check the console output above for more details.'
+  return (
+    `${header}\n\n`
+    + 'This may indicate:\n'
+    + '  • Invalid window configuration\n'
+    + '  • Malformed HTML content\n'
+    + '  • System resource constraints\n\n'
+    + where
+  )
 }
 
 // Export packaging API
@@ -324,8 +366,25 @@ export class CraftApp {
     // shouldn't gate startup.
     void probeBinaryVersion(craftPath)
 
+    // Two things beyond the plain spawn, both from #236:
+    //
+    // `quiet` keeps stderr rather than dropping it. The child's own message
+    // is the only thing that can say why it failed, and the caller is handed
+    // it below instead of being pointed at output that was discarded.
+    //
+    // The marker is what the CLI checks at startup. When `craft` on PATH is
+    // this package's CLI rather than the native binary — which installing the
+    // SDK can arrange — the child recognises itself and says so, instead of
+    // rejecting `--url` as an option the user never typed.
+    const quiet = this.config.quiet === true
     this.process = spawn(craftPath, args, {
-      stdio: this.config.quiet ? 'ignore' : 'inherit',
+      stdio: quiet ? ['ignore', 'ignore', 'pipe'] : 'inherit',
+      env: { ...process.env, [CRAFT_CLI_SPAWN_MARKER]: craftPath },
+    })
+
+    let stderrTail = ''
+    this.process.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_LIMIT)
     })
 
     return new Promise((resolve, reject) => {
@@ -353,19 +412,16 @@ export class CraftApp {
         ))
       })
 
-      this.process?.on('exit', (code) => {
+      // `close`, not `exit`: stderr can still hold buffered data when the
+      // process ends, and the child's last words are usually the whole of
+      // the diagnosis. With no pipe — the inherit path — the two fire
+      // together.
+      this.process?.on('close', (code) => {
         if (code === 0 || code === null) {
           resolve()
         }
         else {
-          reject(new Error(
-            `❌ Craft process exited with code ${code}\n\n` +
-            'This may indicate:\n' +
-            '  • Invalid window configuration\n' +
-            '  • Malformed HTML content\n' +
-            '  • System resource constraints\n\n' +
-            'Check the console output above for more details.'
-          ))
+          reject(new Error(craftProcessFailedMessage(code, stderrTail, quiet)))
         }
       })
     })
