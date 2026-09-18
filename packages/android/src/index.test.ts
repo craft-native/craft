@@ -359,6 +359,24 @@ describe('Craft Android builder', () => {
     expect(holder).toContain('private external fun nativeDispatchDeepLink(url: String, initial: Boolean): Boolean')
   })
 
+  it('enforces the capability flags it reports, in the page and in Kotlin', async () => {
+    // #209: the flags shaped the manifest and craft.capabilities, and then
+    // every call was served anyway.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-capability-gate-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output, config: { enableShare: true } })
+
+    const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
+    expect(bridge).toContain('installCapabilityGates')
+    expect(bridge).toContain("error.code = 'CAPABILITY_DISABLED'")
+    // The gate reads the object the page reads, so the two cannot disagree.
+    expect(bridge).toContain('if (craft.capabilities[capability]) { return served.apply(this, arguments); }')
+    // Generated from this app's config, not hardcoded.
+    expect(bridge).toContain('private val shareEnabled = true')
+    expect(bridge).toContain('private val hapticsEnabled = false')
+    expect(bridge).toContain('if (!hapticsEnabled && disabled("haptics", "haptic")) return')
+    expect(bridge).toContain('if (!keepAwakeEnabled && disabled("keepAwake", "setKeepAwake")) return false')
+  })
+
   it('routes external Activity results back to every pending media promise', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-activity-results-'))
     await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output })
