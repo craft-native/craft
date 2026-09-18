@@ -212,14 +212,20 @@ object CraftNative {
     /**
      * Run `script` in the page. Called from Zig, on any thread.
      *
-     * Silent when no deliverer is installed — which is every moment before the
-     * WebView exists, and after it is torn down. A throw here would cross back
-     * into Zig as a pending exception on a thread that has nowhere to report
-     * it, and the caller already counts what it could not deliver.
+     * Returns whether a deliverer took it. False is every moment before the
+     * WebView exists and after it is torn down, and it used to be
+     * indistinguishable from a delivery: the script was dropped, Zig's caller
+     * reported success, and the page waited on a promise nothing would settle
+     * (#231). Zig counts a false, and says so once.
+     *
+     * Still no throw. A throw here would cross back into Zig as a pending
+     * exception on a thread with nowhere to report it; false says the same
+     * thing and the caller can act on it.
      */
     @JvmStatic
-    fun deliver(script: String) {
-        runCatching { deliverer?.invoke(script) }
+    fun deliver(script: String): Boolean {
+        val target = deliverer ?: return false
+        return runCatching { target(script); true }.getOrDefault(false)
     }
 
     private external fun nativeGetDeviceInfo(activity: Activity): String?

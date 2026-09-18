@@ -1006,7 +1006,11 @@ describe('Craft Android builder', () => {
     expect(bridge.match(/webView\.evaluateJavascript\(/g)?.length).toBe(4)
     expect(bridge).toContain('private fun evaluateJavascriptUnlessClosed(script: String)')
     expect(bridge).toContain('evaluatePromiseJavascript(script: String) {\n        evaluateJavascriptUnlessClosed(script)')
-    expect(nativeDelivery).toContain('runCatching { deliverer?.invoke(script) }')
+    // Still no throw back into Zig, and since #231 it answers whether a
+    // deliverer took the script rather than swallowing the drop.
+    expect(nativeDelivery).toContain('fun deliver(script: String): Boolean')
+    expect(nativeDelivery).toContain('val target = deliverer ?: return false')
+    expect(nativeDelivery).toContain('runCatching { target(script); true }.getOrDefault(false)')
     for (const cleanup of [
       'window.__craftRejectPendingPromises',
       'CraftNative.close(activity)',
