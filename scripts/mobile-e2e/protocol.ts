@@ -97,6 +97,10 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'share.dismissed.resolvesFalse',
     'permissions.location.granted',
     'capabilities.match.behaviour',
+    'haptic.resolvesTrue',
+    'vibrate.resolvesTrue',
+    'speech.disabled.rejects',
+    'speech.stopListening.resolvesTrue',
   ],
 }
 

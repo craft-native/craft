@@ -381,17 +381,29 @@ class CraftBridge(
                     screenCapture: false
                 },
 
-                // Haptic feedback
+                // Haptic feedback.
+                //
+                // These four answer the page, as iOS does since #207. A
+                // @JavascriptInterface method answers its caller
+                // synchronously, so unlike the calls above there is no
+                // channel to park: the Kotlin method's own return value is
+                // the answer. The call goes inside `.then` so that a native
+                // failure rejects rather than throwing at the caller, which
+                // is the shape every other promise here has.
+                //
+                // `=== true` because a WebView reports some failures as
+                // `undefined` rather than as a throw, and `undefined` is
+                // exactly what #219 was about.
                 haptic: function(style) {
-                    CraftAndroid.haptic(style || 'medium');
+                    return Promise.resolve().then(function() { return CraftAndroid.haptic(style || 'medium') === true; });
                 },
 
                 // Speech recognition
                 startListening: function() {
-                    CraftAndroid.startListening();
+                    return Promise.resolve().then(function() { return CraftAndroid.startListening() === true; });
                 },
                 stopListening: function() {
-                    CraftAndroid.stopListening();
+                    return Promise.resolve().then(function() { return CraftAndroid.stopListening() === true; });
                 },
 
                 // Share. Resolves true when the person picks an app, false
@@ -526,7 +538,7 @@ class CraftBridge(
 
                 // Vibration Pattern
                 vibrate: function(pattern) {
-                    CraftAndroid.vibrate(JSON.stringify(pattern));
+                    return Promise.resolve().then(function() { return CraftAndroid.vibrate(JSON.stringify(pattern)) === true; });
                 },
 
                 // App State
@@ -1390,18 +1402,18 @@ class CraftBridge(
             //
             // The refusal is made here, from the same capabilities object the
             // page can read, because that object is what this bridge promises.
-            // Calls that answer nothing yet (#219) cannot carry a refusal, so
-            // they do nothing and say so on the console, which is what a
-            // capability the app never asked for should do.
+            // Calls that answer nothing cannot carry a refusal, so they do
+            // nothing and say so on the console, which is what a capability
+            // the app never asked for should do. What is left answering
+            // nothing is flashlight, keepAwake and the flat watch API (#220).
             //
             // Kotlin refuses the ungated-by-Android ones a second time, for a
             // caller that reaches CraftAndroid without going through here.
             (function installCapabilityGates(craft) {
                 var gated = [
-                    ['haptic', 'haptics'],
-                    ['vibrate', 'haptics'],
-                    ['startListening', 'speechRecognition'],
-                    ['stopListening', 'speechRecognition'],
+                    ['haptic', 'haptics', true],
+                    ['vibrate', 'haptics', true],
+                    ['startListening', 'speechRecognition', true],
                     ['setFlashlight', 'flashlight'],
                     ['toggleFlashlight', 'flashlight'],
                     ['setKeepAwake', 'keepAwake'],
@@ -1512,11 +1524,26 @@ class CraftBridge(
                     getInfo: function() { return Promise.resolve().then(function() { return craft.getDeviceInfo(); }); },
                     getCapabilities: function() { return Promise.resolve(Object.assign({}, craft.capabilities)); }
                 };
+                // Haptics are feedback, so an app built without them has
+                // nothing to play here rather than something to fail: `await
+                // haptics.selection()` in the middle of a flow must not stop
+                // the flow. Any other failure still rejects, and
+                // craft.haptic() itself reports the refusal. The same split
+                // iOS draws since #207, which Android could not draw until
+                // craft.haptic() had an answer to give.
+                function hapticFeedback(answer) {
+                    return answer.then(function() {}, function(error) {
+                        if (error && error.code === 'CAPABILITY_DISABLED') return;
+                        throw error;
+                    });
+                }
                 craft.haptics = {
-                    impact: function(style) { return Promise.resolve().then(function() { craft.haptic(style || 'medium'); }); },
-                    notification: function(type) { return Promise.resolve().then(function() { craft.haptic(type === 'error' ? 'heavy' : 'light'); }); },
-                    selection: function() { return Promise.resolve().then(function() { craft.haptic('selection'); }); },
-                    vibrate: function(pattern) { return Promise.resolve().then(function() { craft.vibrate(pattern || []); }); }
+                    impact: function(style) { return hapticFeedback(craft.haptic(style || 'medium')); },
+                    notification: function(type) {
+                        return hapticFeedback(craft.haptic(type === 'error' ? 'heavy' : type === 'warning' ? 'medium' : 'light'));
+                    },
+                    selection: function() { return hapticFeedback(craft.haptic('selection')); },
+                    vibrate: function(pattern) { return hapticFeedback(craft.vibrate(pattern || [])); }
                 };
                 craft.camera = {
                     takePicture: function() { return legacyOpenCamera().then(normalizePhoto); },
@@ -1647,10 +1674,16 @@ class CraftBridge(
 
     // ==================== Haptics ====================
 
+    /**
+     * Whether the device took the call, which is the answer the page awaits
+     * since #219. False is "nothing played": haptics are off, or the vibrator
+     * refused. It is never an error, because haptics decorate a flow rather
+     * than carry it.
+     */
     @JavascriptInterface
-    fun haptic(style: String) {
-        if (!hapticsEnabled && disabled("haptics", "haptic")) return
-        if (CraftNative.haptic(activity, style)) return
+    fun haptic(style: String): Boolean {
+        if (!hapticsEnabled && disabled("haptics", "haptic")) return false
+        if (CraftNative.haptic(activity, style)) return true
 
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -1676,98 +1709,126 @@ class CraftBridge(
             @Suppress("DEPRECATION")
             vibrator.vibrate(20)
         }
+        return true
     }
 
     // ==================== Speech Recognition ====================
 
+    /**
+     * Whether the request was taken, which is what iOS answers too: the
+     * outcome arrives as craftSpeech* events, not here (#207, #219).
+     *
+     * Asking for the microphone counts as taken. iOS starts recording from
+     * inside its authorization callback, so Android does the same from
+     * onRequestPermissionsResult below; before #219 the grant was dropped and
+     * the page heard nothing at all, not even craftSpeechError.
+     */
     @JavascriptInterface
-    fun startListening() {
-        if (!speechEnabled && disabled("speechRecognition", "startListening")) return
-        if (CraftNative.startListening(activity)) return
+    fun startListening(): Boolean {
+        if (!speechEnabled && disabled("speechRecognition", "startListening")) return false
+        if (CraftNative.startListening(activity)) return true
 
         if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
             sendEvent("craftSpeechError", mapOf("error" to "Speech recognition not available"))
-            return
+            return false
         }
 
         activity.runOnUiThread {
             if (closed) return@runOnUiThread
             if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-                requestPermissionsBestEffort(arrayOf(Manifest.permission.RECORD_AUDIO), 100)
+                requestPermissionsBestEffort(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_SPEECH)
                 return@runOnUiThread
             }
-
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(activity)
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    isListening = true
-                    sendEvent("craftSpeechStart", emptyMap())
-                    haptic("light")
-                }
-
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-
-                override fun onError(error: Int) {
-                    isListening = false
-                    val errorMsg = when (error) {
-                        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-                        SpeechRecognizer.ERROR_CLIENT -> "Client error"
-                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
-                        SpeechRecognizer.ERROR_NETWORK -> "Network error"
-                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
-                        SpeechRecognizer.ERROR_NO_MATCH -> "No match"
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
-                        SpeechRecognizer.ERROR_SERVER -> "Server error"
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
-                        else -> "Unknown error"
-                    }
-                    sendEvent("craftSpeechError", mapOf("error" to errorMsg))
-                    haptic("light")
-                }
-
-                override fun onResults(results: Bundle?) {
-                    isListening = false
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val transcript = matches?.firstOrNull() ?: ""
-                    sendEvent("craftSpeechResult", mapOf("transcript" to transcript, "isFinal" to true))
-                    sendEvent("craftSpeechEnd", emptyMap())
-                    haptic("light")
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val transcript = matches?.firstOrNull() ?: ""
-                    sendEvent("craftSpeechResult", mapOf("transcript" to transcript, "isFinal" to false))
-                }
-
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            }
-
-            speechRecognizer?.startListening(intent)
+            beginSpeechRecognition()
         }
+        return true
     }
 
+    /** The recogniser itself, on the main thread with RECORD_AUDIO granted. */
+    private fun beginSpeechRecognition() {
+        if (closed) return
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(activity)
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                isListening = true
+                sendEvent("craftSpeechStart", emptyMap())
+                haptic("light")
+            }
+
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+
+            override fun onError(error: Int) {
+                isListening = false
+                val errorMsg = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient permissions"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No match"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Server error"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Speech timeout"
+                    else -> "Unknown error"
+                }
+                sendEvent("craftSpeechError", mapOf("error" to errorMsg))
+                haptic("light")
+            }
+
+            override fun onResults(results: Bundle?) {
+                isListening = false
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val transcript = matches?.firstOrNull() ?: ""
+                sendEvent("craftSpeechResult", mapOf("transcript" to transcript, "isFinal" to true))
+                sendEvent("craftSpeechEnd", emptyMap())
+                haptic("light")
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val transcript = matches?.firstOrNull() ?: ""
+                sendEvent("craftSpeechResult", mapOf("transcript" to transcript, "isFinal" to false))
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        }
+
+        speechRecognizer?.startListening(intent)
+    }
+
+    /**
+     * Whether the request was taken. Ungated, as on iOS: stopping something
+     * an app was built without is a no-op, not a refusal, and a page tearing
+     * a screen down should not have to know which build it is running on.
+     */
     @JavascriptInterface
-    fun stopListening() {
-        if (CraftNative.stopListening(activity)) return
+    fun stopListening(): Boolean {
+        if (CraftNative.stopListening(activity)) return true
 
         activity.runOnUiThread {
             speechRecognizer?.stopListening()
             speechRecognizer?.destroy()
             speechRecognizer = null
-            isListening = false
+            // Only when something was listening, so a page that stops twice,
+            // or stops what never started, does not see a session end twice.
+            // iOS sends this from stopSpeechRecognition for the same reason.
+            if (isListening) {
+                isListening = false
+                sendEvent("craftSpeechEnd", emptyMap())
+            }
         }
+        return true
     }
 
     // ==================== Share ====================
@@ -2248,6 +2309,12 @@ class CraftBridge(
 
     fun onRequestPermissionsResult(requestCode: Int): Boolean {
         if (closed) return requestCode in PERMISSION_REQUEST_START..PERMISSION_REQUEST_END
+        // startListening asked for the microphone and is waiting on this.
+        if (requestCode == REQUEST_SPEECH) {
+            if (isPermissionGranted(Manifest.permission.RECORD_AUDIO)) beginSpeechRecognition()
+            else sendEvent("craftSpeechError", mapOf("error" to "Microphone permission denied"))
+            return true
+        }
         val pending = pendingPermissionRequests.remove(requestCode) ?: return false
         // Re-read package state instead of interpreting the parallel callback
         // arrays. In particular, an approximate-location choice returns a
@@ -2826,10 +2893,11 @@ class CraftBridge(
 
     // ==================== Vibration Pattern ====================
 
+    /** Whether the pattern played, the same answer haptic() gives (#219). */
     @JavascriptInterface
-    fun vibrate(patternJson: String) {
-        if (!hapticsEnabled && disabled("haptics", "vibrate")) return
-        if (CraftNative.vibrate(activity, patternJson)) return
+    fun vibrate(patternJson: String): Boolean {
+        if (!hapticsEnabled && disabled("haptics", "vibrate")) return false
+        if (CraftNative.vibrate(activity, patternJson)) return true
 
         val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vibratorManager = activity.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -2850,8 +2918,10 @@ class CraftBridge(
                 @Suppress("DEPRECATION")
                 vibrator.vibrate(timings, -1)
             }
+            return true
         } catch (e: Exception) {
             log("Vibration error: ${e.message}")
+            return false
         }
     }
 
@@ -4950,6 +5020,7 @@ class CraftBridge(
         const val REQUEST_BLUETOOTH = 1009
         const val REQUEST_PICK_CONTACT = 1010
         const val REQUEST_SHARE = 1011
+        const val REQUEST_SPEECH = 1012
         private const val PERMISSION_REQUEST_START = 2000
         private const val PERMISSION_REQUEST_END = 2999
         private const val LOCATION_REQUEST_TIMEOUT_MS = 15_000L
