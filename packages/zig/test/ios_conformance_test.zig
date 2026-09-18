@@ -2013,6 +2013,34 @@ test "no case the page waits on casts its argument without answering the other w
     }
 }
 
+test "a module that parks a call on a completion block also gives it a deadline" {
+    // #223: a call parked on `ios_pending` is one whose only answer comes from
+    // a framework completion. The table makes a late completion harmless; it
+    // does not make one that never arrives answer at all. Both halves or
+    // neither — parking without a deadline is a promise that can wait for
+    // ever, which is what #211 found on CI twice.
+    var parked: usize = 0;
+    for (zig_sources) |source| {
+        if (std.mem.indexOf(u8, source, "ios_pending.Table(") == null) continue;
+        parked += 1;
+        if (std.mem.indexOf(u8, source, "scheduleDeadline(") != null) continue;
+
+        // Named by the first action it declares, which is how these files are
+        // recognisable without embedding their paths.
+        const at = std.mem.indexOf(u8, source, "pub const") orelse 0;
+        const line_end = std.mem.indexOfScalarPos(u8, source, at, '\n') orelse at;
+        std.debug.print(
+            "a module parks calls on ios_pending.Table and never calls scheduleDeadline.\n" ++
+                "  Near: {s}\n" ++
+                "  A parked call whose completion never comes settles nothing at all.\n",
+            .{source[at..line_end]},
+        );
+        return error.ParkedCallHasNoDeadline;
+    }
+    // Non-vacuity: the scan has to be finding the modules that do park.
+    try testing.expect(parked >= 2);
+}
+
 test "every call the page waits on has a case that can resolve it" {
     const region = dispatcherRegion();
     var awaited = try collectAwaitedActions(testing.allocator);
