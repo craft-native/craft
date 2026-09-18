@@ -117,6 +117,8 @@ const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
 const compat_mutex = @import("compat_mutex.zig");
+const ios_pending = @import("ios_pending.zig");
+const compat = @import("compat.zig");
 const memory = @import("memory.zig");
 
 const objc = objc_runtime.objc;
@@ -220,19 +222,29 @@ pub const NotificationsBridge = struct {
         const sels = try Sels.resolve();
 
         const ticket = ios_async.acquire(A.get_pending_notifications) orelse return poolFull();
+        errdefer ios_async.abandon(ticket);
 
-        // Published before the framework call, never after: the completion runs
+        // Claimed before the framework call, never after: the completion runs
         // on a queue UserNotifications picks and can fire before `msgSend`
-        // returns. A block that arrived at an empty side-table slot would have
-        // no ticket to reply with.
-        publishPendingCall(ticket, sels);
+        // returns. A block that arrived at an empty table entry would have no
+        // ticket to reply with.
+        const block = calls.claim(ticket, sels) orelse {
+            std.log.warn(
+                "getPendingNotifications: all {d} completion blocks are still owed a completion " ++
+                    "UserNotifications never delivered; refusing rather than reusing one",
+                .{ios_pending.block_count},
+            );
+            return poolFull();
+        };
+
+        ios_async.scheduleDeadline(ticket, pending_deadline_ms, pendingTimedOut);
 
         // The completion is `void (^)(NSArray<UNNotificationRequest *> *)`,
         // which neither `boolBlock` nor `boolErrorBlock` fits — hence this
-        // module's own per-slot global block, feeding `ios_async.deliverJson`.
+        // module's own per-block global block, feeding `ios_async.deliverJson`.
         const Fn = *const fn (Id, Id, *anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&objc.objc_msgSend);
-        func(center, sel_get, arrayBlock(ticket));
+        func(center, sel_get, arrayBlock(block));
     }
 
     /// Schedule one local notification, and answer with its identifier.
@@ -499,26 +511,20 @@ const PendingCall = struct {
     sels: Sels,
 };
 
-var pending_calls: [ios_async.max_in_flight]?PendingCall = @splat(null);
-var pending_mutex: compat_mutex.Mutex = .{};
+/// One entry per completion block, not per reply slot (#223).
+///
+/// A block knows only its own index. Keyed by reply slot, a deadline would
+/// free slot k, the next call would lease slot k and get the same block, and
+/// the first call's late completion would then answer the second with the
+/// first one's notifications. `ios_pending` keeps a block owed until the
+/// framework calls it; #211 found the same shape in a Siri deletion.
+var calls: ios_pending.Table(Sels) = .{};
 
-/// Record the call a slot's block will answer. The slot is leased exclusively
-/// by this ticket, so the entry is ours to overwrite.
-fn publishPendingCall(ticket: ios_async.Ticket, sels: Sels) void {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    pending_calls[ticket.index] = .{ .ticket = ticket, .sels = sels };
-}
-
-/// Read and clear a slot's entry. Clearing is what makes a second fire of the
-/// same completion a no-op rather than a second reply.
-fn takePendingCall(index: u5) ?PendingCall {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    const call = pending_calls[index];
-    pending_calls[index] = null;
-    return call;
-}
+/// `getPendingNotificationRequestsWithCompletionHandler:` reads a local store
+/// and involves no person, so nothing justifies waiting on it for ever. Well
+/// under the 30s the page's own `_invoke` allows, so the caller hears this
+/// answer rather than its own timeout.
+const pending_deadline_ms: u32 = 10_000;
 
 const BlockDescriptor = extern struct {
     reserved: c_ulong = 0,
@@ -544,19 +550,20 @@ const array_block_descriptor = BlockDescriptor{ .size = @sizeOf(ArrayBlock) };
 
 extern var _NSConcreteGlobalBlock: anyopaque;
 
-/// One invoke per slot, comptime-generated so each block knows which slot it is
-/// without capturing anything.
-fn makeArrayInvoke(comptime index: u5) *const anyopaque {
+/// One invoke per block, comptime-generated so each block knows which block it
+/// is without capturing anything. Per block rather than per reply slot: that
+/// separation is what makes a late completion harmless.
+fn makeArrayInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const ArrayBlock, requests: Id) callconv(.c) void {
-            pendingCompletionFired(index, requests);
+            pendingCompletionFired(block, requests);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeArrayBlocks() [ios_async.max_in_flight]ArrayBlock {
-    var out: [ios_async.max_in_flight]ArrayBlock = undefined;
+fn makeArrayBlocks() [ios_pending.block_count]ArrayBlock {
+    var out: [ios_pending.block_count]ArrayBlock = undefined;
     for (&out, 0..) |*b, i| {
         b.* = .{
             .isa = &_NSConcreteGlobalBlock,
@@ -568,11 +575,11 @@ fn makeArrayBlocks() [ios_async.max_in_flight]ArrayBlock {
     return out;
 }
 
-var array_blocks: [ios_async.max_in_flight]ArrayBlock =
+var array_blocks: [ios_pending.block_count]ArrayBlock =
     if (is_darwin) makeArrayBlocks() else undefined;
 
-fn arrayBlock(ticket: ios_async.Ticket) *anyopaque {
-    return @ptrCast(&array_blocks[ticket.index]);
+fn arrayBlock(block: u5) *anyopaque {
+    return @ptrCast(&array_blocks[block]);
 }
 
 /// Runs on whatever queue UserNotifications chose. It must not reply from here
@@ -585,19 +592,32 @@ fn arrayBlock(ticket: ios_async.Ticket) *anyopaque {
 /// `ios_async.deliverError`, which reports NATIVE_CALL_FAILED through this same
 /// slot and hop — so the caller learns the call failed instead of waiting out a
 /// promise nothing will settle.
-fn pendingCompletionFired(index: u5, requests: Id) void {
+fn pendingCompletionFired(block: u5, requests: Id) void {
     if (!is_darwin) return;
 
-    const call = takePendingCall(index) orelse {
-        std.log.warn(
-            "getPendingNotifications completion fired for slot {d} with no call recorded; ignored",
-            .{index},
-        );
-        return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        .late => |started_ms| {
+            std.log.warn(
+                "getPendingNotifications: a completion arrived {d} ms after the call, after its " ++
+                    "deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn(
+                "getPendingNotifications completion fired for block {d} with no call recorded; ignored",
+                .{block},
+            );
+            return;
+        },
     };
+    const call = entry.call;
+    const ticket = entry.ticket;
 
     const allocator = std.heap.c_allocator;
-    const json = shapePendingReply(allocator, requests, call.sels) catch |err| {
+    const json = shapePendingReply(allocator, requests, call) catch |err| {
         // Rejects rather than going silent. This abandoned the slot and left
         // the caller's untimed promise hanging, on the reasoning that
         // `ios_async` could resolve and nothing else, so the choice was
@@ -610,12 +630,27 @@ fn pendingCompletionFired(index: u5, requests: Id) void {
             "getPendingNotifications could not shape its reply ({}); rejecting",
             .{err},
         );
-        ios_async.deliverError(call.ticket);
+        ios_async.deliverError(ticket);
         return;
     };
     defer allocator.free(json);
 
-    ios_async.deliverJson(call.ticket, json);
+    ios_async.deliverJson(ticket, json);
+}
+
+/// On the main queue, `pending_deadline_ms` after the call. Does nothing when
+/// the completion got there first, which is the usual case: the timer cannot
+/// be cancelled, so it always fires.
+fn pendingTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+
+    const entry = calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    std.log.warn(
+        "getPendingNotifications: getPendingNotificationRequestsWithCompletionHandler: did not " ++
+            "call its completion within {d} ms; answering TIMEOUT",
+        .{pending_deadline_ms},
+    );
+    ios_async.deliverErrorCode(entry.ticket, bridge_error.BridgeError.Timeout);
 }
 
 // =============================================================================
@@ -813,6 +848,10 @@ const ScheduleCall = struct {
 };
 
 var schedule_calls: [ios_async.max_in_flight]?ScheduleCall = @splat(null);
+/// Still the old shape: `scheduleNotification` is two stages, and its deadline
+/// has to start after the authorization prompt rather than at dispatch, which
+/// is its own change (#223).
+var pending_mutex: compat_mutex.Mutex = .{};
 
 fn publishScheduleCall(ticket: ios_async.Ticket, sels: ScheduleSels, schedule: Schedule) void {
     pending_mutex.lock();
@@ -1467,23 +1506,54 @@ test "the side table hands each slot's completion its own ticket, once" {
         .utf8_length = null,
     };
 
-    publishPendingCall(ticket, sels);
+    const block = calls.claim(ticket, sels) orelse return error.NoFreeBlock;
 
-    const taken = takePendingCall(3) orelse return error.PublishedCallWentMissing;
+    const taken = switch (calls.settle(block)) {
+        .reply => |entry| entry,
+        else => return error.PublishedCallWentMissing,
+    };
     try testing.expectEqual(@as(u5, 3), taken.ticket.index);
     try testing.expectEqual(@as(u32, 77), taken.ticket.generation);
 
-    try testing.expect(takePendingCall(3) == null);
+    // And the block is free again, so the same fire cannot answer twice.
+    try testing.expect(calls.settle(block) == .stray);
 }
 
-test "a completion for a slot with no recorded call does nothing" {
-    // A late or duplicate fire must not reach `deliverJson` at all. With the
-    // entry cleared there is no ticket to reply with, and the block returns
-    // without touching the pool — asserted by the neighbouring slots staying
-    // empty rather than by observing a reply that must not happen.
-    try testing.expect(takePendingCall(9) == null);
+test "a deadline answers once, and the completion it beat is ignored" {
+    // #223: without the table a deadline would free the reply slot, the next
+    // call would lease it and get the same block, and this late completion
+    // would answer that call with these notifications.
+    const ticket: ios_async.Ticket = .{ .index = 5, .generation = 12 };
+    const sels: Sels = .{
+        .count = undefined,
+        .object_at = undefined,
+        .content = undefined,
+        .identifier = undefined,
+        .title = null,
+        .body = null,
+        .subtitle = null,
+        .utf8 = null,
+        .utf8_length = null,
+    };
+    const block = calls.claim(ticket, sels) orelse return error.NoFreeBlock;
+
+    const expired = calls.expireIfWaiting(ticket) orelse return error.DeadlineFoundNothing;
+    try testing.expectEqual(@as(u32, 12), expired.ticket.generation);
+    // Owed, not free: another call must not be given this block.
+    const other: ios_async.Ticket = .{ .index = 6, .generation = 1 };
+    const elsewhere = calls.claim(other, sels) orelse return error.NoFreeBlock;
+    try testing.expect(elsewhere != block);
+    try testing.expect(calls.settle(block) == .late);
+    _ = calls.settle(elsewhere);
+}
+
+test "a completion for a block with no recorded call does nothing" {
+    // A late or duplicate fire must not reach `deliverJson` at all. With no
+    // entry there is no ticket to reply with, and the block returns without
+    // touching the pool.
+    try testing.expect(calls.settle(9) == .stray);
     pendingCompletionFired(9, null);
-    try testing.expect(takePendingCall(9) == null);
+    try testing.expect(calls.settle(9) == .stray);
 }
 
 test "off Darwin the handler refuses rather than fake an empty list" {
@@ -1519,6 +1589,10 @@ test "without a bundle identifier the guard fires before the center is touched" 
             var bridge = NotificationsBridge.init(testing.allocator);
             defer bridge.deinit();
 
+            // Drained first, so what follows reads what *this* call did
+            // rather than whatever the rest of the file left behind.
+            for (0..ios_pending.block_count) |i| _ = calls.settle(@intCast(i));
+
             try testing.expectError(
                 error.NoBundleIdentifier,
                 bridge.handleMessage(A.get_pending_notifications, "{}"),
@@ -1526,7 +1600,9 @@ test "without a bundle identifier the guard fires before the center is touched" 
 
             // And the refusal must happen before any slot is leased: a lease
             // that is never released narrows the pool for every later call.
-            for (pending_calls) |entry| try testing.expect(entry == null);
+            for (0..ios_pending.block_count) |i| {
+                try testing.expect(calls.settle(@intCast(i)) == .stray);
+            }
         },
         else => return err,
     }
@@ -1545,9 +1621,9 @@ test "the completion blocks are global, one per slot, and distinct" {
         try testing.expectEqual(@as(c_ulong, @sizeOf(ArrayBlock)), b.descriptor.size);
     }
 
-    // Each slot needs its *own* invoke, or every completion would report the
-    // same slot index and answer the wrong caller.
+    // Each block needs its *own* invoke, or every completion would report the
+    // same block and answer the wrong caller.
     try testing.expect(array_blocks[0].invoke != array_blocks[1].invoke);
-    try testing.expect(arrayBlock(.{ .index = 0, .generation = 1 }) !=
-        arrayBlock(.{ .index = 1, .generation = 1 }));
+    try testing.expect(array_blocks[0].invoke != array_blocks[ios_pending.block_count - 1].invoke);
+    try testing.expect(arrayBlock(0) != arrayBlock(1));
 }
