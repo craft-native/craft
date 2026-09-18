@@ -339,7 +339,7 @@ describe('Craft Android builder', () => {
     const holder = readFileSync(join(output, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')
 
     expect(activity).not.toContain('dispatch = false')
-    expect(activity).toContain('craftBridge.receiveDeepLink(launchLink)')
+    expect(activity).toContain('intent.data?.toString()?.let(craftBridge::receiveDeepLink)')
     expect(activity).toContain('Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY')
     expect(activity).toContain('intent.data?.toString()?.let(craftBridge::receiveDeepLink)')
     // A recreated activity restores what the bridge saved, not getIntent(),
@@ -436,6 +436,41 @@ describe('Craft Android builder', () => {
     expect(bridge).toContain('private fun onlyOnce(script: String): String')
     expect(bridge).toContain('evaluateJavascript(onlyOnce(script))')
     expect(bridge).toContain('if (!window.__craftBridgeInstalled)')
+  })
+
+  it('ignores the launch intent on a relaunch from Recents, and the saved one on a recreate', async () => {
+    // #229, two halves. The shortcut path had no history check, so the
+    // shortcut the app was first opened with was dispatched again every time
+    // the task was reopened from Recents. And a recreated activity must read
+    // what the bridge saved, not getIntent(), which onNewIntent replaces with
+    // the latest warm link — that half landed with #232 and is pinned here so
+    // it cannot quietly go back.
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-recents-'))
+    await init({ name: 'WildLoop', packageName: 'org.wildloop.app', output, config: { enableDeepLinks: true, urlSchemes: ['wildloop'] } })
+
+    const activity = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/MainActivity.kt'), 'utf8')
+    const onCreate = activity.slice(activity.indexOf('override fun onCreate'), activity.indexOf('private fun setupWebView'))
+
+    // One flag, guarding both, rather than the link alone.
+    expect(onCreate).toContain('Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY')
+    expect(onCreate.match(/launchedFromHistory/g)?.length).toBe(2)
+    // Bounded by the block's own closing brace: a slice that ran to the end
+    // of onCreate would still find a shortcut call that had moved back out.
+    const guardStart = onCreate.indexOf('if (!launchedFromHistory) {')
+    const guard = onCreate.slice(guardStart, onCreate.indexOf('\n            }', guardStart))
+    expect(guard).toContain('craftBridge::receiveDeepLink')
+    expect(guard).toContain('handleIncomingShortcut(intent)')
+    // And exactly once, so it cannot also be dispatched outside the guard.
+    expect(onCreate.match(/handleIncomingShortcut\(intent\)/g)?.length).toBe(1)
+
+    // A genuinely new intent still carries both through.
+    const onNewIntent = activity.slice(activity.indexOf('override fun onNewIntent'), activity.indexOf('override fun onBackPressed'))
+    expect(onNewIntent).toContain('craftBridge::receiveDeepLink')
+    expect(onNewIntent).toContain('handleIncomingShortcut(intent)')
+
+    // And a recreate reads the bundle, never the intent.
+    expect(onCreate).toContain('craftBridge.restoreDeepLinks(savedInstanceState)')
+    expect(activity).toContain('craftBridge.saveDeepLinks(outState)')
   })
 
   it('routes external Activity results back to every pending media promise', async () => {
