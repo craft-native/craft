@@ -66,6 +66,10 @@ export function resolveCraftBinary(explicit?: string): string {
  * path-matrix behaviour the pantry contract exists to remove. So instead the
  * spawn is marked, and a CLI that starts up already marked knows it *is* the
  * thing that was spawned, and says so.
+ *
+ * Both spawners set it: `runCraftBinary()` in the CLI, and `CraftApp.show()`
+ * in the SDK. The SDK one was missing until #236, so every SDK caller on such
+ * a machine still met the raw parser error this marker exists to replace.
  */
 export const CRAFT_CLI_SPAWN_MARKER = 'CRAFT_CLI_SPAWNED_FROM'
 
@@ -77,7 +81,7 @@ export function craftBinaryIsCliShimMessage(spawnedFrom: string): string {
   return [
     `"${spawnedFrom}" on PATH is the Craft CLI, not the native binary.`,
     '',
-    'The CLI spawned it expecting the native build, and re-entered itself —',
+    'Craft spawned it expecting the native build and reached this CLI instead —',
     'which is why an option you never typed (--url) came back as unknown.',
     '',
     'Fix it in one of two ways:',

@@ -141,6 +141,23 @@ describe('CLI shim re-entry', () => {
     expect(cli.indexOf('craftBinaryIsCliShimMessage')).toBeLessThan(cli.indexOf('const cli = new CLI'))
   })
 
+  it('marks the SDK spawn too, so an SDK caller reaches the same message', async () => {
+    // #236: the marker was set only by the CLI, so CraftApp.show() — the
+    // path a dashboard or any other SDK consumer takes — still met the raw
+    // `Unknown option --url` that this whole mechanism exists to replace.
+    const idx = await Bun.file(new URL('../index.ts', import.meta.url)).text()
+    expect(idx).toContain('CRAFT_CLI_SPAWN_MARKER')
+    expect(idx).toContain('[CRAFT_CLI_SPAWN_MARKER]: craftPath')
+  })
+
+  it('keeps a quiet spawn\'s stderr, which is where that message arrives', async () => {
+    // The marker only helps if the child's stderr survives. `quiet` used to
+    // be stdio: 'ignore', which discarded exactly the explanation above.
+    const idx = await Bun.file(new URL('../index.ts', import.meta.url)).text()
+    expect(idx).toContain("['ignore', 'ignore', 'pipe']")
+    expect(idx).not.toContain("stdio: this.config.quiet ? 'ignore' : 'inherit'")
+  })
+
   it('names the offending PATH entry, since nothing else points at PATH', () => {
     const message = craftBinaryIsCliShimMessage('/Users/me/.bun/bin/craft')
     expect(message).toContain('/Users/me/.bun/bin/craft')
