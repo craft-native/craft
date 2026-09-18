@@ -863,6 +863,8 @@ struct CraftWebView: UIViewRepresentable {
             case "setBadge":
                 if let count = body["count"] as? Int {
                     setBadgeCount(count, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "setBadge needs a whole number of badges", code: "INVALID_ARGUMENT")
                 }
             case "clearBadge":
                 setBadgeCount(0, callbackId: callbackId)
@@ -877,6 +879,8 @@ struct CraftWebView: UIViewRepresentable {
             case "setFlashlight":
                 if let enabled = body["enabled"] as? Bool {
                     setFlashlight(enabled: enabled, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "setFlashlight needs true or false", code: "INVALID_ARGUMENT")
                 }
             // Vibrate pattern
             case "vibrate":
@@ -891,6 +895,8 @@ struct CraftWebView: UIViewRepresentable {
                 if let urlString = body["url"] as? String, let url = URL(string: urlString) {
                     UIApplication.shared.open(url)
                     resolveCallback(callbackId, result: true)
+                } else {
+                    rejectCallback(callbackId, error: "openURL needs a URL it can parse", code: "INVALID_ARGUMENT")
                 }
             // App state
             case "getAppState":
@@ -1298,6 +1304,8 @@ struct CraftWebView: UIViewRepresentable {
             case "setShortcuts":
                 if let shortcuts = body["shortcuts"] as? [[String: Any]] {
                     setAppShortcuts(shortcuts: shortcuts, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "setShortcuts needs a list of shortcuts", code: "INVALID_ARGUMENT")
                 }
             case "clearShortcuts":
                 clearAppShortcuts(callbackId: callbackId)
@@ -1308,16 +1316,22 @@ struct CraftWebView: UIViewRepresentable {
                    let value = body["value"] as? String {
                     let group = body["group"] as? String
                     setSharedKeychainItem(key: key, value: value, group: group, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "setSharedItem needs both a key and a value", code: "INVALID_ARGUMENT")
                 }
             case "getSharedItem":
                 if let key = body["key"] as? String {
                     let group = body["group"] as? String
                     getSharedKeychainItem(key: key, group: group, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "getSharedItem needs a key", code: "INVALID_ARGUMENT")
                 }
             case "removeSharedItem":
                 if let key = body["key"] as? String {
                     let group = body["group"] as? String
                     removeSharedKeychainItem(key: key, group: group, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "removeSharedItem needs a key", code: "INVALID_ARGUMENT")
                 }
 
             // MARK: - Local Auth Persistence
@@ -1325,6 +1339,8 @@ struct CraftWebView: UIViewRepresentable {
                 if let enabled = body["enabled"] as? Bool {
                     let duration = body["duration"] as? Double ?? 300 // 5 min default
                     setBiometricPersistence(enabled: enabled, duration: duration, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "setBiometricPersistence needs true or false", code: "INVALID_ARGUMENT")
                 }
             case "checkBiometricPersistence":
                 checkBiometricPersistence(callbackId: callbackId)
@@ -1408,6 +1424,8 @@ struct CraftWebView: UIViewRepresentable {
             case "updateWidget":
                 if let data = body["data"] as? [String: Any] {
                     updateWidget(data: data, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "updateWidget needs a data object", code: "INVALID_ARGUMENT")
                 }
             case "reloadWidgets":
                 reloadAllWidgets(callbackId: callbackId)
@@ -1417,20 +1435,28 @@ struct CraftWebView: UIViewRepresentable {
                 if let phrase = body["phrase"] as? String,
                    let action = body["shortcutAction"] as? String {
                     registerSiriShortcut(phrase: phrase, action: action, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "registerSiriShortcut needs both a phrase and a shortcutAction", code: "INVALID_ARGUMENT")
                 }
             case "removeSiriShortcut":
                 if let action = body["shortcutAction"] as? String {
                     removeSiriShortcut(action: action, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "removeSiriShortcut needs a shortcutAction", code: "INVALID_ARGUMENT")
                 }
 
             // MARK: - Watch Connectivity
             case "sendToWatch":
                 if let message = body["message"] as? [String: Any] {
                     sendMessageToWatch(message: message, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "sendToWatch needs a message object", code: "INVALID_ARGUMENT")
                 }
             case "updateWatchContext":
                 if let context = body["context"] as? [String: Any] {
                     updateWatchContext(context: context, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "updateWatchContext needs a context object", code: "INVALID_ARGUMENT")
                 }
             case "isWatchReachable":
                 isWatchReachable(callbackId: callbackId)
