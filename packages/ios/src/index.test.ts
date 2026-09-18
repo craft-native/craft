@@ -261,6 +261,63 @@ describe('Craft iOS builder', () => {
       .toBeLessThan(swift.indexOf('if CraftZigRuntime.offer('))
   })
 
+  it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
+    // #224: each of these is answered only by Swift, on both runtimes, and
+    // only by a framework callback no person is waiting on. Nothing settled
+    // the page's promise if it never came — the shape #211 hit twice on CI.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-swift-deadlines-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    // One mechanism, and both halves of it: arming alone would never answer,
+    // claiming alone would let both paths answer.
+    expect(swift).toContain('private func armDeadline(')
+    expect(swift).toContain('private func claimDeadline(_ token: UUID) -> Bool')
+    expect(swift).toContain('guard let work = pendingDeadlines.removeValue(forKey: token) else { return false }')
+    // It reports a timeout, never the work having happened.
+    expect(swift).toContain('self.rejectCallback(callbackId, error: error, code: "TIMEOUT")')
+
+    // Five call sites, each with its own budget, all well under the 30s the
+    // page's own _invoke allows so the caller hears the native answer.
+    for (const [constant, uses] of [
+      ['notificationSettingsDeadline', 1],
+      ['pushRegistrationDeadline', 1],
+      ['storeKitDeadline', 1],
+      // Live Activities share one budget across update and end.
+      ['liveActivityDeadline', 2],
+    ] as const) {
+      expect(swift).toContain(`private static let ${constant}: TimeInterval =`)
+      expect(swift.match(new RegExp(`Coordinator\\.${constant},`, 'g'))?.length).toBe(uses)
+    }
+    // Every arm has a claim. Five sites arm; the claims are those five plus
+    // the push helper's own and the two places it is reached through.
+    expect(swift.match(/armDeadline\(/g)?.length).toBe(6)
+    expect(swift.match(/claimDeadline\(/g)?.length).toBe(8)
+
+    // The push registration's second call used to overwrite the first's
+    // callbackId, so the first promise never settled at all.
+    const register = swift.slice(
+      swift.indexOf('private func registerPushNotifications('),
+      swift.indexOf('@objc private func receivePushToken('),
+    )
+    expect(register).toContain('if let displaced = pendingPushCallbackId {')
+    expect(register).toContain('Replaced by another push registration')
+    // Armed after the grant, not at dispatch: the prompt has a person in front
+    // of it and must not be timed out.
+    expect(register.indexOf('UIApplication.shared.registerForRemoteNotifications()'))
+      .toBeGreaterThan(register.indexOf('Coordinator.pushRegistrationDeadline'))
+
+    // A token that arrives late still reaches a page listening for the event,
+    // even though the caller that timed out is gone.
+    const receive = swift.slice(
+      swift.indexOf('@objc private func receivePushToken('),
+      swift.indexOf('@objc private func receiveNotificationResponse('),
+    )
+    expect(receive).toContain('if let claimed = claimPushRegistration() { resolveCallback(claimed, result: token) }')
+    expect(receive).toContain('sendToWeb("craftPushToken", data: ["token": token])')
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({
