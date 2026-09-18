@@ -101,6 +101,7 @@ export const REQUIRED_CASES: Record<MobilePlatform, string[]> = {
     'vibrate.resolvesTrue',
     'speech.disabled.rejects',
     'speech.stopListening.resolvesTrue',
+    'bridge.survivesSameDocumentNavigation',
   ],
 }
 

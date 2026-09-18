@@ -219,6 +219,19 @@ class CraftBridge(
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(activity)
     @Volatile
     private var bridgeReady = false
+
+    /**
+     * Which navigation the bridge belongs to.
+     *
+     * `evaluateJavascript`'s completion is posted, so it can run after the
+     * next navigation has already started. Without this, a completion from
+     * the page that has just left marks the page that has just arrived as
+     * ready, and the queues below flush into a document with no bridge and no
+     * replay listener — where they are lost rather than delivered (#228).
+     *
+     * Main thread only, like everything that touches `bridgeReady`.
+     */
+    private var navigationGeneration = 0
     private val pendingEvents = mutableListOf<Pair<String, Map<String, Any>>>()
 
     // What the app was built with (#209). The page refuses a disabled call
@@ -326,6 +339,24 @@ class CraftBridge(
      * did, null included — it renders as the string "null", the way it always has.
      */
     private fun jsQuote(value: Any?): String = JSONObject.quote(value.toString())
+
+    /**
+     * The script, guarded so a second run in the *same* document does nothing.
+     *
+     * Chromium calls `onPageFinished` without a matching `onPageStarted` for
+     * same-document navigations — a fragment change, a `history.pushState` —
+     * and `MainActivity` injects on every one of them. Running the whole
+     * script again replaces `window.craft`, fires `craftReady` a second time,
+     * and rejects every in-flight promise with "Android bridge reinitialized"
+     * (#228).
+     *
+     * A block, not a function: `var` and function declarations are
+     * function-scoped, so the script behaves exactly as it does unwrapped,
+     * and everything it publishes it publishes on `window` regardless. A real
+     * navigation gets a new `window`, so the flag is absent and it installs.
+     */
+    private fun onlyOnce(script: String): String =
+        "if (!window.__craftBridgeInstalled) {\nwindow.__craftBridgeInstalled = true;\n$script\n}"
 
     fun injectBridge() {
         // Before the script, so a native callback arriving while the page is
@@ -1653,8 +1684,15 @@ class CraftBridge(
 
         activity.runOnUiThread {
             if (closed) return@runOnUiThread
-            webView.evaluateJavascript(script) {
+            // Read here rather than at entry: this is the navigation the
+            // script is actually being injected into.
+            val generation = navigationGeneration
+            webView.evaluateJavascript(onlyOnce(script)) {
                 if (closed) return@evaluateJavascript
+                // A completion for a page that has since navigated away.
+                // Marking ready now would flush into the new document, which
+                // has no bridge yet, and the queues would be spent on it.
+                if (generation != navigationGeneration) return@evaluateJavascript
                 bridgeReady = true
                 val events = pendingEvents.toList()
                 pendingEvents.clear()
@@ -1670,6 +1708,9 @@ class CraftBridge(
 
     fun markBridgeLoading() {
         bridgeReady = false
+        // A document is on its way out, so any injection still in flight is
+        // for a page that no longer exists.
+        navigationGeneration += 1
     }
 
     // ==================== Haptics ====================
