@@ -3417,31 +3417,68 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         // MARK: - Push Notifications
+
+        /// The deadline covering the APNs round trip, once authorization is in.
+        private var pendingPushDeadline: UUID?
+
         private func registerPushNotifications(callbackId: String?) {
+            // A second call used to overwrite the first's callbackId, and the
+            // first promise then never settled at all. Displacing a call is an
+            // answer the caller can act on, the way a replaced
+            // getCurrentPosition request is rejected rather than dropped.
+            if let displaced = pendingPushCallbackId {
+                if let token = pendingPushDeadline { _ = claimDeadline(token) }
+                pendingPushDeadline = nil
+                rejectCallback(displaced, error: "Replaced by another push registration", code: "CANCELLED")
+            }
             pendingPushCallbackId = callbackId
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { [weak self] granted, error in
                 if granted {
                     DispatchQueue.main.async {
+                        guard let self else { return }
+                        // Armed here rather than at dispatch: until the person
+                        // answers the prompt there is someone to wait for, and
+                        // only the APNs round trip afterwards is unattended.
+                        self.pendingPushDeadline = self.armDeadline(
+                            Coordinator.pushRegistrationDeadline,
+                            callbackId: callbackId,
+                            error: "APNs did not call back within \(Int(Coordinator.pushRegistrationDeadline))s"
+                        )
+                        self.pendingPushCallbackId = callbackId
                         UIApplication.shared.registerForRemoteNotifications()
                     }
                 } else {
-                    self?.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
-                    self?.pendingPushCallbackId = nil
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.pendingPushCallbackId == callbackId else { return }
+                        self.rejectCallback(callbackId, error: error?.localizedDescription ?? "Permission denied")
+                        self.pendingPushCallbackId = nil
+                    }
                 }
             }
         }
 
+        /// Whether this push callback is still the one waiting, claiming it if so.
+        private func claimPushRegistration() -> String?? {
+            guard let callbackId = pendingPushCallbackId else { return nil }
+            if let token = pendingPushDeadline, !claimDeadline(token) { return nil }
+            pendingPushDeadline = nil
+            pendingPushCallbackId = nil
+            return .some(callbackId)
+        }
+
         @objc private func receivePushToken(_ notification: Notification) {
             guard let token = notification.object as? String else { return }
-            resolveCallback(pendingPushCallbackId, result: token)
-            pendingPushCallbackId = nil
+            // The event goes out either way: a token that arrives after its
+            // deadline is still this app's token, and a page listening for
+            // craftPushToken is not the caller that timed out.
+            if let claimed = claimPushRegistration() { resolveCallback(claimed, result: token) }
             sendToWeb("craftPushToken", data: ["token": token])
         }
 
         @objc private func receivePushRegistrationError(_ notification: Notification) {
             let message = notification.object as? String ?? "Push registration failed"
-            rejectCallback(pendingPushCallbackId, error: message, code: "PUSH_REGISTRATION_ERROR")
-            pendingPushCallbackId = nil
+            guard let claimed = claimPushRegistration() else { return }
+            rejectCallback(claimed, error: message, code: "PUSH_REGISTRATION_ERROR")
         }
 
         @objc private func receiveNotificationResponse(_ notification: Notification) {
@@ -3537,6 +3574,13 @@ struct CraftWebView: UIViewRepresentable {
                 let status = CBManager.authorization
                 resolveCallback(callbackId, result: permissionStatus(status == .allowedAlways, denied: status == .denied, restricted: status == .restricted))
             case "notifications":
+                // Zig answers UnknownAction for this permission, so Swift
+                // serves it on both runtimes and this is the only answer.
+                let token = armDeadline(
+                    Coordinator.notificationSettingsDeadline,
+                    callbackId: callbackId,
+                    error: "UNUserNotificationCenter.getNotificationSettings did not answer within \(Int(Coordinator.notificationSettingsDeadline))s"
+                )
                 UNUserNotificationCenter.current().getNotificationSettings { settings in
                     let status: String
                     switch settings.authorizationStatus {
@@ -3545,7 +3589,10 @@ struct CraftWebView: UIViewRepresentable {
                     case .notDetermined: status = "undetermined"
                     @unknown default: status = "undetermined"
                     }
-                    self.resolveCallback(callbackId, result: status)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.claimDeadline(token) else { return }
+                        self.resolveCallback(callbackId, result: status)
+                    }
                 }
             default:
                 resolveCallback(callbackId, result: "undetermined")
@@ -4244,6 +4291,13 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - In-App Purchase
         private func getProducts(_ productIds: [String], callbackId: String?) {
+            // Nobody is in front of a StoreKit fetch, and it reaches the
+            // network: a request that never returns leaves the page waiting.
+            let token = armDeadline(
+                Coordinator.storeKitDeadline,
+                callbackId: callbackId,
+                error: "StoreKit did not return products within \(Int(Coordinator.storeKitDeadline))s"
+            )
             Task {
                 do {
                     let products = try await Product.products(for: Set(productIds))
@@ -4256,9 +4310,15 @@ struct CraftWebView: UIViewRepresentable {
                             "displayPrice": product.displayPrice
                         ]
                     }
-                    resolveCallback(callbackId, result: productData)
+                    await MainActor.run { [weak self] in
+                        guard let self, self.claimDeadline(token) else { return }
+                        self.resolveCallback(callbackId, result: productData)
+                    }
                 } catch {
-                    rejectCallback(callbackId, error: error.localizedDescription)
+                    await MainActor.run { [weak self] in
+                        guard let self, self.claimDeadline(token) else { return }
+                        self.rejectCallback(callbackId, error: error.localizedDescription)
+                    }
                 }
             }
         }
@@ -4978,9 +5038,17 @@ struct CraftWebView: UIViewRepresentable {
                 durationSeconds: body["durationSeconds"] as? Double ?? current.durationSeconds,
                 progress: min(max(body["progress"] as? Double ?? current.progress, 0), 1)
             )
+            let token = armDeadline(
+                Coordinator.liveActivityDeadline,
+                callbackId: callbackId,
+                error: "Activity.update did not return within \(Int(Coordinator.liveActivityDeadline))s"
+            )
             Task {
                 await activity.update(ActivityContent(state: state, staleDate: nil))
-                resolveCallback(callbackId, result: ["updated": true])
+                await MainActor.run { [weak self] in
+                    guard let self, self.claimDeadline(token) else { return }
+                    self.resolveCallback(callbackId, result: ["updated": true])
+                }
             }
         }
 
@@ -5021,9 +5089,17 @@ struct CraftWebView: UIViewRepresentable {
             } else {
                 finalContent = nil
             }
+            let token = armDeadline(
+                Coordinator.liveActivityDeadline,
+                callbackId: callbackId,
+                error: "Activity.end did not return within \(Int(Coordinator.liveActivityDeadline))s"
+            )
             Task {
                 await activity.end(finalContent, dismissalPolicy: .default)
-                resolveCallback(callbackId, result: ["ended": true])
+                await MainActor.run { [weak self] in
+                    guard let self, self.claimDeadline(token) else { return }
+                    self.resolveCallback(callbackId, result: ["ended": true])
+                }
             }
         }
 
@@ -5652,6 +5728,54 @@ struct CraftWebView: UIViewRepresentable {
 
         // Removals waiting on their completion, each under a token of its own:
         // callbackId can be nil, and restarts when the page reloads.
+        /// One entry per call whose only answer is a framework callback.
+        ///
+        /// Each of these waits on something no person is in front of — a
+        /// notification-settings read, an APNs registration, a StoreKit fetch,
+        /// a Live Activity update — and nothing else settles the page's
+        /// promise if the callback never comes (#224). #211 found the same
+        /// shape in a Siri deletion, twice, on CI.
+        ///
+        /// Whoever claims the token first answers: the callback or the
+        /// deadline. Both run on the main queue, so the race is decided there
+        /// rather than by a lock, and the loser finds nothing and does
+        /// nothing. The deadline never claims the work happened — it may well
+        /// have — only that nothing reported back in time.
+        private var pendingDeadlines: [UUID: DispatchWorkItem] = [:]
+
+        /// How long each of them waits. Comfortably under the 30s the page's
+        /// own `_invoke` allows, so the caller hears the native answer rather
+        /// than its own timeout, and long enough that a slow device is not
+        /// cut off mid-answer.
+        private static let notificationSettingsDeadline: TimeInterval = 10
+        private static let pushRegistrationDeadline: TimeInterval = 20
+        private static let storeKitDeadline: TimeInterval = 20
+        private static let liveActivityDeadline: TimeInterval = 10
+
+        /// Arm a deadline for a call, and return the token that claims it.
+        private func armDeadline(_ seconds: TimeInterval, callbackId: String?, error: String) -> UUID {
+            let token = UUID()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pendingDeadlines.removeValue(forKey: token) != nil else { return }
+                self.rejectCallback(callbackId, error: error, code: "TIMEOUT")
+            }
+            pendingDeadlines[token] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+            return token
+        }
+
+        /// Claim the right to answer. False means the deadline already did.
+        ///
+        /// Call it on the main queue: the callbacks below hop there first,
+        /// because the queue a framework completion arrives on is its own
+        /// business and a `zig:` hand-off reply reaches `evaluateJavaScript`
+        /// with no hop of its own.
+        private func claimDeadline(_ token: UUID) -> Bool {
+            guard let work = pendingDeadlines.removeValue(forKey: token) else { return false }
+            work.cancel()
+            return true
+        }
+
         private var pendingSiriRemovals: [UUID: DispatchWorkItem] = [:]
         // The only thing that settles craft.siri.remove, which arms no timeout
         // of its own; the same as Zig's.
