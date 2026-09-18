@@ -495,6 +495,21 @@ struct CraftWebView: UIViewRepresentable {
         private var pendingPushCallbackId: String?
         private var loadedBundledFallback = false
 
+        /// The highest `cb_<n>` this process has seen the page hand out.
+        ///
+        /// The page's own counter restarts at 0 on every injection, which is
+        /// every reload, navigation and web-content crash recovery, and
+        /// nothing native records which load a call came from. So an answer
+        /// to a call made before a reload was delivered to whichever call on
+        /// the new page drew the same number: `getDeviceInfo` settled with a
+        /// Siri result, or rejected with the earlier call's TIMEOUT (#226).
+        ///
+        /// Seeding each injection above everything already handed out makes
+        /// an id unique for the life of the process. A late answer then names
+        /// a callback no page has, and is dropped where it lands — on either
+        /// runtime, and without native having to track page loads at all.
+        private var highestCallbackId = 0
+
         // Location
         private var locationManager: CLLocationManager?
         private var singleLocationCallbackId: String?
@@ -635,6 +650,9 @@ struct CraftWebView: UIViewRepresentable {
                   let action = body["action"] as? String else { return }
 
             let callbackId = body["callbackId"] as? String
+            // Before Zig is offered the call, because the seed has to cover
+            // every id the page drew, not only the ones Swift went on to serve.
+            noteCallbackId(callbackId)
 
             // The Zig runtime first, when there is one.
             //
@@ -1509,6 +1527,16 @@ struct CraftWebView: UIViewRepresentable {
             return allowed.contains(origin)
         }
 
+        /// Raise the seed to cover an id the page has just used.
+        ///
+        /// Every call the page makes arrives here first, including the ones
+        /// Zig serves, so this sees the whole range a load hands out.
+        private func noteCallbackId(_ callbackId: String?) {
+            guard let callbackId, callbackId.hasPrefix("cb_"),
+                  let drawn = Int(callbackId.dropFirst(3)) else { return }
+            if drawn > highestCallbackId { highestCallbackId = drawn }
+        }
+
         private func injectNativeBridge() {
             let laContext = LAContext()
             var biometricAvailable = false
@@ -1548,7 +1576,9 @@ struct CraftWebView: UIViewRepresentable {
                 },
 
                 _callbacks: {},
-                _callbackId: 0,
+                // Not 0: an id must not repeat one an earlier load of this
+                // page is still waiting on an answer for (#226).
+                _callbackId: \(highestCallbackId),
 
                 _createCallback: function() {
                     var id = 'cb_' + (++this._callbackId);

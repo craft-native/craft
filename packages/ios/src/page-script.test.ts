@@ -8,14 +8,23 @@ import { describe, expect, it } from 'bun:test'
 
 const template = readFileSync(join(import.meta.dir, '../templates/CraftApp.swift'), 'utf8')
 
+/**
+ * Where Swift seeds the page's callback counter, standing in for a process
+ * that has already handed out this many ids (#226).
+ */
+const SEEDED_AT = 4200
+
 /** The page script, as the string Swift evaluates, with every flag off. */
-function pageScript(): string {
+function pageScript(seed = SEEDED_AT): string {
   const opening = 'let script = """\n            window.craft = {'
   const start = template.indexOf(opening)
   if (start === -1) throw new Error('CraftApp.swift no longer injects `window.craft = {` from `let script`')
   const end = template.indexOf('\n            """', start)
   return template
     .slice(template.indexOf('\n', start) + 1, end)
+    // The one interpolation that is a number rather than a Bool: the id the
+    // page counts up from, which Swift carries across loads.
+    .replace('\\(highestCallbackId)', String(seed))
     // `\(config.enableHaptics)` and the like. Each is a Bool in the template.
     .replace(/\\\((?:[^()]|\([^()]*\))*\)/g, 'false')
     .replace(/\\\\/g, '\\')
@@ -25,8 +34,12 @@ interface Post { action: string, callbackId?: string, [key: string]: unknown }
 
 type Listener = (event: { type: string, detail: unknown }) => void
 
-/** `beforeInject` runs first, the way a page's own script runs before WebKit's didFinish injects the bridge. */
-function loadPage(beforeInject?: (page: Record<string, any>) => void) {
+/**
+ * `beforeInject` runs first, the way a page's own script runs before WebKit's
+ * didFinish injects the bridge. `seed` is what Swift interpolates as the id
+ * to count up from — its own high-water mark across loads (#226).
+ */
+function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEEDED_AT) {
   const posts: Post[] = []
   const listeners: Record<string, Listener[]> = {}
   const page: Record<string, any> = {
@@ -54,7 +67,7 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void) {
   const quiet = { log() {}, warn() {}, error() {} }
   beforeInject?.(page)
   // eslint-disable-next-line no-new-func
-  new Function('window', 'document', 'navigator', 'CustomEvent', 'console', pageScript())(
+  new Function('window', 'document', 'navigator', 'CustomEvent', 'console', pageScript(seed))(
     page,
     { addEventListener() {}, readyState: 'complete' },
     {},
@@ -104,6 +117,40 @@ describe('the injected iOS page script', () => {
       expect(await returned).toBe(true)
     })
   }
+
+  // #226: the counter restarted at 0 on every injection, so the seventh call
+  // of a reloaded page drew `cb_7` again — and an answer still owed to the
+  // previous page's `cb_7` settled it, with that call's result or its TIMEOUT.
+  it('counts up from where Swift says the last load left off', async () => {
+    const page = loadPage()
+    void page.craft.haptic('light')
+
+    expect(page.last('haptic').callbackId).toBe(`cb_${SEEDED_AT + 1}`)
+  })
+
+  it('never redraws an id the process has already handed out', () => {
+    // Two loads, the second seeded from what the first drew — which is what
+    // `highestCallbackId` does in Swift: every call passes through the
+    // message handler, so the seed covers the whole range a load used.
+    const first = loadPage()
+    const drawn: string[] = []
+    for (let i = 0; i < 3; i++) {
+      void first.craft.haptic('light')
+      drawn.push(first.last('haptic').callbackId!)
+    }
+
+    const highest = Math.max(...drawn.map(id => Number(id.slice(3))))
+    const second = loadPage(undefined, highest)
+    void second.craft.haptic('light')
+    void second.craft.vibrate([10])
+
+    expect(new Set(drawn).size).toBe(3)
+    for (const action of ['haptic', 'vibrate']) {
+      expect(drawn).not.toContain(second.last(action).callbackId)
+    }
+    // And it carried on from there rather than restarting.
+    expect(second.last('haptic').callbackId).toBe(`cb_${highest + 1}`)
+  })
 
   it('hands a refusal to the caller of the raw call', async () => {
     const page = loadPage()
