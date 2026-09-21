@@ -530,6 +530,13 @@ pub const PermissionsBridge = struct {
         const options = objc.msgSendId(NSDictionary, sel_dictionary) orelse
             return bridge_error.BridgeError.NativeCallFailed;
 
+        // Resolved before the lease (#223). It was looked up after
+        // `publishSettingsCall`, so a failure here released the slot through
+        // the errdefer below but left the ticket parked in `settings_calls`
+        // for a call that had already been refused.
+        const sel_open = objc.sel_registerName("openURL:options:completionHandler:") orelse
+            return bridge_error.BridgeError.NativeCallFailed;
+
         const ticket = ios_async.acquire(A.open_settings) orelse {
             std.log.warn(
                 "openSettings: no free reply slot; {d} native calls are already awaiting one",
@@ -540,8 +547,15 @@ pub const PermissionsBridge = struct {
         errdefer ios_async.abandon(ticket);
         publishSettingsCall(ticket);
 
-        const sel_open = objc.sel_registerName("openURL:options:completionHandler:") orelse
-            return bridge_error.BridgeError.NativeCallFailed;
+        // No deadline, deliberately, and #223 lists this action for one. The
+        // app is suspended while Settings is open, and the uptime clock is
+        // not: a deadline shorter than the visit fires on resume and races the
+        // completion that was held back with it, answering TIMEOUT for an open
+        // that succeeded. People go to Settings to change something, so a
+        // visit longer than any sensible deadline is the ordinary case, not
+        // the edge. `openURL:options:completionHandler:` is called by UIKit on
+        // every open; the side table below is safe without a deadline because
+        // nothing frees this slot early.
         const OpenFn = *const fn (objc.id, objc.SEL, objc.id, objc.id, *anyopaque) callconv(.c) void;
         const openFn: OpenFn = @ptrCast(&objc.objc_msgSend);
         openFn(app, sel_open, url, options, @ptrCast(&settings_blocks[ticket.index]));
