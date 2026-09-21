@@ -285,8 +285,8 @@ pub const NotificationsBridge = struct {
             return poolFull();
         };
 
-        // No deadline yet. Stage one is the authorization prompt, and there is
-        // a person reading it; `authorizationFired` starts the clock on the
+        // no-deadline: stage one is the authorization prompt, and there is a
+        // person reading it. `authorizationFired` starts the clock on the
         // grant, over the write that nobody is waiting in front of.
         const Fn = *const fn (Id, Id, c_ulong, *anyopaque) callconv(.c) void;
         const func: Fn = @ptrCast(&objc.objc_msgSend);

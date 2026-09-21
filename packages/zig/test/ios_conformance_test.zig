@@ -2013,32 +2013,79 @@ test "no case the page waits on casts its argument without answering the other w
     }
 }
 
-test "a module that parks a call on a completion block also gives it a deadline" {
-    // #223: a call parked on `ios_pending` is one whose only answer comes from
-    // a framework completion. The table makes a late completion harmless; it
-    // does not make one that never arrives answer at all. Both halves or
-    // neither — parking without a deadline is a promise that can wait for
-    // ever, which is what #211 found on CI twice.
-    var parked: usize = 0;
+/// Whether `at` sits on a line that starts a function, the boundary a claim's
+/// enclosing function is read between.
+fn startsFunction(source: []const u8, at: usize) bool {
+    const line = source[at..];
+    return std.mem.startsWith(u8, line, "fn ") or std.mem.startsWith(u8, line, "pub fn ") or
+        std.mem.startsWith(u8, line, "    fn ") or std.mem.startsWith(u8, line, "    pub fn ");
+}
+
+/// The function a `claim(` at `at` sits inside: from the nearest line above it
+/// that starts one to the next line below that does.
+fn enclosingFunction(source: []const u8, at: usize) []const u8 {
+    var begin = at;
+    while (begin > 0) {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, source[0..begin], '\n')) |nl| nl + 1 else 0;
+        if (startsFunction(source, line_start)) {
+            begin = line_start;
+            break;
+        }
+        if (line_start == 0) {
+            begin = 0;
+            break;
+        }
+        begin = line_start - 1;
+    }
+    var finish = at;
+    while (std.mem.indexOfScalarPos(u8, source, finish, '\n')) |nl| {
+        if (startsFunction(source, nl + 1)) return source[begin .. nl + 1];
+        finish = nl + 1;
+    }
+    return source[begin..];
+}
+
+test "every place that parks a call gives it a deadline, or says why not" {
+    // #223, and a hole the first version of this check had. It asked only
+    // that a *module* parking on `ios_pending` call `scheduleDeadline`
+    // somewhere — so once one action in a file had a deadline, a second could
+    // be added without one and nothing noticed. #248 demonstrated it rather
+    // than predicted it: deleting that action's deadline passed.
+    //
+    // The unit is now the function that claims a block. It has to arm a
+    // deadline, or carry a `// no-deadline:` line saying why it does not.
+    // Some calls rightly have none — a prompt with a person in front of it,
+    // a later stage that an earlier deadline already covers — and the point
+    // is that leaving one out is a statement someone wrote, not an omission.
+    const needle = ".claim(";
+    var claims: usize = 0;
     for (zig_sources) |source| {
         if (std.mem.indexOf(u8, source, "ios_pending.Table(") == null) continue;
-        parked += 1;
-        if (std.mem.indexOf(u8, source, "scheduleDeadline(") != null) continue;
+        // Tests claim blocks to drive the table; they are not dispatch.
+        const code_end = std.mem.indexOf(u8, source, "const testing = std.testing;") orelse source.len;
 
-        // Named by the first action it declares, which is how these files are
-        // recognisable without embedding their paths.
-        const at = std.mem.indexOf(u8, source, "pub const") orelse 0;
-        const line_end = std.mem.indexOfScalarPos(u8, source, at, '\n') orelse at;
-        std.debug.print(
-            "a module parks calls on ios_pending.Table and never calls scheduleDeadline.\n" ++
-                "  Near: {s}\n" ++
-                "  A parked call whose completion never comes settles nothing at all.\n",
-            .{source[at..line_end]},
-        );
-        return error.ParkedCallHasNoDeadline;
+        var search: usize = 0;
+        while (std.mem.indexOfPos(u8, source[0..code_end], search, needle)) |at| {
+            search = at + needle.len;
+            claims += 1;
+            const function = enclosingFunction(source, at);
+            if (std.mem.indexOf(u8, function, "scheduleDeadline(") != null) continue;
+            if (std.mem.indexOf(u8, function, "// no-deadline:") != null) continue;
+
+            const name_end = std.mem.indexOfScalar(u8, function, '(') orelse @min(function.len, 60);
+            std.debug.print(
+                "`{s}` parks a call on ios_pending and neither arms a deadline nor says why not.\n" ++
+                    "  A parked call whose completion never comes settles nothing at all. Arm\n" ++
+                    "  one with ios_async.scheduleDeadline, or write `// no-deadline: <reason>`\n" ++
+                    "  in the function if a person is in front of it or an earlier deadline\n" ++
+                    "  already covers it.\n",
+                .{std.mem.trim(u8, function[0..name_end], " \n")},
+            );
+            return error.ParkedCallHasNoDeadline;
+        }
     }
-    // Non-vacuity: the scan has to be finding the modules that do park.
-    try testing.expect(parked >= 2);
+    // Non-vacuity: the scan has to be finding the claims that exist.
+    try testing.expect(claims >= 3);
 }
 
 test "every call the page waits on has a case that can resolve it" {
