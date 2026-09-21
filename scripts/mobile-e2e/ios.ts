@@ -2,7 +2,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, notificationPayload, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /** The scheme the probe registers, and the one its cold-start link uses. */
@@ -56,11 +56,24 @@ const APP_NAME = 'CraftE2EProbe'
  * The UI test target the harness adds to the generated project.
  *
  * Added here rather than by the generator, because no app wants it: it exists
- * to cold-start the probe through a link, which is the one thing neither
- * `simctl launch` nor `simctl openurl` can do unattended. See
- * `ios-uitests/DeepLinkColdStartTests.swift` for why.
+ * to cold-start the probe through a link, and through a tap on a pushed
+ * notification, which neither `simctl launch` nor `simctl openurl` can do
+ * unattended. See `ios-uitests/` for why.
  */
 const UI_TESTS = `${APP_NAME}UITests`
+
+/** The UI test classes, each run on its own with `-only-testing`. */
+const UI_TEST_CLASSES = ['DeepLinkColdStartTests', 'NotificationTapColdStartTests'] as const
+
+/**
+ * How long the notification UI test gets to have the app killed and ready for
+ * a push, and then to tap it. It starts a test runner, launches the app twice
+ * and answers a permission prompt, so it is given more than one launch.
+ */
+const NOTIFICATION_TEST_TIMEOUT_MS = 300_000
+
+/** The line the notification UI test prints once the app is gone. */
+const PUSH_READY = /^CRAFT-E2E-PUSH-READY\s*$/m
 
 /**
  * One leg is one answer to "who served the call".
@@ -114,9 +127,10 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   if (!leg.requireZigDispatch && linksRuntime)
     failures.push(`the ${leg.name} leg was supposed to have no runtime but its project links one`)
 
-  // The cold-start UI test, as a target in the generated project.
+  // The cold-start UI tests, as a target in the generated project.
   mkdirSync(join(project, 'UITests'), { recursive: true })
-  copyFileSync(join(import.meta.dir, 'ios-uitests', 'DeepLinkColdStartTests.swift'), join(project, 'UITests', 'DeepLinkColdStartTests.swift'))
+  for (const testClass of UI_TEST_CLASSES)
+    copyFileSync(join(import.meta.dir, 'ios-uitests', `${testClass}.swift`), join(project, 'UITests', `${testClass}.swift`))
   writeFileSync(join(project, 'project.yml'), `${projectYml.trimEnd()}
   ${UI_TESTS}:
     type: bundle.ui-testing
@@ -279,16 +293,18 @@ schemes:
   // #198: cold-start the app through a link, twice, and judge what the page
   // received. After the suite and its evidence, because the UI test
   // terminates and relaunches the app.
-  const link = `${DEEP_LINK_SCHEME}://e2e/cold?run=${encodeURIComponent(nonce)}`
-  const coldStart = await command([
+  const uiTest = (testClass: typeof UI_TEST_CLASSES[number]) => [
     'xcodebuild',
     '-project', `${APP_NAME}.xcodeproj`,
     '-scheme', APP_NAME,
     '-destination', `id=${device.udid}`,
     '-derivedDataPath', derived,
+    `-only-testing:${UI_TESTS}/${testClass}`,
     'CODE_SIGNING_ALLOWED=NO',
     'test-without-building',
-  ], {
+  ]
+  const link = `${DEEP_LINK_SCHEME}://e2e/cold?run=${encodeURIComponent(nonce)}`
+  const coldStart = await command(uiTest('DeepLinkColdStartTests'), {
     cwd: project,
     // xcodebuild hands TEST_RUNNER_-prefixed variables to the runner without
     // the prefix.
@@ -299,6 +315,45 @@ schemes:
   await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'deeplink-screen.png')], { allowFailure: true })
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
   failures.push(...deepLinkProblems(deepLinkResults(`${coldStart.stdout}\n${coldStart.stderr}`), link))
+
+  // #255: a tap on a push that launches the app, judged by what the page was
+  // handed. The UI test allows notifications, kills the app and prints
+  // CRAFT-E2E-PUSH-READY; `simctl push` runs on the host, so the push is sent
+  // from here when that line appears, and the test taps the banner.
+  //
+  // Spawned rather than run through `command`, which returns only once the
+  // process has exited, and this one waits on the push.
+  const payloadPath = join(evidence, 'notification.apns')
+  writeFileSync(payloadPath, notificationPayload(nonce))
+  const notificationLog = join(evidence, 'xcodebuild-notification.log')
+  const tapping = Bun.spawn(uiTest('NotificationTapColdStartTests'), {
+    cwd: project,
+    env: {
+      ...process.env,
+      TEST_RUNNER_PROBE_BUNDLE_ID: BUNDLE_ID,
+      TEST_RUNNER_PROBE_NOTIFY_LINK: `${DEEP_LINK_SCHEME}://e2e/notify?run=${encodeURIComponent(nonce)}`,
+      TEST_RUNNER_PROBE_PUSH_BODY: nonce,
+    },
+    stdin: 'ignore',
+    stdout: Bun.file(notificationLog),
+    stderr: Bun.file(join(evidence, 'xcodebuild-notification-stderr.log')),
+  })
+  const readyForPush = await waitForFile(
+    notificationLog,
+    NOTIFICATION_TEST_TIMEOUT_MS,
+    text => PUSH_READY.test(text) || tapping.exitCode !== null,
+  ) && PUSH_READY.test(readFileSync(notificationLog, 'utf8'))
+  if (readyForPush)
+    await command(['xcrun', 'simctl', 'push', device.udid, BUNDLE_ID, payloadPath], { logPath: join(evidence, 'simctl.log') })
+  const timer = setTimeout(() => tapping.kill(), NOTIFICATION_TEST_TIMEOUT_MS)
+  await tapping.exited
+  clearTimeout(timer)
+  await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'notification-screen.png')], { allowFailure: true })
+  await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
+  if (!readyForPush)
+    failures.push(`the notification UI test never had the app killed and ready for a push; see ${label}/xcodebuild-notification.log`)
+  else
+    failures.push(...notificationTapProblems(notificationTapReport(readFileSync(notificationLog, 'utf8')), nonce, `${label}/xcodebuild-notification.log`))
 
   const dispatched = zigDispatchedActions(consoleText)
   const refused = zigRefusals(consoleText)
