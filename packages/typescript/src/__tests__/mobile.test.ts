@@ -70,6 +70,41 @@ describe('Mobile notification taps', () => {
   })
 })
 
+describe('Mobile notification arrivals', () => {
+  // #256: the bridge's onReceive, passed through, and the bare event when a
+  // bridge predates it.
+  it('subscribes through the bridge when it offers onReceive', () => {
+    const previousWindow = (globalThis as any).window
+    const unsubscribe = () => {}
+    let handed: ((detail: unknown) => void) | undefined
+    ;(globalThis as any).window = {
+      craft: { notifications: { onReceive: (callback: (detail: unknown) => void) => { handed = callback; return unsubscribe } } },
+    }
+
+    try {
+      const seen: unknown[] = []
+      expect(pushNotifications.onReceive(data => seen.push(data))).toBe(unsubscribe)
+      handed?.({ screen: 'recap' })
+      handed?.(undefined)
+      expect(seen).toEqual([{ screen: 'recap' }, {}])
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
+  })
+
+  it('listens for craftNotificationReceived when the bridge has no onReceive', () => {
+    const seen: unknown[] = []
+    const unsubscribe = pushNotifications.onReceive(data => seen.push(data))
+    globalThis.dispatchEvent(new CustomEvent('craftNotificationReceived', { detail: { screen: 'recap' } }))
+    globalThis.dispatchEvent(new CustomEvent('craftNotificationResponse', { detail: { screen: 'tapped' } }))
+    unsubscribe()
+    globalThis.dispatchEvent(new CustomEvent('craftNotificationReceived', { detail: { screen: 'late' } }))
+    expect(seen).toEqual([{ screen: 'recap' }])
+  })
+})
+
 describe('Mobile Android bridge promises', () => {
   it('reads the typed watch reachability envelope', async () => {
     const previousWindow = (globalThis as any).window

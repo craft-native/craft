@@ -376,6 +376,23 @@ describe('Craft iOS builder', () => {
     expect(handle.slice(0, handle.indexOf('\n    }\n'))).toContain('sendToWeb("craftNotificationResponse"')
   })
 
+  it('tells the page about a notification that arrives while the app is open', async () => {
+    // willPresent used to show the banner and nothing else, so a page on
+    // screen when a push landed heard about it only if someone tapped it.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-notification-received-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    const willPresent = swift.slice(swift.indexOf('willPresent notification: UNNotification'))
+    const body = willPresent.slice(0, willPresent.indexOf('\n    }\n'))
+    expect(body).toContain('CraftEventManager.shared.handleNotificationReceived(notification.request.content.userInfo)')
+    // Told, not asked: the banner still shows.
+    expect(body).toContain('completionHandler([.banner, .badge, .sound])')
+
+    const handle = swift.slice(swift.indexOf('func handleNotificationReceived('))
+    expect(handle.slice(0, handle.indexOf('\n    }\n'))).toContain('sendToWeb("craftNotificationReceived"')
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({

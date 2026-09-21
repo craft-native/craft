@@ -94,6 +94,8 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
     // What CraftEventManager.handleNotificationResponse evaluates.
     tap: (detail: unknown) =>
       page.dispatchEvent(new CustomEvent('craftNotificationResponse', { detail })),
+    receive: (detail: unknown) =>
+      page.dispatchEvent(new CustomEvent('craftNotificationReceived', { detail })),
   }
 }
 
@@ -250,6 +252,48 @@ describe('the injected iOS page script', () => {
     unsubscribe()
     await tick()
 
+    expect(seen).toEqual([])
+  })
+
+  // #256: a notification that arrives while the page is open reaches it,
+  // live, on the notifications object the page ends up with.
+  it('hands a notification that arrived while the page was open to onReceive', () => {
+    const page = loadPage()
+    expect(typeof page.craft.notifications.onReceive).toBe('function')
+
+    const seen: unknown[] = []
+    const unsubscribe = page.craft.notifications.onReceive((detail: unknown) => seen.push(detail))
+    page.receive({ screen: 'recap' })
+    expect(seen).toEqual([{ screen: 'recap' }])
+
+    unsubscribe()
+    page.receive({ screen: 'plant-id' })
+    expect(seen).toEqual([{ screen: 'recap' }])
+  })
+
+  it('keeps arrivals and taps apart', async () => {
+    const page = loadPage()
+    const taps: unknown[] = []
+    const arrivals: unknown[] = []
+    page.craft.notifications.onTap((detail: unknown) => taps.push(detail))
+    page.craft.notifications.onReceive((detail: unknown) => arrivals.push(detail))
+    await tick()
+
+    page.receive({ screen: 'recap' })
+    page.tap({ screen: 'plant-id' })
+    expect(arrivals).toEqual([{ screen: 'recap' }])
+    expect(taps).toEqual([{ screen: 'plant-id' }])
+  })
+
+  // Held taps are for a launch the page was not there for. An arrival is
+  // news only to a page that is running, so nothing is held for later.
+  it('does not hold an arrival for a page that subscribes afterwards', async () => {
+    const page = loadPage()
+    page.receive({ screen: 'recap' })
+
+    const seen: unknown[] = []
+    page.craft.notifications.onReceive((detail: unknown) => seen.push(detail))
+    await tick()
     expect(seen).toEqual([])
   })
 
