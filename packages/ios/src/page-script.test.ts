@@ -91,6 +91,9 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
     // What DeepLinkManager.dispatchDeepLink evaluates, once the script has run.
     link: (url: string, initial: boolean) =>
       page.dispatchEvent(new CustomEvent('craftDeepLink', { detail: { url, initial } })),
+    // What CraftEventManager.handleNotificationResponse evaluates.
+    tap: (detail: unknown) =>
+      page.dispatchEvent(new CustomEvent('craftNotificationResponse', { detail })),
   }
 }
 
@@ -200,6 +203,55 @@ describe('the injected iOS page script', () => {
       await expect(settled).rejects.toMatchObject({ code: 'NATIVE_CALL_FAILED' })
     })
   }
+
+  // A notification tap on a cold launch is flushed the moment the bridge is
+  // ready, and a page that wires its listener after its router hydrates was
+  // not listening yet: "Try it" opened the home screen instead. Held the way
+  // deep links are (#198), and handed to the first subscriber.
+  it('hands a tap that arrived before anyone subscribed to the first subscriber', async () => {
+    const page = loadPage()
+    page.tap({ screen: 'plant-id' })
+
+    const seen: unknown[] = []
+    page.craft.notifications.onTap((detail: unknown) => seen.push(detail))
+    await tick()
+
+    expect(seen).toEqual([{ screen: 'plant-id' }])
+  })
+
+  it('keeps onTap on the notifications object the page ends up with', () => {
+    // installCraftMobileContract replaces craft.notifications after the
+    // replay attaches onTap, and onTap survives only because it copies own
+    // properties across. Reorder those two blocks and it would vanish with
+    // nothing else failing, so this reads the final object.
+    const page = loadPage()
+    expect(typeof page.craft.notifications.onTap).toBe('function')
+    expect(typeof page.craft.notifications.onTap(() => {})).toBe('function')
+    // And the contract's own additions are still there beside it.
+    expect(typeof page.craft.notifications.show).toBe('function')
+  })
+
+  it('delivers a tap once, live, to a page already subscribed', async () => {
+    const page = loadPage()
+    const seen: unknown[] = []
+    page.craft.notifications.onTap((detail: unknown) => seen.push(detail))
+    await tick()
+
+    page.tap({ screen: 'recap' })
+    expect(seen).toEqual([{ screen: 'recap' }])
+  })
+
+  it('drops held taps for a subscriber that unsubscribed in the same tick', async () => {
+    const page = loadPage()
+    page.tap({ screen: 'plant-id' })
+
+    const seen: unknown[] = []
+    const unsubscribe = page.craft.notifications.onTap((detail: unknown) => seen.push(detail))
+    unsubscribe()
+    await tick()
+
+    expect(seen).toEqual([])
+  })
 
   // #198 and #215. The Android page script runs the same block; its own test
   // covers the rest of the contract.

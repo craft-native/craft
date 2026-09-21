@@ -349,6 +349,33 @@ describe('Craft iOS builder', () => {
     expect(swift).toContain('if !wasConnected, self?.isConnected == true {')
   })
 
+  it('holds a notification tap that launches the app until the page is ready', async () => {
+    // A tap on a killed app reaches the app delegate before SwiftUI has built
+    // the Coordinator. It was posted through NotificationCenter, which keeps
+    // nothing for an observer that does not exist yet, so the tap was lost.
+    // CraftEventManager exists from process start and holds it, as it already
+    // does for a home-screen shortcut.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-notification-tap-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    const didReceive = swift.slice(
+      swift.indexOf('didReceive response: UNNotificationResponse'),
+      swift.indexOf('willPresent notification: UNNotification'),
+    )
+    expect(didReceive).toContain('CraftEventManager.shared.handleNotificationResponse(')
+    expect(didReceive).not.toContain('NotificationCenter.default.post(')
+
+    // And only that path: a Coordinator still observing a NotificationCenter
+    // post would deliver a warm tap twice.
+    expect(swift).not.toContain('name: .craftNotificationResponse')
+    expect(swift).not.toContain('func receiveNotificationResponse(')
+
+    // It goes through the manager's buffer rather than straight to the page.
+    const handle = swift.slice(swift.indexOf('func handleNotificationResponse('))
+    expect(handle.slice(0, handle.indexOf('\n    }\n'))).toContain('sendToWeb("craftNotificationResponse"')
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({
