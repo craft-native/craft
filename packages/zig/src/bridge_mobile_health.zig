@@ -48,6 +48,8 @@ const capabilities = @import("capabilities.zig");
 const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
+const ios_pending = @import("ios_pending.zig");
+const compat = @import("compat.zig");
 const compat_mutex = @import("compat_mutex.zig");
 
 const objc = objc_runtime.objc;
@@ -166,6 +168,11 @@ pub const HealthBridge = struct {
         const share = try shareTypeSet(self.allocator, requested);
         const read = try readTypeSet(self.allocator, requested);
 
+        // Resolved before the lease (#223): after it, a failure here would
+        // have to release the slot and the block by hand.
+        const sel = objc.sel_registerName("requestAuthorizationToShareTypes:readTypes:completion:") orelse
+            return BridgeError.NativeCallFailed;
+
         const ticket = ios_async.acquire(A.request_health_authorization) orelse {
             std.log.warn(
                 "requestHealthAuthorization: no free reply slot; {d} native calls are already awaiting one",
@@ -174,13 +181,20 @@ pub const HealthBridge = struct {
             return BridgeError.NativeCallFailed;
         };
         errdefer ios_async.abandon(ticket);
-        publishCall(ticket, null);
-
-        const sel = objc.sel_registerName("requestAuthorizationToShareTypes:readTypes:completion:") orelse
+        const block = calls.claim(ticket, .{}) orelse {
+            std.log.warn(
+                "{s}: all {d} completion blocks are still owed a completion HealthKit never " ++
+                    "delivered; refusing rather than reusing one",
+                .{ "requestHealthAuthorization", ios_pending.block_count },
+            );
             return BridgeError.NativeCallFailed;
+        };
+
+        // no-deadline: a person answers the HealthKit authorization sheet, and
+        // timing that out would answer a question they are still reading.
         const RequestFn = *const fn (Id, objc.SEL, Id, Id, *anyopaque) callconv(.c) void;
         const request: RequestFn = @ptrCast(&objc.objc_msgSend);
-        request(store, sel, share, read, @ptrCast(&auth_blocks[ticket.index]));
+        request(store, sel, share, read, @ptrCast(&auth_blocks[block]));
     }
 
     /// Save a workout, then optionally attach a GPS route to it.
@@ -217,6 +231,10 @@ pub const HealthBridge = struct {
             return BridgeError.AllocationFailed;
         errdefer std.heap.c_allocator.free(activity_id);
 
+        // Resolved before the lease (#223).
+        const sel = objc.sel_registerName("saveObject:withCompletion:") orelse
+            return BridgeError.NativeCallFailed;
+
         const ticket = ios_async.acquire(A.save_health_workout) orelse {
             std.log.warn(
                 "saveHealthWorkout: no free reply slot; {d} native calls are already awaiting one",
@@ -226,18 +244,27 @@ pub const HealthBridge = struct {
         };
         errdefer ios_async.abandon(ticket);
 
-        publishWorkoutCall(ticket, .{
+        const block = calls.claim(ticket, .{ .workout = .{
             .workout = workout,
             .activity_id = activity_id,
             .locations = locations,
             .store = store,
-        });
-
-        const sel = objc.sel_registerName("saveObject:withCompletion:") orelse
+        } }) orelse {
+            std.log.warn(
+                "{s}: all {d} completion blocks are still owed a completion HealthKit never " ++
+                    "delivered; refusing rather than reusing one",
+                .{ "saveHealthWorkout", ios_pending.block_count },
+            );
             return BridgeError.NativeCallFailed;
+        };
+
+        // The first of three stages, each re-arming its own clock: see
+        // `workout_stage_deadline_ms` for why one armed here would not do.
+        ios_async.scheduleDeadline(ticket, workout_stage_deadline_ms, workoutTimedOut);
+
         const SaveFn = *const fn (Id, objc.SEL, Id, *anyopaque) callconv(.c) void;
         const save: SaveFn = @ptrCast(&objc.objc_msgSend);
-        save(store, sel, workout, @ptrCast(&save_blocks[ticket.index]));
+        save(store, sel, workout, @ptrCast(&save_blocks[block]));
     }
 
     /// Sum one quantity type over a window and answer `{value, unit}`.
@@ -258,6 +285,18 @@ pub const HealthBridge = struct {
         const unit = try unitFromString(request.type.unit);
         const predicate = try samplePredicate(request.start, request.end);
 
+        // Every class and selector is resolved before the lease (#223). They
+        // used to be looked up after `publishCall`, so a failure there left an
+        // entry parked for a call that was already being refused.
+        const HKStatisticsQuery = objc.objc_getClass("HKStatisticsQuery") orelse
+            return BridgeError.PlatformNotSupported;
+        const sel_alloc = objc.sel_registerName("alloc") orelse return BridgeError.NativeCallFailed;
+        const sel_init = objc.sel_registerName(
+            "initWithQuantityType:quantitySamplePredicate:options:completionHandler:",
+        ) orelse return BridgeError.NativeCallFailed;
+        const sel_execute = objc.sel_registerName("executeQuery:") orelse
+            return BridgeError.NativeCallFailed;
+
         const ticket = ios_async.acquire(A.get_health_data) orelse {
             std.log.warn(
                 "getHealthData: no free reply slot; {d} native calls are already awaiting one",
@@ -266,14 +305,21 @@ pub const HealthBridge = struct {
             return BridgeError.NativeCallFailed;
         };
         errdefer ios_async.abandon(ticket);
-        publishCall(ticket, unit);
+        const block = calls.claim(ticket, .{ .unit = unit }) orelse {
+            std.log.warn(
+                "{s}: all {d} completion blocks are still owed a completion HealthKit never " ++
+                    "delivered; refusing rather than reusing one",
+                .{ "getHealthData", ios_pending.block_count },
+            );
+            return BridgeError.NativeCallFailed;
+        };
+        // `alloc` and the init are all that is left between the claim and the
+        // framework. Neither fails in practice, but if one did, the block was
+        // never handed to anything that would call it back.
+        errdefer _ = calls.settle(block);
 
-        const HKStatisticsQuery = objc.objc_getClass("HKStatisticsQuery") orelse
-            return BridgeError.PlatformNotSupported;
-        const sel_alloc = objc.sel_registerName("alloc") orelse return BridgeError.NativeCallFailed;
-        const sel_init = objc.sel_registerName(
-            "initWithQuantityType:quantitySamplePredicate:options:completionHandler:",
-        ) orelse return BridgeError.NativeCallFailed;
+        ios_async.scheduleDeadline(ticket, stats_deadline_ms, statsTimedOut);
+
         const allocated = objc.msgSendId(HKStatisticsQuery, sel_alloc) orelse
             return BridgeError.NativeCallFailed;
 
@@ -285,11 +331,9 @@ pub const HealthBridge = struct {
             quantity_type,
             predicate,
             statistics_option_cumulative_sum,
-            @ptrCast(&stats_blocks[ticket.index]),
+            @ptrCast(&stats_blocks[block]),
         ) orelse return BridgeError.NativeCallFailed;
 
-        const sel_execute = objc.sel_registerName("executeQuery:") orelse
-            return BridgeError.NativeCallFailed;
         objc.msgSendVoid1(store, sel_execute, query);
     }
 };
@@ -867,7 +911,6 @@ fn releaseObject(object: Id) void {
 
 /// What a slot's block needs that the block itself cannot carry.
 const PendingCall = struct {
-    ticket: ios_async.Ticket,
     /// The `HKUnit` the statistics reply reports in, or null for the calls
     /// that report none.
     unit: Id = null,
@@ -902,41 +945,26 @@ const WorkoutChain = struct {
     }
 };
 
-var pending_calls: [ios_async.max_in_flight]?PendingCall = @splat(null);
-var pending_mutex: compat_mutex.Mutex = .{};
-
-fn publishCall(ticket: ios_async.Ticket, unit: Id) void {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    pending_calls[ticket.index] = .{ .ticket = ticket, .unit = unit };
-}
-
-fn publishWorkoutCall(ticket: ios_async.Ticket, chain: WorkoutChain) void {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    pending_calls[ticket.index] = .{ .ticket = ticket, .workout = chain };
-}
-
-/// Put a chain back for its next stage, keeping the same slot and ticket.
+/// One entry per completion block, not per reply slot (#223).
 ///
-/// The entry is taken at the top of every stage so a duplicate fire finds
-/// nothing; a stage that intends to continue has to put it back explicitly,
-/// which is what makes "this stage is done with the chain" and "the chain
-/// continues" different statements rather than the same silence.
-fn republishWorkoutCall(call: PendingCall, chain: WorkoutChain) void {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    pending_calls[call.ticket.index] = .{ .ticket = call.ticket, .workout = chain };
-}
+/// Keyed by reply slot, a deadline would free slot k, the next call would
+/// lease slot k and get the same block, and the first call's late completion
+/// would answer the second with the first one's statistics or workout. All
+/// three of this file's actions park here; two of them get deadlines.
+var calls: ios_pending.Table(PendingCall) = .{};
 
-/// Read and clear, so a second fire is a no-op rather than a second reply.
-fn takeCall(index: u5) ?PendingCall {
-    pending_mutex.lock();
-    defer pending_mutex.unlock();
-    const call = pending_calls[index];
-    pending_calls[index] = null;
-    return call;
-}
+/// `HKStatisticsQuery` reads the local store, but a year of samples is real
+/// work, so this is more generous than a notification read. Well under the
+/// 30s the page's own `_invoke` allows either way.
+const stats_deadline_ms: u32 = 15_000;
+
+/// Per stage of the workout chain, not per call. Each stage re-arms its own,
+/// because a single deadline armed at dispatch can land in the moment between
+/// one stage settling its block and the next claiming one — find no block
+/// holding the ticket, do nothing, and leave the next stage with no clock at
+/// all. Three stages at this budget stay under `_invoke`'s 30s even if every
+/// earlier deadline lands in such a moment.
+const workout_stage_deadline_ms: u32 = 8_000;
 
 const BlockDescriptor = extern struct {
     reserved: c_ulong = 0,
@@ -961,26 +989,26 @@ const health_block_descriptor = BlockDescriptor{ .size = @sizeOf(HealthBlock) };
 
 extern var _NSConcreteGlobalBlock: anyopaque;
 
-fn makeAuthInvoke(comptime index: u5) *const anyopaque {
+fn makeAuthInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const HealthBlock, success: bool, err: Id) callconv(.c) void {
-            authorizationAnswered(index, success, err);
+            authorizationAnswered(block, success, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeStatsInvoke(comptime index: u5) *const anyopaque {
+fn makeStatsInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const HealthBlock, _: Id, result: Id, err: Id) callconv(.c) void {
-            statisticsAnswered(index, result, err);
+            statisticsAnswered(block, result, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeBlocks(comptime maker: fn (comptime u5) *const anyopaque) [ios_async.max_in_flight]HealthBlock {
-    var out: [ios_async.max_in_flight]HealthBlock = undefined;
+fn makeBlocks(comptime maker: fn (comptime u5) *const anyopaque) [ios_pending.block_count]HealthBlock {
+    var out: [ios_pending.block_count]HealthBlock = undefined;
     for (&out, 0..) |*b, i| {
         b.* = .{
             .isa = &_NSConcreteGlobalBlock,
@@ -992,54 +1020,68 @@ fn makeBlocks(comptime maker: fn (comptime u5) *const anyopaque) [ios_async.max_
     return out;
 }
 
-var auth_blocks: [ios_async.max_in_flight]HealthBlock =
+var auth_blocks: [ios_pending.block_count]HealthBlock =
     if (is_darwin) makeBlocks(makeAuthInvoke) else undefined;
-var stats_blocks: [ios_async.max_in_flight]HealthBlock =
+var stats_blocks: [ios_pending.block_count]HealthBlock =
     if (is_darwin) makeBlocks(makeStatsInvoke) else undefined;
 
-fn makeSaveInvoke(comptime index: u5) *const anyopaque {
+fn makeSaveInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const HealthBlock, success: bool, err: Id) callconv(.c) void {
-            workoutSaved(index, success, err);
+            workoutSaved(block, success, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeInsertInvoke(comptime index: u5) *const anyopaque {
+fn makeInsertInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const HealthBlock, success: bool, err: Id) callconv(.c) void {
-            routeInserted(index, success, err);
+            routeInserted(block, success, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-fn makeFinishInvoke(comptime index: u5) *const anyopaque {
+fn makeFinishInvoke(comptime block: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const HealthBlock, route: Id, err: Id) callconv(.c) void {
-            routeFinished(index, route, err);
+            routeFinished(block, route, err);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
-var save_blocks: [ios_async.max_in_flight]HealthBlock =
+var save_blocks: [ios_pending.block_count]HealthBlock =
     if (is_darwin) makeBlocks(makeSaveInvoke) else undefined;
-var insert_blocks: [ios_async.max_in_flight]HealthBlock =
+var insert_blocks: [ios_pending.block_count]HealthBlock =
     if (is_darwin) makeBlocks(makeInsertInvoke) else undefined;
-var finish_blocks: [ios_async.max_in_flight]HealthBlock =
+var finish_blocks: [ios_pending.block_count]HealthBlock =
     if (is_darwin) makeBlocks(makeFinishInvoke) else undefined;
 
 /// Stage one: the workout is in the store.
-fn workoutSaved(index: u5, success: bool, err: Id) void {
+fn workoutSaved(block: u5, success: bool, err: Id) void {
     if (!is_darwin) return;
 
-    const call = takeCall(index) orelse {
-        std.log.warn("saveHealthWorkout: stage one fired for slot {d} with no call; ignored", .{index});
-        return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        // The deadline answered this call and freed its chain. The framework
+        // still held this block, and has now called it; nothing here to touch.
+        .late => |started_ms| {
+            std.log.warn(
+                "saveHealthWorkout: stage one completion arrived {d} ms after the call, after its " ++
+                    "deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn("saveHealthWorkout: stage one fired for block {d} with no call; ignored", .{block});
+            return;
+        },
     };
-    const chain = call.workout orelse {
+    const ticket = entry.ticket;
+    const chain = entry.call.workout orelse {
         std.log.warn("saveHealthWorkout: stage one fired for a slot holding no workout chain", .{});
         return;
     };
@@ -1047,17 +1089,23 @@ fn workoutSaved(index: u5, success: bool, err: Id) void {
     if (!success) {
         logNSError(A.save_health_workout, err);
         chain.deinit();
-        ios_async.deliverErrorCode(call.ticket, BridgeError.PermissionDenied);
+        ios_async.deliverErrorCode(ticket, BridgeError.PermissionDenied);
         return;
     }
 
     // Swift's early exit. The workout is saved either way; a route is
     // optional, so having none is not a failure.
     if (chain.locations == null) {
-        replyWithWorkout(call.ticket, chain, null);
+        replyWithWorkout(ticket, chain, null);
         chain.deinit();
         return;
     }
+
+    // Resolved before the next claim, never after (#223). This was
+    // `orelse return;` after the call had been republished, which left it
+    // parked with no framework call made — a promise nothing could settle.
+    const sel = objc.sel_registerName("insertRouteData:completion:") orelse
+        return routeAbandoned(ticket, chain, "insertRouteData:completion: is not in this runtime");
 
     var next = chain;
     next.builder = routeBuilder(chain.store) catch |build_err| {
@@ -1065,24 +1113,45 @@ fn workoutSaved(index: u5, success: bool, err: Id) void {
         // The workout is already saved, so answering with its id is truer
         // than reporting a failure — Swift rejects here, and would tell a page
         // nothing was written when something was.
-        replyWithWorkout(call.ticket, chain, null);
+        replyWithWorkout(ticket, chain, null);
         chain.deinit();
         return;
     };
-    republishWorkoutCall(call, next);
 
-    const sel = objc.sel_registerName("insertRouteData:completion:") orelse return;
+    // A fresh block for stage two: this one was settled above and may already
+    // belong to another call.
+    const next_block = calls.claim(ticket, .{ .workout = next }) orelse
+        return routeAbandoned(ticket, next, "every completion block is owed, so the route could not start");
+    ios_async.scheduleDeadline(ticket, workout_stage_deadline_ms, workoutTimedOut);
+
     const InsertFn = *const fn (Id, objc.SEL, Id, *anyopaque) callconv(.c) void;
     const insert: InsertFn = @ptrCast(&objc.objc_msgSend);
-    insert(next.builder, sel, next.locations, @ptrCast(&insert_blocks[index]));
+    insert(next.builder, sel, next.locations, @ptrCast(&insert_blocks[next_block]));
 }
 
 /// Stage two: the fixes are in the builder.
-fn routeInserted(index: u5, success: bool, err: Id) void {
+fn routeInserted(block: u5, success: bool, err: Id) void {
     if (!is_darwin) return;
 
-    const call = takeCall(index) orelse return;
-    const chain = call.workout orelse return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        // The deadline answered this call and freed its chain. The framework
+        // still held this block, and has now called it; nothing here to touch.
+        .late => |started_ms| {
+            std.log.warn(
+                "saveHealthWorkout: stage two completion arrived {d} ms after the call, after its " ++
+                    "deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn("saveHealthWorkout: stage two fired for block {d} with no call; ignored", .{block});
+            return;
+        },
+    };
+    const ticket = entry.ticket;
+    const chain = entry.call.workout orelse return;
 
     if (!success) {
         // Rejects, as the spec does. Resolving here reported a workout with
@@ -1098,26 +1167,80 @@ fn routeInserted(index: u5, success: bool, err: Id) void {
             "saveHealthWorkout: route insert failed; the workout itself was saved as {s}",
             .{uuidStringOf(chain.workout) orelse "<no uuid>"},
         );
-        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
+        ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
         chain.deinit();
         return;
     }
 
-    republishWorkoutCall(call, chain);
-
+    // Resolved before the next claim (#223); it was `orelse return;` after the
+    // republish, parking the call for good.
+    const sel = objc.sel_registerName("finishRouteWithWorkout:metadata:completion:") orelse
+        return routeAbandoned(ticket, chain, "finishRouteWithWorkout:metadata:completion: is not in this runtime");
     const metadata = routeMetadata(chain.activity_id) catch null;
-    const sel = objc.sel_registerName("finishRouteWithWorkout:metadata:completion:") orelse return;
+
+    const next_block = calls.claim(ticket, .{ .workout = chain }) orelse
+        return routeAbandoned(ticket, chain, "every completion block is owed, so the route could not finish");
+    ios_async.scheduleDeadline(ticket, workout_stage_deadline_ms, workoutTimedOut);
+
     const FinishFn = *const fn (Id, objc.SEL, Id, Id, *anyopaque) callconv(.c) void;
     const finish: FinishFn = @ptrCast(&objc.objc_msgSend);
-    finish(chain.builder, sel, chain.workout, metadata, @ptrCast(&finish_blocks[index]));
+    finish(chain.builder, sel, chain.workout, metadata, @ptrCast(&finish_blocks[next_block]));
+}
+
+/// The workout is in the store but its route will not be. Answered as a
+/// failure, for the reason `routeInserted` gives: resolving would look exactly
+/// like a finish that succeeded with no route, and a page would file the
+/// workout as complete with its locations silently missing. The id is kept in
+/// the log, since the workout really was written.
+fn routeAbandoned(ticket: ios_async.Ticket, chain: WorkoutChain, why: []const u8) void {
+    std.log.warn(
+        "saveHealthWorkout: {s}; the workout itself was saved as {s}",
+        .{ why, uuidStringOf(chain.workout) orelse "<no uuid>" },
+    );
+    ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
+    chain.deinit();
+}
+
+/// On the main queue, `workout_stage_deadline_ms` after a stage started.
+/// Takes whichever stage is waiting on this ticket, which is the point: every
+/// stage re-arms one, so an earlier deadline landing between two stages finds
+/// nothing and a later one covers the stage that follows.
+fn workoutTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+
+    const entry = calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    if (entry.call.workout) |chain| chain.deinit();
+    std.log.warn(
+        "saveHealthWorkout: a HealthKit stage did not call its completion within {d} ms; " ++
+            "answering TIMEOUT",
+        .{workout_stage_deadline_ms},
+    );
+    ios_async.deliverErrorCode(entry.ticket, BridgeError.Timeout);
 }
 
 /// Stage three: the route is attached.
-fn routeFinished(index: u5, route: Id, err: Id) void {
+fn routeFinished(block: u5, route: Id, err: Id) void {
     if (!is_darwin) return;
 
-    const call = takeCall(index) orelse return;
-    const chain = call.workout orelse return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        // The deadline answered this call and freed its chain. The framework
+        // still held this block, and has now called it; nothing here to touch.
+        .late => |started_ms| {
+            std.log.warn(
+                "saveHealthWorkout: stage three completion arrived {d} ms after the call, after its " ++
+                    "deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn("saveHealthWorkout: stage three fired for block {d} with no call; ignored", .{block});
+            return;
+        },
+    };
+    const ticket = entry.ticket;
+    const chain = entry.call.workout orelse return;
     defer chain.deinit();
 
     if (err != null) {
@@ -1129,10 +1252,10 @@ fn routeFinished(index: u5, route: Id, err: Id) void {
             "saveHealthWorkout: route finish failed; the workout itself was saved as {s}",
             .{uuidStringOf(chain.workout) orelse "<no uuid>"},
         );
-        ios_async.deliverErrorCode(call.ticket, bridge_error.BridgeError.NativeCallFailed);
+        ios_async.deliverErrorCode(ticket, bridge_error.BridgeError.NativeCallFailed);
         return;
     }
-    replyWithWorkout(call.ticket, chain, route);
+    replyWithWorkout(ticket, chain, route);
 }
 
 /// `{"id":…}` or `{"id":…,"routeId":…}`.
@@ -1204,48 +1327,78 @@ fn routeMetadata(activity_id: []const u8) !Id {
     return objc.msgSendId2(NSDictionary, sel, value, key) orelse error.NativeCallFailed;
 }
 
-fn authorizationAnswered(index: u5, success: bool, err: Id) void {
+fn authorizationAnswered(block: u5, success: bool, err: Id) void {
     if (!is_darwin) return;
 
-    const call = takeCall(index) orelse {
-        std.log.warn(
-            "requestHealthAuthorization answered for slot {d} with no call recorded; ignored",
-            .{index},
-        );
-        return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        // No deadline is armed for this one — a person answers the sheet — so
+        // `late` can only mean the reply slot was answered some other way.
+        .late => return,
+        .stray => {
+            std.log.warn(
+                "requestHealthAuthorization answered for block {d} with no call recorded; ignored",
+                .{block},
+            );
+            return;
+        },
     };
 
     if (success) {
-        ios_async.deliverJson(call.ticket, authorized_reply);
+        ios_async.deliverJson(entry.ticket, authorized_reply);
         return;
     }
     logNSError(A.request_health_authorization, err);
-    ios_async.deliverErrorCode(call.ticket, BridgeError.PermissionDenied);
+    ios_async.deliverErrorCode(entry.ticket, BridgeError.PermissionDenied);
 }
 
-fn statisticsAnswered(index: u5, result: Id, err: Id) void {
+fn statisticsAnswered(block: u5, result: Id, err: Id) void {
     if (!is_darwin) return;
 
-    const call = takeCall(index) orelse {
-        std.log.warn("getHealthData answered for slot {d} with no call recorded; ignored", .{index});
-        return;
+    const entry = switch (calls.settle(block)) {
+        .reply => |parked| parked,
+        .late => |started_ms| {
+            std.log.warn(
+                "getHealthData: a statistics result arrived {d} ms after the call, after its " ++
+                    "deadline had answered; ignored",
+                .{compat.milliTimestamp() - started_ms},
+            );
+            return;
+        },
+        .stray => {
+            std.log.warn("getHealthData answered for block {d} with no call recorded; ignored", .{block});
+            return;
+        },
     };
 
     if (err != null) {
         logNSError(A.get_health_data, err);
-        ios_async.deliverErrorCode(call.ticket, BridgeError.NativeCallFailed);
+        ios_async.deliverErrorCode(entry.ticket, BridgeError.NativeCallFailed);
         return;
     }
 
     const allocator = std.heap.c_allocator;
-    const json = shapeStatistics(allocator, result, call.unit) catch |shape_err| {
+    const json = shapeStatistics(allocator, result, entry.call.unit) catch |shape_err| {
         std.log.warn("getHealthData: could not shape the reply: {}", .{shape_err});
-        ios_async.deliverError(call.ticket);
+        ios_async.deliverError(entry.ticket);
         return;
     };
     defer allocator.free(json);
 
-    ios_async.deliverJson(call.ticket, json);
+    ios_async.deliverJson(entry.ticket, json);
+}
+
+/// On the main queue, `stats_deadline_ms` after the query was executed.
+fn statsTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+
+    const entry = calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    std.log.warn(
+        "getHealthData: HKStatisticsQuery did not call its completion within {d} ms; " ++
+            "answering TIMEOUT",
+        .{stats_deadline_ms},
+    );
+    ios_async.deliverErrorCode(entry.ticket, BridgeError.Timeout);
 }
 
 /// `{"value":…,"unit":…}`.
@@ -1405,18 +1558,86 @@ test "the three workout stages have distinct invokes per slot" {
     try testing.expect(save_blocks[0].invoke != save_blocks[1].invoke);
 }
 
-test "a workout stage firing for a slot with no chain is ignored" {
-    // Each stage takes the entry and a continuing stage puts it back, so a
-    // duplicate fire finds nothing rather than releasing the workout twice.
+test "a workout stage firing for a block with no chain is ignored" {
+    // Each stage settles its block and a continuing stage claims a fresh one,
+    // so a duplicate fire finds nothing rather than releasing the workout twice.
     if (!is_darwin) return error.SkipZigTest;
 
-    pending_mutex.lock();
-    for (&pending_calls) |*entry| entry.* = null;
-    pending_mutex.unlock();
+    // Drained first, so a stray fire is what this reads rather than whatever
+    // another test left parked.
+    for (0..ios_pending.block_count) |i| _ = calls.settle(@intCast(i));
 
     workoutSaved(0, true, null);
     routeInserted(0, true, null);
     routeFinished(0, null, null);
+}
+
+test "a statistics deadline answers once, and the result it beat is ignored" {
+    // #223: without the table a deadline would free the reply slot, the next
+    // call would lease it and get the same block, and this late result would
+    // answer that call with these statistics.
+    for (0..ios_pending.block_count) |i| _ = calls.settle(@intCast(i));
+
+    const ticket: ios_async.Ticket = .{ .index = 7, .generation = 30 };
+    const block = calls.claim(ticket, .{}) orelse return error.NoFreeBlock;
+    const expired = calls.expireIfWaiting(ticket) orelse return error.DeadlineFoundNothing;
+    try testing.expectEqual(@as(u32, 30), expired.ticket.generation);
+
+    const next: ios_async.Ticket = .{ .index = 7, .generation = 31 };
+    const elsewhere = calls.claim(next, .{}) orelse return error.NoFreeBlock;
+    try testing.expect(elsewhere != block);
+    try testing.expect(calls.settle(block) == .late);
+    _ = calls.settle(elsewhere);
+}
+
+test "a deadline that lands between two workout stages cannot strand the next one" {
+    // The reason each stage re-arms its own clock. Stage one settles its block,
+    // and until stage two claims one no block holds the ticket: a deadline that
+    // fires in that moment finds nothing, and timers fire once. Were that the
+    // only deadline, stage two would run with none. So stage two arms its own,
+    // and this is the sequence that makes it necessary.
+    for (0..ios_pending.block_count) |i| _ = calls.settle(@intCast(i));
+
+    const ticket: ios_async.Ticket = .{ .index = 2, .generation = 40 };
+    const stage_one = calls.claim(ticket, .{}) orelse return error.NoFreeBlock;
+    try testing.expect(calls.settle(stage_one) == .reply);
+
+    // The moment between the stages: an earlier deadline finds nothing.
+    try testing.expect(calls.expireIfWaiting(ticket) == null);
+
+    // Stage two claims, and its own deadline has something to take.
+    const stage_two = calls.claim(ticket, .{}) orelse return error.NoFreeBlock;
+    const taken = calls.expireIfWaiting(ticket) orelse return error.StageTwoHadNoDeadline;
+    try testing.expectEqual(@as(u32, 40), taken.ticket.generation);
+    try testing.expect(calls.settle(stage_two) == .late);
+}
+
+test "every workout stage that claims a block arms the workout's own deadline" {
+    // The conformance ratchet already fails a stage that claims with no
+    // deadline at all. What it cannot see is a stage armed with the *wrong*
+    // one: it asks only for some `scheduleDeadline`. Re-arming stage two with
+    // `statsTimedOut` passes it, and would answer TIMEOUT without ever freeing
+    // the workout chain — a leak on every timed-out workout. So the handler is
+    // part of the needle, and there must be one per stage that claims.
+    //
+    // Joined at comptime so the needle cannot match this test's own text,
+    // which is how #248's ordering test once passed with its call deleted.
+    const source = @embedFile("bridge_mobile_health.zig");
+    const needle = "scheduleDeadline(ticket, workout_stage_deadline_ms, " ++ "workoutTimedOut)";
+    var arms: usize = 0;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, source, search, needle)) |at| : (search = at + needle.len) arms += 1;
+    try testing.expectEqual(@as(usize, 3), arms);
+}
+
+test "the authorization sheet is not on a clock" {
+    // A person answers it. The dispatch declares that with `no-deadline:`,
+    // which the conformance ratchet requires of a claim with no deadline.
+    const source = @embedFile("bridge_mobile_health.zig");
+    const needle = "// no-deadline: " ++ "a person answers the HealthKit";
+    try testing.expect(std.mem.indexOf(u8, source, needle) != null);
+    try testing.expect(stats_deadline_ms < 30_000);
+    try testing.expect(3 * workout_stage_deadline_ms < 30_000);
 }
 
 test "the four data types are the ones the Swift switch recognises" {
@@ -1551,12 +1772,12 @@ test "both block families are global, distinct per slot, and distinct from each 
     try testing.expect(stats_blocks[0].invoke != stats_blocks[1].invoke);
 }
 
-test "a completion for a slot with no recorded call is ignored" {
+test "a completion for a block with no recorded call is ignored" {
     if (!is_darwin) return error.SkipZigTest;
 
-    pending_mutex.lock();
-    for (&pending_calls) |*entry| entry.* = null;
-    pending_mutex.unlock();
+    // Drained first, so a stray fire is what this reads rather than whatever
+    // another test left parked.
+    for (0..ios_pending.block_count) |i| _ = calls.settle(@intCast(i));
 
     authorizationAnswered(0, true, null);
     statisticsAnswered(0, null, null);
