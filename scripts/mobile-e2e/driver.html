@@ -17,6 +17,7 @@
   <p id="deeplink"></p>
   <p id="notification-permission"></p>
   <p id="notification"></p>
+  <p id="notification-received"></p>
   <script>
   // The page drives itself and reports through the bridge's own `log` action,
   // which is the one channel both runtimes already forward off-device: iOS
@@ -505,6 +506,10 @@
     // the suite, seconds after the bridge appeared, and reports what it was
     // handed. On any other launch it was handed nothing, and says so.
     //
+    // #256: with the app open, a second push arrives, and the page reports
+    // what onReceive handed it, and how many taps it had by then, since an
+    // arrival is not a tap.
+    //
     // Permission is asked for only when the link asks, because nothing
     // answers the prompt on the launches simctl makes. iOS only: Android has
     // no tap path to test yet.
@@ -520,6 +525,27 @@
       if (typeof onTap === 'function') {
         seen.unsubscribe = typeof window.craft.notifications.onTap(function (detail) { seen.taps.push(detail || {}) })
       }
+      var onReceive = window.craft.notifications && window.craft.notifications.onReceive
+      var arrivals = { received: [], taps: 0, onReceive: typeof onReceive, unsubscribe: null }
+      function reportArrivals() {
+        arrivals.taps = seen.taps.length
+        var line = 'CRAFT-E2E-NOTIFICATION-RECEIVED ' + JSON.stringify(arrivals)
+        document.getElementById('notification-received').textContent = line
+        try { console.log(line) } catch (ignored) {}
+        try { if (window.craft && window.craft.log) window.craft.log(line) } catch (ignored) {}
+      }
+      // Reported at once, and again once arrivals have settled, so a page
+      // that was never told still has a report that says so.
+      if (typeof onReceive === 'function') {
+        var reporting = null
+        arrivals.unsubscribe = typeof window.craft.notifications.onReceive(function (detail) {
+          arrivals.received.push(detail || {})
+          // After a pause, so a second delivery of the same push is counted.
+          clearTimeout(reporting)
+          reporting = setTimeout(reportArrivals, 1500)
+        })
+      }
+      reportArrivals()
       // Long enough for a replay, or a second delivery, to have arrived.
       setTimeout(function () {
         seen.dispatched = dispatchedTaps
