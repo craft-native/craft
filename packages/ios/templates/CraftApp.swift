@@ -34,7 +34,6 @@ import ActivityKit
 extension Notification.Name {
     static let craftPushToken = Notification.Name("craftPushToken")
     static let craftPushRegistrationError = Notification.Name("craftPushRegistrationError")
-    static let craftNotificationResponse = Notification.Name("craftNotificationResponse")
 }
 
 /// Which failed page loads mean the remote origin is out of reach (#252).
@@ -104,7 +103,14 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
-        NotificationCenter.default.post(name: .craftNotificationResponse, object: response.notification.request.content.userInfo)
+        // Through the manager, not NotificationCenter. A tap that launches a
+        // killed app arrives here before SwiftUI has built the Coordinator, and
+        // NotificationCenter keeps nothing for an observer that does not exist
+        // yet — so the tap was dropped, and the page opened wherever it opens
+        // rather than where the notification pointed. The manager exists from
+        // process start and holds the tap until the page is ready, the way it
+        // already does for a home-screen shortcut.
+        CraftEventManager.shared.handleNotificationResponse(response.notification.request.content.userInfo)
         completionHandler()
     }
 
@@ -142,6 +148,20 @@ class CraftEventManager {
 
     func handleShortcut(_ shortcut: UIApplicationShortcutItem) {
         sendToWeb("craftShortcut", data: ["type": shortcut.type])
+    }
+
+    /// A tap on a notification, carrying the payload it was sent with.
+    ///
+    /// Keys that are not strings are dropped rather than failing the whole
+    /// event: an APNs payload's keys always are, and the page could not index
+    /// by anything else anyway.
+    func handleNotificationResponse(_ userInfo: [AnyHashable: Any]) {
+        var data: [String: Any] = [:]
+        for (key, value) in userInfo {
+            guard let key = key as? String else { continue }
+            data[key] = value
+        }
+        sendToWeb("craftNotificationResponse", data: data)
     }
 
     func handleSiriActivity(_ activity: NSUserActivity) -> Bool {
@@ -635,7 +655,6 @@ struct CraftWebView: UIViewRepresentable {
             }
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushToken(_:)), name: .craftPushToken, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushRegistrationError(_:)), name: .craftPushRegistrationError, object: nil)
-            NotificationCenter.default.addObserver(self, selector: #selector(receiveNotificationResponse(_:)), name: .craftNotificationResponse, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
             setupNetworkMonitoring()
         }
@@ -3090,6 +3109,49 @@ struct CraftWebView: UIViewRepresentable {
                 };
             })(window.craft);
 
+            // A notification tap that arrived before anything subscribed.
+            //
+            // On a cold launch the tap is flushed the moment the bridge is
+            // ready, and a page that wires its listener once its router has
+            // hydrated — which is most single-page apps — was not listening
+            // yet, so "open the thing this notification is about" opened the
+            // home screen instead. Deep links hit the same wall (#198) and
+            // are held the same way: state on window, so a second injection
+            // into the same page does not start a fresh buffer, and the first
+            // subscriber is handed whatever it missed.
+            (function installNotificationTapReplay(craft) {
+                var replay = window.__craftNotificationTapReplay;
+                if (!replay) {
+                    replay = window.__craftNotificationTapReplay = {undelivered: [], subscribed: false};
+                    window.addEventListener('craftNotificationResponse', function(e) {
+                        if (!replay.subscribed) replay.undelivered.push(e.detail);
+                    });
+                }
+                craft._subscribeNotificationTaps = function(callback) {
+                    var active = true;
+                    var listener = function(e) { callback(e.detail); };
+                    window.addEventListener('craftNotificationResponse', listener);
+                    if (!replay.subscribed) {
+                        replay.subscribed = true;
+                        setTimeout(function() {
+                            var pending = replay.undelivered;
+                            replay.undelivered = [];
+                            if (!active) return;
+                            pending.forEach(function(detail) { callback(detail); });
+                        }, 0);
+                    }
+                    return function() {
+                        active = false;
+                        window.removeEventListener('craftNotificationResponse', listener);
+                    };
+                };
+                if (craft.notifications) {
+                    craft.notifications.onTap = function(callback) {
+                        return craft._subscribeNotificationTaps(callback);
+                    };
+                }
+            })(window.craft);
+
             (function installCraftMobileContract(craft) {
                 var legacyShare = craft.share.bind(craft);
                 var legacyOpenCamera = craft.openCamera.bind(craft);
@@ -3588,11 +3650,6 @@ struct CraftWebView: UIViewRepresentable {
             let message = notification.object as? String ?? "Push registration failed"
             guard let claimed = claimPushRegistration() else { return }
             rejectCallback(claimed, error: message, code: "PUSH_REGISTRATION_ERROR")
-        }
-
-        @objc private func receiveNotificationResponse(_ notification: Notification) {
-            let data = notification.object as? [String: Any] ?? [:]
-            sendToWeb("craftNotificationResponse", data: data)
         }
 
         // MARK: - Secure Storage (Keychain)

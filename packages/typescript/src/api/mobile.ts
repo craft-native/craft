@@ -1360,7 +1360,20 @@ export const pushNotifications = {
   onToken(callback: (token: string) => void): () => void {
     return onCraftEvent('craftPushToken', detail => callback(String(detail.token ?? '')))
   },
+  /**
+   * A tap on a notification, with the payload it was sent with.
+   *
+   * Goes through the bridge's replay where there is one, so a tap that
+   * launched the app still reaches a page that subscribes once it has
+   * hydrated — rather than only one listening before the bridge was ready.
+   */
   onNotification(callback: (data: Record<string, unknown>) => void): () => void {
+    const craft = getCraftRoot()
+    if (craft?.notifications?.onTap) {
+      return craft.notifications.onTap((detail: unknown) => {
+        callback((detail ?? {}) as Record<string, unknown>)
+      }) ?? (() => {})
+    }
     return onCraftEvent('craftNotificationResponse', detail => callback(detail))
   }
 }

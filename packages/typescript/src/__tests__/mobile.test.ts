@@ -24,13 +24,49 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import { normalizeDeepLinkURL, watchConnectivity } from '../api/mobile'
+import { normalizeDeepLinkURL, pushNotifications, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
     expect(normalizeDeepLinkURL('wildloop://record')).toBe('wildloop://record')
     expect(normalizeDeepLinkURL({ url: 'wildloop://trail/42', scheme: 'wildloop' })).toBe('wildloop://trail/42')
     expect(normalizeDeepLinkURL({ scheme: 'wildloop' })).toBeNull()
+  })
+})
+
+describe('Mobile notification taps', () => {
+  // A tap that launched the app is flushed before a hydrating page subscribes.
+  // The bridge holds it for the first subscriber through notifications.onTap,
+  // and the SDK has to go through that rather than a bare event listener, or
+  // the hold does nothing for anyone using the SDK.
+  it('subscribes through the bridge replay when the bridge offers one', () => {
+    const previousWindow = (globalThis as any).window
+    const unsubscribe = () => {}
+    let handed: ((detail: unknown) => void) | undefined
+    ;(globalThis as any).window = {
+      craft: {
+        notifications: {
+          onTap: (callback: (detail: unknown) => void) => {
+            handed = callback
+            return unsubscribe
+          },
+        },
+      },
+    }
+
+    try {
+      const seen: unknown[] = []
+      const returned = pushNotifications.onNotification(data => seen.push(data))
+      expect(returned).toBe(unsubscribe)
+
+      // The replay hands over whatever it held; the SDK passes it through.
+      handed?.({ screen: 'plant-id' })
+      expect(seen).toEqual([{ screen: 'plant-id' }])
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
   })
 })
 
