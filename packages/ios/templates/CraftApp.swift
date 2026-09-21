@@ -115,6 +115,11 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Told to the page as well as shown. A page that is open when a push
+        // lands used to hear about it only if someone tapped the banner, so it
+        // could not refresh what the push was about while it was on screen.
+        // The banner still shows: the page is told, not asked.
+        CraftEventManager.shared.handleNotificationReceived(notification.request.content.userInfo)
         completionHandler([.banner, .badge, .sound])
     }
 }
@@ -156,12 +161,22 @@ class CraftEventManager {
     /// event: an APNs payload's keys always are, and the page could not index
     /// by anything else anyway.
     func handleNotificationResponse(_ userInfo: [AnyHashable: Any]) {
+        sendToWeb("craftNotificationResponse", data: Self.pageData(userInfo))
+    }
+
+    /// A notification that arrived while the app was in front, in the same
+    /// shape as a tap so one handler can read both.
+    func handleNotificationReceived(_ userInfo: [AnyHashable: Any]) {
+        sendToWeb("craftNotificationReceived", data: Self.pageData(userInfo))
+    }
+
+    private static func pageData(_ userInfo: [AnyHashable: Any]) -> [String: Any] {
         var data: [String: Any] = [:]
         for (key, value) in userInfo {
             guard let key = key as? String else { continue }
             data[key] = value
         }
-        sendToWeb("craftNotificationResponse", data: data)
+        return data
     }
 
     func handleSiriActivity(_ activity: NSUserActivity) -> Bool {
@@ -3148,6 +3163,17 @@ struct CraftWebView: UIViewRepresentable {
                 if (craft.notifications) {
                     craft.notifications.onTap = function(callback) {
                         return craft._subscribeNotificationTaps(callback);
+                    };
+                    // A notification that arrived while the page was open.
+                    // Live only, with nothing held: it matters to a page that
+                    // is running, and one that subscribes later has no use for
+                    // an arrival it was not there to see.
+                    craft.notifications.onReceive = function(callback) {
+                        var listener = function(e) { callback(e.detail); };
+                        window.addEventListener('craftNotificationReceived', listener);
+                        return function() {
+                            window.removeEventListener('craftNotificationReceived', listener);
+                        };
                     };
                 }
             })(window.craft);

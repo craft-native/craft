@@ -1375,6 +1375,23 @@ export const pushNotifications = {
       }) ?? (() => {})
     }
     return onCraftEvent('craftNotificationResponse', detail => callback(detail))
+  },
+  /**
+   * A notification that arrived while the app was open, with the payload it
+   * was sent with — the same shape `onNotification` hands a tap.
+   *
+   * The banner still shows. This is for a page that wants to react while it
+   * is on screen, such as refreshing what the push was about. Live only: an
+   * arrival before the page subscribed is not held for it. iOS only for now.
+   */
+  onReceive(callback: (data: Record<string, unknown>) => void): () => void {
+    const craft = getCraftRoot()
+    if (craft?.notifications?.onReceive) {
+      return craft.notifications.onReceive((detail: unknown) => {
+        callback((detail ?? {}) as Record<string, unknown>)
+      }) ?? (() => {})
+    }
+    return onCraftEvent('craftNotificationReceived', detail => callback(detail))
   }
 }
 
