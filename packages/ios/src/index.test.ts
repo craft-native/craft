@@ -318,6 +318,37 @@ describe('Craft iOS builder', () => {
     expect(receive).toContain('sendToWeb("craftPushToken", data: ["token": token])')
   })
 
+  it('falls back to the bundle only when the remote is out of reach, and comes back', async () => {
+    // #252: any failed or cancelled main-frame load sent the app to its bundled
+    // copy for the rest of the process. The classifier's answers are run for
+    // real by scripts/load-failure.ts; this pins that it is actually consulted,
+    // and that the way back is wired.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-load-failure-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    // Both failure callbacks go through the classifier, and neither reaches
+    // the fallback directly any more — which is the whole bug.
+    const failures = swift.slice(
+      swift.indexOf('func webView(_ webView: WKWebView, didFailProvisionalNavigation'),
+      swift.indexOf('private func fallBackIfUnreachable('),
+    )
+    expect(failures.match(/fallBackIfUnreachable\(webView, after: error\)/g)?.length).toBe(2)
+    expect(failures).not.toContain('loadBundledFallback(in: webView)')
+    expect(swift).toContain('guard CraftLoadFailure.isUnreachable(error) else { return }')
+
+    // No longer one-way: two ways back to the remote origin.
+    expect(swift).toContain('private func returnFromBundledFallback(because reason: String)')
+    expect(swift).toContain('loadedBundledFallback = false')
+    expect(swift).toContain('name: UIApplication.willEnterForegroundNotification')
+
+    // And the network trigger retries on a transition only. Retrying whenever
+    // the path is satisfied would loop against a server that is down on a
+    // network that is up.
+    expect(swift).toContain('let wasConnected = self?.isConnected ?? true')
+    expect(swift).toContain('if !wasConnected, self?.isConnected == true {')
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({

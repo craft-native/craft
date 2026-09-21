@@ -37,6 +37,42 @@ extension Notification.Name {
     static let craftNotificationResponse = Notification.Name("craftNotificationResponse")
 }
 
+/// Which failed page loads mean the remote origin is out of reach (#252).
+///
+/// That is the only failure the bundled copy stands in for. Anything else
+/// either is not a failure at all or is one the bundle would hide: a TLS error
+/// or a bad response means the server *was* reached, and swapping in a local
+/// copy would bury a real fault under a page that half-works.
+///
+/// Written against NSError's domain and code rather than WebKit's types, so it
+/// compiles with Foundation alone — which is how `compile-templates` runs it on
+/// its own, on the CI host, rather than only reading its text.
+enum CraftLoadFailure {
+    static func isUnreachable(_ error: Error) -> Bool {
+        let error = error as NSError
+        // Everything outside NSURLErrorDomain is excluded, WebKit's own
+        // frame-load-interrupted (WebKitErrorDomain 102) among them: a load
+        // replaced by a newer one is not a load that failed.
+        guard error.domain == NSURLErrorDomain else { return false }
+        switch error.code {
+        case NSURLErrorNotConnectedToInternet,
+             NSURLErrorCannotFindHost,
+             NSURLErrorCannotConnectToHost,
+             NSURLErrorTimedOut,
+             NSURLErrorNetworkConnectionLost,
+             NSURLErrorDNSLookupFailed,
+             NSURLErrorDataNotAllowed,
+             NSURLErrorInternationalRoamingOff:
+            return true
+        default:
+            // NSURLErrorCancelled (-999) lands here. WebKit reports it for two
+            // quick taps, a redirect, or a `location.assign` while a load is in
+            // flight — and it used to end the session on the bundled copy.
+            return false
+        }
+    }
+}
+
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
@@ -600,6 +636,7 @@ struct CraftWebView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushToken(_:)), name: .craftPushToken, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushRegistrationError(_:)), name: .craftPushRegistrationError, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(receiveNotificationResponse(_:)), name: .craftNotificationResponse, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
             setupNetworkMonitoring()
         }
 
@@ -622,6 +659,9 @@ struct CraftWebView: UIViewRepresentable {
         private func setupNetworkMonitoring() {
             networkMonitor = NWPathMonitor()
             networkMonitor?.pathUpdateHandler = { [weak self] path in
+                // Read before it is overwritten: the retry below wants the
+                // transition, not the state.
+                let wasConnected = self?.isConnected ?? true
                 self?.isConnected = path.status == .satisfied
                 if path.usesInterfaceType(.wifi) {
                     self?.connectionType = "wifi"
@@ -636,6 +676,16 @@ struct CraftWebView: UIViewRepresentable {
                     "isConnected": self?.isConnected ?? false,
                     "type": self?.connectionType ?? "unknown"
                 ])
+                // Only on false → true. Retrying whenever the path is merely
+                // satisfied would loop: a server that is down on a network
+                // that is up leaves the path satisfied throughout, so every
+                // update would retry, fail, fall back and retry again. That
+                // case recovers on the next foreground instead.
+                if !wasConnected, self?.isConnected == true {
+                    DispatchQueue.main.async {
+                        self?.returnFromBundledFallback(because: "the network came back")
+                    }
+                }
             }
             networkMonitor?.start(queue: DispatchQueue.global())
         }
@@ -1497,10 +1547,17 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            loadBundledFallback(in: webView)
+            fallBackIfUnreachable(webView, after: error)
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            fallBackIfUnreachable(webView, after: error)
+        }
+
+        /// Both used to fall back on *any* error, -999 included, so a second
+        /// tap before the first page committed ended the session on the bundle.
+        private func fallBackIfUnreachable(_ webView: WKWebView, after error: Error) {
+            guard CraftLoadFailure.isUnreachable(error) else { return }
             loadBundledFallback(in: webView)
         }
 
@@ -1509,7 +1566,33 @@ struct CraftWebView: UIViewRepresentable {
                   config.devServerURL != nil,
                   let bundledURL = URL(string: "craft://app/index.html") else { return }
             loadedBundledFallback = true
+            // Kept for the way back: `returnFromBundledFallback` has no view of
+            // its own to reload.
+            self.webView = webView
             webView.load(URLRequest(url: bundledURL))
+        }
+
+        /// Leave the bundled copy for the remote origin again (#252).
+        ///
+        /// It used to be one-way for the life of the process, and the bundle
+        /// cannot reach a frontend's API by relative path — so one dropped
+        /// connection meant no API until the app was killed.
+        ///
+        /// Called when connectivity comes back and when the app returns to the
+        /// foreground, never on every path update. If the remote is still out
+        /// of reach, the load fails with a connectivity error and falls back
+        /// again: one round trip per trigger, not a loop.
+        private func returnFromBundledFallback(because reason: String) {
+            guard loadedBundledFallback,
+                  let webView,
+                  let remote = config.devServerURL.flatMap(URL.init(string:)) else { return }
+            loadedBundledFallback = false
+            print("Craft: \(reason); loading \(remote) again instead of the bundled copy")
+            webView.load(URLRequest(url: remote))
+        }
+
+        @objc private func appWillEnterForeground(_ notification: Notification) {
+            returnFromBundledFallback(because: "the app returned to the foreground")
         }
 
         private func isTrustedURL(_ url: URL?) -> Bool {
