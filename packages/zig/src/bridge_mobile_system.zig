@@ -376,6 +376,15 @@ pub const uikit = if (is_darwin) struct {
     /// app has not listed in `LSApplicationQueriesSchemes`, so gating on it
     /// would refuse URLs that `open:` would in fact have opened. The completion
     /// handler's BOOL is the only truthful answer available.
+    ///
+    /// No deadline, deliberately, although #223 lists this action for one.
+    /// Its reason for wanting one does not apply here: this call leases no
+    /// `ios_async` reply slot, so there is no slot for a deadline to free and
+    /// no next call to hand the block to. The request id travels in the block
+    /// itself, and `openURL:options:completionHandler:` heap-copies it. What a
+    /// deadline *would* do is time out a person: `tel:` and `facetime:` put a
+    /// "Call …?" confirmation on screen, and the completion waits for their
+    /// answer.
     fn openURL(allocator: std.mem.Allocator, url_string: []const u8, request_id: i64) !void {
         const UIApplication = objc.objc_getClass("UIApplication") orelse return error.ClassNotFound;
         const sel_shared = objc.sel_registerName("sharedApplication") orelse return error.SelectorNotFound;
