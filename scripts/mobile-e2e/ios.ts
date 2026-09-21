@@ -1,8 +1,9 @@
+import type { PushStage } from './protocol'
 import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, notificationPayload, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /** The scheme the probe registers, and the one its cold-start link uses. */
@@ -66,14 +67,19 @@ const UI_TESTS = `${APP_NAME}UITests`
 const UI_TEST_CLASSES = ['DeepLinkColdStartTests', 'NotificationTapColdStartTests'] as const
 
 /**
- * How long the notification UI test gets to have the app killed and ready for
- * a push, and then to tap it. It starts a test runner, launches the app twice
- * and answers a permission prompt, so it is given more than one launch.
+ * How long the notification UI test gets in all. It starts a test runner,
+ * launches the app twice and answers a permission prompt; it usually takes
+ * under half a minute.
  */
 const NOTIFICATION_TEST_TIMEOUT_MS = 300_000
 
-/** The line the notification UI test prints once the app is gone. */
-const PUSH_READY = /^CRAFT-E2E-PUSH-READY\s*$/m
+/**
+ * The pushes the notification UI test has asked for, in order, one per
+ * `CRAFT-E2E-PUSH-READY <stage>` line.
+ */
+function pushesAskedFor(output: string): PushStage[] {
+  return [...output.matchAll(/^CRAFT-E2E-PUSH-READY (cold|foreground)\s*$/gm)].map(match => match[1] as PushStage)
+}
 
 /**
  * One leg is one answer to "who served the call".
@@ -316,44 +322,57 @@ schemes:
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
   failures.push(...deepLinkProblems(deepLinkResults(`${coldStart.stdout}\n${coldStart.stderr}`), link))
 
-  // #255: a tap on a push that launches the app, judged by what the page was
-  // handed. The UI test allows notifications, kills the app and prints
-  // CRAFT-E2E-PUSH-READY; `simctl push` runs on the host, so the push is sent
-  // from here when that line appears, and the test taps the banner.
+  // #255 and #256: a tap on a push that launches the app, then a push that
+  // arrives while it is open, each judged by what the page was handed. The UI
+  // test prints CRAFT-E2E-PUSH-READY <stage> when it is ready for each one:
+  // once it has allowed notifications and killed the app, and once the page
+  // it tapped open is listening. `simctl push` runs on the host, so each push
+  // is sent from here when its line appears.
   //
   // Spawned rather than run through `command`, which returns only once the
-  // process has exited, and this one waits on the push.
-  const payloadPath = join(evidence, 'notification.apns')
-  writeFileSync(payloadPath, notificationPayload(nonce))
+  // process has exited, and this one waits on the pushes.
   const notificationLog = join(evidence, 'xcodebuild-notification.log')
+  const notificationEvidence = `${label}/xcodebuild-notification.log`
   const tapping = Bun.spawn(uiTest('NotificationTapColdStartTests'), {
     cwd: project,
     env: {
       ...process.env,
       TEST_RUNNER_PROBE_BUNDLE_ID: BUNDLE_ID,
       TEST_RUNNER_PROBE_NOTIFY_LINK: `${DEEP_LINK_SCHEME}://e2e/notify?run=${encodeURIComponent(nonce)}`,
-      TEST_RUNNER_PROBE_PUSH_BODY: nonce,
+      TEST_RUNNER_PROBE_PUSH_BODY: notificationBody(nonce, 'cold'),
     },
     stdin: 'ignore',
     stdout: Bun.file(notificationLog),
     stderr: Bun.file(join(evidence, 'xcodebuild-notification-stderr.log')),
   })
-  const readyForPush = await waitForFile(
-    notificationLog,
-    NOTIFICATION_TEST_TIMEOUT_MS,
-    text => PUSH_READY.test(text) || tapping.exitCode !== null,
-  ) && PUSH_READY.test(readFileSync(notificationLog, 'utf8'))
-  if (readyForPush)
-    await command(['xcrun', 'simctl', 'push', device.udid, BUNDLE_ID, payloadPath], { logPath: join(evidence, 'simctl.log') })
-  const timer = setTimeout(() => tapping.kill(), NOTIFICATION_TEST_TIMEOUT_MS)
+  // One push per line asked for, sent as each line appears, until the test
+  // exits or runs out of time.
+  const pushed: PushStage[] = []
+  const deadline = Date.now() + NOTIFICATION_TEST_TIMEOUT_MS
+  while (tapping.exitCode === null && Date.now() < deadline) {
+    for (const stage of pushesAskedFor(readFileSync(notificationLog, 'utf8')).slice(pushed.length)) {
+      const payloadPath = join(evidence, `notification-${stage}.apns`)
+      writeFileSync(payloadPath, notificationPayload(nonce, stage))
+      await command(['xcrun', 'simctl', 'push', device.udid, BUNDLE_ID, payloadPath], { logPath: join(evidence, 'simctl.log') })
+      pushed.push(stage)
+    }
+    await Bun.sleep(250)
+  }
+  if (tapping.exitCode === null) tapping.kill()
   await tapping.exited
-  clearTimeout(timer)
   await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'notification-screen.png')], { allowFailure: true })
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
-  if (!readyForPush)
-    failures.push(`the notification UI test never had the app killed and ready for a push; see ${label}/xcodebuild-notification.log`)
-  else
-    failures.push(...notificationTapProblems(notificationTapReport(readFileSync(notificationLog, 'utf8')), nonce, `${label}/xcodebuild-notification.log`))
+  const notificationOutput = readFileSync(notificationLog, 'utf8')
+  if (!pushed.includes('cold')) {
+    failures.push(`the notification UI test never had the app killed and ready for a push; see ${notificationEvidence}`)
+  }
+  else {
+    failures.push(...notificationTapProblems(notificationTapReport(notificationOutput), nonce, notificationEvidence))
+    if (!pushed.includes('foreground'))
+      failures.push(`the notification UI test never got to the push that arrives while the app is open; see ${notificationEvidence}`)
+    else
+      failures.push(...notificationReceiptProblems(notificationReceiptReport(notificationOutput), nonce, notificationEvidence))
+  }
 
   const dispatched = zigDispatchedActions(consoleText)
   const refused = zigRefusals(consoleText)

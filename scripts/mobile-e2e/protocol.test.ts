@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, NOTIFICATION_ROUTE, notificationPayload, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -422,12 +422,57 @@ describe('notification tap cold start', () => {
       .toEqual(['the notification tap cold start never reported; see ios-shim/xcodebuild-notification.log'])
   })
 
-  it('sends a push simctl accepts, whose body is the run the banner is found by', () => {
-    const payload = notificationPayload(RUN)
-    expect(new TextEncoder().encode(payload).length).toBeLessThanOrEqual(4096)
-    const parsed = JSON.parse(payload)
-    expect(parsed.aps.alert.body).toBe(RUN)
-    expect(parsed).toMatchObject({ craftE2E: RUN, route: NOTIFICATION_ROUTE })
+  it('sends pushes simctl accepts, each with the banner text its stage is found by', () => {
+    for (const stage of ['cold', 'foreground'] as const) {
+      const payload = notificationPayload(RUN, stage)
+      expect(new TextEncoder().encode(payload).length).toBeLessThanOrEqual(4096)
+      const parsed = JSON.parse(payload)
+      expect(parsed.aps.alert.body).toBe(notificationBody(RUN, stage))
+      expect(parsed).toMatchObject({ craftE2E: RUN, stage, route: NOTIFICATION_ROUTE })
+    }
+    // The cold banner is searched for by its text; the other stage's must not match it.
+    expect(notificationBody(RUN, 'foreground')).not.toContain(notificationBody(RUN, 'cold'))
+  })
+})
+
+describe('notification that arrives while the app is open', () => {
+  const RUN = 'craft-e2e-ios-shim-1'
+  const arrival = { aps: { alert: { title: 'Craft E2E', body: `${RUN} foreground` } }, craftE2E: RUN, stage: 'foreground', route: NOTIFICATION_ROUTE }
+  const judge = (report: object) => notificationReceiptProblems(
+    notificationReceiptReport(`CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION {"taps":[]}\nCRAFT-E2E-NOTIFICATION-RECEIVED-RESULT CRAFT-E2E-NOTIFICATION-RECEIVED ${JSON.stringify(report)}`),
+    RUN,
+  )
+
+  it('passes a page handed the push once through onReceive, and not as a tap', () => {
+    expect(judge({ received: [arrival], taps: 1, onReceive: 'function', unsubscribe: 'function' })).toEqual([])
+  })
+
+  // The bug: willPresent showed the banner and told the page nothing.
+  it('fails a page that was never told', () => {
+    expect(judge({ received: [], taps: 1, onReceive: 'function', unsubscribe: 'function' }))
+      .toEqual(['a page that was open when a push arrived was handed [] by onReceive, expected that push once'])
+  })
+
+  it('fails the cold push reported as an arrival, a duplicate, or one that lost its route', () => {
+    const cold = { ...arrival, stage: 'cold' }
+    expect(judge({ received: [cold, arrival], taps: 1, onReceive: 'function', unsubscribe: 'function' })[0]).toContain('expected that push once')
+    expect(judge({ received: [arrival, arrival], taps: 1, onReceive: 'function', unsubscribe: 'function' })[0]).toContain('expected that push once')
+    expect(judge({ received: [{ ...arrival, route: undefined }], taps: 1, onReceive: 'function', unsubscribe: 'function' })[0]).toContain('without its route')
+  })
+
+  it('fails an arrival handed to onTap as well', () => {
+    expect(judge({ received: [arrival], taps: 2, onReceive: 'function', unsubscribe: 'function' }))
+      .toEqual(['the push that arrived while the app was open was handed to onTap as well; onTap had 2 taps'])
+  })
+
+  it('fails a bridge with no onReceive, or one that returns no way to unsubscribe, and names a run that never reported', () => {
+    expect(judge({ received: [], taps: 1, onReceive: 'undefined', unsubscribe: null }))
+      .toEqual(['notifications.onReceive is undefined, so a page cannot hear about a push that arrives while it is open'])
+    expect(judge({ received: [arrival], taps: 1, onReceive: 'function', unsubscribe: 'undefined' }))
+      .toEqual(['notifications.onReceive returned undefined, expected a function that unsubscribes'])
+    // The tap's report line is not a receipt report.
+    expect(notificationReceiptProblems(notificationReceiptReport('CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION {"taps":[]}'), RUN))
+      .toEqual(['the push that arrived while the app was open never reported; see xcodebuild-notification.log'])
   })
 })
 

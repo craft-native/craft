@@ -447,13 +447,26 @@ export function deepLinkProblems(
 export const NOTIFICATION_ROUTE = '/e2e/notification-tap'
 
 /**
- * The push the harness sends with `simctl push` once the app is killed.
- *
- * The body is the run's nonce, which the UI test finds the banner by, and
- * `craftE2E` carries it again as data, for the page to hand back.
+ * The two pushes the notification UI test asks for: `cold` once the app is
+ * killed, for its banner to be tapped (#255), and `foreground` once the app
+ * that tap launched is open (#256).
  */
-export function notificationPayload(run: string): string {
-  return `${JSON.stringify({ aps: { alert: { title: 'Craft E2E', body: run } }, craftE2E: run, route: NOTIFICATION_ROUTE })}\n`
+export type PushStage = 'cold' | 'foreground'
+
+/** The banner text of a stage's push, which the UI test finds the banner by. */
+export function notificationBody(run: string, stage: PushStage): string {
+  return `${run} ${stage}`
+}
+
+/**
+ * The push the harness sends with `simctl push` for one stage.
+ *
+ * `craftE2E` and `stage` carry the run and the stage again as data, for the
+ * page to hand back, so a push from another run or the other stage cannot
+ * pass for this one.
+ */
+export function notificationPayload(run: string, stage: PushStage): string {
+  return `${JSON.stringify({ aps: { alert: { title: 'Craft E2E', body: notificationBody(run, stage) } }, craftE2E: run, stage, route: NOTIFICATION_ROUTE })}\n`
 }
 
 /** What a page that subscribed late was handed after a tap launched the app. */
@@ -518,6 +531,66 @@ export function notificationTapProblems(
     problems.push(`a page that subscribed to notifications.onTap after launch was handed ${JSON.stringify(report.taps)}, expected the tap that launched the app once`)
   else if (ours[0]!.route !== NOTIFICATION_ROUTE)
     problems.push(`the tap reached the page without the push's route: it carried ${JSON.stringify(ours[0])}`)
+  return problems
+}
+
+/** What a page that was open when a push arrived was handed by onReceive. */
+export interface NotificationReceiptReport {
+  received: Record<string, unknown>[]
+  /** How many taps onTap had handed the page when it reported. */
+  taps: number
+  /** `typeof` notifications.onReceive. */
+  onReceive: string
+  /** `typeof` what onReceive returned, or null when there was no onReceive to call. */
+  unsubscribe: string | null
+}
+
+/**
+ * The receipt report the UI test printed, as a
+ * `CRAFT-E2E-NOTIFICATION-RECEIVED-RESULT CRAFT-E2E-NOTIFICATION-RECEIVED {json}`
+ * line. Null when there is none, or it does not parse.
+ */
+export function notificationReceiptReport(output: string): NotificationReceiptReport | null {
+  for (const line of output.split('\n')) {
+    const match = line.match(/CRAFT-E2E-NOTIFICATION-RECEIVED-RESULT CRAFT-E2E-NOTIFICATION-RECEIVED (\{.*\})\s*$/)
+    if (!match) continue
+    try {
+      const report = JSON.parse(match[1]!) as NotificationReceiptReport
+      if (Array.isArray(report.received)) return report
+    }
+    catch {}
+  }
+  return null
+}
+
+/**
+ * Why the push that arrived while the app was open is not a pass (#256).
+ *
+ * The page must be handed that push once, through onReceive, with its data
+ * intact. Not the cold push, which arrived while the app was not running and
+ * was the tap's to deliver, and not as a tap: an arrival is not a tap, and a
+ * page routing on onTap would jump to a screen nobody asked for.
+ */
+export function notificationReceiptProblems(
+  report: NotificationReceiptReport | null,
+  run: string,
+  evidence = 'xcodebuild-notification.log',
+): string[] {
+  if (!report)
+    return [`the push that arrived while the app was open never reported; see ${evidence}`]
+  if (report.onReceive !== 'function')
+    return [`notifications.onReceive is ${report.onReceive}, so a page cannot hear about a push that arrives while it is open`]
+
+  const problems: string[] = []
+  if (report.unsubscribe !== 'function')
+    problems.push(`notifications.onReceive returned ${report.unsubscribe}, expected a function that unsubscribes`)
+  const ours = report.received.filter(entry => entry.craftE2E === run && entry.stage === 'foreground')
+  if (ours.length !== 1 || report.received.length !== 1)
+    problems.push(`a page that was open when a push arrived was handed ${JSON.stringify(report.received)} by onReceive, expected that push once`)
+  else if (ours[0]!.route !== NOTIFICATION_ROUTE)
+    problems.push(`the push reached onReceive without its route: it carried ${JSON.stringify(ours[0])}`)
+  if (report.taps > 1)
+    problems.push(`the push that arrived while the app was open was handed to onTap as well; onTap had ${report.taps} taps`)
   return problems
 }
 
