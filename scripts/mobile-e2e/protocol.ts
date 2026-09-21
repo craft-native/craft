@@ -438,6 +438,89 @@ export function deepLinkProblems(
   return problems
 }
 
+/**
+ * Where the pushed notification says to go, as a custom key beside `aps`.
+ *
+ * The part of a push an app routes on, and the part the tap has to carry
+ * intact: WildLoop opens the plant camera off a key like this one.
+ */
+export const NOTIFICATION_ROUTE = '/e2e/notification-tap'
+
+/**
+ * The push the harness sends with `simctl push` once the app is killed.
+ *
+ * The body is the run's nonce, which the UI test finds the banner by, and
+ * `craftE2E` carries it again as data, for the page to hand back.
+ */
+export function notificationPayload(run: string): string {
+  return `${JSON.stringify({ aps: { alert: { title: 'Craft E2E', body: run } }, craftE2E: run, route: NOTIFICATION_ROUTE })}\n`
+}
+
+/** What a page that subscribed late was handed after a tap launched the app. */
+export interface NotificationTapReport {
+  /** craftNotificationResponse events native code dispatched, counted from the page's first line. */
+  dispatched: number
+  /** What notifications.onTap handed a subscriber that arrived after the suite. */
+  taps: Record<string, unknown>[]
+  /** `typeof` notifications.onTap. */
+  onTap: string
+  /** `typeof` what onTap returned, or null when there was no onTap to call. */
+  unsubscribe: string | null
+}
+
+/**
+ * The page's report the UI test printed, read out of xcodebuild's output.
+ *
+ * `ios-uitests/NotificationTapColdStartTests.swift` writes one
+ * `CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION {json}` line. None,
+ * or one whose JSON does not parse, is null: the test never got that far.
+ */
+export function notificationTapReport(output: string): NotificationTapReport | null {
+  for (const line of output.split('\n')) {
+    const match = line.match(/CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION (\{.*\})\s*$/)
+    if (!match) continue
+    try {
+      const report = JSON.parse(match[1]!) as NotificationTapReport
+      if (Array.isArray(report.taps)) return report
+    }
+    catch {}
+  }
+  return null
+}
+
+/**
+ * Why the notification tap cold start is not a pass, one line per reason.
+ *
+ * #255 lost a tap in two places, and the report tells them apart: nothing
+ * dispatched is the app dropping it before any page existed, dispatched but
+ * not handed to onTap is the page flushing it before anyone subscribed.
+ */
+export function notificationTapProblems(
+  report: NotificationTapReport | null,
+  run: string,
+  evidence = 'xcodebuild-notification.log',
+): string[] {
+  if (!report)
+    return [`the notification tap cold start never reported; see ${evidence}`]
+  if (report.onTap !== 'function')
+    return [`notifications.onTap is ${report.onTap}, so a page has no way to be handed a tap`]
+
+  const problems: string[] = []
+  if (report.unsubscribe !== 'function')
+    problems.push(`notifications.onTap returned ${report.unsubscribe}, expected a function that unsubscribes`)
+  if (report.dispatched === 0) {
+    problems.push('the app never dispatched the tap that launched it; native code dropped it before the page existed')
+    return problems
+  }
+
+  const ours = report.taps.filter(tap => tap.craftE2E === run)
+  if (ours.length !== 1 || report.taps.length !== 1)
+    problems.push(`a page that subscribed to notifications.onTap after launch was handed ${JSON.stringify(report.taps)}, expected the tap that launched the app once`)
+  else if (ours[0]!.route !== NOTIFICATION_ROUTE)
+    problems.push(`the tap reached the page without the push's route: it carried ${JSON.stringify(ours[0])}`)
+  return problems
+}
+
 /** The need the Android share case announces before it opens the menu. */
 export const DISMISS_SHARE_MENU = 'dismiss-share-menu'
 

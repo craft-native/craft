@@ -15,6 +15,8 @@
   <h1 id="headline">Craft mobile E2E</h1>
   <ul id="results"></ul>
   <p id="deeplink"></p>
+  <p id="notification-permission"></p>
+  <p id="notification"></p>
   <script>
   // The page drives itself and reports through the bridge's own `log` action,
   // which is the one channel both runtimes already forward off-device: iOS
@@ -35,6 +37,13 @@
     // launch link and change what onLink receives.
     var dispatchedLinks = []
     window.addEventListener('craftDeepLink', function (event) { dispatchedLinks.push(event.detail || {}) })
+
+    // Every notification tap the native side dispatches, counted the same way,
+    // so a missing tap can be put on the right side of the bridge: none here
+    // means the app never handed it over, one here and none through onTap
+    // means the page's replay lost it.
+    var dispatchedTaps = 0
+    window.addEventListener('craftNotificationResponse', function () { dispatchedTaps++ })
 
     var NONCE = '__CRAFT_E2E_NONCE__'
     // Which platform the harness built this leg for. Substituted in from
@@ -487,6 +496,40 @@
       setTimeout(report, 250)
     }
 
+    // #255: a tap on a push that launches the app reaches a page that
+    // subscribes late, through notifications.onTap.
+    //
+    // The harness does on iOS what a person does, from an XCUITest: it opens
+    // the permission link and allows the prompt, kills the app, sends a real
+    // push with `simctl push`, and taps the banner. The page subscribes after
+    // the suite, seconds after the bridge appeared, and reports what it was
+    // handed. On any other launch it was handed nothing, and says so.
+    //
+    // Permission is asked for only when the link asks, because nothing
+    // answers the prompt on the launches simctl makes. iOS only: Android has
+    // no tap path to test yet.
+    function probeNotifications() {
+      if (window.craft.platform !== 'ios') return
+      var launch = dispatchedLinks.filter(function (detail) { return detail.initial === true })[0] || null
+      if (launch && launch.url.indexOf('://e2e/notify') !== -1) {
+        var said = function (text) { document.getElementById('notification-permission').textContent = 'CRAFT-E2E-NOTIFY-PERMISSION ' + text }
+        window.craft.permissions.request('notifications').then(said, function (error) { said('rejected ' + describeError(error).message) })
+      }
+      var onTap = window.craft.notifications && window.craft.notifications.onTap
+      var seen = { dispatched: 0, taps: [], onTap: typeof onTap, unsubscribe: null }
+      if (typeof onTap === 'function') {
+        seen.unsubscribe = typeof window.craft.notifications.onTap(function (detail) { seen.taps.push(detail || {}) })
+      }
+      // Long enough for a replay, or a second delivery, to have arrived.
+      setTimeout(function () {
+        seen.dispatched = dispatchedTaps
+        var line = 'CRAFT-E2E-NOTIFICATION ' + JSON.stringify(seen)
+        document.getElementById('notification').textContent = line
+        try { console.log(line) } catch (ignored) {}
+        try { if (window.craft && window.craft.log) window.craft.log(line) } catch (ignored) {}
+      }, 1500)
+    }
+
     function waitForBridge(attempt) {
       if (window.craft && window.craft.getDeviceInfo) return Promise.resolve(true)
       if (attempt >= 150) return Promise.resolve(false)
@@ -517,6 +560,7 @@
           emit({ event: 'done', passed: passed, failed: failed })
           document.getElementById('headline').textContent = failed ? 'FAILED' : 'PASSED'
           probeDeepLinks()
+          probeNotifications()
           return
         }
 

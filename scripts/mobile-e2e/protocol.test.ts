@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, NOTIFICATION_ROUTE, notificationPayload, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -379,6 +379,55 @@ describe('cold-start deep links', () => {
     expect(deepLinkProblems(deepLinkResults(`${noUnsubscribe}\n${passing.split('\n')[2]}`), LINK))
       .toEqual(['onLink returned undefined in the subscribe cold start, expected a function that unsubscribes'])
     expect(deepLinkProblems(deepLinkResults(passing), LINK)).toEqual([])
+  })
+})
+
+describe('notification tap cold start', () => {
+  const RUN = 'craft-e2e-ios-shim-1'
+  const line = (report: object) => `CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION ${JSON.stringify(report)}`
+  const tap = { aps: { alert: { title: 'Craft E2E', body: RUN } }, craftE2E: RUN, route: NOTIFICATION_ROUTE }
+  const judge = (report: object) => notificationTapProblems(notificationTapReport(`Test Case started.\n${line(report)}\n** TEST SUCCEEDED **`), RUN)
+
+  it('passes a late subscriber handed the tap that launched the app, once', () => {
+    expect(judge({ dispatched: 1, taps: [tap], onTap: 'function', unsubscribe: 'function' })).toEqual([])
+  })
+
+  // The two halves of #255, told apart.
+  it('blames native code when the app never dispatched the tap', () => {
+    expect(judge({ dispatched: 0, taps: [], onTap: 'function', unsubscribe: 'function' }))
+      .toEqual(['the app never dispatched the tap that launched it; native code dropped it before the page existed'])
+  })
+
+  it('blames the page when the tap was dispatched before anyone subscribed', () => {
+    const problems = judge({ dispatched: 1, taps: [], onTap: 'function', unsubscribe: 'function' })
+    expect(problems).toHaveLength(1)
+    expect(problems[0]).toContain('subscribed to notifications.onTap after launch was handed []')
+  })
+
+  it('fails a tap handed over twice, one from another run, or one that lost its route', () => {
+    expect(judge({ dispatched: 1, taps: [tap, tap], onTap: 'function', unsubscribe: 'function' })[0]).toContain('expected the tap that launched the app once')
+    expect(judge({ dispatched: 1, taps: [{ ...tap, craftE2E: 'an-earlier-run' }], onTap: 'function', unsubscribe: 'function' })[0]).toContain('expected the tap that launched the app once')
+    expect(judge({ dispatched: 1, taps: [{ ...tap, route: undefined }], onTap: 'function', unsubscribe: 'function' })[0]).toContain('without the push\'s route')
+  })
+
+  it('fails a bridge with no onTap, or one that returns no way to unsubscribe', () => {
+    expect(judge({ dispatched: 1, taps: [], onTap: 'undefined', unsubscribe: null }))
+      .toEqual(['notifications.onTap is undefined, so a page has no way to be handed a tap'])
+    expect(judge({ dispatched: 1, taps: [tap], onTap: 'function', unsubscribe: 'undefined' }))
+      .toEqual(['notifications.onTap returned undefined, expected a function that unsubscribes'])
+  })
+
+  it('names a run that never reported', () => {
+    expect(notificationTapProblems(notificationTapReport('** TEST FAILED **'), RUN, 'ios-shim/xcodebuild-notification.log'))
+      .toEqual(['the notification tap cold start never reported; see ios-shim/xcodebuild-notification.log'])
+  })
+
+  it('sends a push simctl accepts, whose body is the run the banner is found by', () => {
+    const payload = notificationPayload(RUN)
+    expect(new TextEncoder().encode(payload).length).toBeLessThanOrEqual(4096)
+    const parsed = JSON.parse(payload)
+    expect(parsed.aps.alert.body).toBe(RUN)
+    expect(parsed).toMatchObject({ craftE2E: RUN, route: NOTIFICATION_ROUTE })
   })
 })
 
