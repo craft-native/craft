@@ -1,8 +1,9 @@
 import XCTest
 
-/// Taps a pushed notification that launches the probe app, then has a second
-/// push arrive while it is open, and reports what its page was handed each
-/// time (#255, #256).
+/// Taps a pushed notification that launches the probe app, has a second push
+/// arrive while it is open, then taps a local notification the page scheduled
+/// with data, and reports what its page was handed each time (#255, #256,
+/// #258).
 ///
 /// A person's sequence, end to end: the app asks for permission and is
 /// allowed, the app is killed, a real push arrives through `simctl push`, and
@@ -10,6 +11,8 @@ import XCTest
 /// `simctl` runs on the host, so the test prints `CRAFT-E2E-PUSH-READY cold`
 /// once the app is gone and `CRAFT-E2E-PUSH-READY foreground` once the page
 /// is listening, and the harness sends each push when it reads the line.
+/// Last, a link has the page schedule a notification of its own, the app is
+/// killed before it fires, and its banner is tapped.
 ///
 /// As with the deep-link test, no assertions about the answer live here. The
 /// page's report is printed and `scripts/mobile-e2e/protocol.ts` judges it.
@@ -18,6 +21,8 @@ final class NotificationTapColdStartTests: XCTestCase {
     private var bundleId: String { environment["PROBE_BUNDLE_ID"] ?? "" }
     private var permissionLink: String { environment["PROBE_NOTIFY_LINK"] ?? "" }
     private var pushBody: String { environment["PROBE_PUSH_BODY"] ?? "" }
+    private var localLink: String { environment["PROBE_LOCAL_LINK"] ?? "" }
+    private var localBody: String { environment["PROBE_LOCAL_BODY"] ?? "" }
 
     override func setUp() {
         // Each step stands on the one before it; carrying on past a failure
@@ -25,10 +30,12 @@ final class NotificationTapColdStartTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testPushesReachThePage() throws {
+    func testNotificationsReachThePage() throws {
         XCTAssertFalse(bundleId.isEmpty, "PROBE_BUNDLE_ID is not set")
         XCTAssertFalse(permissionLink.isEmpty, "PROBE_NOTIFY_LINK is not set")
         XCTAssertFalse(pushBody.isEmpty, "PROBE_PUSH_BODY is not set")
+        XCTAssertFalse(localLink.isEmpty, "PROBE_LOCAL_LINK is not set")
+        XCTAssertFalse(localBody.isEmpty, "PROBE_LOCAL_BODY is not set")
 
         let app = XCUIApplication(bundleIdentifier: bundleId)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -60,7 +67,8 @@ final class NotificationTapColdStartTests: XCTestCase {
         // case that always worked.
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "the app did not stop, so this would not be a cold start")
-        tapColdPush(springboard, app: app)
+        print("CRAFT-E2E-PUSH-READY cold")
+        tapBanner(springboard, app: app, containing: pushBody)
 
         let report = app.staticTexts
             .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-NOTIFICATION '"))
@@ -84,9 +92,32 @@ final class NotificationTapColdStartTests: XCTestCase {
             .firstMatch
         _ = arrived.waitForExistence(timeout: 30)
         print("CRAFT-E2E-NOTIFICATION-RECEIVED-RESULT \(receipts.label)")
+
+        // #258: a notification the page scheduled itself, with data. The
+        // local link has the page schedule it a few seconds out, and the app
+        // is killed before it fires, so its tap is a cold start like the push.
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "the app did not stop before the local link")
+        XCUIDevice.shared.system.open(URL(string: localLink)!)
+        if open.waitForExistence(timeout: 5) { open.tap() }
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 60), "the local link did not start the app")
+        let scheduled = app.staticTexts
+            .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-LOCAL-SCHEDULED '"))
+            .firstMatch
+        XCTAssertTrue(scheduled.waitForExistence(timeout: 60), "the page never said whether it scheduled the notification")
+        XCTAssertEqual(scheduled.label, "CRAFT-E2E-LOCAL-SCHEDULED ok")
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "the app did not stop, so the local tap would not be a cold start")
+        tapBanner(springboard, app: app, containing: localBody)
+
+        let local = app.staticTexts
+            .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-NOTIFICATION '"))
+            .firstMatch
+        XCTAssertTrue(local.waitForExistence(timeout: 120), "the page never reported what the local notification's tap handed it")
+        print("CRAFT-E2E-LOCAL-RESULT \(local.label)")
     }
 
-    /// Asks the host for the cold push and taps its banner.
+    /// Taps the banner of a notification that has arrived or is about to.
     ///
     /// The banner, not Notification Center: on iOS 26 Notification Center is
     /// pulled down as the Lock Screen, and a tap there only offers Open. The
@@ -99,12 +130,11 @@ final class NotificationTapColdStartTests: XCTestCase {
     /// enough for the banner to go, and the test fails saying the tap could
     /// not find it. There is no retrying around that: a tap that misses ends
     /// the test method, even inside XCTExpectFailure.
-    private func tapColdPush(_ springboard: XCUIApplication, app: XCUIApplication) {
+    private func tapBanner(_ springboard: XCUIApplication, app: XCUIApplication, containing text: String) {
         let banner = springboard.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@", pushBody))
+            .matching(NSPredicate(format: "label CONTAINS %@", text))
             .firstMatch
-        print("CRAFT-E2E-PUSH-READY cold")
-        XCTAssertTrue(banner.waitForExistence(timeout: 120), "no banner for the push ever appeared")
+        XCTAssertTrue(banner.waitForExistence(timeout: 120), "no banner for \(text) ever appeared")
         banner.tap()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 60), "tapping the banner did not start the app")
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
@@ -432,6 +432,48 @@ describe('notification tap cold start', () => {
     }
     // The cold banner is searched for by its text; the other stage's must not match it.
     expect(notificationBody(RUN, 'foreground')).not.toContain(notificationBody(RUN, 'cold'))
+  })
+})
+
+describe('tap on a notification the page scheduled with data', () => {
+  const RUN = 'craft-e2e-ios-runtime-1'
+  const tap = { craftE2E: RUN, stage: 'local', nested: { kept: true } }
+  const pushed = { craftE2E: RUN, stage: 'cold', route: NOTIFICATION_ROUTE }
+  const output = (report: object) => [
+    `CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION ${JSON.stringify({ dispatched: 1, taps: [pushed], onTap: 'function', unsubscribe: 'function' })}`,
+    `CRAFT-E2E-LOCAL-RESULT CRAFT-E2E-NOTIFICATION ${JSON.stringify(report)}`,
+  ].join('\n')
+  const judge = (report: object) => localNotificationProblems(notificationTapReport(output(report), 'CRAFT-E2E-LOCAL-RESULT'), RUN)
+
+  it('passes a tap that hands back the data it was scheduled with, nested values included', () => {
+    expect(judge({ dispatched: 1, taps: [tap], onTap: 'function', unsubscribe: 'function' })).toEqual([])
+  })
+
+  // The bug: neither scheduler set userInfo.
+  it('fails a tap that hands the page {}', () => {
+    expect(judge({ dispatched: 1, taps: [{}], onTap: 'function', unsubscribe: 'function' }))
+      .toEqual(['a tap on a scheduled notification handed the page {}: the data it was scheduled with never reached userInfo'])
+  })
+
+  it('fails lost nesting, another run\'s data, a double delivery, and a tap never dispatched', () => {
+    expect(judge({ dispatched: 1, taps: [{ ...tap, nested: '[object Object]' }], onTap: 'function', unsubscribe: 'function' })[0]).toContain('nested data did not survive')
+    expect(judge({ dispatched: 1, taps: [{ ...tap, craftE2E: 'an-earlier-run' }], onTap: 'function', unsubscribe: 'function' })[0]).toContain('expected the data it was scheduled with once')
+    expect(judge({ dispatched: 1, taps: [tap, tap], onTap: 'function', unsubscribe: 'function' })[0]).toContain('expected the data it was scheduled with once')
+    expect(judge({ dispatched: 0, taps: [], onTap: 'function', unsubscribe: 'function' })).toEqual(['the app never dispatched the tap on the scheduled notification'])
+  })
+
+  it('reads each tap report by its own label', () => {
+    // The push's report is not the scheduled notification's, and a run that
+    // never got to the local stage has no local report at all.
+    expect(notificationTapReport(output({ dispatched: 1, taps: [tap] }))?.taps).toEqual([pushed])
+    expect(notificationTapReport(output({ dispatched: 1, taps: [tap] }), 'CRAFT-E2E-LOCAL-RESULT')?.taps).toEqual([tap])
+    expect(localNotificationProblems(notificationTapReport(output({}).split('\n')[0]!, 'CRAFT-E2E-LOCAL-RESULT'), RUN))
+      .toEqual(['the tap on the scheduled notification never reported; see xcodebuild-notification.log'])
+  })
+
+  it('finds the local banner by text the push banners do not share', () => {
+    expect(notificationBody(RUN, 'local')).toBe(`${RUN} local`)
+    expect(notificationBody(RUN, 'cold')).not.toContain(notificationBody(RUN, 'local'))
   })
 })
 
