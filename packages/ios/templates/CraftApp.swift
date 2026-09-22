@@ -4119,9 +4119,23 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+            let nativeError = error as NSError
+            // kCLErrorLocationUnknown is Core Location saying it has no fix
+            // *yet*, not that it failed. requestLocation gives up on it, so a
+            // one-shot asks again shortly instead of failing a caller whose
+            // fix was seconds off; its timeout still bounds the wait (#260).
+            // Nor is it an error event: a watch keeps running through it.
+            if nativeError.domain == kCLErrorDomain && nativeError.code == CLError.Code.locationUnknown.rawValue {
+                if let waiting = singleLocationCallbackId {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(1)) { [weak self] in
+                        guard let self, self.singleLocationCallbackId == waiting else { return }
+                        self.locationManager?.requestLocation()
+                    }
+                }
+                return
+            }
             let callbackId = singleLocationCallbackId
             finishSingleLocationRequest()
-            let nativeError = error as NSError
             let code = nativeError.domain == kCLErrorDomain && nativeError.code == CLError.Code.denied.rawValue
                 ? "PERMISSION_DENIED"
                 : "POSITION_UNAVAILABLE"

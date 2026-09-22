@@ -1779,6 +1779,20 @@ fn takePendingFix() ?PendingFix {
     return call;
 }
 
+/// Read the slot without clearing it, for an answer that is not yet the answer.
+fn peekPendingFix() ?PendingFix {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    return pending_fix;
+}
+
+fn pendingFixIs(ticket: ios_async.Ticket) bool {
+    state_mutex.lock();
+    defer state_mutex.unlock();
+    const call = pending_fix orelse return false;
+    return call.ticket.index == ticket.index and call.ticket.generation == ticket.generation;
+}
+
 fn takePendingFixIf(ticket: ios_async.Ticket) ?PendingFix {
     state_mutex.lock();
     defer state_mutex.unlock();
@@ -1798,6 +1812,21 @@ fn positionTimedOut(context: ?*anyopaque) callconv(.c) void {
 
 fn schedulePositionTimeout(ticket: ios_async.Ticket, timeout_ms: u32) void {
     ios_async.scheduleDeadline(ticket, timeout_ms, positionTimedOut);
+}
+
+/// How long a one-shot told "no fix yet" waits before asking again.
+const no_fix_retry_ms: u32 = 1_000;
+
+/// Ask again for the fix `kCLErrorLocationUnknown` said was not there yet,
+/// provided the call that was told to wait is still the one waiting. One that
+/// has since been answered, timed out or displaced stops the asking, so its
+/// own deadline is what bounds the whole wait.
+fn retryPendingFix(context: ?*anyopaque) callconv(.c) void {
+    if (!is_darwin) return;
+    if (!pendingFixIs(ios_async.ticketFromDeadline(context))) return;
+    const mgr = ensureManager() catch return;
+    const sel_request = selector("requestLocation") catch return;
+    objc.msgSend(mgr, sel_request);
 }
 
 /// Record the running watch. Overwriting is the whole behaviour: a second
@@ -1960,13 +1989,39 @@ fn didUpdateLocations(_: Id, _: Id, _: Id, locations: Id) callconv(.c) void {
 
 fn didFailWithError(_: Id, _: Id, _: Id, err_object: Id) callconv(.c) void {
     if (!is_darwin) return;
+    handleLocationFailure(
+        readNSString(err_object, "domain") orelse "(none)",
+        readNSInteger(err_object, "code"),
+        readNSString(err_object, "localizedDescription") orelse "(none)",
+    );
+}
 
-    // Read once and reused below: the log line is the one channel a
-    // `BridgeError` enum leaves for a rejected caller, and the event is the
-    // only channel a watch has at all.
-    const description = readNSString(err_object, "localizedDescription") orelse "(none)";
-    const domain = readNSString(err_object, "domain") orelse "(none)";
-    const native_code = readNSInteger(err_object, "code");
+/// `kCLErrorLocationUnknown`: Core Location has no fix *yet*.
+///
+/// Apple documents it as the manager being unable to get a location right
+/// away, not as a failure. `requestLocation` gives up on it, though, so a
+/// one-shot told this asks again shortly rather than failing a caller whose
+/// fix was seconds off: a phone with a cold GPS, or a loaded simulator, where
+/// it broke the slice job's whole location chain (#260). The caller's own
+/// timeout still bounds the wait.
+fn isNoFixYet(domain: []const u8, native_code: c_long) bool {
+    return native_code == 0 and std.mem.eql(u8, domain, "kCLErrorDomain");
+}
+
+/// What a CoreLocation error does, apart from reading it off the `NSError`.
+fn handleLocationFailure(domain: []const u8, native_code: c_long, description: []const u8) void {
+    // Not a failure, so neither a rejection nor `craftLocationError`: a watch
+    // keeps running through it, since `startUpdatingLocation` does keep trying,
+    // and an error event would tell the page otherwise.
+    if (isNoFixYet(domain, native_code)) {
+        if (peekPendingFix()) |call| {
+            std.log.info("location: no fix yet (kCLErrorLocationUnknown); asking again in {d} ms", .{no_fix_retry_ms});
+            ios_async.scheduleDeadline(call.ticket, no_fix_retry_ms, retryPendingFix);
+        } else {
+            std.log.info("location: no fix yet (kCLErrorLocationUnknown); Core Location is still trying", .{});
+        }
+        return;
+    }
 
     std.log.warn(
         "location: CLLocationManager failed - domain={s} code={d} description={s}",
@@ -2582,6 +2637,29 @@ test "the error event carries Swift's one-key message object" {
     try testing.expectEqual(@as(usize, 1), parsed.value.object.count());
     try testing.expect(parsed.value.object.get("code") == null);
     try testing.expect(parsed.value.object.get("domain") == null);
+}
+
+test "no fix yet keeps the one-shot waiting, and a real failure still settles it" {
+    // #260: `kCLErrorLocationUnknown` rejected a getCurrentPosition whose fix
+    // was seconds away, and on a loaded simulator that broke the slice job's
+    // whole location chain. Core Location's own word for it is "not yet".
+    try testing.expect(isNoFixYet("kCLErrorDomain", 0));
+    try testing.expect(!isNoFixYet("kCLErrorDomain", 1));
+    try testing.expect(!isNoFixYet("another-domain", 0));
+
+    _ = takeWatchAndPending();
+    const ticket: ios_async.Ticket = .{ .index = 4, .generation = 7 };
+    try testing.expect(publishPendingFix(ticket, empty_sels) == null);
+
+    handleLocationFailure("kCLErrorDomain", 0, "The operation couldn't be completed.");
+    const waiting = peekPendingFix() orelse return error.NoFixYetSettledTheCall;
+    try testing.expectEqual(ticket.generation, waiting.ticket.generation);
+    try testing.expect(pendingFixIs(ticket));
+    try testing.expect(!pendingFixIs(.{ .index = 4, .generation = 8 }));
+
+    // Anything else is still an answer, and it takes the call.
+    handleLocationFailure("kCLErrorDomain", 2, "network");
+    try testing.expect(takePendingFix() == null);
 }
 
 test "only Core Location denial becomes a permission error" {
