@@ -407,6 +407,27 @@ describe('Craft iOS builder', () => {
     expect(body.indexOf('content.userInfo = info')).toBeLessThan(body.indexOf('UNNotificationRequest(identifier: id, content: content'))
   })
 
+  it('asks again when Core Location has no fix yet, rather than failing the caller', async () => {
+    // #260: kCLErrorLocationUnknown rejected a getCurrentPosition whose fix
+    // was seconds away. requestLocation gives up on it, so the one-shot asks
+    // again while the same caller waits; its timeout still bounds the wait.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-location-no-fix-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: { enableGeolocation: true } })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    const failed = swift.slice(swift.indexOf('didFailWithError error: Error) {'))
+    const body = failed.slice(0, failed.indexOf('\n        }\n'))
+    const noFixYet = body.indexOf('nativeError.code == CLError.Code.locationUnknown.rawValue')
+    expect(noFixYet).toBeGreaterThan(-1)
+    // Decided before anything settles the caller or tells the page.
+    expect(noFixYet).toBeLessThan(body.indexOf('finishSingleLocationRequest()'))
+    expect(noFixYet).toBeLessThan(body.indexOf('rejectCallback('))
+    expect(noFixYet).toBeLessThan(body.indexOf('sendToWeb("craftLocationError"'))
+    // Asks again only for the caller that was told to wait.
+    expect(body).toContain('guard let self, self.singleLocationCallbackId == waiting else { return }')
+    expect(body).toContain('self.locationManager?.requestLocation()')
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({
