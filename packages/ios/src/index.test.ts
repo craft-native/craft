@@ -393,6 +393,20 @@ describe('Craft iOS builder', () => {
     expect(handle.slice(0, handle.indexOf('\n    }\n'))).toContain('sendToWeb("craftNotificationReceived"')
   })
 
+  it('schedules a local notification with the data the page gave it', async () => {
+    // #258: `data` never reached userInfo, so a tap on a scheduled
+    // notification handed the page {} and it had nothing to route on.
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-notification-data-'))
+    await init({ name: 'WildLoop', bundleId: 'org.wildloop.app', output, config: { enableLocalNotifications: true } })
+    const swift = readFileSync(join(output, 'Sources', 'WildLoopApp.swift'), 'utf8')
+
+    const schedule = swift.slice(swift.indexOf('private func scheduleLocalNotification('))
+    const body = schedule.slice(0, schedule.indexOf('\n        }\n'))
+    expect(body).toContain('if let info = data["data"] as? [String: Any] { content.userInfo = info }')
+    // Set on the content the request is made from, before it is filed.
+    expect(body.indexOf('content.userInfo = info')).toBeLessThan(body.indexOf('UNNotificationRequest(identifier: id, content: content'))
+  })
+
   it('settles calendar callbacks only after a real EventKit operation', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-calendar-'))
     await init({
