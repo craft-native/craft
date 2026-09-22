@@ -1179,6 +1179,27 @@ export interface NotificationOptions {
   scheduleAt?: number
 }
 
+/** A notification as the bridges read it: `delay` in place of `scheduleAt`. */
+export type BridgeNotification = Omit<NotificationOptions, 'scheduleAt'> & { delay?: number }
+
+/**
+ * The bridges' spelling of a notification: `scheduleAt` becomes `delay`.
+ *
+ * Both bridges schedule from `delay`, milliseconds from now, and iOS also from
+ * `timestamp`; neither reads `scheduleAt`, so a reminder meant for an hour
+ * from now fired at once (#261). `delay` rather than `timestamp` because
+ * Android reads only `delay`, and because an interval is what an instant
+ * means, where iOS's calendar trigger would move with the device's time zone.
+ * A moment already past sends no delay at all, which both bridges deliver
+ * now: a zero delay raises inside UserNotifications on the Swift side.
+ */
+export function bridgeNotification(options: NotificationOptions, now: number = Date.now()): BridgeNotification {
+  const { scheduleAt, ...rest } = options
+  if (scheduleAt === undefined) return rest
+  const wait = Math.ceil(scheduleAt - now)
+  return wait > 0 ? { ...rest, delay: wait } : rest
+}
+
 /**
  * Local notifications API.
  *
@@ -1226,7 +1247,7 @@ export const notifications = {
   async schedule(options: NotificationOptions): Promise<void> {
     const craft = getCraftMobile()
     if (typeof window !== 'undefined' && craft?.notifications) {
-      return craft.notifications.schedule(options)
+      return craft.notifications.schedule(bridgeNotification(options))
     }
     throw new Error('Scheduled notifications not available in web')
   },
@@ -1637,7 +1658,7 @@ interface CraftMobileBridge {
   }
   notifications?: {
     show(options: NotificationOptions): Promise<void>
-    schedule(options: NotificationOptions): Promise<void>
+    schedule(options: BridgeNotification): Promise<void>
     cancelAll(): Promise<void>
     setBadge(count: number): Promise<void>
   }

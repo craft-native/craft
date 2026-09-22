@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import { normalizeDeepLinkURL, pushNotifications, watchConnectivity } from '../api/mobile'
+import { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -62,6 +62,53 @@ describe('Mobile notification taps', () => {
       // The replay hands over whatever it held; the SDK passes it through.
       handed?.({ screen: 'plant-id' })
       expect(seen).toEqual([{ screen: 'plant-id' }])
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
+  })
+})
+
+describe('Mobile scheduled notifications', () => {
+  // #261: the bridges schedule from `delay`, and neither reads `scheduleAt`,
+  // so a reminder meant for an hour from now fired at once.
+  const NOW = 1_700_000_000_000
+
+  it('turns scheduleAt into a delay from now, and sends no scheduleAt', () => {
+    const sent = bridgeNotification({ title: 'Reminder', body: 'Break', scheduleAt: NOW + 3_600_000, data: { screen: 'plant-id' } }, NOW)
+    expect(sent).toEqual({ title: 'Reminder', body: 'Break', delay: 3_600_000, data: { screen: 'plant-id' } })
+    expect('scheduleAt' in sent).toBe(false)
+  })
+
+  it('delivers now for a moment already here or past, without a zero delay', () => {
+    // A zero delay raises inside UserNotifications on the Swift side, so
+    // "now" is no delay at all, which both bridges deliver immediately.
+    for (const scheduleAt of [NOW, NOW - 5_000]) {
+      const sent = bridgeNotification({ title: 'Now', scheduleAt }, NOW)
+      expect(sent).toEqual({ title: 'Now' })
+    }
+    // A fraction of a millisecond still waits: Android reads whole ms.
+    expect(bridgeNotification({ title: 'Soon', scheduleAt: NOW + 0.4 }, NOW)).toEqual({ title: 'Soon', delay: 1 })
+  })
+
+  it('leaves a notification with no scheduleAt as it was', () => {
+    expect(bridgeNotification({ title: 'Plain', badge: 2 }, NOW)).toEqual({ title: 'Plain', badge: 2 })
+  })
+
+  it('schedules through the bridge with the delay, not scheduleAt', async () => {
+    const previousWindow = (globalThis as any).window
+    const sent: unknown[] = []
+    ;(globalThis as any).window = { craft: { notifications: { schedule: async (options: unknown) => { sent.push(options) } } } }
+    try {
+      const before = Date.now()
+      await notifications.schedule({ title: 'Reminder', scheduleAt: before + 3_600_000 })
+      const after = Date.now()
+      expect(sent).toHaveLength(1)
+      const options = sent[0] as { delay?: number, scheduleAt?: number }
+      expect(options.scheduleAt).toBeUndefined()
+      expect(options.delay).toBeGreaterThanOrEqual(3_600_000 - (after - before))
+      expect(options.delay).toBeLessThanOrEqual(3_600_000)
     }
     finally {
       if (previousWindow === undefined) delete (globalThis as any).window
