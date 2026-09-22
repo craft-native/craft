@@ -453,8 +453,11 @@ export const NOTIFICATION_ROUTE = '/e2e/notification-tap'
  */
 export type PushStage = 'cold' | 'foreground'
 
-/** The banner text of a stage's push, which the UI test finds the banner by. */
-export function notificationBody(run: string, stage: PushStage): string {
+/**
+ * The banner text of a stage's notification, which the UI test finds the
+ * banner by: a pushed stage, or `local`, the one the page schedules (#258).
+ */
+export function notificationBody(run: string, stage: PushStage | 'local'): string {
   return `${run} ${stage}`
 }
 
@@ -485,12 +488,15 @@ export interface NotificationTapReport {
  * The page's report the UI test printed, read out of xcodebuild's output.
  *
  * `ios-uitests/NotificationTapColdStartTests.swift` writes one
- * `CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION {json}` line. None,
- * or one whose JSON does not parse, is null: the test never got that far.
+ * `<label> CRAFT-E2E-NOTIFICATION {json}` line per tap: labelled
+ * `CRAFT-E2E-NOTIFICATION-RESULT` for the push, `CRAFT-E2E-LOCAL-RESULT` for
+ * the scheduled notification. None, or one whose JSON does not parse, is
+ * null: the test never got that far.
  */
-export function notificationTapReport(output: string): NotificationTapReport | null {
+export function notificationTapReport(output: string, label = 'CRAFT-E2E-NOTIFICATION-RESULT'): NotificationTapReport | null {
   for (const line of output.split('\n')) {
-    const match = line.match(/CRAFT-E2E-NOTIFICATION-RESULT CRAFT-E2E-NOTIFICATION (\{.*\})\s*$/)
+    const at = line.indexOf(`${label} CRAFT-E2E-NOTIFICATION `)
+    const match = at === -1 ? null : line.slice(at + label.length + 1).match(/^CRAFT-E2E-NOTIFICATION (\{.*\})\s*$/)
     if (!match) continue
     try {
       const report = JSON.parse(match[1]!) as NotificationTapReport
@@ -532,6 +538,33 @@ export function notificationTapProblems(
   else if (ours[0]!.route !== NOTIFICATION_ROUTE)
     problems.push(`the tap reached the page without the push's route: it carried ${JSON.stringify(ours[0])}`)
   return problems
+}
+
+/**
+ * Why the tap on the notification the page scheduled is not a pass (#258).
+ *
+ * The page scheduled it with `data`, and the tap must hand that back once,
+ * nested values included. The bug handed the page `{}`: neither scheduler put
+ * `data` into userInfo, so there was nothing for the tap to carry.
+ */
+export function localNotificationProblems(
+  report: NotificationTapReport | null,
+  run: string,
+  evidence = 'xcodebuild-notification.log',
+): string[] {
+  if (!report)
+    return [`the tap on the scheduled notification never reported; see ${evidence}`]
+  if (report.dispatched === 0)
+    return ['the app never dispatched the tap on the scheduled notification']
+  if (report.taps.length === 1 && Object.keys(report.taps[0]!).length === 0)
+    return ['a tap on a scheduled notification handed the page {}: the data it was scheduled with never reached userInfo']
+
+  const ours = report.taps.filter(tap => tap.craftE2E === run && tap.stage === 'local')
+  if (ours.length !== 1 || report.taps.length !== 1)
+    return [`a tap on the scheduled notification handed the page ${JSON.stringify(report.taps)}, expected the data it was scheduled with once`]
+  if ((ours[0]!.nested as { kept?: unknown } | undefined)?.kept !== true)
+    return [`the scheduled notification's nested data did not survive: it carried ${JSON.stringify(ours[0])}`]
+  return []
 }
 
 /** What a page that was open when a push arrived was handed by onReceive. */
