@@ -1495,6 +1495,11 @@ export interface CraftNotificationResponseEvent extends CustomEvent {
   detail: Record<string, any>;
 }
 
+/** A notification that arrived while the app was open, in the same shape as a tap. iOS. */
+export interface CraftNotificationReceivedEvent extends CustomEvent {
+  detail: Record<string, any>;
+}
+
 export interface CraftWatchUserInfoEvent extends CustomEvent {
   detail: Record<string, any>;
 }
@@ -1546,6 +1551,7 @@ declare global {
     craftNetworkChange: CraftNetworkChangeEvent;
     craftPushToken: CraftPushTokenEvent;
     craftNotificationResponse: CraftNotificationResponseEvent;
+    craftNotificationReceived: CraftNotificationReceivedEvent;
     craftWatchMessage: CraftWatchMessageEvent;
     craftWatchReachability: CraftWatchReachabilityEvent;
     craftWatchContext: CraftWatchContextEvent;
