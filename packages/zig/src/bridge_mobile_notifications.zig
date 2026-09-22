@@ -707,12 +707,16 @@ const Schedule = struct {
     subtitle: ?[]u8,
     badge: ?i64,
     trigger: Trigger,
+    /// The page's `data` object as JSON text, for `userInfo`. Text here so
+    /// parsing stays pure; `buildRequest` turns it into an NSDictionary.
+    user_info: ?[]u8 = null,
 
     fn deinit(self: *Schedule, allocator: std.mem.Allocator) void {
         if (self.id) |v| allocator.free(v);
         allocator.free(self.title);
         allocator.free(self.body);
         if (self.subtitle) |v| allocator.free(v);
+        if (self.user_info) |v| allocator.free(v);
         self.* = undefined;
     }
 };
@@ -759,6 +763,16 @@ fn parseSchedule(allocator: std.mem.Allocator, data: []const u8) !Schedule {
     } else null;
     errdefer if (id) |v| allocator.free(v);
 
+    // `data` rides along as the notification's userInfo, which is what a tap
+    // (#255) and an arrival (#256) hand the page. It was dropped, so a
+    // scheduled notification reached the page as `{}` (#258). An object only,
+    // as `as? [String: Any]` reads it.
+    const user_info: ?[]u8 = if (notification.get("data")) |v| switch (v) {
+        .object => try jsonText(allocator, v),
+        else => null,
+    } else null;
+    errdefer if (user_info) |v| allocator.free(v);
+
     return .{
         .id = id,
         .title = title,
@@ -766,7 +780,15 @@ fn parseSchedule(allocator: std.mem.Allocator, data: []const u8) !Schedule {
         .subtitle = subtitle,
         .badge = numberOr(notification.get("badge")),
         .trigger = triggerFrom(notification),
+        .user_info = user_info,
     };
+}
+
+fn jsonText(allocator: std.mem.Allocator, value: std.json.Value) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(value, .{}, &out.writer);
+    return out.toOwnedSlice();
 }
 
 fn stringOr(value: ?std.json.Value, fallback: []const u8) []const u8 {
@@ -827,6 +849,9 @@ const ScheduleSels = struct {
     request_with: Id,
     add_request: Id,
     uuid_string: Id,
+    set_user_info: Id,
+    data_with_bytes: Id,
+    json_object_with_data: Id,
 
     fn resolve() !ScheduleSels {
         if (!is_darwin) return error.UnsupportedPlatform;
@@ -848,6 +873,9 @@ const ScheduleSels = struct {
             .request_with = try selector("requestWithIdentifier:content:trigger:"),
             .add_request = try selector("addNotificationRequest:withCompletionHandler:"),
             .uuid_string = try selector("UUIDString"),
+            .set_user_info = try selector("setUserInfo:"),
+            .data_with_bytes = try selector("dataWithBytes:length:"),
+            .json_object_with_data = try selector("JSONObjectWithData:options:error:"),
         };
     }
 };
@@ -1113,6 +1141,7 @@ fn buildRequest(schedule: *Schedule, sels: ScheduleSels) !Id {
     try setStringField(content, sels.set_title, schedule.title, sels);
     try setStringField(content, sels.set_body, schedule.body, sels);
     if (schedule.subtitle) |sub| try setStringField(content, sels.set_subtitle, sub, sels);
+    if (schedule.user_info) |json| objc.msgSendVoid1(content, sels.set_user_info, try jsonObject(json, sels));
 
     if (schedule.badge) |badge| {
         const NSNumber = objc.objc_getClass("NSNumber") orelse return error.ClassNotFound;
@@ -1139,6 +1168,25 @@ fn buildRequest(schedule: *Schedule, sels: ScheduleSels) !Id {
     const request = req(UNNotificationRequest, sels.request_with, ns_id, content, trigger);
     if (request == null) return error.NoRequest;
     return request;
+}
+
+/// The page's `data` as the NSDictionary `userInfo` takes, read back through
+/// NSJSONSerialization into the same Foundation types WebKit hands the Swift
+/// side. JSON the page sent always reads; refusing when it does not beats
+/// scheduling a notification that would reach the page as `{}` again.
+fn jsonObject(json: []const u8, sels: ScheduleSels) !Id {
+    const NSData = objc.objc_getClass("NSData") orelse return error.ClassNotFound;
+    const DataFn = *const fn (Id, Id, [*]const u8, c_ulong) callconv(.c) Id;
+    const make_data: DataFn = @ptrCast(&objc.objc_msgSend);
+    const bytes = make_data(NSData, sels.data_with_bytes, json.ptr, json.len);
+    if (bytes == null) return error.NoData;
+
+    const NSJSONSerialization = objc.objc_getClass("NSJSONSerialization") orelse return error.ClassNotFound;
+    const ReadFn = *const fn (Id, Id, Id, c_ulong, ?*Id) callconv(.c) Id;
+    const read: ReadFn = @ptrCast(&objc.objc_msgSend);
+    const object = read(NSJSONSerialization, sels.json_object_with_data, bytes, 0, null);
+    if (object == null) return error.UserInfoUnreadable;
+    return object;
 }
 
 /// A nil trigger is legal and means "deliver now" — see `Trigger`.
@@ -1369,6 +1417,33 @@ test "the payload is read the way the spec reads it" {
         bridge_error.BridgeError.MissingData,
         parseSchedule(allocator, "{}"),
     );
+}
+
+test "the page's data travels as userInfo, and only an object does" {
+    // #258: `data` was never read, so a tap on a scheduled notification handed
+    // the page `{}` and "open the thing this is about" had nothing to open.
+    const allocator = testing.allocator;
+
+    var with = try parseSchedule(allocator, "{\"notification\":{\"title\":\"t\",\"data\":{\"screen\":\"plant-id\",\"n\":2,\"deep\":{\"ok\":true}}}}");
+    defer with.deinit(allocator);
+    const text = with.user_info orelse return error.DataDropped;
+    const round = try std.json.parseFromSlice(std.json.Value, allocator, text, .{});
+    defer round.deinit();
+    try testing.expectEqualStrings("plant-id", round.value.object.get("screen").?.string);
+    try testing.expectEqual(@as(i64, 2), round.value.object.get("n").?.integer);
+    try testing.expect(round.value.object.get("deep").?.object.get("ok").?.bool);
+
+    // `as? [String: Any]`: anything but an object is no userInfo at all.
+    for ([_][]const u8{
+        "{\"notification\":{\"title\":\"t\"}}",
+        "{\"notification\":{\"data\":\"plant-id\"}}",
+        "{\"notification\":{\"data\":[1,2]}}",
+        "{\"notification\":{\"data\":null}}",
+    }) |payload| {
+        var without = try parseSchedule(allocator, payload);
+        defer without.deinit(allocator);
+        try testing.expect(without.user_info == null);
+    }
 }
 
 test "a non-positive delay delivers now instead of raising" {

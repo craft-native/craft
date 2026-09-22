@@ -4433,6 +4433,10 @@ struct CraftWebView: UIViewRepresentable {
                 content.body = data["body"] as? String ?? ""
                 if let subtitle = data["subtitle"] as? String { content.subtitle = subtitle }
                 if let badge = data["badge"] as? Int { content.badge = NSNumber(value: badge) }
+                // The page's `data`, which is what a tap (#255) and an arrival
+                // (#256) hand back. It was dropped, so a tap on a scheduled
+                // notification reached the page as {} (#258).
+                if let info = data["data"] as? [String: Any] { content.userInfo = info }
                 content.sound = .default
 
                 let id = data["id"] as? String ?? UUID().uuidString
