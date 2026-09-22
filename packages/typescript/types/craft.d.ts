@@ -1258,6 +1258,8 @@ export interface NotificationData {
   badge?: number;
   timestamp?: number;
   delay?: number;
+  /** Handed back to the page when the notification is tapped or arrives. */
+  data?: Record<string, any>;
 }
 
 export interface PendingNotification {
