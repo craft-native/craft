@@ -97,6 +97,9 @@ jobs:
         working-directory: packages/typescript
         run: bun test --coverage
 
+      - name: Soak retained window routing across fresh DOM fixtures
+        run: bun run test:window-routing
+
       - name: Generate coverage summary
         if: always()
         working-directory: packages/typescript

@@ -37,6 +37,7 @@
     "verify:docs": "bun scripts/verify-doc-links.ts",
     "test": "command -v zig >/dev/null 2>&1 || eval \"$(pantry env | sed -n '/^export /,$p')\"; cd packages/zig && zig build test",
     "test:sdk": "cd packages/typescript && bun test",
+    "test:window-routing": "bun test packages/typescript/src/__tests__/window-routing.test.ts --rerun-each=100 --randomize --seed=254",
     "test:native-lifecycle": "bun scripts/native-lifecycle.ts",
     "test:mobile-e2e:ios": "bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib",
     "test:mobile-e2e:android": "bun scripts/mobile-e2e.ts --platform android --android-runtime packages/zig/zig-out/android",
