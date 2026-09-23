@@ -194,17 +194,16 @@ pub fn errorMessage(err: BridgeError) []const u8 {
 /// the dispatcher exposes. Errors the protocol cannot name become the honest
 /// catch-all instead of leaving the page without a reply.
 pub fn fromHandlerError(err: anyerror) BridgeError {
+    // Preserve every explicitly declared protocol error before translating
+    // implementation aliases. A hand-maintained subset loses useful errors
+    // (for example WebViewHandleNotSet) when new handlers start returning them.
+    inline for (@typeInfo(BridgeError).error_set.error_names.?) |name| {
+        const protocol_error = @field(BridgeError, name);
+        if (err == protocol_error) return protocol_error;
+    }
     return switch (err) {
-        error.AllocationFailed, error.OutOfMemory => BridgeError.AllocationFailed,
-        error.UnknownAction => BridgeError.UnknownAction,
-        error.MissingData => BridgeError.MissingData,
-        error.InvalidJSON => BridgeError.InvalidJSON,
-        error.InvalidParameter => BridgeError.InvalidParameter,
-        error.Busy => BridgeError.Busy,
-        error.PlatformNotSupported, error.UnsupportedPlatform => BridgeError.PlatformNotSupported,
-        error.NotFound => BridgeError.NotFound,
-        error.PermissionDenied => BridgeError.PermissionDenied,
-        error.Timeout => BridgeError.Timeout,
+        error.OutOfMemory => BridgeError.AllocationFailed,
+        error.UnsupportedPlatform => BridgeError.PlatformNotSupported,
         else => BridgeError.NativeCallFailed,
     };
 }
@@ -379,7 +378,10 @@ test "errorCodeString returns correct codes" {
 
 test "handler error narrowing preserves protocol errors" {
     const testing = std.testing;
-    try testing.expectEqual(BridgeError.Busy, fromHandlerError(error.Busy));
+    inline for (@typeInfo(BridgeError).error_set.error_names.?) |name| {
+        const protocol_error = @field(BridgeError, name);
+        try testing.expectEqual(protocol_error, fromHandlerError(protocol_error));
+    }
     try testing.expectEqual(BridgeError.PlatformNotSupported, fromHandlerError(error.UnsupportedPlatform));
     try testing.expectEqual(BridgeError.AllocationFailed, fromHandlerError(error.OutOfMemory));
     try testing.expectEqual(BridgeError.NativeCallFailed, fromHandlerError(error.NotInTheProtocol));

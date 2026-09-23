@@ -764,6 +764,10 @@ test "with no host shim present, the hand-off declines rather than failing" {
 }
 
 test "a handler error reaches the page as something the protocol can say" {
+    inline for (@typeInfo(bridge_error.BridgeError).error_set.error_names.?) |name| {
+        const protocol_error = @field(bridge_error.BridgeError, name);
+        try testing.expectEqual(protocol_error, asBridgeError(protocol_error));
+    }
     // A handler's error set is wider than BridgeError. Whatever it raises still
     // has to arrive as an error code, because the alternative is a handler that
     // fails silently and leaves the caller on a promise that never settles.
@@ -788,6 +792,31 @@ test "a handler error reaches the page as something the protocol can say" {
         bridge_error.BridgeError.NativeCallFailed,
         asBridgeError(error.SomethingNobodyAnticipated),
     );
+}
+
+test "share without a webview keeps its specific error in the correlated reply" {
+    if (!builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+    const saved = getWebView();
+    defer setWebView(saved);
+    setWebView(null);
+
+    var system = bridge_mobile_system.SystemBridge.init(testing.allocator);
+    defer system.deinit();
+    system.handleMessage("share", "{\"text\":\"fixture\"}") catch |err| {
+        const narrowed = asBridgeError(err);
+        try testing.expectEqual(bridge_error.BridgeError.WebViewHandleNotSet, narrowed);
+        var context = bridge_error.ErrorContext.init(narrowed, "share", bridge_error.errorMessage(narrowed));
+        context.request_id = 71;
+        const json = try context.toJSON(testing.allocator);
+        defer testing.allocator.free(json);
+        const parsed = try std.json.parseFromSlice(std.json.Value, testing.allocator, json, .{});
+        defer parsed.deinit();
+        try testing.expectEqualStrings("WEBVIEW_HANDLE_NOT_SET", parsed.value.object.get("code").?.string);
+        try testing.expectEqualStrings("share", parsed.value.object.get("action").?.string);
+        try testing.expectEqual(@as(i64, 71), parsed.value.object.get("id").?.integer);
+        return;
+    };
+    return error.ShareSucceededWithoutWebView;
 }
 
 test "a request id survives the trip out to the host and back" {
