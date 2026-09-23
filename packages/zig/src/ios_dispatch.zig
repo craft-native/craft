@@ -418,18 +418,7 @@ fn hostServesItself(action: []const u8) bool {
 /// settle. `NativeCallFailed` is the honest catch-all for "it broke in a way
 /// the protocol has no word for".
 fn asBridgeError(err: anyerror) bridge_error.BridgeError {
-    return switch (err) {
-        error.AllocationFailed, error.OutOfMemory => bridge_error.BridgeError.AllocationFailed,
-        error.InvalidJSON => bridge_error.BridgeError.InvalidJSON,
-        error.InvalidParameter => bridge_error.BridgeError.InvalidParameter,
-        error.MissingData => bridge_error.BridgeError.MissingData,
-        error.NotFound => bridge_error.BridgeError.NotFound,
-        error.PermissionDenied => bridge_error.BridgeError.PermissionDenied,
-        error.PlatformNotSupported, error.UnsupportedPlatform => bridge_error.BridgeError.PlatformNotSupported,
-        error.Timeout => bridge_error.BridgeError.Timeout,
-        error.UnknownAction => bridge_error.BridgeError.UnknownAction,
-        else => bridge_error.BridgeError.NativeCallFailed,
-    };
+    return bridge_error.fromHandlerError(err);
 }
 
 /// Hand an action to the host shim. Returns false when there is no shim.
@@ -789,6 +778,10 @@ test "a handler error reaches the page as something the protocol can say" {
     try testing.expectEqual(
         bridge_error.BridgeError.PlatformNotSupported,
         asBridgeError(error.UnsupportedPlatform),
+    );
+    try testing.expectEqual(
+        bridge_error.BridgeError.Busy,
+        asBridgeError(error.Busy),
     );
     // The catch-all. An error the protocol has no word for still gets one.
     try testing.expectEqual(

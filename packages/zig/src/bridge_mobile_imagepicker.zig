@@ -1434,7 +1434,7 @@ test "a delegate callback with no call recorded touches no slot" {
 test "the pool refusal is an error the caller sees, not a dropped call" {
     try testing.expectEqual(
         bridge_error.BridgeError.Busy,
-        poolFull(A.open_camera),
+        bridge_error.fromHandlerError(poolFull(A.open_camera)),
     );
 }
 
