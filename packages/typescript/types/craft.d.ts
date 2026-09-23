@@ -249,13 +249,13 @@ export interface CraftBridge {
    * @param callback - Function called with new position
    * @returns Watch ID
    */
-  watchPosition(callback: (position: Position) => void): string;
+  watchPosition(callback: (position: Position) => void): number;
 
   /**
    * Clear position watch
-   * @param watchId - Watch ID from watchPosition
+   * @param watchId - Watch ID from watchPosition; omit to clear every active watch
    */
-  clearWatch(watchId: string): void;
+  clearWatch(watchId?: number): void;
 
   // ==================== Sensors ====================
 

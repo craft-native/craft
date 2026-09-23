@@ -175,3 +175,24 @@ test "every direct method craft.d.ts declares exists directly on both bridges" {
         return error.DeclaredMethodMissingFromBridge;
     }
 }
+
+test "the flat location pair uses numeric handles and delegates to the v1 iOS surface" {
+    try testing.expect(std.mem.indexOf(
+        u8,
+        sdk_types,
+        "watchPosition(callback: (position: Position) => void): number;",
+    ) != null);
+    try testing.expect(std.mem.indexOf(u8, sdk_types, "clearWatch(watchId?: number): void;") != null);
+
+    const ios = craftObject(ios_spec) orelse return error.IosCraftObjectNotFound;
+    try testing.expect(std.mem.indexOf(
+        u8,
+        ios,
+        "watchPosition: function(callback) {\n                    return this.location.watchPosition(callback);",
+    ) != null);
+    try testing.expect(std.mem.indexOf(
+        u8,
+        ios,
+        "clearWatch: function(watchId) {\n                    return this.location.clearWatch(watchId);",
+    ) != null);
+}

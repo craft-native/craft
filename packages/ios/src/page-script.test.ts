@@ -85,6 +85,7 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
   return {
     craft,
     last,
+    count: (action: string) => posts.filter(message => message.action === action).length,
     // What Swift's resolveCallback and rejectCallback evaluate.
     answer: (action: string, value: unknown) => craft._resolveCallback(last(action).callbackId, value),
     refuse: (action: string, message: string, code: string) => craft._rejectCallback(last(action).callbackId, message, code),
@@ -96,6 +97,8 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
       page.dispatchEvent(new CustomEvent('craftNotificationResponse', { detail })),
     receive: (detail: unknown) =>
       page.dispatchEvent(new CustomEvent('craftNotificationReceived', { detail })),
+    position: (detail: unknown) =>
+      page.dispatchEvent(new CustomEvent('craftLocationUpdate', { detail })),
   }
 }
 
@@ -108,7 +111,6 @@ describe('the injected iOS page script', () => {
     ['startListening', craft => craft.startListening()],
     ['stopListening', craft => craft.stopListening()],
     ['watchPosition', craft => craft.geolocation.watchPosition(() => {})],
-    ['clearWatch', craft => craft.geolocation.clearWatch()],
   ]
 
   for (const [action, call] of calls) {
@@ -122,6 +124,12 @@ describe('the injected iOS page script', () => {
       expect(await returned).toBe(true)
     })
   }
+
+  it('settles a legacy clear with no active watch without posting a redundant stop', async () => {
+    const page = loadPage()
+    expect(await page.craft.geolocation.clearWatch()).toBe(true)
+    expect(page.count('clearWatch')).toBe(0)
+  })
 
   // #226: the counter restarted at 0 on every injection, so the seventh call
   // of a reloaded page drew `cb_7` again — and an answer still owed to the
@@ -165,17 +173,84 @@ describe('the injected iOS page script', () => {
     await expect(haptic).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
   })
 
-  it('sends the v1 location clearWatch with an id once the last watch leaves', async () => {
+  it('makes the flat location pair use numeric v1 handles and one native stream', async () => {
     const page = loadPage()
-    const first = page.craft.location.watchPosition(() => {})
+    const first = page.craft.watchPosition(() => {})
     const second = page.craft.location.watchPosition(() => {})
+    expect(typeof first).toBe('number')
+    expect(typeof second).toBe('number')
+    expect(second).not.toBe(first)
+    expect(page.count('watchPosition')).toBe(1)
     page.answer('watchPosition', true)
 
-    page.craft.location.clearWatch(first)
+    page.craft.clearWatch(first)
     expect(() => page.last('clearWatch')).toThrow()
     page.craft.location.clearWatch(second)
-    expect(page.last('clearWatch').callbackId).toMatch(/^cb_\d+$/)
+    expect(page.count('clearWatch')).toBe(1)
     page.answer('clearWatch', true)
+  })
+
+  it('keeps no-argument clearWatch compatible by clearing every active handle once', () => {
+    const page = loadPage()
+    let calls = 0
+    page.craft.watchPosition(() => calls++)
+    page.craft.location.watchPosition(() => calls++)
+    page.answer('watchPosition', true)
+
+    page.craft.clearWatch()
+    expect(page.count('clearWatch')).toBe(1)
+    page.position({ latitude: 1 })
+    expect(calls).toBe(0)
+
+    page.craft.clearWatch()
+    expect(page.count('clearWatch')).toBe(1)
+  })
+
+  it('drops a refused v1 start so the next subscriber asks native again', async () => {
+    const page = loadPage()
+    let calls = 0
+    page.craft.watchPosition(() => calls++)
+    page.refuse('watchPosition', 'Location is disabled', 'CAPABILITY_DISABLED')
+    await Promise.resolve()
+
+    page.position({ latitude: 1 })
+    expect(calls).toBe(0)
+    page.craft.watchPosition(() => calls++)
+    expect(page.count('watchPosition')).toBe(2)
+    page.refuse('watchPosition', 'Location is disabled', 'CAPABILITY_DISABLED')
+    await Promise.resolve()
+  })
+
+  it('removes a refused legacy listener instead of leaving a dead watch behind', async () => {
+    const page = loadPage()
+    let calls = 0
+    const started = page.craft.geolocation.watchPosition(() => calls++)
+    page.refuse('watchPosition', 'Location is disabled', 'CAPABILITY_DISABLED')
+
+    await expect(started).rejects.toMatchObject({ code: 'CAPABILITY_DISABLED' })
+    page.position({ latitude: 1 })
+    expect(calls).toBe(0)
+  })
+
+  it('does not let a legacy clear stop v1 subscribers sharing the native stream', async () => {
+    const page = loadPage()
+    let v1Calls = 0
+    let legacyCalls = 0
+    const id = page.craft.location.watchPosition(() => v1Calls++)
+    page.answer('watchPosition', true)
+    await Promise.resolve()
+
+    const legacyStarted = page.craft.geolocation.watchPosition(() => legacyCalls++)
+    expect(page.count('watchPosition')).toBe(1)
+    expect(await legacyStarted).toBe(true)
+    expect(await page.craft.geolocation.clearWatch()).toBe(true)
+    expect(page.count('clearWatch')).toBe(0)
+
+    page.position({ latitude: 1 })
+    expect(v1Calls).toBe(1)
+    expect(legacyCalls).toBe(0)
+    page.craft.location.clearWatch(id)
+    expect(page.count('clearWatch')).toBe(1)
   })
 
   // Haptics are feedback. An app that left enableHaptics off must not have

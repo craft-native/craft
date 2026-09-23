@@ -2125,10 +2125,10 @@ struct CraftWebView: UIViewRepresentable {
                     return this.geolocation.getCurrentPosition({});
                 },
                 watchPosition: function(callback) {
-                    return this.geolocation.watchPosition(callback);
+                    return this.location.watchPosition(callback);
                 },
                 clearWatch: function(watchId) {
-                    return this.geolocation.clearWatch(watchId);
+                    return this.location.clearWatch(watchId);
                 },
                 getContacts: function() {
                     return this._invoke('getContacts');
@@ -3253,21 +3253,80 @@ struct CraftWebView: UIViewRepresentable {
                 };
 
                 var locationWatchCallbacks = new Map();
+                var legacyLocationWatchCallbacks = [];
                 var nextLocationWatchId = 0;
+                var locationWatchStarted = false;
+                var locationWatchStart = null;
+                var locationWatchGeneration = 0;
+
+                function hasLocationWatchers() {
+                    return locationWatchCallbacks.size > 0 || legacyLocationWatchCallbacks.length > 0;
+                }
+
+                function startLocationWatch() {
+                    if (locationWatchStarted) return Promise.resolve(true);
+                    if (locationWatchStart) return locationWatchStart;
+
+                    var generation = locationWatchGeneration;
+                    var pending = craft._invoke('watchPosition');
+                    var managed = pending.then(function(result) {
+                        if (generation === locationWatchGeneration) {
+                            locationWatchStarted = hasLocationWatchers();
+                        }
+                        if (locationWatchStart === managed) locationWatchStart = null;
+                        return result;
+                    }, function(error) {
+                        if (generation === locationWatchGeneration) {
+                            locationWatchCallbacks.clear();
+                            legacyLocationWatchCallbacks.length = 0;
+                            locationWatchStarted = false;
+                        }
+                        if (locationWatchStart === managed) locationWatchStart = null;
+                        throw error;
+                    });
+                    locationWatchStart = managed;
+                    return managed;
+                }
+
+                function stopLocationWatchIfUnused() {
+                    if (hasLocationWatchers()) return Promise.resolve(true);
+                    if (!locationWatchStarted && !locationWatchStart) return Promise.resolve(true);
+
+                    locationWatchGeneration += 1;
+                    locationWatchStarted = false;
+                    locationWatchStart = null;
+                    return craft._invoke('clearWatch');
+                }
+
                 window.addEventListener('craftLocationUpdate', function(event) {
                     locationWatchCallbacks.forEach(function(callback) { callback(event.detail); });
+                    legacyLocationWatchCallbacks.slice().forEach(function(callback) { callback(event.detail); });
                 });
+                legacyGeolocation.watchPosition = function(callback) {
+                    legacyLocationWatchCallbacks.push(callback);
+                    return startLocationWatch();
+                };
+                legacyGeolocation.clearWatch = function() {
+                    legacyLocationWatchCallbacks.length = 0;
+                    return stopLocationWatchIfUnused();
+                };
                 craft.location = {
                     getCurrentPosition: function(options) { return legacyGeolocation.getCurrentPosition(options || {}); },
                     watchPosition: function(callback) {
                         var id = ++nextLocationWatchId;
                         locationWatchCallbacks.set(id, callback);
-                        if (locationWatchCallbacks.size === 1) void craft._invoke('watchPosition');
+                        void startLocationWatch().catch(function() {});
                         return id;
                     },
                     clearWatch: function(id) {
-                        locationWatchCallbacks.delete(id);
-                        if (locationWatchCallbacks.size === 0) void craft._invoke('clearWatch');
+                        if (typeof id === 'undefined') {
+                            locationWatchCallbacks.clear();
+                            legacyLocationWatchCallbacks.length = 0;
+                            void stopLocationWatchIfUnused().catch(function() {});
+                            return;
+                        }
+                        if (!locationWatchCallbacks.delete(id)) return;
+                        void stopLocationWatchIfUnused().catch(function() {});
                     },
                     startRecording: function() { return craft._invoke('startLocationRecording'); },
                     pauseRecording: function() { return craft._invoke('pauseLocationRecording'); },
