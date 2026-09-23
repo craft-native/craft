@@ -4,32 +4,18 @@
  */
 
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { CRAFT_CLI_SPAWN_MARKER, craftBinaryNotFoundMessage, resolveCraftBinary } from './binary-resolver.js'
+import { SDK_VERSION } from './sdk-version.js'
 import type { AppConfig, WindowOptions } from './types.js'
 
 const execFileAsync = promisify(execFile)
 
 /** Tracks whether we've already warned about a binary/SDK version mismatch so each process logs once. */
 let versionMismatchWarned = false
-
-/**
- * Read the SDK's own version from `package.json`. Falls back to `'unknown'`
- * when not running from the source tree (the import-meta.dir path may not
- * resolve in some bundler edge cases).
- */
-function getSdkVersion(): string {
-  try {
-    const pkgPath = join(import.meta.dir, '..', 'package.json')
-    return JSON.parse(readFileSync(pkgPath, 'utf-8')).version ?? 'unknown'
-  }
-  catch {
-    return 'unknown'
-  }
-}
 
 /**
  * Probe the native binary for its `--version`, compare it to the SDK
@@ -41,7 +27,7 @@ async function probeBinaryVersion(craftPath: string): Promise<void> {
   try {
     const { stdout } = await execFileAsync(craftPath, ['--version'], { timeout: 2000 })
     const nativeVersion = parseCraftVersionOutput(stdout)
-    const sdkVersion = getSdkVersion()
+    const sdkVersion = SDK_VERSION
     if (sdkVersion !== 'unknown' && nativeVersion && nativeVersion !== sdkVersion) {
       versionMismatchWarned = true
       console.warn(
