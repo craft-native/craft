@@ -190,6 +190,25 @@ pub fn errorMessage(err: BridgeError) []const u8 {
     };
 }
 
+/// Narrow the wider error set inferred for a bridge handler to the failures
+/// the dispatcher exposes. Errors the protocol cannot name become the honest
+/// catch-all instead of leaving the page without a reply.
+pub fn fromHandlerError(err: anyerror) BridgeError {
+    return switch (err) {
+        error.AllocationFailed, error.OutOfMemory => BridgeError.AllocationFailed,
+        error.UnknownAction => BridgeError.UnknownAction,
+        error.MissingData => BridgeError.MissingData,
+        error.InvalidJSON => BridgeError.InvalidJSON,
+        error.InvalidParameter => BridgeError.InvalidParameter,
+        error.Busy => BridgeError.Busy,
+        error.PlatformNotSupported, error.UnsupportedPlatform => BridgeError.PlatformNotSupported,
+        error.NotFound => BridgeError.NotFound,
+        error.PermissionDenied => BridgeError.PermissionDenied,
+        error.Timeout => BridgeError.Timeout,
+        else => BridgeError.NativeCallFailed,
+    };
+}
+
 /// Send error to JavaScript via eval
 pub fn sendErrorToJS(allocator: std.mem.Allocator, action: []const u8, err: BridgeError) void {
     var ctx = ErrorContext.init(err, action, errorMessage(err));
@@ -356,6 +375,14 @@ test "errorCodeString returns correct codes" {
     try testing.expectEqualStrings("UNKNOWN_ACTION", errorCodeString(BridgeError.UnknownAction));
     try testing.expectEqualStrings("MISSING_DATA", errorCodeString(BridgeError.MissingData));
     try testing.expectEqualStrings("BUSY", errorCodeString(BridgeError.Busy));
+}
+
+test "handler error narrowing preserves protocol errors" {
+    const testing = std.testing;
+    try testing.expectEqual(BridgeError.Busy, fromHandlerError(error.Busy));
+    try testing.expectEqual(BridgeError.PlatformNotSupported, fromHandlerError(error.UnsupportedPlatform));
+    try testing.expectEqual(BridgeError.AllocationFailed, fromHandlerError(error.OutOfMemory));
+    try testing.expectEqual(BridgeError.NativeCallFailed, fromHandlerError(error.NotInTheProtocol));
 }
 
 test "ErrorContext.toJSON produces valid JSON" {
