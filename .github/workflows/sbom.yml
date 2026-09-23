@@ -3,14 +3,11 @@ name: SBOM
 on:
   push:
     branches: [main]
-    tags:
-      - 'v*'
-  release:
-    types: [published]
+  workflow_call:
   workflow_dispatch:
 
 concurrency:
-  group: sbom-${{ github.head_ref || github.ref }}
+  group: sbom-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -207,17 +204,6 @@ jobs:
           name: sbom
           path: sbom/
           retention-days: 90
-
-      - name: Attach SBOM to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            sbom/craft-sbom.json
-            sbom/full-sbom.cyclonedx.json
-            sbom/full-sbom.spdx.json
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Submit to Dependency Graph
         if: github.ref == 'refs/heads/main'

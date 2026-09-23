@@ -22,6 +22,10 @@ jobs:
       - name: Validate tag and workspace versions
         run: bun scripts/release-version.ts
 
+  release-sbom:
+    needs: validate-release
+    uses: ./.github/workflows/sbom.yml
+
   pantry:
     needs: [validate-release]
     name: pantry (${{ matrix.platform.name }})
@@ -433,8 +437,8 @@ jobs:
 
   verify-macos-downloads:
     name: verify downloaded ${{ matrix.platform.name }}
-    needs: [pantry]
-    if: ${{ !cancelled() }}
+    needs: [validate-release, pantry]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
@@ -459,6 +463,36 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "craft-$PLATFORM.zip" --dir "$DOWNLOAD_DIR"
           ditto -x -k "$DOWNLOAD_DIR/craft-$PLATFORM.zip" "$DOWNLOAD_DIR/extracted"
           bun scripts/verify-macos-release.ts "$DOWNLOAD_DIR/extracted/craft" "${TAG#v}"
+
+  attach-release-sbom:
+    name: attach and verify release SBOMs
+    needs: [pantry, release-sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: sbom
+      - name: Attach the SBOMs produced by this release run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bun scripts/verify-sbom.ts sbom "$TAG"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \
+            sbom/craft-sbom.json sbom/full-sbom.cyclonedx.json sbom/full-sbom.spdx.json --clobber
+          VERIFY_DIR=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'craft-sbom.json' \
+            --pattern 'full-sbom.cyclonedx.json' --pattern 'full-sbom.spdx.json' --dir "$VERIFY_DIR"
+          bun scripts/verify-sbom.ts "$VERIFY_DIR" "$TAG"
+          for document in craft-sbom.json full-sbom.cyclonedx.json full-sbom.spdx.json; do
+            cmp "sbom/$document" "$VERIFY_DIR/$document"
+          done
 
   npm:
     name: npm
