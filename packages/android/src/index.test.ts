@@ -306,7 +306,29 @@ describe('Craft Android builder', () => {
     const config = JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8'))
     const activity = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/MainActivity.kt'), 'utf8')
     expect(config.hasBundledFallback).toBe(true)
-    expect(activity).toContain('hasBundledFallback && !loadedBundledFallback')
+
+    // #254: only a main-frame connectivity failure may hide the remote page
+    // behind the bundled copy. TLS, authentication, and bad-response failures
+    // must remain visible instead of looking like a successful offline launch.
+    const failureHandler = activity.slice(
+      activity.indexOf('override fun onReceivedError('),
+      activity.indexOf('webView.webChromeClient = WebChromeClient()'),
+    )
+    expect(failureHandler).toContain('CraftLoadFailure.isUnreachable(error.errorCode)')
+    expect(failureHandler).not.toContain('hasBundledFallback && !loadedBundledFallback')
+
+    // Falling back is no longer one-way. Bound the assertion to the named
+    // recovery method so the field declaration cannot make this pass alone.
+    const recovery = activity.slice(
+      activity.indexOf('private fun returnFromBundledFallback('),
+      activity.indexOf('private fun loadContent()'),
+    )
+    expect(recovery).toContain('loadedBundledFallback = false')
+    expect(recovery).toContain('webView.loadUrl(remoteUrl)')
+
+    expect(activity).toContain('returnFromBundledFallback("the app returned to the foreground")')
+    expect(activity).toContain('val wasConnected = isConnected')
+    expect(activity).toContain('if (!wasConnected && isConnected) {')
   })
 
   it('delivers shortcut activations and refuses impossible event streams', async () => {

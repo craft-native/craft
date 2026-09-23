@@ -1,10 +1,14 @@
 package {{PACKAGE_NAME}}
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.os.Bundle
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
+import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
 import android.webkit.WebResourceResponse
@@ -19,6 +23,20 @@ import org.json.JSONObject
 import java.io.FileNotFoundException
 import java.net.URLConnection
 
+/** Main-frame failures for which the bundled app is an honest fallback (#254). */
+object CraftLoadFailure {
+    fun isUnreachable(errorCode: Int): Boolean = when (errorCode) {
+        WebViewClient.ERROR_HOST_LOOKUP,
+        WebViewClient.ERROR_CONNECT,
+        WebViewClient.ERROR_TIMEOUT,
+        // Android uses ERROR_IO for connection interruptions as well as local
+        // I/O failures. Keep it here deliberately: it is the closest Android
+        // equivalent to iOS's NSURLErrorNetworkConnectionLost.
+        WebViewClient.ERROR_IO -> true
+        else -> false
+    }
+}
+
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var craftBridge: CraftBridge
@@ -32,6 +50,28 @@ class MainActivity : AppCompatActivity() {
             .build()
     }
     private var loadedBundledFallback = false
+    private lateinit var connectivityManager: ConnectivityManager
+    @Volatile
+    private var isConnected = false
+    private var networkMonitoringRegistered = false
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            val wasConnected = isConnected
+            isConnected = true
+            if (!wasConnected && isConnected) {
+                runOnUiThread {
+                    returnFromBundledFallback("the network came back")
+                }
+            }
+        }
+
+        override fun onLost(network: Network) {
+            // A second transport can already be the default by the time the
+            // old one reports its loss, so read current state instead of
+            // blindly turning the latch off.
+            isConnected = connectivityManager.activeNetwork != null
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,6 +108,7 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
         loadContent()
+        setupNetworkMonitoring()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -113,7 +154,13 @@ class MainActivity : AppCompatActivity() {
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
                 super.onReceivedError(view, request, error)
-                if (request?.isForMainFrame == true && hasBundledFallback && !loadedBundledFallback) {
+                if (
+                    request?.isForMainFrame == true &&
+                    error != null &&
+                    CraftLoadFailure.isUnreachable(error.errorCode) &&
+                    hasBundledFallback &&
+                    !loadedBundledFallback
+                ) {
                     loadedBundledFallback = true
                     webView.loadUrl(BUNDLED_APP_URL)
                 }
@@ -124,6 +171,23 @@ class MainActivity : AppCompatActivity() {
 
         // Add JavaScript interface
         webView.addJavascriptInterface(craftBridge, "CraftAndroid")
+    }
+
+    private fun setupNetworkMonitoring() {
+        if (!hasBundledFallback || devServerUrl == null) return
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        isConnected = connectivityManager.activeNetwork != null
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
+        networkMonitoringRegistered = true
+    }
+
+    /** Leave the bundled copy for the configured remote origin again. */
+    private fun returnFromBundledFallback(reason: String) {
+        val remoteUrl = devServerUrl ?: return
+        if (!loadedBundledFallback) return
+        loadedBundledFallback = false
+        Log.i(TAG, "$reason; loading $remoteUrl again instead of the bundled copy")
+        webView.loadUrl(remoteUrl)
     }
 
     private fun loadContent() {
@@ -234,6 +298,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         webView.onResume()
+        returnFromBundledFallback("the app returned to the foreground")
     }
 
     override fun onPause() {
@@ -242,6 +307,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (networkMonitoringRegistered) {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            networkMonitoringRegistered = false
+        }
         craftBridge.close()
         webView.destroy()
         super.onDestroy()
@@ -263,6 +332,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val TAG = "CraftMainActivity"
         private const val BUNDLED_APP_HOST = "appassets.androidplatform.net"
         private const val BUNDLED_APP_ORIGIN = "https://appassets.androidplatform.net"
         private const val BUNDLED_APP_URL = "$BUNDLED_APP_ORIGIN/"
