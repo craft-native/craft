@@ -178,7 +178,7 @@ pub const HealthBridge = struct {
                 "requestHealthAuthorization: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
         const block = calls.claim(ticket, .{}) orelse {
@@ -240,7 +240,7 @@ pub const HealthBridge = struct {
                 "saveHealthWorkout: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
 
@@ -302,7 +302,7 @@ pub const HealthBridge = struct {
                 "getHealthData: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
         const block = calls.claim(ticket, .{ .unit = unit }) orelse {

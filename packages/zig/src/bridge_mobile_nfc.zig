@@ -156,7 +156,7 @@ const alert_message = "Hold your iPhone near the NFC tag";
 
 fn poolFull() BridgeError {
     std.log.warn("scanNFC refused: all {d} async slots in flight", .{ios_async.max_in_flight});
-    return BridgeError.InvalidParameter;
+    return BridgeError.Busy;
 }
 
 // =============================================================================
