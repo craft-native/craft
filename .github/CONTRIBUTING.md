@@ -6,8 +6,16 @@ Thank you for your interest in contributing to Craft! This document provides gui
 
 ### Prerequisites
 
-- **Pantry-managed stable Zig**: run `eval "$(pantry env | sed -n '/^export /,$p')"`, then invoke `zig` (locally only — CI does not: the pantry action already puts `zig` on PATH, and `pantry env` runs a workspace setup that re-installs JS deps with its own `--linker`, rewriting `node_modules` mid-job)
+- **Pinned Zig toolchain**: use the exact snapshot in `pantry.lock`. Root `bun run build:core`, `test`, `fmt`, `run`, and `zig` scripts validate the selected compiler and print its path/version before use. Activate your Pantry environment locally, or set `CRAFT_ZIG=/absolute/path/to/zig` to a matching compiler. The scripts do not invoke `pantry env` automatically because it can reinstall workspace dependencies. CI receives the pinned toolchain from the Pantry action.
 - **Bun**: Install from [bun.sh](https://bun.sh)
+
+To intentionally test another Zig snapshot, use both an explicit compiler and the opt-in:
+
+```bash
+CRAFT_ZIG=/absolute/path/to/experimental/zig CRAFT_ALLOW_UNPINNED_ZIG=1 bun run build:core
+```
+
+This override is for compatibility testing; it does not change the checked-in lockfile.
 
 #### Platform-specific Dependencies
 
@@ -41,19 +49,19 @@ cd craft
 
 ```bash
 # Debug build
-zig build
+bun run build:debug
 
 # Release build
-zig build -Doptimize=ReleaseSafe
+bun run build:core
 
 # Run tests
-zig build test
+bun run test
 
 # Run example
-zig build run
+bun run run:demo
 
 # Run the craft CLI
-zig build run
+bun run run
 ```
 
 ## Project Structure

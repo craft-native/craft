@@ -267,6 +267,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Test pinned Zig toolchain selection
+        run: bun test scripts/zig.test.ts
+
       - name: Check Zig formatting
         working-directory: packages/zig
         run: zig fmt --check src/ build.zig
