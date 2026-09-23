@@ -375,31 +375,30 @@ pub const ImagePickerBridge = struct {
     }
 };
 
-/// The answer for a full slot pool, copied from `bridge_mobile_location`:
-/// `BridgeError` has no "Busy", `INVALID_PARAMETER` is the migration notes'
-/// designated stand-in, and the point is that the caller gets an explicit
-/// rejection instead of a promise that never settles.
+/// The answer for a full slot pool. The call is valid, but all reply capacity
+/// is temporarily leased, so the page can distinguish retryable pressure from
+/// a bad argument or a broken native call.
 fn poolFull(action: []const u8) bridge_error.BridgeError {
     std.log.warn(
         "{s} refused: all {d} async slots in flight",
         .{ action, ios_async.max_in_flight },
     );
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 /// The answer for a second request while a picker is already on screen.
 ///
 /// The *second* caller is refused and the first is left alone, because the
-/// first picker is still up and will answer. Same `INVALID_PARAMETER`
-/// stand-in, for the same reason: `BridgeError` cannot say "busy", and silence
-/// is not an option.
+/// first picker is still up and will answer. This is the same retryable state
+/// as a full reply pool from the page's perspective: the call is valid, but
+/// this moment is not.
 fn busyRefusal(action: []const u8, holder: Source) bridge_error.BridgeError {
     std.log.warn(
         "{s} refused: {s} already has a picker presented; refusing the second call rather " ++
             "than replacing the first, whose promise would then never settle",
         .{ action, holder.actionName() },
     );
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 // =============================================================================
@@ -1398,7 +1397,7 @@ test "a second request while a picker is presented is refused, and the first is 
 
     // And it is a rejection the caller can see, never silence.
     try testing.expectEqual(
-        bridge_error.BridgeError.InvalidParameter,
+        bridge_error.BridgeError.Busy,
         busyRefusal(A.pick_image, .camera),
     );
 
@@ -1434,7 +1433,7 @@ test "a delegate callback with no call recorded touches no slot" {
 
 test "the pool refusal is an error the caller sees, not a dropped call" {
     try testing.expectEqual(
-        bridge_error.BridgeError.InvalidParameter,
+        bridge_error.BridgeError.Busy,
         poolFull(A.open_camera),
     );
 }

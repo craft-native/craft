@@ -374,16 +374,14 @@ pub const ContactPickerBridge = struct {
     }
 };
 
-/// The answer for a full block pool, copied from `bridge_mobile_location`:
-/// `BridgeError` has no "Busy", `INVALID_PARAMETER` is the migration notes'
-/// designated stand-in, and the point is that the caller gets an explicit
-/// rejection instead of a promise that never settles.
+/// The answer for a full block pool. The call is valid, but all reply capacity
+/// is temporarily leased, so the page can retry rather than blaming its input.
 fn poolFull() bridge_error.BridgeError {
     std.log.warn(
         "pickContact refused: all {d} async slots are in flight",
         .{ios_async.max_in_flight},
     );
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 /// The answer for a second `pickContact` while one is on screen.
@@ -395,16 +393,15 @@ fn poolFull() bridge_error.BridgeError {
 /// promise alive. Swift does neither: it overwrites `pendingCallbackId` and the
 /// first caller waits forever on an untimed promise.
 ///
-/// Same `INVALID_PARAMETER` stand-in as `poolFull`, for the same reason —
-/// `BridgeError` has no word for "busy" — with a log line that says which of
-/// the two happened.
+/// Same retryable `Busy` answer as `poolFull`, with a log line that says which
+/// kind of capacity is occupied.
 fn alreadyPresented() bridge_error.BridgeError {
     std.log.warn(
         "pickContact refused: a contact picker is already presented and still waiting for an " ++
             "answer; the first call is left alone rather than being stranded",
         .{},
     );
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 // =============================================================================
@@ -1617,6 +1614,7 @@ test "a second request while one is presented is refused, and the first is left 
     // promise never settles; the picker on screen is about to answer, so the
     // newcomer is the one that has to be told no.
     try testing.expect(!publishPending(.{ .ticket = fakeTicket(4, 9), .sels = fakeSels() }));
+    try testing.expectEqual(bridge_error.BridgeError.Busy, alreadyPresented());
 
     // And the slot still holds the *first* ticket, not the newcomer's — a
     // refusal that quietly replaced would look identical from the return value.
@@ -1624,6 +1622,10 @@ test "a second request while one is presented is refused, and the first is left 
     defer pending_mutex.unlock();
     try testing.expectEqual(first.index, pending.?.ticket.index);
     try testing.expectEqual(first.generation, pending.?.ticket.generation);
+}
+
+test "a full async pool reports that the call is retryable" {
+    try testing.expectEqual(bridge_error.BridgeError.Busy, poolFull());
 }
 
 test "the slot is handed over once, so a double-firing delegate cannot reply twice" {

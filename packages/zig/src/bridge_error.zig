@@ -18,6 +18,8 @@ pub const BridgeError = error{
     InvalidJSON,
     /// Invalid parameter value
     InvalidParameter,
+    /// Native work is temporarily at capacity or an exclusive resource is in use
+    Busy,
     /// Platform not supported for this operation
     PlatformNotSupported,
     /// Native API call failed
@@ -152,6 +154,7 @@ pub fn errorCodeString(err: BridgeError) []const u8 {
         BridgeError.MissingData => "MISSING_DATA",
         BridgeError.InvalidJSON => "INVALID_JSON",
         BridgeError.InvalidParameter => "INVALID_PARAMETER",
+        BridgeError.Busy => "BUSY",
         BridgeError.PlatformNotSupported => "PLATFORM_NOT_SUPPORTED",
         BridgeError.NativeCallFailed => "NATIVE_CALL_FAILED",
         BridgeError.AllocationFailed => "ALLOCATION_FAILED",
@@ -174,6 +177,7 @@ pub fn errorMessage(err: BridgeError) []const u8 {
         BridgeError.MissingData => "Required data is missing",
         BridgeError.InvalidJSON => "Failed to parse JSON data",
         BridgeError.InvalidParameter => "Invalid parameter value",
+        BridgeError.Busy => "Native operation is temporarily busy",
         BridgeError.PlatformNotSupported => "This operation is not supported on the current platform",
         BridgeError.NativeCallFailed => "Native API call failed",
         BridgeError.AllocationFailed => "Memory allocation failed",
@@ -351,6 +355,7 @@ test "errorCodeString returns correct codes" {
     try testing.expectEqualStrings("WINDOW_HANDLE_NOT_SET", errorCodeString(BridgeError.WindowHandleNotSet));
     try testing.expectEqualStrings("UNKNOWN_ACTION", errorCodeString(BridgeError.UnknownAction));
     try testing.expectEqualStrings("MISSING_DATA", errorCodeString(BridgeError.MissingData));
+    try testing.expectEqualStrings("BUSY", errorCodeString(BridgeError.Busy));
 }
 
 test "ErrorContext.toJSON produces valid JSON" {
