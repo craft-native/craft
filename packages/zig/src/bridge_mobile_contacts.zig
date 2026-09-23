@@ -343,16 +343,13 @@ pub const ContactsBridge = struct {
     }
 };
 
-/// The answer for a full block pool, copied from `bridge_mobile_location` and
-/// the picker: `BridgeError` has no "Busy", `INVALID_PARAMETER` is the
-/// migration notes' designated stand-in, and the point is that the caller gets
-/// an explicit rejection instead of a promise that never settles.
+/// Reject a call when every asynchronous reply slot is already in use.
 fn poolFull(action: []const u8) bridge_error.BridgeError {
     std.log.warn(
         "{s} refused: all {d} async slots are in flight",
         .{ action, ios_async.max_in_flight },
     );
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 // =============================================================================
