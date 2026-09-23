@@ -237,14 +237,9 @@ jobs:
 
       - name: Sign macOS binary
         if: runner.os == 'macOS' && env.SIGNING_AVAILABLE == 'true'
-        env:
-          # Default to the strict distribution entitlements; CI can opt in to
-          # the dev plist (sandbox off, library validation off) by setting
-          # CRAFT_ENTITLEMENTS=dev for local debugging — never for release.
-          ENTITLEMENTS_VARIANT: ${{ vars.CRAFT_ENTITLEMENTS || 'distribution' }}
         run: |
           set -euo pipefail
-          ENTITLEMENTS="scripts/entitlements-${ENTITLEMENTS_VARIANT}.plist"
+          ENTITLEMENTS="scripts/entitlements-distribution.plist"
           if [ ! -f "$ENTITLEMENTS" ]; then
             echo "::error file=$ENTITLEMENTS::missing — required for hardened-runtime signing"
             exit 1
@@ -253,11 +248,20 @@ jobs:
           for binary in \
             packages/zig/zig-out/bin/craft \
             packages/zig/zig-out/cross/darwin-x64/craft; do
-            codesign --force --options runtime --sign "$APPLE_SIGNING_IDENTITY" \
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" \
               --entitlements "$ENTITLEMENTS" "$binary"
             codesign --verify --deep --strict "$binary"
           done
           echo "macOS ARM64 and x64 binaries signed successfully"
+
+      - name: Verify standalone macOS launch and signatures
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bun test scripts/macos-release.test.ts
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/bin/craft "$VERSION"
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/cross/darwin-x64/craft "$VERSION" --no-execute
 
       - name: Notarize macOS binaries
         if: runner.os == 'macOS' && env.SIGNING_AVAILABLE == 'true'
@@ -398,6 +402,35 @@ jobs:
             echo "::warning::Registry returned $code — it will index this on its next sweep."
             cat /tmp/index.out || true
           fi
+
+  verify-macos-downloads:
+    name: verify downloaded ${{ matrix.platform.name }}
+    needs: [pantry]
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: macos-15, name: darwin-arm64 }
+          - { os: macos-15-intel, name: darwin-x64 }
+    runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup Pantry
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777
+      - name: Verify the final downloadable executable
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          PLATFORM: ${{ matrix.platform.name }}
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DIR=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "craft-$PLATFORM.zip" --dir "$DOWNLOAD_DIR"
+          ditto -x -k "$DOWNLOAD_DIR/craft-$PLATFORM.zip" "$DOWNLOAD_DIR/extracted"
+          bun scripts/verify-macos-release.ts "$DOWNLOAD_DIR/extracted/craft" "${TAG#v}"
 
   npm:
     name: npm

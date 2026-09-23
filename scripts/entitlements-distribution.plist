@@ -1,36 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Distribution entitlements for the Craft binary shipped to end users.
+  Distribution entitlements for the standalone Craft CLI installed by Pantry.
 
-  We deliberately request the *minimum* set of capabilities here — the dev
-  plist (`entitlements-dev.plist`) is what disables the sandbox and library
-  validation for local-iteration ergonomics. End users should never run with
-  those flags turned off, since that disables the macOS exploit-mitigation
-  story we otherwise rely on.
+  App Sandbox requires a bundle identity. This raw executable has no embedded
+  Info.plist and must accept user-supplied paths from the shell; enabling App
+  Sandbox here traps in libsecinit before main. Hardened runtime is enabled
+  separately by codesign's runtime option, and library validation stays on.
 
-  If your app needs extra capabilities (camera, microphone, user-selected
-  files, etc.), generate a custom plist via
-  `generateEntitlements({ camera: true, ... })` from the SDK or fork this
-  file in your own project.
+  Application bundles have their own identity and entitlement policy, generated
+  by the SDK. This plist is only for the standalone CLI release artifact.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- Run inside the macOS app sandbox. -->
-    <key>com.apple.security.app-sandbox</key>
-    <true/>
-
-    <!-- WebKit needs JIT for modern JS performance. Limited to the runtime
-         WebView, not arbitrary code. -->
+    <!-- Allow the runtime's JIT under hardened runtime. -->
     <key>com.apple.security.cs.allow-jit</key>
-    <true/>
-
-    <!-- Allow outbound HTTP. Required for the auto-updater and fetch API. -->
-    <key>com.apple.security.network.client</key>
-    <true/>
-
-    <!-- Allow user-selected files (open dialog returns sandbox-scoped URLs). -->
-    <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
 </dict>
 </plist>
