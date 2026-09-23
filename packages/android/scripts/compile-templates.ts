@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,10 +13,13 @@ interface CompileFixture {
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url))
 const packageDirectory = dirname(scriptDirectory)
-const permissionTestTemplate = readFileSync(
-  join(packageDirectory, 'compile-fixtures/CraftPermissionPolicyTest.kt'),
-  'utf8',
-)
+const compileFixtureDirectory = join(packageDirectory, 'compile-fixtures')
+const compileTestTemplates = readdirSync(compileFixtureDirectory, { withFileTypes: true })
+  .filter(entry => entry.isFile() && entry.name.endsWith('Test.kt'))
+  .map(entry => ({
+    name: entry.name,
+    source: readFileSync(join(compileFixtureDirectory, entry.name), 'utf8'),
+  }))
 const gradleExecutable = process.env.GRADLE_EXECUTABLE || 'gradle'
 const keepProjects = process.argv.includes('--keep')
 const workspace = mkdtempSync(join(tmpdir(), 'craft-android-templates-'))
@@ -92,10 +95,12 @@ try {
       fixture.packageName.replaceAll('.', '/'),
     )
     mkdirSync(testDirectory, { recursive: true })
-    writeFileSync(
-      join(testDirectory, 'CraftPermissionPolicyTest.kt'),
-      permissionTestTemplate.replaceAll('{{PACKAGE_NAME}}', fixture.packageName),
-    )
+    for (const testTemplate of compileTestTemplates) {
+      writeFileSync(
+        join(testDirectory, testTemplate.name),
+        testTemplate.source.replaceAll('{{PACKAGE_NAME}}', fixture.packageName),
+      )
+    }
 
     console.log(`\nCompiling generated Android fixture: ${fixture.name}`)
     const result = Bun.spawnSync([
