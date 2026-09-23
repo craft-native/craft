@@ -280,6 +280,9 @@ jobs:
       - name: Verify API documentation links
         run: bun run verify:docs
 
+      - name: Test merged SBOM inventory
+        run: bun test scripts/merge-sbom.test.ts
+
       - name: Run pickier (lint + format check)
         run: bun run lint
 
