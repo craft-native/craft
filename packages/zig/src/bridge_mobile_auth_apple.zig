@@ -149,7 +149,7 @@ pub const AppleAuthBridge = struct {
 
 fn poolFull() BridgeError {
     std.log.warn("signInWithApple refused: all {d} async slots in flight", .{ios_async.max_in_flight});
-    return BridgeError.InvalidParameter;
+    return BridgeError.Busy;
 }
 
 /// `@[ASAuthorizationScopeFullName, ASAuthorizationScopeEmail]`, or null when

@@ -142,7 +142,7 @@ pub const AuthBridge = struct {
                 "authenticate: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
 
