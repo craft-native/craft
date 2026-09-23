@@ -172,7 +172,7 @@ pub const SiriBridge = struct {
                     "awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
 
