@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { randomUUID } from 'node:crypto'
 import { Window, windowManager } from '../api/window'
 
 describe('typed window-handle routing', () => {
@@ -10,8 +11,14 @@ describe('typed window-handle routing', () => {
   })
   const open = mock(async (options: { id: string }) => ({ name: options.id }))
   const listeners = new Map<string, Set<EventListener>>()
+  // The manager retains stable handles across fixtures and Bun reruns. Wall
+  // clock milliseconds can collide while each test installs a fresh fake DOM.
+  let clock: ReturnType<typeof spyOn>
+  const fixtureId = (label: string) => `${label}-${randomUUID()}`
 
   beforeEach(() => {
+    // Keep time fixed so reintroducing Date.now() IDs fails deterministically.
+    clock = spyOn(Date, 'now').mockReturnValue(0)
     call.mockClear()
     callResult = undefined
     open.mockClear()
@@ -34,6 +41,7 @@ describe('typed window-handle routing', () => {
   })
 
   afterEach(() => {
+    clock.mockRestore()
     if (previousWindow === undefined) {
       Reflect.deleteProperty(globalThis, 'window')
     }
@@ -113,7 +121,7 @@ describe('typed window-handle routing', () => {
   })
 
   it('revives the stable SDK handle around a fresh native window after destroy', async () => {
-    const id = `destroyed-${Date.now()}`
+    const id = fixtureId('destroyed')
     const first = await windowManager.create({ id, html: '<h1>First</h1>' })
     await first.destroy()
 
@@ -125,7 +133,7 @@ describe('typed window-handle routing', () => {
   })
 
   it('creates through the injected bridge instead of the incompatible generic envelope', async () => {
-    const id = `settings-${Date.now()}`
+    const id = fixtureId('settings')
     const created = await windowManager.create({ id, html: '<h1>Settings</h1>' })
 
     expect(open).toHaveBeenCalledWith({ id, html: '<h1>Settings</h1>' })
@@ -139,7 +147,7 @@ describe('typed window-handle routing', () => {
   })
 
   it('resolves the focused retained handle through the injected bridge', async () => {
-    const id = `focused-${Date.now()}`
+    const id = fixtureId('focused')
     const settings = await windowManager.create({ id, html: '<h1>Settings</h1>' })
     callResult = id
 
@@ -148,7 +156,7 @@ describe('typed window-handle routing', () => {
   })
 
   it('revives the same handle and its listeners when a named window is reopened', async () => {
-    const id = `reopened-${Date.now()}`
+    const id = fixtureId('reopened')
     const settings = await windowManager.create({ id, html: '<h1>Settings</h1>' })
     const onResize = mock(() => {})
     settings.on('resize', onResize)
