@@ -11,7 +11,8 @@
     "url": "https://github.com/craft-native/craft/issues"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "description": "Svelte bindings for Craft framework",
   "svelte": "src/index.ts",

@@ -8,6 +8,10 @@ Svelte bindings for the Craft framework using stores and actions.
 npm install @craft-native/svelte
 ```
 
+The package includes its TypeScript source for bundlers that select the `svelte`
+export condition. Other consumers use the compiled ESM or CommonJS entry in
+`dist`. Both entries expose the same stores and actions.
+
 ## Usage
 
 ### Stores
