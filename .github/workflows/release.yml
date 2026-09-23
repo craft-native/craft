@@ -430,6 +430,12 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
+      - name: Test package regressions
+        run: bun run test:packages
+
+      - name: Build and verify every npm artifact
+        run: bun run verify:npm
+
       - name: Publish to npm
         run: pantry publish --npm --access public
         env:
