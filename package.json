@@ -57,6 +57,7 @@
     "zig": "bun scripts/zig.ts",
     "dev": "cd packages/typescript && bun run dev",
     "changelog": "bun x logsmith --verbose",
+    "changelog:preview": "bun scripts/changelog-preview.ts",
     "changelog:generate": "bun x logsmith --output CHANGELOG.md",
     "release": "bun x --bun bumpx prompt --recursive",
     "release:patch": "bun x --bun bumpx patch --recursive --yes"
