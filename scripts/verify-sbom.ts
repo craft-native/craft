@@ -17,7 +17,7 @@ export function verifySbomFiles(directory: string, tag: string): void {
         if (document.metadata?.component?.name !== 'craft' || document.metadata.component.version !== tag)
           throw new Error(`${name}: release identity does not match ${tag}`)
       }
-      else if (!Array.isArray(document.components) || document.components.length === 0) {
+      if (!Array.isArray(document.components) || document.components.length === 0) {
         throw new Error(`${name}: expected dependency components`)
       }
     }
