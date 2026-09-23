@@ -277,6 +277,9 @@ jobs:
         working-directory: packages/zig
         run: zig fmt --check src/ build.zig
 
+      - name: Test failure-safe vulnerability scanning
+        run: bun test scripts/scan-sbom.test.ts
+
       - name: Audit Zig C imports
         run: bun run verify:cimports
 

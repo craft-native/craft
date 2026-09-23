@@ -30,8 +30,13 @@ jobs:
 
       - name: Install SBOM tools
         run: |
-          # Install Syft for comprehensive SBOM (works with bun.lock)
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/syft"
+          cd "$RUNNER_TEMP/syft"
+          curl --fail --location --retry 3 --output syft.tar.gz https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_linux_amd64.tar.gz
+          echo 'caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d  syft.tar.gz' | sha256sum --check --strict
+          tar -xzf syft.tar.gz syft
+          echo "$RUNNER_TEMP/syft" >> "$GITHUB_PATH"
 
       - name: Generate comprehensive SBOM (Syft)
         run: |
@@ -96,11 +101,13 @@ jobs:
           output-file: sbom/github-sbom.json
 
   vulnerability-scan:
-    # name: SBOM Vulnerability Scan
     needs: generate
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+
       - name: Download SBOM
         uses: actions/download-artifact@v4
         with:
@@ -109,64 +116,22 @@ jobs:
 
       - name: Install Grype
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/grype"
+          cd "$RUNNER_TEMP/grype"
+          curl --fail --location --retry 3 --output grype.tar.gz https://github.com/anchore/grype/releases/download/v0.119.0/grype_0.119.0_linux_amd64.tar.gz
+          echo '3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b  grype.tar.gz' | sha256sum --check --strict
+          tar -xzf grype.tar.gz grype
+          echo "$RUNNER_TEMP/grype" >> "$GITHUB_PATH"
 
-      - name: Scan SBOM for vulnerabilities
-        id: scan
-        run: |
-          mkdir -p scan-results
-
-          # Scan the full SBOM
-          if [ -f "sbom/full-sbom.cyclonedx.json" ]; then
-            grype sbom:sbom/full-sbom.cyclonedx.json \
-              --output json \
-              --file scan-results/vulnerabilities.json \
-              || true
-
-            grype sbom:sbom/full-sbom.cyclonedx.json \
-              --output table \
-              --file scan-results/vulnerabilities.txt \
-              || true
-          fi
-
-          # Count vulnerabilities by severity
-          if [ -f "scan-results/vulnerabilities.json" ]; then
-            CRITICAL=$(jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' scan-results/vulnerabilities.json 2>/dev/null || echo "0")
-            HIGH=$(jq '[.matches[] | select(.vulnerability.severity == "High")] | length' scan-results/vulnerabilities.json 2>/dev/null || echo "0")
-            MEDIUM=$(jq '[.matches[] | select(.vulnerability.severity == "Medium")] | length' scan-results/vulnerabilities.json 2>/dev/null || echo "0")
-            LOW=$(jq '[.matches[] | select(.vulnerability.severity == "Low")] | length' scan-results/vulnerabilities.json 2>/dev/null || echo "0")
-
-            echo "critical=$CRITICAL" >> $GITHUB_OUTPUT
-            echo "high=$HIGH" >> $GITHUB_OUTPUT
-            echo "medium=$MEDIUM" >> $GITHUB_OUTPUT
-            echo "low=$LOW" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Generate vulnerability report
-        run: |
-          echo "## Vulnerability Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Critical | ${{ steps.scan.outputs.critical || '0' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| High | ${{ steps.scan.outputs.high || '0' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Medium | ${{ steps.scan.outputs.medium || '0' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Low | ${{ steps.scan.outputs.low || '0' }} |" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.scan.outputs.critical }}" -gt 0 ] || [ "${{ steps.scan.outputs.high }}" -gt 0 ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ **Action Required:** Critical or High severity vulnerabilities found!" >> $GITHUB_STEP_SUMMARY
-          fi
+      - name: Scan and validate vulnerability report
+        run: bun scripts/scan-sbom.ts sbom/full-sbom.cyclonedx.json scan-results
 
       - name: Upload scan results
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: vulnerability-scan
           path: scan-results/
+          if-no-files-found: warn
           retention-days: 90
-
-      - name: Fail on critical vulnerabilities
-        if: steps.scan.outputs.critical > 0
-        run: |
-          echo "::error::Critical vulnerabilities found in dependencies!"
-          exit 1
