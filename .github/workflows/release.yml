@@ -11,7 +11,19 @@ defaults:
     shell: bash
 
 jobs:
+  validate-release:
+    name: validate release identity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - name: Validate tag and workspace versions
+        run: bun scripts/release-version.ts
+
   pantry:
+    needs: [validate-release]
     name: pantry (${{ matrix.platform.name }})
     strategy:
       fail-fast: false
@@ -326,8 +338,8 @@ jobs:
   # half of that bargain: the run goes red, naming the assets that are missing.
   verify-release:
     name: verify release assets
-    needs: [pantry]
-    if: ${{ !cancelled() }}
+    needs: [validate-release, pantry]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -413,8 +425,8 @@ jobs:
     # `bun install`, and publishes packages built from TypeScript. Signing a Zig
     # binary and publishing an SDK are independent, and the workflow now says
     # so. `!cancelled()` rather than `always()` so a cancelled run still stops.
-    needs: [pantry]
-    if: ${{ !cancelled() }}
+    needs: [validate-release, pantry]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
