@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { scanSbom, summarizeVulnerabilities } from './scan-sbom'
@@ -32,14 +32,18 @@ function fixture(source: string) {
 test('scanner execution failures cannot pass even with an old valid report', () => {
   const f = fixture('process.exit(7)')
   writeFileSync(join(f.root, 'vulnerabilities.json'), JSON.stringify(report()))
+  writeFileSync(join(f.root, 'vulnerabilities.txt'), 'stale successful summary')
   expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow('exit code 7')
+  expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
 })
 
 test('successful exit without valid output cannot reuse stale or malformed reports', () => {
   for (const source of ['process.exit(0)', 'await Bun.write(process.argv[process.argv.indexOf("--file") + 1], "not json")', 'await Bun.write(process.argv[process.argv.indexOf("--file") + 1], "{}")']) {
     const f = fixture(source)
     writeFileSync(join(f.root, 'vulnerabilities.json'), JSON.stringify(report()))
+    writeFileSync(join(f.root, 'vulnerabilities.txt'), 'stale successful summary')
     expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow()
+    expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
   }
 })
 
@@ -49,4 +53,26 @@ test('valid scanner output produces a matching text report; empty SBOMs are refu
   expect(readFileSync(join(f.root, 'vulnerabilities.txt'), 'utf8')).toContain('High\tfixture')
   writeFileSync(f.sbom, JSON.stringify({ bomFormat: 'CycloneDX', components: [] }))
   expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow('populated CycloneDX')
+  expect(existsSync(join(f.root, 'vulnerabilities.json'))).toBe(false)
+  expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
+})
+
+test('invalid input clears previous reports before failing', () => {
+  const f = fixture('throw new Error("scanner must not run")')
+  for (const input of ['{', '{}']) {
+    writeFileSync(f.sbom, input)
+    for (const name of ['vulnerabilities.json', 'vulnerabilities.txt']) writeFileSync(join(f.root, name), 'stale report')
+    expect(() => scanSbom(f.sbom, f.root, f.executable)).toThrow()
+    expect(existsSync(join(f.root, 'vulnerabilities.json'))).toBe(false)
+    expect(existsSync(join(f.root, 'vulnerabilities.txt'))).toBe(false)
+  }
+})
+
+test('refuses an input that aliases a scanner output without deleting it', () => {
+  const f = fixture('process.exit(0)')
+  const input = join(f.root, 'vulnerabilities.json')
+  const content = readFileSync(f.sbom, 'utf8')
+  writeFileSync(input, content)
+  expect(() => scanSbom(input, f.root, f.executable)).toThrow('must not be a scanner output')
+  expect(readFileSync(input, 'utf8')).toBe(content)
 })

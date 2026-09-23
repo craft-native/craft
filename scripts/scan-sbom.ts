@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { resolve } from 'node:path'
 
 const severities = ['Critical', 'High', 'Medium', 'Low', 'Negligible', 'Unknown'] as const
 type Severity = typeof severities[number]
@@ -28,18 +28,23 @@ export function summarizeVulnerabilities(report: unknown) {
 }
 
 export function scanSbom(sbom: string, output: string, executable = 'grype') {
+  const reportPath = resolve(output, 'vulnerabilities.json')
+  const textPath = resolve(output, 'vulnerabilities.txt')
+  if ([reportPath, textPath].includes(resolve(sbom)))
+    throw new Error('SBOM input must not be a scanner output file')
+  // Clear both previous outputs even when the new input fails validation.
+  // Failed runs may retain fresh scanner diagnostics, never an old clean summary.
+  for (const path of [reportPath, textPath]) rmSync(path, { force: true })
   // Validate input before invoking the scanner. Missing inventory must not look clean.
   const inventory = JSON.parse(readFileSync(sbom, 'utf8'))
   if (inventory.bomFormat !== 'CycloneDX' || !Array.isArray(inventory.components) || !inventory.components.length)
     throw new Error('A populated CycloneDX SBOM is required for vulnerability scanning')
   mkdirSync(output, { recursive: true })
-  const reportPath = join(output, 'vulnerabilities.json')
-  rmSync(reportPath, { force: true })
   const scan = Bun.spawnSync([executable, `sbom:${resolve(sbom)}`, '--output', 'json', '--file', reportPath], { stdout: 'inherit', stderr: 'inherit' })
   if (scan.exitCode !== 0)
     throw new Error(`Grype failed with exit code ${scan.exitCode}; vulnerability counts are unavailable`)
   const summary = summarizeVulnerabilities(JSON.parse(readFileSync(reportPath, 'utf8')))
-  writeFileSync(join(output, 'vulnerabilities.txt'), summary.text)
+  writeFileSync(textPath, summary.text)
   return summary
 }
 
