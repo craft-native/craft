@@ -346,9 +346,11 @@ jobs:
     if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
 
     steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
       - name: Every platform pantry installs must have shipped
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
@@ -358,7 +360,7 @@ jobs:
 
           # Kept in step with the `required` list in pantry's recipe:
           # packages/ts-pantry/src/recipes/craft-native.org.ts
-          REQUIRED="craft-darwin-arm64.zip craft-darwin-x64.zip craft-linux-x64.zip"
+          REQUIRED="craft-darwin-arm64.zip craft-darwin-x64.zip craft-linux-x64.zip craft-windows-x64.zip"
 
           echo "Assets on $TAG:"
           ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
@@ -376,6 +378,20 @@ jobs:
           fi
 
           echo "All required assets present."
+
+      - name: Publish and verify the complete release manifest
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ARCHIVE_DIR=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'craft-*.zip' --dir "$ARCHIVE_DIR"
+          bun scripts/release-manifest.ts create "$ARCHIVE_DIR" "$ARCHIVE_DIR/release-manifest.json"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$ARCHIVE_DIR/release-manifest.json" --clobber
+          mkdir "$ARCHIVE_DIR/verified"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json --dir "$ARCHIVE_DIR/verified"
+          bun scripts/release-manifest.ts verify "$ARCHIVE_DIR" "$ARCHIVE_DIR/verified/release-manifest.json"
 
       # Tell the registry this version exists, with the token this workflow
       # already holds to publish to it.
