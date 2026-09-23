@@ -729,9 +729,15 @@ cli
   .example('craft init MyApp --template dashboard')
   .example('craft init MyApp --template all')
   .action(async (name: string, options?: any) => {
+    const template = options?.template || 'blank'
+    const templates = ['blank', 'tabs', 'drawer', 'dashboard', 'desktop', 'ios', 'android', 'all']
+    if (!templates.includes(template)) {
+      console.error(`Error: Unknown template "${template}"`)
+      console.error(`Available templates: ${templates.join(', ')}`)
+      process.exit(1)
+    }
     console.log(`\n⚡ Creating new Craft project: ${name}\n`)
 
-    const template = options?.template || 'blank'
     const bundleId = options?.bundleId || `com.example.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}`
     const appNameSlug = name.toLowerCase().replace(/[^a-z0-9]/g, '-')
 
