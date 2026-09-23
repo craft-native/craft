@@ -397,6 +397,12 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json --dir "$ARCHIVE_DIR/verified"
           bun scripts/release-manifest.ts verify "$ARCHIVE_DIR" "$ARCHIVE_DIR/verified/release-manifest.json"
 
+  notify-registry:
+    name: notify registry after artifact verification
+    needs: [verify-release, verify-macos-downloads, attach-release-sbom]
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
       # Tell the registry this version exists, with the token this workflow
       # already holds to publish to it.
       #
@@ -421,11 +427,14 @@ jobs:
             exit 0
           fi
 
-          code=$(curl -sS -o /tmp/index.out -w '%{http_code}' --max-time 30 \
+          if ! code=$(curl -sS -o /tmp/index.out -w '%{http_code}' --max-time 30 \
             -X POST https://registry.pantry.dev/api/rebuild \
             -H "Authorization: Bearer $PANTRY_TOKEN" \
             -H 'Content-Type: application/json' \
-            -d '{"domain":"craft-native.org"}')
+            -d '{"domain":"craft-native.org"}'); then
+            echo "::warning::Registry request failed — it will index this on its next sweep."
+            exit 0
+          fi
 
           if [ "$code" = "200" ]; then
             echo "Registry notified: craft-native.org queued for indexing."

@@ -299,7 +299,7 @@ jobs:
         run: bun test scripts/release-manifest.test.ts
 
       - name: Test release SBOM verification
-        run: bun test scripts/verify-sbom.test.ts
+        run: bun test scripts/verify-sbom.test.ts scripts/release-workflow.test.ts
 
   integration:
     runs-on: ubuntu-latest

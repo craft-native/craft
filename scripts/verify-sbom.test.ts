@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { releaseSboms, verifySbomFiles } from './verify-sbom'
 
 const documents = {
-  'craft-sbom.json': { bomFormat: 'CycloneDX', specVersion: '1.5', metadata: { component: { name: 'craft', version: 'v0.0.93' } } },
+  'craft-sbom.json': { bomFormat: 'CycloneDX', specVersion: '1.5', metadata: { component: { name: 'craft', version: 'v0.0.93' } }, components: [{ name: 'dependency', version: '1.0.0' }] },
   'full-sbom.cyclonedx.json': { bomFormat: 'CycloneDX', specVersion: '1.6', components: [{ name: 'dependency', version: '1.0.0' }] },
   'full-sbom.spdx.json': { spdxVersion: 'SPDX-2.3', SPDXID: 'SPDXRef-DOCUMENT', packages: [{ name: 'dependency' }] },
 }
@@ -25,8 +25,13 @@ test('requires all three valid documents from the matching release', () => {
       expect(() => verifySbomFiles(directory, 'v0.0.93')).toThrow()
       writeFileSync(join(directory, name), JSON.stringify(documents[name]))
     }
-    writeFileSync(join(directory, 'full-sbom.cyclonedx.json'), JSON.stringify({ bomFormat: 'CycloneDX', specVersion: '1.6', components: [] }))
-    expect(() => verifySbomFiles(directory, 'v0.0.93')).toThrow('dependency components')
+    for (const name of ['craft-sbom.json', 'full-sbom.cyclonedx.json'] as const) {
+      for (const components of [undefined, []]) {
+        writeFileSync(join(directory, name), JSON.stringify({ ...documents[name], components }))
+        expect(() => verifySbomFiles(directory, 'v0.0.93')).toThrow('dependency components')
+      }
+      writeFileSync(join(directory, name), JSON.stringify(documents[name]))
+    }
   }
   finally {
     rmSync(directory, { recursive: true, force: true })
