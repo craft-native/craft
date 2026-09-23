@@ -453,6 +453,23 @@ See [benchmarks](../../benchmarks) for detailed performance comparisons.
 - **Zero dependencies** - Pure Node.js APIs only
 - **Better DX** - Hot reload and dev tools built-in
 
+## Native bridge error codes
+
+The mobile bridge declarations in `types/craft.d.ts` distinguish canonical
+`NativeBridgeErrorCode` values from the broader compatible `CraftErrorCode` union.
+The native wire vocabulary comes from `packages/zig/src/bridge_error.zig`; SDK
+parity tests fail if the declaration drifts. It includes `INVALID_PARAMETER`,
+`PLATFORM_NOT_SUPPORTED`, `NATIVE_CALL_FAILED`, `WEBVIEW_HANDLE_NOT_SET`, `BUSY`,
+and `CAPABILITY_DISABLED`.
+
+Existing mobile/shim names such as `INVALID_PARAMS` and `NOT_AVAILABLE` remain
+accepted by `CraftErrorCode` for source compatibility. They are not aliases that
+the SDK rewrites on the wire. Applications supporting multiple host versions
+should handle the codes those hosts actually return; new native error handling
+should use the canonical spellings. A capability disabled by app configuration
+is distinct from a user denying permission, and `BUSY` is distinct from a failed
+native call.
+
 ## Requirements
 
 - Bun >= 1.0.0 (for development)
