@@ -66,6 +66,11 @@ cli
     }
 
     const template = options?.template || 'minimal'
+    if (!['minimal', 'full-featured', 'todo-app'].includes(template)) {
+      console.error(`Error: Unknown template "${template}"`)
+      console.error('Available templates: minimal, full-featured, todo-app')
+      process.exit(1)
+    }
     const skipInstall = options?.skipInstall || false
 
     console.log(`\n✨ Creating a new Craft app: ${projectName}`)
@@ -91,11 +96,6 @@ cli
     }
     else if (template === 'todo-app') {
       createTodoAppTemplate(projectPath, projectName)
-    }
-    else {
-      console.error(`Error: Unknown template "${template}"`)
-      console.log('\nAvailable templates: minimal, full-featured, todo-app')
-      process.exit(1)
     }
 
     // Install dependencies unless skipped
