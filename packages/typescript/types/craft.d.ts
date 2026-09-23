@@ -980,7 +980,31 @@ export interface DebugReport {
   timestamp: number;
 }
 
-export type CraftErrorCode =
+/**
+ * Canonical Zig bridge wire codes. Kept in parity with
+ * packages/zig/src/bridge_error.zig:errorCodeString by the SDK test suite.
+ */
+export type NativeBridgeErrorCode =
+  | 'WINDOW_HANDLE_NOT_SET'
+  | 'WEBVIEW_HANDLE_NOT_SET'
+  | 'TRAY_HANDLE_NOT_SET'
+  | 'UNKNOWN_ACTION'
+  | 'MISSING_DATA'
+  | 'INVALID_JSON'
+  | 'INVALID_PARAMETER'
+  | 'BUSY'
+  | 'PLATFORM_NOT_SUPPORTED'
+  | 'NATIVE_CALL_FAILED'
+  | 'ALLOCATION_FAILED'
+  | 'CANCELLED'
+  | 'NOT_FOUND'
+  | 'PERMISSION_DENIED'
+  | 'TIMEOUT'
+  | 'UNSAFE_COMMAND'
+  | 'CAPABILITY_DISABLED';
+
+/** Native wire codes plus existing mobile/shim names retained for compatibility. */
+export type CraftErrorCode = NativeBridgeErrorCode
   | 'CRAFT_ERROR'           // Generic error
   | 'PERMISSION_DENIED'     // Permission not granted
   | 'NOT_AVAILABLE'         // Feature not available on device
