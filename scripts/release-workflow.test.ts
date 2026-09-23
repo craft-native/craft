@@ -62,3 +62,16 @@ test('a registry network failure remains a visible best-effort warning', () => {
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+test('SBOM generation validates required documents before uploading artifacts', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/sbom.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const generate = workflow.jobs.generate.steps!
+  const validation = generate.findIndex(step => step.name === 'Validate SBOMs')
+  const upload = generate.findIndex(step => step.uses?.startsWith('actions/upload-artifact@'))
+  expect(validation).toBeGreaterThan(-1)
+  expect(upload).toBeGreaterThan(validation)
+  const command = generate[validation]!.run!
+  expect(command).toContain('bun scripts/verify-sbom.ts sbom "v$VERSION"')
+  expect(command).toContain("require('./package.json').version")
+  expect(command).not.toContain('||')
+})
