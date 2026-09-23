@@ -822,6 +822,15 @@ test "an action the namespace does not serve is reported, not ignored" {
     }
 }
 
+test "both system presenter lookups report a missing webview explicitly" {
+    if (!is_darwin) return error.SkipZigTest;
+    const saved = ios_dispatch.getWebView();
+    defer ios_dispatch.setWebView(saved);
+    ios_dispatch.setWebView(null);
+    try testing.expectError(bridge_error.BridgeError.WebViewHandleNotSet, uikit.topmostViewController());
+    try testing.expectError(bridge_error.BridgeError.WebViewHandleNotSet, uikit.keyWindowScene());
+}
+
 test "openURL without a url reports it rather than settling nothing" {
     // Swift's `if let` fell through here and never resolved or rejected the
     // callback, so the page waited out a 30-second timeout with no cause to
