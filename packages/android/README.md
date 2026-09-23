@@ -145,7 +145,11 @@ also enables foreground geolocation. Push notifications require a regular
 `googleServicesFile` whose JSON contains a client matching the generated
 Android package. Deep links require at least one valid URI scheme; scheme names
 are normalized to lowercase.
-Health Connect normalizes `minSdk` to at least 26 and `compileSdk` to at least 36.
+The generated runtime supports Android 8.0 / API 26 and newer, exported as
+`ANDROID_MIN_SDK`. `minSdk` defaults to that floor; lower values are rejected
+before project files are written, including when Health Connect is enabled.
+Health Connect normalizes `compileSdk` to at least 36.
+The same effective `minSdk` is written to Gradle and both configuration files.
 A custom `appIconPath` must be a regular PNG, WebP, JPG, or GIF file; its supported
 extension is preserved in the generated drawable resource.
 

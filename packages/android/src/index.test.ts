@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, syncAndroidWebAssets } from './index'
+import { ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, syncAndroidWebAssets } from './index'
 
 function generatedFiles(path: string): string[] {
   return readdirSync(path, { withFileTypes: true }).flatMap((entry) => {
@@ -12,6 +12,34 @@ function generatedFiles(path: string): string[] {
 }
 
 describe('Craft Android builder', () => {
+  it('rejects Android API levels below the runtime floor before writing a project', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'craft-android-sdk-floor-'))
+    try {
+      for (const enableHealthConnect of [false, true]) {
+        const output = join(root, String(enableHealthConnect))
+        await expect(init({ name: 'OldDevice', output, runtimeDir: null, config: { minSdk: 25, enableHealthConnect } }))
+          .rejects.toThrow('Android minSdk must be at least 26')
+        expect(existsSync(output)).toBe(false)
+      }
+    }
+    finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('keeps the default and supported Android API levels aligned across generated metadata', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'craft-android-sdk-supported-'))
+    try {
+      for (const minSdk of [undefined, 26, 28]) {
+        const output = join(root, String(minSdk))
+        await init({ name: 'SupportedDevice', output, runtimeDir: null, config: minSdk === undefined ? {} : { minSdk } })
+        const expected = minSdk ?? 26
+        expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).minSdk).toBe(expected)
+        expect(JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8')).minSdk).toBe(expected)
+        expect(readFileSync(join(output, 'app/build.gradle.kts'), 'utf8')).toContain(`minSdk = ${expected}`)
+      }
+    }
+    finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   it('routes every Kotlin template through the project generator', () => {
     const templates = readdirSync(join(import.meta.dir, '../templates'))
       .filter(name => name.endsWith('.kt.template'))
@@ -1298,7 +1326,7 @@ describe('Craft Android builder', () => {
       name: 'WildLoop',
       packageName: 'org.wildloop.app',
       output,
-      config: { compileSdk: 34, enableHealthConnect: true, minSdk: 24 },
+      config: { compileSdk: 34, enableHealthConnect: true, minSdk: ANDROID_MIN_SDK },
     })
 
     const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
@@ -1489,12 +1517,6 @@ describe('the Zig library and the generated app agree on how old a device may be
 
     expect(declared).not.toBeNull()
 
-    // DEFAULT_CONFIG is not exported, so read it the same way: from the source
-    // that defines it, which is the thing that would have to change.
-    const generator = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
-    const minSdk = generator.match(/minSdk:\s*(\d+)/)
-
-    expect(minSdk).not.toBeNull()
-    expect(Number(declared![1])).toBeLessThanOrEqual(Number(minSdk![1]))
+    expect(Number(declared![1])).toBeLessThanOrEqual(ANDROID_MIN_SDK)
   })
 })

@@ -42,6 +42,9 @@ const KOTLIN_KEYWORDS = new Set([
   'while',
 ])
 
+/** Oldest Android API level supported by the generated Kotlin runtime. */
+export const ANDROID_MIN_SDK = 26
+
 export interface CraftAndroidConfig {
   appName: string
   packageName: string
@@ -67,6 +70,7 @@ export interface CraftAndroidConfig {
   googleServicesFile?: string
   devServerURL?: string
   hasBundledFallback?: boolean
+  /** Android API level, at least ANDROID_MIN_SDK (26). */
   minSdk?: number
   compileSdk?: number
   targetSdk?: number
@@ -125,7 +129,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   enableDeepLinks: false,
   urlSchemes: [],
   trustedOrigins: [],
-  minSdk: 26,
+  minSdk: ANDROID_MIN_SDK,
   compileSdk: 36,
   targetSdk: 35,
 }
@@ -258,6 +262,9 @@ function validateAndroidConfig(config: CraftAndroidConfig): void {
     }
   }
 
+  if (Number(config.minSdk) < ANDROID_MIN_SDK) {
+    throw new Error(`Android minSdk must be at least ${ANDROID_MIN_SDK} (Android 8.0) for the Craft runtime`)
+  }
   if (Number(config.minSdk) > Number(config.targetSdk)) {
     throw new Error('Android minSdk must not exceed targetSdk')
   }
@@ -462,7 +469,6 @@ export async function init(options: InitOptions): Promise<void> {
   }
   if (config.enableBackgroundLocation) config.enableGeolocation = true
   if (config.enableHealthConnect) {
-    config.minSdk = Math.max(config.minSdk ?? 26, 26)
     config.compileSdk = Math.max(config.compileSdk ?? 36, 36)
   }
   normalizeAndroidNetworkConfig(config)
@@ -614,7 +620,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
     .replace(/\{\{VERSION_NAME\}\}/g, escapeKotlinString(config.version || '1.0.0'))
     .replace(/\{\{VERSION_CODE\}\}/g, String(config.versionCode || 1))
-    .replace(/\{\{MIN_SDK\}\}/g, String(config.minSdk || 24))
+    .replace(/\{\{MIN_SDK\}\}/g, String(config.minSdk ?? ANDROID_MIN_SDK))
     .replace(/\{\{COMPILE_SDK\}\}/g, String(config.compileSdk || 36))
     .replace(/\{\{TARGET_SDK\}\}/g, String(config.targetSdk || 35))
     .replace(/\{\{GOOGLE_SERVICES_PLUGIN\}\}/g, hasGoogleServices ? '    id("com.google.gms.google-services")' : '')
