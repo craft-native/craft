@@ -283,6 +283,9 @@ jobs:
       - name: Test release identity validation
         run: bun test scripts/release-version.test.ts
 
+      - name: Test complete release manifest verification
+        run: bun test scripts/release-manifest.test.ts
+
   integration:
     runs-on: ubuntu-latest
     needs: [zig-core, typescript-sdk, create-craft, ts-maps]
