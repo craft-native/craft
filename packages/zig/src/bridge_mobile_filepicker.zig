@@ -428,7 +428,7 @@ pub const FilePickerBridge = struct {
                     "pending reply; refusing the second call rather than stranding the first",
                 .{},
             );
-            return BridgeError.InvalidParameter;
+            return BridgeError.Busy;
         }
 
         const PresentFn = *const fn (Id, Id, Id, bool, Id) callconv(.c) void;
@@ -543,7 +543,7 @@ pub const FilePickerBridge = struct {
                 "downloadFile: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
 
@@ -562,13 +562,10 @@ pub const FilePickerBridge = struct {
     }
 };
 
-/// The answer for a full block pool, in the shape `bridge_mobile_location.zig`
-/// uses: `BridgeError` has no "Busy", `INVALID_PARAMETER` is the migration
-/// notes' designated stand-in, and the point is that the seventeenth concurrent
-/// call gets an explicit rejection instead of a promise that never settles.
+/// Reject a call when every asynchronous reply slot is already in use.
 fn poolFull() BridgeError {
     std.log.warn("pickFile refused: all {d} async slots in flight", .{ios_async.max_in_flight});
-    return BridgeError.InvalidParameter;
+    return BridgeError.Busy;
 }
 
 fn selector(name: [*:0]const u8) !Id {

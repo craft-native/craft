@@ -268,7 +268,7 @@ fn requireBundleIdentifier() !void {
 
 fn poolFull(action: []const u8) bridge_error.BridgeError {
     std.log.warn("{s} refused: all {d} async slots in flight", .{ action, ios_async.max_in_flight });
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 /// What a slot's block will answer. The ticket is stored, not rebuilt from the
