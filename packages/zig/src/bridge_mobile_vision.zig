@@ -191,7 +191,7 @@ pub const VisionBridge = struct {
                 "{s}: no free reply slot; {d} native calls are already awaiting one",
                 .{ kind.action(), ios_async.max_in_flight },
             );
-            return BridgeError.NativeCallFailed;
+            return BridgeError.Busy;
         };
 
         work.* = .{ .handler = handler, .request = request, .kind = kind, .ticket = ticket };

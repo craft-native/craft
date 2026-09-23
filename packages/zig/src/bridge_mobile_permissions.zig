@@ -542,7 +542,7 @@ pub const PermissionsBridge = struct {
                 "openSettings: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return bridge_error.BridgeError.NativeCallFailed;
+            return bridge_error.BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
         publishSettingsCall(ticket);
@@ -564,13 +564,10 @@ pub const PermissionsBridge = struct {
     }
 };
 
-/// The answer for a full block pool. `BridgeError` has no "Busy";
-/// INVALID_PARAMETER is the designated stand-in from the migration notes,
-/// and the point is that the sixteen-plus-first concurrent prompt gets an
-/// explicit rejection instead of a promise that never settles.
+/// Reject a call when every asynchronous reply slot is already in use.
 fn poolFull() bridge_error.BridgeError {
     std.log.warn("permission request refused: all {d} async slots in flight", .{ios_async.max_in_flight});
-    return bridge_error.BridgeError.InvalidParameter;
+    return bridge_error.BridgeError.Busy;
 }
 
 // =============================================================================

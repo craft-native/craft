@@ -318,7 +318,7 @@ pub const WatchBridge = struct {
                 "sendToWatch: no free reply slot; {d} native calls are already awaiting one",
                 .{ios_async.max_in_flight},
             );
-            return bridge_error.BridgeError.NativeCallFailed;
+            return bridge_error.BridgeError.Busy;
         };
         errdefer ios_async.abandon(ticket);
         publishWatchCall(ticket);
