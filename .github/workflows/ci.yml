@@ -320,6 +320,12 @@ jobs:
       - name: Verify publish surfaces
         run: bun run verify:packages
 
+      - name: Test package regressions
+        run: bun run test:packages
+
+      - name: Build and verify every npm artifact
+        run: bun run verify:npm
+
       - name: Run root verification
         run: bun run verify
 
