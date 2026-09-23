@@ -50,13 +50,8 @@ jobs:
 
       - name: Validate SBOMs
         run: |
-          # Basic validation
-          for file in sbom/*.json; do
-            if [ -f "$file" ]; then
-              echo "Validating $file..."
-              python3 -m json.tool "$file" > /dev/null && echo "  ✓ Valid JSON" || echo "  ✗ Invalid JSON"
-            fi
-          done
+          VERSION=$(bun -p "require('./package.json').version")
+          bun scripts/verify-sbom.ts sbom "v$VERSION"
 
       - name: Generate SBOM summary
         run: |

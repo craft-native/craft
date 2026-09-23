@@ -32,6 +32,10 @@ test('requires all three valid documents from the matching release', () => {
       }
       writeFileSync(join(directory, name), JSON.stringify(documents[name]))
     }
+    for (const packages of [undefined, [], 'not-an-inventory']) {
+      writeFileSync(join(directory, 'full-sbom.spdx.json'), JSON.stringify({ ...documents['full-sbom.spdx.json'], packages }))
+      expect(() => verifySbomFiles(directory, 'v0.0.93')).toThrow('populated SPDX')
+    }
   }
   finally {
     rmSync(directory, { recursive: true, force: true })
