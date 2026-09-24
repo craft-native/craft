@@ -67,7 +67,7 @@
     "@stacksjs/bumpx": "^0.2.10",
     "@stacksjs/bunpress": "^0.2.13",
     "@stacksjs/env": "^0.72.50",
-    "better-dx": "^0.2.15"
+    "better-dx": "^0.2.25"
   },
   "git-hooks": {
     "pre-commit": {
