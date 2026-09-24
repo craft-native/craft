@@ -31,7 +31,7 @@
     "verify": "bun scripts/verify.ts",
     "verify:packages": "bun scripts/verify-packages.ts",
     "verify:npm": "bun scripts/npm-packages.ts",
-    "test:packages": "bun test scripts/npm-packages.test.ts scripts/mobile-package.test.ts scripts/svelte-package.test.ts scripts/scaffold-package.test.ts",
+    "test:packages": "bun test scripts/npm-packages.test.ts scripts/mobile-package.test.ts scripts/svelte-package.test.ts scripts/vue-package.test.ts scripts/scaffold-package.test.ts",
     "verify:create": "bun scripts/verify-create-craft.ts",
     "verify:cimports": "bun scripts/audit-cimports.ts",
     "verify:docs": "bun scripts/verify-doc-links.ts",
