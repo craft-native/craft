@@ -34,16 +34,26 @@ test('registry indexing waits for the final manifest, macOS downloads and attach
 
 test('npm publication follows artifact validation, and macOS downloads run on both matching architectures', () => {
   const npm = release.jobs.npm.steps!.map(step => step.run ?? '')
-  const verify = npm.indexOf('bun run verify:npm')
+  const verify = npm.indexOf('bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"')
+  const scan = npm.indexOf('bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"')
+  const publish = npm.indexOf('bun scripts/publish-npm-archives.ts "$RUNNER_TEMP/craft-npm-archives"')
   expect(verify).toBeGreaterThan(-1)
-  expect(npm.indexOf('pantry publish --npm --access public')).toBeGreaterThan(verify)
+  expect(scan).toBeGreaterThan(verify)
+  expect(publish).toBeGreaterThan(scan)
+  expect(steps(release.jobs.npm)).not.toContain('pantry publish --npm')
+  expect(release.jobs.npm.steps!.find(step => step.name === 'Publish scanned npm archives')?.env?.NODE_AUTH_TOKEN).toBe('${{ secrets.NPM_TOKEN }}')
+  const native = release.jobs.pantry.steps!
+  expect(native.findIndex(step => step.name === 'Scan binaries prepared for publication')).toBeGreaterThan(native.findIndex(step => step.name === 'Notarize macOS binaries'))
+  expect(native.findIndex(step => step.name === 'Publish & Release')).toBeGreaterThan(native.findIndex(step => step.name === 'Scan binaries prepared for publication'))
+  expect(native.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
+  expect(release.jobs.npm.steps!.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
   expect(release.jobs['verify-macos-downloads'].strategy?.matrix.platform).toEqual([
     { os: 'macos-15', name: 'darwin-arm64' },
     { os: 'macos-15-intel', name: 'darwin-x64' },
   ])
   expect(steps(release.jobs['verify-macos-downloads'])).toContain('scripts/verify-macos-release.ts')
   expect(release.jobs['release-sbom'].uses).toBe('./.github/workflows/sbom.yml')
-  expect(release.jobs['release-sbom'].with?.enforce_high).toBe(true)
+  expect(release.jobs['release-sbom'].with?.enforce_high).toBe(false)
   expect(needs(release.jobs.pantry)).toContain('release-sbom')
   expect(steps(release.jobs.pantry)).toContain('bun install --frozen-lockfile')
   expect(steps(release.jobs.npm)).toContain('bun install --frozen-lockfile')

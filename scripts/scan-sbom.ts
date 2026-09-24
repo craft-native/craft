@@ -58,7 +58,7 @@ if (import.meta.main) {
     const setting = process.env.CRAFT_FAIL_HIGH ?? 'false'
     if (!['true', 'false'].includes(setting)) throw new Error('CRAFT_FAIL_HIGH must be true or false')
     const { counts } = scanSbom(process.argv[2] || 'sbom/full-sbom.cyclonedx.json', process.argv[3] || 'scan-results')
-    const summary = ['## Vulnerability scan results', '', '| Severity | Count |', '| --- | --- |', ...severities.map(severity => `| ${severity} | ${counts[severity]} |`), '', 'Policy: Critical findings fail every scan. High findings fail release scans; they remain review items on main (#279).', ''].join('\n')
+    const summary = ['## Vulnerability scan results', '', '| Severity | Count |', '| --- | --- |', ...severities.map(severity => `| ${severity} | ${counts[severity]} |`), '', 'Policy: Critical findings fail every scan. High findings in this full-source scan remain review items; release artifacts and production dependencies have a separate High gate (#279).', ''].join('\n')
     console.log(summary)
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
     if (counts.High > 0 && setting === 'false') console.warn('::warning::High vulnerability findings require review under #279')
