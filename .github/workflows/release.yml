@@ -314,7 +314,6 @@ jobs:
         env:
           CRAFT_PLATFORM: ${{ runner.os == 'macOS' && 'macos' || 'linux' }}
         run: bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"
-          done
 
       # ── Publish & Release ──────────────────────────────
       # Pantry action handles everything:

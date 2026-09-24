@@ -48,6 +48,16 @@ test('Bun audit parser fails closed and only High or Critical blocks', () => {
     expect(() => summarizeBunAudit(invalid)).toThrow()
 })
 
+test('release scanner rejects extra arguments before scanning', () => {
+  const result = Bun.spawnSync([
+    process.execPath,
+    join(import.meta.dir, 'scan-release-artifacts.ts'),
+    'linux', '/missing', '/missing', 'done',
+  ], { stdout: 'pipe', stderr: 'pipe' })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain('Usage: scan-release-artifacts.ts')
+})
+
 function binary(root: string, path: string, magic: string) {
   const absolute = join(root, path)
   mkdirSync(join(absolute, '..'), { recursive: true })

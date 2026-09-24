@@ -160,8 +160,10 @@ function scanNative(binaryRoot: string, platform: 'macos' | 'linux', output: str
 }
 
 if (import.meta.main) {
-  const [mode, input, output] = Bun.argv.slice(2)
-  if (!mode || !input || !output) throw new Error('Usage: scan-release-artifacts.ts <npm|macos|linux> <input> <output>')
+  const args = Bun.argv.slice(2)
+  if (args.length !== 3 || args.some(arg => !arg))
+    throw new Error('Usage: scan-release-artifacts.ts <npm|macos|linux> <input> <output>')
+  const [mode, input, output] = args as [string, string, string]
   const syft = process.env.CRAFT_SYFT ?? 'syft'
   const grype = process.env.CRAFT_GRYPE ?? 'grype'
   if (mode === 'npm') scanNpm(resolve(input), resolve(output), syft, grype)
