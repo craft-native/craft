@@ -512,8 +512,9 @@
     // arrival is not a tap.
     //
     // #258: opened by the local link, the page schedules a notification of
-    // its own, with data, a few seconds out. The test kills the app before it
-    // fires and taps it, and this same report says what the tap carried.
+    // its own, with data, far enough out for the UI test to stop the app.
+    // The test kills it before it fires and taps it, and this same report
+    // says what the tap carried.
     //
     // Permission is asked for only when the link asks, because nothing
     // answers the prompt on the launches simctl makes. iOS only: Android has
@@ -527,12 +528,20 @@
       }
       if (launch && launch.url.indexOf('://e2e/local') !== -1) {
         var scheduled = function (text) { document.getElementById('notification-local').textContent = 'CRAFT-E2E-LOCAL-SCHEDULED ' + text }
+        var delay = Number(new URL(launch.url).searchParams.get('delayMs'))
+        if (!Number.isInteger(delay) || delay < 60000 || delay > 180000) {
+          scheduled('rejected invalid scheduling window')
+          return
+        }
+        // Record the earliest delivery time before crossing the bridge. A
+        // slow completion must not invent a later deadline for the UI test.
+        var fireAt = Date.now() + delay
         window.craft.notifications.schedule({
           title: 'Craft E2E',
           body: NONCE + ' local',
-          delay: 8000,
+          delay: delay,
           data: { craftE2E: NONCE, stage: 'local', nested: { kept: true } }
-        }).then(function () { scheduled('ok') }, function (error) { scheduled('rejected ' + describeError(error).message) })
+        }).then(function () { scheduled('ok ' + fireAt) }, function (error) { scheduled('rejected ' + describeError(error).message) })
       }
       var onTap = window.craft.notifications && window.craft.notifications.onTap
       var seen = { dispatched: 0, taps: [], onTap: typeof onTap, unsubscribe: null }

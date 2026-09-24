@@ -59,6 +59,11 @@ export type DriverEvent = PlanEvent | CaseEvent | DoneEvent | FatalEvent | Obser
 
 export type MobilePlatform = 'ios' | 'android'
 
+// The local notification must survive UI discovery and synchronous app
+// termination before it fires. CI has spent 32 seconds in terminate() alone.
+export const LOCAL_NOTIFICATION_DELAY_MS = 120_000
+export const NOTIFICATION_TEST_TIMEOUT_MS = 300_000 + LOCAL_NOTIFICATION_DELAY_MS
+
 /**
  * The cases each platform must run, named here and nowhere else.
  *
@@ -867,4 +872,3 @@ export function androidDeclines(text: string): string[] {
   const pattern = new RegExp(`craft: (\\w+) (${phrases}) \\(([^)]*)\\)`, 'g')
   return [...plain.matchAll(pattern)].map(match => `${match[1]}: ${match[2]} (${match[3]})`)
 }
-

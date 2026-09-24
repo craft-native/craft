@@ -2,11 +2,68 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { LOCAL_NOTIFICATION_DELAY_MS, NOTIFICATION_TEST_TIMEOUT_MS } from './protocol'
 
 const ESC = String.fromCharCode(27)
 
 /** A transcript shaped like the one a real iOS run produces. */
 const RUN = 'craft-e2e-ios-shim-1234'
+
+describe('local notification scheduling window', () => {
+  const page = readFileSync(join(import.meta.dir, 'driver.html'), 'utf8')
+  const start = page.indexOf("      if (launch && launch.url.indexOf('://e2e/local')")
+  const end = page.indexOf('      var onTap', start)
+  if (start < 0 || end < 0) throw new Error('Cannot find the actual driver scheduling block')
+  const schedule = new Function('window', 'document', 'launch', 'NONCE', 'Date', 'describeError', page.slice(start, end))
+
+  it('keeps the host budget large enough for the bounded delivery window', () => {
+    expect(LOCAL_NOTIFICATION_DELAY_MS).toBe(120_000)
+    expect(NOTIFICATION_TEST_TIMEOUT_MS - LOCAL_NOTIFICATION_DELAY_MS).toBeGreaterThanOrEqual(300_000)
+    const host = readFileSync(join(import.meta.dir, 'ios.ts'), 'utf8')
+    expect(host).toContain('&delayMs=${LOCAL_NOTIFICATION_DELAY_MS}')
+    expect(host).toContain('Date.now() + NOTIFICATION_TEST_TIMEOUT_MS')
+  })
+
+  it('reports the earliest delivery deadline, not a fresh window after a delayed callback', async () => {
+    const element = { textContent: '' }
+    let options: any
+    let now = 1000
+    let resolve!: () => void
+    const pending = new Promise<void>((done) => { resolve = done })
+    schedule({ craft: { notifications: { schedule(value: unknown) { options = value; return pending } } } },
+      { getElementById: () => element }, { url: 'crafte2eprobe://e2e/local?delayMs=120000' }, RUN, { now: () => now }, String)
+    expect(options.delay).toBe(120_000)
+    expect(options.data).toEqual({ craftE2E: RUN, stage: 'local', nested: { kept: true } })
+    expect(element.textContent).toBe('')
+    now += 16_000
+    resolve()
+    await pending
+    expect(element.textContent).toBe('CRAFT-E2E-LOCAL-SCHEDULED ok 121000')
+    // Even after the observed 16-second UI lookup and 32-second termination,
+    // the deadline is still ahead. The old 8-second window failed this case.
+    expect(121_000 - (now + 16_000 + 32_000)).toBeGreaterThan(0)
+  })
+
+  it('refuses missing, malformed or unbounded scheduling delays', () => {
+    for (const query of ['', '?delayMs=NaN', '?delayMs=0', '?delayMs=8000', '?delayMs=180001']) {
+      const element = { textContent: '' }
+      let called = false
+      schedule({ craft: { notifications: { schedule() { called = true; return Promise.resolve() } } } },
+        { getElementById: () => element }, { url: `crafte2eprobe://e2e/local${query}` }, RUN, Date, String)
+      expect(called).toBe(false)
+      expect(element.textContent).toContain('CRAFT-E2E-LOCAL-SCHEDULED rejected')
+    }
+  })
+
+  it('reports native scheduling rejection without claiming a valid deadline', async () => {
+    const element = { textContent: '' }
+    const rejected = Promise.reject(new Error('permission denied'))
+    schedule({ craft: { notifications: { schedule: () => rejected } } },
+      { getElementById: () => element }, { url: 'crafte2eprobe://e2e/local?delayMs=120000' }, RUN, Date, (error: Error) => error)
+    await rejected.catch(() => {})
+    expect(element.textContent).toBe('CRAFT-E2E-LOCAL-SCHEDULED rejected permission denied')
+  })
+})
 
 function iosTranscript(overrides: { cases?: string[], omit?: string[], fail?: Record<string, string>, done?: boolean, run?: string } = {}): string {
   const planned = overrides.cases ?? REQUIRED_CASES.ios
@@ -675,4 +732,3 @@ describe('android declines', () => {
       expect(dispatch).toContain(`" ${phrase} ({s})"`)
   })
 })
-

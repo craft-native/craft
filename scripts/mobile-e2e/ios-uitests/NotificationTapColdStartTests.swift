@@ -94,8 +94,9 @@ final class NotificationTapColdStartTests: XCTestCase {
         print("CRAFT-E2E-NOTIFICATION-RECEIVED-RESULT \(receipts.label)")
 
         // #258: a notification the page scheduled itself, with data. The
-        // local link has the page schedule it a few seconds out, and the app
-        // is killed before it fires, so its tap is a cold start like the push.
+        // local link carries a bounded scheduling window. The page reports
+        // its earliest delivery deadline so slow UI calls cannot silently
+        // turn this into a foreground-delivery test (#307).
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "the app did not stop before the local link")
         XCUIDevice.shared.system.open(URL(string: localLink)!)
@@ -105,10 +106,20 @@ final class NotificationTapColdStartTests: XCTestCase {
             .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-LOCAL-SCHEDULED '"))
             .firstMatch
         XCTAssertTrue(scheduled.waitForExistence(timeout: 60), "the page never said whether it scheduled the notification")
-        XCTAssertEqual(scheduled.label, "CRAFT-E2E-LOCAL-SCHEDULED ok")
+        let schedulingReport = scheduled.label.split(separator: " ")
+        guard schedulingReport.count == 3, schedulingReport[1] == "ok",
+              let fireAtMs = Double(schedulingReport[2]), fireAtMs.isFinite, fireAtMs > 0 else {
+            XCTFail("invalid local scheduling report: \(scheduled.label)")
+            return
+        }
+        let fireAt = Date(timeIntervalSince1970: fireAtMs / 1000)
+        XCTAssertLessThanOrEqual(fireAt.timeIntervalSinceNow, 180, "local scheduling window is unbounded")
         app.terminate()
         XCTAssertTrue(app.wait(for: .notRunning, timeout: 15), "the app did not stop, so the local tap would not be a cold start")
-        tapBanner(springboard, app: app, containing: localBody)
+        let remaining = fireAt.timeIntervalSinceNow
+        print("CRAFT-E2E-LOCAL-TIMING deadlineMs=\(fireAtMs) remainingAfterStopSeconds=\(remaining)")
+        XCTAssertGreaterThan(remaining, 0, "local notification deadline elapsed before the app stopped; cold-start precondition was not met")
+        tapBanner(springboard, app: app, containing: localBody, timeout: remaining + 30)
 
         let local = app.staticTexts
             .containing(NSPredicate(format: "label BEGINSWITH 'CRAFT-E2E-NOTIFICATION '"))
@@ -130,11 +141,11 @@ final class NotificationTapColdStartTests: XCTestCase {
     /// enough for the banner to go, and the test fails saying the tap could
     /// not find it. There is no retrying around that: a tap that misses ends
     /// the test method, even inside XCTExpectFailure.
-    private func tapBanner(_ springboard: XCUIApplication, app: XCUIApplication, containing text: String) {
+    private func tapBanner(_ springboard: XCUIApplication, app: XCUIApplication, containing text: String, timeout: TimeInterval = 120) {
         let banner = springboard.descendants(matching: .any)
             .matching(NSPredicate(format: "label CONTAINS %@", text))
             .firstMatch
-        XCTAssertTrue(banner.waitForExistence(timeout: 120), "no banner for \(text) ever appeared")
+        XCTAssertTrue(banner.waitForExistence(timeout: timeout), "no banner for \(text) ever appeared")
         banner.tap()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 60), "tapping the banner did not start the app")
     }
