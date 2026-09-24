@@ -1,0 +1,35 @@
+name: Set up release scanners
+description: Install pinned Syft and Grype binaries for release artifact checks
+runs:
+  using: composite
+  steps:
+    - name: Install Syft and Grype
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS" in
+          Linux)
+            syft_platform=linux_amd64
+            grype_platform=linux_amd64
+            syft_hash=caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d
+            grype_hash=3fa2dc4b924621ab65404cf08d0b8438d896d80ab949c9d5a4ca283c36004c9b
+            ;;
+          macOS)
+            syft_platform=darwin_arm64
+            grype_platform=darwin_arm64
+            syft_hash=014d561b6d13059124155f74a6c5a9a99501f5e209313638dd884f39eb418ee6
+            grype_hash=500c9b2b6c089d21481815f57a553fabbd441ec7d1e79d95e3aaf40c3bfc7e36
+            ;;
+          *) echo "Unsupported scanner platform: $RUNNER_OS" >&2; exit 1 ;;
+        esac
+        mkdir -p "$RUNNER_TEMP/release-scanners"
+        cd "$RUNNER_TEMP/release-scanners"
+        curl --fail --location --retry 3 --output syft.tar.gz \
+          "https://github.com/anchore/syft/releases/download/v1.52.0/syft_1.52.0_${syft_platform}.tar.gz"
+        echo "$syft_hash  syft.tar.gz" | shasum -a 256 --check
+        tar -xzf syft.tar.gz syft
+        curl --fail --location --retry 3 --output grype.tar.gz \
+          "https://github.com/anchore/grype/releases/download/v0.119.0/grype_0.119.0_${grype_platform}.tar.gz"
+        echo "$grype_hash  grype.tar.gz" | shasum -a 256 --check
+        tar -xzf grype.tar.gz grype
+        echo "$RUNNER_TEMP/release-scanners" >> "$GITHUB_PATH"
