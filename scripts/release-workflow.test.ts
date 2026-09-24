@@ -45,6 +45,8 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   const native = release.jobs.pantry.steps!
   expect(native.findIndex(step => step.name === 'Scan binaries prepared for publication')).toBeGreaterThan(native.findIndex(step => step.name === 'Notarize macOS binaries'))
   expect(native.findIndex(step => step.name === 'Publish & Release')).toBeGreaterThan(native.findIndex(step => step.name === 'Scan binaries prepared for publication'))
+  expect(native.find(step => step.name === 'Scan binaries prepared for publication')?.run)
+    .toBe('bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"')
   expect(native.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
   expect(release.jobs.npm.steps!.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
   expect(release.jobs['verify-macos-downloads'].strategy?.matrix.platform).toEqual([
