@@ -3,7 +3,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
-import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, localNotificationProblems, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
+import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, LOCAL_NOTIFICATION_DELAY_MS, localNotificationProblems, NOTIFICATION_TEST_TIMEOUT_MS, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
 /** The scheme the probe registers, and the one its cold-start link uses. */
@@ -68,13 +68,6 @@ const UI_TESTS = `${APP_NAME}UITests`
 
 /** The UI test classes, each run on its own with `-only-testing`. */
 const UI_TEST_CLASSES = ['DeepLinkColdStartTests', 'NotificationTapColdStartTests'] as const
-
-/**
- * How long the notification UI test gets in all. It starts a test runner,
- * launches the app four times, answers a permission prompt and waits out a
- * scheduled notification; it usually takes about a minute.
- */
-const NOTIFICATION_TEST_TIMEOUT_MS = 300_000
 
 /**
  * The pushes the notification UI test has asked for, in order, one per
@@ -343,7 +336,7 @@ schemes:
       TEST_RUNNER_PROBE_BUNDLE_ID: BUNDLE_ID,
       TEST_RUNNER_PROBE_NOTIFY_LINK: `${DEEP_LINK_SCHEME}://e2e/notify?run=${encodeURIComponent(nonce)}`,
       TEST_RUNNER_PROBE_PUSH_BODY: notificationBody(nonce, 'cold'),
-      TEST_RUNNER_PROBE_LOCAL_LINK: `${DEEP_LINK_SCHEME}://e2e/local?run=${encodeURIComponent(nonce)}`,
+      TEST_RUNNER_PROBE_LOCAL_LINK: `${DEEP_LINK_SCHEME}://e2e/local?run=${encodeURIComponent(nonce)}&delayMs=${LOCAL_NOTIFICATION_DELAY_MS}`,
       TEST_RUNNER_PROBE_LOCAL_BODY: notificationBody(nonce, 'local'),
     },
     stdin: 'ignore',
@@ -365,6 +358,8 @@ schemes:
   }
   if (tapping.exitCode === null) tapping.kill()
   await tapping.exited
+  if (tapping.exitCode !== 0)
+    failures.push(`notification UI test exited ${tapping.exitCode}; see ${notificationEvidence}`)
   await command(['xcrun', 'simctl', 'io', device.udid, 'screenshot', join(evidence, 'notification-screen.png')], { allowFailure: true })
   await command(['xcrun', 'simctl', 'terminate', device.udid, BUNDLE_ID], { allowFailure: true })
   const notificationOutput = readFileSync(notificationLog, 'utf8')
