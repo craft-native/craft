@@ -31,3 +31,57 @@ test('packed Svelte condition resolves outside the workspace', async () => {
     rmSync(temp, { recursive: true, force: true })
   }
 })
+
+test('store declarations expose the public Readable contract', () => {
+  const root = resolve(import.meta.dir, '..')
+  const temp = mkdtempSync(join(tmpdir(), 'craft-svelte-types-'))
+  const run = (args: string[], cwd = temp): void => {
+    const result = Bun.spawnSync([
+      process.execPath, join(root, 'packages/typescript/scripts/tsc.ts'), ...args,
+    ], { cwd, stdout: 'pipe', stderr: 'pipe' })
+    expect(`${result.stdout}\n${result.stderr}`).not.toContain('error TS')
+    expect(result.exitCode).toBe(0)
+  }
+  try {
+    run([
+      '-p', join(root, 'packages/svelte/tsconfig.json'), '--emitDeclarationOnly',
+      '--outDir', join(temp, 'declarations'),
+    ])
+    // Consumers only need Svelte's public store interface. Inferred subscribe
+    // signatures must not leak helper exports from the build-time peer.
+    writeFileSync(join(temp, 'store-contract.d.ts'), `
+declare module 'svelte/store' {
+  export interface Readable<T> {
+    subscribe(run: (value: T) => void, invalidate?: (value?: T) => void): () => void
+  }
+}
+`)
+    writeFileSync(join(temp, 'consumer.mts'), `
+import type { Readable } from 'svelte/store'
+import { craft, isReady } from './declarations/stores/craft.js'
+import { platform, createPlatformStore } from './declarations/stores/platform.js'
+const ready: Readable<boolean> = isReady
+const info: Readable<{ platform: string; version: string } | null> = platform
+const another: typeof info = createPlatformStore()
+const unsubscribe: () => void = craft.subscribe(api => {
+  if (api) {
+    const result: Promise<{ platform: string; version: string }> = api.getPlatform()
+    void result
+  }
+})
+// @ts-expect-error the Craft store is read-only to consumers
+craft.set(null)
+// @ts-expect-error readiness remains boolean
+const wrong: Readable<string> = isReady
+void [ready, info, another, unsubscribe, wrong]
+`)
+    run([
+      'consumer.mts', 'store-contract.d.ts', '--noEmit', '--strict',
+      '--module', 'nodenext', '--moduleResolution', 'nodenext',
+      '--target', 'esnext', '--ignoreConfig',
+    ])
+  }
+  finally {
+    rmSync(temp, { recursive: true, force: true })
+  }
+}, 60_000)

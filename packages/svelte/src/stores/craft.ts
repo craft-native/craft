@@ -1,4 +1,5 @@
 import { writable, derived } from 'svelte/store';
+import type { Readable } from 'svelte/store';
 
 interface CraftAPI {
   getPlatform(): Promise<{ platform: string; version: string }>;
@@ -18,7 +19,7 @@ declare global {
   }
 }
 
-function createCraftStore() {
+function createCraftStore(): Readable<CraftAPI | null> {
   const { subscribe, set } = writable<CraftAPI | null>(null);
 
   if (typeof window !== 'undefined') {
