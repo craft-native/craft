@@ -57,8 +57,13 @@ jobs:
         uses: ./.github/actions/first-party-zig-deps
 
       - name: Build Zig core
-        working-directory: packages/zig
-        run: zig build
+        run: bun run build:core
+
+      - name: Verify built native CLI startup
+        run: |
+          bun test scripts/verify-native-startup.test.ts
+          VERSION="$(bun -p "require('./package.json').version")"
+          bun scripts/verify-native-startup.ts packages/zig/zig-out/bin/craft "$VERSION"
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
