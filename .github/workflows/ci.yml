@@ -287,7 +287,7 @@ jobs:
         run: bun run verify:docs
 
       - name: Test dependency-bot job selection
-        run: bun test scripts/buddy-schedule.test.ts
+        run: bun test scripts/buddy-schedule.test.ts scripts/buddy-update.test.ts
 
       - name: Test merged SBOM inventory
         run: bun test scripts/merge-sbom.test.ts
