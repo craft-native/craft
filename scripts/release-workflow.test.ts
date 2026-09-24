@@ -19,8 +19,10 @@ const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ??
 test('every publishing path depends on release identity validation', () => {
   for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads'])
     expect(needs(release.jobs[name])).toContain('validate-release')
-  for (const name of ['npm', 'verify-release', 'verify-macos-downloads'])
+  for (const name of ['verify-release', 'verify-macos-downloads'])
     expect(release.jobs[name].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' }}")
+  expect(release.jobs.npm.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}")
+  expect(needs(release.jobs.npm)).toContain('release-sbom')
 })
 
 test('registry indexing waits for the final manifest, macOS downloads and attached SBOMs', () => {

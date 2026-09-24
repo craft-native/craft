@@ -528,9 +528,10 @@ jobs:
     # Nothing here consumes the binary job's artifacts: this checks out, runs
     # `bun install`, and publishes packages built from TypeScript. Signing a Zig
     # binary and publishing an SDK are independent, and the workflow now says
-    # so. `!cancelled()` rather than `always()` so a cancelled run still stops.
-    needs: [validate-release, pantry]
-    if: ${{ !cancelled() && needs.validate-release.result == 'success' }}
+    # so. The full-source scan's Critical gate still applies to both paths.
+    # `!cancelled()` rather than `always()` so a cancelled run still stops.
+    needs: [validate-release, release-sbom, pantry]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
