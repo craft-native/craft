@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 type Manifest = {
   name: string
+  version: string
   private?: boolean
   scripts?: Record<string, string>
   peerDependencies?: Record<string, string>
@@ -76,10 +78,18 @@ function importSpecifiers(pkg: Manifest): string[] {
   return [pkg.name]
 }
 
-export async function verifyNpmPackages(buildOnly = false): Promise<void> {
+export async function verifyNpmPackages(buildOnly = false, archiveDir?: string): Promise<void> {
   const packages = publicPackages()
   if (packages.length === 0)
     throw new Error('No public npm workspaces found')
+  if (buildOnly && archiveDir) throw new Error('Cannot export archives in build-only mode')
+  const output = archiveDir ? resolve(archiveDir) : undefined
+  if (output) {
+    if (output === root || output.startsWith(`${root}${sep}`))
+      throw new Error('Archive output must be outside the repository')
+    mkdirSync(output, { recursive: true })
+    if (readdirSync(output).length) throw new Error('Archive output must be empty')
+  }
   const temp = mkdtempSync(join(tmpdir(), 'craft-npm-verify-'))
   try {
     for (const { dir, pkg } of packages) {
@@ -95,12 +105,17 @@ export async function verifyNpmPackages(buildOnly = false): Promise<void> {
       return
 
     const specifiers: string[] = []
+    const archives: { name: string, version: string, file: string, sha256: string }[] = []
     for (const [index, { dir, pkg }] of packages.entries()) {
-      const archive = join(temp, `${index}.tgz`)
+      const file = `${index}.tgz`
+      const archive = join(output ?? temp, file)
       run([process.execPath, 'pm', 'pack', '--filename', archive], dir)
       const entries = run(['tar', '-tzf', archive], temp).trim().split('\n')
       const packed: Manifest = JSON.parse(run(['tar', '-xOzf', archive, 'package/package.json'], temp))
       verifyArchiveTargets(packed, entries)
+      if (packed.name !== pkg.name || packed.version !== pkg.version)
+        throw new Error(`${pkg.name}: packed identity differs from the source manifest`)
+      archives.push({ name: packed.name, version: packed.version, file, sha256: createHash('sha256').update(readFileSync(archive)).digest('hex') })
       const installed = join(temp, 'node_modules', pkg.name)
       mkdirSync(installed, { recursive: true })
       run(['tar', '-xzf', archive, '--strip-components=1', '-C', installed], temp)
@@ -133,6 +148,8 @@ export async function verifyNpmPackages(buildOnly = false): Promise<void> {
       '--target', 'esnext', '--skipLibCheck', '--ignoreConfig',
       '--typeRoots', join(root, 'node_modules/@types'),
     ], temp)
+    if (output)
+      writeFileSync(join(output, 'manifest.json'), `${JSON.stringify({ packages: archives }, null, 2)}\n`)
     console.log(`Verified ${packages.length} npm archives and ${specifiers.length} installed import/type entry points.`)
   }
   finally {
@@ -140,5 +157,9 @@ export async function verifyNpmPackages(buildOnly = false): Promise<void> {
   }
 }
 
-if (import.meta.main)
-  await verifyNpmPackages(Bun.argv.includes('--build-only'))
+if (import.meta.main) {
+  const index = Bun.argv.indexOf('--archive-dir')
+  if (index >= 0 && (!Bun.argv[index + 1] || Bun.argv[index + 1]!.startsWith('--')))
+    throw new Error('--archive-dir requires an output path')
+  await verifyNpmPackages(Bun.argv.includes('--build-only'), index >= 0 ? Bun.argv[index + 1] : undefined)
+}
