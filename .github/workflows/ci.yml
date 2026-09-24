@@ -286,6 +286,9 @@ jobs:
       - name: Verify API documentation links
         run: bun run verify:docs
 
+      - name: Test dependency-bot job selection
+        run: bun test scripts/buddy-schedule.test.ts
+
       - name: Test merged SBOM inventory
         run: bun test scripts/merge-sbom.test.ts
 

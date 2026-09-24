@@ -87,14 +87,22 @@ jobs:
     steps:
       - name: Determine which jobs to run
         id: determine
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          REQUESTED_JOB: ${{ github.event.inputs.job }}
         run: |
           # Default to not running any jobs
           echo "run_check=false" >> $GITHUB_OUTPUT
           echo "run_update=false" >> $GITHUB_OUTPUT
           echo "run_dashboard=false" >> $GITHUB_OUTPUT
 
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            JOB="${{ github.event.inputs.job || 'all' }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            JOB="${REQUESTED_JOB:-all}"
+            case "$JOB" in
+              all|check|update|dashboard) ;;
+              *) echo "::error::Unknown Buddy Bot job: $JOB"; exit 1 ;;
+            esac
             if [ "$JOB" = "all" ] || [ "$JOB" = "check" ]; then
               echo "run_check=true" >> $GITHUB_OUTPUT
             fi
@@ -104,14 +112,17 @@ jobs:
             if [ "$JOB" = "all" ] || [ "$JOB" = "dashboard" ]; then
               echo "run_dashboard=true" >> $GITHUB_OUTPUT
             fi
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
+          elif [ "$EVENT_NAME" = "schedule" ]; then
             # Determine based on cron schedule
-            if [ "${{ github.event.schedule }}" = "*/1 * * * *" ]; then
+            if [ "$EVENT_SCHEDULE" = "0 * * * *" ]; then
               echo "run_check=true" >> $GITHUB_OUTPUT
-            elif [ "${{ github.event.schedule }}" = "0 */2 * * *" ]; then
+            elif [ "$EVENT_SCHEDULE" = "0 3,15 * * *" ]; then
               echo "run_update=true" >> $GITHUB_OUTPUT
-            elif [ "${{ github.event.schedule }}" = "15 */2 * * *" ]; then
+            elif [ "$EVENT_SCHEDULE" = "15 3,15 * * *" ]; then
               echo "run_dashboard=true" >> $GITHUB_OUTPUT
+            else
+              echo "::error::Unknown Buddy Bot schedule: $EVENT_SCHEDULE"
+              exit 1
             fi
           fi
 
@@ -362,7 +373,6 @@ jobs:
       - name: Display dashboard configuration
         run: |
           echo "📊 **Buddy Bot Dashboard Management**"
-          echo "Pin Dashboard: ${{ github.event.inputs.pin || 'true' }}"
           echo "Custom Title: ${{ github.event.inputs.title || 'default' }}"
           echo "Issue Number: ${{ github.event.inputs.issue_number || 'auto-detect' }}"
           echo "Verbose: ${{ github.event.inputs.verbose || 'true' }}"
@@ -398,14 +408,12 @@ jobs:
 
       - name: Update Dependency Dashboard
         run: |
-          PIN="${{ github.event.inputs.pin || 'true' }}"
           TITLE="${{ github.event.inputs.title }}"
           ISSUE_NUMBER="${{ github.event.inputs.issue_number }}"
           VERBOSE="${{ github.event.inputs.verbose || 'true' }}"
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
 
           echo "📊 Updating dependency dashboard..."
-          echo "Pin: $PIN"
           echo "Title: ${TITLE:-default}"
           echo "Issue Number: ${ISSUE_NUMBER:-auto-detect}"
           echo "Verbose: $VERBOSE"
@@ -485,7 +493,6 @@ jobs:
         run: |
           echo "## 📊 Dependency Dashboard Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Pin Dashboard**: ${{ github.event.inputs.pin || 'true' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Custom Title**: ${{ github.event.inputs.title || 'default' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Issue Number**: ${{ github.event.inputs.issue_number || 'auto-detect' }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Triggered by**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
