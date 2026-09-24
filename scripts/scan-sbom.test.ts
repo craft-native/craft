@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { scanSbom, summarizeVulnerabilities } from './scan-sbom'
+import { enforceScanPolicy, scanSbom, summarizeVulnerabilities } from './scan-sbom'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -16,6 +16,15 @@ test('counts all supported severities without mistaking absent results for zero'
   expect(result.text).toContain('High\tfixture\t1.0.0\tCVE-2026-1234')
   for (const invalid of [null, {}, { matches: [] }, { ...report(), matches: null }, { ...report(), descriptor: { name: 'grype', version: '0.119.0' } }, report([{}]), report([match('new severity')])])
     expect(() => summarizeVulnerabilities(invalid)).toThrow()
+})
+
+test('High findings block release scans and Critical findings block every scan', () => {
+  const high = summarizeVulnerabilities(report([match('High')])).counts
+  expect(() => enforceScanPolicy(high, false)).not.toThrow()
+  expect(() => enforceScanPolicy(high, true)).toThrow('High vulnerabilities block this release')
+  const critical = summarizeVulnerabilities(report([match('Critical')])).counts
+  expect(() => enforceScanPolicy(critical, false)).toThrow('Critical vulnerabilities')
+  expect(() => enforceScanPolicy(critical, true)).toThrow('Critical vulnerabilities')
 })
 
 function fixture(source: string) {

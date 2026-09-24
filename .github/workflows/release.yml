@@ -25,9 +25,13 @@ jobs:
   release-sbom:
     needs: validate-release
     uses: ./.github/workflows/sbom.yml
+    with:
+      enforce_high: true
 
   pantry:
-    needs: [validate-release]
+    # The reusable SBOM workflow includes the vulnerability scan. Publishing
+    # must wait for its existing Critical gate, not merely attach it afterward.
+    needs: [validate-release, release-sbom]
     name: pantry (${{ matrix.platform.name }})
     strategy:
       fail-fast: false
@@ -65,7 +69,7 @@ jobs:
         run: ${{ matrix.platform.deps }}
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Extract Version
         id: version
@@ -532,7 +536,7 @@ jobs:
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Test package regressions
         run: bun run test:packages

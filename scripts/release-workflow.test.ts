@@ -7,7 +7,8 @@ type Job = {
   needs?: string | string[]
   if?: string
   uses?: string
-  steps?: { name?: string, run?: string, uses?: string }[]
+  with?: { enforce_high?: boolean }
+  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string> }[]
   strategy?: { matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
@@ -41,6 +42,10 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   ])
   expect(steps(release.jobs['verify-macos-downloads'])).toContain('scripts/verify-macos-release.ts')
   expect(release.jobs['release-sbom'].uses).toBe('./.github/workflows/sbom.yml')
+  expect(release.jobs['release-sbom'].with?.enforce_high).toBe(true)
+  expect(needs(release.jobs.pantry)).toContain('release-sbom')
+  expect(steps(release.jobs.pantry)).toContain('bun install --frozen-lockfile')
+  expect(steps(release.jobs.npm)).toContain('bun install --frozen-lockfile')
   expect(needs(release.jobs['attach-release-sbom'])).toContain('release-sbom')
   expect(steps(release.jobs['attach-release-sbom'])).toContain('cmp "sbom/$document" "$VERIFY_DIR/$document"')
 })
@@ -66,6 +71,7 @@ test('a registry network failure remains a visible best-effort warning', () => {
 test('SBOM generation validates required documents before uploading artifacts', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/sbom.yml'), 'utf8')) as { jobs: Record<string, Job> }
   const generate = workflow.jobs.generate.steps!
+  expect(generate.find(step => step.name === 'Install dependencies')?.run).toBe('bun install --frozen-lockfile')
   const validation = generate.findIndex(step => step.name === 'Validate SBOMs')
   const upload = generate.findIndex(step => step.uses?.startsWith('actions/upload-artifact@'))
   expect(validation).toBeGreaterThan(-1)
@@ -74,4 +80,6 @@ test('SBOM generation validates required documents before uploading artifacts', 
   expect(command).toContain('bun scripts/verify-sbom.ts sbom "v$VERSION"')
   expect(command).toContain("require('./package.json').version")
   expect(command).not.toContain('||')
+  const scan = workflow.jobs['vulnerability-scan'].steps!.find(step => step.name === 'Scan and validate vulnerability report')
+  expect(scan?.env?.CRAFT_FAIL_HIGH).toBe('${{ inputs.enforce_high || false }}')
 })

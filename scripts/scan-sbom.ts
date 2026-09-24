@@ -27,6 +27,11 @@ export function summarizeVulnerabilities(report: unknown) {
   return { counts, text: `${lines.join('\n')}\n` }
 }
 
+export function enforceScanPolicy(counts: ReturnType<typeof summarizeVulnerabilities>['counts'], failHigh: boolean): void {
+  if (counts.Critical > 0) throw new Error('Critical vulnerabilities found in dependencies')
+  if (failHigh && counts.High > 0) throw new Error('High vulnerabilities block this release')
+}
+
 export function scanSbom(sbom: string, output: string, executable = 'grype') {
   const reportPath = resolve(output, 'vulnerabilities.json')
   const textPath = resolve(output, 'vulnerabilities.txt')
@@ -50,12 +55,14 @@ export function scanSbom(sbom: string, output: string, executable = 'grype') {
 
 if (import.meta.main) {
   try {
+    const setting = process.env.CRAFT_FAIL_HIGH ?? 'false'
+    if (!['true', 'false'].includes(setting)) throw new Error('CRAFT_FAIL_HIGH must be true or false')
     const { counts } = scanSbom(process.argv[2] || 'sbom/full-sbom.cyclonedx.json', process.argv[3] || 'scan-results')
-    const summary = ['## Vulnerability scan results', '', '| Severity | Count |', '| --- | --- |', ...severities.map(severity => `| ${severity} | ${counts[severity]} |`), '', 'Policy: Critical findings fail this check. High findings remain unresolved release-review items (#279); this report is not a release approval.', ''].join('\n')
+    const summary = ['## Vulnerability scan results', '', '| Severity | Count |', '| --- | --- |', ...severities.map(severity => `| ${severity} | ${counts[severity]} |`), '', 'Policy: Critical findings fail every scan. High findings fail release scans; they remain review items on main (#279).', ''].join('\n')
     console.log(summary)
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
-    if (counts.High > 0) console.warn('::warning::High vulnerability findings require review under #279')
-    if (counts.Critical > 0) throw new Error('Critical vulnerabilities found in dependencies')
+    if (counts.High > 0 && setting === 'false') console.warn('::warning::High vulnerability findings require review under #279')
+    enforceScanPolicy(counts, setting === 'true')
   }
   catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
