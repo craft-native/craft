@@ -26,7 +26,7 @@ on:
           - dashboard
       # Update job inputs
       strategy:
-        description: Update strategy
+        description: Patch only, minor plus patches, major only, or all stable versions; pinned refs require manual review
         required: false
         default: patch
         type: choice
@@ -292,33 +292,13 @@ jobs:
           echo "Branch: ${{ github.ref_name }}"
 
       - name: Run Buddy dependency updates
-        if: ${{ github.event.inputs.dry_run != 'true' }}
-        run: |
-          STRATEGY="${{ github.event.inputs.strategy || 'patch' }}"
-          PACKAGES="${{ github.event.inputs.packages }}"
-          VERBOSE="${{ github.event.inputs.verbose || 'true' }}"
-
-          echo "🚀 Running dependency updates..."
-          echo "This will create/update PRs if outdated dependencies are found"
-          echo ""
-
-          set -e  # Exit on any error
-
-          if [ "$PACKAGES" != "" ]; then
-            if [ "$VERBOSE" = "true" ]; then
-              bunx buddy-bot update --packages "$PACKAGES" --verbose
-            else
-              bunx buddy-bot update --packages "$PACKAGES"
-            fi
-          else
-            if [ "$VERBOSE" = "true" ]; then
-              bunx buddy-bot update --strategy "$STRATEGY" --verbose
-            else
-              bunx buddy-bot update --strategy "$STRATEGY"
-            fi
-          fi
-
+        run: bun scripts/buddy-update.ts
         env:
+          BUDDY_STRATEGY: ${{ github.event.inputs.strategy || 'patch' }}
+          BUDDY_PACKAGES: ${{ github.event.inputs.packages }}
+          BUDDY_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          BUDDY_VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
+          BUDDY_BASE_BRANCH: ${{ github.event.repository.default_branch }}
           GITHUB_TOKEN: ${{ secrets.BUDDY_BOT_TOKEN || secrets.GITHUB_TOKEN }}
           BUDDY_BOT_TOKEN: ${{ secrets.BUDDY_BOT_TOKEN }}
 
