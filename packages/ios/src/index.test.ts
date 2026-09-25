@@ -337,9 +337,22 @@ describe('Craft iOS builder', () => {
     expect(failures).not.toContain('loadBundledFallback(in: webView)')
     expect(swift).toContain('guard CraftLoadFailure.isUnreachable(error) else { return }')
 
-    // No longer one-way: two ways back to the remote origin.
+    // No longer one-way: two ways back to the remote origin. Bound the reset
+    // to the named recovery function, because `private var
+    // loadedBundledFallback = false` declares the field with the same text —
+    // an unbounded assertion passes on the declaration alone, and passed
+    // before this recovery existed at all.
     expect(swift).toContain('private func returnFromBundledFallback(because reason: String)')
-    expect(swift).toContain('loadedBundledFallback = false')
+    const recovery = swift.slice(
+      swift.indexOf('private func returnFromBundledFallback(because reason: String)'),
+      swift.indexOf('@objc private func appWillEnterForeground('),
+    )
+    // A renamed boundary must fail here rather than widen the slice back to
+    // the whole file and quietly restore the hole this replaces.
+    expect(recovery.length).toBeGreaterThan(0)
+    expect(recovery.length).toBeLessThan(swift.length / 2)
+    expect(recovery).toContain('loadedBundledFallback = false')
+    expect(recovery).toContain('webView.load(URLRequest(url: remote))')
     expect(swift).toContain('name: UIApplication.willEnterForegroundNotification')
 
     // And the network trigger retries on a transition only. Retrying whenever
