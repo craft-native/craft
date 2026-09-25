@@ -100,3 +100,19 @@ test('SBOM generation validates required documents before uploading artifacts', 
   expect(workflow.jobs['vulnerability-scan'].steps!.find(step => step.uses?.startsWith('actions/download-artifact@'))?.uses).toBe(artifactDownload)
   expect(release.jobs['attach-release-sbom'].steps!.find(step => step.uses?.startsWith('actions/download-artifact@'))?.uses).toBe(artifactDownload)
 })
+
+// A composite action under .github/actions is setup: it clones pinned
+// dependencies, installs a toolchain, and returns early when the work is
+// already done. Running one twice in a job is therefore always waste rather
+// than intent, and it happens by accident when two pull requests insert steps
+// into the same region. Repeating a published action can be deliberate --
+// uploading two artifacts, say -- so only local ones are checked here.
+test('no job runs the same local composite action twice', () => {
+  for (const file of ['ci.yml', 'release.yml', 'sbom.yml', 'mobile-e2e.yml']) {
+    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      const local = (job.steps ?? []).map(step => step.uses).filter((uses): uses is string => uses?.startsWith('./') ?? false)
+      expect(new Set(local).size, `${file} job ${name} repeats a local action: ${local.join(', ')}`).toBe(local.length)
+    }
+  }
+})
