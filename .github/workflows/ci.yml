@@ -294,6 +294,9 @@ jobs:
       - name: Test dependency-bot job selection
         run: bun test scripts/buddy-schedule.test.ts scripts/buddy-update.test.ts
 
+      - name: Test agent environment briefing
+        run: bun test scripts/agents-guidelines.test.ts
+
       - name: Test merged SBOM inventory
         run: bun test scripts/merge-sbom.test.ts
 
