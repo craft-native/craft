@@ -22,6 +22,11 @@ jobs:
       - name: Validate tag and workspace versions
         run: bun scripts/release-version.ts
 
+      # A release must not carry an advisory nobody has reviewed, or a review
+      # that expired while the release was being prepared.
+      - name: Review dependency advisories
+        run: bun scripts/advisory-policy.ts
+
   release-sbom:
     needs: validate-release
     uses: ./.github/workflows/sbom.yml

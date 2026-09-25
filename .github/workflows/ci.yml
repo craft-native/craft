@@ -297,6 +297,15 @@ jobs:
       - name: Test agent environment briefing
         run: bun test scripts/agents-guidelines.test.ts
 
+      - name: Test dependency advisory policy
+        run: bun test scripts/advisory-policy.test.ts
+
+      # Reads the registry, so this is the step that turns a newly published
+      # advisory into a red build rather than a larger number in a report.
+      # Clearing it is one reviewed entry in scripts/retained-advisories.ts.
+      - name: Review dependency advisories
+        run: bun scripts/advisory-policy.ts
+
       - name: Test merged SBOM inventory
         run: bun test scripts/merge-sbom.test.ts
 
