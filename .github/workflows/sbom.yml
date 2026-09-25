@@ -129,6 +129,12 @@ jobs:
         env:
           CRAFT_FAIL_HIGH: ${{ inputs.enforce_high || false }}
 
+      # Always on, unlike enforce_high. Fails when a High or Critical finding is
+      # not confined to paths that publish nothing, and prints the tooling
+      # inventory otherwise so the count stays visible rather than silent.
+      - name: Require High findings to be tooling-only
+        run: bun scripts/sbom-scope.ts scan-results/vulnerabilities.json
+
       - name: Upload scan results
         if: ${{ always() }}
         uses: actions/upload-artifact@v4

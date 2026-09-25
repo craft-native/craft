@@ -283,7 +283,7 @@ jobs:
         run: zig fmt --check src/ build.zig
 
       - name: Test failure-safe vulnerability scanning
-        run: bun test scripts/scan-sbom.test.ts scripts/scan-release-artifacts.test.ts
+        run: bun test scripts/scan-sbom.test.ts scripts/scan-release-artifacts.test.ts scripts/sbom-scope.test.ts
 
       - name: Audit Zig C imports
         run: bun run verify:cimports
