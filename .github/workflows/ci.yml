@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -89,6 +89,10 @@ jobs:
           VERSION="$(bun -p "require('../../package.json').version")"
           zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget=x86_64-windows
           test -f zig-out/bin/craft.exe
+
+      - name: Smoke Linux multi-window bridge
+        if: runner.os == 'Linux'
+        run: bun scripts/verify-linux-multi-window.ts packages/zig/zig-out/bin/craft
 
   typescript-sdk:
     runs-on: ubuntu-latest
