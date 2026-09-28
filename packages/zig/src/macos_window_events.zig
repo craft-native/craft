@@ -125,11 +125,14 @@ fn addMethod(cls: objc.Class, sel_name: [*:0]const u8, imp: *const anyopaque) vo
 }
 
 export fn windowDidBecomeKey(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    @import("tray_popover.zig").windowBecameKey(macos.msgSend0(notification, "object"));
     fire(notification, "focus", "");
 }
 
 export fn windowDidResignKey(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
     fire(notification, "blur", "");
+    // A tray popover closes when it loses the keyboard, like a real one.
+    @import("tray_popover.zig").windowResignedKey(macos.msgSend0(notification, "object"));
 }
 
 export fn windowDidMiniaturize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
@@ -150,6 +153,7 @@ export fn windowDidExitFullScreen(_: objc.id, _: objc.SEL, notification: objc.id
 
 export fn windowDidResize(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
     const window = macos.msgSend0(notification, "object");
+    @import("tray_popover.zig").windowResized(window);
     if (@intFromPtr(window) == 0) return fire(notification, "resize", "");
     const frame = macos.msgSendRect(window, "frame");
     var buf: [192]u8 = undefined;

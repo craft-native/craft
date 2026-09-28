@@ -53,6 +53,9 @@ pub const objc = struct {
     pub const OBJC_ASSOCIATION_COPY: usize = 0x303;
 };
 
+/// `--tray-popover`, reachable from the CLI entry point, which is its own module.
+pub const tray_popover = @import("tray_popover.zig");
+
 pub const NSRect = extern struct {
     origin: NSPoint,
     size: NSSize,
@@ -126,6 +129,45 @@ fn webMaterialSlot(window: objc.id, create: bool) ?*WebMaterialSlot {
         }
     }
     return null;
+}
+
+/// Change the material a `--web-window-material` backdrop draws, for a window
+/// that is not a sidebar window: a tray popover draws the popover material.
+/// Does nothing to a window with no backdrop.
+pub fn setWebMaterial(window: objc.id, material: c_long) void {
+    const slot = webMaterialSlot(window, false) orelse return;
+    if (slot.material_view != null) _ = msgSend1(slot.material_view, "setMaterial:", material);
+}
+
+/// Round a `--web-window-material` backdrop's corners.
+///
+/// With the material view's `maskImage`, a stretchable rounded rectangle, which
+/// is how AppKit asks for it. Neither of the obvious ways works: an
+/// NSVisualEffectView manages its own layer and ignores a corner radius set on
+/// it, and masking an ancestor instead stops it blending with what is behind
+/// the window, so it falls back to an opaque fill.
+pub fn setWebMaterialCornerRadius(window: objc.id, radius: f64) void {
+    const slot = webMaterialSlot(window, false) orelse return;
+    const view = slot.material_view orelse return;
+
+    const side = radius * 2 + 1;
+    const image = msgSend1(msgSend0(getClass("NSImage"), "alloc"), "initWithSize:", NSSize{ .width = side, .height = side });
+    if (image == null) return;
+    msgSendVoid0(image, "lockFocus");
+    msgSendVoid0(msgSend0(getClass("NSColor"), "blackColor"), "set");
+    const path = msgSend3(getClass("NSBezierPath"), "bezierPathWithRoundedRect:xRadius:yRadius:", NSRect{
+        .origin = .{ .x = 0, .y = 0 },
+        .size = .{ .width = side, .height = side },
+    }, radius, radius);
+    if (path != null) msgSendVoid0(path, "fill");
+    msgSendVoid0(image, "unlockFocus");
+
+    // Stretch only the one-point middle, so the corners keep their radius at
+    // any window size.
+    const EdgeInsets = extern struct { top: f64, left: f64, bottom: f64, right: f64 };
+    msgSendVoid1(image, "setCapInsets:", EdgeInsets{ .top = radius, .left = radius, .bottom = radius, .right = radius });
+    msgSendVoid1(image, "setResizingMode:", @as(c_long, 1)); // NSImageResizingModeStretch
+    _ = msgSend1(view, "setMaskImage:", image);
 }
 
 fn forgetWebMaterial(window: objc.id) void {
@@ -682,6 +724,31 @@ pub fn createColorFromHex(hex_str: []const u8) ?objc.id {
 
 // Custom borderless window class that can become key window
 var BorderlessWindowClass: objc.Class = null;
+var PopoverPanelClass: objc.Class = null;
+
+/// The `--tray-popover` window: a borderless NSPanel that can take the keyboard.
+///
+/// A panel, because only a non-activating panel can be the key window while
+/// another app stays active. The popover was an ordinary window before, and
+/// current macOS declines to activate an accessory app on request, so it was
+/// drawn on top while the app in front kept the keyboard: clicking into the
+/// token field and typing typed into that other app.
+fn getPopoverPanelClass() objc.Class {
+    if (PopoverPanelClass != null) return PopoverPanelClass;
+
+    const NSPanel = getClass("NSPanel");
+    PopoverPanelClass = objc.objc_allocateClassPair(NSPanel, "CraftPopoverPanel", 0);
+    if (PopoverPanelClass == null) return NSPanel;
+
+    const canBecomeKey = struct {
+        fn impl(_: objc.id, _: objc.SEL) callconv(.c) bool {
+            return true;
+        }
+    }.impl;
+    _ = objc.class_addMethod(PopoverPanelClass, sel("canBecomeKeyWindow"), @ptrCast(@constCast(&canBecomeKey)), "B@:");
+    objc.objc_registerClassPair(PopoverPanelClass);
+    return PopoverPanelClass;
+}
 
 fn getBorderlessWindowClass() objc.Class {
     if (BorderlessWindowClass != null) return BorderlessWindowClass;
@@ -808,15 +875,19 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         }
     } else {
         // Borderless window - use NSWindowStyleMaskBorderless (0)
-        // Combined with NSWindowStyleMaskNonactivatingPanel behavior workaround
         styleMask = 0;
+        // A tray popover takes the keyboard without activating the app, as
+        // Spotlight and the system's status menus do. See tray_popover.zig.
+        if (tray_popover.wantsPanel(style.system_tray)) styleMask |= 128; // NSWindowStyleMaskNonactivatingPanel
     }
 
     const backing: c_ulong = 2; // NSBackingStoreBuffered
     const defer_flag: bool = false;
 
     // For borderless windows, use custom class that can become key window
-    const WindowClass = if (style.frameless) getBorderlessWindowClass() else NSWindow;
+    const WindowClass = if (tray_popover.wantsPanel(style.system_tray))
+        getPopoverPanelClass()
+    else if (style.frameless) getBorderlessWindowClass() else NSWindow;
 
     // Allocate and initialize window
     const window_alloc = msgSend0(WindowClass, "alloc");
@@ -1198,6 +1269,8 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
             tray_menu.setGlobalWebView(wv);
             if (window) |win| {
                 tray_menu.setGlobalWindow(win);
+                // No-op unless `--tray-popover`; see tray_popover.zig.
+                @import("tray_popover.zig").adopt(win);
             }
         }
 
@@ -4537,7 +4610,9 @@ pub fn publishWindowChrome(window: objc.id, when: ChromePublish) void {
 
     // A frameless window is created with an empty style mask, which is also
     // the only way to have no titlebar and no buttons at all.
-    const frameless = msgSend0Ulong(window, "styleMask") == 0;
+    // Not titled, rather than no bits at all: a tray popover is a borderless
+    // panel whose mask carries NSWindowStyleMaskNonactivatingPanel.
+    const frameless = (msgSend0Ulong(window, "styleMask") & 1) == 0;
     const state = measureWindowChrome(window, webview, frameless);
 
     const slot = chromeSlot(window);

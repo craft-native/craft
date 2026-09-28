@@ -20,6 +20,9 @@ pub const WindowOptions = struct {
     system_tray: bool = false,
     hide_dock_icon: bool = false,
     menubar_only: bool = false,
+    /// The tray's window behaves as the status item's popover. See
+    /// tray_popover.zig.
+    tray_popover: bool = false,
     titlebar_hidden: bool = false,
     native_sidebar: bool = false,
     sidebar_width: u32 = 220,
@@ -547,6 +550,20 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.menubar_only = true;
             options.system_tray = true; // Menubar-only implies system tray
             options.hide_dock_icon = true; // And hiding dock icon
+        } else if (std.mem.eql(u8, arg, "--tray-popover")) {
+            // Everything a popover is, so one flag asks for it: a status item,
+            // no titlebar or Dock icon, a fixed size, the material behind the
+            // page, and hidden until the item is clicked.
+            options.tray_popover = true;
+            options.system_tray = true;
+            options.hide_dock_icon = true;
+            options.frameless = true;
+            options.resizable = false;
+            options.web_window_material = true;
+            // Craft's sidebar toggle and history arrows belong to a window
+            // with a titlebar, not a popover.
+            options.web_chrome_controls = false;
+            options.headless = true;
         } else if (std.mem.eql(u8, arg, "--native-sidebar")) {
             options.native_sidebar = true;
         } else if (std.mem.eql(u8, arg, "--web-sidebar-material")) {
@@ -651,6 +668,15 @@ fn printHelp() void {
         \\      --system-tray        Show system tray icon
         \\      --hide-dock-icon     Hide dock icon (menubar-only mode, macOS)
         \\      --menubar-only       Menubar-only mode (no window, system tray only)
+        \\      --tray-popover       The window is the status item's popover (macOS):
+        \\                           clicking the item opens it underneath, on the
+        \\                           popover material with rounded corners, and
+        \\                           clicking anywhere else closes it. Implies
+        \\                           --system-tray --frameless --headless
+        \\                           --no-resize --web-window-material
+        \\                           --hide-dock-icon. The page gets no
+        \\                           craft:tray:click; craft.window.show() and
+        \\                           hide() open and close it in place.
         \\      --log-file <PATH>    Append craft's own log to this file as well as
         \\                           stderr. Captures everything craft logs through
         \\                           std.log; debug-mode std.debug.print tracing is

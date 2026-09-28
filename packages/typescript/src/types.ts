@@ -197,6 +197,19 @@ export interface WindowOptions {
   menubarOnly?: boolean
 
   /**
+   * The window is the tray icon's popover (macOS): clicking the icon opens it
+   * underneath, on the popover material with rounded corners, and clicking
+   * anywhere else closes it. Implies `systemTray`, `frameless`, `headless`,
+   * `resizable: false`, `webWindowMaterial` and `hideDockIcon`.
+   *
+   * The page gets no `tray.onClick` in this mode, since the click already
+   * opened or closed it; `window.show()` and `window.hide()` open and close it
+   * in place, and `window.setSize()` keeps it hung from the icon.
+   * @default false
+   */
+  trayPopover?: boolean
+
+  /**
    * Hide the titlebar (content extends to window edge)
    * @default false
    */

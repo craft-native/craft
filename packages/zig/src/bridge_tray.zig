@@ -211,30 +211,9 @@ pub const TrayBridge = struct {
         if (tray_menu.getPendingAction()) |action| {
             log.debug("Polling found action: {s}", .{action});
 
-            // Escape `action` so that a payload containing `'`, `\`, or a
-            // newline cannot close out the string literal and inject JS.
-            var esc_buf: [200]u8 = undefined;
-            var esc_len: usize = 0;
-            for (action) |c| {
-                const repl: []const u8 = switch (c) {
-                    '\\' => "\\\\",
-                    '\'' => "\\'",
-                    '\n' => "\\n",
-                    '\r' => "\\r",
-                    '<' => "\\x3c",
-                    else => &[_]u8{c},
-                };
-                if (esc_len + repl.len > esc_buf.len) return;
-                @memcpy(esc_buf[esc_len..][0..repl.len], repl);
-                esc_len += repl.len;
-            }
-
-            // Call the JavaScript global function to deliver the action
             const bridge = @import("bridge.zig");
             var buf: [256]u8 = undefined;
-            const js = try std.fmt.bufPrint(&buf,
-                \\if(window.__craftDeliverAction)window.__craftDeliverAction('{s}');
-            , .{esc_buf[0..esc_len]});
+            const js = tray_menu.deliverActionScript(&buf, action) orelse return;
 
             bridge.evalJS(js) catch |err| {
                 log.debug("Failed to deliver action: {}", .{err});

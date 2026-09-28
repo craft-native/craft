@@ -491,6 +491,8 @@ export class CraftApp {
       args.push('--hide-dock-icon')
     if (window?.menubarOnly)
       args.push('--menubar-only')
+    if (window?.trayPopover)
+      args.push('--tray-popover')
     if (window?.titlebarHidden)
       args.push('--titlebar-hidden')
     if (window?.headless)

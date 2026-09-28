@@ -231,7 +231,10 @@ pub export fn menuActionCallback(self: objc.id, _: objc.SEL, sender: objc.id) vo
             log.debug("Menu bar expanded via show action", .{});
         }
 
-        if (global_window_handle) |window| {
+        const tray_popover = @import("tray_popover.zig");
+        if (tray_popover.owns(global_window_handle)) {
+            tray_popover.show();
+        } else if (global_window_handle) |window| {
             const macos = @import("macos.zig");
             // Activate the app first (required for menubar-only/accessory apps)
             const NSApp = getClass("NSApplication");
@@ -243,12 +246,18 @@ pub export fn menuActionCallback(self: objc.id, _: objc.SEL, sender: objc.id) vo
             log.debug("WARNING: global_window_handle is null, cannot show window", .{});
         }
     } else if (std.mem.eql(u8, action_str, "hide")) {
-        if (global_window_handle) |window| {
+        const tray_popover = @import("tray_popover.zig");
+        if (tray_popover.owns(global_window_handle)) {
+            tray_popover.hide();
+        } else if (global_window_handle) |window| {
             const macos = @import("macos.zig");
             macos.hideWindow(window);
         }
     } else if (std.mem.eql(u8, action_str, "toggle")) {
-        if (global_window_handle) |window| {
+        const tray_popover = @import("tray_popover.zig");
+        if (tray_popover.owns(global_window_handle)) {
+            tray_popover.toggle();
+        } else if (global_window_handle) |window| {
             const macos = @import("macos.zig");
             macos.toggleWindow(window);
         }
@@ -337,12 +346,53 @@ pub fn getPendingAction() ?[]const u8 {
     return action_queue.pop();
 }
 
-fn dispatchMenuActionToJS(webview: objc.id, action: []const u8) !void {
-    _ = webview;
-    log.debug("Queuing action: {s}", .{action});
+/// `__craftDeliverAction('<action>')`, with the action escaped so a `'`, `\`
+/// or newline in it cannot close the string literal and run as script. Null if
+/// it does not fit in `buf`.
+pub fn deliverActionScript(buf: []u8, action: []const u8) ?[]const u8 {
+    var esc_buf: [200]u8 = undefined;
+    var esc_len: usize = 0;
+    for (action) |c| {
+        const repl: []const u8 = switch (c) {
+            '\\' => "\\\\",
+            '\'' => "\\'",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '<' => "\\x3c",
+            else => &[_]u8{c},
+        };
+        if (esc_len + repl.len > esc_buf.len) return null;
+        @memcpy(esc_buf[esc_len..][0..repl.len], repl);
+        esc_len += repl.len;
+    }
+    return std.fmt.bufPrint(buf, "if(window.__craftDeliverAction)window.__craftDeliverAction('{s}');", .{esc_buf[0..esc_len]}) catch null;
+}
 
-    // Add to queue for JavaScript to poll
+/// Hand a menu action to the page now, and queue it for the page's poll only if
+/// that fails.
+///
+/// Queuing was the only path, and the poll runs on a page timer that WebKit
+/// throttles to about once a second while the window is unshown - which a tray
+/// app's window almost always is. Choosing Pause from the menu took a second to
+/// pause. See `tray_click.deliverClick` for the same fix to a left click.
+fn dispatchMenuActionToJS(webview: objc.id, action: []const u8) !void {
+    var buf: [256]u8 = undefined;
+    if (webview != null) {
+        if (deliverActionScript(&buf, action)) |js| {
+            if (@import("macos.zig").tryEvalJSInWebView(webview, js)) |_| {
+                log.debug("Delivered action: {s}", .{action});
+                return;
+            } else |_| {}
+        }
+    }
+    log.debug("Queuing action: {s}", .{action});
     action_queue.push(action);
+}
+
+test "a menu action cannot break out of the delivery script" {
+    var buf: [256]u8 = undefined;
+    const js = deliverActionScript(&buf, "a'b\\c\n</script>").?;
+    try std.testing.expectEqualStrings("if(window.__craftDeliverAction)window.__craftDeliverAction('a\\'b\\\\c\\n\\x3c/script>');", js);
 }
 
 /// Create menu action target
@@ -372,6 +422,10 @@ pub fn createNSMenu(allocator: std.mem.Allocator, items: []const MenuItemConfig)
 
     const NSMenu = getClass("NSMenu");
     const menu = msgSend0(msgSend0(NSMenu, "alloc"), "init");
+    // An item's own `enabled` decides. Left on, NSMenu re-enables every item
+    // whose target answers its action - all of them, since they share one
+    // target - so `enabled: false` was parsed, set, and silently overruled.
+    msgSendVoid1(menu, "setAutoenablesItems:", @as(c_int, 0));
 
     for (items) |item| {
         try addMenuItem(menu, item);

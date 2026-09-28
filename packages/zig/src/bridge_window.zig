@@ -499,6 +499,10 @@ pub const WindowBridge = struct {
         const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
+            // A `--tray-popover` window is placed under its item and keeps
+            // the item highlighted while open; see tray_popover.zig.
+            const tray_popover = @import("tray_popover.zig");
+            if (tray_popover.owns(handle)) return tray_popover.show();
             const macos = @import("macos.zig");
             macos.showWindow(handle);
         }
@@ -508,6 +512,10 @@ pub const WindowBridge = struct {
         const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
+            // A `--tray-popover` window is placed under its item and keeps
+            // the item highlighted while open; see tray_popover.zig.
+            const tray_popover = @import("tray_popover.zig");
+            if (tray_popover.owns(handle)) return tray_popover.hide();
             const macos = @import("macos.zig");
             macos.hideWindow(handle);
         }
@@ -517,6 +525,10 @@ pub const WindowBridge = struct {
         const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
+            // A `--tray-popover` window is placed under its item and keeps
+            // the item highlighted while open; see tray_popover.zig.
+            const tray_popover = @import("tray_popover.zig");
+            if (tray_popover.owns(handle)) return tray_popover.toggle();
             const macos = @import("macos.zig");
             macos.toggleWindow(handle);
         }
@@ -555,6 +567,8 @@ pub const WindowBridge = struct {
         const handle = try self.requireWindowHandle(data);
 
         if (builtin.os.tag == .macos) {
+            const tray_popover = @import("tray_popover.zig");
+            if (tray_popover.owns(handle)) return tray_popover.show();
             const macos = @import("macos.zig");
             // makeKeyAndOrderFront focuses the window
             macos.showWindow(handle);
