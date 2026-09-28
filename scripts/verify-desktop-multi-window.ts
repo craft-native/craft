@@ -1,10 +1,13 @@
-/** Exercise the shipped Linux binary's page-to-native multi-window bridge. */
+/** Exercise the shipped Linux or Windows binary's page-to-native multi-window bridge. */
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { platform } from 'node:os'
 
 const binary = process.argv[2]
-if (!binary) throw new Error('usage: bun scripts/verify-linux-multi-window.ts <craft-binary>')
+if (!binary) throw new Error('usage: bun scripts/verify-desktop-multi-window.ts <craft-binary>')
+const isWindows = platform() === 'win32'
+const platformName = isWindows ? 'Windows' : 'Linux'
 
 const mainPage = `<!doctype html><script>
 (async () => {
@@ -130,8 +133,10 @@ await new Promise<void>((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve)
 })
 const port = (server.address() as AddressInfo).port
-const child = spawn('timeout', ['110s', 'xvfb-run', '-a', binary, '--url', `http://127.0.0.1:${port}/main`], {
-  detached: true,
+const child = spawn(isWindows ? binary : 'timeout', isWindows
+  ? ['--url', `http://127.0.0.1:${port}/main`]
+  : ['110s', 'xvfb-run', '-a', binary, '--url', `http://127.0.0.1:${port}/main`], {
+  detached: !isWindows,
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let output = ''
@@ -140,11 +145,11 @@ for (const stream of [child.stdout, child.stderr]) {
 }
 child.once('error', error => rejectDone(error))
 child.once('exit', (code, signal) => rejectDone(new Error(`Craft exited before smoke completed (${code ?? signal})`)))
-const timer = setTimeout(() => rejectDone(new Error('Linux multi-window smoke timed out')), 100_000)
+const timer = setTimeout(() => rejectDone(new Error(`${platformName} multi-window smoke timed out`)), 100_000)
 
 try {
   await done
-  console.log(`Linux multi-window smoke passed: ${[...steps].join(', ')}`)
+  console.log(`${platformName} multi-window smoke passed: ${[...steps].join(', ')}`)
 }
 catch (error) {
   throw new Error(`${String(error)}\nHTTP requests: ${requests.join(', ')}\nCraft output:\n${output}`)
@@ -152,7 +157,10 @@ catch (error) {
 finally {
   clearTimeout(timer)
   if (child.pid) {
-    try { process.kill(-child.pid, 'SIGTERM') }
+    try {
+      if (isWindows) child.kill()
+      else process.kill(-child.pid, 'SIGTERM')
+    }
     catch { /* The process group may have already exited. */ }
   }
   await new Promise<void>(resolve => server.close(() => resolve()))
