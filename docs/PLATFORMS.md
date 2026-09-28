@@ -155,7 +155,8 @@ Currently implemented foundations (experimental):
 - 🚧 Notifications, tray, clipboard, and dialogs require further integration testing
 - ✅ Hot reload via WebSocket
 - ✅ Developer tools (WebKit Inspector)
-- 🚧 Multi-window, bridge parity, and advanced window behavior are incomplete
+- ✅ Named runtime windows, addressed controls, and scoped window events (GUI smoke in CI)
+- 🚧 Other bridge parity and advanced window behavior remain incomplete
 
 ### Known Limitations
 
@@ -247,11 +248,12 @@ Currently implemented foundations (experimental):
 - 🚧 Notifications, tray, clipboard, and dialogs require further integration testing
 - ✅ Hot reload via WebSocket
 - ✅ Developer tools (Edge DevTools)
-- 🚧 Multi-window, bridge parity, and advanced window behavior are incomplete
+- ✅ Named runtime windows, addressed controls, and scoped window events (WebView2 GUI smoke in CI)
+- 🚧 Other bridge parity and advanced window behavior remain incomplete
 
 ### Known Limitations
 
-- **WebView2 Required**: End users must have WebView2 Runtime installed
+- **WebView2 Required**: End users must have WebView2 Runtime installed; release archives include the app-local loader DLL
 - **Transparency**: Requires DWM (Desktop Window Manager) enabled
 - **System Tray**: Icon must be .ico format
 - **UWP Apps**: Limited support for UWP features

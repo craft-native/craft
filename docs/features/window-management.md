@@ -485,8 +485,9 @@ restore its DOM and JavaScript state. On Linux and Windows, closing releases
 the native window and webview; reopening the same ID creates a fresh page
 behind the same stable SDK handle. Call `destroy()` to permanently release a
 runtime-created window and its event subscriptions. The unnamed primary window
-cannot be force-destroyed through this API. CI exercises the Linux
-create/close/reopen path under Xvfb.
+cannot be force-destroyed through this API. CI exercises Linux
+create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
+including concurrent child creation and stale-handle cleanup.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
 implemented routing guarantees, application-level event sinks and remaining
