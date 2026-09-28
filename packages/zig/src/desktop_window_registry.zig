@@ -282,3 +282,13 @@ test "a window keeps its own platform control object" {
     _ = registry.forgetWindow(0x1000);
     try std.testing.expectEqual(@as(usize, 0x2002), registry.byWindow(0x2000).?.context);
 }
+
+test "a stale event subscription id cannot select a reopened window" {
+    var registry: Registry = .{};
+    const old_id = registry.remember(0x1000, 0x1001).?;
+    _ = registry.forgetWindow(0x1000);
+    const reopened_id = registry.remember(0x1000, 0x2001).?;
+    try std.testing.expect(old_id != reopened_id);
+    try std.testing.expect(registry.byId(old_id) == null);
+    try std.testing.expectEqual(@as(usize, 0x2001), registry.byId(reopened_id).?.webview);
+}

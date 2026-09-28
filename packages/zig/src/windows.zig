@@ -641,6 +641,7 @@ pub const ICoreWebView2PermissionRequestedEventHandler = PermissionRequestedHand
 const WebMessageReceivedHandler = extern struct {
     lpVtbl: *const WebMessageReceivedHandlerVtbl,
     ref_count: c_ulong,
+    window_id: u32,
 
     const WebMessageReceivedHandlerVtbl = extern struct {
         QueryInterface: *const fn (*WebMessageReceivedHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
@@ -674,9 +675,12 @@ const WebMessageReceivedHandler = extern struct {
         return remaining;
     }
 
-    fn invoke(_: *WebMessageReceivedHandler, sender: *ICoreWebView2, args: *ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) HRESULT {
-        // Authenticate with the COM sender, never an id supplied by the page.
-        const entry = desktop_windows.byWebview(@intFromPtr(sender)) orelse return S_OK;
+    fn invoke(self: *WebMessageReceivedHandler, _: *ICoreWebView2, args: *ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) HRESULT {
+        // The handler is registered on exactly one native WebView2 instance.
+        // Bind its live registry id rather than comparing raw COM interface
+        // pointers, which need not have the same address for one object.
+        const entry = desktop_windows.byId(self.window_id) orelse return S_OK;
+        std.debug.print("[WebView2] Page message received for window {d}\n", .{self.window_id});
         var message_wide: ?LPWSTR = null;
         if (!succeeded(args.lpVtbl.get_WebMessageAsJson(args, &message_wide))) return S_OK;
         const wide = message_wide orelse return S_OK;
@@ -1242,7 +1246,7 @@ pub const Window = struct {
         std.debug.print("[WebView2] Native window registered\n", .{});
 
         const message_handler = try std.heap.c_allocator.create(WebMessageReceivedHandler);
-        message_handler.* = .{ .lpVtbl = &WebMessageReceivedHandler.vtbl_instance, .ref_count = 1 };
+        message_handler.* = .{ .lpVtbl = &WebMessageReceivedHandler.vtbl_instance, .ref_count = 1, .window_id = window_id };
         var message_token: EventRegistrationToken = .{ .value = 0 };
         std.debug.print("[WebView2] Registering page message handler\n", .{});
         const message_hr = webview.lpVtbl.add_WebMessageReceived(webview, @ptrCast(message_handler), &message_token);

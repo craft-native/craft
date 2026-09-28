@@ -24,7 +24,8 @@ app-local WebView2 loader; users still need the Microsoft WebView2 Runtime.
 
 Linux and Windows keep their live native window/webview pairs in
 `desktop_window_registry.zig`. Page messages are authenticated by the sending
-WebKitGTK/WebView2 view; names select a target only after that sender is known.
+WebKitGTK view or the per-WebView2 event subscription; names select a target
+only after that native source is known.
 Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. Linux must register its `GtkApplication`
 before constructing the first `GtkApplicationWindow`, because the CLI creates
