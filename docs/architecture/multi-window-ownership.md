@@ -1,7 +1,7 @@
 # Multi-window ownership
 
 This document records Craft's current multi-window ownership contract. It is
-both a map of the implemented macOS behavior and a boundary around the choices
+both a map of the implemented desktop behavior and a boundary around the choices
 that are still open. A process-global Zig object is not automatically a
 single-window bug: the important question is whether it is a shared service or
 whether it stores a window-specific target.
@@ -10,17 +10,25 @@ whether it stores a window-specific target.
 
 | Area | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Runtime creation from `createWindow()` | Implemented | Not wired to the SDK handle contract | Not wired to the SDK handle contract |
-| Stable named handles | Implemented | Not implemented | Not implemented |
-| Sender-authenticated local actions | Implemented | Not implemented | Not implemented |
-| Named cross-window actions | Implemented | Not implemented | Not implemented |
-| Per-window lifecycle events | Implemented | Not implemented | Not implemented |
-| Permanent destroy and cleanup | Implemented for named windows | Not implemented | Not implemented |
+| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; cross-build in CI |
+| Stable named handles | Implemented | Implemented | Implemented |
+| Sender-authenticated local actions | Implemented | Implemented through WebKitGTK | Implemented through WebView2 |
+| Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
+| Per-window lifecycle events | Implemented | Implemented | Implemented |
+| Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
-Issue #67 therefore remains open. Its macOS core is substantially implemented,
-but closing it would imply cross-platform and modal/parent semantics that Craft
-does not yet provide.
+Issue #67 remains open while the portable runtime smoke and the still-unspecified
+modal/parent semantics are reviewed. A green cross-build alone does not prove
+that WebView2 opens and tears down a real window on Windows.
+
+Linux and Windows keep their live native window/webview pairs in
+`desktop_window_registry.zig`. Page messages are authenticated by the sending
+WebKitGTK/WebView2 view; names select a target only after that sender is known.
+Replies go back to the requesting view, and lifecycle events go to the changed
+window plus its named handle's creator. Linux must register its `GtkApplication`
+before constructing the first `GtkApplicationWindow`, because the CLI creates
+that window before entering `g_application_run()`.
 
 ## Per-window state
 
@@ -118,13 +126,12 @@ The next multi-window milestone needs product decisions in addition to code:
    application-level asynchronous source above.
 3. Decide whether Touch Bar should stay primary-window scoped or follow the
    key window with separately owned item definitions and callbacks.
-4. Bring Linux and Windows runtime creation, stable handles, sender routing,
-   lifecycle events and destroy semantics up to the macOS contract. Their
-   platform backends can create native windows today, but the TypeScript bridge
-   deliberately reports runtime creation as unsupported outside macOS.
-5. Add platform-native integration coverage. Source conformance and pure state
-   tests defend macOS invariants without requiring a GUI runner, but they do
-   not substitute for real Windows WebView2 and Linux WebKitGTK lifecycle tests.
+4. Finish advanced Linux/Windows window actions and clarify which are portable
+   versus platform-specific, without conflating close semantics: macOS retains
+   a closed page, while Linux and Windows release it.
+5. Complete platform-native integration coverage. Linux WebKitGTK runs under
+   Xvfb in CI; Windows currently has a cross-build but still needs a real
+   WebView2 lifecycle smoke on a capable Windows runner.
 
 ## Review checklist
 

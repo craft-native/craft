@@ -16,7 +16,9 @@ const window_reply_target = @import("window_reply_target.zig");
 // GTK and WebKit C bindings
 pub extern "c" fn gtk_init(argc: ?*c_int, argv: ?*anyopaque) void;
 pub extern "c" fn gtk_application_new(application_id: [*:0]const u8, flags: c_int) ?*anyopaque;
+pub extern "c" fn g_application_register(app: *anyopaque, cancellable: ?*anyopaque, err: ?*?*anyopaque) c_int;
 pub extern "c" fn g_application_run(app: *anyopaque, argc: c_int, argv: [*c][*c]u8) c_int;
+pub extern "c" fn g_object_unref(object: *anyopaque) void;
 pub extern "c" fn gtk_application_window_new(app: *anyopaque) *anyopaque;
 pub extern "c" fn gtk_window_set_title(window: *anyopaque, title: [*:0]const u8) void;
 pub extern "c" fn gtk_window_set_default_size(window: *anyopaque, width: c_int, height: c_int) void;
@@ -517,6 +519,13 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
 // Application state
 var app_instance: ?*anyopaque = null;
 
+fn onApplicationActivated(_: *anyopaque, _: ?*anyopaque) callconv(.c) void {
+    // The CLI creates and shows its first window before g_application_run().
+    // Activation presents that already-owned window instead of constructing
+    // another one.
+    if (desktop_windows.latest()) |entry| gtk_window_present(@ptrFromInt(entry.window));
+}
+
 pub const WindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
@@ -552,7 +561,19 @@ pub const Window = struct {
         // Initialize GTK if not already done
         if (app_instance == null) {
             gtk_init(null, null);
-            app_instance = gtk_application_new("com.craft.app", 0);
+            const app = gtk_application_new("com.craft.app", 0) orelse return error.ApplicationCreationFailed;
+            if (g_signal_connect_data(app, "activate", @ptrCast(&onApplicationActivated), null, null, 0) == 0) {
+                g_object_unref(app);
+                return error.SignalConnectionFailed;
+            }
+            // GtkApplicationWindow must not be added before the application's
+            // startup signal. Register now because Craft creates its first
+            // window before entering g_application_run().
+            if (g_application_register(app, null, null) == 0) {
+                g_object_unref(app);
+                return error.ApplicationRegistrationFailed;
+            }
+            app_instance = app;
         }
 
         const window = gtk_application_window_new(app_instance.?);
@@ -758,7 +779,7 @@ pub const Window = struct {
 pub const App = struct {
     pub fn run() !void {
         if (app_instance) |app| {
-            _ = g_application_run(app, 0, undefined);
+            _ = g_application_run(app, 0, null);
         }
     }
 

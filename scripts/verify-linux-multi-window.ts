@@ -90,6 +90,7 @@ const childPage = `<!doctype html><script>
 </script>`
 
 const steps = new Set<string>()
+const requests: string[] = []
 let resolveDone!: () => void
 let rejectDone!: (error: Error) => void
 const done = new Promise<void>((resolve, reject) => {
@@ -98,6 +99,7 @@ const done = new Promise<void>((resolve, reject) => {
 })
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+  requests.push(url.pathname)
   if (url.pathname === '/main' || url.pathname === '/child') {
     response.setHeader('content-type', 'text/html; charset=utf-8')
     response.end(url.pathname === '/main' ? mainPage : childPage)
@@ -145,7 +147,7 @@ try {
   console.log(`Linux multi-window smoke passed: ${[...steps].join(', ')}`)
 }
 catch (error) {
-  throw new Error(`${String(error)}\nCraft output:\n${output}`)
+  throw new Error(`${String(error)}\nHTTP requests: ${requests.join(', ')}\nCraft output:\n${output}`)
 }
 finally {
   clearTimeout(timer)
