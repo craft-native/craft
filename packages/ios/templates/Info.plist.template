@@ -38,7 +38,7 @@
     <key>UIUserInterfaceStyle</key>
     <string>{{UI_STYLE}}</string>
     <key>UIStatusBarStyle</key>
-    <string>UIStatusBarStyleLightContent</string>
+    <string>{{STATUS_BAR_STYLE}}</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
     <false/>
 {{USAGE_DESCRIPTIONS}}

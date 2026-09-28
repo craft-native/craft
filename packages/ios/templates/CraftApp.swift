@@ -223,7 +223,7 @@ struct CraftApp: App {
         WindowGroup {
             CraftWebView(config: appState.config)
                 .ignoresSafeArea()
-                .preferredColorScheme(appState.config.darkMode ? .dark : .light)
+                .preferredColorScheme(appState.config.colorScheme)
                 .environmentObject(appState)
                 .onOpenURL { url in
                     // Handle deep links and universal links
@@ -353,7 +353,12 @@ struct CraftConfig: Codable {
     var appName: String = "Craft App"
     var bundleId: String = "com.craft.app"
     var darkMode: Bool = true
+    /// "light", "dark" or "system". Absent in configs older than the field,
+    /// which keep what `darkMode` pinned.
+    var appearance: String? = nil
     var backgroundColor: String = "#1a1a2e"
+    /// The background while the phone is in Dark Mode; the light one if unset.
+    var backgroundColorDark: String? = nil
     var enableSpeechRecognition: Bool = false
     var enableHaptics: Bool = false
     var enableShare: Bool = false
@@ -391,6 +396,26 @@ struct CraftConfig: Codable {
     var enableMLKit: Bool = false
     var devServerURL: String? = nil
     var trustedOrigins: [String] = []
+}
+
+extension CraftConfig {
+    /// The scheme SwiftUI pins, or nil to follow the phone's setting.
+    var colorScheme: ColorScheme? {
+        switch appearance {
+        case "system": return nil
+        case "light": return .light
+        case "dark": return .dark
+        default: return darkMode ? .dark : .light
+        }
+    }
+
+    /// The webview's background, resolved per trait so a Dark Mode switch
+    /// repaints it without a reload.
+    var resolvedBackgroundColor: UIColor {
+        let light = UIColor(hex: backgroundColor) ?? .black
+        guard let darkHex = backgroundColorDark, let dark = UIColor(hex: darkHex) else { return light }
+        return UIColor { traits in traits.userInterfaceStyle == .dark ? dark : light }
+    }
 }
 
 // MARK: - WebView
@@ -517,7 +542,7 @@ struct CraftWebView: UIViewRepresentable {
         CraftEventManager.shared.setWebView(webView)
 
         // Parse background color
-        let bgColor = UIColor(hex: config.backgroundColor) ?? .black
+        let bgColor = config.resolvedBackgroundColor
         webView.backgroundColor = bgColor
         webView.scrollView.backgroundColor = bgColor
 
@@ -1297,6 +1322,32 @@ struct CraftWebView: UIViewRepresentable {
                     saveHealthWorkout(body: body, callbackId: callbackId)
                 } else {
                     rejectCallback(callbackId, error: "HealthKit is disabled")
+                }
+            case "getHealthWorkouts":
+                if config.enableHealthKit {
+                    getHealthWorkouts(
+                        startDate: body["startDate"] as? Double,
+                        endDate: body["endDate"] as? Double,
+                        limit: body["limit"] as? Int,
+                        callbackId: callbackId
+                    )
+                } else {
+                    rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
+                }
+            case "getHealthDailyStatistics":
+                if config.enableHealthKit {
+                    if let dataType = body["type"] as? String {
+                        getHealthDailyStatistics(
+                            type: dataType,
+                            startDate: body["startDate"] as? Double,
+                            endDate: body["endDate"] as? Double,
+                            callbackId: callbackId
+                        )
+                    } else {
+                        rejectCallback(callbackId, error: "getHealthDailyStatistics was called without a type", code: "INVALID_ARGUMENT")
+                    }
+                } else {
+                    rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
                 }
 
             // MARK: - Live Activities
@@ -3341,7 +3392,15 @@ struct CraftWebView: UIViewRepresentable {
                         options = options || {};
                         return craft._invoke('getHealthData', {type: type, startDate: options.startDate, endDate: options.endDate});
                     },
-                    saveWorkout: function(workout) { return craft._invoke('saveHealthWorkout', workout || {}); }
+                    saveWorkout: function(workout) { return craft._invoke('saveHealthWorkout', workout || {}); },
+                    getWorkouts: function(options) {
+                        options = options || {};
+                        return craft._invoke('getHealthWorkouts', {startDate: options.startDate, endDate: options.endDate, limit: options.limit});
+                    },
+                    getDailyStatistics: function(type, options) {
+                        options = options || {};
+                        return craft._invoke('getHealthDailyStatistics', {type: type, startDate: options.startDate, endDate: options.endDate});
+                    }
                 };
                 craft.liveActivity = {
                     start: function(options) { return craft._invoke('startLiveActivity', options || {}); },
@@ -5100,6 +5159,30 @@ struct CraftWebView: UIViewRepresentable {
                     }
                 case "workouts":
                     readTypes.insert(HKObjectType.workoutType())
+                    // A workout's own heart rate and energy are read through
+                    // these; without them every workout comes back bare.
+                    if let heartType = HKQuantityType.quantityType(forIdentifier: .heartRate) {
+                        readTypes.insert(heartType)
+                    }
+                    if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) {
+                        readTypes.insert(energyType)
+                    }
+                case "restingHeartRate":
+                    if let restingType = HKQuantityType.quantityType(forIdentifier: .restingHeartRate) {
+                        readTypes.insert(restingType)
+                    }
+                case "heartRateVariability":
+                    if let hrvType = HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN) {
+                        readTypes.insert(hrvType)
+                    }
+                case "bodyMass":
+                    if let massType = HKQuantityType.quantityType(forIdentifier: .bodyMass) {
+                        readTypes.insert(massType)
+                    }
+                case "sleep":
+                    if let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) {
+                        readTypes.insert(sleepType)
+                    }
                 default:
                     break
                 }
@@ -5120,44 +5203,32 @@ struct CraftWebView: UIViewRepresentable {
                 return
             }
 
-            var quantityType: HKQuantityType?
-            var unit: HKUnit?
-
-            switch type {
-            case "steps":
-                quantityType = HKQuantityType.quantityType(forIdentifier: .stepCount)
-                unit = .count()
-            case "heartRate":
-                quantityType = HKQuantityType.quantityType(forIdentifier: .heartRate)
-                unit = HKUnit(from: "count/min")
-            case "activeEnergy":
-                quantityType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned)
-                unit = .kilocalorie()
-            case "distance":
-                quantityType = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)
-                unit = .meter()
-            default:
+            guard let spec = Self.healthQuantity(type), let qType = spec.type else {
                 rejectCallback(callbackId, error: "Unknown health data type")
                 return
             }
-
-            guard let qType = quantityType, let qUnit = unit else {
-                rejectCallback(callbackId, error: "Invalid health data type")
-                return
-            }
+            let qUnit = spec.unit
 
             let start = startDate != nil ? Date(timeIntervalSince1970: startDate! / 1000) : Calendar.current.date(byAdding: .day, value: -7, to: Date())!
             let end = endDate != nil ? Date(timeIntervalSince1970: endDate! / 1000) : Date()
 
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
 
-            let query = HKStatisticsQuery(quantityType: qType, quantitySamplePredicate: predicate, options: .cumulativeSum) { [weak self] _, result, error in
+            // A discrete type (heart rate, weight) has no sum: HealthKit fails
+            // the whole query when asked for one, which is what heart rate
+            // used to do. Each type is asked for the statistic it has.
+            let query = HKStatisticsQuery(quantityType: qType, quantitySamplePredicate: predicate, options: spec.options) { [weak self] _, result, error in
                 if let error = error {
+                    // No samples in the range is an answer, not a failure.
+                    if (error as? HKError)?.code == .errorNoData {
+                        self?.resolveCallback(callbackId, result: ["value": 0, "unit": qUnit.unitString])
+                        return
+                    }
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
                     return
                 }
 
-                let value = result?.sumQuantity()?.doubleValue(for: qUnit) ?? 0
+                let value = result.flatMap { Self.statisticValue($0, options: spec.options, unit: qUnit) } ?? 0
                 self?.resolveCallback(callbackId, result: ["value": value, "unit": qUnit.unitString])
             }
 
@@ -5250,6 +5321,194 @@ struct CraftWebView: UIViewRepresentable {
                     }
                 }
             }
+        }
+
+        /// The quantity behind each health data type, its unit, and the one
+        /// statistic that type supports.
+        private static func healthQuantity(_ type: String) -> (type: HKQuantityType?, unit: HKUnit, options: HKStatisticsOptions)? {
+            let bpm = HKUnit.count().unitDivided(by: .minute())
+            switch type {
+            case "steps": return (HKQuantityType.quantityType(forIdentifier: .stepCount), .count(), .cumulativeSum)
+            case "activeEnergy": return (HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned), .kilocalorie(), .cumulativeSum)
+            case "distance": return (HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning), .meter(), .cumulativeSum)
+            case "heartRate": return (HKQuantityType.quantityType(forIdentifier: .heartRate), bpm, .discreteAverage)
+            case "restingHeartRate": return (HKQuantityType.quantityType(forIdentifier: .restingHeartRate), bpm, .discreteAverage)
+            case "heartRateVariability": return (HKQuantityType.quantityType(forIdentifier: .heartRateVariabilitySDNN), .secondUnit(with: .milli), .discreteAverage)
+            case "bodyMass": return (HKQuantityType.quantityType(forIdentifier: .bodyMass), .gramUnit(with: .kilo), .mostRecent)
+            default: return nil
+            }
+        }
+
+        private static func statisticValue(_ statistics: HKStatistics, options: HKStatisticsOptions, unit: HKUnit) -> Double? {
+            if options.contains(.cumulativeSum) { return statistics.sumQuantity()?.doubleValue(for: unit) }
+            if options.contains(.mostRecent) { return statistics.mostRecentQuantity()?.doubleValue(for: unit) }
+            return statistics.averageQuantity()?.doubleValue(for: unit)
+        }
+
+        private static let healthDayFormatter: DateFormatter = {
+            let formatter = DateFormatter()
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = .current
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter
+        }()
+
+        /// A stable name for a workout's activity, independent of the SDK's
+        /// raw values, so a page can map it to its own sports.
+        private static func workoutTypeName(_ type: HKWorkoutActivityType) -> String {
+            switch type {
+            case .running: return "running"
+            case .cycling: return "cycling"
+            case .walking: return "walking"
+            case .hiking: return "hiking"
+            case .swimming: return "swimming"
+            case .rowing: return "rowing"
+            case .elliptical: return "elliptical"
+            case .stairClimbing, .stairs: return "stairClimbing"
+            case .yoga: return "yoga"
+            case .pilates: return "pilates"
+            case .functionalStrengthTraining, .traditionalStrengthTraining, .coreTraining: return "strength"
+            case .highIntensityIntervalTraining: return "hiit"
+            case .crossTraining, .mixedCardio: return "crossTraining"
+            case .crossCountrySkiing: return "crossCountrySkiing"
+            case .downhillSkiing, .snowboarding: return "skiing"
+            case .paddleSports: return "paddling"
+            case .climbing: return "climbing"
+            case .dance, .socialDance, .cardioDance: return "dance"
+            case .cooldown, .flexibility, .mindAndBody: return "mobility"
+            default: return "other"
+            }
+        }
+
+        /// Workouts in Apple Health — the watch's, and every app's that
+        /// writes there — newest first, with the numbers a training log needs.
+        private func getHealthWorkouts(startDate: Double?, endDate: Double?, limit: Int?, callbackId: String?) {
+            guard let healthStore = healthStore else {
+                rejectCallback(callbackId, error: "HealthKit not available")
+                return
+            }
+
+            let start = startDate.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Calendar.current.date(byAdding: .day, value: -30, to: Date())!
+            let end = endDate.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+            let newestFirst = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+            let cap = max(1, min(limit ?? 200, 1000))
+
+            let query = HKSampleQuery(sampleType: HKObjectType.workoutType(), predicate: predicate, limit: cap, sortDescriptors: [newestFirst]) { [weak self] _, samples, error in
+                if let error = error, (error as? HKError)?.code != .errorNoData {
+                    self?.rejectCallback(callbackId, error: error.localizedDescription)
+                    return
+                }
+
+                let bpm = HKUnit.count().unitDivided(by: .minute())
+                let workouts: [[String: Any]] = (samples as? [HKWorkout] ?? []).map { workout in
+                    var item: [String: Any] = [
+                        "id": workout.uuid.uuidString,
+                        "type": Self.workoutTypeName(workout.workoutActivityType),
+                        "startDate": workout.startDate.timeIntervalSince1970 * 1000,
+                        "endDate": workout.endDate.timeIntervalSince1970 * 1000,
+                        "durationSeconds": workout.duration,
+                        "sourceName": workout.sourceRevision.source.name,
+                        "indoor": (workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool) ?? false,
+                    ]
+                    if let meters = workout.totalDistance?.doubleValue(for: .meter()), meters > 0 {
+                        item["distanceMeters"] = meters
+                    }
+                    if let ascent = workout.metadata?[HKMetadataKeyElevationAscended] as? HKQuantity {
+                        item["elevationGainMeters"] = ascent.doubleValue(for: .meter())
+                    }
+                    if #available(iOS 16.0, *) {
+                        if let heartType = HKQuantityType.quantityType(forIdentifier: .heartRate),
+                           let heart = workout.statistics(for: heartType) {
+                            if let average = heart.averageQuantity()?.doubleValue(for: bpm) { item["averageHeartRate"] = average }
+                            if let maximum = heart.maximumQuantity()?.doubleValue(for: bpm) { item["maxHeartRate"] = maximum }
+                        }
+                        if let energyType = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
+                           let calories = workout.statistics(for: energyType)?.sumQuantity()?.doubleValue(for: .kilocalorie()) {
+                            item["activeEnergyCalories"] = calories
+                        }
+                    } else if let calories = workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) {
+                        item["activeEnergyCalories"] = calories
+                    }
+                    return item
+                }
+                self?.resolveCallback(callbackId, result: workouts)
+            }
+            healthStore.execute(query)
+        }
+
+        /// One value per local day: a sum for steps, energy and distance, an
+        /// average for heart rate, resting heart rate and HRV, the latest
+        /// weight, and hours asleep for sleep (counted on the day you woke).
+        private func getHealthDailyStatistics(type: String, startDate: Double?, endDate: Double?, callbackId: String?) {
+            guard let healthStore = healthStore else {
+                rejectCallback(callbackId, error: "HealthKit not available")
+                return
+            }
+
+            let calendar = Calendar.current
+            let end = endDate.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
+            let start = calendar.startOfDay(for: startDate.map { Date(timeIntervalSince1970: $0 / 1000) } ?? calendar.date(byAdding: .day, value: -30, to: end)!)
+
+            if type == "sleep" {
+                guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+                    rejectCallback(callbackId, error: "Sleep data is unavailable")
+                    return
+                }
+                // From the evening before the first day, so its night counts.
+                let predicate = HKQuery.predicateForSamples(withStart: calendar.date(byAdding: .hour, value: -12, to: start), end: end, options: [])
+                let query = HKSampleQuery(sampleType: sleepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { [weak self] _, samples, error in
+                    if let error = error, (error as? HKError)?.code != .errorNoData {
+                        self?.rejectCallback(callbackId, error: error.localizedDescription)
+                        return
+                    }
+                    // Time in bed and time awake are not sleep; every asleep
+                    // stage (and the older single "asleep" value) is.
+                    let awake: Set<Int> = [HKCategoryValueSleepAnalysis.inBed.rawValue, HKCategoryValueSleepAnalysis.awake.rawValue]
+                    var secondsByDay: [String: Double] = [:]
+                    for sample in samples as? [HKCategorySample] ?? [] where !awake.contains(sample.value) {
+                        let day = Self.healthDayFormatter.string(from: sample.endDate)
+                        secondsByDay[day, default: 0] += sample.endDate.timeIntervalSince(sample.startDate)
+                    }
+                    let days = secondsByDay.keys.sorted().map { day -> [String: Any] in
+                        ["date": day, "value": (secondsByDay[day]! / 3600 * 100).rounded() / 100, "unit": "hr"]
+                    }
+                    self?.resolveCallback(callbackId, result: days)
+                }
+                healthStore.execute(query)
+                return
+            }
+
+            guard let spec = Self.healthQuantity(type), let qType = spec.type else {
+                rejectCallback(callbackId, error: "Unknown health data type")
+                return
+            }
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+            let query = HKStatisticsCollectionQuery(
+                quantityType: qType,
+                quantitySamplePredicate: predicate,
+                options: spec.options,
+                anchorDate: start,
+                intervalComponents: DateComponents(day: 1)
+            )
+            query.initialResultsHandler = { [weak self] _, collection, error in
+                if let error = error, (error as? HKError)?.code != .errorNoData {
+                    self?.rejectCallback(callbackId, error: error.localizedDescription)
+                    return
+                }
+                var days: [[String: Any]] = []
+                collection?.enumerateStatistics(from: start, to: end) { statistics, _ in
+                    guard let value = Self.statisticValue(statistics, options: spec.options, unit: spec.unit) else { return }
+                    days.append([
+                        "date": Self.healthDayFormatter.string(from: statistics.startDate),
+                        "value": value,
+                        "unit": spec.unit.unitString,
+                    ])
+                }
+                self?.resolveCallback(callbackId, result: days)
+            }
+            healthStore.execute(query)
         }
 
         // MARK: - Live Activities

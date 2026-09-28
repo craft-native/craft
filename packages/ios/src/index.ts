@@ -10,13 +10,23 @@ import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
 
+export type CraftAppearance = 'light' | 'dark' | 'system'
+
 export interface CraftConfig {
   appName: string
   bundleId: string
   version?: string
   buildNumber?: string
   darkMode?: boolean
+  /**
+   * Which interface style the app draws in. `system` follows the phone's
+   * Light/Dark setting (and the page's `prefers-color-scheme` with it); `light`
+   * and `dark` pin one. Unset keeps the older `darkMode` switch.
+   */
+  appearance?: CraftAppearance
   backgroundColor?: string
+  /** The launch and webview background while the phone is in Dark Mode. */
+  backgroundColorDark?: string
   enableSpeechRecognition?: boolean
   enableHaptics?: boolean
   enableShare?: boolean
@@ -198,6 +208,27 @@ function plistString(key: string, value: string): string {
   return `    <key>${key}</key>\n    <string>${xmlEscape(value)}</string>`
 }
 
+/** `appearance` when set, otherwise what the older `darkMode` switch pinned. */
+export function resolveAppearance(config: Pick<CraftConfig, 'appearance' | 'darkMode'>): CraftAppearance {
+  if (config.appearance) return config.appearance
+  return config.darkMode === false ? 'light' : 'dark'
+}
+
+/**
+ * The Info.plist interface style and the status bar that reads on it.
+ *
+ * The status bar used to be `LightContent` whatever the app looked like:
+ * white text that vanished on a light page. It now follows the appearance —
+ * dark text on a light app, light on a dark one, and the system's choice when
+ * the app follows the system.
+ */
+export function renderAppearance(config: Pick<CraftConfig, 'appearance' | 'darkMode'>): { interfaceStyle: string, statusBarStyle: string } {
+  const appearance = resolveAppearance(config)
+  if (appearance === 'system') return { interfaceStyle: 'Automatic', statusBarStyle: 'UIStatusBarStyleDefault' }
+  if (appearance === 'light') return { interfaceStyle: 'Light', statusBarStyle: 'UIStatusBarStyleDarkContent' }
+  return { interfaceStyle: 'Dark', statusBarStyle: 'UIStatusBarStyleLightContent' }
+}
+
 export function renderUsageDescriptions(config: CraftConfig): string {
   const entries: Array<[boolean | undefined, string, string]> = [
     [config.enableSpeechRecognition, 'NSSpeechRecognitionUsageDescription', `${config.appName} uses speech recognition for voice input.`],
@@ -345,17 +376,25 @@ function renderAssetCatalog(output: string, config: CraftConfig): void {
     info: { author: 'xcode', version: 1 },
   }, null, 2)}\n`)
 
-  const color = config.backgroundColor?.replace(/^#/, '') || '000000'
-  const normalized = color.length === 3 ? [...color].map(value => `${value}${value}`).join('') : color.padEnd(6, '0').slice(0, 6)
-  const components = [0, 2, 4].map(index => (Number.parseInt(normalized.slice(index, index + 2), 16) / 255).toFixed(3))
-  writeFileSync(join(launchBackground, 'Contents.json'), `${JSON.stringify({
-    colors: [{
-      color: {
-        'color-space': 'srgb',
-        components: { alpha: '1.000', blue: components[2], green: components[1], red: components[0] },
-      },
+  const colorEntry = (hex: string | undefined) => {
+    const color = hex?.replace(/^#/, '') || '000000'
+    const normalized = color.length === 3 ? [...color].map(value => `${value}${value}`).join('') : color.padEnd(6, '0').slice(0, 6)
+    const components = [0, 2, 4].map(index => (Number.parseInt(normalized.slice(index, index + 2), 16) / 255).toFixed(3))
+    return {
+      'color-space': 'srgb',
+      components: { alpha: '1.000', blue: components[2], green: components[1], red: components[0] },
+    }
+  }
+  const colors: Array<Record<string, unknown>> = [{ color: colorEntry(config.backgroundColor), idiom: 'universal' }]
+  if (config.backgroundColorDark) {
+    colors.push({
+      appearances: [{ appearance: 'luminosity', value: 'dark' }],
+      color: colorEntry(config.backgroundColorDark),
       idiom: 'universal',
-    }],
+    })
+  }
+  writeFileSync(join(launchBackground, 'Contents.json'), `${JSON.stringify({
+    colors,
     info: { author: 'xcode', version: 1 },
   }, null, 2)}\n`)
 }
@@ -517,10 +556,28 @@ async function refreshRuntime(output: string, override?: string | null): Promise
   console.log('   Refreshed the Zig runtime from', dir)
 }
 
-export async function init(options: InitOptions): Promise<void> {
-  const { name, bundleId, teamId, output } = options
+/**
+ * The identifier an app's display name becomes wherever Xcode or Swift needs
+ * one: the project, the target, the product and the `@main` type.
+ *
+ * The display name goes in front of people and may say anything; an
+ * identifier may not. "HQ.training" used to become `struct HQ.trainingApp`,
+ * which does not compile. Words are joined in PascalCase ("HQTraining"), and
+ * a name that starts with a digit or has no letters at all still yields a
+ * valid Swift type.
+ */
+export function productName(name: string): string {
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean)
+  const joined = words.map(word => word[0].toUpperCase() + word.slice(1)).join('')
+  if (!joined) return 'Craft'
+  return /^\d/.test(joined) ? `App${joined}` : joined
+}
 
-  console.log(`\n⚡ Initializing Craft iOS project: ${name}`)
+export async function init(options: InitOptions): Promise<void> {
+  const { name: displayName, bundleId, teamId, output } = options
+  const name = productName(displayName)
+
+  console.log(`\n⚡ Initializing Craft iOS project: ${displayName}`)
   console.log(`   Output: ${output}\n`)
 
   // Create directory structure
@@ -533,13 +590,13 @@ export async function init(options: InitOptions): Promise<void> {
   }
 
   // Generate bundle ID from name if not provided
-  const finalBundleId = bundleId || `com.craft.${name.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+  const finalBundleId = bundleId || `com.craft.${name.toLowerCase()}`
   const bundleIdPrefix = finalBundleId.split('.').slice(0, -1).join('.')
 
   // Create craft.config.json
   const config: CraftConfig = {
     ...DEFAULT_CONFIG,
-    appName: name,
+    appName: displayName,
     bundleId: finalBundleId,
     teamId: teamId || '',
     ...options.config,
@@ -558,11 +615,12 @@ export async function init(options: InitOptions): Promise<void> {
   // Generate Info.plist
   const infoPlistTemplate = readFileSync(join(TEMPLATES_DIR, 'Info.plist.template'), 'utf-8')
   const infoPlist = infoPlistTemplate
-    .replace(/\{\{APP_NAME\}\}/g, name)
+    .replace(/\{\{APP_NAME\}\}/g, xmlEscape(displayName))
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
     .replace(/\{\{VERSION\}\}/g, config.version || '1.0.0')
     .replace(/\{\{BUILD_NUMBER\}\}/g, config.buildNumber || '1')
-    .replace(/\{\{UI_STYLE\}\}/g, config.darkMode ? 'Dark' : 'Light')
+    .replace(/\{\{UI_STYLE\}\}/g, renderAppearance(config).interfaceStyle)
+    .replace(/\{\{STATUS_BAR_STYLE\}\}/g, renderAppearance(config).statusBarStyle)
     .replace(/\{\{ORIENTATIONS\}\}/g, renderOrientations(config))
     .replace(/\{\{USAGE_DESCRIPTIONS\}\}/g, renderUsageDescriptions(config))
     .replace(/\{\{URL_TYPES\}\}/g, renderUrlTypes(config))
@@ -670,12 +728,12 @@ export async function init(options: InitOptions): Promise<void> {
       .replace(/\{\{APP_NAME\}\}/g, name)
     writeFileSync(join(output, 'WatchExtension', `${name}WatchApp.swift`), watchSource)
     const watchInfo = readFileSync(join(TEMPLATES_DIR, 'WatchApp.Info.plist.template'), 'utf8')
-      .replace(/\{\{APP_NAME\}\}/g, name)
+      .replace(/\{\{APP_NAME\}\}/g, xmlEscape(displayName))
       .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
     writeFileSync(join(output, 'WatchApp', 'Info.plist'), watchInfo)
     writeFileSync(join(output, 'WatchApp', 'Watch.entitlements'), renderWatchEntitlements(config))
     const watchExtensionInfo = readFileSync(join(TEMPLATES_DIR, 'WatchExtension.Info.plist.template'), 'utf8')
-      .replace(/\{\{APP_NAME\}\}/g, name)
+      .replace(/\{\{APP_NAME\}\}/g, xmlEscape(displayName))
       .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
     writeFileSync(join(output, 'WatchExtension', 'Info.plist'), watchExtensionInfo)
     writeFileSync(join(output, 'WatchExtension', 'Watch.entitlements'), renderWatchEntitlements(config))
@@ -687,7 +745,7 @@ export async function init(options: InitOptions): Promise<void> {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>${name}</title>
+  <title>${xmlEscape(displayName)}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -708,7 +766,7 @@ export async function init(options: InitOptions): Promise<void> {
 </head>
 <body>
   <div class="container">
-    <h1>⚡ ${name}</h1>
+    <h1>⚡ ${xmlEscape(displayName)}</h1>
     <p>Built with Craft iOS</p>
     <p class="ready" id="status">Waiting for Craft bridge...</p>
   </div>
@@ -773,7 +831,7 @@ export async function build(options: BuildOptions): Promise<void> {
     if (result.exitCode === 0) {
       console.log('   Running xcodegen...')
       await $`cd ${output} && xcodegen generate`.quiet()
-      console.log(`✅ Xcode project created: ${config.appName}.xcodeproj`)
+      console.log(`✅ Xcode project created: ${productName(config.appName)}.xcodeproj`)
     }
 else {
       throw new Error('xcodegen not found')

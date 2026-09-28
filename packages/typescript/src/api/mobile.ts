@@ -1416,7 +1416,19 @@ export const pushNotifications = {
   }
 }
 
-export type HealthDataType = 'steps' | 'heartRate' | 'activeEnergy' | 'distance' | 'workouts'
+export type HealthDataType =
+  | 'steps'
+  | 'heartRate'
+  | 'activeEnergy'
+  | 'distance'
+  | 'workouts'
+  | 'restingHeartRate'
+  | 'heartRateVariability'
+  | 'bodyMass'
+  | 'sleep'
+
+/** The types with one value per day. `sleep` is hours asleep, counted on the day you woke. */
+export type HealthDailyType = Exclude<HealthDataType, 'workouts'>
 
 export interface HealthDataOptions {
   startDate?: number
@@ -1452,6 +1464,45 @@ export interface HealthWorkoutResult {
   id: string
 }
 
+export interface HealthWorkoutQuery {
+  /** Epoch milliseconds. Defaults to 30 days ago. */
+  startDate?: number
+  /** Epoch milliseconds. Defaults to now. */
+  endDate?: number
+  /** At most this many, newest first. Defaults to 200, capped at 1000. */
+  limit?: number
+}
+
+/** The activity of a workout read from Apple Health, named independently of the SDK. */
+export type HealthWorkoutActivity =
+  | 'running' | 'cycling' | 'walking' | 'hiking' | 'swimming' | 'rowing' | 'elliptical'
+  | 'stairClimbing' | 'yoga' | 'pilates' | 'strength' | 'hiit' | 'crossTraining'
+  | 'crossCountrySkiing' | 'skiing' | 'paddling' | 'climbing' | 'dance' | 'mobility' | 'other'
+
+/** A workout recorded by the watch, or by any app that writes to Apple Health. */
+export interface HealthWorkoutSample {
+  /** HealthKit's UUID: stable across reads, so it can key an import. */
+  id: string
+  type: HealthWorkoutActivity
+  startDate: number
+  endDate: number
+  durationSeconds: number
+  sourceName: string
+  indoor: boolean
+  distanceMeters?: number
+  elevationGainMeters?: number
+  activeEnergyCalories?: number
+  averageHeartRate?: number
+  maxHeartRate?: number
+}
+
+export interface HealthDailyValue {
+  /** The local day, YYYY-MM-DD. */
+  date: string
+  value: number
+  unit: string
+}
+
 export const health = {
   async requestAuthorization(types: HealthDataType[]): Promise<boolean> {
     const craft = getCraftRoot()
@@ -1467,7 +1518,19 @@ export const health = {
     const craft = getCraftRoot()
     if (!craft?.health?.saveWorkout) throw new Error('Saving health workouts is unavailable')
     return craft.health.saveWorkout(workout)
-  }
+  },
+  /** Workouts in Apple Health, newest first. iOS only for now. */
+  async getWorkouts(options: HealthWorkoutQuery = {}): Promise<HealthWorkoutSample[]> {
+    const craft = getCraftRoot()
+    if (!craft?.health?.getWorkouts) throw new Error('Reading health workouts is unavailable')
+    return craft.health.getWorkouts(options)
+  },
+  /** One value per local day between two dates. iOS only for now. */
+  async getDailyStatistics(type: HealthDailyType, options: HealthDataOptions = {}): Promise<HealthDailyValue[]> {
+    const craft = getCraftRoot()
+    if (!craft?.health?.getDailyStatistics) throw new Error('Daily health statistics are unavailable')
+    return craft.health.getDailyStatistics(type, options)
+  },
 }
 
 export interface LiveActivityState {
@@ -1666,6 +1729,8 @@ interface CraftMobileBridge {
     requestAuthorization(types: HealthDataType[]): Promise<boolean>
     getData(type: HealthDataType, options: HealthDataOptions): Promise<HealthDataResult>
     saveWorkout(workout: HealthWorkout): Promise<HealthWorkoutResult>
+    getWorkouts?(options: HealthWorkoutQuery): Promise<HealthWorkoutSample[]>
+    getDailyStatistics?(type: HealthDailyType, options: HealthDataOptions): Promise<HealthDailyValue[]>
   }
   liveActivity?: {
     start(options: LiveActivityOptions): Promise<{ id: string }>

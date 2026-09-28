@@ -9,6 +9,8 @@ import {
   renderRuntimeSettings,
   resolveRuntimeDir,
   orderSimulators,
+  productName,
+  renderAppearance,
   renderBackgroundModes,
   renderEntitlements,
   renderOrientations,
@@ -141,6 +143,76 @@ describe('Craft iOS builder', () => {
     expect(generatedConfig.enableHaptics).toBe(true)
     expect(generatedConfig.enableSecureStorage).toBe(false)
     expect(generatedConfig.enableScreenCapture).toBe(false)
+  })
+
+  it('names the Swift types and target after an identifier, and shows the display name as given', async () => {
+    expect(productName('HQ.training')).toBe('HQTraining')
+    expect(productName('my app')).toBe('MyApp')
+    expect(productName('WildLoop')).toBe('WildLoop')
+    expect(productName('7 Summits')).toBe('App7Summits')
+    expect(productName('…')).toBe('Craft')
+
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-dotted-'))
+    await init({ runtimeDir: null, name: 'HQ.training', bundleId: 'training.hq.app', output, config: {} })
+
+    const swift = readFileSync(join(output, 'Sources', 'HQTrainingApp.swift'), 'utf8')
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    const project = readFileSync(join(output, 'project.yml'), 'utf8')
+    expect(swift).toContain('struct HQTrainingApp: App')
+    expect(swift).toContain('final class HQTrainingAppDelegate')
+    expect(swift).not.toContain('HQ.training')
+    expect(project).toContain('name: HQTraining\n')
+    expect(project).toContain('\n  HQTraining:\n')
+    expect(plist).toContain('<key>CFBundleDisplayName</key>\n    <string>HQ.training</string>')
+    expect(JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8')).appName).toBe('HQ.training')
+  })
+
+  it('follows the phone\'s appearance when asked, with a status bar that reads on it', async () => {
+    expect(renderAppearance({ appearance: 'system' })).toEqual({ interfaceStyle: 'Automatic', statusBarStyle: 'UIStatusBarStyleDefault' })
+    expect(renderAppearance({ appearance: 'light' })).toEqual({ interfaceStyle: 'Light', statusBarStyle: 'UIStatusBarStyleDarkContent' })
+    expect(renderAppearance({ appearance: 'dark' })).toEqual({ interfaceStyle: 'Dark', statusBarStyle: 'UIStatusBarStyleLightContent' })
+    // Configs from before `appearance` keep what darkMode pinned.
+    expect(renderAppearance({ darkMode: true }).interfaceStyle).toBe('Dark')
+    expect(renderAppearance({ darkMode: false }).interfaceStyle).toBe('Light')
+
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-appearance-'))
+    await init({
+      runtimeDir: null,
+      name: 'Appearance',
+      bundleId: 'com.example.appearance',
+      output,
+      config: { appearance: 'system', backgroundColor: '#f8fafc', backgroundColorDark: '#020617' },
+    })
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    const swift = readFileSync(join(output, 'Sources', 'AppearanceApp.swift'), 'utf8')
+    const launch = JSON.parse(readFileSync(join(output, 'Assets.xcassets', 'LaunchBackground.colorset', 'Contents.json'), 'utf8'))
+    expect(plist).toContain('<key>UIUserInterfaceStyle</key>\n    <string>Automatic</string>')
+    expect(plist).toContain('<string>UIStatusBarStyleDefault</string>')
+    expect(swift).toContain('.preferredColorScheme(appState.config.colorScheme)')
+    expect(launch.colors).toHaveLength(2)
+    expect(launch.colors[1].appearances).toEqual([{ appearance: 'luminosity', value: 'dark' }])
+    expect(launch.colors[1].color.components.red).toBe('0.008')
+  })
+
+  it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-health-'))
+    await init({ runtimeDir: null, name: 'Health', bundleId: 'com.example.health', output, config: { enableHealthKit: true } })
+    const swift = readFileSync(join(output, 'Sources', 'HealthApp.swift'), 'utf8')
+
+    expect(swift).toContain("getWorkouts: function(options) {")
+    expect(swift).toContain("craft._invoke('getHealthWorkouts'")
+    expect(swift).toContain("craft._invoke('getHealthDailyStatistics'")
+    expect(swift).toContain('case "getHealthWorkouts":')
+    expect(swift).toContain('case "getHealthDailyStatistics":')
+    // Heart rate is discrete: asking HealthKit for its sum failed the query.
+    expect(swift).toContain('case "heartRate": return (HKQuantityType.quantityType(forIdentifier: .heartRate), bpm, .discreteAverage)')
+    expect(swift).toContain('options: spec.options) { [weak self] _, result, error in')
+    expect(swift).not.toContain('options: .cumulativeSum) { [weak self]')
+    // Every new read type is requested, so a grant covers what is then read.
+    for (const identifier of ['.restingHeartRate', '.heartRateVariabilitySDNN', '.bodyMass', '.sleepAnalysis'])
+      expect(swift).toContain(identifier)
+    expect(swift).toContain('HKStatisticsCollectionQuery(')
+    expect(swift).toContain('"id": workout.uuid.uuidString')
   })
 
   it('keeps bundled assets as a remote-app recovery path', async () => {
