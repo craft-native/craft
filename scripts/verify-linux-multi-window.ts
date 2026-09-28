@@ -30,6 +30,17 @@ const mainPage = `<!doctype html><script>
     await waitFor('child-1')
     const bounds = await window.craft.window._call('getBounds', {}, 'settings')
     if (!(bounds.width > 0 && bounds.height > 0)) throw new Error('child bounds not routed to creator')
+    await window.craft.window._call('setSize', { width: 640, height: 480 }, 'settings')
+    let resized = false
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const size = await window.craft.window._call('getSize', {}, 'settings')
+      if (Math.abs(size.width - 640) <= 40 && Math.abs(size.height - 480) <= 40) {
+        resized = true
+        break
+      }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    if (!resized) throw new Error('live child resize did not change its size')
     const title = await window.craft.window._call('getTitle', {}, 'settings')
     if (title !== 'Child 1') throw new Error('child title not routed to creator: ' + title)
 

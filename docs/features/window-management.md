@@ -32,6 +32,8 @@ The `craft-native` SDK returns a typed `Window` handle. Runtime-created
 windows are available on macOS, Linux, and Windows and must provide either
 `html` or `url` content. The common create, close, title, geometry, and event
 routes are cross-platform; some advanced window controls remain macOS-only.
+On Linux, the window manager may ignore position requests, especially before
+the window is shown.
 
 ```typescript
 import { createWindow } from 'craft-native'

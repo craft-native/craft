@@ -20,6 +20,7 @@ pub extern "c" fn g_application_run(app: *anyopaque, argc: c_int, argv: [*c][*c]
 pub extern "c" fn gtk_application_window_new(app: *anyopaque) *anyopaque;
 pub extern "c" fn gtk_window_set_title(window: *anyopaque, title: [*:0]const u8) void;
 pub extern "c" fn gtk_window_set_default_size(window: *anyopaque, width: c_int, height: c_int) void;
+pub extern "c" fn gtk_window_resize(window: *anyopaque, width: c_int, height: c_int) void;
 pub extern "c" fn gtk_window_present(window: *anyopaque) void;
 pub extern "c" fn gtk_window_close(window: *anyopaque) void;
 pub extern "c" fn gtk_window_set_decorated(window: *anyopaque, decorated: c_int) void;
@@ -31,7 +32,7 @@ pub extern "c" fn gtk_window_unmaximize(window: *anyopaque) void;
 pub extern "c" fn gtk_window_iconify(window: *anyopaque) void;
 pub extern "c" fn gtk_widget_hide(widget: *anyopaque) void;
 pub extern "c" fn gtk_widget_show(widget: *anyopaque) void;
-pub extern "c" fn gtk_window_set_position(window: *anyopaque, x: c_int, y: c_int) void;
+pub extern "c" fn gtk_window_move(window: *anyopaque, x: c_int, y: c_int) void;
 pub extern "c" fn gtk_window_get_position(window: *anyopaque, x: *c_int, y: *c_int) void;
 pub extern "c" fn gtk_window_get_size(window: *anyopaque, width: *c_int, height: *c_int) void;
 pub extern "c" fn gtk_window_get_title(window: *anyopaque) ?[*:0]const u8;
@@ -493,12 +494,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const height = json_utils.getInt(u32, json, "height") orelse return error.InvalidParameter;
         if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
             return error.InvalidParameter;
-        gtk_window_set_default_size(window, @intCast(width), @intCast(height));
+        gtk_window_resize(window, @intCast(width), @intCast(height));
     } else if (std.mem.eql(u8, action, "setPosition")) {
         const json = data orelse return error.MissingData;
         const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
         const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
-        gtk_window_set_position(window, x, y);
+        gtk_window_move(window, x, y);
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
@@ -627,7 +628,7 @@ pub const Window = struct {
         const x: i32 = options.x orelse 100;
         const y: i32 = options.y orelse 100;
         if (options.x != null and options.y != null) {
-            gtk_window_set_position(window, @intCast(x), @intCast(y));
+            gtk_window_move(window, @intCast(x), @intCast(y));
         }
 
         // Add WebView to window
@@ -681,11 +682,12 @@ pub const Window = struct {
     }
 
     pub fn setSize(self: *Window, width: u32, height: u32) void {
-        gtk_window_set_default_size(self.gtk_window, @intCast(width), @intCast(height));
+        if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int))) return;
+        gtk_window_resize(self.gtk_window, @intCast(width), @intCast(height));
     }
 
     pub fn setPosition(self: *Window, x: i32, y: i32) void {
-        gtk_window_set_position(self.gtk_window, @intCast(x), @intCast(y));
+        gtk_window_move(self.gtk_window, x, y);
     }
 
     pub fn setTitle(self: *Window, title: []const u8) void {
