@@ -1235,17 +1235,21 @@ pub const Window = struct {
             _ = controller.lpVtbl.Release(controller);
             return error.TooManyWindows;
         };
+        std.debug.print("[WebView2] Native window registered\n", .{});
 
         const message_handler = try std.heap.c_allocator.create(WebMessageReceivedHandler);
         message_handler.* = .{ .lpVtbl = &WebMessageReceivedHandler.vtbl_instance, .ref_count = 1 };
         var message_token: EventRegistrationToken = .{ .value = 0 };
+        std.debug.print("[WebView2] Registering page message handler\n", .{});
         const message_hr = webview.lpVtbl.add_WebMessageReceived(webview, @ptrCast(message_handler), &message_token);
+        std.debug.print("[WebView2] Page message handler returned 0x{x}\n", .{@as(u32, @bitCast(message_hr))});
         _ = WebMessageReceivedHandler.release(message_handler);
         if (!succeeded(message_hr)) return error.WebMessageRegistrationFailed;
         if (!desktop_windows.setMessageToken(@intFromPtr(hwnd), message_token.value)) {
             _ = webview.lpVtbl.remove_WebMessageReceived(webview, message_token);
             return error.WebMessageRegistrationFailed;
         }
+        std.debug.print("[WebView2] Capturing initial window geometry\n", .{});
         observeWindowGeometry(desktop_windows.byId(window_id).?);
 
         var window = Window{
@@ -1262,7 +1266,9 @@ pub const Window = struct {
 
         // Install before the first Navigate/NavigateToString so every page
         // starts with the same bridge surface as a macOS Craft window.
+        std.debug.print("[WebView2] Installing document-start bridge\n", .{});
         try window.injectScript(@embedFile("js/craft-bridge.js"));
+        std.debug.print("[WebView2] Document-start bridge installed\n", .{});
         return window;
     }
 

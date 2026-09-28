@@ -133,6 +133,7 @@ await new Promise<void>((resolve, reject) => {
   server.listen(0, '127.0.0.1', resolve)
 })
 const port = (server.address() as AddressInfo).port
+const startedAt = Date.now()
 const child = spawn(isWindows ? binary : 'timeout', isWindows
   ? ['--url', `http://127.0.0.1:${port}/main`]
   : ['110s', 'xvfb-run', '-a', binary, '--url', `http://127.0.0.1:${port}/main`], {
@@ -144,7 +145,7 @@ for (const stream of [child.stdout, child.stderr]) {
   stream.on('data', chunk => { output = (output + chunk.toString()).slice(-16_000) })
 }
 child.once('error', error => rejectDone(error))
-child.once('exit', (code, signal) => rejectDone(new Error(`Craft exited before smoke completed (${code ?? signal})`)))
+child.once('exit', (code, signal) => rejectDone(new Error(`Craft exited before smoke completed (${code ?? signal}, ${Date.now() - startedAt} ms)`)))
 const timer = setTimeout(() => rejectDone(new Error(`${platformName} multi-window smoke timed out`)), 100_000)
 
 try {
@@ -152,7 +153,7 @@ try {
   console.log(`${platformName} multi-window smoke passed: ${[...steps].join(', ')}`)
 }
 catch (error) {
-  throw new Error(`${String(error)}\nHTTP requests: ${requests.join(', ')}\nCraft output:\n${output}`)
+  throw new Error(`${String(error)}\nElapsed: ${Date.now() - startedAt} ms\nHTTP requests: ${requests.join(', ')}\nCraft output:\n${output}`)
 }
 finally {
   clearTimeout(timer)

@@ -10,7 +10,7 @@ whether it stores a window-specific target.
 
 | Area | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
+| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke under validation in CI |
 | Stable named handles | Implemented | Implemented | Implemented |
 | Sender-authenticated local actions | Implemented | Implemented through WebKitGTK | Implemented through WebView2 |
 | Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
