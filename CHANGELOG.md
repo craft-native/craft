@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.93...v0.0.94)
+
+## 🐛 Bug Fixes
+
+- **release**: release:patch keeps the Zig manifests on the release version ([559df08](https://github.com/craft-native/craft/commit/559df08)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.94 ([73effc2](https://github.com/craft-native/craft/commit/73effc2)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.92...v0.0.93)
 
 ## ✨ Features
