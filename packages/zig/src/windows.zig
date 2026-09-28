@@ -1549,6 +1549,14 @@ pub fn createWindow(title: []const u8, width: u32, height: u32, html: []const u8
 }
 
 pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, url, style, true);
+}
+
+pub fn createWindowWithHTML(title: []const u8, width: u32, height: u32, html: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, html, style, false);
+}
+
+fn createStyledWindow(title: []const u8, width: u32, height: u32, content: []const u8, style: WindowStyle, comptime is_url: bool) !*anyopaque {
     var window = try Window.create(.{
         .title = title,
         .width = width,
@@ -1558,11 +1566,13 @@ pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []co
         .resizable = style.resizable,
         .frameless = style.frameless,
         .transparent = style.transparent,
+        .always_on_top = style.always_on_top,
         .fullscreen = style.fullscreen,
         .dark_mode = style.dark_mode,
         .dev_tools = style.dev_tools,
     });
-    try window.loadURL(url);
+    errdefer window.close();
+    if (is_url) try window.loadURL(content) else try window.loadHTML(content);
     window.show();
     return window.hwnd;
 }

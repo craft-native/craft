@@ -793,6 +793,14 @@ pub fn createWindow(title: []const u8, width: u32, height: u32, html: []const u8
 }
 
 pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, url, style, true);
+}
+
+pub fn createWindowWithHTML(title: []const u8, width: u32, height: u32, html: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, html, style, false);
+}
+
+fn createStyledWindow(title: []const u8, width: u32, height: u32, content: []const u8, style: WindowStyle, comptime is_url: bool) !*anyopaque {
     var window = try Window.create(.{
         .title = title,
         .width = width,
@@ -811,7 +819,8 @@ pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []co
         .allow_notifications = style.allow_notifications,
         .allow_clipboard = style.allow_clipboard,
     });
-    try window.loadURL(url);
+    errdefer window.close();
+    if (is_url) try window.loadURL(content) else try window.loadHTML(content);
     window.show();
     return window.gtk_window;
 }
