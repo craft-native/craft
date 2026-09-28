@@ -127,6 +127,11 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
 
+    // Before any window exists: the tray's window is adopted as it is built.
+    if (comptime builtin.os.tag == .macos) {
+        if (options.tray_popover) craft.macos.tray_popover.enable();
+    }
+
     // Configure logging before anything else that might have something to
     // say. Both startup paths flow through here, and `--log-file` is only
     // useful if it is open before the interesting part of startup runs.
@@ -281,30 +286,7 @@ pub fn main(init: std.process.Init) !void {
             options.width,
             options.height,
             url,
-            .{
-                .frameless = options.frameless,
-                .transparent = options.transparent,
-                .always_on_top = options.always_on_top,
-                .resizable = options.resizable,
-                .fullscreen = options.fullscreen,
-                .x = options.x,
-                .y = options.y,
-                .dark_mode = options.dark_mode,
-                .enable_hot_reload = options.hot_reload,
-                .hide_dock_icon = options.hide_dock_icon,
-                .titlebar_hidden = options.titlebar_hidden,
-                .system_tray = options.system_tray,
-                .dev_tools = effective_dev_tools,
-                .benchmark = options.benchmark,
-                .headless = options.headless,
-                .frame_autosave = options.frame_autosave,
-                .web_sidebar_material = options.web_sidebar_material,
-                .web_window_material = options.web_window_material,
-                .web_sidebar_width = options.web_sidebar_width,
-                .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
-                .web_chrome_controls = options.web_chrome_controls,
-                .persistent_storage = options.persistent_storage,
-            },
+            windowStyle(options, effective_dev_tools),
         );
     } else if (options.html) |html| {
         // Load HTML content
@@ -319,30 +301,7 @@ pub fn main(init: std.process.Init) !void {
             options.width,
             options.height,
             html,
-            .{
-                .frameless = options.frameless,
-                .transparent = options.transparent,
-                .resizable = options.resizable,
-                .always_on_top = options.always_on_top,
-                .fullscreen = options.fullscreen,
-                .x = options.x,
-                .y = options.y,
-                .dark_mode = options.dark_mode,
-                .enable_hot_reload = options.hot_reload,
-                .hide_dock_icon = options.hide_dock_icon,
-                .titlebar_hidden = options.titlebar_hidden,
-                .system_tray = options.system_tray,
-                .dev_tools = effective_dev_tools,
-                .benchmark = options.benchmark,
-                .headless = options.headless,
-                .frame_autosave = options.frame_autosave,
-                .web_sidebar_material = options.web_sidebar_material,
-                .web_window_material = options.web_window_material,
-                .web_sidebar_width = options.web_sidebar_width,
-                .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
-                .web_chrome_controls = options.web_chrome_controls,
-                .persistent_storage = options.persistent_storage,
-            },
+            windowStyle(options, effective_dev_tools),
         );
     } else {
         // Show default demo app
@@ -560,6 +519,36 @@ fn parseLogLevel(name: []const u8) ?craft.Log.LogLevel {
     return null;
 }
 
+/// The window style the CLI options describe, for every startup path that
+/// makes an ordinary web window. One list, so a new option cannot reach one
+/// path and not another.
+fn windowStyle(options: cli.WindowOptions, dev_tools: bool) craft.WindowStyle {
+    return .{
+        .frameless = options.frameless,
+        .transparent = options.transparent,
+        .always_on_top = options.always_on_top,
+        .resizable = options.resizable,
+        .fullscreen = options.fullscreen,
+        .x = options.x,
+        .y = options.y,
+        .dark_mode = options.dark_mode,
+        .enable_hot_reload = options.hot_reload,
+        .hide_dock_icon = options.hide_dock_icon,
+        .titlebar_hidden = options.titlebar_hidden,
+        .system_tray = options.system_tray,
+        .dev_tools = dev_tools,
+        .benchmark = options.benchmark,
+        .headless = options.headless,
+        .frame_autosave = options.frame_autosave,
+        .web_sidebar_material = options.web_sidebar_material,
+        .web_window_material = options.web_window_material,
+        .web_sidebar_width = options.web_sidebar_width,
+        .web_sidebar_material_opacity = options.web_sidebar_material_opacity,
+        .web_chrome_controls = options.web_chrome_controls,
+        .persistent_storage = options.persistent_storage,
+    };
+}
+
 fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !void {
     std.debug.print("\n⚡ Creating system tray application\n", .{});
     std.debug.print("   Title: {s}\n", .{options.title});
@@ -600,23 +589,11 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                 options.width,
                 options.height,
                 url,
-                .{
-                    .frameless = options.frameless,
-                    .transparent = options.transparent,
-                    .always_on_top = options.always_on_top,
-                    .resizable = options.resizable,
-                    .fullscreen = options.fullscreen,
-                    .x = options.x,
-                    .y = options.y,
-                    .dark_mode = options.dark_mode,
-                    .enable_hot_reload = options.hot_reload,
-                    .hide_dock_icon = options.hide_dock_icon,
-                    .titlebar_hidden = options.titlebar_hidden,
-                    .system_tray = options.system_tray,
-                    .dev_tools = options.dev_tools,
-                    .frame_autosave = options.frame_autosave,
-                    .headless = options.headless,
-                },
+                // The same style as a window of its own. The tray path used to
+                // spell out a shorter list and drop the rest: every material,
+                // chrome-control and persistent-storage option was silently
+                // ignored for a tray app.
+                windowStyle(options, options.dev_tools),
             );
         } else if (options.html) |html| {
             _ = try app.createWindowWithHTML(
@@ -624,23 +601,7 @@ fn runWithSystemTray(allocator: std.mem.Allocator, options: cli.WindowOptions) !
                 options.width,
                 options.height,
                 html,
-                .{
-                    .frameless = options.frameless,
-                    .transparent = options.transparent,
-                    .resizable = options.resizable,
-                    .always_on_top = options.always_on_top,
-                    .fullscreen = options.fullscreen,
-                    .x = options.x,
-                    .y = options.y,
-                    .dark_mode = options.dark_mode,
-                    .enable_hot_reload = options.hot_reload,
-                    .hide_dock_icon = options.hide_dock_icon,
-                    .titlebar_hidden = options.titlebar_hidden,
-                    .system_tray = options.system_tray,
-                    .dev_tools = options.dev_tools,
-                    .frame_autosave = options.frame_autosave,
-                    .headless = options.headless,
-                },
+                windowStyle(options, options.dev_tools),
             );
         }
     }
