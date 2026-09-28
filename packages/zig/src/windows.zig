@@ -3,6 +3,7 @@ const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_bridge_text = @import("desktop_bridge_text.zig");
 const desktop_script_encoding = @import("desktop_script_encoding.zig");
+const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const json_utils = @import("json_utils.zig");
 const request_context = @import("request_context.zig");
@@ -88,7 +89,9 @@ pub const SW_HIDE: c_int = 0;
 pub const SW_MAXIMIZE: c_int = 3;
 pub const SW_MINIMIZE: c_int = 6;
 pub const WM_DESTROY: UINT = 0x0002;
+pub const WM_MOVE: UINT = 0x0003;
 pub const WM_SIZE: UINT = 0x0005;
+pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_QUIT: UINT = 0x0012;
 pub const PM_REMOVE: UINT = 0x0001;
@@ -123,6 +126,7 @@ pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) callconv(.c
 pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: UINT) callconv(.c) BOOL;
 pub extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: LPCWSTR) callconv(.c) ?*anyopaque;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
+pub extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowLongPtrW(hWnd: HWND, nIndex: c_int, dwNewLong: isize) callconv(.c) isize;
 pub extern "user32" fn GetWindowLongPtrW(hWnd: HWND, nIndex: c_int) callconv(.c) isize;
 pub extern "kernel32" fn GetModuleHandleW(lpModuleName: ?LPCWSTR) callconv(.c) ?HINSTANCE;
@@ -846,6 +850,49 @@ const CLASS_NAME: [:0]const u16 = &[_:0]u16{ 'Z', 'y', 't', 'e', 'W', 'i', 'n', 
 // Window.create. Keep stable handles for every live window here.
 var desktop_windows: desktop_window_registry.Registry = .{};
 
+fn deliverToWebview(webview_handle: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
+    const script = desktop_window_events.format(std.heap.c_allocator, name, detail_json, window_name) catch return;
+    defer std.heap.c_allocator.free(script);
+    var wide = desktop_script_encoding.encode(std.heap.c_allocator, script) catch return;
+    defer wide.deinit(std.heap.c_allocator);
+    const webview: *ICoreWebView2 = @ptrFromInt(webview_handle);
+    const handler = std.heap.c_allocator.create(ExecuteScriptCompletedHandler) catch return;
+    handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };
+    _ = webview.lpVtbl.ExecuteScript(webview, wide.ptr(), handler);
+    _ = ExecuteScriptCompletedHandler.esRelease(handler);
+}
+
+fn deliverWindowEvent(entry: desktop_window_registry.Entry, name: []const u8, detail_json: []const u8) void {
+    deliverToWebview(entry.webview, name, detail_json, null);
+    const owner = window_registry.ownerWebViewOf(entry.window) orelse return;
+    if (owner == entry.webview or desktop_windows.byWebview(owner) == null) return;
+    const window_name = window_registry.nameOf(entry.window) orelse return;
+    deliverToWebview(owner, name, detail_json, window_name);
+}
+
+fn observeWindowGeometry(entry: desktop_window_registry.Entry) void {
+    var rect: RECT = undefined;
+    if (GetWindowRect(@ptrFromInt(entry.window), &rect) == 0) return;
+    const width = @as(i64, rect.right) - @as(i64, rect.left);
+    const height = @as(i64, rect.bottom) - @as(i64, rect.top);
+    if (width < 0 or height < 0 or width > std.math.maxInt(u32) or height > std.math.maxInt(u32)) return;
+    const change = desktop_windows.observeGeometry(entry.window, .{
+        .x = @intCast(rect.left),
+        .y = @intCast(rect.top),
+        .width = @intCast(width),
+        .height = @intCast(height),
+    }) orelse return;
+    var detail_buf: [96]u8 = undefined;
+    if (change.moved) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"x\":{d},\"y\":{d}}}", .{ rect.left, rect.top }) catch return;
+        deliverWindowEvent(entry, "move", detail);
+    }
+    if (change.resized) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"width\":{d},\"height\":{d}}}", .{ width, height }) catch return;
+        deliverWindowEvent(entry, "resize", detail);
+    }
+}
+
 fn namedWindowResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     var json: std.ArrayListUnmanaged(u8) = .empty;
     errdefer json.deinit(allocator);
@@ -1151,6 +1198,7 @@ pub const Window = struct {
             _ = webview.lpVtbl.remove_WebMessageReceived(webview, message_token);
             return error.WebMessageRegistrationFailed;
         }
+        observeWindowGeometry(desktop_windows.byId(window_id).?);
 
         var window = Window{
             .id = window_id,
@@ -1359,14 +1407,31 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 var bounds: RECT = undefined;
                 _ = GetClientRect(hwnd, &bounds);
                 _ = controller.lpVtbl.put_Bounds(controller, bounds);
+                const minimized = wParam == 1; // SIZE_MINIMIZED
+                if (desktop_windows.observeState(entry.window, minimized, false)) |change| {
+                    if (change.minimized) |now_minimized|
+                        deliverWindowEvent(entry, if (now_minimized) "minimize" else "restore", "");
+                }
+                if (!minimized) observeWindowGeometry(entry);
             }
             return 0;
+        },
+        WM_MOVE => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                if (!entry.minimized) observeWindowGeometry(entry);
+            }
+            return 0;
+        },
+        WM_ACTIVATE => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry|
+                deliverWindowEvent(entry, if ((wParam & 0xffff) == 0) "blur" else "focus", "");
         },
         WM_CLOSE => {
             _ = DestroyWindow(hwnd);
             return 0;
         },
         WM_DESTROY => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| deliverWindowEvent(entry, "close", "");
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
                 const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
                 const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
@@ -1520,6 +1585,6 @@ pub fn getClipboard(allocator: std.mem.Allocator) ![]u8 {
     const text_len = std.mem.indexOfSentinel(u16, 0, text_wide);
 
     // Convert UTF-16 to UTF-8
-    const utf8_len = std.unicode.utf16leToUtf8AllocZ(allocator, text_wide[0..text_len]) catch return "";
+    const utf8_len = std.unicode.utf16LeToUtf8AllocZ(allocator, text_wide[0..text_len]) catch return "";
     return utf8_len;
 }

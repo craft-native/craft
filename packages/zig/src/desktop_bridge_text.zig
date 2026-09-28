@@ -6,7 +6,7 @@ const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 
 pub fn fromUtf16(allocator: std.mem.Allocator, wide: []const u16) ![:0]u8 {
     if (wide.len > desktop_bridge_envelope.max_message_bytes) return error.MessageTooLarge;
-    const utf8 = try std.unicode.utf16leToUtf8AllocZ(allocator, wide);
+    const utf8 = try std.unicode.utf16LeToUtf8AllocZ(allocator, wide);
     errdefer allocator.free(utf8);
     if (utf8.len > desktop_bridge_envelope.max_message_bytes) return error.MessageTooLarge;
     return utf8;

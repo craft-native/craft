@@ -2,6 +2,7 @@ const std = @import("std");
 const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
+const desktop_window_events = @import("desktop_window_events.zig");
 const json_utils = @import("json_utils.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
@@ -30,6 +31,10 @@ pub extern "c" fn gtk_window_iconify(window: *anyopaque) void;
 pub extern "c" fn gtk_widget_hide(widget: *anyopaque) void;
 pub extern "c" fn gtk_widget_show(widget: *anyopaque) void;
 pub extern "c" fn gtk_window_set_position(window: *anyopaque, x: c_int, y: c_int) void;
+pub extern "c" fn gtk_window_get_position(window: *anyopaque, x: *c_int, y: *c_int) void;
+pub extern "c" fn gtk_window_get_size(window: *anyopaque, width: *c_int, height: *c_int) void;
+pub extern "c" fn gtk_widget_get_window(widget: *anyopaque) ?*anyopaque;
+pub extern "c" fn gdk_window_get_state(window: *anyopaque) c_uint;
 
 pub extern "c" fn webkit_web_view_new() *anyopaque;
 pub extern "c" fn webkit_web_view_load_uri(webview: *anyopaque, uri: [*:0]const u8) void;
@@ -229,9 +234,75 @@ fn registerWindow(gtk_window: *anyopaque, webview: *anyopaque) ?u32 {
 /// Forget the handle at actual teardown, so neither path leaves a stale
 /// webview eligible for bridge replies.
 fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
+    if (desktop_windows.byWindow(@intFromPtr(widget))) |entry| {
+        deliverWindowEvent(entry, "close", "");
+    }
     const entry = desktop_windows.forgetWindow(@intFromPtr(widget)) orelse return;
     window_registry.forgetOwner(entry.webview);
     window_registry.forget(entry.window);
+}
+
+fn deliverToWebview(webview: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
+    const script = desktop_window_events.format(std.heap.c_allocator, name, detail_json, window_name) catch return;
+    defer std.heap.c_allocator.free(script);
+    const script_z = @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script) catch return;
+    defer std.heap.c_allocator.free(script_z);
+    webkit_web_view_run_javascript(@ptrFromInt(webview), script_z, null, null, null);
+}
+
+fn deliverWindowEvent(entry: desktop_window_registry.Entry, name: []const u8, detail_json: []const u8) void {
+    deliverToWebview(entry.webview, name, detail_json, null);
+    const owner = window_registry.ownerWebViewOf(entry.window) orelse return;
+    if (owner == entry.webview or desktop_windows.byWebview(owner) == null) return;
+    const window_name = window_registry.nameOf(entry.window) orelse return;
+    deliverToWebview(owner, name, detail_json, window_name);
+}
+
+fn onWindowFocusIn(widget: *anyopaque, _: *anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    if (desktop_windows.byWindow(@intFromPtr(widget))) |entry| deliverWindowEvent(entry, "focus", "");
+    return 0;
+}
+
+fn onWindowFocusOut(widget: *anyopaque, _: *anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    if (desktop_windows.byWindow(@intFromPtr(widget))) |entry| deliverWindowEvent(entry, "blur", "");
+    return 0;
+}
+
+fn onWindowConfigure(widget: *anyopaque, _: *anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    const entry = desktop_windows.byWindow(@intFromPtr(widget)) orelse return 0;
+    var x: c_int = 0;
+    var y: c_int = 0;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    gtk_window_get_position(widget, &x, &y);
+    gtk_window_get_size(widget, &width, &height);
+    if (width < 0 or height < 0) return 0;
+    const change = desktop_windows.observeGeometry(entry.window, .{
+        .x = x,
+        .y = y,
+        .width = @intCast(width),
+        .height = @intCast(height),
+    }) orelse return 0;
+    var detail_buf: [96]u8 = undefined;
+    if (change.moved) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"x\":{d},\"y\":{d}}}", .{ x, y }) catch return 0;
+        deliverWindowEvent(entry, "move", detail);
+    }
+    if (change.resized) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"width\":{d},\"height\":{d}}}", .{ width, height }) catch return 0;
+        deliverWindowEvent(entry, "resize", detail);
+    }
+    return 0;
+}
+
+fn onWindowState(widget: *anyopaque, _: *anyopaque, _: ?*anyopaque) callconv(.c) c_int {
+    const entry = desktop_windows.byWindow(@intFromPtr(widget)) orelse return 0;
+    const gdk_window = gtk_widget_get_window(widget) orelse return 0;
+    const state = gdk_window_get_state(gdk_window);
+    const change = desktop_windows.observeState(entry.window, (state & 2) != 0, (state & 16) != 0) orelse return 0;
+    if (change.minimized) |minimized| deliverWindowEvent(entry, if (minimized) "minimize" else "restore", "");
+    if (change.fullscreen) |fullscreen| deliverWindowEvent(entry, if (fullscreen) "enter-fullscreen" else "leave-fullscreen", "");
+    return 0;
 }
 
 /// WebKit supplies the WebView via signal user data; a page-supplied window id
@@ -519,6 +590,12 @@ pub const Window = struct {
 
         // Add WebView to window
         gtk_container_add(window, webview);
+
+        if (g_signal_connect_data(window, "focus-in-event", @ptrCast(&onWindowFocusIn), null, null, 0) == 0 or
+            g_signal_connect_data(window, "focus-out-event", @ptrCast(&onWindowFocusOut), null, null, 0) == 0 or
+            g_signal_connect_data(window, "configure-event", @ptrCast(&onWindowConfigure), null, null, 0) == 0 or
+            g_signal_connect_data(window, "window-state-event", @ptrCast(&onWindowState), null, null, 0) == 0)
+            return error.SignalConnectionFailed;
 
         // Register window in the multi-window registry
         const window_id = registerWindow(window, webview) orelse {
