@@ -116,3 +116,20 @@ test('no job runs the same local composite action twice', () => {
     }
   }
 })
+
+test('every workflow names its bun test files as paths, not filters', () => {
+  // `bun test scripts/x.test.ts` is a substring FILTER: Bun walks the whole
+  // repository, pantry/ included, to match it. Under the pinned Bun 1.3.14 that
+  // walk leaves Bun.spawnSync unable to capture a child's output - /bin/echo
+  // came back empty with exit 1 - so the release's "Verify standalone macOS
+  // launch" step failed on a binary that launches fine, and v0.0.94 shipped no
+  // macOS build. `./scripts/x.test.ts` is a path and runs only that file.
+  for (const file of ['ci.yml', 'release.yml', 'sbom.yml', 'mobile-e2e.yml']) {
+    const text = readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')
+    for (const line of text.split('\n').filter(l => /\bbun test\b/.test(l))) {
+      const files = line.replace(/.*\bbun test\b/, '').trim().split(/\s+/).filter(arg => /\.(?:ts|tsx|js)$/.test(arg))
+      for (const arg of files)
+        expect(arg.startsWith('./') || arg.startsWith('/'), `${file}: \`${line.trim()}\` passes ${arg} as a filter; write ./${arg}`).toBe(true)
+    }
+  }
+})

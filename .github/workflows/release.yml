@@ -280,7 +280,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          bun test scripts/macos-release.test.ts
+          bun test ./scripts/macos-release.test.ts
           bun scripts/verify-macos-release.ts packages/zig/zig-out/bin/craft "$VERSION"
           bun scripts/verify-macos-release.ts packages/zig/zig-out/cross/darwin-x64/craft "$VERSION" --no-execute
 
