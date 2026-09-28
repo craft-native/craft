@@ -122,3 +122,12 @@ test "size limits reject crossing and clamp programmatic sizes" {
     try std.testing.expectEqualDeep(Size{ .width = 320, .height = 768 }, limits.clamp(.{ .width = 100, .height = 900 }));
     try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":-1,\"height\":200}"));
 }
+
+test "portable control inputs require actual JSON booleans and integers" {
+    try std.testing.expect(try parseBool("{\"fullscreen\":true}", "fullscreen"));
+    try std.testing.expect(!(try parseBool("{\"resizable\":false}", "resizable")));
+    try std.testing.expectError(error.InvalidParameter, parseBool("{\"fullscreen\":1}", "fullscreen"));
+    try std.testing.expectError(error.InvalidParameter, parseBool("{\"fullscreen\":null}", "fullscreen"));
+    try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640.5,\"height\":480}"));
+    try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640,\"height\":0}"));
+}

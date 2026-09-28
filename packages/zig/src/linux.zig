@@ -1,6 +1,7 @@
 const std = @import("std");
 const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
+const desktop_window_controls = @import("desktop_window_controls.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
@@ -27,6 +28,8 @@ pub extern "c" fn gtk_window_present(window: *anyopaque) void;
 pub extern "c" fn gtk_window_close(window: *anyopaque) void;
 pub extern "c" fn gtk_window_set_decorated(window: *anyopaque, decorated: c_int) void;
 pub extern "c" fn gtk_window_set_resizable(window: *anyopaque, resizable: c_int) void;
+pub extern "c" fn gtk_window_get_resizable(window: *anyopaque) c_int;
+pub extern "c" fn gtk_window_set_geometry_hints(window: *anyopaque, geometry_widget: ?*anyopaque, geometry: ?*const GdkGeometry, geom_mask: c_int) void;
 pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_maximize(window: *anyopaque) void;
@@ -41,6 +44,23 @@ pub extern "c" fn gtk_window_get_title(window: *anyopaque) ?[*:0]const u8;
 pub extern "c" fn gtk_window_is_active(window: *anyopaque) c_int;
 pub extern "c" fn gtk_widget_get_window(widget: *anyopaque) ?*anyopaque;
 pub extern "c" fn gdk_window_get_state(window: *anyopaque) c_uint;
+pub extern "c" fn gdk_display_get_monitor_at_window(display: *anyopaque, window: *anyopaque) ?*anyopaque;
+pub extern "c" fn gdk_monitor_get_workarea(monitor: *anyopaque, dest: *GdkRectangle) void;
+
+const GdkRectangle = extern struct { x: c_int, y: c_int, width: c_int, height: c_int };
+const GdkGeometry = extern struct {
+    min_width: c_int = 0,
+    min_height: c_int = 0,
+    max_width: c_int = 0,
+    max_height: c_int = 0,
+    base_width: c_int = 0,
+    base_height: c_int = 0,
+    width_inc: c_int = 0,
+    height_inc: c_int = 0,
+    min_aspect: f64 = 0,
+    max_aspect: f64 = 0,
+    win_gravity: c_int = 0,
+};
 
 pub extern "c" fn webkit_web_view_new() *anyopaque;
 pub extern "c" fn webkit_web_view_load_uri(webview: *anyopaque, uri: [*:0]const u8) void;
@@ -433,6 +453,34 @@ fn windowGeometry(window: *anyopaque) !desktop_window_registry.Geometry {
     return .{ .x = x, .y = y, .width = @intCast(width), .height = @intCast(height) };
 }
 
+fn applyWindowLimits(window: *anyopaque, limits: desktop_window_controls.Limits) void {
+    var geometry: GdkGeometry = .{};
+    var mask: c_int = 0;
+    if (limits.minimum) |min| {
+        geometry.min_width = @intCast(min.width);
+        geometry.min_height = @intCast(min.height);
+        mask |= 2; // GDK_HINT_MIN_SIZE
+    }
+    if (limits.maximum) |max| {
+        geometry.max_width = @intCast(max.width);
+        geometry.max_height = @intCast(max.height);
+        mask |= 4; // GDK_HINT_MAX_SIZE
+    }
+    gtk_window_set_geometry_hints(window, null, if (mask == 0) null else &geometry, mask);
+}
+
+fn centerWindow(window: *anyopaque) !void {
+    const gdk_window = gtk_widget_get_window(window) orelse return error.NativeCallFailed;
+    const display = gdk_display_get_default() orelse return error.NativeCallFailed;
+    const monitor = gdk_display_get_monitor_at_window(display, gdk_window) orelse return error.NativeCallFailed;
+    var workarea: GdkRectangle = undefined;
+    gdk_monitor_get_workarea(monitor, &workarea);
+    const bounds = try windowGeometry(window);
+    const x = @as(i64, workarea.x) + @divTrunc(@as(i64, workarea.width) - @as(i64, bounds.width), 2);
+    const y = @as(i64, workarea.y) + @divTrunc(@as(i64, workarea.height) - @as(i64, bounds.height), 2);
+    gtk_window_move(window, std.math.cast(c_int, x) orelse return error.NativeCallFailed, std.math.cast(c_int, y) orelse return error.NativeCallFailed);
+}
+
 fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
     const allocator = std.heap.c_allocator;
     const entry = try targetWindow(data);
@@ -491,17 +539,40 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         defer std.heap.c_allocator.free(title_z);
         gtk_window_set_title(window, title_z);
     } else if (std.mem.eql(u8, action, "setSize")) {
-        const json = data orelse return error.MissingData;
-        const width = json_utils.getInt(u32, json, "width") orelse return error.InvalidParameter;
-        const height = json_utils.getInt(u32, json, "height") orelse return error.InvalidParameter;
-        if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
-            return error.InvalidParameter;
-        gtk_window_resize(window, @intCast(width), @intCast(height));
+        const size = entry.limits.clamp(try desktop_window_controls.parseSize(data));
+        gtk_window_resize(window, @intCast(size.width), @intCast(size.height));
     } else if (std.mem.eql(u8, action, "setPosition")) {
         const json = data orelse return error.MissingData;
         const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
         const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
         gtk_window_move(window, x, y);
+    } else if (std.mem.eql(u8, action, "setBounds")) {
+        const update = try desktop_window_controls.parseBounds(data);
+        const current = try windowGeometry(window);
+        if (update.width != null or update.height != null) {
+            const size = entry.limits.clamp(.{ .width = update.width orelse current.width, .height = update.height orelse current.height });
+            gtk_window_resize(window, @intCast(size.width), @intCast(size.height));
+        }
+        if (update.x != null or update.y != null)
+            gtk_window_move(window, update.x orelse current.x, update.y orelse current.y);
+    } else if (std.mem.eql(u8, action, "center")) {
+        try centerWindow(window);
+    } else if (std.mem.eql(u8, action, "setResizable")) {
+        gtk_window_set_resizable(window, if (try desktop_window_controls.parseBool(data, "resizable")) 1 else 0);
+    } else if (std.mem.eql(u8, action, "isResizable")) {
+        bridge_error.sendResultToJS(std.heap.c_allocator, action, if (gtk_window_get_resizable(window) != 0) "true" else "false");
+    } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
+        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
+        if (fullscreen) gtk_window_fullscreen(window) else gtk_window_unfullscreen(window);
+    } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMaximumSize")) {
+        const size = try desktop_window_controls.parseSize(data);
+        const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
+        if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
+        applyWindowLimits(window, limits);
+        const current = try windowGeometry(window);
+        const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
+        if (clamped.width != current.width or clamped.height != current.height)
+            gtk_window_resize(window, @intCast(clamped.width), @intCast(clamped.height));
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
