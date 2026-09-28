@@ -75,9 +75,10 @@ back to whichever window was created most recently:
 - The local scroll monitor is installed once, but reads the event's `NSWindow`,
   advances only that window's accumulator and emits only to its webview.
 
-`close()` preserves these resources and the SDK's native-event subscriptions
-so the same page can reopen with its DOM and JavaScript state intact, including
-when the primary window is reopened by the Dock rather than `createWindow()`.
+On macOS, `close()` preserves these resources and the SDK's native-event
+subscriptions so the same page can reopen with its DOM and JavaScript state
+intact, including when the primary window is reopened by the Dock rather than
+`createWindow()`.
 `destroy()` removes the named registry entry, Native UI graph, gesture and
 material slots, recovery state, event ownership and retained AppKit objects
 before releasing the window and detaching the SDK's DOM listeners.
@@ -139,9 +140,9 @@ The next multi-window milestone needs product decisions in addition to code:
 4. Finish advanced Linux/Windows window actions and clarify which are portable
    versus platform-specific, without conflating close semantics: macOS retains
    a closed page, while Linux and Windows release it.
-5. Complete platform-native integration coverage. Linux WebKitGTK runs under
-   Xvfb in CI; Windows currently has a cross-build but still needs a real
-   WebView2 lifecycle smoke on a capable Windows runner.
+5. Expand platform-native integration beyond the current named-window lifecycle
+   smokes. CI runs Linux WebKitGTK under Xvfb and Windows WebView2 on a native
+   runner, but advanced actions and packaged-app behavior still need coverage.
 
 ## Review checklist
 
@@ -151,6 +152,8 @@ For every new bridge or callback that touches a window, verify:
 - An explicit window ID is resolved through the registry and unknown IDs fail.
 - An asynchronous reply retains both its target and its requesting webview.
 - A delayed control callback stores its owner on the control/delegate instance.
-- Ordinary close preserves state; permanent destroy forgets it exactly once.
+- On macOS, ordinary close retains the page and permanent destroy forgets it
+  exactly once. On Linux and Windows, close and destroy both release the native
+  window/webview; a later open of the same name creates a fresh native page.
 - A process-global event sink is documented as primary, broadcast or
   subscriber-owned rather than inheriting accidental last-window behavior.

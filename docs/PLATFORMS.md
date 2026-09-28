@@ -158,6 +158,9 @@ Currently implemented foundations (experimental):
 - ✅ Named runtime windows, addressed controls, and scoped window events (GUI smoke in CI)
 - 🚧 Other bridge parity and advanced window behavior remain incomplete
 
+The Xvfb smoke covers named create, addressed replies, close, and reopen; it
+does not establish full desktop bridge parity for a particular application.
+
 ### Known Limitations
 
 - **Transparency**: Requires compositor (e.g., Picom, Compton)
@@ -250,6 +253,9 @@ Currently implemented foundations (experimental):
 - ✅ Developer tools (Edge DevTools)
 - ✅ Named runtime windows, addressed controls, and scoped window events (WebView2 GUI smoke in CI)
 - 🚧 Other bridge parity and advanced window behavior remain incomplete
+
+The native WebView2 smoke also exercises concurrent child creation and cleanup;
+it does not establish full desktop bridge parity for a particular application.
 
 ### Known Limitations
 

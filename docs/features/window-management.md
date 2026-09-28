@@ -483,9 +483,10 @@ by `on`, such as `stopWatching()` above, when the listener is no longer needed.
 On macOS, closing a window keeps its native page alive so reopening can
 restore its DOM and JavaScript state. On Linux and Windows, closing releases
 the native window and webview; reopening the same ID creates a fresh page
-behind the same stable SDK handle. Call `destroy()` to permanently release a
-runtime-created window and its event subscriptions. The unnamed primary window
-cannot be force-destroyed through this API. CI exercises Linux
+behind the same stable SDK handle. `destroy()` releases a named window's native
+resources and detaches its SDK DOM listeners. A later `createWindow()` with the
+same ID reuses the typed handle and reattaches those listeners. The unnamed
+primary window cannot be force-destroyed through this API. CI exercises Linux
 create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
 including concurrent child creation and stale-handle cleanup.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
