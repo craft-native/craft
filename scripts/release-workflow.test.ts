@@ -133,3 +133,24 @@ test('every workflow names its bun test files as paths, not filters', () => {
     }
   }
 })
+
+test('every run script in every workflow is valid bash', () => {
+  // 5d65a10 dropped the `done` closing the notarization loop in release.yml.
+  // Nothing parses a run script until a runner executes it, and the step only
+  // runs on a macOS release after signing and the launch check - so the first
+  // sign was v0.0.95's macOS build failing with "syntax error: unexpected end
+  // of file" after everything before it had passed.
+  for (const file of ['ci.yml', 'release.yml', 'sbom.yml', 'mobile-e2e.yml']) {
+    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job & { defaults?: { run?: { shell?: string } } }> }
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (!step.run || (step as { shell?: string }).shell === 'pwsh' || (step as { shell?: string }).shell === 'powershell')
+          continue
+        // Actions substitutes `${{ ... }}` before bash sees the script.
+        const script = step.run.replace(/\$\{\{[\s\S]*?\}\}/g, 'X')
+        const check = Bun.spawnSync(['bash', '-n'], { stdin: new TextEncoder().encode(script), stderr: 'pipe' })
+        expect(check.stderr.toString(), `${file} job ${name} step "${step.name ?? step.run.slice(0, 40)}"`).toBe('')
+      }
+    }
+  }
+})

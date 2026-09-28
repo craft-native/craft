@@ -306,6 +306,7 @@ jobs:
               --timeout 30m
             codesign --verify --deep --strict "$binary"
             rm "$archive"
+          done
 
       - uses: ./.github/actions/setup-release-scanners
 
