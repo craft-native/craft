@@ -47,6 +47,17 @@ const mainPage = `<!doctype html><script>
     const title = await window.craft.window._call('getTitle', {}, 'settings')
     if (title !== 'Child 1') throw new Error('child title not routed to creator: ' + title)
 
+    const [queuedA, queuedB] = await Promise.all([
+      window.craft.window.open({ name: 'queue-a', title: 'Child queue-a', url: location.origin + '/child?cycle=queue-a' }),
+      window.craft.window.open({ name: 'queue-b', title: 'Child queue-b', url: location.origin + '/child?cycle=queue-b' }),
+    ])
+    if (queuedA.name !== 'queue-a' || queuedB.name !== 'queue-b')
+      throw new Error('concurrent child opens returned the wrong handles')
+    await waitFor('child-queue-a')
+    await waitFor('child-queue-b')
+    await window.craft.window._call('close', {}, 'queue-a')
+    await window.craft.window._call('close', {}, 'queue-b')
+
     const closed = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('child close event missing')), 20000)
       window.addEventListener('craft:window:close', (event) => {

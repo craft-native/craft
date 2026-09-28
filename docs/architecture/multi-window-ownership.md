@@ -33,6 +33,11 @@ that window before entering `g_application_run()`. On Windows, the controller
 passed to the asynchronous WebView2 completion callback is borrowed. Each live
 window retains its own controller reference until native destruction; otherwise
 WebView2 can close before the page bridge registers or navigation begins.
+WebView2 also forbids entering a nested message loop from its message callback.
+Windows therefore queues page-requested child creation onto the UI message
+queue, preserving the authenticated owner and reply ID until that callback
+returns. Concurrent opens are drained serially and abandoned if their creator
+window is destroyed before dispatch.
 
 ## Per-window state
 

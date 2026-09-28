@@ -95,6 +95,7 @@ pub const WM_SIZE: UINT = 0x0005;
 pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_QUIT: UINT = 0x0012;
+const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
 
@@ -122,6 +123,7 @@ pub extern "user32" fn TranslateMessage(lpMsg: *const MSG) callconv(.c) BOOL;
 pub extern "user32" fn DispatchMessageW(lpMsg: *const MSG) callconv(.c) LRESULT;
 pub extern "user32" fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT;
 pub extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.c) void;
+pub extern "user32" fn PostMessageW(hWnd: ?HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) BOOL;
 pub extern "user32" fn DestroyWindow(hWnd: HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) callconv(.c) BOOL;
 pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.c) c_int;
@@ -700,6 +702,15 @@ const WebMessageReceivedHandler = extern struct {
             bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
             return S_OK;
         }
+        if (std.mem.eql(u8, envelope.action, "open") or std.mem.eql(u8, envelope.action, "create")) {
+            // WebView2 does not deliver async completion callbacks inside its
+            // own event callback. Window.create pumps until such a callback,
+            // so run it from a posted Win32 message after Invoke returns.
+            queueWindowOpen(entry, envelope.action, envelope.data, envelope.request_id) catch |err| {
+                bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+            };
+            return S_OK;
+        }
         handleWindowAction(envelope.action, envelope.data) catch |err| {
             bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
         };
@@ -862,6 +873,85 @@ const CLASS_NAME: [:0]const u16 = &[_:0]u16{ 'Z', 'y', 't', 'e', 'W', 'i', 'n', 
 // Window.create. Keep stable handles for every live window here.
 var desktop_windows: desktop_window_registry.Registry = .{};
 
+const PendingWindowOpen = struct {
+    next: ?*PendingWindowOpen = null,
+    owner_id: u32,
+    request_id: ?u64,
+    action: []const u8,
+    data: ?[]u8,
+};
+
+var pending_open_head: ?*PendingWindowOpen = null;
+var pending_open_tail: ?*PendingWindowOpen = null;
+var pending_open_count: usize = 0;
+var processing_open = false;
+
+fn freePendingOpen(task: *PendingWindowOpen) void {
+    if (task.data) |data| std.heap.c_allocator.free(data);
+    std.heap.c_allocator.destroy(task);
+}
+
+fn queueWindowOpen(owner: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8, request_id: ?u64) !void {
+    if (pending_open_count >= desktop_window_registry.capacity) return error.TooManyWindows;
+    const copied_data: ?[]u8 = if (data) |value| try std.heap.c_allocator.dupe(u8, value) else null;
+    errdefer if (copied_data) |value| std.heap.c_allocator.free(value);
+    const task = try std.heap.c_allocator.create(PendingWindowOpen);
+    errdefer std.heap.c_allocator.destroy(task);
+    task.* = .{
+        .owner_id = owner.id,
+        .request_id = request_id,
+        .action = if (std.mem.eql(u8, action, "open")) "open" else "create",
+        .data = copied_data,
+    };
+    const owner_hwnd: HWND = @ptrFromInt(owner.window);
+    if (PostMessageW(owner_hwnd, WM_CRAFT_OPEN_WINDOW, 0, 0) == 0)
+        return error.NativeCallFailed;
+    if (pending_open_tail) |tail| tail.next = task else pending_open_head = task;
+    pending_open_tail = task;
+    pending_open_count += 1;
+}
+
+fn discardPendingOpens(owner_id: u32) void {
+    var previous: ?*PendingWindowOpen = null;
+    var current = pending_open_head;
+    while (current) |task| {
+        const next = task.next;
+        if (task.owner_id == owner_id) {
+            if (previous) |prior| prior.next = next else pending_open_head = next;
+            if (pending_open_tail != null and pending_open_tail.? == task) pending_open_tail = previous;
+            pending_open_count -= 1;
+            freePendingOpen(task);
+        } else {
+            previous = task;
+        }
+        current = next;
+    }
+}
+
+fn processPendingOpens() void {
+    if (processing_open) return;
+    processing_open = true;
+    defer processing_open = false;
+
+    while (pending_open_head) |task| {
+        pending_open_head = task.next;
+        if (pending_open_head == null) pending_open_tail = null;
+        pending_open_count -= 1;
+        if (desktop_windows.byId(task.owner_id)) |owner| {
+            window_context.push(owner.window, owner.webview);
+            request_context.push(task.request_id);
+            const data: ?[]const u8 = if (task.data) |value| value else null;
+            openNamedWindow(task.action, data) catch |err| {
+                if (desktop_windows.byId(task.owner_id) != null)
+                    bridge_error.sendErrorToJS(std.heap.c_allocator, task.action, bridge_error.fromHandlerError(err));
+            };
+            request_context.pop();
+            window_context.pop();
+        }
+        freePendingOpen(task);
+    }
+}
+
 fn deliverToWebview(webview_handle: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
     const script = desktop_window_events.format(std.heap.c_allocator, name, detail_json, window_name) catch return;
     defer std.heap.c_allocator.free(script);
@@ -971,6 +1061,7 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     });
     errdefer created.close();
     if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
+    if (desktop_windows.byWebview(owner) == null) return error.WindowHandleNotSet;
     if (!window_registry.rememberNamedOwned(@intFromPtr(created.hwnd), name, owner))
         return error.TooManyWindows;
     created.show();
@@ -1462,6 +1553,10 @@ pub const Window = struct {
 
 fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT {
     switch (msg) {
+        WM_CRAFT_OPEN_WINDOW => {
+            processPendingOpens();
+            return 0;
+        },
         WM_SIZE => {
             // A resize belongs to this HWND, not whichever window was created last.
             if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
@@ -1495,6 +1590,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         WM_DESTROY => {
             if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| deliverWindowEvent(entry, "close", "");
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                discardPendingOpens(entry.id);
                 const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
                 const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
                 window_registry.forgetOwner(entry.webview);
