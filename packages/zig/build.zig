@@ -1287,6 +1287,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const desktop_window_reads_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_window_reads.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     const desktop_script_encoding_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/desktop_script_encoding.zig"),
@@ -1753,6 +1761,7 @@ pub fn build(b: *std.Build) void {
     const run_desktop_bridge_envelope_tests = b.addRunArtifact(desktop_bridge_envelope_tests);
     const run_desktop_bridge_text_tests = b.addRunArtifact(desktop_bridge_text_tests);
     const run_desktop_window_events_tests = b.addRunArtifact(desktop_window_events_tests);
+    const run_desktop_window_reads_tests = b.addRunArtifact(desktop_window_reads_tests);
     const run_desktop_script_encoding_tests = b.addRunArtifact(desktop_script_encoding_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
@@ -1907,6 +1916,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_desktop_bridge_envelope_tests.step);
     test_step.dependOn(&run_desktop_bridge_text_tests.step);
     test_step.dependOn(&run_desktop_window_events_tests.step);
+    test_step.dependOn(&run_desktop_window_reads_tests.step);
     test_step.dependOn(&run_desktop_script_encoding_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);

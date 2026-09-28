@@ -4,6 +4,7 @@ const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_bridge_text = @import("desktop_bridge_text.zig");
 const desktop_script_encoding = @import("desktop_script_encoding.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
+const desktop_window_reads = @import("desktop_window_reads.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const json_utils = @import("json_utils.zig");
 const request_context = @import("request_context.zig");
@@ -123,6 +124,9 @@ pub extern "user32" fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lPa
 pub extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.c) void;
 pub extern "user32" fn DestroyWindow(hWnd: HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) callconv(.c) BOOL;
+pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.c) c_int;
+pub extern "user32" fn GetWindowTextW(hWnd: HWND, lpString: LPWSTR, nMaxCount: c_int) callconv(.c) c_int;
+pub extern "user32" fn GetForegroundWindow() callconv(.c) ?HWND;
 pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: UINT) callconv(.c) BOOL;
 pub extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: LPCWSTR) callconv(.c) ?*anyopaque;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
@@ -979,9 +983,53 @@ fn targetWindow(data: ?[]const u8) !desktop_window_registry.Entry {
     return desktop_windows.byWindow(window_context.current() orelse return error.WindowHandleNotSet) orelse error.WindowHandleNotSet;
 }
 
+fn windowGeometry(hwnd: HWND) !desktop_window_registry.Geometry {
+    var rect: RECT = undefined;
+    if (GetWindowRect(hwnd, &rect) == 0) return error.NativeCallFailed;
+    const width = @as(i64, rect.right) - @as(i64, rect.left);
+    const height = @as(i64, rect.bottom) - @as(i64, rect.top);
+    if (width < 0 or height < 0 or width > std.math.maxInt(u32) or height > std.math.maxInt(u32))
+        return error.NativeCallFailed;
+    return .{ .x = @intCast(rect.left), .y = @intCast(rect.top), .width = @intCast(width), .height = @intCast(height) };
+}
+
+fn windowTitle(allocator: std.mem.Allocator, hwnd: HWND) ![:0]u8 {
+    const length = GetWindowTextLengthW(hwnd);
+    if (length < 0) return error.NativeCallFailed;
+    if (@as(usize, @intCast(length)) >= desktop_bridge_envelope.max_message_bytes)
+        return error.MessageTooLarge;
+    const wide = try allocator.alloc(u16, @as(usize, @intCast(length)) + 1);
+    defer allocator.free(wide);
+    const copied = GetWindowTextW(hwnd, @ptrCast(wide.ptr), @intCast(wide.len));
+    if (copied < 0) return error.NativeCallFailed;
+    const utf8 = try desktop_bridge_text.fromUtf16(allocator, wide[0..@intCast(copied)]);
+    return utf8;
+}
+
+fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const entry = try targetWindow(data);
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    const json = if (std.mem.eql(u8, action, "getTitle")) blk: {
+        const title = try windowTitle(allocator, hwnd);
+        defer allocator.free(title);
+        break :blk try desktop_window_reads.string(allocator, title);
+    } else if (std.mem.eql(u8, action, "getFocused")) blk: {
+        const focused = if (GetForegroundWindow()) |window| @intFromPtr(window) else 0;
+        const name = desktop_window_reads.focusedName(&desktop_windows, entry.window, focused, window_registry.nameOf(focused));
+        break :blk try desktop_window_reads.string(allocator, name);
+    } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(hwnd));
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
 fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create"))
         return openNamedWindow(action, data);
+    if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
+        std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
+        std.mem.eql(u8, action, "getFocused"))
+        return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);
     const hwnd: HWND = @ptrFromInt(entry.window);
@@ -1007,7 +1055,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         defer std.heap.c_allocator.free(title);
         if (std.mem.indexOfScalar(u8, title, 0) != null) return error.InvalidParameter;
         const title_wide = utf8ToUtf16Z(256, title) catch return error.InvalidParameter;
-        if (SetWindowTextW(hwnd, &title_wide) == 0) return error.NativeCallFailed;
+        if (SetWindowTextW(hwnd, @ptrCast(&title_wide)) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "setSize")) {
         const json = data orelse return error.MissingData;
         const width = json_utils.getInt(u32, json, "width") orelse return error.InvalidParameter;
@@ -1264,7 +1312,7 @@ pub const Window = struct {
     pub fn setTitle(self: *Window, title: []const u8) void {
         if (self.liveEntry() == null) return;
         const title_wide_buf = utf8ToUtf16Z(256, title) catch return;
-        _ = SetWindowTextW(self.hwnd, &title_wide_buf);
+        _ = SetWindowTextW(self.hwnd, @ptrCast(&title_wide_buf));
         self.title = title;
     }
 

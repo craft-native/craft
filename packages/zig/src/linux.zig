@@ -3,6 +3,7 @@ const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
+const desktop_window_reads = @import("desktop_window_reads.zig");
 const json_utils = @import("json_utils.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
@@ -33,6 +34,8 @@ pub extern "c" fn gtk_widget_show(widget: *anyopaque) void;
 pub extern "c" fn gtk_window_set_position(window: *anyopaque, x: c_int, y: c_int) void;
 pub extern "c" fn gtk_window_get_position(window: *anyopaque, x: *c_int, y: *c_int) void;
 pub extern "c" fn gtk_window_get_size(window: *anyopaque, width: *c_int, height: *c_int) void;
+pub extern "c" fn gtk_window_get_title(window: *anyopaque) ?[*:0]const u8;
+pub extern "c" fn gtk_window_is_active(window: *anyopaque) c_int;
 pub extern "c" fn gtk_widget_get_window(widget: *anyopaque) ?*anyopaque;
 pub extern "c" fn gdk_window_get_state(window: *anyopaque) c_uint;
 
@@ -416,9 +419,48 @@ fn targetWindow(data: ?[]const u8) !desktop_window_registry.Entry {
     return desktop_windows.byWindow(window_context.current() orelse return error.WindowHandleNotSet) orelse error.WindowHandleNotSet;
 }
 
+fn windowGeometry(window: *anyopaque) !desktop_window_registry.Geometry {
+    var x: c_int = 0;
+    var y: c_int = 0;
+    var width: c_int = 0;
+    var height: c_int = 0;
+    gtk_window_get_position(window, &x, &y);
+    gtk_window_get_size(window, &width, &height);
+    if (width < 0 or height < 0) return error.NativeCallFailed;
+    return .{ .x = x, .y = y, .width = @intCast(width), .height = @intCast(height) };
+}
+
+fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const entry = try targetWindow(data);
+    const window: *anyopaque = @ptrFromInt(entry.window);
+    const json = if (std.mem.eql(u8, action, "getTitle")) blk: {
+        const title = gtk_window_get_title(window);
+        break :blk try desktop_window_reads.string(allocator, if (title) |text| std.mem.span(text) else "");
+    } else if (std.mem.eql(u8, action, "getFocused")) blk: {
+        var focused: usize = 0;
+        for (desktop_windows.entries) |slot| {
+            if (slot) |candidate| {
+                if (gtk_window_is_active(@ptrFromInt(candidate.window)) != 0) {
+                    focused = candidate.window;
+                    break;
+                }
+            }
+        }
+        const name = desktop_window_reads.focusedName(&desktop_windows, entry.window, focused, window_registry.nameOf(focused));
+        break :blk try desktop_window_reads.string(allocator, name);
+    } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(window));
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
 fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create"))
         return openNamedWindow(action, data);
+    if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
+        std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
+        std.mem.eql(u8, action, "getFocused"))
+        return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);
     const window: *anyopaque = @ptrFromInt(entry.window);
