@@ -461,9 +461,11 @@ export async function init(options: InitOptions): Promise<void> {
   // Command-level identity always wins over duplicate fields in `config`.
   // Normalize implied capabilities before validation so craft.config.json and
   // the generated Gradle source describe the same effective project.
+  // Undefined keeps the default instead of erasing it (see the iOS builder).
+  const given = Object.fromEntries(Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined))
   const config: CraftAndroidConfig = {
     ...DEFAULT_CONFIG,
-    ...options.config,
+    ...given,
     appName: name,
     packageName: finalPackageName,
   }

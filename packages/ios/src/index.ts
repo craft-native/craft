@@ -595,13 +595,17 @@ export async function init(options: InitOptions): Promise<void> {
   const finalBundleId = bundleId || `com.craft.${name.toLowerCase()}`
   const bundleIdPrefix = finalBundleId.split('.').slice(0, -1).join('.')
 
-  // Create craft.config.json
+  // Create craft.config.json. A key a caller passes as undefined (a Stacks
+  // config that leaves `darkMode` unset passes exactly that) keeps its default
+  // rather than erasing it: the file would lose the key, and the app then read
+  // none of the file.
+  const given = Object.fromEntries(Object.entries(options.config ?? {}).filter(([, value]) => value !== undefined))
   const config: CraftConfig = {
     ...DEFAULT_CONFIG,
     appName: displayName,
     bundleId: finalBundleId,
     teamId: teamId || '',
-    ...options.config,
+    ...given,
   }
   if (config.enableBackgroundLocation) config.enableGeolocation = true
 

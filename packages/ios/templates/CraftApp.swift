@@ -337,13 +337,36 @@ class AppState: ObservableObject {
     @Published var config: CraftConfig
 
     init() {
-        // Load config from craft.config.json if available
         if let configURL = Bundle.main.url(forResource: "craft.config", withExtension: "json"),
-           let data = try? Data(contentsOf: configURL),
-           let config = try? JSONDecoder().decode(CraftConfig.self, from: data) {
-            self.config = config
+           let data = try? Data(contentsOf: configURL) {
+            self.config = CraftConfig.load(from: data)
         } else {
             self.config = CraftConfig()
+        }
+    }
+}
+
+extension CraftConfig {
+    /// The bundled config laid over the defaults, key by key.
+    ///
+    /// Decoded whole, one missing or mistyped key failed the entire file and
+    /// the app ran on `CraftConfig()` — every capability off, silently: the
+    /// network bridge refused, the page read that as offline, and nothing said
+    /// why. A key the file leaves out now keeps its default, and a file that
+    /// still cannot be read says so in the log.
+    static func load(from data: Data) -> CraftConfig {
+        let defaults = (try? JSONEncoder().encode(CraftConfig()))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        guard let given = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            NSLog("[craft] craft.config.json is not a JSON object; running on defaults")
+            return CraftConfig()
+        }
+        let merged = defaults.merging(given.filter { !($0.value is NSNull) }) { _, bundled in bundled }
+        do {
+            return try JSONDecoder().decode(CraftConfig.self, from: JSONSerialization.data(withJSONObject: merged))
+        } catch {
+            NSLog("[craft] craft.config.json could not be read, running on defaults: %@", String(describing: error))
+            return CraftConfig()
         }
     }
 }
@@ -514,6 +537,48 @@ final class BundledAssetSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 }
 
+#if DEBUG
+/// Relays the page's console and uncaught errors to NSLog in debug builds.
+final class PageConsoleRelay: NSObject, WKScriptMessageHandler {
+    static let script = """
+    (function() {
+        var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craftLog;
+        if (!handler) return;
+        function text(value) {
+            try { return typeof value === 'string' ? value : (value && value.stack) || JSON.stringify(value); }
+            catch (e) { return String(value); }
+        }
+        function send(level, message) { try { handler.postMessage({ level: level, message: String(message).slice(0, 4000) }); } catch (e) {} }
+        ['error', 'warn', 'log', 'info'].forEach(function(level) {
+            var original = console[level];
+            console[level] = function() {
+                send(level, Array.prototype.map.call(arguments, text).join(' '));
+                return original.apply(console, arguments);
+            };
+        });
+        // Capture phase: a script or stylesheet that fails to load fires its
+        // error on the element, which never bubbles to window.
+        window.addEventListener('error', function(event) {
+            var target = event.target;
+            if (target && target !== window && (target.src || target.href)) {
+                send('error', 'failed to load ' + (target.src || target.href));
+                return;
+            }
+            send('error', 'uncaught ' + event.message + ' at ' + event.filename + ':' + event.lineno + ':' + event.colno);
+        }, true);
+        window.addEventListener('unhandledrejection', function(event) {
+            send('error', 'unhandled rejection ' + text(event.reason));
+        });
+    })();
+    """
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        NSLog("[craft page] %@: %@", body["level"] as? String ?? "log", body["message"] as? String ?? "")
+    }
+}
+#endif
+
 struct CraftWebView: UIViewRepresentable {
     let config: CraftConfig
 
@@ -528,6 +593,14 @@ struct CraftWebView: UIViewRepresentable {
         let contentController = WKUserContentController()
         contentController.add(context.coordinator, name: "craft")
         webConfig.userContentController = contentController
+        #if DEBUG
+        // The page's errors and console, in the device log, so a debug build
+        // can be diagnosed from `log stream` or `simctl spawn … log show`
+        // without attaching Safari. A separate handler, outside the bridge's
+        // action dispatch. Never in a release build.
+        contentController.add(PageConsoleRelay(), name: "craftLog")
+        contentController.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        #endif
 
         let webView = WKWebView(frame: .zero, configuration: webConfig)
         webView.navigationDelegate = context.coordinator

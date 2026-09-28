@@ -195,6 +195,12 @@ describe('Craft iOS builder', () => {
     // Swipe-back is opt-in, and only a debug build can be inspected.
     expect(swift).toContain('webView.allowsBackForwardNavigationGestures = config.swipeNavigation ?? false')
     expect(swift).toContain('#if DEBUG\n        // Safari\'s Develop menu can attach to a debug build; never a release.\n        if #available(iOS 16.4, *) { webView.isInspectable = true }')
+    // A debug build relays the page's errors to the device log; a release
+    // build carries neither the handler nor the script.
+    expect(swift).toContain('contentController.add(PageConsoleRelay(), name: "craftLog")')
+    expect(swift).toContain('NSLog("[craft page] %@: %@"')
+    const relayStart = swift.indexOf('final class PageConsoleRelay')
+    expect(swift.lastIndexOf('#if DEBUG', relayStart)).toBeGreaterThan(swift.lastIndexOf('#endif', relayStart))
   })
 
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
@@ -222,6 +228,20 @@ describe('Craft iOS builder', () => {
     expect(swift).toContain('if readOnly { shareTypes.removeAll() }')
     expect(swift).toContain('requestHealthAuthorization: true,')
     expect(swift).toContain("var timeout = personFacing[action] ? null : setTimeout(")
+  })
+
+  it('keeps a default when a caller passes undefined, and the app reads a partial config over its defaults', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-undefined-'))
+    await init({ runtimeDir: null, name: 'Partial', bundleId: 'com.example.partial', output, config: { darkMode: undefined, enableHaptics: true } })
+    const generated = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    expect(generated.darkMode).toBe(true)
+    expect(generated.enableHaptics).toBe(true)
+
+    const swift = readFileSync(join(output, 'Sources', 'PartialApp.swift'), 'utf8')
+    expect(swift).toContain('self.config = CraftConfig.load(from: data)')
+    expect(swift).toContain('let merged = defaults.merging(given.filter { !($0.value is NSNull) }) { _, bundled in bundled }')
+    expect(swift).toContain('craft.config.json could not be read, running on defaults')
+    expect(swift).not.toContain('let config = try? JSONDecoder().decode(CraftConfig.self, from: data)')
   })
 
   it('keeps bundled assets as a remote-app recovery path', async () => {
