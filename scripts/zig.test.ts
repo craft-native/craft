@@ -31,7 +31,7 @@ test('accepts only the locked snapshot by default, even when PATH shadows it', (
 test('Windows uses the pinned Pantry installation instead of its .bin shim', () => {
   const f = fixture()
   const version = pinnedZigVersion(f.root)
-  const installed = join(f.root, 'pantry/ziglang.org/v0.17.0-dev.1963_e00c6c439/bin/zig.exe')
+  const installed = join(f.root, 'pantry/ziglang-org/0.17.0-dev.1963_e00c6c439/bin/zig.exe')
   expect(pinnedPantryZigPath(f.root, version, f.env, 'win32')).toBeNull()
   mkdirSync(join(installed, '..'), { recursive: true })
   writeFileSync(installed, '')

@@ -11,7 +11,7 @@ export function pinnedZigVersion(root: string): string {
 
 export function pinnedPantryZigPath(root: string, expected: string, env: NodeJS.ProcessEnv, hostPlatform: string): string | null {
   if (hostPlatform !== 'win32' || env.CRAFT_ZIG) return null
-  const installed = join(root, 'pantry', 'ziglang.org', `v${expected.replace('+', '_')}`, 'bin', 'zig.exe')
+  const installed = join(root, 'pantry', 'ziglang-org', expected.replace('+', '_'), 'bin', 'zig.exe')
   return existsSync(installed) ? installed : null
 }
 
