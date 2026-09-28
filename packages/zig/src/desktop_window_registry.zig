@@ -7,6 +7,23 @@
 const std = @import("std");
 
 pub const capacity = 32;
+pub const Geometry = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+};
+
+pub const GeometryChange = struct {
+    moved: bool,
+    resized: bool,
+};
+
+pub const StateChange = struct {
+    minimized: ?bool,
+    fullscreen: ?bool,
+};
+
 pub const Entry = struct {
     id: u32,
     window: usize,
@@ -15,6 +32,9 @@ pub const Entry = struct {
     context: usize = 0,
     /// WebView2 subscription to remove before releasing a closed webview.
     message_token: ?i64 = null,
+    geometry: ?Geometry = null,
+    minimized: bool = false,
+    fullscreen: bool = false,
 };
 
 pub const Registry = struct {
@@ -79,6 +99,42 @@ pub const Registry = struct {
             }
         }
         return false;
+    }
+
+    pub fn observeGeometry(self: *Registry, window: usize, next: Geometry) ?GeometryChange {
+        if (window == 0) return null;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    const previous = entry.geometry;
+                    entry.geometry = next;
+                    if (previous) |old| return .{
+                        .moved = old.x != next.x or old.y != next.y,
+                        .resized = old.width != next.width or old.height != next.height,
+                    };
+                    return .{ .moved = false, .resized = false };
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn observeState(self: *Registry, window: usize, minimized: bool, fullscreen: bool) ?StateChange {
+        if (window == 0) return null;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    const change: StateChange = .{
+                        .minimized = if (entry.minimized != minimized) minimized else null,
+                        .fullscreen = if (entry.fullscreen != fullscreen) fullscreen else null,
+                    };
+                    entry.minimized = minimized;
+                    entry.fullscreen = fullscreen;
+                    return change;
+                }
+            }
+        }
+        return null;
     }
 
     pub fn latest(self: *const Registry) ?Entry {
@@ -183,6 +239,38 @@ test "a web message subscription belongs only to its live window" {
     try std.testing.expect(registry.byWebview(0x2001).?.message_token == null);
     try std.testing.expectEqual(@as(?i64, 42), registry.forgetWindow(0x1000).?.message_token);
     try std.testing.expect(registry.byWebview(0x1001) == null);
+}
+
+test "geometry changes belong to one live window and reset on reopen" {
+    var registry: Registry = .{};
+    _ = registry.remember(0x1000, 0x1001);
+    _ = registry.remember(0x2000, 0x2001);
+    const initial: Geometry = .{ .x = 10, .y = 20, .width = 800, .height = 600 };
+    const first = registry.observeGeometry(0x1000, initial).?;
+    try std.testing.expect(!first.moved and !first.resized);
+    const changed = registry.observeGeometry(0x1000, .{ .x = 30, .y = 20, .width = 900, .height = 600 }).?;
+    try std.testing.expect(changed.moved and changed.resized);
+    try std.testing.expect(registry.byWindow(0x2000).?.geometry == null);
+    _ = registry.forgetWindow(0x1000);
+    try std.testing.expect(registry.observeGeometry(0x1000, initial) == null);
+    _ = registry.remember(0x1000, 0x3001);
+    try std.testing.expect(registry.byWindow(0x1000).?.geometry == null);
+}
+
+test "minimize and fullscreen transitions do not leak across windows" {
+    var registry: Registry = .{};
+    _ = registry.remember(0x1000, 0x1001);
+    _ = registry.remember(0x2000, 0x2001);
+    const minimized = registry.observeState(0x1000, true, false).?;
+    try std.testing.expectEqual(@as(?bool, true), minimized.minimized);
+    try std.testing.expect(minimized.fullscreen == null);
+    const same = registry.observeState(0x1000, true, false).?;
+    try std.testing.expect(same.minimized == null and same.fullscreen == null);
+    const restored = registry.observeState(0x1000, false, true).?;
+    try std.testing.expectEqual(@as(?bool, false), restored.minimized);
+    try std.testing.expectEqual(@as(?bool, true), restored.fullscreen);
+    try std.testing.expect(!registry.byWindow(0x2000).?.minimized);
+    try std.testing.expect(!registry.byWindow(0x2000).?.fullscreen);
 }
 
 test "a window keeps its own platform control object" {
