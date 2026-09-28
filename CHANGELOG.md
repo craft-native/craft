@@ -1,5 +1,111 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.92...v0.0.93)
+
+## ✨ Features
+
+- **security**: gate SBOM findings on whether they ship ([a91ed0c](https://github.com/craft-native/craft/commit/a91ed0c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **security**: decide dependency advisories instead of counting them ([2c7fa41](https://github.com/craft-native/craft/commit/2c7fa41)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- scan exact release archives before publication ([955adad](https://github.com/craft-native/craft/commit/955adad)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: report busy native resources distinctly ([430c0a9](https://github.com/craft-native/craft/commit/430c0a9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: tell the page about a notification that arrives while the app is open ([e178b89](https://github.com/craft-native/craft/commit/e178b89)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **release**: the release scripts run @stacksjs/bumpx, not the unrelated bumpx ([eff9313](https://github.com/craft-native/craft/commit/eff9313)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **tray**: SystemTray sends messages the macOS runtime handles ([7f2a3fe](https://github.com/craft-native/craft/commit/7f2a3fe)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ci**: stop re-running the first-party Zig dependency setup ([06e4d72](https://github.com/craft-native/craft/commit/06e4d72)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#323](https://github.com/craft-native/craft/issues/323), [#316](https://github.com/craft-native/craft/issues/316), [#317](https://github.com/craft-native/craft/issues/317))
+- **ci**: keep full-scan Critical gate on npm publishing ([33e9ea2](https://github.com/craft-native/craft/commit/33e9ea2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: reject malformed release scanner commands ([a5950a1](https://github.com/craft-native/craft/commit/a5950a1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: gate release publishing on SBOM scan ([c321130](https://github.com/craft-native/craft/commit/c321130)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: enforce dependency update boundaries ([e7410b5](https://github.com/craft-native/craft/commit/e7410b5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **svelte**: expose public store declaration types ([533a8b0](https://github.com/craft-native/craft/commit/533a8b0)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ci**: select dependency bot jobs for current schedules ([e649c6e](https://github.com/craft-native/craft/commit/e649c6e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: add non-mutating changelog previews ([7d38f99](https://github.com/craft-native/craft/commit/7d38f99)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: reject invalid SBOMs before artifact upload ([a6b0225](https://github.com/craft-native/craft/commit/a6b0225)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: notify the registry only after artifact verification ([36fbb50](https://github.com/craft-native/craft/commit/36fbb50)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **sbom**: discard stale reports before every scan ([ff7d278](https://github.com/craft-native/craft/commit/ff7d278)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **security**: fail closed on vulnerability scanner errors ([c33bd97](https://github.com/craft-native/craft/commit/c33bd97)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **dev**: enforce the locked Zig toolchain in root commands ([6c265f7](https://github.com/craft-native/craft/commit/6c265f7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **sbom**: retain scanned components and dependency relationships ([5e20d9d](https://github.com/craft-native/craft/commit/5e20d9d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: attach SBOMs from the same release workflow ([a8adc7d](https://github.com/craft-native/craft/commit/a8adc7d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: preserve every explicit native bridge error ([a2dc262](https://github.com/craft-native/craft/commit/a2dc262)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: enforce the generated runtime minimum SDK ([ee07aec](https://github.com/craft-native/craft/commit/ee07aec)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **types**: align mobile errors with the native wire vocabulary ([f3cda79](https://github.com/craft-native/craft/commit/f3cda79)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: generate the manifest from all uploaded platforms ([d1e4620](https://github.com/craft-native/craft/commit/d1e4620)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **cli**: reject unknown templates before creating projects ([8fa698c](https://github.com/craft-native/craft/commit/8fa698c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **packaging**: resolve framework types before runtime conditions ([8d0b697](https://github.com/craft-native/craft/commit/8d0b697)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: validate tag and workspace identity before publishing ([ed54a43](https://github.com/craft-native/craft/commit/ed54a43)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: sign the macOS CLI without app sandbox ([61674f3](https://github.com/craft-native/craft/commit/61674f3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **sdk**: embed a relocatable package version ([d54ba84](https://github.com/craft-native/craft/commit/d54ba84)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **release**: gate npm publishing on packed workspace artifacts ([594c300](https://github.com/craft-native/craft/commit/594c300)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **svelte**: include the published source entry ([83d767d](https://github.com/craft-native/craft/commit/83d767d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **mobile**: ship standalone builder declarations ([1911c60](https://github.com/craft-native/craft/commit/1911c60)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: preserve busy errors through dispatch ([661aef9](https://github.com/craft-native/craft/commit/661aef9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **location**: unify watch handles across mobile surfaces ([f58cb78](https://github.com/craft-native/craft/commit/f58cb78)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: report busy permission and device pools ([2536781](https://github.com/craft-native/craft/commit/2536781)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: report busy service pools ([f47b23e](https://github.com/craft-native/craft/commit/f47b23e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: report busy data and picker pools ([9c9e72b](https://github.com/craft-native/craft/commit/9c9e72b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: report busy async media and auth pools ([82a0bd9](https://github.com/craft-native/craft/commit/82a0bd9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **android**: recover remote loads after connectivity returns ([7d55a7d](https://github.com/craft-native/craft/commit/7d55a7d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: ask again when Core Location has no fix yet, rather than failing the caller ([d4f6672](https://github.com/craft-native/craft/commit/d4f6672)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#260](https://github.com/craft-native/craft/issues/260))
+- **sdk**: schedule a notification for its scheduleAt, not immediately ([8890fec](https://github.com/craft-native/craft/commit/8890fec)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#258](https://github.com/craft-native/craft/issues/258))
+- **ios**: schedule a notification with the data the page gave it ([e12da07](https://github.com/craft-native/craft/commit/e12da07)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **types**: declare craftNotificationReceived in the SDK's window event map ([4b67259](https://github.com/craft-native/craft/commit/4b67259)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: hand a notification tap that launches the app to the page that asks for it ([97bb0a2](https://github.com/craft-native/craft/commit/97bb0a2)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#198](https://github.com/craft-native/craft/issues/198))
+- **ios**: fall back to the bundle only when the remote is out of reach, and come back ([52c3b12](https://github.com/craft-native/craft/commit/52c3b12)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#252](https://github.com/craft-native/craft/issues/252))
+- **ios**: resolve openSettings' selector before the lease, and say why two actions have no deadline ([efa348e](https://github.com/craft-native/craft/commit/efa348e)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223))
+- **ios**: give getHealthData and saveHealthWorkout deadlines, on the shared block table ([c9668ea](https://github.com/craft-native/craft/commit/c9668ea)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223))
+- **ios**: give scheduleNotification's add a deadline, starting on the grant ([a6b5d36](https://github.com/craft-native/craft/commit/a6b5d36)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223))
+- **ios**: give getPendingNotifications a deadline, on the shared block table ([01eb383](https://github.com/craft-native/craft/commit/01eb383)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223), [#223](https://github.com/craft-native/craft/issues/223))
+- **ios**: answer a malformed argument instead of leaving the page waiting ([24982f7](https://github.com/craft-native/craft/commit/24982f7)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#221](https://github.com/craft-native/craft/issues/221))
+- **ios**: give the Swift-only calls that wait on a framework callback a deadline ([226a13e](https://github.com/craft-native/craft/commit/226a13e)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#224](https://github.com/craft-native/craft/issues/224), [#211](https://github.com/craft-native/craft/issues/211))
+- **ios**: give each page load callback ids no earlier load is still owed ([2f4e079](https://github.com/craft-native/craft/commit/2f4e079)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#226](https://github.com/craft-native/craft/issues/226), [#211](https://github.com/craft-native/craft/issues/211))
+- **ios**: answer the lease a hop was queued for, not whichever call holds the slot ([6502f39](https://github.com/craft-native/craft/commit/6502f39)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#225](https://github.com/craft-native/craft/issues/225))
+
+## ♻️ Code Refactoring
+
+- **ios**: lift #211's owed-block design out of Siri, so other actions can use it ([02f9db8](https://github.com/craft-native/craft/commit/02f9db8)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#211](https://github.com/craft-native/craft/issues/211), [#211](https://github.com/craft-native/craft/issues/211), [#223](https://github.com/craft-native/craft/issues/223), [#211](https://github.com/craft-native/craft/issues/211))
+
+## 📝 Documentation
+
+- **agents**: brief Codex on the environment a fresh checkout cannot infer ([1b6a10b](https://github.com/craft-native/craft/commit/1b6a10b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## ✅ Tests
+
+- **ios**: bind the fallback reset assertion to the recovery function ([febb090](https://github.com/craft-native/craft/commit/febb090)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#252](https://github.com/craft-native/craft/issues/252))
+- **ci**: launch the versioned native binary ([3a5ceb5](https://github.com/craft-native/craft/commit/3a5ceb5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: enforce a cold-start notification deadline ([de856c7](https://github.com/craft-native/craft/commit/de856c7)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **sdk**: isolate window routing handles across reruns ([e41de98](https://github.com/craft-native/craft/commit/e41de98)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: tap a notification the page scheduled with data, and judge what it hands back ([c5809c8](https://github.com/craft-native/craft/commit/c5809c8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: push to the open app after the tap, and judge what onReceive hands the page ([d201de9](https://github.com/craft-native/craft/commit/d201de9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **ios**: tap a real pushed notification that launches the app, and judge what the page gets ([9879ea5](https://github.com/craft-native/craft/commit/9879ea5)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#255](https://github.com/craft-native/craft/issues/255))
+- **ios**: require a deadline per parked call, or a written reason for none ([2caecba](https://github.com/craft-native/craft/commit/2caecba)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#223](https://github.com/craft-native/craft/issues/223), [#248](https://github.com/craft-native/craft/issues/248))
+- **android**: compare each JNI descriptor with its Kotlin external fun ([f4377dd](https://github.com/craft-native/craft/commit/f4377dd)) _(by glennmichael123 <gtorregosa@gmail.com>)_ ([#230](https://github.com/craft-native/craft/issues/230))
+
+## 💚 Continuous Integration
+
+- **security**: run the shipping-scope gate on every SBOM scan ([08676a8](https://github.com/craft-native/craft/commit/08676a8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **security**: gate pull requests and releases on reviewed advisories ([b02d2f9](https://github.com/craft-native/craft/commit/b02d2f9)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- gate release on shipped artifact findings ([5d65a10](https://github.com/craft-native/craft/commit/5d65a10)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.93 ([04273c8](https://github.com/craft-native/craft/commit/04273c8)) _(by Chris <chrisbreuer93@gmail.com>)_
+- **ci**: pin artifact download action ([052eacf](https://github.com/craft-native/craft/commit/052eacf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: refresh shared development tooling ([a75b5e5](https://github.com/craft-native/craft/commit/a75b5e5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- **deps**: refresh Vue patch and verify packed SSR ([a0a99db](https://github.com/craft-native/craft/commit/a0a99db)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🎉 Miscellaneous
+
+- Merge pull request #315 from craft-native/codex/pin-artifact-download ([d92feec](https://github.com/craft-native/craft/commit/d92feec)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#315](https://github.com/craft-native/craft/issues/315), [#315](https://github.com/craft-native/craft/issues/315))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.91...v0.0.92)
 
 ## 🚀 Features
