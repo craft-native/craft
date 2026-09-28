@@ -122,7 +122,11 @@ const dispatch_end = "func webView(";
 /// and `deliverErrorCode` landed the day after that was written. Worth
 /// re-reading the other deferrals for the same reason before assuming they
 /// still hold.
-const max_not_yet_migrated: usize = 13;
+/// 15 when the spec gained getHealthWorkouts and getHealthDailyStatistics.
+/// Both went into Swift first, as every action before them did, and nobody
+/// has reached them in Zig yet; they fall through to the shim, which serves
+/// them. Not a regression: no action left Zig.
+const max_not_yet_migrated: usize = 15;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";

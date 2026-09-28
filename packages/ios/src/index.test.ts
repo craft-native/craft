@@ -192,6 +192,9 @@ describe('Craft iOS builder', () => {
     expect(launch.colors).toHaveLength(2)
     expect(launch.colors[1].appearances).toEqual([{ appearance: 'luminosity', value: 'dark' }])
     expect(launch.colors[1].color.components.red).toBe('0.008')
+    // Swipe-back is opt-in, and only a debug build can be inspected.
+    expect(swift).toContain('webView.allowsBackForwardNavigationGestures = config.swipeNavigation ?? false')
+    expect(swift).toContain('#if DEBUG\n        // Safari\'s Develop menu can attach to a debug build; never a release.\n        if #available(iOS 16.4, *) { webView.isInspectable = true }')
   })
 
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {

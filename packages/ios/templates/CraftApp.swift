@@ -359,6 +359,8 @@ struct CraftConfig: Codable {
     var backgroundColor: String = "#1a1a2e"
     /// The background while the phone is in Dark Mode; the light one if unset.
     var backgroundColorDark: String? = nil
+    /// Edge-swipe back and forward through the page's history.
+    var swipeNavigation: Bool? = nil
     var enableSpeechRecognition: Bool = false
     var enableHaptics: Bool = false
     var enableShare: Bool = false
@@ -530,6 +532,13 @@ struct CraftWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: webConfig)
         webView.navigationDelegate = context.coordinator
         webView.isOpaque = false
+        // An edge swipe goes back (and forward) through the page's history,
+        // pushState entries included, the way every iOS app's stack does.
+        webView.allowsBackForwardNavigationGestures = config.swipeNavigation ?? false
+        #if DEBUG
+        // Safari's Develop menu can attach to a debug build; never a release.
+        if #available(iOS 16.4, *) { webView.isInspectable = true }
+        #endif
 
         // Before any message can be offered. Zig evaluates every reply against
         // this webview, and without it an action would run, succeed, and reach

@@ -27,6 +27,8 @@ export interface CraftConfig {
   backgroundColor?: string
   /** The launch and webview background while the phone is in Dark Mode. */
   backgroundColorDark?: string
+  /** Edge-swipe back and forward through the page's history, pushState entries included. */
+  swipeNavigation?: boolean
   enableSpeechRecognition?: boolean
   enableHaptics?: boolean
   enableShare?: boolean
