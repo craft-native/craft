@@ -13,6 +13,8 @@ pub const Entry = struct {
     webview: usize,
     /// Platform-specific control object (WebView2 controller on Windows).
     context: usize = 0,
+    /// WebView2 subscription to remove before releasing a closed webview.
+    message_token: ?i64 = null,
 };
 
 pub const Registry = struct {
@@ -64,6 +66,19 @@ pub const Registry = struct {
             }
         }
         return null;
+    }
+
+    pub fn setMessageToken(self: *Registry, window: usize, token: i64) bool {
+        if (window == 0) return false;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    entry.message_token = token;
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     pub fn latest(self: *const Registry) ?Entry {
@@ -156,6 +171,18 @@ test "reply candidates contain only live webviews" {
     try std.testing.expectEqualSlices(usize, &.{0x2001}, registry.liveWebviews(&handles));
     _ = registry.forgetWindow(0x2000);
     try std.testing.expectEqual(@as(usize, 0), registry.liveWebviews(&handles).len);
+}
+
+test "a web message subscription belongs only to its live window" {
+    var registry: Registry = .{};
+    _ = registry.remember(0x1000, 0x1001);
+    _ = registry.remember(0x2000, 0x2001);
+    try std.testing.expect(registry.setMessageToken(0x1000, 42));
+    try std.testing.expect(!registry.setMessageToken(0x3000, 99));
+    try std.testing.expectEqual(@as(?i64, 42), registry.byWebview(0x1001).?.message_token);
+    try std.testing.expect(registry.byWebview(0x2001).?.message_token == null);
+    try std.testing.expectEqual(@as(?i64, 42), registry.forgetWindow(0x1000).?.message_token);
+    try std.testing.expect(registry.byWebview(0x1001) == null);
 }
 
 test "a window keeps its own platform control object" {

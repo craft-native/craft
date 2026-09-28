@@ -26,7 +26,7 @@ pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_maximize(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unmaximize(window: *anyopaque) void;
-pub extern "c" fn gtk_window_minimize(window: *anyopaque) void;
+pub extern "c" fn gtk_window_iconify(window: *anyopaque) void;
 pub extern "c" fn gtk_widget_hide(widget: *anyopaque) void;
 pub extern "c" fn gtk_widget_show(widget: *anyopaque) void;
 pub extern "c" fn gtk_window_set_position(window: *anyopaque, x: c_int, y: c_int) void;
@@ -359,7 +359,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
         gtk_window_close(window);
     } else if (std.mem.eql(u8, action, "minimize")) {
-        gtk_window_minimize(window);
+        gtk_window_iconify(window);
     } else if (std.mem.eql(u8, action, "maximize")) {
         gtk_window_maximize(window);
     } else if (std.mem.eql(u8, action, "unmaximize") or std.mem.eql(u8, action, "restore")) {
@@ -592,7 +592,7 @@ pub const Window = struct {
     }
 
     pub fn minimize(self: *Window) void {
-        gtk_window_minimize(self.gtk_window);
+        gtk_window_iconify(self.gtk_window);
     }
 
     pub fn setFullscreen(self: *Window, fullscreen: bool) void {
