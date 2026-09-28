@@ -137,12 +137,12 @@ The next multi-window milestone needs product decisions in addition to code:
    application-level asynchronous source above.
 3. Decide whether Touch Bar should stay primary-window scoped or follow the
    key window with separately owned item definitions and callbacks.
-4. Finish advanced Linux/Windows window actions and clarify which are portable
-   versus platform-specific, without conflating close semantics: macOS retains
-   a closed page, while Linux and Windows release it.
-5. Expand platform-native integration beyond the current named-window lifecycle
-   smokes. CI runs Linux WebKitGTK under Xvfb and Windows WebView2 on a native
-   runner, but advanced actions and packaged-app behavior still need coverage.
+4. Decide the portability contract for advanced actions beyond bounds,
+   centering, resizability, size limits and fullscreen. Closing still differs:
+   macOS retains a closed page, while Linux and Windows release it.
+5. Expand platform-native integration beyond named-window lifecycle and core
+   geometry/control smokes. CI runs Linux WebKitGTK under Xvfb and Windows
+   WebView2 on a native runner; packaged-app behavior still needs coverage.
 
 ## Review checklist
 
