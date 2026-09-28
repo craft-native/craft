@@ -28,7 +28,10 @@ WebKitGTK/WebView2 view; names select a target only after that sender is known.
 Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. Linux must register its `GtkApplication`
 before constructing the first `GtkApplicationWindow`, because the CLI creates
-that window before entering `g_application_run()`.
+that window before entering `g_application_run()`. On Windows, the controller
+passed to the asynchronous WebView2 completion callback is borrowed. Each live
+window retains its own controller reference until native destruction; otherwise
+WebView2 can close before the page bridge registers or navigation begins.
 
 ## Per-window state
 

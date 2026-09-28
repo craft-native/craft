@@ -58,6 +58,9 @@ const mainPage = `<!doctype html><script>
     await window.craft.window._call('close', {}, 'settings')
     await closed
     await report('closed')
+    const survivingMain = await window.craft.window._call('getBounds', {}, 'main')
+    if (!(survivingMain.width > 0 && survivingMain.height > 0))
+      throw new Error('closing child invalidated main controller')
     let staleRejected = false
     try { await window.craft.window._call('getBounds', {}, 'settings') }
     catch (_) { staleRejected = true }

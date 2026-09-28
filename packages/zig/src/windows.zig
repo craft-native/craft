@@ -567,6 +567,10 @@ const ControllerCompletedHandler = extern struct {
             return perm_hr;
         }
 
+        // The callback only lends us the controller. Keep our own reference
+        // past Invoke so WebView2 does not close before Window.create uses it.
+        _ = controller.lpVtbl.AddRef(controller);
+
         // Store results
         self.ctx.controller = controller;
         self.ctx.webview = webview;
