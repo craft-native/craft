@@ -7,6 +7,7 @@ import { enforceScanPolicy, scanSbom } from './scan-sbom'
 type Archive = { name: string, version: string, file: string, sha256: string }
 type Component = { name: string, version?: string, 'bom-ref'?: string, [key: string]: unknown }
 type Inventory = { bomFormat: string, components: Component[], [key: string]: unknown }
+type NativeArtifact = { path: string, name: string, magic: string[], type: 'application' | 'library', version?: string }
 
 const root = resolve(import.meta.dir, '..')
 const sha256 = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
@@ -108,18 +109,21 @@ function scanNpm(directory: string, output: string, syft: string, grype: string)
   finally { rmSync(consumer, { recursive: true, force: true }) }
 }
 
+function nativeArtifacts(platform: 'macos' | 'linux'): NativeArtifact[] {
+  return platform === 'macos'
+    ? [{ path: 'bin/craft', name: 'craft-darwin-arm64', magic: ['cffaedfe', 'feedfacf'], type: 'application' }, { path: 'cross/darwin-x64/craft', name: 'craft-darwin-x64', magic: ['cffaedfe', 'feedfacf'], type: 'application' }]
+    : [{ path: 'bin/craft', name: 'craft-linux-x64', magic: ['7f454c46'], type: 'application' }, { path: 'cross/windows-x64/craft.exe', name: 'craft-windows-x64', magic: ['4d5a'], type: 'application' }, { path: 'cross/windows-x64/WebView2Loader.dll', name: 'WebView2Loader', magic: ['4d5a'], type: 'library', version: '1.0.4191.47' }]
+}
+
 export function nativeInventory(binaryRoot: string, platform: 'macos' | 'linux', version: string, zigVersion: string, discovered: Component[][] = []): Inventory {
-  const entries = platform === 'macos'
-    ? [{ path: 'bin/craft', name: 'craft-darwin-arm64', magic: ['cffaedfe', 'feedfacf'] }, { path: 'cross/darwin-x64/craft', name: 'craft-darwin-x64', magic: ['cffaedfe', 'feedfacf'] }]
-    : [{ path: 'bin/craft', name: 'craft-linux-x64', magic: ['7f454c46'] }, { path: 'cross/windows-x64/craft.exe', name: 'craft-windows-x64', magic: ['4d5a'] }]
-  const binaries: Component[] = entries.map(({ path, name, magic }) => {
+  const artifacts: Component[] = nativeArtifacts(platform).map(({ path, name, magic, type, version: artifactVersion }) => {
     const absolute = join(binaryRoot, path)
     if (!existsSync(absolute) || !statSync(absolute).isFile() || statSync(absolute).size < 1024)
       throw new Error(`${name}: missing or empty release binary`)
     const bytes = readFileSync(absolute)
     if (!magic.some(prefix => bytes.subarray(0, prefix.length / 2).toString('hex') === prefix))
       throw new Error(`${name}: unexpected executable format`)
-    return { 'bom-ref': `urn:craft:binary:${name}`, type: 'application', name, version,
+    return { 'bom-ref': `urn:craft:binary:${name}`, type, name, version: artifactVersion ?? version,
       hashes: [{ alg: 'SHA-256', content: createHash('sha256').update(bytes).digest('hex') }],
       properties: [{ name: 'craft:artifact-path', value: path }],
     }
@@ -128,8 +132,11 @@ export function nativeInventory(binaryRoot: string, platform: 'macos' | 'linux',
   return {
     bomFormat: 'CycloneDX', specVersion: '1.6', version: 1,
     metadata: { component: { type: 'application', name: 'craft-native-release', version } },
-    components: [...binaries, zig, ...discovered.flat()],
-    dependencies: binaries.map(binary => ({ ref: binary['bom-ref'], dependsOn: [zig['bom-ref']] })),
+    components: [...artifacts, zig, ...discovered.flat()],
+    dependencies: artifacts.filter(artifact => artifact.type === 'application').map(artifact => ({
+      ref: artifact['bom-ref'],
+      dependsOn: artifact.name === 'craft-windows-x64' ? [zig['bom-ref'], 'urn:craft:binary:WebView2Loader'] : [zig['bom-ref']],
+    })),
   }
 }
 
@@ -137,7 +144,7 @@ function scanNative(binaryRoot: string, platform: 'macos' | 'linux', output: str
   mkdirSync(output, { recursive: true })
   const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }
   const zigVersion = Bun.JSONC.parse(readFileSync(join(root, 'pantry.jsonc'), 'utf8')).dependencies['ziglang.org'] as string
-  const paths = platform === 'macos' ? ['bin/craft', 'cross/darwin-x64/craft'] : ['bin/craft', 'cross/windows-x64/craft.exe']
+  const paths = nativeArtifacts(platform).map(artifact => artifact.path)
   const discovered = paths.map((path, index) => {
     const report = join(output, `native-${index}.cyclonedx.json`)
     run([syft, join(binaryRoot, path), '-o', `cyclonedx-json=${report}`])
@@ -152,7 +159,7 @@ function scanNative(binaryRoot: string, platform: 'macos' | 'linux', output: str
   const summary = scanSbom(sbom, join(output, 'grype'), grype)
   enforceScanPolicy(summary.counts, true)
   const after = nativeInventory(binaryRoot, platform, version, zigVersion)
-  for (const [index, binary] of after.components.slice(0, 2).entries()) {
+  for (const [index, binary] of after.components.slice(0, paths.length).entries()) {
     if (JSON.stringify(binary.hashes) !== JSON.stringify(inventory.components[index]!.hashes))
       throw new Error(`${binary.name}: release binary changed after scanning`)
   }
