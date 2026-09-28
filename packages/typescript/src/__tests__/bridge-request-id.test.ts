@@ -37,19 +37,20 @@ interface Harness {
  * they can simply be passed in as parameters — no DOM, no jsdom, and nothing
  * shared between tests.
  */
-function loadBridge(): Harness {
+function loadBridge(platform: 'webkit' | 'webview2' = 'webkit'): Harness {
   const sent: Envelope[] = []
   const errors: unknown[][] = []
   const win: any = {
-    webkit: {
-      messageHandlers: {
-        craft: { postMessage: (m: Envelope) => { sent.push(m) } },
-      },
-    },
     addEventListener: () => {},
     removeEventListener: () => {},
     // The script fires `craft:ready` on load.
     dispatchEvent: () => true,
+  }
+  if (platform === 'webkit') {
+    win.webkit = { messageHandlers: { craft: { postMessage: (m: Envelope) => { sent.push(m) } } } }
+  }
+  else {
+    win.chrome = { webview: { postMessage: (m: Envelope) => { sent.push(m) } } }
   }
   const doc: any = { readyState: 'complete', addEventListener: () => {} }
   const console_: any = { ...console, error: (...a: unknown[]) => { errors.push(a) }, warn: () => {} }
@@ -84,6 +85,24 @@ function settled(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('bridge reply correlation', () => {
+  it('uses WebView2 when WebKit is absent and preserves the reply id', async () => {
+    const h = loadBridge('webview2')
+    const pending = h.craft.tags.get('/windows')
+    expect(h.sent).toHaveLength(1)
+    expect(h.sent[0]).toMatchObject({ t: 'tags', a: 'get' })
+    expect(h.sent[0].i).toBeGreaterThan(0)
+    h.reply('get', { tags: ['native'] }, h.sent[0].i!)
+    expect(await pending).toEqual(['native'])
+
+    // A page may expose a partial `webkit` object without Craft's handler.
+    // It must still use the authenticated WebView2 transport.
+    h.win.webkit = { messageHandlers: {} }
+    const next = h.craft.tags.get('/windows-next')
+    expect(h.sent).toHaveLength(2)
+    h.reply('get', { tags: ['again'] }, h.sent[1].i!)
+    expect(await next).toEqual(['again'])
+  })
+
   it('gives each caller its own answer when two bridges share an action name', async () => {
     // `get` is served by both keychain and tags. Before request ids, both
     // callers queued under the string "get" and were matched by arrival order,
