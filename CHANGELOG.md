@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.95...v0.0.96)
+
+## 🐛 Bug Fixes
+
+- **release**: close the notarization loop, and parse every workflow script ([15f13a7](https://github.com/craft-native/craft/commit/15f13a7)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.96 ([674f5df](https://github.com/craft-native/craft/commit/674f5df)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.94...v0.0.95)
 
 ## 🐛 Bug Fixes
