@@ -1,4 +1,5 @@
 const std = @import("std");
+const desktop_window_registry = @import("desktop_window_registry.zig");
 const window_context = @import("window_context.zig");
 const window_reply_target = @import("window_reply_target.zig");
 
@@ -200,55 +201,30 @@ pub const WindowEntry = struct {
     webview: *anyopaque,
 };
 
-var window_registry: [32]?WindowEntry = std.mem.zeroes([32]?WindowEntry);
-var window_count: u32 = 0;
-var next_window_id: u32 = 1;
+var desktop_windows: desktop_window_registry.Registry = .{};
 
 pub fn getWindowById(id: u32) ?WindowEntry {
-    for (window_registry) |entry| {
-        if (entry) |e| {
-            if (e.id == id) return e;
-        }
-    }
-    return null;
+    const entry = desktop_windows.byId(id) orelse return null;
+    return .{ .id = entry.id, .gtk_window = @ptrFromInt(entry.window), .webview = @ptrFromInt(entry.webview) };
 }
 
 pub fn getWindowCount() u32 {
-    return window_count;
+    return @intCast(desktop_windows.count());
 }
 
 fn registerWindow(gtk_window: *anyopaque, webview: *anyopaque) ?u32 {
-    for (&window_registry) |*slot| {
-        if (slot.* == null) {
-            const id = next_window_id;
-            next_window_id += 1;
-            slot.* = WindowEntry{
-                .id = id,
-                .gtk_window = gtk_window,
-                .webview = webview,
-            };
-            window_count += 1;
-            return id;
-        }
-    }
-    return null; // registry full
+    return desktop_windows.remember(@intFromPtr(gtk_window), @intFromPtr(webview));
 }
 
-fn unregisterWindow(id: u32) void {
-    for (&window_registry) |*slot| {
-        if (slot.*) |e| {
-            if (e.id == id) {
-                slot.* = null;
-                window_count -= 1;
-                break;
-            }
-        }
-    }
+/// GTK emits destroy for titlebar closes as well as programmatic closes.
+/// Forget the handle at actual teardown, so neither path leaves a stale
+/// webview eligible for bridge replies.
+fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
+    _ = desktop_windows.forgetWindow(@intFromPtr(widget));
 }
 
 // Application state
 var app_instance: ?*anyopaque = null;
-var current_window: ?*anyopaque = null;
 
 pub const WindowStyle = struct {
     frameless: bool = false,
@@ -289,7 +265,6 @@ pub const Window = struct {
         }
 
         const window = gtk_application_window_new(app_instance.?);
-        current_window = window;
 
         // Create WebView
         const webview = webkit_web_view_new();
@@ -362,7 +337,15 @@ pub const Window = struct {
         gtk_container_add(window, webview);
 
         // Register window in the multi-window registry
-        const window_id = registerWindow(window, webview) orelse return error.TooManyWindows;
+        const window_id = registerWindow(window, webview) orelse {
+            gtk_window_close(window);
+            return error.TooManyWindows;
+        };
+        if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0) {
+            _ = desktop_windows.forgetWindow(@intFromPtr(window));
+            gtk_window_close(window);
+            return error.SignalConnectionFailed;
+        }
 
         return Window{
             .id = window_id,
@@ -386,24 +369,9 @@ pub const Window = struct {
     }
 
     pub fn close(self: *Window) void {
-        // Remove from window registry
-        unregisterWindow(self.id);
-
-        // Update current_window if this was the active one
-        if (current_window == self.gtk_window) {
-            current_window = null;
-            // Set current_window to the most recently registered window, if any
-            var latest_id: u32 = 0;
-            for (window_registry) |entry| {
-                if (entry) |e| {
-                    if (e.id > latest_id) {
-                        latest_id = e.id;
-                        current_window = e.gtk_window;
-                    }
-                }
-            }
-        }
-
+        // The destroy signal unregisters only after GTK actually closes it.
+        const live = desktop_windows.byId(self.id) orelse return;
+        if (live.window != @intFromPtr(self.gtk_window)) return;
         gtk_window_close(self.gtk_window);
     }
 
@@ -494,22 +462,10 @@ pub const App = struct {
 /// Evaluate JavaScript in the page that sent the current bridge message.
 /// Native callers without a sender continue to use the latest live window.
 pub fn evalJS(script: []const u8) !void {
-    var live: [window_registry.len]usize = undefined;
-    var live_len: usize = 0;
-    var latest_id: u32 = 0;
-    var fallback: ?usize = null;
-    for (window_registry) |entry| {
-        if (entry) |e| {
-            live[live_len] = @intFromPtr(e.webview);
-            live_len += 1;
-            if (e.id > latest_id) {
-                latest_id = e.id;
-                fallback = @intFromPtr(e.webview);
-            }
-        }
-    }
-
-    const target = window_reply_target.select(live[0..live_len], window_context.currentWebView(), fallback) orelse
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    const live = desktop_windows.liveWebviews(&handles);
+    const latest = desktop_windows.latest();
+    const target = window_reply_target.select(live, window_context.currentWebView(), if (latest) |entry| entry.webview else null) orelse
         return error.NoWebView;
     const script_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script);
     defer std.heap.c_allocator.free(script_z);
