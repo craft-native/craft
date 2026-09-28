@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.96...v0.0.97)
+
+## 🐛 Bug Fixes
+
+- **create-craft**: restore the README tree that npm refused to publish ([607a859](https://github.com/craft-native/craft/commit/607a859)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.97 ([05a5930](https://github.com/craft-native/craft/commit/05a5930)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.95...v0.0.96)
 
 ## 🐛 Bug Fixes
