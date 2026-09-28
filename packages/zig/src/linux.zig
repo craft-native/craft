@@ -407,6 +407,7 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
 
     const width = json_utils.getInt(u32, json, "width") orelse 800;
     const height = json_utils.getInt(u32, json, "height") orelse 600;
+    const limits = try desktop_window_controls.parseCreateLimits(json);
     if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
         return error.InvalidParameter;
     var created = try Window.create(.{
@@ -421,6 +422,8 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         .dev_tools = json_utils.getBool(json, "devTools") orelse false,
     });
     errdefer created.close();
+    if (limits.minimum != null or limits.maximum != null)
+        try setWindowLimits(desktop_windows.byWindow(@intFromPtr(created.gtk_window)) orelse return error.WindowHandleNotSet, limits);
     if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
     if (!window_registry.rememberNamedOwned(@intFromPtr(created.gtk_window), name, owner))
         return error.TooManyWindows;
@@ -467,6 +470,16 @@ fn applyWindowLimits(window: *anyopaque, limits: desktop_window_controls.Limits)
         mask |= 4; // GDK_HINT_MAX_SIZE
     }
     gtk_window_set_geometry_hints(window, null, if (mask == 0) null else &geometry, mask);
+}
+
+fn setWindowLimits(entry: desktop_window_registry.Entry, limits: desktop_window_controls.Limits) !void {
+    const window: *anyopaque = @ptrFromInt(entry.window);
+    if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
+    applyWindowLimits(window, limits);
+    const current = try windowGeometry(window);
+    const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
+    if (clamped.width != current.width or clamped.height != current.height)
+        gtk_window_resize(window, @intCast(clamped.width), @intCast(clamped.height));
 }
 
 fn centerWindow(window: *anyopaque) !void {
@@ -570,12 +583,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMaximumSize")) {
         const size = try desktop_window_controls.parseSize(data);
         const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
-        if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
-        applyWindowLimits(window, limits);
-        const current = try windowGeometry(window);
-        const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
-        if (clamped.width != current.width or clamped.height != current.height)
-            gtk_window_resize(window, @intCast(clamped.width), @intCast(clamped.height));
+        try setWindowLimits(entry, limits);
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";

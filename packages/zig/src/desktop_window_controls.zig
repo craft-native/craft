@@ -58,7 +58,7 @@ pub const Limits = struct {
 };
 
 fn object(data: []const u8) !std.json.Parsed(std.json.Value) {
-    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.c_allocator, data, .{}) catch return error.InvalidParameter;
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, data, .{}) catch return error.InvalidParameter;
     if (parsed.value != .object) {
         parsed.deinit();
         return error.InvalidParameter;
@@ -107,6 +107,32 @@ pub fn parseSize(data: ?[]const u8) !Size {
     return .{ .width = width, .height = height };
 }
 
+/// Creation options may constrain one axis without constraining the other.
+/// Use effective no-op limits on omitted axes so both GTK and Win32 can keep
+/// a single pair of minimum/maximum dimensions per native window.
+pub fn parseCreateLimits(data: ?[]const u8) !Limits {
+    var parsed = try object(data orelse return error.MissingData);
+    defer parsed.deinit();
+    const value = parsed.value;
+    const min_width = try optionalInteger(u32, value, "minWidth");
+    const min_height = try optionalInteger(u32, value, "minHeight");
+    const max_width = try optionalInteger(u32, value, "maxWidth");
+    const max_height = try optionalInteger(u32, value, "maxHeight");
+    const limit: u32 = std.math.maxInt(c_int);
+    var limits: Limits = .{};
+    if (min_width != null or min_height != null) {
+        const size: Size = .{ .width = min_width orelse 1, .height = min_height orelse 1 };
+        if (size.width == 0 or size.height == 0 or size.width > limit or size.height > limit) return error.InvalidParameter;
+        limits = try limits.withMinimum(size);
+    }
+    if (max_width != null or max_height != null) {
+        const size: Size = .{ .width = max_width orelse limit, .height = max_height orelse limit };
+        if (size.width == 0 or size.height == 0 or size.width > limit or size.height > limit) return error.InvalidParameter;
+        limits = try limits.withMaximum(size);
+    }
+    return limits;
+}
+
 pub fn parseBool(data: ?[]const u8, key: []const u8) !bool {
     var parsed = try object(data orelse return error.MissingData);
     defer parsed.deinit();
@@ -152,4 +178,13 @@ test "centering uses the selected monitor workarea including negative origins" {
         .{ .x = 0, .y = 0, .width = 1200, .height = 900 },
         .{ .width = 800, .height = 600 },
     ));
+}
+
+test "creation limits preserve unconstrained axes and reject conflicts" {
+    const width_only = try parseCreateLimits("{\"minWidth\":320,\"maxWidth\":1024}");
+    try std.testing.expectEqualDeep(Size{ .width = 320, .height = 1 }, width_only.minimum.?);
+    try std.testing.expectEqualDeep(Size{ .width = 1024, .height = std.math.maxInt(c_int) }, width_only.maximum.?);
+    try std.testing.expectError(error.InvalidParameter, parseCreateLimits("{\"minWidth\":900,\"maxWidth\":800}"));
+    try std.testing.expectError(error.InvalidParameter, parseCreateLimits("{\"maxHeight\":0}"));
+    try std.testing.expectError(error.InvalidParameter, parseCreateLimits("{\"minWidth\":1.5}"));
 }

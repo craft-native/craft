@@ -24,6 +24,7 @@ const mainPage = `<!doctype html><script>
   const child = (cycle) => window.craft.window.open({
     name: 'settings', title: 'Child ' + cycle,
     url: location.origin + '/child?cycle=' + cycle,
+    minWidth: 300, minHeight: 200, maxWidth: 1200, maxHeight: 900,
   })
   const call = (action, data = {}, id = 'settings') => window.craft.window._call(action, data, id)
   const waitSize = async (predicate, label) => {
@@ -51,6 +52,8 @@ const mainPage = `<!doctype html><script>
     await waitFor('child-1')
     const bounds = await window.craft.window._call('getBounds', {}, 'settings')
     if (!(bounds.width > 0 && bounds.height > 0)) throw new Error('child bounds not routed to creator')
+    await call('setSize', { width: 100, height: 100 })
+    await waitSize(size => size.width >= 280 && size.height >= 180, 'creation limits')
     await window.craft.window._call('setSize', { width: 640, height: 480 }, 'settings')
     let resized = false
     for (let attempt = 0; attempt < 40; attempt++) {

@@ -1070,6 +1070,7 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
 
     const width = json_utils.getInt(u32, json, "width") orelse 800;
     const height = json_utils.getInt(u32, json, "height") orelse 600;
+    const limits = try desktop_window_controls.parseCreateLimits(json);
     if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
         return error.InvalidParameter;
     var created = try Window.create(.{
@@ -1085,6 +1086,8 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         .dev_tools = json_utils.getBool(json, "devTools") orelse false,
     });
     errdefer created.close();
+    if (limits.minimum != null or limits.maximum != null)
+        try setWindowLimits(desktop_windows.byWindow(@intFromPtr(created.hwnd)) orelse return error.WindowHandleNotSet, limits);
     if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
     if (desktop_windows.byWebview(owner) == null) return error.WindowHandleNotSet;
     if (!window_registry.rememberNamedOwned(@intFromPtr(created.hwnd), name, owner))
@@ -1144,6 +1147,17 @@ fn centerWindow(hwnd: HWND) !void {
     );
     if (SetWindowPos(hwnd, null, position.x, position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) == 0)
         return error.NativeCallFailed;
+}
+
+fn setWindowLimits(entry: desktop_window_registry.Entry, limits: desktop_window_controls.Limits) !void {
+    if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    const current = try windowGeometry(hwnd);
+    const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
+    if (clamped.width != current.width or clamped.height != current.height) {
+        if (SetWindowPos(hwnd, null, 0, 0, @intCast(clamped.width), @intCast(clamped.height), SWP_NOMOVE | SWP_NOZORDER) == 0)
+            return error.NativeCallFailed;
+    }
 }
 
 fn setWindowResizable(entry: desktop_window_registry.Entry, resizable: bool) !void {
@@ -1295,13 +1309,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMaximumSize")) {
         const size = try desktop_window_controls.parseSize(data);
         const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
-        if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
-        const current = try windowGeometry(hwnd);
-        const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
-        if (clamped.width != current.width or clamped.height != current.height) {
-            if (SetWindowPos(hwnd, null, 0, 0, @intCast(clamped.width), @intCast(clamped.height), SWP_NOMOVE | SWP_NOZORDER) == 0)
-                return error.NativeCallFailed;
-        }
+        try setWindowLimits(entry, limits);
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
