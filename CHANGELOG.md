@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.100...v0.0.101)
+
+## 🐛 Bug Fixes
+
+- **mobile**: keep a default when a config key is undefined, and show a debug build's page errors in the device log ([f663274](https://github.com/craft-native/craft/commit/f663274)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.101 ([b0a73e4](https://github.com/craft-native/craft/commit/b0a73e4)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.99...v0.0.100)
 
 ## 🚀 Features
