@@ -313,7 +313,7 @@ jobs:
         run: bun run lint
 
       - name: Test release identity validation
-        run: bun test ./scripts/release-version.test.ts
+        run: bun test ./scripts/release-version.test.ts ./scripts/package-text.test.ts
 
       - name: Test complete release manifest verification
         run: bun test ./scripts/release-manifest.test.ts
