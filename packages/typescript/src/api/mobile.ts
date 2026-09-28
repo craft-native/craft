@@ -1430,6 +1430,11 @@ export type HealthDataType =
 /** The types with one value per day. `sleep` is hours asleep, counted on the day you woke. */
 export type HealthDailyType = Exclude<HealthDataType, 'workouts'>
 
+export interface HealthAuthorizationOptions {
+  /** `false` asks to read only. Default: also allowed to save workouts. */
+  write?: boolean
+}
+
 export interface HealthDataOptions {
   startDate?: number
   endDate?: number
@@ -1504,10 +1509,15 @@ export interface HealthDailyValue {
 }
 
 export const health = {
-  async requestAuthorization(types: HealthDataType[]): Promise<boolean> {
+  /**
+   * Ask for the health data a page needs. `{ write: false }` asks to read
+   * only, for an app that never writes back; by default it may also save
+   * workouts, energy and distance.
+   */
+  async requestAuthorization(types: HealthDataType[], options: HealthAuthorizationOptions = {}): Promise<boolean> {
     const craft = getCraftRoot()
     if (!craft?.health?.requestAuthorization) throw new Error('Health data is unavailable')
-    return Boolean(await craft.health.requestAuthorization(types))
+    return Boolean(await craft.health.requestAuthorization(types, options))
   },
   async getData(type: HealthDataType, options: HealthDataOptions = {}): Promise<HealthDataResult> {
     const craft = getCraftRoot()
@@ -1726,7 +1736,7 @@ interface CraftMobileBridge {
     setBadge(count: number): Promise<void>
   }
   health?: {
-    requestAuthorization(types: HealthDataType[]): Promise<boolean>
+    requestAuthorization(types: HealthDataType[], options?: HealthAuthorizationOptions): Promise<boolean>
     getData(type: HealthDataType, options: HealthDataOptions): Promise<HealthDataResult>
     saveWorkout(workout: HealthWorkout): Promise<HealthWorkoutResult>
     getWorkouts?(options: HealthWorkoutQuery): Promise<HealthWorkoutSample[]>

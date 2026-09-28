@@ -216,6 +216,12 @@ describe('Craft iOS builder', () => {
       expect(swift).toContain(identifier)
     expect(swift).toContain('HKStatisticsCollectionQuery(')
     expect(swift).toContain('"id": workout.uuid.uuidString')
+    // A reader asks to read only, and the sheet a person is reading is never
+    // timed out from the page.
+    expect(swift).toContain("readOnly: Boolean(options && options.write === false)")
+    expect(swift).toContain('if readOnly { shareTypes.removeAll() }')
+    expect(swift).toContain('requestHealthAuthorization: true,')
+    expect(swift).toContain("var timeout = personFacing[action] ? null : setTimeout(")
   })
 
   it('keeps bundled assets as a remote-app recovery path', async () => {

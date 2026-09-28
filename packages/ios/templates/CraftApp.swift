@@ -1310,7 +1310,7 @@ struct CraftWebView: UIViewRepresentable {
             case "requestHealthAuthorization":
                 if config.enableHealthKit {
                     let types = body["types"] as? [String] ?? []
-                    requestHealthAuthorization(types: types, callbackId: callbackId)
+                    requestHealthAuthorization(types: types, readOnly: body["readOnly"] as? Bool ?? false, callbackId: callbackId)
                 } else {
                     rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
                 }
@@ -3248,19 +3248,28 @@ struct CraftWebView: UIViewRepresentable {
                 var legacyNotifications = craft.notifications;
 
                 craft.contractVersion = '1.0.0';
+                // Actions answered by a person, through a system sheet they
+                // may take a minute to read. Thirty seconds of reading the
+                // HealthKit sheet used to fail the call while the sheet was
+                // still open; these wait for the answer instead.
+                var personFacing = {
+                    requestHealthAuthorization: true,
+                    requestPermission: true,
+                    signInWithApple: true
+                };
                 craft._invoke = function(action, payload) {
                     var self = craft;
                     var id = 'cb_' + (++self._callbackId);
                     var message = Object.assign({}, payload || {}, {action: action, callbackId: id});
                     window.webkit.messageHandlers.craft.postMessage(message);
                     return new Promise(function(resolve, reject) {
-                        var timeout = setTimeout(function() {
+                        var timeout = personFacing[action] ? null : setTimeout(function() {
                             delete self._callbacks[id];
                             reject(new Error('Craft bridge timed out: ' + action));
                         }, 30000);
                         self._callbacks[id] = {
-                            resolve: function(value) { clearTimeout(timeout); resolve(value); },
-                            reject: function(error) { clearTimeout(timeout); reject(error); }
+                            resolve: function(value) { if (timeout) clearTimeout(timeout); resolve(value); },
+                            reject: function(error) { if (timeout) clearTimeout(timeout); reject(error); }
                         };
                     });
                 };
@@ -3396,7 +3405,9 @@ struct CraftWebView: UIViewRepresentable {
                     readRecording: function() { return craft._invoke('readLocationRecording'); }
                 };
                 craft.health = {
-                    requestAuthorization: function(types) { return craft._invoke('requestHealthAuthorization', {types: types || []}); },
+                    requestAuthorization: function(types, options) {
+                        return craft._invoke('requestHealthAuthorization', {types: types || [], readOnly: Boolean(options && options.write === false)});
+                    },
                     getData: function(type, options) {
                         options = options || {};
                         return craft._invoke('getHealthData', {type: type, startDate: options.startDate, endDate: options.endDate});
@@ -5134,7 +5145,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         // MARK: - Health
-        private func requestHealthAuthorization(types: [String], callbackId: String?) {
+        private func requestHealthAuthorization(types: [String], readOnly: Bool = false, callbackId: String?) {
             guard let healthStore = healthStore else {
                 rejectCallback(callbackId, error: "HealthKit not available")
                 return
@@ -5197,6 +5208,9 @@ struct CraftWebView: UIViewRepresentable {
                 }
             }
 
+            // A page that only reads asks only to read: the sheet then says
+            // "access", not "access and update".
+            if readOnly { shareTypes.removeAll() }
             healthStore.requestAuthorization(toShare: shareTypes, read: readTypes) { [weak self] success, error in
                 if success {
                     self?.resolveCallback(callbackId, result: true)
