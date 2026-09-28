@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.94...v0.0.95)
+
+## 🐛 Bug Fixes
+
+- **ci**: run workflow test files as paths, not filters ([9426f79](https://github.com/craft-native/craft/commit/9426f79)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.95 ([8726f35](https://github.com/craft-native/craft/commit/8726f35)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.93...v0.0.94)
 
 ## 🐛 Bug Fixes
