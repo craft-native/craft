@@ -55,8 +55,27 @@ const mainPage = `<!doctype html><script>
       throw new Error('concurrent child opens returned the wrong handles')
     await waitFor('child-queue-a')
     await waitFor('child-queue-b')
+    const queueClosed = new Set()
+    const queueClosedDone = new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('queued child close events missing')), 20000)
+      window.addEventListener('craft:window:close', (event) => {
+        if (event.detail.windowId !== 'queue-a' && event.detail.windowId !== 'queue-b') return
+        queueClosed.add(event.detail.windowId)
+        if (queueClosed.size !== 2) return
+        clearTimeout(timeout)
+        resolve()
+      })
+    })
     await window.craft.window._call('close', {}, 'queue-a')
     await window.craft.window._call('close', {}, 'queue-b')
+    await queueClosedDone
+    for (const name of ['queue-a', 'queue-b']) {
+      let rejected = false
+      try { await window.craft.window._call('getBounds', {}, name) }
+      catch (_) { rejected = true }
+      if (!rejected) throw new Error('closed queued child still answered a read: ' + name)
+    }
+    await report('queued-closed')
 
     const closed = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('child close event missing')), 20000)
@@ -132,7 +151,7 @@ const server = createServer((request, response) => {
     if (step) steps.add(step)
     response.end('ok')
     if (step === 'done') {
-      const required = ['main', 'child-1', 'closed', 'child-2', 'done']
+      const required = ['main', 'child-1', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
       if (required.every(name => steps.has(name))) resolveDone()
       else rejectDone(new Error(`incomplete smoke steps: ${[...steps].join(', ')}`))
     }

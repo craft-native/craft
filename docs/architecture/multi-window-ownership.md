@@ -10,7 +10,7 @@ whether it stores a window-specific target.
 
 | Area | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke under validation in CI |
+| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Stable named handles | Implemented | Implemented | Implemented |
 | Sender-authenticated local actions | Implemented | Implemented through WebKitGTK | Implemented through WebView2 |
 | Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
@@ -18,7 +18,7 @@ whether it stores a window-specific target.
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
-Issue #67 remains open while the Windows runtime smoke and the still-unspecified
+Issue #67 remains open while the full CI matrix and the still-unspecified
 modal/parent semantics are reviewed. The Windows release archive now stages an
 app-local WebView2 loader; users still need the Microsoft WebView2 Runtime.
 
