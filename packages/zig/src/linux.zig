@@ -1,6 +1,11 @@
 const std = @import("std");
+const bridge_error = @import("bridge_error.zig");
+const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
+const json_utils = @import("json_utils.zig");
+const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
+const window_registry = @import("window_registry.zig");
 const window_reply_target = @import("window_reply_target.zig");
 
 // Linux implementation using GTK3 and WebKit2GTK 4.1.
@@ -29,6 +34,7 @@ pub extern "c" fn gtk_window_set_position(window: *anyopaque, x: c_int, y: c_int
 pub extern "c" fn webkit_web_view_new() *anyopaque;
 pub extern "c" fn webkit_web_view_load_uri(webview: *anyopaque, uri: [*:0]const u8) void;
 pub extern "c" fn webkit_web_view_load_html(webview: *anyopaque, html: [*:0]const u8, base_uri: [*:0]const u8) void;
+pub extern "c" fn webkit_web_view_reload(webview: *anyopaque) void;
 pub extern "c" fn webkit_web_view_get_settings(webview: *anyopaque) *anyopaque;
 pub extern "c" fn webkit_settings_set_enable_developer_extras(settings: *anyopaque, enabled: c_int) void;
 pub extern "c" fn webkit_settings_set_enable_webgl(settings: *anyopaque, enabled: c_int) void;
@@ -79,6 +85,9 @@ pub extern "c" fn webkit_user_script_new(
 ) *anyopaque;
 pub extern "c" fn webkit_user_content_manager_add_script(manager: *anyopaque, script: *anyopaque) void;
 pub extern "c" fn webkit_user_content_manager_remove_all_scripts(manager: *anyopaque) void;
+pub extern "c" fn webkit_user_content_manager_register_script_message_handler(manager: *anyopaque, name: [*:0]const u8) c_int;
+pub extern "c" fn webkit_javascript_result_get_js_value(result: *anyopaque) *anyopaque;
+pub extern "c" fn jsc_value_to_json(value: *anyopaque, indent: c_uint) ?[*:0]u8;
 
 pub extern "c" fn gtk_container_add(container: *anyopaque, widget: *anyopaque) void;
 
@@ -220,7 +229,175 @@ fn registerWindow(gtk_window: *anyopaque, webview: *anyopaque) ?u32 {
 /// Forget the handle at actual teardown, so neither path leaves a stale
 /// webview eligible for bridge replies.
 fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
-    _ = desktop_windows.forgetWindow(@intFromPtr(widget));
+    const entry = desktop_windows.forgetWindow(@intFromPtr(widget)) orelse return;
+    window_registry.forgetOwner(entry.webview);
+    window_registry.forget(entry.window);
+}
+
+/// WebKit supplies the WebView via signal user data; a page-supplied window id
+/// is only a name to resolve after the native sender has been authenticated.
+fn onScriptMessage(_: *anyopaque, result: *anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const sender = user_data orelse return;
+    const entry = desktop_windows.byWebview(@intFromPtr(sender)) orelse return;
+    const value = webkit_javascript_result_get_js_value(result);
+    const json_z = jsc_value_to_json(value, 0) orelse return;
+    defer g_free(@ptrCast(json_z));
+
+    var envelope = desktop_bridge_envelope.parse(std.heap.c_allocator, std.mem.span(json_z)) catch return;
+    defer envelope.deinit();
+    window_context.push(entry.window, entry.webview);
+    defer window_context.pop();
+    request_context.push(envelope.request_id);
+    defer request_context.pop();
+
+    if (!std.mem.eql(u8, envelope.kind, "window")) {
+        bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
+        return;
+    }
+    handleWindowAction(envelope.action, envelope.data) catch |err| {
+        bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+    };
+}
+
+fn namedWindowResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer json.deinit(allocator);
+    try json.appendSlice(allocator, "{\"name\":\"");
+    try bridge_error.appendJsonEscaped(allocator, &json, name);
+    try json.appendSlice(allocator, "\"}");
+    return json.toOwnedSlice(allocator);
+}
+
+fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const json = data orelse return error.MissingData;
+    const explicit_name = try json_utils.getStringDecoded(allocator, json, "name");
+    defer if (explicit_name) |name| allocator.free(name);
+    const fallback_id = if (explicit_name == null)
+        try json_utils.getStringDecoded(allocator, json, "id")
+    else
+        null;
+    defer if (fallback_id) |name| allocator.free(name);
+    const name = explicit_name orelse fallback_id orelse return error.InvalidParameter;
+    if (name.len == 0 or name.len > window_registry.max_name or
+        std.mem.eql(u8, name, "main") or std.mem.indexOfScalar(u8, name, 0) != null)
+        return error.InvalidParameter;
+
+    const url = try json_utils.getStringDecoded(allocator, json, "url");
+    defer if (url) |text| allocator.free(text);
+    const html = try json_utils.getStringDecoded(allocator, json, "html");
+    defer if (html) |text| allocator.free(text);
+    if (url == null and html == null) return error.InvalidParameter;
+    const title = try json_utils.getStringDecoded(allocator, json, "title");
+    defer if (title) |text| allocator.free(text);
+    for ([_]?[]const u8{ url, html, title }) |value| {
+        if (value) |text| if (std.mem.indexOfScalar(u8, text, 0) != null)
+            return error.InvalidParameter;
+    }
+
+    // Allocate the response before creating native state. A failed allocation
+    // must not leave a live window behind a rejected creation Promise.
+    const result = try namedWindowResult(allocator, name);
+    defer allocator.free(result);
+    const owner = window_context.currentWebView() orelse return error.WebViewHandleNotSet;
+    if (window_registry.byName(name)) |existing| {
+        if (desktop_windows.byWindow(existing) == null) return error.WindowHandleNotSet;
+        if (!window_registry.rememberNamedOwned(existing, name, owner)) return error.InvalidParameter;
+        gtk_window_present(@ptrFromInt(existing));
+        bridge_error.sendResultToJS(allocator, action, result);
+        return;
+    }
+
+    const width = json_utils.getInt(u32, json, "width") orelse 800;
+    const height = json_utils.getInt(u32, json, "height") orelse 600;
+    if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
+        return error.InvalidParameter;
+    var created = try Window.create(.{
+        .title = title orelse name,
+        .width = width,
+        .height = height,
+        .x = json_utils.getInt(i32, json, "x"),
+        .y = json_utils.getInt(i32, json, "y"),
+        .resizable = json_utils.getBool(json, "resizable") orelse true,
+        .frameless = json_utils.getBool(json, "frameless") orelse false,
+        .fullscreen = json_utils.getBool(json, "fullscreen") orelse false,
+        .dev_tools = json_utils.getBool(json, "devTools") orelse false,
+    });
+    errdefer created.close();
+    if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
+    if (!window_registry.rememberNamedOwned(@intFromPtr(created.gtk_window), name, owner))
+        return error.TooManyWindows;
+    created.show();
+    bridge_error.sendResultToJS(allocator, action, result);
+}
+
+fn targetWindow(data: ?[]const u8) !desktop_window_registry.Entry {
+    if (data) |json| {
+        const name = try json_utils.getStringDecoded(std.heap.c_allocator, json, "windowId");
+        defer if (name) |text| std.heap.c_allocator.free(text);
+        if (name) |text| {
+            if (!std.mem.eql(u8, text, "main")) {
+                const handle = window_registry.byName(text) orelse return error.NotFound;
+                return desktop_windows.byWindow(handle) orelse error.NotFound;
+            }
+        }
+    }
+    return desktop_windows.byWindow(window_context.current() orelse return error.WindowHandleNotSet) orelse error.WindowHandleNotSet;
+}
+
+fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
+    if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create"))
+        return openNamedWindow(action, data);
+
+    const entry = try targetWindow(data);
+    const window: *anyopaque = @ptrFromInt(entry.window);
+    const webview: *anyopaque = @ptrFromInt(entry.webview);
+    if (std.mem.eql(u8, action, "show") or std.mem.eql(u8, action, "focus")) {
+        gtk_window_present(window);
+    } else if (std.mem.eql(u8, action, "hide")) {
+        gtk_widget_hide(window);
+    } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
+        gtk_window_close(window);
+    } else if (std.mem.eql(u8, action, "minimize")) {
+        gtk_window_minimize(window);
+    } else if (std.mem.eql(u8, action, "maximize")) {
+        gtk_window_maximize(window);
+    } else if (std.mem.eql(u8, action, "unmaximize") or std.mem.eql(u8, action, "restore")) {
+        gtk_window_unmaximize(window);
+    } else if (std.mem.eql(u8, action, "reload")) {
+        webkit_web_view_reload(webview);
+    } else if (std.mem.eql(u8, action, "setTitle")) {
+        const json = data orelse return error.MissingData;
+        const title = (try json_utils.getStringDecoded(std.heap.c_allocator, json, "title")) orelse return error.InvalidParameter;
+        defer std.heap.c_allocator.free(title);
+        if (std.mem.indexOfScalar(u8, title, 0) != null) return error.InvalidParameter;
+        const title_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, title);
+        defer std.heap.c_allocator.free(title_z);
+        gtk_window_set_title(window, title_z);
+    } else if (std.mem.eql(u8, action, "setSize")) {
+        const json = data orelse return error.MissingData;
+        const width = json_utils.getInt(u32, json, "width") orelse return error.InvalidParameter;
+        const height = json_utils.getInt(u32, json, "height") orelse return error.InvalidParameter;
+        if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
+            return error.InvalidParameter;
+        gtk_window_set_default_size(window, @intCast(width), @intCast(height));
+    } else if (std.mem.eql(u8, action, "setPosition")) {
+        const json = data orelse return error.MissingData;
+        const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
+        const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
+        gtk_window_set_position(window, x, y);
+    } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
+        const json = data orelse return error.MissingData;
+        const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
+        const value = (try json_utils.getStringDecoded(std.heap.c_allocator, json, key)) orelse return error.InvalidParameter;
+        defer std.heap.c_allocator.free(value);
+        if (std.mem.indexOfScalar(u8, value, 0) != null) return error.InvalidParameter;
+        const value_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, value);
+        defer std.heap.c_allocator.free(value_z);
+        if (std.mem.eql(u8, action, "loadURL")) webkit_web_view_load_uri(webview, value_z) else webkit_web_view_load_html(webview, value_z, "");
+    } else {
+        return error.PlatformNotSupported;
+    }
 }
 
 // Application state
@@ -265,9 +442,16 @@ pub const Window = struct {
         }
 
         const window = gtk_application_window_new(app_instance.?);
+        errdefer gtk_window_close(window);
 
         // Create WebView
         const webview = webkit_web_view_new();
+        const manager = webkit_web_view_get_user_content_manager(webview);
+        // Connect before registration: WebKit can emit a page message as soon
+        // as the injected document-start API becomes available.
+        if (g_signal_connect_data(manager, "script-message-received::craft", @ptrCast(&onScriptMessage), webview, null, 0) == 0 or
+            webkit_user_content_manager_register_script_message_handler(manager, "craft") == 0)
+            return error.SignalConnectionFailed;
 
         // Configure WebView settings
         const settings = webkit_web_view_get_settings(webview);
@@ -338,12 +522,10 @@ pub const Window = struct {
 
         // Register window in the multi-window registry
         const window_id = registerWindow(window, webview) orelse {
-            gtk_window_close(window);
             return error.TooManyWindows;
         };
         if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0) {
             _ = desktop_windows.forgetWindow(@intFromPtr(window));
-            gtk_window_close(window);
             return error.SignalConnectionFailed;
         }
 
@@ -357,8 +539,6 @@ pub const Window = struct {
             .x = x,
             .y = y,
         };
-        errdefer created.close();
-
         // Register the page API before any load. The user-content manager
         // reapplies this document-start script after navigation too.
         try created.injectScript(@embedFile("js/craft-bridge.js"));

@@ -24,7 +24,7 @@ pub const Registry = struct {
     }
 
     pub fn rememberWithContext(self: *Registry, window: usize, webview: usize, context: usize) ?u32 {
-        if (window == 0 or webview == 0 or self.byWindow(window) != null or self.next_id == 0) return null;
+        if (window == 0 or webview == 0 or self.byWindow(window) != null or self.byWebview(webview) != null or self.next_id == 0) return null;
         for (&self.entries) |*slot| {
             if (slot.* == null) {
                 const id = self.next_id;
@@ -51,6 +51,16 @@ pub const Registry = struct {
         for (self.entries) |slot| {
             if (slot) |entry| {
                 if (entry.window == window) return entry;
+            }
+        }
+        return null;
+    }
+
+    pub fn byWebview(self: *const Registry, webview: usize) ?Entry {
+        if (webview == 0) return null;
+        for (self.entries) |slot| {
+            if (slot) |entry| {
+                if (entry.webview == webview) return entry;
             }
         }
         return null;
@@ -121,6 +131,7 @@ test "invalid and duplicate native handles never occupy a slot" {
     try std.testing.expect(registry.remember(0x1000, 0) == null);
     try std.testing.expect(registry.remember(0x1000, 0x1001) != null);
     try std.testing.expect(registry.remember(0x1000, 0x2001) == null);
+    try std.testing.expect(registry.remember(0x2000, 0x1001) == null);
     try std.testing.expectEqual(@as(usize, 1), registry.count());
     try std.testing.expect(registry.forgetWindow(0x2000) == null);
     try std.testing.expectEqual(@as(usize, 1), registry.count());
