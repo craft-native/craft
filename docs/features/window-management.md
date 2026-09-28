@@ -77,6 +77,8 @@ await settings.toggleFullscreen()
 The bounds update preserves omitted coordinates and dimensions. Native window
 managers can adjust requested geometry for decorations or screen constraints;
 read `getBounds()` after a resize event if you need the actual result.
+Creation-time `minWidth`/`minHeight` and `maxWidth`/`maxHeight` may constrain
+either axis independently; the native window system's own minimum still applies.
 
 The older `createWindow(html, options)` overload remains available when the
 content is already in a string.

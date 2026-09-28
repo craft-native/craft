@@ -1189,8 +1189,10 @@ fn setWindowFullscreen(entry: desktop_window_registry.Entry, fullscreen: bool) !
         setWindowStyle(hwnd, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
         const width = @as(i64, info.rcMonitor.right) - @as(i64, info.rcMonitor.left);
         const height = @as(i64, info.rcMonitor.bottom) - @as(i64, info.rcMonitor.top);
+        // HWND_TOP (null) raises a child requested by another page. Keeping
+        // its old Z-order can leave a borderless "fullscreen" behind that page.
         if (width <= 0 or height <= 0 or width > std.math.maxInt(c_int) or height > std.math.maxInt(c_int) or
-            SetWindowPos(hwnd, null, @intCast(info.rcMonitor.left), @intCast(info.rcMonitor.top), @intCast(width), @intCast(height), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE) == 0)
+            SetWindowPos(hwnd, null, @intCast(info.rcMonitor.left), @intCast(info.rcMonitor.top), @intCast(width), @intCast(height), SWP_FRAMECHANGED | SWP_NOACTIVATE) == 0)
         {
             setWindowStyle(hwnd, style);
             _ = SetWindowPos(hwnd, null, bounds.x, bounds.y, @intCast(bounds.width), @intCast(bounds.height), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
@@ -1214,6 +1216,32 @@ fn setWindowFullscreen(entry: desktop_window_registry.Entry, fullscreen: bool) !
         if (change.fullscreen) |now_fullscreen|
             deliverWindowEvent(entry, if (now_fullscreen) "enter-fullscreen" else "leave-fullscreen", "");
     }
+}
+
+fn applyTrackingLimits(info: *MINMAXINFO, limits: desktop_window_controls.Limits) void {
+    if (limits.minimum) |min| {
+        info.ptMinTrackSize.x = @max(info.ptMinTrackSize.x, @as(c_long, @intCast(min.width)));
+        info.ptMinTrackSize.y = @max(info.ptMinTrackSize.y, @as(c_long, @intCast(min.height)));
+    }
+    if (limits.maximum) |max| {
+        info.ptMaxTrackSize.x = @max(info.ptMinTrackSize.x, @min(info.ptMaxTrackSize.x, @as(c_long, @intCast(max.width))));
+        info.ptMaxTrackSize.y = @max(info.ptMinTrackSize.y, @min(info.ptMaxTrackSize.y, @as(c_long, @intCast(max.height))));
+    }
+}
+
+test "Windows tracking limits retain native defaults on an omitted axis" {
+    var info: MINMAXINFO = .{
+        .ptReserved = .{ .x = 0, .y = 0 },
+        .ptMaxSize = .{ .x = 0, .y = 0 },
+        .ptMaxPosition = .{ .x = 0, .y = 0 },
+        .ptMinTrackSize = .{ .x = 120, .y = 80 },
+        .ptMaxTrackSize = .{ .x = 2000, .y = 1300 },
+    };
+    applyTrackingLimits(&info, try desktop_window_controls.parseCreateLimits("{\"minWidth\":320,\"maxWidth\":1024}"));
+    try std.testing.expectEqual(@as(c_long, 320), info.ptMinTrackSize.x);
+    try std.testing.expectEqual(@as(c_long, 80), info.ptMinTrackSize.y);
+    try std.testing.expectEqual(@as(c_long, 1024), info.ptMaxTrackSize.x);
+    try std.testing.expectEqual(@as(c_long, 1300), info.ptMaxTrackSize.y);
 }
 
 fn windowTitle(allocator: std.mem.Allocator, hwnd: HWND) ![:0]u8 {
@@ -1698,12 +1726,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
         WM_GETMINMAXINFO => {
             if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
                 const info: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lParam)));
-                if (entry.limits.minimum) |min| {
-                    info.ptMinTrackSize = .{ .x = @intCast(min.width), .y = @intCast(min.height) };
-                }
-                if (entry.limits.maximum) |max| {
-                    info.ptMaxTrackSize = .{ .x = @intCast(max.width), .y = @intCast(max.height) };
-                }
+                applyTrackingLimits(info, entry.limits);
                 return 0;
             }
         },
