@@ -1,4 +1,6 @@
 const std = @import("std");
+const window_context = @import("window_context.zig");
+const window_reply_target = @import("window_reply_target.zig");
 
 // Linux implementation using GTK3 and WebKit2GTK 4.1.
 // Requires: libgtk-3-dev, libwebkit2gtk-4.1-dev
@@ -489,28 +491,29 @@ pub const App = struct {
     }
 };
 
-/// Evaluate JavaScript in the current webview (cross-platform bridge helper).
-/// Uses the most recently registered window's webview from the window registry.
+/// Evaluate JavaScript in the page that sent the current bridge message.
+/// Native callers without a sender continue to use the latest live window.
 pub fn evalJS(script: []const u8) !void {
-    // Find the most recently registered window's webview
+    var live: [window_registry.len]usize = undefined;
+    var live_len: usize = 0;
     var latest_id: u32 = 0;
-    var latest_webview: ?*anyopaque = null;
+    var fallback: ?usize = null;
     for (window_registry) |entry| {
         if (entry) |e| {
+            live[live_len] = @intFromPtr(e.webview);
+            live_len += 1;
             if (e.id > latest_id) {
                 latest_id = e.id;
-                latest_webview = e.webview;
+                fallback = @intFromPtr(e.webview);
             }
         }
     }
 
-    if (latest_webview) |webview| {
-        const script_z = @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script) catch return error.OutOfMemory;
-        defer std.heap.c_allocator.free(script_z);
-        webkit_web_view_run_javascript(webview, script_z, null, null, null);
-    } else {
+    const target = window_reply_target.select(live[0..live_len], window_context.currentWebView(), fallback) orelse
         return error.NoWebView;
-    }
+    const script_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script);
+    defer std.heap.c_allocator.free(script_z);
+    webkit_web_view_run_javascript(@ptrFromInt(target), script_z, null, null, null);
 }
 
 // Legacy API compatibility
