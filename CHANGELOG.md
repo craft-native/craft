@@ -1,5 +1,61 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.98...v0.0.99)
+
+## 🚀 Features
+
+- **ios**: name apps with any display name, follow the system appearance, and read Apple Health workouts ([26d0afb](https://github.com/craft-native/craft/commit/26d0afb)) _(by Chris <chrisbreuer93@gmail.com>)_
+- launch styled URL and HTML windows on desktop ([1e08fa5](https://github.com/craft-native/craft/commit/1e08fa5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- read live desktop window handle state ([2133022](https://github.com/craft-native/craft/commit/2133022)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- route native desktop events to live pages ([dba36bf](https://github.com/craft-native/craft/commit/dba36bf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- track desktop window event transitions ([af909eb](https://github.com/craft-native/craft/commit/af909eb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- route Windows WebView2 messages to named windows ([fa5dd52](https://github.com/craft-native/craft/commit/fa5dd52)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- receive and route Linux window bridge messages ([4a8869a](https://github.com/craft-native/craft/commit/4a8869a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- defer WebView2 child creation past message callback ([06a7d9d](https://github.com/craft-native/craft/commit/06a7d9d)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- route WebView2 messages by bound window subscription ([32bb4a3](https://github.com/craft-native/craft/commit/32bb4a3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- retain Windows WebView2 controllers past callback ([5234e0b](https://github.com/craft-native/craft/commit/5234e0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- support Windows Zig archive layouts ([c433945](https://github.com/craft-native/craft/commit/c433945)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- locate Pantry Zig package on Windows ([6a8dc85](https://github.com/craft-native/craft/commit/6a8dc85)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- invoke pinned Zig installation on Windows ([36a06c2](https://github.com/craft-native/craft/commit/36a06c2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- scan shipped WebView2 loader with native artifacts ([9c51096](https://github.com/craft-native/craft/commit/9c51096)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- register GTK application before opening windows ([b489b0b](https://github.com/craft-native/craft/commit/b489b0b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use GTK live resize and coordinate move APIs ([4f5be92](https://github.com/craft-native/craft/commit/4f5be92)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- use injected window bridge in WebView2 SDK ([84bad09](https://github.com/craft-native/craft/commit/84bad09)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- install desktop bridge before first navigation ([bf68015](https://github.com/craft-native/craft/commit/bf68015)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- post injected bridge messages through WebView2 ([eeb0e4e](https://github.com/craft-native/craft/commit/eeb0e4e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- scope Windows WebView2 lifecycle to each window ([a02b082](https://github.com/craft-native/craft/commit/a02b082)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- forget Linux windows on native destroy ([0c310e8](https://github.com/craft-native/craft/commit/0c310e8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- route Linux bridge replies to live sender webview ([06d7f2b](https://github.com/craft-native/craft/commit/06d7f2b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 📚 Documentation
+
+- align desktop window lifecycle and CI coverage ([1279f74](https://github.com/craft-native/craft/commit/1279f74)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- describe cross-platform named-window lifecycle ([512de9f](https://github.com/craft-native/craft/commit/512de9f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧪 Tests
+
+- verify queued WebView2 child cleanup ([7da2736](https://github.com/craft-native/craft/commit/7da2736)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- trace WebView2 startup in Windows smoke ([fbe9cb3](https://github.com/craft-native/craft/commit/fbe9cb3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- smoke Windows named-window lifecycle in CI ([7a5fccd](https://github.com/craft-native/craft/commit/7a5fccd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- smoke Linux named-window lifecycle in CI ([d989008](https://github.com/craft-native/craft/commit/d989008)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.99 ([3f0e633](https://github.com/craft-native/craft/commit/3f0e633)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- Merge pull request #325 from craft-native/codex/multi-window-linux-windows ([e0055f6](https://github.com/craft-native/craft/commit/e0055f6)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#325](https://github.com/craft-native/craft/issues/325), [#325](https://github.com/craft-native/craft/issues/325))
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.97...v0.0.98)
 
 ## ✨ Features
