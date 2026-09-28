@@ -5,7 +5,7 @@
  */
 
 import { getBridge } from '../bridge/core.js'
-import { isWebKitHost } from '../bridge/webkit-pending.js'
+import { isDesktopWebViewHost } from '../bridge/webkit-pending.js'
 
 interface InjectedWindowBridge {
   _call<T>(action: string, data: Record<string, any> | undefined, windowId: string): Promise<T>
@@ -740,7 +740,7 @@ export class Window {
   // ==========================================================================
 
   private async _call<T = void>(action: string, data?: Record<string, any>): Promise<T> {
-    if (isWebKitHost()) {
+    if (isDesktopWebViewHost()) {
       const injected = getInjectedWindowBridge()
       if (!injected?._call) {
         throw new Error('Craft window bridge is unavailable')
@@ -813,7 +813,7 @@ class WindowManager {
     }
     const existing = this._windows.get(id)
 
-    if (isWebKitHost()) {
+    if (isDesktopWebViewHost()) {
       const injected = getInjectedWindowBridge()
       if (!injected?.open) {
         throw new Error('Craft window bridge is unavailable')
@@ -844,7 +844,7 @@ class WindowManager {
    * Get focused window
    */
   async getFocused(): Promise<Window | null> {
-    if (isWebKitHost()) {
+    if (isDesktopWebViewHost()) {
       const injected = getInjectedWindowBridge()
       if (!injected?._call) {
         throw new Error('Craft window bridge is unavailable')
