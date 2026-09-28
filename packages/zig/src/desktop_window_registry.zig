@@ -5,6 +5,7 @@
 //! before any later bridge reply or resize selects its destroyed webview.
 
 const std = @import("std");
+const desktop_window_controls = @import("desktop_window_controls.zig");
 
 pub const capacity = 32;
 pub const Geometry = struct {
@@ -35,6 +36,10 @@ pub const Entry = struct {
     geometry: ?Geometry = null,
     minimized: bool = false,
     fullscreen: bool = false,
+    limits: desktop_window_controls.Limits = .{},
+    /// Windows restores these when leaving borderless fullscreen.
+    windowed_geometry: ?Geometry = null,
+    windowed_style: ?isize = null,
 };
 
 pub const Registry = struct {
@@ -94,6 +99,33 @@ pub const Registry = struct {
             if (slot.*) |*entry| {
                 if (entry.window == window) {
                     entry.message_token = token;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn setLimits(self: *Registry, window: usize, limits: desktop_window_controls.Limits) bool {
+        if (window == 0) return false;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    entry.limits = limits;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn setWindowedState(self: *Registry, window: usize, geometry: ?Geometry, style: ?isize) bool {
+        if (window == 0) return false;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    entry.windowed_geometry = geometry;
+                    entry.windowed_style = style;
                     return true;
                 }
             }
@@ -239,6 +271,23 @@ test "a web message subscription belongs only to its live window" {
     try std.testing.expect(registry.byWebview(0x2001).?.message_token == null);
     try std.testing.expectEqual(@as(?i64, 42), registry.forgetWindow(0x1000).?.message_token);
     try std.testing.expect(registry.byWebview(0x1001) == null);
+}
+
+test "portable controls belong to one live window and reset on reopen" {
+    var registry: Registry = .{};
+    _ = registry.remember(0x1000, 0x1001);
+    _ = registry.remember(0x2000, 0x2001);
+    const limits: desktop_window_controls.Limits = .{ .minimum = .{ .width = 320, .height = 240 } };
+    try std.testing.expect(registry.setLimits(0x1000, limits));
+    try std.testing.expect(registry.setWindowedState(0x1000, .{ .x = 10, .y = 20, .width = 800, .height = 600 }, 0x55));
+    try std.testing.expect(registry.byWindow(0x2000).?.limits.minimum == null);
+    try std.testing.expect(registry.byWindow(0x2000).?.windowed_geometry == null);
+    try std.testing.expectEqual(@as(u32, 320), registry.byWindow(0x1000).?.limits.minimum.?.width);
+    _ = registry.forgetWindow(0x1000);
+    try std.testing.expect(!registry.setLimits(0x1000, limits));
+    _ = registry.remember(0x1000, 0x3001);
+    try std.testing.expect(registry.byWindow(0x1000).?.limits.minimum == null);
+    try std.testing.expect(registry.byWindow(0x1000).?.windowed_style == null);
 }
 
 test "geometry changes belong to one live window and reset on reopen" {

@@ -1,0 +1,124 @@
+//! Validated, platform-neutral inputs for the portable window controls.
+const std = @import("std");
+
+pub const Bounds = struct {
+    x: ?i32 = null,
+    y: ?i32 = null,
+    width: ?u32 = null,
+    height: ?u32 = null,
+};
+
+pub const Size = struct { width: u32, height: u32 };
+
+pub const Limits = struct {
+    minimum: ?Size = null,
+    maximum: ?Size = null,
+
+    pub fn withMinimum(self: Limits, size: Size) !Limits {
+        if (self.maximum) |max| {
+            if (size.width > max.width or size.height > max.height) return error.InvalidParameter;
+        }
+        var next = self;
+        next.minimum = size;
+        return next;
+    }
+
+    pub fn withMaximum(self: Limits, size: Size) !Limits {
+        if (self.minimum) |min| {
+            if (size.width < min.width or size.height < min.height) return error.InvalidParameter;
+        }
+        var next = self;
+        next.maximum = size;
+        return next;
+    }
+
+    pub fn clamp(self: Limits, size: Size) Size {
+        var result = size;
+        if (self.minimum) |min| {
+            result.width = @max(result.width, min.width);
+            result.height = @max(result.height, min.height);
+        }
+        if (self.maximum) |max| {
+            result.width = @min(result.width, max.width);
+            result.height = @min(result.height, max.height);
+        }
+        return result;
+    }
+};
+
+fn object(data: []const u8) !std.json.Parsed(std.json.Value) {
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.c_allocator, data, .{}) catch return error.InvalidParameter;
+    if (parsed.value != .object) {
+        parsed.deinit();
+        return error.InvalidParameter;
+    }
+    return parsed;
+}
+
+fn integer(comptime T: type, value: std.json.Value) !T {
+    if (value != .integer) return error.InvalidParameter;
+    return std.math.cast(T, value.integer) orelse error.InvalidParameter;
+}
+
+fn optionalInteger(comptime T: type, value: std.json.Value, key: []const u8) !?T {
+    const field = value.object.get(key) orelse return null;
+    return try integer(T, field);
+}
+
+pub fn parseBounds(data: ?[]const u8) !Bounds {
+    var parsed = try object(data orelse return error.MissingData);
+    defer parsed.deinit();
+    const value = parsed.value;
+    const result: Bounds = .{
+        .x = try optionalInteger(i32, value, "x"),
+        .y = try optionalInteger(i32, value, "y"),
+        .width = try optionalInteger(u32, value, "width"),
+        .height = try optionalInteger(u32, value, "height"),
+    };
+    if (result.width == 0 or result.height == 0) return error.InvalidParameter;
+    if (result.width) |width| {
+        if (width > std.math.maxInt(c_int)) return error.InvalidParameter;
+    }
+    if (result.height) |height| {
+        if (height > std.math.maxInt(c_int)) return error.InvalidParameter;
+    }
+    return result;
+}
+
+pub fn parseSize(data: ?[]const u8) !Size {
+    var parsed = try object(data orelse return error.MissingData);
+    defer parsed.deinit();
+    const value = parsed.value;
+    const width = try integer(u32, value.object.get("width") orelse return error.InvalidParameter);
+    const height = try integer(u32, value.object.get("height") orelse return error.InvalidParameter);
+    if (width == 0 or height == 0 or width > std.math.maxInt(c_int) or height > std.math.maxInt(c_int))
+        return error.InvalidParameter;
+    return .{ .width = width, .height = height };
+}
+
+pub fn parseBool(data: ?[]const u8, key: []const u8) !bool {
+    var parsed = try object(data orelse return error.MissingData);
+    defer parsed.deinit();
+    const value = parsed.value.object.get(key) orelse return error.InvalidParameter;
+    if (value != .bool) return error.InvalidParameter;
+    return value.bool;
+}
+
+test "partial bounds preserve missing fields and reject invalid dimensions" {
+    const only_x = try parseBounds("{\"x\":-12,\"animate\":true}");
+    try std.testing.expectEqual(@as(?i32, -12), only_x.x);
+    try std.testing.expect(only_x.y == null and only_x.width == null and only_x.height == null);
+    try std.testing.expectError(error.InvalidParameter, parseBounds("{\"width\":0}"));
+    try std.testing.expectError(error.InvalidParameter, parseBounds("{\"width\":1.5}"));
+    try std.testing.expectError(error.InvalidParameter, parseBounds("{\"x\":2147483648}"));
+}
+
+test "size limits reject crossing and clamp programmatic sizes" {
+    var limits: Limits = .{};
+    limits = try limits.withMinimum(.{ .width = 320, .height = 240 });
+    limits = try limits.withMaximum(.{ .width = 1024, .height = 768 });
+    try std.testing.expectError(error.InvalidParameter, limits.withMinimum(.{ .width = 1200, .height = 240 }));
+    try std.testing.expectError(error.InvalidParameter, limits.withMaximum(.{ .width = 100, .height = 768 }));
+    try std.testing.expectEqualDeep(Size{ .width = 320, .height = 768 }, limits.clamp(.{ .width = 100, .height = 900 }));
+    try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":-1,\"height\":200}"));
+}
