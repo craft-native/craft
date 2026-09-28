@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.99...v0.0.100)
+
+## 🚀 Features
+
+- **ios**: swipe back through history, and let Safari inspect debug builds ([800c6d1](https://github.com/craft-native/craft/commit/800c6d1)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **ios**: let a person take their time with a permission sheet, and ask for health read access alone ([852c2ba](https://github.com/craft-native/craft/commit/852c2ba)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.100 ([c4d275f](https://github.com/craft-native/craft/commit/c4d275f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.98...v0.0.99)
 
 ## 🚀 Features
