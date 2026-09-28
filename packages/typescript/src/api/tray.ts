@@ -317,7 +317,8 @@ export class SystemTray {
    */
   async setIcon(icon: string): Promise<void> {
     this._options.icon = icon
-    await this._call('setIcon', icon)
+    // Native reads `{ icon }`: an SF Symbol name, a Craft icon alias, or a path.
+    await this._call('setIcon', JSON.stringify({ icon }))
   }
 
   /**
@@ -342,6 +343,13 @@ export class SystemTray {
         // Generate ID if not provided
         if (!processedItem.id && processedItem.label) {
           processedItem.id = `menu_${index}_${Date.now()}`
+        }
+
+        // Native routes a click by `action`, not `id`, and gives an item
+        // without one no target at all - so a menu built from ids alone
+        // rendered, and no click on it ever reached onMenuAction.
+        if (!processedItem.action && processedItem.id && processedItem.type !== 'separator') {
+          processedItem.action = processedItem.id
         }
 
         // Process submenu recursively
@@ -461,10 +469,14 @@ export class SystemTray {
     if (typeof window !== 'undefined' && (window as any).webkit?.messageHandlers?.craft) {
       return new Promise((resolve, reject) => {
         try {
+          // The native dispatcher reads `t` (target) and `a` (action) and drops
+          // anything else without a word: this used to post `type`/`action`/
+          // `data`, so setTitle, setIcon and setMenu did nothing on macOS.
+          // Same shape as `_post` in the injected craft-bridge.js.
           (window as any).webkit.messageHandlers.craft.postMessage({
-            type: 'tray',
-            action,
-            data: typeof data === 'string' ? data : JSON.stringify(data)
+            t: 'tray',
+            a: action,
+            d: typeof data === 'string' ? data : JSON.stringify(data),
           })
           resolve(undefined as T)
         }
