@@ -9,6 +9,17 @@ pub const Bounds = struct {
 };
 
 pub const Size = struct { width: u32, height: u32 };
+pub const Position = struct { x: i32, y: i32 };
+pub const Workarea = struct { x: i32, y: i32, width: u32, height: u32 };
+
+pub fn centerIn(area: Workarea, size: Size) !Position {
+    const x = @as(i64, area.x) + @divTrunc(@as(i64, area.width) - @as(i64, size.width), 2);
+    const y = @as(i64, area.y) + @divTrunc(@as(i64, area.height) - @as(i64, size.height), 2);
+    return .{
+        .x = std.math.cast(i32, x) orelse return error.InvalidParameter,
+        .y = std.math.cast(i32, y) orelse return error.InvalidParameter,
+    };
+}
 
 pub const Limits = struct {
     minimum: ?Size = null,
@@ -130,4 +141,15 @@ test "portable control inputs require actual JSON booleans and integers" {
     try std.testing.expectError(error.InvalidParameter, parseBool("{\"fullscreen\":null}", "fullscreen"));
     try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640.5,\"height\":480}"));
     try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640,\"height\":0}"));
+}
+
+test "centering uses the selected monitor workarea including negative origins" {
+    try std.testing.expectEqualDeep(Position{ .x = -1360, .y = 300 }, try centerIn(
+        .{ .x = -1920, .y = 0, .width = 1920, .height = 1080 },
+        .{ .width = 800, .height = 480 },
+    ));
+    try std.testing.expectEqualDeep(Position{ .x = 200, .y = 150 }, try centerIn(
+        .{ .x = 0, .y = 0, .width = 1200, .height = 900 },
+        .{ .width = 800, .height = 600 },
+    ));
 }

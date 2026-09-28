@@ -476,9 +476,12 @@ fn centerWindow(window: *anyopaque) !void {
     var workarea: GdkRectangle = undefined;
     gdk_monitor_get_workarea(monitor, &workarea);
     const bounds = try windowGeometry(window);
-    const x = @as(i64, workarea.x) + @divTrunc(@as(i64, workarea.width) - @as(i64, bounds.width), 2);
-    const y = @as(i64, workarea.y) + @divTrunc(@as(i64, workarea.height) - @as(i64, bounds.height), 2);
-    gtk_window_move(window, std.math.cast(c_int, x) orelse return error.NativeCallFailed, std.math.cast(c_int, y) orelse return error.NativeCallFailed);
+    if (workarea.width <= 0 or workarea.height <= 0) return error.NativeCallFailed;
+    const position = try desktop_window_controls.centerIn(
+        .{ .x = workarea.x, .y = workarea.y, .width = @intCast(workarea.width), .height = @intCast(workarea.height) },
+        .{ .width = bounds.width, .height = bounds.height },
+    );
+    gtk_window_move(window, position.x, position.y);
 }
 
 fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
@@ -585,6 +588,10 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else {
         return error.PlatformNotSupported;
     }
+}
+
+test "Linux portable controls require an authenticated live sender" {
+    try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("setBounds", "{}"));
 }
 
 // Application state

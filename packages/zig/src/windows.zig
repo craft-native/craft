@@ -2,6 +2,7 @@ const std = @import("std");
 const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_bridge_text = @import("desktop_bridge_text.zig");
+const desktop_window_controls = @import("desktop_window_controls.zig");
 const desktop_script_encoding = @import("desktop_script_encoding.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
@@ -63,6 +64,20 @@ pub const RECT = extern struct {
     right: c_long,
     bottom: c_long,
 };
+pub const POINT = extern struct { x: c_long, y: c_long };
+pub const MINMAXINFO = extern struct {
+    ptReserved: POINT,
+    ptMaxSize: POINT,
+    ptMaxPosition: POINT,
+    ptMinTrackSize: POINT,
+    ptMaxTrackSize: POINT,
+};
+pub const MONITORINFO = extern struct {
+    cbSize: DWORD,
+    rcMonitor: RECT,
+    rcWork: RECT,
+    dwFlags: DWORD,
+};
 
 // COM base type
 pub const GUID = extern struct {
@@ -82,6 +97,7 @@ pub const WS_OVERLAPPEDWINDOW: DWORD = 0x00CF0000;
 pub const WS_VISIBLE: DWORD = 0x10000000;
 pub const WS_POPUP: DWORD = 0x80000000;
 pub const WS_THICKFRAME: DWORD = 0x00040000;
+pub const WS_MAXIMIZEBOX: DWORD = 0x00010000;
 pub const WS_EX_TOPMOST: DWORD = 0x00000008;
 pub const WS_EX_LAYERED: DWORD = 0x00080000;
 pub const CW_USEDEFAULT: c_int = @bitCast(@as(c_uint, 0x80000000));
@@ -94,10 +110,18 @@ pub const WM_MOVE: UINT = 0x0003;
 pub const WM_SIZE: UINT = 0x0005;
 pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
+pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_QUIT: UINT = 0x0012;
 const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
+const GWL_STYLE: c_int = -16;
+const SWP_NOSIZE: UINT = 0x0001;
+const SWP_NOMOVE: UINT = 0x0002;
+const SWP_NOZORDER: UINT = 0x0004;
+const SWP_FRAMECHANGED: UINT = 0x0020;
+const SWP_NOACTIVATE: UINT = 0x0010;
+const MONITOR_DEFAULTTONEAREST: DWORD = 2;
 
 // Win32 API functions
 pub extern "user32" fn RegisterClassExW(*const WNDCLASSEXW) callconv(.c) u16;
@@ -135,6 +159,8 @@ pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOO
 pub extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowLongPtrW(hWnd: HWND, nIndex: c_int, dwNewLong: isize) callconv(.c) isize;
 pub extern "user32" fn GetWindowLongPtrW(hWnd: HWND, nIndex: c_int) callconv(.c) isize;
+pub extern "user32" fn MonitorFromWindow(hWnd: HWND, dwFlags: DWORD) callconv(.c) ?*anyopaque;
+pub extern "user32" fn GetMonitorInfoW(hMonitor: *anyopaque, lpmi: *MONITORINFO) callconv(.c) BOOL;
 pub extern "kernel32" fn GetModuleHandleW(lpModuleName: ?LPCWSTR) callconv(.c) ?HINSTANCE;
 pub extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.c) void;
 pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.c) void;
@@ -1091,6 +1117,91 @@ fn windowGeometry(hwnd: HWND) !desktop_window_registry.Geometry {
     return .{ .x = @intCast(rect.left), .y = @intCast(rect.top), .width = @intCast(width), .height = @intCast(height) };
 }
 
+fn windowStyle(hwnd: HWND) DWORD {
+    return @truncate(@as(usize, @bitCast(GetWindowLongPtrW(hwnd, GWL_STYLE))));
+}
+
+fn setWindowStyle(hwnd: HWND, style: DWORD) void {
+    _ = SetWindowLongPtrW(hwnd, GWL_STYLE, @bitCast(@as(usize, style)));
+}
+
+fn monitorInfo(hwnd: HWND) !MONITORINFO {
+    const monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) orelse return error.NativeCallFailed;
+    var info: MONITORINFO = .{ .cbSize = @sizeOf(MONITORINFO), .rcMonitor = undefined, .rcWork = undefined, .dwFlags = 0 };
+    if (GetMonitorInfoW(monitor, &info) == 0) return error.NativeCallFailed;
+    return info;
+}
+
+fn centerWindow(hwnd: HWND) !void {
+    const info = try monitorInfo(hwnd);
+    const bounds = try windowGeometry(hwnd);
+    const work_width = @as(i64, info.rcWork.right) - @as(i64, info.rcWork.left);
+    const work_height = @as(i64, info.rcWork.bottom) - @as(i64, info.rcWork.top);
+    if (work_width <= 0 or work_height <= 0) return error.NativeCallFailed;
+    const position = try desktop_window_controls.centerIn(
+        .{ .x = @intCast(info.rcWork.left), .y = @intCast(info.rcWork.top), .width = @intCast(work_width), .height = @intCast(work_height) },
+        .{ .width = bounds.width, .height = bounds.height },
+    );
+    if (SetWindowPos(hwnd, null, position.x, position.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) == 0)
+        return error.NativeCallFailed;
+}
+
+fn setWindowResizable(entry: desktop_window_registry.Entry, resizable: bool) !void {
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    const current = entry.windowed_style orelse @as(isize, @bitCast(@as(usize, windowStyle(hwnd))));
+    const previous: DWORD = @truncate(@as(usize, @bitCast(current)));
+    var style: DWORD = @truncate(@as(usize, @bitCast(current)));
+    if (resizable) style |= WS_THICKFRAME | WS_MAXIMIZEBOX else style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    if (entry.fullscreen) {
+        if (!desktop_windows.setWindowedState(entry.window, entry.windowed_geometry, @bitCast(@as(usize, style)))) return error.WindowHandleNotSet;
+        return;
+    }
+    setWindowStyle(hwnd, style);
+    if (SetWindowPos(hwnd, null, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE) == 0) {
+        setWindowStyle(hwnd, previous);
+        _ = SetWindowPos(hwnd, null, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+        return error.NativeCallFailed;
+    }
+}
+
+fn setWindowFullscreen(entry: desktop_window_registry.Entry, fullscreen: bool) !void {
+    if (entry.fullscreen == fullscreen) return;
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    if (fullscreen) {
+        const bounds = try windowGeometry(hwnd);
+        const info = try monitorInfo(hwnd);
+        const style = windowStyle(hwnd);
+        if (!desktop_windows.setWindowedState(entry.window, bounds, @bitCast(@as(usize, style)))) return error.WindowHandleNotSet;
+        setWindowStyle(hwnd, (style & ~WS_OVERLAPPEDWINDOW) | WS_POPUP);
+        const width = @as(i64, info.rcMonitor.right) - @as(i64, info.rcMonitor.left);
+        const height = @as(i64, info.rcMonitor.bottom) - @as(i64, info.rcMonitor.top);
+        if (width <= 0 or height <= 0 or width > std.math.maxInt(c_int) or height > std.math.maxInt(c_int) or
+            SetWindowPos(hwnd, null, @intCast(info.rcMonitor.left), @intCast(info.rcMonitor.top), @intCast(width), @intCast(height), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE) == 0)
+        {
+            setWindowStyle(hwnd, style);
+            _ = SetWindowPos(hwnd, null, bounds.x, bounds.y, @intCast(bounds.width), @intCast(bounds.height), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+            _ = desktop_windows.setWindowedState(entry.window, null, null);
+            return error.NativeCallFailed;
+        }
+    } else {
+        const style = entry.windowed_style orelse return error.NativeCallFailed;
+        const bounds = entry.windowed_geometry orelse return error.NativeCallFailed;
+        const fullscreen_style = windowStyle(hwnd);
+        setWindowStyle(hwnd, @truncate(@as(usize, @bitCast(style))));
+        const size = entry.limits.clamp(.{ .width = bounds.width, .height = bounds.height });
+        if (SetWindowPos(hwnd, null, bounds.x, bounds.y, @intCast(size.width), @intCast(size.height), SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE) == 0) {
+            setWindowStyle(hwnd, fullscreen_style);
+            _ = SetWindowPos(hwnd, null, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+            return error.NativeCallFailed;
+        }
+        _ = desktop_windows.setWindowedState(entry.window, null, null);
+    }
+    if (desktop_windows.observeState(entry.window, entry.minimized, fullscreen)) |change| {
+        if (change.fullscreen) |now_fullscreen|
+            deliverWindowEvent(entry, if (now_fullscreen) "enter-fullscreen" else "leave-fullscreen", "");
+    }
+}
+
 fn windowTitle(allocator: std.mem.Allocator, hwnd: HWND) ![:0]u8 {
     const length = GetWindowTextLengthW(hwnd);
     if (length < 0) return error.NativeCallFailed;
@@ -1155,17 +1266,42 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const title_wide = utf8ToUtf16Z(256, title) catch return error.InvalidParameter;
         if (SetWindowTextW(hwnd, @ptrCast(&title_wide)) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "setSize")) {
-        const json = data orelse return error.MissingData;
-        const width = json_utils.getInt(u32, json, "width") orelse return error.InvalidParameter;
-        const height = json_utils.getInt(u32, json, "height") orelse return error.InvalidParameter;
-        if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
-            return error.InvalidParameter;
-        if (SetWindowPos(hwnd, null, 0, 0, @intCast(width), @intCast(height), 0x0002) == 0) return error.NativeCallFailed;
+        const size = entry.limits.clamp(try desktop_window_controls.parseSize(data));
+        if (SetWindowPos(hwnd, null, 0, 0, @intCast(size.width), @intCast(size.height), SWP_NOMOVE | SWP_NOZORDER) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "setPosition")) {
         const json = data orelse return error.MissingData;
         const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
         const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
-        if (SetWindowPos(hwnd, null, x, y, 0, 0, 0x0001) == 0) return error.NativeCallFailed;
+        if (SetWindowPos(hwnd, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "setBounds")) {
+        const update = try desktop_window_controls.parseBounds(data);
+        const current = try windowGeometry(hwnd);
+        const size = entry.limits.clamp(.{ .width = update.width orelse current.width, .height = update.height orelse current.height });
+        const flags: UINT = SWP_NOZORDER | SWP_NOACTIVATE |
+            (if (update.x == null and update.y == null) SWP_NOMOVE else @as(UINT, 0)) |
+            (if (update.width == null and update.height == null) SWP_NOSIZE else @as(UINT, 0));
+        if (SetWindowPos(hwnd, null, update.x orelse current.x, update.y orelse current.y, @intCast(size.width), @intCast(size.height), flags) == 0)
+            return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "center")) {
+        try centerWindow(hwnd);
+    } else if (std.mem.eql(u8, action, "setResizable")) {
+        try setWindowResizable(entry, try desktop_window_controls.parseBool(data, "resizable"));
+    } else if (std.mem.eql(u8, action, "isResizable")) {
+        const style: DWORD = if (entry.windowed_style) |saved| @truncate(@as(usize, @bitCast(saved))) else windowStyle(hwnd);
+        bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
+    } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
+        const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
+        try setWindowFullscreen(entry, fullscreen);
+    } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMaximumSize")) {
+        const size = try desktop_window_controls.parseSize(data);
+        const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
+        if (!desktop_windows.setLimits(entry.window, limits)) return error.WindowHandleNotSet;
+        const current = try windowGeometry(hwnd);
+        const clamped = limits.clamp(.{ .width = current.width, .height = current.height });
+        if (clamped.width != current.width or clamped.height != current.height) {
+            if (SetWindowPos(hwnd, null, 0, 0, @intCast(clamped.width), @intCast(clamped.height), SWP_NOMOVE | SWP_NOZORDER) == 0)
+                return error.NativeCallFailed;
+        }
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
@@ -1177,6 +1313,10 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else {
         return error.PlatformNotSupported;
     }
+}
+
+test "Windows portable controls require an authenticated live sender" {
+    try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("setBounds", "{}"));
 }
 
 pub const WindowStyle = struct {
@@ -1232,9 +1372,9 @@ pub const Window = struct {
         }
 
         // Determine window style
-        var style: DWORD = if (options.frameless) WS_POPUP else WS_OVERLAPPEDWINDOW;
-        if (!options.resizable and !options.frameless) {
-            style &= ~WS_THICKFRAME;
+        var style: DWORD = if (options.frameless) WS_POPUP | WS_THICKFRAME else WS_OVERLAPPEDWINDOW;
+        if (!options.resizable) {
+            style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
         }
         style |= WS_VISIBLE;
 
@@ -1348,6 +1488,7 @@ pub const Window = struct {
             return error.WebMessageRegistrationFailed;
         }
         observeWindowGeometry(desktop_windows.byId(window_id).?);
+        if (options.fullscreen) try setWindowFullscreen(desktop_windows.byId(window_id).?, true);
 
         var window = Window{
             .id = window_id,
@@ -1460,11 +1601,8 @@ pub const Window = struct {
     }
 
     pub fn setFullscreen(self: *Window, fullscreen: bool) void {
-        _ = self;
-        _ = fullscreen;
-        // Would modify window style and size
-        // GetWindowLong/SetWindowLong to change WS_OVERLAPPEDWINDOW style
-        // SetWindowPos to resize to full screen dimensions
+        const entry = self.liveEntry() orelse return;
+        setWindowFullscreen(entry, fullscreen) catch {};
     }
 
     pub fn executeJavaScript(self: *Window, script: []const u8) !void {
@@ -1549,6 +1687,18 @@ pub const Window = struct {
 
 fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT {
     switch (msg) {
+        WM_GETMINMAXINFO => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                const info: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lParam)));
+                if (entry.limits.minimum) |min| {
+                    info.ptMinTrackSize = .{ .x = @intCast(min.width), .y = @intCast(min.height) };
+                }
+                if (entry.limits.maximum) |max| {
+                    info.ptMaxTrackSize = .{ .x = @intCast(max.width), .y = @intCast(max.height) };
+                }
+                return 0;
+            }
+        },
         WM_CRAFT_OPEN_WINDOW => {
             processPendingOpens();
             return 0;
@@ -1561,7 +1711,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 _ = GetClientRect(hwnd, &bounds);
                 _ = controller.lpVtbl.put_Bounds(controller, bounds);
                 const minimized = wParam == 1; // SIZE_MINIMIZED
-                if (desktop_windows.observeState(entry.window, minimized, false)) |change| {
+                if (desktop_windows.observeState(entry.window, minimized, entry.fullscreen)) |change| {
                     if (change.minimized) |now_minimized|
                         deliverWindowEvent(entry, if (now_minimized) "minimize" else "restore", "");
                 }
