@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 export function pinnedZigVersion(root: string): string {
@@ -9,10 +9,19 @@ export function pinnedZigVersion(root: string): string {
   return version.replace('_', '+')
 }
 
-export function resolveZig(root: string, env: NodeJS.ProcessEnv = process.env): { path: string, version: string, overridden: boolean } {
+export function pinnedPantryZigPath(root: string, expected: string, env: NodeJS.ProcessEnv, hostPlatform: string): string | null {
+  if (hostPlatform !== 'win32' || env.CRAFT_ZIG) return null
+  const installed = join(root, 'pantry', 'ziglang.org', `v${expected.replace('+', '_')}`, 'bin', 'zig.exe')
+  return existsSync(installed) ? installed : null
+}
+
+export function resolveZig(root: string, env: NodeJS.ProcessEnv = process.env, hostPlatform = process.platform): { path: string, version: string, overridden: boolean } {
   const expected = pinnedZigVersion(root)
   const executable = env.CRAFT_ZIG || 'zig'
-  const path = Bun.which(executable, { PATH: env.PATH, cwd: root })
+  // Pantry's Windows .bin/zig.exe shim reports a version, but Zig resolves
+  // its lib directory relative to argv[0] and cannot build through the shim.
+  // Invoke the locked package's actual binary whenever Pantry installed it.
+  const path = pinnedPantryZigPath(root, expected, env, hostPlatform) ?? Bun.which(executable, { PATH: env.PATH, cwd: root })
   const remedy = 'Activate the pinned Pantry toolchain, or set CRAFT_ZIG to its executable. To intentionally test a different snapshot, also set CRAFT_ALLOW_UNPINNED_ZIG=1.'
   if (!path)
     throw new Error(`Zig ${expected} was not found (${executable}). ${remedy}`)
