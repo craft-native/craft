@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.97...v0.0.98)
+
+## ✨ Features
+
+- **tray**: --tray-popover, a status item's native popover ([6da2680](https://github.com/craft-native/craft/commit/6da2680)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- **cli**: give tray apps every window style option ([cb213b6](https://github.com/craft-native/craft/commit/cb213b6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🔧 Chores
+
+- release v0.0.98 ([d81e1d8](https://github.com/craft-native/craft/commit/d81e1d8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.96...v0.0.97)
 
 ## 🐛 Bug Fixes
