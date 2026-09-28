@@ -1,4 +1,7 @@
 const std = @import("std");
+const desktop_window_registry = @import("desktop_window_registry.zig");
+const window_context = @import("window_context.zig");
+const window_reply_target = @import("window_reply_target.zig");
 
 // Windows implementation using Win32 API and WebView2
 // Requires: Microsoft.Web.WebView2 NuGet package
@@ -699,11 +702,9 @@ var app_running = false;
 var window_class_registered = false;
 const CLASS_NAME: [:0]const u16 = &[_:0]u16{ 'Z', 'y', 't', 'e', 'W', 'i', 'n', 'd', 'o', 'w' };
 
-// WebView2 owns these COM interfaces independently of the stack value returned
-// from Window.create. Keep only stable COM pointers in global callback state.
-var g_active_hwnd: ?HWND = null;
-var g_active_controller: ?*ICoreWebView2Controller = null;
-var g_active_webview: ?*ICoreWebView2 = null;
+// Native callbacks arrive with an HWND, not the stack value returned by
+// Window.create. Keep stable handles for every live window here.
+var desktop_windows: desktop_window_registry.Registry = .{};
 
 pub const WindowStyle = struct {
     frameless: bool = false,
@@ -721,6 +722,7 @@ pub const WindowStyle = struct {
 };
 
 pub const Window = struct {
+    id: u32,
     hwnd: HWND,
     controller: ?*ICoreWebView2Controller,
     webview: ?*ICoreWebView2,
@@ -790,6 +792,7 @@ pub const Window = struct {
             hInstance,
             null,
         ) orelse return error.WindowCreationFailed;
+        errdefer _ = DestroyWindow(hwnd);
 
         // ----------------------------------------------------------------
         // Async WebView2 initialization
@@ -851,10 +854,20 @@ pub const Window = struct {
 
         std.debug.print("[Media] Windows WebView2 configured for camera/microphone access\n", .{});
 
+        const controller = init_ctx.controller orelse return error.WebView2InitFailed;
+        const webview = init_ctx.webview orelse return error.WebView2InitFailed;
+        const window_id = desktop_windows.rememberWithContext(@intFromPtr(hwnd), @intFromPtr(webview), @intFromPtr(controller)) orelse {
+            _ = controller.lpVtbl.Close(controller);
+            _ = webview.lpVtbl.Release(webview);
+            _ = controller.lpVtbl.Release(controller);
+            return error.TooManyWindows;
+        };
+
         const window = Window{
+            .id = window_id,
             .hwnd = hwnd,
-            .controller = init_ctx.controller,
-            .webview = init_ctx.webview,
+            .controller = controller,
+            .webview = webview,
             .title = options.title,
             .width = options.width,
             .height = options.height,
@@ -862,35 +875,39 @@ pub const Window = struct {
             .y = y,
         };
 
-        g_active_hwnd = hwnd;
-        g_active_controller = window.controller;
-        g_active_webview = window.webview;
-
         return window;
     }
 
+    fn liveEntry(self: *const Window) ?desktop_window_registry.Entry {
+        const entry = desktop_windows.byId(self.id) orelse return null;
+        return if (entry.window == @intFromPtr(self.hwnd)) entry else null;
+    }
+
     pub fn show(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_SHOW);
         _ = UpdateWindow(self.hwnd);
     }
 
     pub fn hide(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_HIDE);
     }
 
     pub fn close(self: *Window) void {
-        if (self.controller) |ctrl| {
-            _ = ctrl.lpVtbl.Close(ctrl);
+        if (self.liveEntry() == null) {
+            self.controller = null;
+            self.webview = null;
+            return;
         }
-        self.controller = null;
-        self.webview = null;
-        g_active_hwnd = null;
-        g_active_controller = null;
-        g_active_webview = null;
-        _ = DestroyWindow(self.hwnd);
+        if (DestroyWindow(self.hwnd) != 0) {
+            self.controller = null;
+            self.webview = null;
+        }
     }
 
     pub fn setSize(self: *Window, width: u32, height: u32) void {
+        if (self.liveEntry() == null) return;
         _ = SetWindowPos(self.hwnd, null, 0, 0, @intCast(width), @intCast(height), 0x0002); // SWP_NOMOVE
         self.width = width;
         self.height = height;
@@ -898,12 +915,14 @@ pub const Window = struct {
     }
 
     pub fn setPosition(self: *Window, x_pos: i32, y_pos: i32) void {
+        if (self.liveEntry() == null) return;
         _ = SetWindowPos(self.hwnd, null, @intCast(x_pos), @intCast(y_pos), 0, 0, 0x0001); // SWP_NOSIZE
         self.x = x_pos;
         self.y = y_pos;
     }
 
     pub fn setTitle(self: *Window, title: []const u8) void {
+        if (self.liveEntry() == null) return;
         var title_wide_buf: [256]u16 = undefined;
         const len = std.unicode.utf8ToUtf16Le(&title_wide_buf, title) catch return;
         title_wide_buf[len] = 0;
@@ -912,7 +931,8 @@ pub const Window = struct {
     }
 
     pub fn loadURL(self: *Window, url: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         var url_wide = try utf8ToUtf16Z(4096, url);
         const url_ptr: LPCWSTR = @ptrCast(&url_wide);
         const hr = webview.lpVtbl.Navigate(webview, url_ptr);
@@ -923,7 +943,8 @@ pub const Window = struct {
     }
 
     pub fn loadHTML(self: *Window, html: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         // NavigateToString needs null-terminated UTF-16.
         // For large HTML we allocate on the heap.
         const wide_len = html.len + 1; // rough upper bound for ASCII-heavy content
@@ -942,10 +963,12 @@ pub const Window = struct {
     }
 
     pub fn maximize(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
     }
 
     pub fn minimize(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_MINIMIZE);
     }
 
@@ -958,7 +981,8 @@ pub const Window = struct {
     }
 
     pub fn executeJavaScript(self: *Window, script: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         var script_wide = try utf8ToUtf16Z(16384, script);
         const script_ptr: LPCWSTR = @ptrCast(&script_wide);
 
@@ -978,7 +1002,8 @@ pub const Window = struct {
     }
 
     pub fn injectScript(self: *Window, script: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         var script_wide = try utf8ToUtf16Z(16384, script);
         const script_ptr: LPCWSTR = @ptrCast(&script_wide);
 
@@ -997,13 +1022,15 @@ pub const Window = struct {
     }
 
     pub fn openDevTools(self: *Window) void {
-        const webview = self.webview orelse return;
+        const entry = self.liveEntry() orelse return;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         _ = webview.lpVtbl.OpenDevToolsWindow(webview);
     }
 
     // Resize the WebView2 control to match the current client area
     fn resizeWebView(self: *Window) void {
-        const controller = self.controller orelse return;
+        const entry = self.liveEntry() orelse return;
+        const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
         var bounds: RECT = undefined;
         _ = GetClientRect(self.hwnd, &bounds);
         _ = controller.lpVtbl.put_Bounds(controller, bounds);
@@ -1013,18 +1040,29 @@ pub const Window = struct {
 fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT {
     switch (msg) {
         WM_SIZE => {
-            // Resize the WebView2 control to fill the window
-            if (g_active_hwnd == hwnd) {
-                if (g_active_controller) |controller| {
-                    var bounds: RECT = undefined;
-                    _ = GetClientRect(hwnd, &bounds);
-                    _ = controller.lpVtbl.put_Bounds(controller, bounds);
-                }
+            // A resize belongs to this HWND, not whichever window was created last.
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
+                var bounds: RECT = undefined;
+                _ = GetClientRect(hwnd, &bounds);
+                _ = controller.lpVtbl.put_Bounds(controller, bounds);
             }
             return 0;
         },
-        WM_DESTROY, WM_CLOSE => {
-            PostQuitMessage(0);
+        WM_CLOSE => {
+            _ = DestroyWindow(hwnd);
+            return 0;
+        },
+        WM_DESTROY => {
+            if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
+                const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
+                _ = controller.lpVtbl.Close(controller);
+                _ = webview.lpVtbl.Release(webview);
+                _ = controller.lpVtbl.Release(controller);
+                // Closing a child window must not end every window's event loop.
+                if (app_running and desktop_windows.count() == 0) PostQuitMessage(0);
+            }
             return 0;
         },
         else => {},
@@ -1035,6 +1073,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
 pub const App = struct {
     pub fn run() !void {
         app_running = true;
+        defer app_running = false;
         var msg: MSG = undefined;
 
         while (GetMessageW(&msg, null, 0, 0) != 0) {
@@ -1049,10 +1088,15 @@ pub const App = struct {
     }
 };
 
-/// Evaluate JavaScript in the current webview (cross-platform bridge helper).
-/// Uses the active window's WebView2 instance.
+/// Evaluate a reply in the authenticated sender, if that webview is still live.
+/// Native callers without a sender use the most recently created live window.
 pub fn evalJS(script: []const u8) !void {
-    const webview = g_active_webview orelse return error.NoWebView;
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    const live = desktop_windows.liveWebviews(&handles);
+    const latest = desktop_windows.latest();
+    const target = window_reply_target.select(live, window_context.currentWebView(), if (latest) |entry| entry.webview else null) orelse
+        return error.NoWebView;
+    const webview: *ICoreWebView2 = @ptrFromInt(target);
     var script_wide = try utf8ToUtf16Z(16384, script);
     const handler = try std.heap.c_allocator.create(ExecuteScriptCompletedHandler);
     handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };

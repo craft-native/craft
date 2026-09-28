@@ -11,6 +11,8 @@ pub const Entry = struct {
     id: u32,
     window: usize,
     webview: usize,
+    /// Platform-specific control object (WebView2 controller on Windows).
+    context: usize = 0,
 };
 
 pub const Registry = struct {
@@ -18,13 +20,17 @@ pub const Registry = struct {
     next_id: u32 = 1,
 
     pub fn remember(self: *Registry, window: usize, webview: usize) ?u32 {
+        return self.rememberWithContext(window, webview, 0);
+    }
+
+    pub fn rememberWithContext(self: *Registry, window: usize, webview: usize, context: usize) ?u32 {
         if (window == 0 or webview == 0 or self.byWindow(window) != null or self.next_id == 0) return null;
         for (&self.entries) |*slot| {
             if (slot.* == null) {
                 const id = self.next_id;
                 // Exhaust rather than reuse an id that a caller may still hold.
                 self.next_id = if (id == std.math.maxInt(u32)) 0 else id + 1;
-                slot.* = .{ .id = id, .window = window, .webview = webview };
+                slot.* = .{ .id = id, .window = window, .webview = webview, .context = context };
                 return id;
             }
         }
@@ -139,4 +145,14 @@ test "reply candidates contain only live webviews" {
     try std.testing.expectEqualSlices(usize, &.{0x2001}, registry.liveWebviews(&handles));
     _ = registry.forgetWindow(0x2000);
     try std.testing.expectEqual(@as(usize, 0), registry.liveWebviews(&handles).len);
+}
+
+test "a window keeps its own platform control object" {
+    var registry: Registry = .{};
+    const first = registry.rememberWithContext(0x1000, 0x1001, 0x1002).?;
+    const second = registry.rememberWithContext(0x2000, 0x2001, 0x2002).?;
+    try std.testing.expectEqual(@as(usize, 0x1002), registry.byId(first).?.context);
+    try std.testing.expectEqual(@as(usize, 0x2002), registry.byId(second).?.context);
+    _ = registry.forgetWindow(0x1000);
+    try std.testing.expectEqual(@as(usize, 0x2002), registry.byWindow(0x2000).?.context);
 }

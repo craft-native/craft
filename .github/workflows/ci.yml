@@ -79,6 +79,17 @@ jobs:
           ls -lh packages/zig/zig-out/bin/
           size packages/zig/zig-out/bin/craft
 
+      # The host matrix never analyzes windows.zig. Exercise the same target
+      # as release.yml here so multi-window WebView2 changes cannot wait until
+      # a tag to reveal a cross-compilation failure.
+      - name: Cross-build Windows CLI
+        if: runner.os == 'Linux'
+        working-directory: packages/zig
+        run: |
+          VERSION="$(bun -p "require('../../package.json').version")"
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget=x86_64-windows
+          test -f zig-out/bin/craft.exe
+
   typescript-sdk:
     runs-on: ubuntu-latest
 
