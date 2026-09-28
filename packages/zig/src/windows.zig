@@ -1,4 +1,5 @@
 const std = @import("std");
+const desktop_script_encoding = @import("desktop_script_encoding.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const window_context = @import("window_context.zig");
 const window_reply_target = @import("window_reply_target.zig");
@@ -83,6 +84,7 @@ pub const SW_MINIMIZE: c_int = 6;
 pub const WM_DESTROY: UINT = 0x0002;
 pub const WM_SIZE: UINT = 0x0005;
 pub const WM_CLOSE: UINT = 0x0010;
+pub const WM_QUIT: UINT = 0x0012;
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
 
@@ -650,6 +652,57 @@ const ExecuteScriptCompletedHandler = extern struct {
 
 pub const ICoreWebView2ExecuteScriptCompletedHandler = ExecuteScriptCompletedHandler;
 
+// -- Document-start script completed handler ---------------------------------
+
+const ScriptInstallContext = struct {
+    done: bool = false,
+    result: HRESULT = -1,
+};
+
+const ScriptInstallCompletedHandler = extern struct {
+    lpVtbl: *const ScriptInstallCompletedHandlerVtbl,
+    ref_count: c_ulong,
+    ctx: *ScriptInstallContext,
+
+    const ScriptInstallCompletedHandlerVtbl = extern struct {
+        QueryInterface: *const fn (*ScriptInstallCompletedHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*ScriptInstallCompletedHandler) callconv(.c) c_ulong,
+        Release: *const fn (*ScriptInstallCompletedHandler) callconv(.c) c_ulong,
+        Invoke: *const fn (*ScriptInstallCompletedHandler, HRESULT, LPCWSTR) callconv(.c) HRESULT,
+    };
+
+    const vtbl_instance = ScriptInstallCompletedHandlerVtbl{
+        .QueryInterface = &queryInterface,
+        .AddRef = &addRef,
+        .Release = &release,
+        .Invoke = &invoke,
+    };
+
+    fn queryInterface(self: *ScriptInstallCompletedHandler, _: *const GUID, ppv: *?*anyopaque) callconv(.c) HRESULT {
+        ppv.* = @ptrCast(self);
+        _ = addRef(self);
+        return S_OK;
+    }
+
+    fn addRef(self: *ScriptInstallCompletedHandler) callconv(.c) c_ulong {
+        self.ref_count += 1;
+        return self.ref_count;
+    }
+
+    fn release(self: *ScriptInstallCompletedHandler) callconv(.c) c_ulong {
+        if (self.ref_count > 0) self.ref_count -= 1;
+        const remaining = self.ref_count;
+        if (remaining == 0) std.heap.c_allocator.destroy(self);
+        return remaining;
+    }
+
+    fn invoke(self: *ScriptInstallCompletedHandler, hr: HRESULT, _: LPCWSTR) callconv(.c) HRESULT {
+        self.ctx.result = hr;
+        self.ctx.done = true;
+        return S_OK;
+    }
+};
+
 // ============================================================================
 // WebView2Loader — loaded dynamically at runtime to avoid link-time dependency
 // ============================================================================
@@ -863,7 +916,7 @@ pub const Window = struct {
             return error.TooManyWindows;
         };
 
-        const window = Window{
+        var window = Window{
             .id = window_id,
             .hwnd = hwnd,
             .controller = controller,
@@ -875,6 +928,9 @@ pub const Window = struct {
             .y = y,
         };
 
+        // Install before the first Navigate/NavigateToString so every page
+        // starts with the same bridge surface as a macOS Craft window.
+        try window.injectScript(@embedFile("js/craft-bridge.js"));
         return window;
     }
 
@@ -1004,14 +1060,37 @@ pub const Window = struct {
     pub fn injectScript(self: *Window, script: []const u8) !void {
         const entry = self.liveEntry() orelse return error.NoWebView;
         const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
-        var script_wide = try utf8ToUtf16Z(16384, script);
-        const script_ptr: LPCWSTR = @ptrCast(&script_wide);
+        var script_wide = try desktop_script_encoding.encode(std.heap.c_allocator, script);
+        defer script_wide.deinit(std.heap.c_allocator);
 
-        const hr = webview.lpVtbl.AddScriptToExecuteOnDocumentCreated(webview, script_ptr, null);
+        var install: ScriptInstallContext = .{};
+        const handler = try std.heap.c_allocator.create(ScriptInstallCompletedHandler);
+        handler.* = .{ .lpVtbl = &ScriptInstallCompletedHandler.vtbl_instance, .ref_count = 1, .ctx = &install };
+        const hr = webview.lpVtbl.AddScriptToExecuteOnDocumentCreated(webview, script_wide.ptr(), handler);
+        _ = ScriptInstallCompletedHandler.release(handler);
         if (!succeeded(hr)) {
             std.debug.print("[WebView2] AddScriptToExecuteOnDocumentCreated failed: 0x{x}\n", .{@as(u32, @bitCast(hr))});
             return error.ScriptInjectionFailed;
         }
+
+        // WebView2 installs this asynchronously. Navigate immediately after
+        // the API call and the first page can miss the bridge entirely.
+        var msg: MSG = undefined;
+        var quit_requested = false;
+        while (!install.done) {
+            if (PeekMessageW(&msg, null, 0, 0, PM_REMOVE) != 0) {
+                if (msg.message == WM_QUIT) {
+                    quit_requested = true;
+                } else {
+                    _ = TranslateMessage(&msg);
+                    _ = DispatchMessageW(&msg);
+                }
+            } else {
+                Sleep(1);
+            }
+        }
+        if (quit_requested) PostQuitMessage(0);
+        if (!succeeded(install.result)) return error.ScriptInjectionFailed;
     }
 
     pub fn enableGPUAcceleration(self: *Window, enable: bool) !void {

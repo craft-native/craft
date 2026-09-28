@@ -347,7 +347,7 @@ pub const Window = struct {
             return error.SignalConnectionFailed;
         }
 
-        return Window{
+        var created = Window{
             .id = window_id,
             .gtk_window = window,
             .webview = webview,
@@ -357,6 +357,12 @@ pub const Window = struct {
             .x = x,
             .y = y,
         };
+        errdefer created.close();
+
+        // Register the page API before any load. The user-content manager
+        // reapplies this document-start script after navigation too.
+        try created.injectScript(@embedFile("js/craft-bridge.js"));
+        return created;
     }
 
     pub fn show(self: *Window) void {
@@ -424,6 +430,7 @@ pub const Window = struct {
     }
 
     pub fn injectScript(self: *Window, script: []const u8) !void {
+        if (std.mem.indexOfScalar(u8, script, 0) != null) return error.InvalidScript;
         const script_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script);
         defer std.heap.c_allocator.free(script_z);
 
