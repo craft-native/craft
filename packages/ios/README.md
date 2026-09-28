@@ -143,6 +143,34 @@ Edit `craft.config.json` in your iOS project:
 }
 ```
 
+The app name is shown as written (`"HQ.training"` is fine); the Xcode
+project, target and Swift types use a PascalCase identifier made from it
+(`HQTraining`). A key left out of the file keeps its default.
+
+Appearance and navigation:
+
+```json
+{
+  "appearance": "system",
+  "backgroundColor": "#f8fafc",
+  "backgroundColorDark": "#020617",
+  "swipeNavigation": true
+}
+```
+
+- `appearance`: `"system"` follows the phone's Light/Dark setting (and the
+  page's `prefers-color-scheme`), with a status bar that reads on either;
+  `"light"` and `"dark"` pin one. Without it, `darkMode` decides as before.
+- `backgroundColorDark`: the launch screen and webview background in Dark Mode.
+- `swipeNavigation`: an edge swipe goes back and forward through the page's
+  history, pushState entries included.
+
+Debug builds let Safari's Develop menu inspect the webview, and relay the
+page's console, uncaught errors, rejected promises and failed script loads to
+the device log as `[craft page] …`, so a page that only breaks inside the app
+can be read with `xcrun simctl spawn booted log show --predicate 'process ==
+"YourApp"'`. Release builds do neither.
+
 When push notifications are enabled, generated Debug builds use the APNs
 development environment and Release builds use the production environment.
 The generated entitlements select the correct value from the active Xcode
@@ -239,6 +267,15 @@ console.log(nfcData); // Tag content
 // Health/Fitness (requires HealthKit entitlement)
 await window.craft.requestHealthAuthorization(['stepCount', 'heartRate']);
 const steps = await window.craft.getHealthData('stepCount', startDate, endDate);
+
+// Through craft-native/mobile's `health` service:
+import { health } from 'craft-native/mobile'
+// Read only: the sheet asks for access, not "access and update".
+await health.requestAuthorization(['workouts', 'heartRate', 'sleep'], { write: false })
+// Apple Health workouts (the watch's and every app's), newest first.
+const workouts = await health.getWorkouts({ startDate: Date.now() - 30 * 86400000 })
+// One value per local day: sums, averages, the latest weight, hours asleep.
+const hrv = await health.getDailyStatistics('heartRateVariability', { startDate: Date.now() - 30 * 86400000 })
 
 // Screen Capture
 const screenshotBase64 = await window.craft.takeScreenshot();
