@@ -170,6 +170,9 @@ pub const Window = struct {
     }
 
     pub fn show(self: *Self) !void {
+        // Styled URL/HTML constructors already created and showed their native
+        // window. Creating it again here would duplicate the first page.
+        if (self.native_handle != null) return;
         switch (builtin.os.tag) {
             .macos => try self.showMacOS(),
             .linux => try self.showLinux(),
@@ -314,7 +317,7 @@ pub const App = struct {
             try self.windows.append(self.allocator, window);
             return window;
         } else {
-            return error.UnsupportedPlatform;
+            return self.createPortableWindow(title, width, height, html, style, false);
         }
     }
 
@@ -328,8 +331,60 @@ pub const App = struct {
             try self.windows.append(self.allocator, window);
             return window;
         } else {
-            return error.UnsupportedPlatform;
+            return self.createPortableWindow(title, width, height, url, style, true);
         }
+    }
+
+    fn createPortableWindow(self: *Self, title: []const u8, width: u32, height: u32, content: []const u8, style: WindowStyle, comptime is_url: bool) !*Window {
+        if (builtin.os.tag == .linux) {
+            const linux = @import("linux.zig");
+            const native_style: linux.WindowStyle = .{
+                .frameless = style.frameless,
+                .transparent = style.transparent,
+                .always_on_top = style.always_on_top,
+                .resizable = style.resizable,
+                .fullscreen = style.fullscreen,
+                .x = style.x,
+                .y = style.y,
+                .dark_mode = style.dark_mode,
+                .dev_tools = style.dev_tools,
+            };
+            const native = if (is_url)
+                try linux.createWindowWithURL(title, width, height, content, native_style)
+            else
+                try linux.createWindowWithHTML(title, width, height, content, native_style);
+            errdefer linux.gtk_window_close(native);
+            return self.rememberPortableWindow(title, width, height, if (is_url) "" else content, native);
+        } else if (builtin.os.tag == .windows) {
+            const windows = @import("windows.zig");
+            const native_style: windows.WindowStyle = .{
+                .frameless = style.frameless,
+                .transparent = style.transparent,
+                .always_on_top = style.always_on_top,
+                .resizable = style.resizable,
+                .fullscreen = style.fullscreen,
+                .x = style.x,
+                .y = style.y,
+                .dark_mode = style.dark_mode,
+                .dev_tools = style.dev_tools,
+            };
+            const native = if (is_url)
+                try windows.createWindowWithURL(title, width, height, content, native_style)
+            else
+                try windows.createWindowWithHTML(title, width, height, content, native_style);
+            errdefer _ = windows.DestroyWindow(native);
+            return self.rememberPortableWindow(title, width, height, if (is_url) "" else content, native);
+        }
+        return error.UnsupportedPlatform;
+    }
+
+    fn rememberPortableWindow(self: *Self, title: []const u8, width: u32, height: u32, html: []const u8, native: *anyopaque) !*Window {
+        const window = try self.allocator.create(Window);
+        errdefer self.allocator.destroy(window);
+        window.* = Window.init(title, width, height, html);
+        window.native_handle = native;
+        try self.windows.append(self.allocator, window);
+        return window;
     }
 
     /// Create a window with a native macOS sidebar (Finder-style with vibrancy) - HTML mode

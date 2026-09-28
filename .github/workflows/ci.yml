@@ -51,7 +51,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -78,6 +78,66 @@ jobs:
         run: |
           ls -lh packages/zig/zig-out/bin/
           size packages/zig/zig-out/bin/craft
+
+      # The host matrix never analyzes windows.zig. Exercise the same target
+      # as release.yml here so multi-window WebView2 changes cannot wait until
+      # a tag to reveal a cross-compilation failure.
+      - name: Cross-build Windows CLI
+        if: runner.os == 'Linux'
+        working-directory: packages/zig
+        run: |
+          VERSION="$(bun -p "require('../../package.json').version")"
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget=x86_64-windows
+          test -f zig-out/bin/craft.exe
+
+      - name: Smoke Linux multi-window bridge
+        if: runner.os == 'Linux'
+        run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft
+
+  windows-multi-window:
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Pantry (provides Bun and Zig)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+
+      - name: First-party Zig dependencies
+        uses: ./.github/actions/first-party-zig-deps
+
+      - name: Build Windows CLI
+        shell: pwsh
+        run: |
+          # The Pantry .bin shim can print zig version but cannot locate Zig's
+          # lib directory during a build. Run the locked package binary itself.
+          $package = Join-Path $env:GITHUB_WORKSPACE 'pantry/ziglang-org/0.17.0-dev.1963_e00c6c439'
+          $env:CRAFT_ZIG = ''
+          foreach ($candidate in @((Join-Path $package 'zig.exe'), (Join-Path $package 'bin/zig.exe'))) {
+            if (Test-Path -LiteralPath $candidate) { $env:CRAFT_ZIG = $candidate; break }
+          }
+          if (-not $env:CRAFT_ZIG) {
+            Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE 'pantry') -Filter zig.exe -Recurse -File |
+              Select-Object -ExpandProperty FullName
+            throw "Pinned Zig executable missing from $package"
+          }
+          bun run build:core
+
+      - name: Stage pinned WebView2 loader
+        shell: pwsh
+        run: |
+          $version = '1.0.4191.47'
+          $expected = 'f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0'
+          $archive = Join-Path $env:RUNNER_TEMP 'microsoft.web.webview2.zip'
+          $package = Join-Path $env:RUNNER_TEMP 'microsoft.web.webview2'
+          Invoke-WebRequest -Uri "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$version/microsoft.web.webview2.$version.nupkg" -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw 'WebView2 NuGet package digest mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $package
+          Copy-Item (Join-Path $package 'build/native/x64/WebView2Loader.dll') 'packages/zig/zig-out/bin/WebView2Loader.dll'
+
+      - name: Smoke Windows multi-window bridge
+        run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft.exe
 
   typescript-sdk:
     runs-on: ubuntu-latest
@@ -375,7 +435,7 @@ jobs:
         run: bun run verify
 
   publish-commit:
-    needs: [zig-core, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
+    needs: [zig-core, windows-multi-window, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:

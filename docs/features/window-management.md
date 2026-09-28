@@ -29,8 +29,11 @@ await show(html, {
 ### Runtime Window Creation
 
 The `craft-native` SDK returns a typed `Window` handle. Runtime-created
-windows are currently implemented by the macOS host and must provide either
-`html` or `url` content.
+windows are available on macOS, Linux, and Windows and must provide either
+`html` or `url` content. The common create, close, title, geometry, and event
+routes are cross-platform; some advanced window controls remain macOS-only.
+On Linux, the window manager may ignore position requests, especially before
+the window is shown.
 
 ```typescript
 import { createWindow } from 'craft-native'
@@ -477,12 +480,15 @@ that created it sees the same transitions through the `inspector` handle.
 Other open windows do not receive them. Call the unsubscribe function returned
 by `on`, such as `stopWatching()` above, when the listener is no longer needed.
 
-Closing a window keeps its native page alive so the macOS reopen lifecycle can
-restore its DOM and JavaScript state. Call `destroy()` on a runtime-created
-handle to permanently release its native window, webview, recovery state and
-event subscriptions; opening the same ID afterwards creates a fresh native
-page behind the same stable SDK handle. The unnamed primary window cannot be
-force-destroyed through this API.
+On macOS, closing a window keeps its native page alive so reopening can
+restore its DOM and JavaScript state. On Linux and Windows, closing releases
+the native window and webview; reopening the same ID creates a fresh page
+behind the same stable SDK handle. `destroy()` releases a named window's native
+resources and detaches its SDK DOM listeners. A later `createWindow()` with the
+same ID reuses the typed handle and reattaches those listeners. The unnamed
+primary window cannot be force-destroyed through this API. CI exercises Linux
+create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
+including concurrent child creation and stale-handle cleanup.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
 implemented routing guarantees, application-level event sinks and remaining

@@ -222,6 +222,25 @@ const WEBVIEW_HOST =
     \\globalThis.setTimeout = function () { return 0 };
     \\globalThis.clearTimeout = function () {};
 ;
+
+test "the embedded bridge posts through WebView2 when WebKit is absent" {
+    var fx = try Fixture.init();
+    defer fx.deinit();
+    const ctx = fx.ctx;
+
+    _ = try ctx.evaluate(WEBVIEW_HOST);
+    _ = try ctx.evaluate(
+        \\delete window.webkit;
+        \\window.chrome = { webview: { postMessage: function (m) { posted.push(m) } } };
+    );
+    _ = try ctx.evaluate(BRIDGE);
+    _ = try ctx.evaluate("window.craft.window.show()");
+
+    try testing.expectEqualStrings("1", try fx.text("String(posted.length)"));
+    try testing.expectEqualStrings("window", try fx.text("posted[0].t"));
+    try testing.expectEqualStrings("show", try fx.text("posted[0].a"));
+    try testing.expectEqualStrings("true", try fx.text("posted[0].i > 0"));
+}
 // The timer stubs are load-bearing rather than cosmetic. `_req` arms a
 // 30-second reaping timeout inside its Promise executor, so without a
 // `setTimeout` the executor throws a ReferenceError and every request-shaped

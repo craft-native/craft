@@ -8,8 +8,8 @@
 //   1. **Self-contained** — no imports, no transpiler, ES5-friendly
 //      (avoid arrow functions, const/let are fine in modern WebKit).
 //   2. **Idempotent** — may run twice if the page reloads.
-//   3. **Defensive** — `webkit.messageHandlers.craft` may not exist (e.g.
-//      when served outside a Craft window). Don't throw at module load.
+//   3. **Defensive** — neither WebKit's `messageHandlers.craft` nor WebView2's
+//      `chrome.webview` need exist (e.g. outside Craft). Don't throw at load.
 //
 // The native side dispatches messages by `t` (type) and answers async ones
 // via `window.__craftBridgeResult(action, payload, id)`, where `id` is the
@@ -171,7 +171,11 @@
     try {
       const msg = { t: t, a: a, d: d || '' }
       if (i) msg.i = i
-      window.webkit.messageHandlers.craft.postMessage(msg)
+      const webkit = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft
+      const webview2 = window.chrome && window.chrome.webview
+      if (webkit && typeof webkit.postMessage === 'function') webkit.postMessage(msg)
+      else if (webview2 && typeof webview2.postMessage === 'function') webview2.postMessage(msg)
+      else throw new Error('native bridge unavailable')
       return true
     }
     catch (e) {

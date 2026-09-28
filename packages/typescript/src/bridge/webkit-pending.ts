@@ -73,6 +73,14 @@ export function isWebKitHost(): boolean {
   return typeof window !== 'undefined' && !!window.webkit?.messageHandlers?.craft
 }
 
+/** Desktop window handles use the injected Craft envelope on both WebKit and WebView2. */
+export function isDesktopWebViewHost(): boolean {
+  if (isWebKitHost()) return true
+  if (typeof window === 'undefined') return false
+  const host = window as Window & { chrome?: { webview?: { postMessage?: (message: unknown) => void } } }
+  return typeof host.chrome?.webview?.postMessage === 'function'
+}
+
 /**
  * Send a fire-and-forget message into the WKWebView host. Returns true if
  * the message was delivered, false otherwise.

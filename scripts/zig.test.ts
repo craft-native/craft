@@ -2,7 +2,7 @@ import { afterEach, expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { pinnedZigVersion, resolveZig, runZig } from './zig'
+import { pinnedPantryZigPath, pinnedZigVersion, resolveZig, runZig } from './zig'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -26,6 +26,25 @@ test('accepts only the locked snapshot by default, even when PATH shadows it', (
   expect(() => resolveZig(f.root, f.env)).toThrow('CRAFT_ALLOW_UNPINNED_ZIG=1')
   const pinned = fixture()
   expect(resolveZig(f.root, { ...f.env, CRAFT_ZIG: pinned.path })).toEqual({ path: pinned.path, version: '0.17.0-dev.1963+e00c6c439', overridden: false })
+})
+
+test('Windows uses the pinned Pantry installation instead of its .bin shim', () => {
+  const f = fixture()
+  const version = pinnedZigVersion(f.root)
+  const packageDir = join(f.root, 'pantry/ziglang-org/0.17.0-dev.1963_e00c6c439')
+  const installed = join(packageDir, 'zig.exe')
+  expect(pinnedPantryZigPath(f.root, version, f.env, 'win32')).toBeNull()
+  mkdirSync(packageDir, { recursive: true })
+  writeFileSync(installed, '')
+  expect(pinnedPantryZigPath(f.root, version, f.env, 'win32')).toBe(installed)
+  const mirrored = join(packageDir, 'bin/zig.exe')
+  mkdirSync(join(packageDir, 'bin'))
+  writeFileSync(mirrored, '')
+  expect(pinnedPantryZigPath(f.root, version, f.env, 'win32')).toBe(installed)
+  rmSync(installed)
+  expect(pinnedPantryZigPath(f.root, version, f.env, 'win32')).toBe(mirrored)
+  expect(pinnedPantryZigPath(f.root, version, { ...f.env, CRAFT_ZIG: f.path }, 'win32')).toBeNull()
+  expect(pinnedPantryZigPath(f.root, version, f.env, 'darwin')).toBeNull()
 })
 
 test('requires an explicit opt-in for unpinned snapshots', () => {

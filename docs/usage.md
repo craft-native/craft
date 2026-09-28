@@ -330,15 +330,16 @@ await settingsWindow.focus()
 ```
 
 Calling `createWindow` again with the same `id` brings the retained native
-window forward and returns the same typed handle. Runtime creation currently
-uses the macOS host. `close()` retains that page for a later reopen, while
-`destroy()` permanently releases a runtime-created window; the unnamed primary
-window is not destroyable through this API. Modal and parent-window
-relationships are not supported.
+window forward and returns the same typed handle on macOS, Linux, and Windows.
+On macOS, `close()` retains the page for a later reopen. On Linux and Windows,
+closing releases the native page; reopening the same ID creates a fresh one
+behind the stable typed handle. `destroy()` permanently releases a
+runtime-created window; the unnamed primary window is not destroyable through
+this API. Modal and parent-window relationships are not supported.
 
 The [multi-window ownership contract](architecture/multi-window-ownership.md)
 tracks which state is window-scoped, which events intentionally target the
-primary page and what remains before the feature is cross-platform.
+primary page, and which advanced behaviors remain outside the contract.
 
 ### Window Lifecycle Events
 

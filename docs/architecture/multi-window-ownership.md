@@ -1,7 +1,7 @@
 # Multi-window ownership
 
 This document records Craft's current multi-window ownership contract. It is
-both a map of the implemented macOS behavior and a boundary around the choices
+both a map of the implemented desktop behavior and a boundary around the choices
 that are still open. A process-global Zig object is not automatically a
 single-window bug: the important question is whether it is a shared service or
 whether it stores a window-specific target.
@@ -10,17 +10,35 @@ whether it stores a window-specific target.
 
 | Area | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Runtime creation from `createWindow()` | Implemented | Not wired to the SDK handle contract | Not wired to the SDK handle contract |
-| Stable named handles | Implemented | Not implemented | Not implemented |
-| Sender-authenticated local actions | Implemented | Not implemented | Not implemented |
-| Named cross-window actions | Implemented | Not implemented | Not implemented |
-| Per-window lifecycle events | Implemented | Not implemented | Not implemented |
-| Permanent destroy and cleanup | Implemented for named windows | Not implemented | Not implemented |
+| Runtime creation from `createWindow()` | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
+| Stable named handles | Implemented | Implemented | Implemented |
+| Sender-authenticated local actions | Implemented | Implemented through WebKitGTK | Implemented through WebView2 |
+| Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
+| Per-window lifecycle events | Implemented | Implemented | Implemented |
+| Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
-Issue #67 therefore remains open. Its macOS core is substantially implemented,
-but closing it would imply cross-platform and modal/parent semantics that Craft
-does not yet provide.
+The runtime-creation, stable-handle, reply-routing, and event-scoping contract
+from issue #67 is covered here. Modal/parent semantics remain separate future
+decisions. The Windows release archive stages an app-local WebView2 loader;
+users still need the Microsoft WebView2 Runtime.
+
+Linux and Windows keep their live native window/webview pairs in
+`desktop_window_registry.zig`. Page messages are authenticated by the sending
+WebKitGTK view or the per-WebView2 event subscription; names select a target
+only after that native source is known.
+Replies go back to the requesting view, and lifecycle events go to the changed
+window plus its named handle's creator. Linux must register its `GtkApplication`
+before constructing the first `GtkApplicationWindow`, because the CLI creates
+that window before entering `g_application_run()`. On Windows, the controller
+passed to the asynchronous WebView2 completion callback is borrowed. Each live
+window retains its own controller reference until native destruction; otherwise
+WebView2 can close before the page bridge registers or navigation begins.
+WebView2 also forbids entering a nested message loop from its message callback.
+Windows therefore queues page-requested child creation onto the UI message
+queue, preserving the authenticated owner and reply ID until that callback
+returns. Concurrent opens are drained serially and abandoned if their creator
+window is destroyed before dispatch.
 
 ## Per-window state
 
@@ -57,9 +75,10 @@ back to whichever window was created most recently:
 - The local scroll monitor is installed once, but reads the event's `NSWindow`,
   advances only that window's accumulator and emits only to its webview.
 
-`close()` preserves these resources and the SDK's native-event subscriptions
-so the same page can reopen with its DOM and JavaScript state intact, including
-when the primary window is reopened by the Dock rather than `createWindow()`.
+On macOS, `close()` preserves these resources and the SDK's native-event
+subscriptions so the same page can reopen with its DOM and JavaScript state
+intact, including when the primary window is reopened by the Dock rather than
+`createWindow()`.
 `destroy()` removes the named registry entry, Native UI graph, gesture and
 material slots, recovery state, event ownership and retained AppKit objects
 before releasing the window and detaching the SDK's DOM listeners.
@@ -118,13 +137,12 @@ The next multi-window milestone needs product decisions in addition to code:
    application-level asynchronous source above.
 3. Decide whether Touch Bar should stay primary-window scoped or follow the
    key window with separately owned item definitions and callbacks.
-4. Bring Linux and Windows runtime creation, stable handles, sender routing,
-   lifecycle events and destroy semantics up to the macOS contract. Their
-   platform backends can create native windows today, but the TypeScript bridge
-   deliberately reports runtime creation as unsupported outside macOS.
-5. Add platform-native integration coverage. Source conformance and pure state
-   tests defend macOS invariants without requiring a GUI runner, but they do
-   not substitute for real Windows WebView2 and Linux WebKitGTK lifecycle tests.
+4. Finish advanced Linux/Windows window actions and clarify which are portable
+   versus platform-specific, without conflating close semantics: macOS retains
+   a closed page, while Linux and Windows release it.
+5. Expand platform-native integration beyond the current named-window lifecycle
+   smokes. CI runs Linux WebKitGTK under Xvfb and Windows WebView2 on a native
+   runner, but advanced actions and packaged-app behavior still need coverage.
 
 ## Review checklist
 
@@ -134,6 +152,8 @@ For every new bridge or callback that touches a window, verify:
 - An explicit window ID is resolved through the registry and unknown IDs fail.
 - An asynchronous reply retains both its target and its requesting webview.
 - A delayed control callback stores its owner on the control/delegate instance.
-- Ordinary close preserves state; permanent destroy forgets it exactly once.
+- On macOS, ordinary close retains the page and permanent destroy forgets it
+  exactly once. On Linux and Windows, close and destroy both release the native
+  window/webview; a later open of the same name creates a fresh native page.
 - A process-global event sink is documented as primary, broadcast or
   subscriber-owned rather than inheriting accidental last-window behavior.

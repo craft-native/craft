@@ -1,4 +1,16 @@
 const std = @import("std");
+const bridge_error = @import("bridge_error.zig");
+const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
+const desktop_bridge_text = @import("desktop_bridge_text.zig");
+const desktop_script_encoding = @import("desktop_script_encoding.zig");
+const desktop_window_events = @import("desktop_window_events.zig");
+const desktop_window_reads = @import("desktop_window_reads.zig");
+const desktop_window_registry = @import("desktop_window_registry.zig");
+const json_utils = @import("json_utils.zig");
+const request_context = @import("request_context.zig");
+const window_context = @import("window_context.zig");
+const window_registry = @import("window_registry.zig");
+const window_reply_target = @import("window_reply_target.zig");
 
 // Windows implementation using Win32 API and WebView2
 // Requires: Microsoft.Web.WebView2 NuGet package
@@ -78,8 +90,12 @@ pub const SW_HIDE: c_int = 0;
 pub const SW_MAXIMIZE: c_int = 3;
 pub const SW_MINIMIZE: c_int = 6;
 pub const WM_DESTROY: UINT = 0x0002;
+pub const WM_MOVE: UINT = 0x0003;
 pub const WM_SIZE: UINT = 0x0005;
+pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
+pub const WM_QUIT: UINT = 0x0012;
+const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
 
@@ -107,15 +123,21 @@ pub extern "user32" fn TranslateMessage(lpMsg: *const MSG) callconv(.c) BOOL;
 pub extern "user32" fn DispatchMessageW(lpMsg: *const MSG) callconv(.c) LRESULT;
 pub extern "user32" fn DefWindowProcW(hWnd: HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT;
 pub extern "user32" fn PostQuitMessage(nExitCode: c_int) callconv(.c) void;
+pub extern "user32" fn PostMessageW(hWnd: ?HWND, Msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) BOOL;
 pub extern "user32" fn DestroyWindow(hWnd: HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) callconv(.c) BOOL;
+pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.c) c_int;
+pub extern "user32" fn GetWindowTextW(hWnd: HWND, lpString: LPWSTR, nMaxCount: c_int) callconv(.c) c_int;
+pub extern "user32" fn GetForegroundWindow() callconv(.c) ?HWND;
 pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: UINT) callconv(.c) BOOL;
 pub extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: LPCWSTR) callconv(.c) ?*anyopaque;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
+pub extern "user32" fn GetWindowRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowLongPtrW(hWnd: HWND, nIndex: c_int, dwNewLong: isize) callconv(.c) isize;
 pub extern "user32" fn GetWindowLongPtrW(hWnd: HWND, nIndex: c_int) callconv(.c) isize;
 pub extern "kernel32" fn GetModuleHandleW(lpModuleName: ?LPCWSTR) callconv(.c) ?HINSTANCE;
 pub extern "kernel32" fn Sleep(dwMilliseconds: DWORD) callconv(.c) void;
+pub extern "ole32" fn CoTaskMemFree(pv: ?*anyopaque) callconv(.c) void;
 
 // ============================================================================
 // WebView2 COM vtable interfaces
@@ -263,6 +285,19 @@ pub const ICoreWebView2Vtbl = extern struct {
 
 pub const ICoreWebView2 = extern struct {
     lpVtbl: *ICoreWebView2Vtbl,
+};
+
+pub const ICoreWebView2WebMessageReceivedEventArgsVtbl = extern struct {
+    QueryInterface: *const fn (*ICoreWebView2WebMessageReceivedEventArgs, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+    AddRef: *const fn (*ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) c_ulong,
+    Release: *const fn (*ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) c_ulong,
+    get_Source: *const fn (*ICoreWebView2WebMessageReceivedEventArgs, *?LPWSTR) callconv(.c) HRESULT,
+    get_WebMessageAsJson: *const fn (*ICoreWebView2WebMessageReceivedEventArgs, *?LPWSTR) callconv(.c) HRESULT,
+    TryGetWebMessageAsString: *const fn (*ICoreWebView2WebMessageReceivedEventArgs, *?LPWSTR) callconv(.c) HRESULT,
+};
+
+pub const ICoreWebView2WebMessageReceivedEventArgs = extern struct {
+    lpVtbl: *ICoreWebView2WebMessageReceivedEventArgsVtbl,
 };
 
 // -- ICoreWebView2Settings ---------------------------------------------------
@@ -534,6 +569,10 @@ const ControllerCompletedHandler = extern struct {
             return perm_hr;
         }
 
+        // The callback only lends us the controller. Keep our own reference
+        // past Invoke so WebView2 does not close before Window.create uses it.
+        _ = controller.lpVtbl.AddRef(controller);
+
         // Store results
         self.ctx.controller = controller;
         self.ctx.webview = webview;
@@ -599,6 +638,85 @@ const PermissionRequestedHandler = extern struct {
 
 pub const ICoreWebView2PermissionRequestedEventHandler = PermissionRequestedHandler;
 
+// -- Page-to-host message handler --------------------------------------------
+
+const WebMessageReceivedHandler = extern struct {
+    lpVtbl: *const WebMessageReceivedHandlerVtbl,
+    ref_count: c_ulong,
+    window_id: u32,
+
+    const WebMessageReceivedHandlerVtbl = extern struct {
+        QueryInterface: *const fn (*WebMessageReceivedHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*WebMessageReceivedHandler) callconv(.c) c_ulong,
+        Release: *const fn (*WebMessageReceivedHandler) callconv(.c) c_ulong,
+        Invoke: *const fn (*WebMessageReceivedHandler, *ICoreWebView2, *ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) HRESULT,
+    };
+
+    const vtbl_instance = WebMessageReceivedHandlerVtbl{
+        .QueryInterface = &queryInterface,
+        .AddRef = &addRef,
+        .Release = &release,
+        .Invoke = &invoke,
+    };
+
+    fn queryInterface(self: *WebMessageReceivedHandler, _: *const GUID, ppv: *?*anyopaque) callconv(.c) HRESULT {
+        ppv.* = @ptrCast(self);
+        _ = addRef(self);
+        return S_OK;
+    }
+
+    fn addRef(self: *WebMessageReceivedHandler) callconv(.c) c_ulong {
+        self.ref_count += 1;
+        return self.ref_count;
+    }
+
+    fn release(self: *WebMessageReceivedHandler) callconv(.c) c_ulong {
+        if (self.ref_count > 0) self.ref_count -= 1;
+        const remaining = self.ref_count;
+        if (remaining == 0) std.heap.c_allocator.destroy(self);
+        return remaining;
+    }
+
+    fn invoke(self: *WebMessageReceivedHandler, _: *ICoreWebView2, args: *ICoreWebView2WebMessageReceivedEventArgs) callconv(.c) HRESULT {
+        // The handler is registered on exactly one native WebView2 instance.
+        // Bind its live registry id rather than comparing raw COM interface
+        // pointers, which need not have the same address for one object.
+        const entry = desktop_windows.byId(self.window_id) orelse return S_OK;
+        var message_wide: ?LPWSTR = null;
+        if (!succeeded(args.lpVtbl.get_WebMessageAsJson(args, &message_wide))) return S_OK;
+        const wide = message_wide orelse return S_OK;
+        defer CoTaskMemFree(@ptrCast(wide));
+        const wide_text = std.mem.span(wide);
+        const message = desktop_bridge_text.fromUtf16(std.heap.c_allocator, wide_text) catch return S_OK;
+        defer std.heap.c_allocator.free(message);
+
+        var envelope = desktop_bridge_envelope.parse(std.heap.c_allocator, message) catch return S_OK;
+        defer envelope.deinit();
+        window_context.push(entry.window, entry.webview);
+        defer window_context.pop();
+        request_context.push(envelope.request_id);
+        defer request_context.pop();
+
+        if (!std.mem.eql(u8, envelope.kind, "window")) {
+            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
+            return S_OK;
+        }
+        if (std.mem.eql(u8, envelope.action, "open") or std.mem.eql(u8, envelope.action, "create")) {
+            // WebView2 does not deliver async completion callbacks inside its
+            // own event callback. Window.create pumps until such a callback,
+            // so run it from a posted Win32 message after Invoke returns.
+            queueWindowOpen(entry, envelope.action, envelope.data, envelope.request_id) catch |err| {
+                bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+            };
+            return S_OK;
+        }
+        handleWindowAction(envelope.action, envelope.data) catch |err| {
+            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+        };
+        return S_OK;
+    }
+};
+
 // -- ExecuteScript completed handler (fire-and-forget) -----------------------
 
 const ExecuteScriptCompletedHandler = extern struct {
@@ -646,6 +764,57 @@ const ExecuteScriptCompletedHandler = extern struct {
 };
 
 pub const ICoreWebView2ExecuteScriptCompletedHandler = ExecuteScriptCompletedHandler;
+
+// -- Document-start script completed handler ---------------------------------
+
+const ScriptInstallContext = struct {
+    done: bool = false,
+    result: HRESULT = -1,
+};
+
+const ScriptInstallCompletedHandler = extern struct {
+    lpVtbl: *const ScriptInstallCompletedHandlerVtbl,
+    ref_count: c_ulong,
+    ctx: *ScriptInstallContext,
+
+    const ScriptInstallCompletedHandlerVtbl = extern struct {
+        QueryInterface: *const fn (*ScriptInstallCompletedHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*ScriptInstallCompletedHandler) callconv(.c) c_ulong,
+        Release: *const fn (*ScriptInstallCompletedHandler) callconv(.c) c_ulong,
+        Invoke: *const fn (*ScriptInstallCompletedHandler, HRESULT, LPCWSTR) callconv(.c) HRESULT,
+    };
+
+    const vtbl_instance = ScriptInstallCompletedHandlerVtbl{
+        .QueryInterface = &queryInterface,
+        .AddRef = &addRef,
+        .Release = &release,
+        .Invoke = &invoke,
+    };
+
+    fn queryInterface(self: *ScriptInstallCompletedHandler, _: *const GUID, ppv: *?*anyopaque) callconv(.c) HRESULT {
+        ppv.* = @ptrCast(self);
+        _ = addRef(self);
+        return S_OK;
+    }
+
+    fn addRef(self: *ScriptInstallCompletedHandler) callconv(.c) c_ulong {
+        self.ref_count += 1;
+        return self.ref_count;
+    }
+
+    fn release(self: *ScriptInstallCompletedHandler) callconv(.c) c_ulong {
+        if (self.ref_count > 0) self.ref_count -= 1;
+        const remaining = self.ref_count;
+        if (remaining == 0) std.heap.c_allocator.destroy(self);
+        return remaining;
+    }
+
+    fn invoke(self: *ScriptInstallCompletedHandler, hr: HRESULT, _: LPCWSTR) callconv(.c) HRESULT {
+        self.ctx.result = hr;
+        self.ctx.done = true;
+        return S_OK;
+    }
+};
 
 // ============================================================================
 // WebView2Loader — loaded dynamically at runtime to avoid link-time dependency
@@ -699,11 +868,316 @@ var app_running = false;
 var window_class_registered = false;
 const CLASS_NAME: [:0]const u16 = &[_:0]u16{ 'Z', 'y', 't', 'e', 'W', 'i', 'n', 'd', 'o', 'w' };
 
-// WebView2 owns these COM interfaces independently of the stack value returned
-// from Window.create. Keep only stable COM pointers in global callback state.
-var g_active_hwnd: ?HWND = null;
-var g_active_controller: ?*ICoreWebView2Controller = null;
-var g_active_webview: ?*ICoreWebView2 = null;
+// Native callbacks arrive with an HWND, not the stack value returned by
+// Window.create. Keep stable handles for every live window here.
+var desktop_windows: desktop_window_registry.Registry = .{};
+
+const PendingWindowOpen = struct {
+    next: ?*PendingWindowOpen = null,
+    owner_id: u32,
+    request_id: ?u64,
+    action: []const u8,
+    data: ?[]u8,
+};
+
+var pending_open_head: ?*PendingWindowOpen = null;
+var pending_open_tail: ?*PendingWindowOpen = null;
+var pending_open_count: usize = 0;
+var processing_open = false;
+
+fn freePendingOpen(task: *PendingWindowOpen) void {
+    if (task.data) |data| std.heap.c_allocator.free(data);
+    std.heap.c_allocator.destroy(task);
+}
+
+fn queueWindowOpen(owner: desktop_window_registry.Entry, action: []const u8, data: ?[]const u8, request_id: ?u64) !void {
+    if (pending_open_count >= desktop_window_registry.capacity) return error.TooManyWindows;
+    const copied_data: ?[]u8 = if (data) |value| try std.heap.c_allocator.dupe(u8, value) else null;
+    errdefer if (copied_data) |value| std.heap.c_allocator.free(value);
+    const task = try std.heap.c_allocator.create(PendingWindowOpen);
+    errdefer std.heap.c_allocator.destroy(task);
+    task.* = .{
+        .owner_id = owner.id,
+        .request_id = request_id,
+        .action = if (std.mem.eql(u8, action, "open")) "open" else "create",
+        .data = copied_data,
+    };
+    const owner_hwnd: HWND = @ptrFromInt(owner.window);
+    if (PostMessageW(owner_hwnd, WM_CRAFT_OPEN_WINDOW, 0, 0) == 0)
+        return error.NativeCallFailed;
+    if (pending_open_tail) |tail| tail.next = task else pending_open_head = task;
+    pending_open_tail = task;
+    pending_open_count += 1;
+}
+
+fn discardPendingOpens(owner_id: u32) void {
+    var previous: ?*PendingWindowOpen = null;
+    var current = pending_open_head;
+    while (current) |task| {
+        const next = task.next;
+        if (task.owner_id == owner_id) {
+            if (previous) |prior| prior.next = next else pending_open_head = next;
+            if (pending_open_tail != null and pending_open_tail.? == task) pending_open_tail = previous;
+            pending_open_count -= 1;
+            freePendingOpen(task);
+        } else {
+            previous = task;
+        }
+        current = next;
+    }
+}
+
+fn processPendingOpens() void {
+    if (processing_open) return;
+    processing_open = true;
+    defer processing_open = false;
+
+    while (pending_open_head) |task| {
+        pending_open_head = task.next;
+        if (pending_open_head == null) pending_open_tail = null;
+        pending_open_count -= 1;
+        if (desktop_windows.byId(task.owner_id)) |owner| {
+            window_context.push(owner.window, owner.webview);
+            request_context.push(task.request_id);
+            const data: ?[]const u8 = if (task.data) |value| value else null;
+            openNamedWindow(task.action, data) catch |err| {
+                if (desktop_windows.byId(task.owner_id) != null)
+                    bridge_error.sendErrorToJS(std.heap.c_allocator, task.action, bridge_error.fromHandlerError(err));
+            };
+            request_context.pop();
+            window_context.pop();
+        }
+        freePendingOpen(task);
+    }
+}
+
+fn deliverToWebview(webview_handle: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
+    const script = desktop_window_events.format(std.heap.c_allocator, name, detail_json, window_name) catch return;
+    defer std.heap.c_allocator.free(script);
+    var wide = desktop_script_encoding.encode(std.heap.c_allocator, script) catch return;
+    defer wide.deinit(std.heap.c_allocator);
+    const webview: *ICoreWebView2 = @ptrFromInt(webview_handle);
+    const handler = std.heap.c_allocator.create(ExecuteScriptCompletedHandler) catch return;
+    handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };
+    _ = webview.lpVtbl.ExecuteScript(webview, wide.ptr(), handler);
+    _ = ExecuteScriptCompletedHandler.esRelease(handler);
+}
+
+fn deliverWindowEvent(entry: desktop_window_registry.Entry, name: []const u8, detail_json: []const u8) void {
+    deliverToWebview(entry.webview, name, detail_json, null);
+    const owner = window_registry.ownerWebViewOf(entry.window) orelse return;
+    if (owner == entry.webview or desktop_windows.byWebview(owner) == null) return;
+    const window_name = window_registry.nameOf(entry.window) orelse return;
+    deliverToWebview(owner, name, detail_json, window_name);
+}
+
+fn observeWindowGeometry(entry: desktop_window_registry.Entry) void {
+    var rect: RECT = undefined;
+    if (GetWindowRect(@ptrFromInt(entry.window), &rect) == 0) return;
+    const width = @as(i64, rect.right) - @as(i64, rect.left);
+    const height = @as(i64, rect.bottom) - @as(i64, rect.top);
+    if (width < 0 or height < 0 or width > std.math.maxInt(u32) or height > std.math.maxInt(u32)) return;
+    const change = desktop_windows.observeGeometry(entry.window, .{
+        .x = @intCast(rect.left),
+        .y = @intCast(rect.top),
+        .width = @intCast(width),
+        .height = @intCast(height),
+    }) orelse return;
+    var detail_buf: [96]u8 = undefined;
+    if (change.moved) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"x\":{d},\"y\":{d}}}", .{ rect.left, rect.top }) catch return;
+        deliverWindowEvent(entry, "move", detail);
+    }
+    if (change.resized) {
+        const detail = std.fmt.bufPrint(&detail_buf, "{{\"width\":{d},\"height\":{d}}}", .{ width, height }) catch return;
+        deliverWindowEvent(entry, "resize", detail);
+    }
+}
+
+fn namedWindowResult(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
+    var json: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer json.deinit(allocator);
+    try json.appendSlice(allocator, "{\"name\":\"");
+    try bridge_error.appendJsonEscaped(allocator, &json, name);
+    try json.appendSlice(allocator, "\"}");
+    return json.toOwnedSlice(allocator);
+}
+
+fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const json = data orelse return error.MissingData;
+    const explicit_name = try json_utils.getStringDecoded(allocator, json, "name");
+    defer if (explicit_name) |name| allocator.free(name);
+    const fallback_id = if (explicit_name == null)
+        try json_utils.getStringDecoded(allocator, json, "id")
+    else
+        null;
+    defer if (fallback_id) |name| allocator.free(name);
+    const name = explicit_name orelse fallback_id orelse return error.InvalidParameter;
+    if (name.len == 0 or name.len > window_registry.max_name or
+        std.mem.eql(u8, name, "main") or std.mem.indexOfScalar(u8, name, 0) != null)
+        return error.InvalidParameter;
+
+    const url = try json_utils.getStringDecoded(allocator, json, "url");
+    defer if (url) |text| allocator.free(text);
+    const html = try json_utils.getStringDecoded(allocator, json, "html");
+    defer if (html) |text| allocator.free(text);
+    if (url == null and html == null) return error.InvalidParameter;
+    const title = try json_utils.getStringDecoded(allocator, json, "title");
+    defer if (title) |text| allocator.free(text);
+    for ([_]?[]const u8{ url, html, title }) |value| {
+        if (value) |text| if (std.mem.indexOfScalar(u8, text, 0) != null)
+            return error.InvalidParameter;
+    }
+
+    const result = try namedWindowResult(allocator, name);
+    defer allocator.free(result);
+    const owner = window_context.currentWebView() orelse return error.WebViewHandleNotSet;
+    if (window_registry.byName(name)) |existing| {
+        if (desktop_windows.byWindow(existing) == null) return error.WindowHandleNotSet;
+        if (!window_registry.rememberNamedOwned(existing, name, owner)) return error.InvalidParameter;
+        _ = ShowWindow(@ptrFromInt(existing), SW_SHOW);
+        _ = UpdateWindow(@ptrFromInt(existing));
+        bridge_error.sendResultToJS(allocator, action, result);
+        return;
+    }
+
+    const width = json_utils.getInt(u32, json, "width") orelse 800;
+    const height = json_utils.getInt(u32, json, "height") orelse 600;
+    if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
+        return error.InvalidParameter;
+    var created = try Window.create(.{
+        .title = title orelse name,
+        .width = width,
+        .height = height,
+        .x = json_utils.getInt(i32, json, "x"),
+        .y = json_utils.getInt(i32, json, "y"),
+        .resizable = json_utils.getBool(json, "resizable") orelse true,
+        .frameless = json_utils.getBool(json, "frameless") orelse false,
+        .always_on_top = json_utils.getBool(json, "alwaysOnTop") orelse false,
+        .fullscreen = json_utils.getBool(json, "fullscreen") orelse false,
+        .dev_tools = json_utils.getBool(json, "devTools") orelse false,
+    });
+    errdefer created.close();
+    if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
+    if (desktop_windows.byWebview(owner) == null) return error.WindowHandleNotSet;
+    if (!window_registry.rememberNamedOwned(@intFromPtr(created.hwnd), name, owner))
+        return error.TooManyWindows;
+    created.show();
+    bridge_error.sendResultToJS(allocator, action, result);
+}
+
+fn targetWindow(data: ?[]const u8) !desktop_window_registry.Entry {
+    if (data) |json| {
+        const name = try json_utils.getStringDecoded(std.heap.c_allocator, json, "windowId");
+        defer if (name) |text| std.heap.c_allocator.free(text);
+        if (name) |text| {
+            if (!std.mem.eql(u8, text, "main")) {
+                const handle = window_registry.byName(text) orelse return error.NotFound;
+                return desktop_windows.byWindow(handle) orelse error.NotFound;
+            }
+        }
+    }
+    return desktop_windows.byWindow(window_context.current() orelse return error.WindowHandleNotSet) orelse error.WindowHandleNotSet;
+}
+
+fn windowGeometry(hwnd: HWND) !desktop_window_registry.Geometry {
+    var rect: RECT = undefined;
+    if (GetWindowRect(hwnd, &rect) == 0) return error.NativeCallFailed;
+    const width = @as(i64, rect.right) - @as(i64, rect.left);
+    const height = @as(i64, rect.bottom) - @as(i64, rect.top);
+    if (width < 0 or height < 0 or width > std.math.maxInt(u32) or height > std.math.maxInt(u32))
+        return error.NativeCallFailed;
+    return .{ .x = @intCast(rect.left), .y = @intCast(rect.top), .width = @intCast(width), .height = @intCast(height) };
+}
+
+fn windowTitle(allocator: std.mem.Allocator, hwnd: HWND) ![:0]u8 {
+    const length = GetWindowTextLengthW(hwnd);
+    if (length < 0) return error.NativeCallFailed;
+    if (@as(usize, @intCast(length)) >= desktop_bridge_envelope.max_message_bytes)
+        return error.MessageTooLarge;
+    const wide = try allocator.alloc(u16, @as(usize, @intCast(length)) + 1);
+    defer allocator.free(wide);
+    const copied = GetWindowTextW(hwnd, @ptrCast(wide.ptr), @intCast(wide.len));
+    if (copied < 0) return error.NativeCallFailed;
+    const utf8 = try desktop_bridge_text.fromUtf16(allocator, wide[0..@intCast(copied)]);
+    return utf8;
+}
+
+fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const entry = try targetWindow(data);
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    const json = if (std.mem.eql(u8, action, "getTitle")) blk: {
+        const title = try windowTitle(allocator, hwnd);
+        defer allocator.free(title);
+        break :blk try desktop_window_reads.string(allocator, title);
+    } else if (std.mem.eql(u8, action, "getFocused")) blk: {
+        const focused = if (GetForegroundWindow()) |window| @intFromPtr(window) else 0;
+        const name = desktop_window_reads.focusedName(&desktop_windows, entry.window, focused, window_registry.nameOf(focused));
+        break :blk try desktop_window_reads.string(allocator, name);
+    } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(hwnd));
+    defer allocator.free(json);
+    bridge_error.sendResultToJS(allocator, action, json);
+}
+
+fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
+    if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create"))
+        return openNamedWindow(action, data);
+    if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
+        std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
+        std.mem.eql(u8, action, "getFocused"))
+        return sendWindowRead(action, data);
+
+    const entry = try targetWindow(data);
+    const hwnd: HWND = @ptrFromInt(entry.window);
+    const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
+    if (std.mem.eql(u8, action, "show") or std.mem.eql(u8, action, "focus")) {
+        _ = ShowWindow(hwnd, SW_SHOW);
+        _ = UpdateWindow(hwnd);
+    } else if (std.mem.eql(u8, action, "hide")) {
+        _ = ShowWindow(hwnd, SW_HIDE);
+    } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
+        if (DestroyWindow(hwnd) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "minimize")) {
+        _ = ShowWindow(hwnd, SW_MINIMIZE);
+    } else if (std.mem.eql(u8, action, "maximize")) {
+        _ = ShowWindow(hwnd, SW_MAXIMIZE);
+    } else if (std.mem.eql(u8, action, "restore") or std.mem.eql(u8, action, "unmaximize")) {
+        _ = ShowWindow(hwnd, 9); // SW_RESTORE
+    } else if (std.mem.eql(u8, action, "reload")) {
+        if (!succeeded(webview.lpVtbl.Reload(webview))) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "setTitle")) {
+        const json = data orelse return error.MissingData;
+        const title = (try json_utils.getStringDecoded(std.heap.c_allocator, json, "title")) orelse return error.InvalidParameter;
+        defer std.heap.c_allocator.free(title);
+        if (std.mem.indexOfScalar(u8, title, 0) != null) return error.InvalidParameter;
+        const title_wide = utf8ToUtf16Z(256, title) catch return error.InvalidParameter;
+        if (SetWindowTextW(hwnd, @ptrCast(&title_wide)) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "setSize")) {
+        const json = data orelse return error.MissingData;
+        const width = json_utils.getInt(u32, json, "width") orelse return error.InvalidParameter;
+        const height = json_utils.getInt(u32, json, "height") orelse return error.InvalidParameter;
+        if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
+            return error.InvalidParameter;
+        if (SetWindowPos(hwnd, null, 0, 0, @intCast(width), @intCast(height), 0x0002) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "setPosition")) {
+        const json = data orelse return error.MissingData;
+        const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
+        const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
+        if (SetWindowPos(hwnd, null, x, y, 0, 0, 0x0001) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
+        const json = data orelse return error.MissingData;
+        const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
+        const value = (try json_utils.getStringDecoded(std.heap.c_allocator, json, key)) orelse return error.InvalidParameter;
+        defer std.heap.c_allocator.free(value);
+        if (std.mem.indexOfScalar(u8, value, 0) != null) return error.InvalidParameter;
+        var native = Window{ .id = entry.id, .hwnd = hwnd, .controller = @ptrFromInt(entry.context), .webview = webview, .title = "", .width = 0, .height = 0, .x = 0, .y = 0 };
+        if (std.mem.eql(u8, action, "loadURL")) try native.loadURL(value) else try native.loadHTML(value);
+    } else {
+        return error.PlatformNotSupported;
+    }
+}
 
 pub const WindowStyle = struct {
     frameless: bool = false,
@@ -721,6 +1195,7 @@ pub const WindowStyle = struct {
 };
 
 pub const Window = struct {
+    id: u32,
     hwnd: HWND,
     controller: ?*ICoreWebView2Controller,
     webview: ?*ICoreWebView2,
@@ -766,10 +1241,8 @@ pub const Window = struct {
         const ex_style: DWORD = if (options.always_on_top) WS_EX_TOPMOST else 0;
 
         // Convert title to wide string
-        var title_wide: [256]u16 = undefined;
-        const title_len = std.unicode.utf8ToUtf16Le(&title_wide, options.title) catch return error.WindowCreationFailed;
-        title_wide[title_len] = 0;
-        const title_ptr: [*:0]const u16 = title_wide[0..title_len :0];
+        const title_wide = utf8ToUtf16Z(256, options.title) catch return error.WindowCreationFailed;
+        const title_ptr: LPCWSTR = @ptrCast(&title_wide);
 
         // Calculate window position
         const x = options.x orelse CW_USEDEFAULT;
@@ -790,6 +1263,7 @@ pub const Window = struct {
             hInstance,
             null,
         ) orelse return error.WindowCreationFailed;
+        errdefer _ = DestroyWindow(hwnd);
 
         // ----------------------------------------------------------------
         // Async WebView2 initialization
@@ -851,10 +1325,35 @@ pub const Window = struct {
 
         std.debug.print("[Media] Windows WebView2 configured for camera/microphone access\n", .{});
 
-        const window = Window{
+        const controller = init_ctx.controller orelse return error.WebView2InitFailed;
+        const webview = init_ctx.webview orelse return error.WebView2InitFailed;
+        const window_id = desktop_windows.rememberWithContext(@intFromPtr(hwnd), @intFromPtr(webview), @intFromPtr(controller)) orelse {
+            _ = controller.lpVtbl.Close(controller);
+            _ = webview.lpVtbl.Release(webview);
+            _ = controller.lpVtbl.Release(controller);
+            return error.TooManyWindows;
+        };
+
+        const message_handler = try std.heap.c_allocator.create(WebMessageReceivedHandler);
+        message_handler.* = .{ .lpVtbl = &WebMessageReceivedHandler.vtbl_instance, .ref_count = 1, .window_id = window_id };
+        var message_token: EventRegistrationToken = .{ .value = 0 };
+        const message_hr = webview.lpVtbl.add_WebMessageReceived(webview, @ptrCast(message_handler), &message_token);
+        _ = WebMessageReceivedHandler.release(message_handler);
+        if (!succeeded(message_hr)) {
+            std.debug.print("[WebView2] Page message registration failed: 0x{x}\n", .{@as(u32, @bitCast(message_hr))});
+            return error.WebMessageRegistrationFailed;
+        }
+        if (!desktop_windows.setMessageToken(@intFromPtr(hwnd), message_token.value)) {
+            _ = webview.lpVtbl.remove_WebMessageReceived(webview, message_token);
+            return error.WebMessageRegistrationFailed;
+        }
+        observeWindowGeometry(desktop_windows.byId(window_id).?);
+
+        var window = Window{
+            .id = window_id,
             .hwnd = hwnd,
-            .controller = init_ctx.controller,
-            .webview = init_ctx.webview,
+            .controller = controller,
+            .webview = webview,
             .title = options.title,
             .width = options.width,
             .height = options.height,
@@ -862,35 +1361,42 @@ pub const Window = struct {
             .y = y,
         };
 
-        g_active_hwnd = hwnd;
-        g_active_controller = window.controller;
-        g_active_webview = window.webview;
-
+        // Install before the first Navigate/NavigateToString so every page
+        // starts with the same bridge surface as a macOS Craft window.
+        try window.injectScript(@embedFile("js/craft-bridge.js"));
         return window;
     }
 
+    fn liveEntry(self: *const Window) ?desktop_window_registry.Entry {
+        const entry = desktop_windows.byId(self.id) orelse return null;
+        return if (entry.window == @intFromPtr(self.hwnd)) entry else null;
+    }
+
     pub fn show(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_SHOW);
         _ = UpdateWindow(self.hwnd);
     }
 
     pub fn hide(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_HIDE);
     }
 
     pub fn close(self: *Window) void {
-        if (self.controller) |ctrl| {
-            _ = ctrl.lpVtbl.Close(ctrl);
+        if (self.liveEntry() == null) {
+            self.controller = null;
+            self.webview = null;
+            return;
         }
-        self.controller = null;
-        self.webview = null;
-        g_active_hwnd = null;
-        g_active_controller = null;
-        g_active_webview = null;
-        _ = DestroyWindow(self.hwnd);
+        if (DestroyWindow(self.hwnd) != 0) {
+            self.controller = null;
+            self.webview = null;
+        }
     }
 
     pub fn setSize(self: *Window, width: u32, height: u32) void {
+        if (self.liveEntry() == null) return;
         _ = SetWindowPos(self.hwnd, null, 0, 0, @intCast(width), @intCast(height), 0x0002); // SWP_NOMOVE
         self.width = width;
         self.height = height;
@@ -898,21 +1404,22 @@ pub const Window = struct {
     }
 
     pub fn setPosition(self: *Window, x_pos: i32, y_pos: i32) void {
+        if (self.liveEntry() == null) return;
         _ = SetWindowPos(self.hwnd, null, @intCast(x_pos), @intCast(y_pos), 0, 0, 0x0001); // SWP_NOSIZE
         self.x = x_pos;
         self.y = y_pos;
     }
 
     pub fn setTitle(self: *Window, title: []const u8) void {
-        var title_wide_buf: [256]u16 = undefined;
-        const len = std.unicode.utf8ToUtf16Le(&title_wide_buf, title) catch return;
-        title_wide_buf[len] = 0;
-        _ = SetWindowTextW(self.hwnd, &title_wide_buf);
+        if (self.liveEntry() == null) return;
+        const title_wide_buf = utf8ToUtf16Z(256, title) catch return;
+        _ = SetWindowTextW(self.hwnd, @ptrCast(&title_wide_buf));
         self.title = title;
     }
 
     pub fn loadURL(self: *Window, url: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         var url_wide = try utf8ToUtf16Z(4096, url);
         const url_ptr: LPCWSTR = @ptrCast(&url_wide);
         const hr = webview.lpVtbl.Navigate(webview, url_ptr);
@@ -923,7 +1430,8 @@ pub const Window = struct {
     }
 
     pub fn loadHTML(self: *Window, html: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         // NavigateToString needs null-terminated UTF-16.
         // For large HTML we allocate on the heap.
         const wide_len = html.len + 1; // rough upper bound for ASCII-heavy content
@@ -942,10 +1450,12 @@ pub const Window = struct {
     }
 
     pub fn maximize(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_MAXIMIZE);
     }
 
     pub fn minimize(self: *Window) void {
+        if (self.liveEntry() == null) return;
         _ = ShowWindow(self.hwnd, SW_MINIMIZE);
     }
 
@@ -958,7 +1468,8 @@ pub const Window = struct {
     }
 
     pub fn executeJavaScript(self: *Window, script: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         var script_wide = try utf8ToUtf16Z(16384, script);
         const script_ptr: LPCWSTR = @ptrCast(&script_wide);
 
@@ -978,15 +1489,39 @@ pub const Window = struct {
     }
 
     pub fn injectScript(self: *Window, script: []const u8) !void {
-        const webview = self.webview orelse return error.WebView2NotInitialized;
-        var script_wide = try utf8ToUtf16Z(16384, script);
-        const script_ptr: LPCWSTR = @ptrCast(&script_wide);
+        const entry = self.liveEntry() orelse return error.NoWebView;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
+        var script_wide = try desktop_script_encoding.encode(std.heap.c_allocator, script);
+        defer script_wide.deinit(std.heap.c_allocator);
 
-        const hr = webview.lpVtbl.AddScriptToExecuteOnDocumentCreated(webview, script_ptr, null);
+        var install: ScriptInstallContext = .{};
+        const handler = try std.heap.c_allocator.create(ScriptInstallCompletedHandler);
+        handler.* = .{ .lpVtbl = &ScriptInstallCompletedHandler.vtbl_instance, .ref_count = 1, .ctx = &install };
+        const hr = webview.lpVtbl.AddScriptToExecuteOnDocumentCreated(webview, script_wide.ptr(), handler);
+        _ = ScriptInstallCompletedHandler.release(handler);
         if (!succeeded(hr)) {
             std.debug.print("[WebView2] AddScriptToExecuteOnDocumentCreated failed: 0x{x}\n", .{@as(u32, @bitCast(hr))});
             return error.ScriptInjectionFailed;
         }
+
+        // WebView2 installs this asynchronously. Navigate immediately after
+        // the API call and the first page can miss the bridge entirely.
+        var msg: MSG = undefined;
+        var quit_requested = false;
+        while (!install.done) {
+            if (PeekMessageW(&msg, null, 0, 0, PM_REMOVE) != 0) {
+                if (msg.message == WM_QUIT) {
+                    quit_requested = true;
+                } else {
+                    _ = TranslateMessage(&msg);
+                    _ = DispatchMessageW(&msg);
+                }
+            } else {
+                Sleep(1);
+            }
+        }
+        if (quit_requested) PostQuitMessage(0);
+        if (!succeeded(install.result)) return error.ScriptInjectionFailed;
     }
 
     pub fn enableGPUAcceleration(self: *Window, enable: bool) !void {
@@ -997,13 +1532,15 @@ pub const Window = struct {
     }
 
     pub fn openDevTools(self: *Window) void {
-        const webview = self.webview orelse return;
+        const entry = self.liveEntry() orelse return;
+        const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
         _ = webview.lpVtbl.OpenDevToolsWindow(webview);
     }
 
     // Resize the WebView2 control to match the current client area
     fn resizeWebView(self: *Window) void {
-        const controller = self.controller orelse return;
+        const entry = self.liveEntry() orelse return;
+        const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
         var bounds: RECT = undefined;
         _ = GetClientRect(self.hwnd, &bounds);
         _ = controller.lpVtbl.put_Bounds(controller, bounds);
@@ -1012,19 +1549,57 @@ pub const Window = struct {
 
 fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT {
     switch (msg) {
+        WM_CRAFT_OPEN_WINDOW => {
+            processPendingOpens();
+            return 0;
+        },
         WM_SIZE => {
-            // Resize the WebView2 control to fill the window
-            if (g_active_hwnd == hwnd) {
-                if (g_active_controller) |controller| {
-                    var bounds: RECT = undefined;
-                    _ = GetClientRect(hwnd, &bounds);
-                    _ = controller.lpVtbl.put_Bounds(controller, bounds);
+            // A resize belongs to this HWND, not whichever window was created last.
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
+                var bounds: RECT = undefined;
+                _ = GetClientRect(hwnd, &bounds);
+                _ = controller.lpVtbl.put_Bounds(controller, bounds);
+                const minimized = wParam == 1; // SIZE_MINIMIZED
+                if (desktop_windows.observeState(entry.window, minimized, false)) |change| {
+                    if (change.minimized) |now_minimized|
+                        deliverWindowEvent(entry, if (now_minimized) "minimize" else "restore", "");
                 }
+                if (!minimized) observeWindowGeometry(entry);
             }
             return 0;
         },
-        WM_DESTROY, WM_CLOSE => {
-            PostQuitMessage(0);
+        WM_MOVE => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                if (!entry.minimized) observeWindowGeometry(entry);
+            }
+            return 0;
+        },
+        WM_ACTIVATE => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry|
+                deliverWindowEvent(entry, if ((wParam & 0xffff) == 0) "blur" else "focus", "");
+        },
+        WM_CLOSE => {
+            _ = DestroyWindow(hwnd);
+            return 0;
+        },
+        WM_DESTROY => {
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| deliverWindowEvent(entry, "close", "");
+            if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                discardPendingOpens(entry.id);
+                const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
+                const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
+                window_registry.forgetOwner(entry.webview);
+                window_registry.forget(entry.window);
+                if (entry.message_token) |token| {
+                    _ = webview.lpVtbl.remove_WebMessageReceived(webview, .{ .value = token });
+                }
+                _ = controller.lpVtbl.Close(controller);
+                _ = webview.lpVtbl.Release(webview);
+                _ = controller.lpVtbl.Release(controller);
+                // Closing a child window must not end every window's event loop.
+                if (app_running and desktop_windows.count() == 0) PostQuitMessage(0);
+            }
             return 0;
         },
         else => {},
@@ -1035,6 +1610,7 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
 pub const App = struct {
     pub fn run() !void {
         app_running = true;
+        defer app_running = false;
         var msg: MSG = undefined;
 
         while (GetMessageW(&msg, null, 0, 0) != 0) {
@@ -1049,10 +1625,15 @@ pub const App = struct {
     }
 };
 
-/// Evaluate JavaScript in the current webview (cross-platform bridge helper).
-/// Uses the active window's WebView2 instance.
+/// Evaluate a reply in the authenticated sender, if that webview is still live.
+/// Native callers without a sender use the most recently created live window.
 pub fn evalJS(script: []const u8) !void {
-    const webview = g_active_webview orelse return error.NoWebView;
+    var handles: [desktop_window_registry.capacity]usize = undefined;
+    const live = desktop_windows.liveWebviews(&handles);
+    const latest = desktop_windows.latest();
+    const target = window_reply_target.select(live, window_context.currentWebView(), if (latest) |entry| entry.webview else null) orelse
+        return error.NoWebView;
+    const webview: *ICoreWebView2 = @ptrFromInt(target);
     var script_wide = try utf8ToUtf16Z(16384, script);
     const handler = try std.heap.c_allocator.create(ExecuteScriptCompletedHandler);
     handler.* = .{ .lpVtbl = &ExecuteScriptCompletedHandler.vtbl_instance, .ref_count = 1 };
@@ -1074,6 +1655,14 @@ pub fn createWindow(title: []const u8, width: u32, height: u32, html: []const u8
 }
 
 pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, url, style, true);
+}
+
+pub fn createWindowWithHTML(title: []const u8, width: u32, height: u32, html: []const u8, style: WindowStyle) !*anyopaque {
+    return createStyledWindow(title, width, height, html, style, false);
+}
+
+fn createStyledWindow(title: []const u8, width: u32, height: u32, content: []const u8, style: WindowStyle, comptime is_url: bool) !*anyopaque {
     var window = try Window.create(.{
         .title = title,
         .width = width,
@@ -1083,11 +1672,13 @@ pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []co
         .resizable = style.resizable,
         .frameless = style.frameless,
         .transparent = style.transparent,
+        .always_on_top = style.always_on_top,
         .fullscreen = style.fullscreen,
         .dark_mode = style.dark_mode,
         .dev_tools = style.dev_tools,
     });
-    try window.loadURL(url);
+    errdefer window.close();
+    if (is_url) try window.loadURL(content) else try window.loadHTML(content);
     window.show();
     return window.hwnd;
 }
@@ -1158,6 +1749,6 @@ pub fn getClipboard(allocator: std.mem.Allocator) ![]u8 {
     const text_len = std.mem.indexOfSentinel(u16, 0, text_wide);
 
     // Convert UTF-16 to UTF-8
-    const utf8_len = std.unicode.utf16leToUtf8AllocZ(allocator, text_wide[0..text_len]) catch return "";
+    const utf8_len = std.unicode.utf16LeToUtf8AllocZ(allocator, text_wide[0..text_len]) catch return "";
     return utf8_len;
 }

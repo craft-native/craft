@@ -65,6 +65,20 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   expect(steps(release.jobs['attach-release-sbom'])).toContain('cmp "sbom/$document" "$VERIFY_DIR/$document"')
 })
 
+test('Windows release stages the pinned WebView2 loader before scanning and publishing', () => {
+  const native = release.jobs.pantry.steps!
+  const staged = native.findIndex(step => step.name === 'Stage Windows WebView2 loader')
+  const scan = native.findIndex(step => step.name === 'Scan binaries prepared for publication')
+  const publish = native.findIndex(step => step.name === 'Publish & Release')
+  expect(staged).toBeGreaterThan(native.findIndex(step => step.name === 'Cross-compile additional targets (Linux)'))
+  expect(scan).toBeGreaterThan(staged)
+  expect(publish).toBeGreaterThan(scan)
+  const command = native[staged]?.run ?? ''
+  expect(command).toContain('1.0.4191.47')
+  expect(command).toContain('f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0')
+  expect(command).toContain('zig-out/cross/windows-x64/WebView2Loader.dll')
+})
+
 test('a registry network failure remains a visible best-effort warning', () => {
   const command = steps(release.jobs['notify-registry'])
   expect(command).not.toBe('')

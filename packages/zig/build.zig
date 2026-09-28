@@ -1257,6 +1257,62 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const window_reply_target_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/window_reply_target.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_window_registry_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_window_registry.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_bridge_envelope_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_bridge_envelope.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_bridge_text_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_bridge_text.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_window_events_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_window_events.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_window_reads_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_window_reads.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const desktop_script_encoding_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_script_encoding.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // The shell bridge's argv construction: what a `spawn` actually runs.
     // Untested until now, which is how it shipped parsing an `args` array and
     // throwing it away.
@@ -1710,6 +1766,13 @@ pub fn build(b: *std.Build) void {
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_window_context_tests = b.addRunArtifact(window_context_tests);
+    const run_window_reply_target_tests = b.addRunArtifact(window_reply_target_tests);
+    const run_desktop_window_registry_tests = b.addRunArtifact(desktop_window_registry_tests);
+    const run_desktop_bridge_envelope_tests = b.addRunArtifact(desktop_bridge_envelope_tests);
+    const run_desktop_bridge_text_tests = b.addRunArtifact(desktop_bridge_text_tests);
+    const run_desktop_window_events_tests = b.addRunArtifact(desktop_window_events_tests);
+    const run_desktop_window_reads_tests = b.addRunArtifact(desktop_window_reads_tests);
+    const run_desktop_script_encoding_tests = b.addRunArtifact(desktop_script_encoding_tests);
     const run_external_link_tests = b.addRunArtifact(external_link_tests);
     const run_webview_recovery_tests = b.addRunArtifact(webview_recovery_tests);
     const run_request_context_tests = b.addRunArtifact(request_context_tests);
@@ -1859,6 +1922,13 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_window_context_tests.step);
+    test_step.dependOn(&run_window_reply_target_tests.step);
+    test_step.dependOn(&run_desktop_window_registry_tests.step);
+    test_step.dependOn(&run_desktop_bridge_envelope_tests.step);
+    test_step.dependOn(&run_desktop_bridge_text_tests.step);
+    test_step.dependOn(&run_desktop_window_events_tests.step);
+    test_step.dependOn(&run_desktop_window_reads_tests.step);
+    test_step.dependOn(&run_desktop_script_encoding_tests.step);
     test_step.dependOn(&run_external_link_tests.step);
     test_step.dependOn(&run_webview_recovery_tests.step);
     test_step.dependOn(&run_request_context_tests.step);
@@ -2829,6 +2899,7 @@ fn linkPlatformLibraries(b: *std.Build, module: *std.Build.Module, target_os: st
         .linux => {
             module.linkSystemLibrary("gtk+-3.0", .{});
             module.linkSystemLibrary("webkit2gtk-4.1", .{});
+            module.linkSystemLibrary("javascriptcoregtk-4.1", .{});
         },
         .windows => {
             module.linkSystemLibrary("ole32", .{});

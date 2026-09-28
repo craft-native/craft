@@ -140,6 +140,24 @@ describe('typed window-handle routing', () => {
     expect(created.id).toBe(id)
   })
 
+  it('uses the injected window envelope in WebView2 as well as WebKit', async () => {
+    const host = globalThis.window as unknown as {
+      webkit?: unknown
+      chrome?: { webview: { postMessage: () => void } }
+    }
+    Reflect.deleteProperty(host, 'webkit')
+    host.chrome = { webview: { postMessage: () => {} } }
+    const id = fixtureId('webview2')
+    const created = await windowManager.create({ id, html: '<h1>Windows</h1>' })
+    await created.setTitle('Windows')
+    callResult = id
+
+    expect(open).toHaveBeenCalledWith({ id, html: '<h1>Windows</h1>' })
+    expect(call).toHaveBeenCalledWith('setTitle', { title: 'Windows' }, id)
+    expect(await windowManager.getFocused()).toBe(created)
+    expect(call).toHaveBeenCalledWith('getFocused', undefined, 'main')
+  })
+
   it('refuses the local main alias before opening a child window', async () => {
     await expect(windowManager.create({ id: 'main', html: '<h1>Orphan</h1>' }))
       .rejects.toThrow('reserved for the current window')

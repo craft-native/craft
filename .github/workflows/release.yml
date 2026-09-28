@@ -179,6 +179,23 @@ jobs:
           rm -rf zig-out/bin
           zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
 
+      # The Windows binary dynamically loads WebView2Loader.dll. The runtime
+      # alone does not provide the app-local loader, so stage the x64 DLL beside
+      # craft.exe before Pantry zips zig-out/cross/windows-x64/. Pin and verify
+      # the official NuGet package instead of silently shipping a moving DLL.
+      - name: Stage Windows WebView2 loader
+        if: runner.os == 'Linux'
+        working-directory: packages/zig
+        run: |
+          set -euo pipefail
+          VERSION=1.0.4191.47
+          EXPECTED=f492bbf547d0da329553b6727435b677579b1e9f91cc9e4a1ad029366d5f23d0
+          ARCHIVE="$RUNNER_TEMP/microsoft.web.webview2.$VERSION.nupkg"
+          curl -fsSL --retry 3 "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$VERSION/microsoft.web.webview2.$VERSION.nupkg" -o "$ARCHIVE"
+          echo "$EXPECTED  $ARCHIVE" | sha256sum -c -
+          unzip -p "$ARCHIVE" build/native/x64/WebView2Loader.dll > zig-out/cross/windows-x64/WebView2Loader.dll
+          test -s zig-out/cross/windows-x64/WebView2Loader.dll
+
       # ── macOS Code Signing & Notarization ──────────────────────────
       # The signing credentials live encrypted in `.env.production`, not as
       # seven repository secrets.
