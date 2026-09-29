@@ -33,6 +33,7 @@ pub const Entry = struct {
     context: usize = 0,
     /// WebView2 subscription to remove before releasing a closed webview.
     message_token: ?i64 = null,
+    navigation_token: ?i64 = null,
     geometry: ?Geometry = null,
     minimized: bool = false,
     fullscreen: bool = false,
@@ -99,6 +100,19 @@ pub const Registry = struct {
             if (slot.*) |*entry| {
                 if (entry.window == window) {
                     entry.message_token = token;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn setNavigationToken(self: *Registry, window: usize, token: i64) bool {
+        if (window == 0) return false;
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    entry.navigation_token = token;
                     return true;
                 }
             }
@@ -266,8 +280,10 @@ test "a web message subscription belongs only to its live window" {
     _ = registry.remember(0x1000, 0x1001);
     _ = registry.remember(0x2000, 0x2001);
     try std.testing.expect(registry.setMessageToken(0x1000, 42));
+    try std.testing.expect(registry.setNavigationToken(0x1000, 43));
     try std.testing.expect(!registry.setMessageToken(0x3000, 99));
     try std.testing.expectEqual(@as(?i64, 42), registry.byWebview(0x1001).?.message_token);
+    try std.testing.expectEqual(@as(?i64, 43), registry.byWebview(0x1001).?.navigation_token);
     try std.testing.expect(registry.byWebview(0x2001).?.message_token == null);
     try std.testing.expectEqual(@as(?i64, 42), registry.forgetWindow(0x1000).?.message_token);
     try std.testing.expect(registry.byWebview(0x1001) == null);
