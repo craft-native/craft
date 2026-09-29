@@ -39,6 +39,13 @@ craft-package --name "My App" --version "1.0.0" --binary ./build/myapp
 | | RPM | Fedora/RedHat package |
 | | AppImage | Universal Linux binary |
 
+For a DEB or MSI that handles custom URLs, set `urlSchemes` and `launchUrl` on
+the platform options. The launcher loads `launchUrl` as the app's page and
+passes the incoming URI separately as `--deep-link`; the page can read it with
+`window.craft.deepLink.getInitialUrl()`. An app that already embeds its own
+page in its binary may omit `launchUrl`. Scheme registration currently applies
+to DEB and MSI, not RPM, AppImage, or ZIP.
+
 ## TypeScript API
 
 ### Complete Example

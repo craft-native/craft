@@ -249,6 +249,9 @@ export interface PackageConfig {
     /** Custom URI schemes registered by the MSI installer */
     urlSchemes?: string[]
 
+    /** App page loaded when the MSI shortcut or a registered URI starts Craft. */
+    launchUrl?: string
+
     /** Architecture encoded in MSI metadata (defaults to the native host) */
     architecture?: 'x86' | 'x64' | 'arm64'
 
@@ -266,6 +269,9 @@ export interface PackageConfig {
 
     /** Custom URI schemes advertised by the DEB desktop entry */
     urlSchemes?: string[]
+
+    /** App page loaded when the DEB desktop entry starts Craft. */
+    launchUrl?: string
 
     /** Create RPM package */
     rpm?: boolean
@@ -293,6 +299,7 @@ interface MSIOptions {
   architecture: 'x86' | 'x64' | 'arm64'
   additionalFiles?: string[]
   urlSchemes?: string[]
+  launchUrl?: string
   certificatePath?: string
   certificatePassword?: string
 }
@@ -514,6 +521,7 @@ async function packageWindows(config: PackageConfig, outDir: string): Promise<Pa
       architecture: opts.architecture || windowsArchitecture(process.arch),
       additionalFiles: opts.additionalFiles,
       urlSchemes: opts.urlSchemes,
+      launchUrl: opts.launchUrl,
       certificatePath: opts.certificatePath,
       certificatePassword: opts.certificatePassword,
     })
@@ -569,6 +577,7 @@ async function packageLinux(config: PackageConfig, outDir: string): Promise<Pack
       // needs its provider even on a minimal desktop without it preinstalled.
       dependencies: opts.debDependencies || [...DEFAULT_DEB_DEPENDENCIES],
       urlSchemes: opts.urlSchemes,
+      launchUrl: opts.launchUrl,
     })
     results.push({
       success: debResult.success,
@@ -694,12 +703,27 @@ function uniqueUrlSchemes(schemes: readonly string[]): string[] {
 }
 
 /** Desktop-entry URI association; the OS passes one URL as `%u`. */
-export function linuxDesktopEntry(name: string, binaryName: string, urlSchemes: readonly string[] = []): string {
+function launchPageUrl(value: string): string {
+  let url: URL
+  try { url = new URL(value) }
+  catch { throw new Error(`Invalid packaged app launch URL: ${JSON.stringify(value)}`) }
+  if (!['http:', 'https:', 'file:'].includes(url.protocol))
+    throw new Error(`Unsupported packaged app launch URL protocol: ${url.protocol}`)
+  return url.href
+}
+
+function desktopExecArgument(value: string): string {
+  // Desktop Entry Exec expands % field codes even inside quoted arguments.
+  return `"${value.replaceAll('%', '%%').replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('$', '\\$').replaceAll('`', '\\`')}"`
+}
+
+export function linuxDesktopEntry(name: string, binaryName: string, urlSchemes: readonly string[] = [], launchUrl?: string): string {
   const schemes = uniqueUrlSchemes(urlSchemes)
+  const page = launchUrl ? ` --url ${desktopExecArgument(launchPageUrl(launchUrl))}` : ''
   return `[Desktop Entry]
 Type=Application
 Name=${name}
-Exec=/usr/bin/${binaryName}${schemes.length ? ' --deep-link %u' : ''}
+Exec=/usr/bin/${binaryName}${page}${schemes.length ? ' --deep-link %u' : ''}
 Terminal=false
 Categories=Utility;
 ${schemes.length ? `MimeType=${schemes.map(scheme => `x-scheme-handler/${scheme.toLowerCase()};`).join('')}\n` : ''}`
@@ -1127,7 +1151,7 @@ export function windowsArchitecture(architecture: string): 'x86' | 'x64' | 'arm6
   throw new Error(`Unsupported Windows package architecture: ${architecture}`)
 }
 
-export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture' | 'urlSchemes'>, sourceName: string, additionalFileNames: string[] = []): string {
+export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture' | 'urlSchemes' | 'launchUrl'>, sourceName: string, additionalFileNames: string[] = []): string {
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/.test(opts.version)) throw new Error(`MSI version must have 3 or 4 numeric parts: ${opts.version}`)
   const id = wixIdentifier(opts.name)
   const manufacturer = opts.manufacturer.trim() || 'Unknown'
@@ -1136,6 +1160,7 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
   const win64 = opts.architecture === 'x86' ? 'no' : 'yes'
   const notificationAppId = windowsNotificationAppId(opts.name, manufacturer)
   const schemes = uniqueUrlSchemes(opts.urlSchemes || [])
+  const page = opts.launchUrl ? ` --url &quot;${xml(launchPageUrl(opts.launchUrl))}&quot;` : ''
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="${xml(opts.name)}" Language="1033" Version="${opts.version}" Manufacturer="${xml(manufacturer)}" UpgradeCode="${upgradeCode}">
@@ -1147,7 +1172,7 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
         <Directory Id="INSTALLFOLDER" Name="${xml(opts.name)}">
           <Component Id="${id}Executable" Guid="*" Win64="${win64}">
             <File Id="${id}File" Source="${xml(sourceName)}" KeyPath="yes">
-              <Shortcut Id="${id}StartMenuShortcut" Directory="ProgramMenuFolder" Name="${xml(opts.name)}" WorkingDirectory="INSTALLFOLDER">
+              <Shortcut Id="${id}StartMenuShortcut" Directory="ProgramMenuFolder" Name="${xml(opts.name)}" WorkingDirectory="INSTALLFOLDER"${page ? ` Arguments="${page.trim()}"` : ''}>
                 <ShortcutProperty Key="System.AppUserModel.ID" Value="${notificationAppId}" />
               </Shortcut>
             </File>
@@ -1163,7 +1188,7 @@ ${schemes.map((scheme, index) => `          <Component Id="${id}Protocol${index}
               <RegistryValue Type="string" Value="URL:${xml(opts.name)} Protocol" KeyPath="yes" />
               <RegistryValue Type="string" Name="URL Protocol" Value="" />
               <RegistryKey Key="shell\\open\\command">
-                <RegistryValue Type="string" Value="&quot;[#${id}File]&quot; --deep-link &quot;%1&quot;" />
+                <RegistryValue Type="string" Value="&quot;[#${id}File]&quot;${page} --deep-link &quot;%1&quot;" />
               </RegistryKey>
             </RegistryKey>
           </Component>`).join('\n')}
@@ -1300,6 +1325,7 @@ async function createDEB(opts: {
   maintainer: string
   dependencies: string[]
   urlSchemes?: string[]
+  launchUrl?: string
 }): Promise<{ success: boolean; outputPath?: string; error?: string }> {
   return new Promise((resolve) => {
     try {
@@ -1327,7 +1353,7 @@ async function createDEB(opts: {
           return
         }
       }
-      const desktopContent = linuxDesktopEntry(opts.name, sanitizedName, opts.urlSchemes)
+      const desktopContent = linuxDesktopEntry(opts.name, sanitizedName, opts.urlSchemes, opts.launchUrl)
 
       // Create DEB package structure
       const tempDir = mkdtempSync(join(tmpdir(), 'craft-deb-'))

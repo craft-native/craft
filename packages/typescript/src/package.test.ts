@@ -18,6 +18,12 @@ describe('Linux DEB URI schemes', () => {
     expect(linuxDesktopEntry('Craft', 'craft')).not.toContain('MimeType=')
     expect(() => linuxDesktopEntry('Craft', 'craft', ['not a scheme'])).toThrow('Invalid URL scheme')
   })
+
+  it('loads the packaged page before delivering a cold URI', () => {
+    const entry = linuxDesktopEntry('Craft', 'craft', ['craft-test'], 'https://example.test/app?tab=one%20two')
+    expect(entry).toContain('Exec=/usr/bin/craft --url "https://example.test/app?tab=one%%20two" --deep-link %u')
+    expect(() => linuxDesktopEntry('Craft', 'craft', [], 'javascript:alert(1)')).toThrow('Unsupported packaged app launch URL')
+  })
 })
 
 describe('Windows MSI packaging', () => {
@@ -46,6 +52,12 @@ describe('Windows MSI packaging', () => {
     expect(source).toContain('Key="Software\\Classes\\craft+preview"')
     expect(source).not.toContain('CraftProtocol2')
     expect(() => renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['bad scheme'] }, 'Craft.exe')).toThrow('Invalid URL scheme')
+  })
+
+  it('uses the packaged page for Start-menu and protocol launches', () => {
+    const source = renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['craft-test'], launchUrl: 'https://example.test/app?tab=one&mode=two' }, 'Craft.exe')
+    expect(source).toContain('Arguments="--url &quot;https://example.test/app?tab=one&amp;mode=two&quot;"')
+    expect(source).toContain('Value="&quot;[#CraftFile]&quot; --url &quot;https://example.test/app?tab=one&amp;mode=two&quot; --deep-link &quot;%1&quot;"')
   })
 
   it('rejects versions WiX cannot compare', () => {

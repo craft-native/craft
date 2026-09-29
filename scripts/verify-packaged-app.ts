@@ -36,6 +36,54 @@ async function command(label: string, argv: string[]): Promise<string> {
   return output
 }
 
+async function startColdDeepLinkObserver(): Promise<{
+  launchUrl: string
+  waitFor: (expected: string) => Promise<void>
+  close: () => Promise<void>
+}> {
+  let accept!: (url: string | null) => void
+  const received = new Promise<string | null>(resolve => { accept = resolve })
+  const page = `<!doctype html><title>Craft cold deep-link smoke</title><script>
+    (async () => {
+      if (!window.craft?.deepLink?.getInitialUrl) throw new Error('installed app has no deep-link bridge')
+      const url = window.craft.deepLink.getInitialUrl()
+      const report = new URL('/received', location.origin)
+      if (url) report.searchParams.set('url', url)
+      await fetch(report, { method: 'POST' })
+      window.craft.window.close()
+    })().catch(error => {
+      const report = new URL('/failed', location.origin)
+      report.searchParams.set('reason', String(error))
+      return fetch(report, { method: 'POST' })
+    })
+  </script>`
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith('/received?') && request.method === 'POST')
+      accept(new URL(request.url, 'http://127.0.0.1').searchParams.get('url'))
+    if (request.url?.startsWith('/failed?') && request.method === 'POST')
+      accept(`error: ${new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')}`)
+    response.writeHead(200, { 'Content-Type': 'text/html', Connection: 'close' })
+    response.end(page)
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as AddressInfo
+  return {
+    launchUrl: `http://127.0.0.1:${address.port}/`,
+    async waitFor(expected: string) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const actual = await Promise.race([
+          received,
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Installed app did not report its cold deep link within 20 seconds')), 20_000) }),
+        ])
+        if (actual !== expected) throw new Error(`Installed app cold deep link differed: ${JSON.stringify(actual)}`)
+      }
+      finally { if (timer) clearTimeout(timer) }
+    },
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  }
+}
+
 function artifact(results: PackageResult[], format: string): string {
   const result = results.find(item => item.format === format)
   if (!result?.success || !result.outputPath || !existsSync(result.outputPath))
@@ -311,7 +359,10 @@ async function main(): Promise<void> {
   const work = mkdtempSync(join(tmpdir(), 'craft-packaged-smoke-'))
   let installed = false
   let installer = ''
+  let coldObserver: Awaited<ReturnType<typeof startColdDeepLinkObserver>> | undefined
   try {
+    if (process.env.GITHUB_ACTIONS === 'true' && platform !== 'macos')
+      coldObserver = await startColdDeepLinkObserver()
     const loader = join(dirname(binary), 'WebView2Loader.dll')
     if (platform === 'windows' && !existsSync(loader))
       throw new Error(`Windows WebView2 loader missing beside binary: ${loader}`)
@@ -325,8 +376,8 @@ async function main(): Promise<void> {
       bundleId: receipt,
       platforms: [platform],
       macos: { dmg: false, pkg: true, urlSchemes: [deepLinkScheme] },
-      linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'], urlSchemes: [deepLinkScheme] },
-      windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [], urlSchemes: [deepLinkScheme] },
+      linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'], urlSchemes: [deepLinkScheme], launchUrl: coldObserver?.launchUrl },
+      windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [], urlSchemes: [deepLinkScheme], launchUrl: coldObserver?.launchUrl },
     })
     installer = artifact(results, platform === 'macos' ? 'pkg' : platform === 'windows' ? 'msi' : 'deb')
     if (platform === 'linux') {
@@ -336,8 +387,10 @@ async function main(): Promise<void> {
       const inspected = join(work, 'deb-inspect')
       await command('extract Linux DEB for protocol inspection', ['dpkg-deb', '--extract', installer, inspected])
       const desktop = readFileSync(join(inspected, 'usr', 'share', 'applications', 'craft.desktop'), 'utf8')
-      if (!desktop.includes(`MimeType=x-scheme-handler/${deepLinkScheme};`) || !desktop.includes('Exec=/usr/bin/craft --deep-link %u'))
+      if (!desktop.includes(`MimeType=x-scheme-handler/${deepLinkScheme};`) || !desktop.includes('Exec=/usr/bin/craft') || !desktop.includes('--deep-link %u'))
         throw new Error('Linux DEB did not register its declared URL scheme')
+      if (coldObserver && !desktop.includes(`--url "${coldObserver.launchUrl}"`))
+        throw new Error('Linux DEB protocol handler did not load its packaged app page')
     }
 
     if (platform === 'windows') {
@@ -372,10 +425,30 @@ async function main(): Promise<void> {
       const launch = await command('inspect Windows URL launch command', ['reg.exe', 'query', `HKCR\\${deepLinkScheme}\\shell\\open\\command`, '/ve'])
       if (!launch.includes('--deep-link') || !launch.includes('"%1"'))
         throw new Error('Windows MSI URL handler did not pass a separate deep-link argument')
+      if (coldObserver && !launch.includes(coldObserver.launchUrl))
+        throw new Error('Windows MSI URL handler did not load its packaged app page')
+    }
+    if (coldObserver) {
+      const coldUrl = `${deepLinkScheme}://cold/${randomUUID()}`
+      if (platform === 'linux') {
+        await command('select installed Linux URI handler', ['xdg-mime', 'default', 'craft.desktop', `x-scheme-handler/${deepLinkScheme}`])
+        const selected = await command('inspect Linux URI handler', ['xdg-mime', 'query', 'default', `x-scheme-handler/${deepLinkScheme}`])
+        if (selected !== 'craft.desktop') throw new Error(`Linux selected the wrong URI handler: ${selected}`)
+        await command('dispatch cold Linux URI', ['xdg-open', coldUrl])
+      }
+      else {
+        await command('dispatch cold Windows URI', ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${coldUrl}'`])
+      }
+      await coldObserver.waitFor(coldUrl)
+      // The page posts before asking Craft to close; let that native close
+      // finish before another app instance starts or MSI uninstall begins.
+      await new Promise(resolve => setTimeout(resolve, 500))
+      console.log(`Installed ${platform} app received its cold-launch deep link`)
     }
     await launchViaSdk()
   }
   finally {
+    if (coldObserver) await coldObserver.close()
     if (installed) {
       if (platform === 'windows') await command('uninstall Windows MSI', ['msiexec.exe', '/x', installer, '/qn', '/norestart'])
       else if (platform === 'macos') {
