@@ -126,7 +126,10 @@ fn logInternal(
 
     // Timestamp - use C clock for wall time where available
     if (config.show_timestamp) {
-        if (comptime @hasDecl(std.c, "clock_gettime")) {
+        // The pinned Zig stdlib declares clock_gettime on Windows too, but
+        // its clockid_t is void there and merely referencing it fails to
+        // compile. Gate the POSIX clock by target, not declaration alone.
+        if (comptime builtin.os.tag != .windows and @hasDecl(std.c, "clock_gettime")) {
             var ts: std.c.timespec = undefined;
             if (std.c.clock_gettime(.REALTIME, &ts) == 0) {
                 const secs_total: i64 = ts.sec;
@@ -307,8 +310,9 @@ test "log level ordering" {
 
 test "scoped logger" {
     const myLog = scoped("TestModule");
-    // Just verify it compiles - actual output would go to stderr
-    _ = myLog;
+    // Exercise logInternal during compilation on every target. A type-only
+    // reference missed the Windows clock_gettime failure in the pinned stdlib.
+    myLog.debug("cross-platform logger", .{});
 }
 
 test "log level text" {

@@ -30,6 +30,12 @@ test "desktop clipboard result escapes JSON text" {
     try std.testing.expectEqualStrings("Craft \\\"quoted\\\" \\\\ path\\n", result.items);
 }
 
+test "desktop text dispatcher rejects unsupported clipboard actions" {
+    if (comptime builtin.os.tag == .macos) return;
+    var bridge = ClipboardBridge.init(std.testing.allocator);
+    try std.testing.expectError(BridgeError.UnknownAction, bridge.handleDesktopText(A.write_h_t_m_l, null));
+}
+
 // Import GTK clipboard API from linux.zig (works on both X11 and Wayland)
 const linux = if (builtin.os.tag == .linux) @import("linux.zig") else undefined;
 const capabilities = @import("capabilities.zig");
