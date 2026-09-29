@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.103...v0.0.104)
+
+## 🐛 Bug Fixes
+
+- **ios**: resume a paused recording restored at launch ([bc85a82](https://github.com/craft-native/craft/commit/bc85a82)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.104 ([67792ed](https://github.com/craft-native/craft/commit/67792ed)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.102...v0.0.103)
 
 ## 🐛 Bug Fixes
