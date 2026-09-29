@@ -7,6 +7,8 @@ const desktop_window_registry = @import("desktop_window_registry.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
 const json_utils = @import("json_utils.zig");
+const io_context = @import("io_context.zig");
+const desktop_deep_link = @import("desktop_deep_link.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -19,6 +21,10 @@ const window_reply_target = @import("window_reply_target.zig");
 pub extern "c" fn gtk_init(argc: ?*c_int, argv: ?*anyopaque) void;
 pub extern "c" fn gtk_application_new(application_id: [*:0]const u8, flags: c_int) ?*anyopaque;
 pub extern "c" fn g_application_register(app: *anyopaque, cancellable: ?*anyopaque, err: ?*?*anyopaque) c_int;
+pub extern "c" fn g_application_get_is_remote(app: *anyopaque) c_int;
+pub extern "c" fn g_application_open(app: *anyopaque, files: [*]*anyopaque, n_files: c_int, hint: [*:0]const u8) void;
+pub extern "c" fn g_file_new_for_uri(uri: [*:0]const u8) ?*anyopaque;
+pub extern "c" fn g_file_get_uri(file: *anyopaque) ?[*:0]u8;
 pub extern "c" fn g_application_run(app: *anyopaque, argc: c_int, argv: [*c][*c]u8) c_int;
 pub extern "c" fn g_object_unref(object: *anyopaque) void;
 pub extern "c" fn gtk_application_window_new(app: *anyopaque) *anyopaque;
@@ -695,8 +701,58 @@ test "Linux portable controls require an authenticated live sender" {
     try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("setBounds", "{}"));
 }
 
+test "Linux installed-app deep-link forwarding is in the build" {
+    const forward = &forwardDeepLinkIfRunning;
+    try std.testing.expect(@intFromPtr(forward) != 0);
+}
+
 // Application state
 var app_instance: ?*anyopaque = null;
+
+fn onApplicationOpen(_: *anyopaque, files: [*]*anyopaque, count: c_int, _: [*:0]const u8, _: ?*anyopaque) callconv(.c) void {
+    if (count <= 0) return;
+    const entry = desktop_windows.latest() orelse return;
+    for (files[0..@intCast(count)]) |file| {
+        const uri_z = g_file_get_uri(file) orelse continue;
+        defer g_free(@ptrCast(uri_z));
+        const script = desktop_deep_link.deliveryScript(std.heap.c_allocator, std.mem.span(uri_z)) catch continue;
+        defer std.heap.c_allocator.free(script);
+        const script_z = @import("memory.zig").dupeZ(std.heap.c_allocator, u8, script) catch continue;
+        defer std.heap.c_allocator.free(script_z);
+        webkit_web_view_run_javascript(@ptrFromInt(entry.webview), script_z, null, null, null);
+    }
+    gtk_window_present(@ptrFromInt(entry.window));
+}
+
+fn registerApplication() !?*anyopaque {
+    if (app_instance != null) return null;
+    gtk_init(null, null);
+    const exe = try std.process.executablePathAlloc(io_context.get(), std.heap.c_allocator);
+    defer std.heap.c_allocator.free(exe);
+    const app_id = try desktop_deep_link.applicationId(std.heap.c_allocator, exe);
+    defer std.heap.c_allocator.free(app_id);
+    const app = gtk_application_new(app_id, 4) orelse return error.ApplicationCreationFailed; // G_APPLICATION_HANDLES_OPEN
+    errdefer g_object_unref(app);
+    if (g_signal_connect_data(app, "activate", @ptrCast(&onApplicationActivated), null, null, 0) == 0 or
+        g_signal_connect_data(app, "open", @ptrCast(&onApplicationOpen), null, null, 0) == 0)
+        return error.SignalConnectionFailed;
+    if (g_application_register(app, null, null) == 0) return error.ApplicationRegistrationFailed;
+    if (g_application_get_is_remote(app) != 0) return app;
+    app_instance = app;
+    return null;
+}
+
+pub fn forwardDeepLinkIfRunning(url: []const u8) !bool {
+    const remote = try registerApplication() orelse return false;
+    defer g_object_unref(remote);
+    const url_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, url);
+    defer std.heap.c_allocator.free(url_z);
+    const file = g_file_new_for_uri(url_z) orelse return error.InvalidDeepLink;
+    defer g_object_unref(file);
+    var files = [_]*anyopaque{file};
+    g_application_open(remote, &files, 1, "");
+    return true;
+}
 
 fn onApplicationActivated(_: *anyopaque, _: ?*anyopaque) callconv(.c) void {
     // The CLI creates and shows its first window before g_application_run().
@@ -739,20 +795,12 @@ pub const Window = struct {
     pub fn create(options: @import("api.zig").WindowOptions) !Window {
         // Initialize GTK if not already done
         if (app_instance == null) {
-            gtk_init(null, null);
-            const app = gtk_application_new("com.craft.app", 0) orelse return error.ApplicationCreationFailed;
-            if (g_signal_connect_data(app, "activate", @ptrCast(&onApplicationActivated), null, null, 0) == 0) {
-                g_object_unref(app);
-                return error.SignalConnectionFailed;
+            // GtkApplicationWindow must not be added before startup. This
+            // claims an app-specific session bus name before the first window.
+            if (try registerApplication()) |remote| {
+                g_object_unref(remote);
+                return error.ApplicationAlreadyRunning;
             }
-            // GtkApplicationWindow must not be added before the application's
-            // startup signal. Register now because Craft creates its first
-            // window before entering g_application_run().
-            if (g_application_register(app, null, null) == 0) {
-                g_object_unref(app);
-                return error.ApplicationRegistrationFailed;
-            }
-            app_instance = app;
         }
 
         const window = gtk_application_window_new(app_instance.?);

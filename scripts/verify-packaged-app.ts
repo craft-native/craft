@@ -36,21 +36,30 @@ async function command(label: string, argv: string[]): Promise<string> {
   return output
 }
 
-async function startColdDeepLinkObserver(): Promise<{
+async function startColdDeepLinkObserver(testWarm: boolean): Promise<{
   launchUrl: string
   waitFor: (expected: string) => Promise<void>
+  waitForWarm: (expected: string) => Promise<void>
   close: () => Promise<void>
 }> {
-  let accept!: (url: string | null) => void
-  const received = new Promise<string | null>(resolve => { accept = resolve })
+  let acceptCold!: (url: string | null) => void
+  let acceptWarm!: (url: string | null) => void
+  let coldReceived = false
+  const receivedCold = new Promise<string | null>(resolve => { acceptCold = resolve })
+  const receivedWarm = new Promise<string | null>(resolve => { acceptWarm = resolve })
   const page = `<!doctype html><title>Craft cold deep-link smoke</title><script>
     (async () => {
       if (!window.craft?.deepLink?.getInitialUrl) throw new Error('installed app has no deep-link bridge')
+      if (${testWarm}) window.craft.deepLink.onUrl(detail => {
+        const report = new URL('/warm', location.origin)
+        report.searchParams.set('url', detail.url)
+        fetch(report, { method: 'POST' }).then(() => window.craft.window.close())
+      })
       const url = window.craft.deepLink.getInitialUrl()
       const report = new URL('/received', location.origin)
       if (url) report.searchParams.set('url', url)
       await fetch(report, { method: 'POST' })
-      window.craft.window.close()
+      if (!${testWarm}) window.craft.window.close()
     })().catch(error => {
       const report = new URL('/failed', location.origin)
       report.searchParams.set('reason', String(error))
@@ -58,10 +67,18 @@ async function startColdDeepLinkObserver(): Promise<{
     })
   </script>`
   const server = createServer((request, response) => {
-    if (request.url?.startsWith('/received?') && request.method === 'POST')
-      accept(new URL(request.url, 'http://127.0.0.1').searchParams.get('url'))
-    if (request.url?.startsWith('/failed?') && request.method === 'POST')
-      accept(`error: ${new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')}`)
+    if (request.url?.startsWith('/received?') && request.method === 'POST') {
+      const url = new URL(request.url, 'http://127.0.0.1').searchParams.get('url')
+      if (coldReceived) acceptWarm(`unexpected second app instance: ${url}`)
+      else { coldReceived = true; acceptCold(url) }
+    }
+    if (request.url?.startsWith('/warm?') && request.method === 'POST')
+      acceptWarm(new URL(request.url, 'http://127.0.0.1').searchParams.get('url'))
+    if (request.url?.startsWith('/failed?') && request.method === 'POST') {
+      const reason = `error: ${new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')}`
+      if (coldReceived) acceptWarm(reason)
+      else acceptCold(reason)
+    }
     response.writeHead(200, { 'Content-Type': 'text/html', Connection: 'close' })
     response.end(page)
   })
@@ -73,10 +90,21 @@ async function startColdDeepLinkObserver(): Promise<{
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const actual = await Promise.race([
-          received,
+          receivedCold,
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Installed app did not report its cold deep link within 20 seconds')), 20_000) }),
         ])
         if (actual !== expected) throw new Error(`Installed app cold deep link differed: ${JSON.stringify(actual)}`)
+      }
+      finally { if (timer) clearTimeout(timer) }
+    },
+    async waitForWarm(expected: string) {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const actual = await Promise.race([
+          receivedWarm,
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Running app did not report its warm deep link within 20 seconds')), 20_000) }),
+        ])
+        if (actual !== expected) throw new Error(`Running app warm deep link differed: ${JSON.stringify(actual)}`)
       }
       finally { if (timer) clearTimeout(timer) }
     },
@@ -362,7 +390,7 @@ async function main(): Promise<void> {
   let coldObserver: Awaited<ReturnType<typeof startColdDeepLinkObserver>> | undefined
   try {
     if (process.env.GITHUB_ACTIONS === 'true' && platform !== 'macos')
-      coldObserver = await startColdDeepLinkObserver()
+      coldObserver = await startColdDeepLinkObserver(platform === 'linux')
     const loader = join(dirname(binary), 'WebView2Loader.dll')
     if (platform === 'windows' && !existsSync(loader))
       throw new Error(`Windows WebView2 loader missing beside binary: ${loader}`)
@@ -440,10 +468,16 @@ async function main(): Promise<void> {
         await command('dispatch cold Windows URI', ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${coldUrl}'`])
       }
       await coldObserver.waitFor(coldUrl)
+      console.log(`Installed ${platform} app received its cold-launch deep link`)
+      if (platform === 'linux') {
+        const warmUrl = `${deepLinkScheme}://warm/${randomUUID()}`
+        await command('dispatch warm Linux URI', ['xdg-open', warmUrl])
+        await coldObserver.waitForWarm(warmUrl)
+        console.log('Running Linux app received its warm deep link in the existing page')
+      }
       // The page posts before asking Craft to close; let that native close
       // finish before another app instance starts or MSI uninstall begins.
       await new Promise(resolve => setTimeout(resolve, 500))
-      console.log(`Installed ${platform} app received its cold-launch deep link`)
     }
     await launchViaSdk()
   }

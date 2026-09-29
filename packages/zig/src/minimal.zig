@@ -115,8 +115,10 @@ pub fn main(init: std.process.Init) !void {
 
     // The protocol URL is application data, never the document URL. Install
     // it before a Linux/Windows webview registers its document-start scripts.
-    if (builtin.os.tag == .linux or builtin.os.tag == .windows)
+    if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
         craft.desktop_deep_link.setInitial(options.deep_link);
+        craft.desktop_deep_link.setPage(options.url);
+    }
 
     // Before anything builds a menu bar: `createApplicationMenu` reads the
     // process name once, and both branches below reach it.
@@ -178,6 +180,13 @@ pub fn main(init: std.process.Init) !void {
     if (options.eval_source != null or options.eval_file != null) {
         try runEval(allocator, options);
         return;
+    }
+
+    // A registered URI invoked while this Linux app is open belongs to the
+    // existing process. GApplication forwards it over the session bus, then
+    // this short-lived activation process exits without creating a WebView.
+    if (builtin.os.tag == .linux and options.deep_link != null) {
+        if (try craft.desktop_linux.forwardDeepLinkIfRunning(options.deep_link.?)) return;
     }
 
     var app = craft.App.init(allocator);
