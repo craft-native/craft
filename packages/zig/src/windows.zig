@@ -762,6 +762,14 @@ const WebMessageReceivedHandler = extern struct {
             };
             return S_OK;
         }
+        if (std.mem.eql(u8, envelope.kind, "notification")) {
+            var notification = @import("bridge_notification.zig").NotificationBridge.init(std.heap.c_allocator);
+            defer notification.deinit();
+            notification.handleWindowsDesktop(envelope.action, envelope.data orelse "") catch |err| {
+                bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+            };
+            return S_OK;
+        }
         if (!std.mem.eql(u8, envelope.kind, "window")) {
             bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
             return S_OK;

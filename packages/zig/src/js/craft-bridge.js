@@ -651,11 +651,7 @@
       if (typeof o.title !== 'string' || o.title.length === 0) {
         return Promise.reject(new Error('notification title is required'))
       }
-      // `show` means now. This routes through `schedule`, whose delay defaults
-      // to sixty seconds — so every `show()` used to arrive a minute later,
-      // which from here is indistinguishable from one that never arrived.
-      if (typeof o.delay !== 'number') o.delay = 0
-      return _send('notification', 'schedule', _stringify(o))
+      return _send('notification', 'show', _stringify(o))
     },
     schedule:          function (opts) { return _send('notification', 'schedule', _stringify(opts || {})) },
     cancel:            function (id)   { return _send('notification', 'cancel', _stringify({ id: String(id) })) },

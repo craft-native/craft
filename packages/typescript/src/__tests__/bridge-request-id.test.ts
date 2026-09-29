@@ -85,6 +85,12 @@ function settled(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('bridge reply correlation', () => {
+  it('posts notification show as an immediate native action', async () => {
+    const h = loadBridge()
+    await h.craft.notifications.show({ title: 'Now' })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'show', d: '{"title":"Now"}' })
+  })
+
   it('accepts both native notification permission reply shapes', async () => {
     const h = loadBridge()
     const mac = h.craft.notifications.requestPermission()

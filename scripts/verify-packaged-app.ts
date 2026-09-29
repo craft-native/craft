@@ -110,6 +110,7 @@ async function launchViaSdk(): Promise<void> {
   const testDeepLink = testSystemClipboard && platform === 'macos'
   const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
+  const testWindowsNotification = testSystemClipboard && platform === 'windows'
   const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
   const deepLinkUrl = `${deepLinkScheme}://open/${randomUUID()}`
   const notificationMarker = `Craft installed notification ${randomUUID()}`
@@ -159,6 +160,11 @@ async function launchViaSdk(): Promise<void> {
           new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
         ])
         if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
+      }
+      if (${testWindowsNotification}) {
+        if (!await window.craft.notifications.requestPermission())
+          throw new Error('installed Windows app denied notification permission')
+        await window.craft.notifications.show({ title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
       }
       await fetch('/ready', { method: 'POST' })
     })().catch((error) => {
@@ -223,6 +229,20 @@ async function launchViaSdk(): Promise<void> {
       }
       if (testMacNotificationPermission)
         console.log('Installed macOS app notification permission request answered')
+      if (testWindowsNotification) {
+        const appId = windowsNotificationAppId('craft', 'Craft Packaged Smoke')
+        let delivered = false
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const xml = await command('inspect Windows notification history', [
+            'powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+            `$ErrorActionPreference='Stop'; [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] > $null; [Windows.UI.Notifications.ToastNotificationManager]::History.GetHistory('${appId}') | ForEach-Object { $_.Content.GetXml() }`,
+          ])
+          if (xml.includes(notificationMarker)) { delivered = true; break }
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        if (!delivered) throw new Error('Windows notification history did not contain the installed app toast')
+        console.log('Installed Windows app notification reached Action Center')
+      }
       if (testDeepLink) {
         await command('dispatch installed app URL scheme', ['open', deepLinkUrl])
         let linkTimer: ReturnType<typeof setTimeout> | undefined
