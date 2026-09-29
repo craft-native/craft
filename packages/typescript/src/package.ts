@@ -24,6 +24,9 @@ import { homedir, tmpdir } from 'os'
 import { basename, join } from 'path'
 import { deflateRawSync } from 'zlib'
 
+/** Runtime packages required by the default Linux DEB, including notify-send. */
+export const DEFAULT_DEB_DEPENDENCIES = ['libgtk-3-0', 'libwebkit2gtk-4.1-37', 'libnotify-bin'] as const
+
 // Dependency-free ZIP writer. Craft used to pull `archiver` (→ archiver-utils →
 // lazystream → readable-stream) solely to zip a single Windows binary; that
 // transitive tree is heavy and broke downstream installs (lazystream requires
@@ -267,7 +270,7 @@ export interface PackageConfig {
     /** Desktop categories */
     categories?: string[]
 
-    /** Dependencies (Debian) */
+    /** Dependencies (Debian); replaces the defaults, including libnotify-bin */
     debDependencies?: string[]
 
     /** Dependencies (RPM) */
@@ -553,7 +556,9 @@ async function packageLinux(config: PackageConfig, outDir: string): Promise<Pack
       outputPath: join(outDir, `${name}_${version}_amd64.deb`),
       description: config.description || '',
       maintainer: config.author || 'Unknown',
-      dependencies: opts.debDependencies || ['libgtk-3-0', 'libwebkit2gtk-4.1-37'],
+      // The Linux notification bridge invokes notify-send. An installed app
+      // needs its provider even on a minimal desktop without it preinstalled.
+      dependencies: opts.debDependencies || [...DEFAULT_DEB_DEPENDENCIES],
     })
     results.push({
       success: debResult.success,

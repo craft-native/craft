@@ -47,40 +47,41 @@ function sha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
-async function startLinuxNotificationObserver(marker: string): Promise<{ seen: Promise<boolean>, stop: () => Promise<void> }> {
+async function startLinuxNotificationObserver(marker: string): Promise<{ observe: () => Promise<boolean>, stop: () => Promise<void> }> {
   // A private D-Bus session (created by CI) and Dunst let the host verify the
   // exact banner that the installed app sent, not just that _send() posted JS.
-  const daemon = Bun.spawn(['dunst', '--print', '--config', '-'], {
-    stdin: 'ignore', stdout: 'pipe', stderr: 'ignore',
+  const daemon = Bun.spawn(['dunst', '--config', '-'], {
+    stdin: 'ignore', stdout: 'ignore', stderr: 'ignore',
   })
-  const seen = (async () => {
-    const reader = daemon.stdout.getReader()
-    const decoder = new TextDecoder()
-    let output = ''
-    try {
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) return false
-        output += decoder.decode(value, { stream: true })
-        if (output.includes(marker)) return true
-        if (output.length > 64_000) output = output.slice(-32_000)
-      }
-    }
-    catch {
-      return false
-    }
-    finally {
-      reader.releaseLock()
-    }
-  })()
   const stop = async () => {
     daemon.kill()
     await daemon.exited
   }
   try {
     for (let attempt = 0; attempt < 30; attempt++) {
-      const probe = Bun.spawnSync(['dunstctl', 'is-paused'], { stdout: 'pipe', stderr: 'pipe' })
-      if (probe.exitCode === 0) return { seen, stop }
+      // NameHasOwner does not activate org.freedesktop.Notifications. Calling
+      // dunstctl before our daemon owns the name can instead auto-start a
+      // *second* Dunst, making this one exit before observing anything.
+      const probe = Bun.spawnSync([
+        'dbus-send', '--session', '--print-reply', '--dest=org.freedesktop.DBus',
+        '/org/freedesktop/DBus', 'org.freedesktop.DBus.NameHasOwner',
+        'string:org.freedesktop.Notifications',
+      ], { stdout: 'pipe', stderr: 'pipe' })
+      if (probe.exitCode === 0 && probe.stdout.toString().includes('boolean true')) {
+        await command('clear private notification history', ['dunstctl', 'history-clear'])
+        const observe = async () => {
+          for (let poll = 0; poll < 100; poll++) {
+            const count = Bun.spawnSync(['dunstctl', 'count', 'displayed'], { stdout: 'pipe', stderr: 'pipe' })
+            if (count.exitCode === 0 && Number(count.stdout.toString().trim()) > 0)
+              await command('close displayed notification into history', ['dunstctl', 'close-all'])
+            const history = Bun.spawnSync(['dunstctl', 'history'], { stdout: 'pipe', stderr: 'pipe' })
+            if (history.exitCode === 0 && history.stdout.toString().includes(marker)) return true
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          return false
+        }
+        return { observe, stop }
+      }
       await new Promise(resolve => setTimeout(resolve, 100))
     }
     throw new Error('Dunst did not become ready in the private D-Bus session')
@@ -208,20 +209,9 @@ async function launchViaSdk(): Promise<void> {
         console.log('Installed app clipboard bridge and OS clipboard agree')
       }
       if (notificationObserver) {
-        let notificationTimer: ReturnType<typeof setTimeout> | undefined
-        try {
-          const observed = await Promise.race([
-            notificationObserver.seen,
-            new Promise<never>((_, reject) => {
-              notificationTimer = setTimeout(() => reject(new Error('Dunst did not receive the installed app notification within 10 seconds')), 10_000)
-            }),
-          ])
-          if (!observed) throw new Error('Dunst exited before receiving the installed app notification')
-          console.log('Installed Linux app notification reached the desktop daemon')
-        }
-        finally {
-          if (notificationTimer) clearTimeout(notificationTimer)
-        }
+        if (!await notificationObserver.observe())
+          throw new Error('Dunst history did not contain the installed app notification within 10 seconds')
+        console.log('Installed Linux app notification reached the desktop daemon')
       }
       if (testDeepLink) {
         await command('dispatch installed app URL scheme', ['open', deepLinkUrl])
@@ -289,10 +279,15 @@ async function main(): Promise<void> {
       bundleId: receipt,
       platforms: [platform],
       macos: { dmg: false, pkg: true, urlSchemes: [deepLinkScheme] },
-      linux: { deb: true, rpm: false, appImage: false, debDependencies: [] },
+      linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'] },
       windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [] },
     })
     installer = artifact(results, platform === 'macos' ? 'pkg' : platform === 'windows' ? 'msi' : 'deb')
+    if (platform === 'linux') {
+      const dependencies = await command('inspect Linux DEB dependencies', ['dpkg-deb', '--field', installer, 'Depends'])
+      if (!dependencies.split(',').map(item => item.trim()).includes('libnotify-bin'))
+        throw new Error('Installed-app DEB did not declare the notify-send provider')
+    }
 
     if (platform === 'windows') {
       const zip = artifact(results, 'zip')

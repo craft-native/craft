@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, windowsArchitecture, windowsExecutableName } from './package.js'
+import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, windowsArchitecture, windowsExecutableName } from './package.js'
+
+describe('Linux DEB runtime dependencies', () => {
+  it('installs the notify-send provider used by the desktop notification bridge', () => {
+    expect(DEFAULT_DEB_DEPENDENCIES).toContain('libnotify-bin')
+  })
+})
 
 describe('Windows MSI packaging', () => {
   it('renders a deterministic major-upgrade installer without shell interpolation', () => {
