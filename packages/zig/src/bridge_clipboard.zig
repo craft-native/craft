@@ -124,6 +124,15 @@ pub const ClipboardBridge = struct {
         }
     }
 
+    /// Desktop Linux and Windows currently expose only text clipboard actions.
+    /// Keep the larger macOS surface out of their lazy-analysis path until its
+    /// platform implementations are migrated to the pinned Zig toolchain.
+    pub fn handleDesktopText(self: *Self, action: []const u8, data: ?[]const u8) !void {
+        if (std.mem.eql(u8, action, A.write_text)) return self.writeText(data);
+        if (std.mem.eql(u8, action, A.read_text)) return self.readText();
+        return BridgeError.UnknownAction;
+    }
+
     /// Report error to JavaScript and log
     fn reportError(self: *Self, action: []const u8, err: anyerror) void {
         const bridge_err: BridgeError = switch (err) {
@@ -496,37 +505,8 @@ pub const ClipboardBridge = struct {
         defer parsed.deinit();
         const text = parsed.value.text;
 
-        // Try GTK clipboard first (works on both X11 and Wayland)
-        if (self.linuxGdkWriteText(text)) {
-            log.debug("Linux: Wrote text to clipboard via GTK", .{});
-            return;
-        }
-
-        // Fall back to xclip subprocess
-        log.debug("Linux: GTK clipboard unavailable, falling back to xclip", .{});
-        var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard" }, self.allocator);
-        child.stdin_behavior = .Pipe;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-
-        try child.spawn();
-        // Ensure stdin is closed even on error to avoid fd leak
-        defer {
-            if (child.stdin) |*stdin| stdin.close();
-        }
-        if (child.stdin) |stdin| {
-            stdin.writeAll(text) catch |err| {
-                std.log.warn("clipboard: write to xclip failed: {}", .{err});
-            };
-            // Close stdin to signal EOF to the child
-            child.stdin.?.close();
-            child.stdin = null; // Prevent double close in defer
-        }
-        _ = child.wait() catch |err| {
-            std.log.warn("clipboard: waiting for xclip failed: {}", .{err});
-        };
-
-        log.debug("Linux: Wrote text to clipboard via xclip", .{});
+        if (!self.linuxGdkWriteText(text)) return BridgeError.NativeCallFailed;
+        log.debug("Linux: Wrote text to clipboard via GTK", .{});
     }
 
     /// Try to write text using the GTK3 clipboard API.
@@ -548,7 +528,7 @@ pub const ClipboardBridge = struct {
 
         // Try GTK clipboard first (works on both X11 and Wayland)
         if (self.linuxGdkReadText()) |gdk_text| {
-            defer linux.g_free(@ptrCast(@constCast(gdk_text.ptr)));
+            defer linux.g_free(@ptrCast(@constCast(gdk_text)));
             const text_str = std.mem.span(gdk_text);
 
             if (text_str.len > 0) {
@@ -560,45 +540,6 @@ pub const ClipboardBridge = struct {
                 try self.appendEscapedJson(&buf, text_str);
                 try buf.appendSlice(self.allocator, "\"}");
                 result_json = try buf.toOwnedSlice(self.allocator);
-            }
-        } else {
-            // Fall back to xclip subprocess
-            log.debug("Linux: GTK clipboard unavailable, falling back to xclip", .{});
-            var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard", "-o" }, self.allocator);
-            child.stdout_behavior = .Pipe;
-            child.stderr_behavior = .Ignore;
-
-            try child.spawn();
-            // Ensure stdout is closed even on error to avoid fd leak
-            defer {
-                if (child.stdout) |*stdout| stdout.close();
-            }
-            const result = child.wait() catch |err| {
-                std.log.warn("clipboard: waiting for xclip readText failed: {}", .{err});
-                bridge_error.sendResultToJS(self.allocator, "readText", result_json);
-                return;
-            };
-
-            if (result.Exited == 0) {
-                if (child.stdout) |stdout| {
-                    const output = stdout.reader().readAllAlloc(self.allocator, 1024 * 1024) catch |err| {
-                        std.log.warn("clipboard: reading xclip stdout failed: {}", .{err});
-                        bridge_error.sendResultToJS(self.allocator, "readText", result_json);
-                        return;
-                    };
-                    defer self.allocator.free(output);
-
-                    if (output.len > 0) {
-                        log.debug("Linux: Read text from clipboard via xclip", .{});
-                        var buf: std.ArrayList(u8) = .empty;
-                        defer buf.deinit(self.allocator);
-
-                        try buf.appendSlice(self.allocator, "{\"text\":\"");
-                        try self.appendEscapedJson(&buf, output);
-                        try buf.appendSlice(self.allocator, "\"}");
-                        result_json = try buf.toOwnedSlice(self.allocator);
-                    }
-                }
             }
         }
 

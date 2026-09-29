@@ -412,7 +412,7 @@ fn onScriptMessage(_: *anyopaque, result: *anyopaque, user_data: ?*anyopaque) ca
 
     if (std.mem.eql(u8, envelope.kind, "clipboard")) {
         var clipboard = @import("bridge_clipboard.zig").ClipboardBridge.init(std.heap.c_allocator);
-        clipboard.handleMessageWithData(envelope.action, envelope.data) catch |err| {
+        clipboard.handleDesktopText(envelope.action, envelope.data) catch |err| {
             bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
         };
         return;
