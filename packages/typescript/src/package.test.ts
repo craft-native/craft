@@ -423,6 +423,8 @@ describe('macOS signing and delivery arguments', () => {
       .toEqual(['--force', '--sign', 'Developer ID Application: Acme', '--timestamp', '--options', 'runtime', '--deep', '/tmp/Craft.app'])
     expect(codesignArguments({ path: '/tmp/Craft.app', identity: '3rd Party Mac Developer Application: Acme', entitlements: '/tmp/app.entitlements' }))
       .toEqual(['--force', '--sign', '3rd Party Mac Developer Application: Acme', '--timestamp', '--entitlements', '/tmp/app.entitlements', '--deep', '/tmp/Craft.app'])
+    expect(codesignArguments({ path: '/tmp/Craft.app', identity: '-', hardenedRuntime: true }))
+      .toEqual(['--force', '--sign', '-', '--options', 'runtime', '--deep', '/tmp/Craft.app'])
   })
 
   it('builds a signed App Store submission package installing into /Applications', () => {

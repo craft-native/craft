@@ -785,7 +785,9 @@ export function codesignArguments(opts: {
   return [
     '--force',
     '--sign', opts.identity,
-    '--timestamp',
+    // Ad-hoc signatures have no timestamp authority. They are useful for
+    // local/CI installed-app smoke, while release identities keep timestamping.
+    ...(opts.identity === '-' ? [] : ['--timestamp']),
     ...(opts.hardenedRuntime ? ['--options', 'runtime'] : []),
     ...(opts.entitlements ? ['--entitlements', opts.entitlements] : []),
     '--deep',

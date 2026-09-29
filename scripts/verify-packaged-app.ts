@@ -431,7 +431,10 @@ async function main(): Promise<void> {
       outDir: work,
       bundleId: receipt,
       platforms: [platform],
-      macos: { dmg: false, pkg: true, urlSchemes: [deepLinkScheme] },
+      // The hosted runner rejected authorization from the unsigned bundle.
+      // Ad-hoc signing tests whether an installed code identity is sufficient
+      // without requiring a release certificate on the hosted runner.
+      macos: { dmg: false, pkg: true, signIdentity: '-', urlSchemes: [deepLinkScheme] },
       linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'], urlSchemes: [deepLinkScheme], launchUrl: coldObserver?.launchUrl },
       windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [], urlSchemes: [deepLinkScheme], launchUrl: coldObserver?.launchUrl },
     })
@@ -466,6 +469,8 @@ async function main(): Promise<void> {
     installed = true
 
     if (!existsSync(installPath)) throw new Error(`Installer did not create ${installPath}`)
+    if (platform === 'macos')
+      await command('verify installed macOS app signature', ['codesign', '--verify', '--deep', '--strict', '/Applications/craft.app'])
     verifyNativeStartup(installPath, version)
     if (platform === 'windows' && sha256(join(dirname(installPath), 'WebView2Loader.dll')) !== sha256(loader))
       throw new Error('Windows MSI did not install the WebView2 loader beside craft.exe')
