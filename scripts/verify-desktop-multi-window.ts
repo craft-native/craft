@@ -67,6 +67,23 @@ const mainPage = `<!doctype html><script>
     if (!resized) throw new Error('live child resize did not change its size')
     const title = await window.craft.window._call('getTitle', {}, 'settings')
     if (title !== 'Child 1') throw new Error('child title not routed to creator: ' + title)
+    if (!isWindows) {
+      const [childTitle, answer] = await Promise.all([
+        call('executeJavaScript', { code: 'document.title' }),
+        call('executeJavaScript', { code: '21 * 2' }),
+      ])
+      if (childTitle !== 'Child 1' || answer !== 42)
+        throw new Error('asynchronous child evaluation answered the wrong creator-page call')
+      const object = await call('executeJavaScript', { code: '({ nested: [true, "child"] })' })
+      if (object?.nested?.[0] !== true || object.nested[1] !== 'child')
+        throw new Error('child evaluation lost its JSON result')
+      if (await call('executeJavaScript', { code: 'undefined' }) !== null)
+        throw new Error('undefined evaluation did not resolve as null')
+      let rejected = false
+      try { await call('executeJavaScript', { code: 'throw new Error("evaluation failed")' }) }
+      catch (error) { rejected = error?.code === 'NATIVE_CALL_FAILED' }
+      if (!rejected) throw new Error('a JavaScript exception did not reject the requesting page')
+    }
 
     const mainBefore = await call('getBounds', {}, 'main')
     await call('setBounds', { x: bounds.x + 20, y: bounds.y + 15, width: 700, height: 500 })
@@ -177,10 +194,17 @@ const childPage = `<!doctype html><script>
 (async () => {
   try {
     const cycle = new URLSearchParams(location.search).get('cycle')
+    const expectedTitle = ['Child', cycle].join(' ')
+    document.title = expectedTitle
     const bounds = await window.craft.window._call('getBounds', {}, 'main')
     const title = await window.craft.window._call('getTitle', {}, 'main')
-    if (!(bounds.width > 0 && bounds.height > 0) || title !== 'Child ' + cycle)
+    if (!(bounds.width > 0 && bounds.height > 0) || title !== expectedTitle)
       throw new Error('child page read targeted another webview')
+    if (!${isWindows}) {
+      const ownTitle = await window.craft.window._call('executeJavaScript', { code: 'document.title' }, 'main')
+      if (ownTitle !== expectedTitle)
+        throw new Error('child evaluation reply escaped to its creator page')
+    }
     await fetch('/report?step=child-' + cycle, { method: 'POST' })
   }
   catch (error) {

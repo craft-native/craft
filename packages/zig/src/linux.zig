@@ -2,6 +2,7 @@ const std = @import("std");
 const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_window_controls = @import("desktop_window_controls.zig");
+const desktop_window_evaluations = @import("desktop_window_evaluations.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
@@ -102,8 +103,14 @@ pub extern "c" fn webkit_web_view_run_javascript(
 pub extern "c" fn webkit_web_view_run_javascript_finish(
     webview: *anyopaque,
     result: *anyopaque,
-    error_ptr: ?*anyopaque,
-) *anyopaque;
+    error_ptr: ?*?*GError,
+) ?*anyopaque;
+pub extern "c" fn webkit_javascript_result_unref(result: *anyopaque) void;
+pub extern "c" fn jsc_value_get_context(value: *anyopaque) ?*anyopaque;
+pub extern "c" fn jsc_context_get_exception(context: *anyopaque) ?*anyopaque;
+pub extern "c" fn jsc_value_is_undefined(value: *anyopaque) c_int;
+pub extern "c" fn g_error_free(err: *GError) void;
+const GError = extern struct { domain: c_uint, code: c_int, message: [*:0]u8 };
 
 // User content manager for injecting scripts
 pub extern "c" fn webkit_web_view_get_user_content_manager(webview: *anyopaque) *anyopaque;
@@ -242,6 +249,61 @@ pub const WindowEntry = struct {
 };
 
 var desktop_windows: desktop_window_registry.Registry = .{};
+var pending_evaluations: desktop_window_evaluations.Tracker = .{};
+
+fn sendEvaluationResult(pending: desktop_window_evaluations.Pending, json: []const u8) void {
+    const sender = desktop_windows.byId(pending.sender_id) orelse return;
+    window_context.push(sender.window, sender.webview);
+    defer window_context.pop();
+    request_context.push(pending.request_id);
+    defer request_context.pop();
+    bridge_error.sendResultToJS(std.heap.c_allocator, "executeJavaScript", json);
+}
+
+fn sendEvaluationError(pending: desktop_window_evaluations.Pending, err: bridge_error.BridgeError) void {
+    const sender = desktop_windows.byId(pending.sender_id) orelse return;
+    window_context.push(sender.window, sender.webview);
+    defer window_context.pop();
+    request_context.push(pending.request_id);
+    defer request_context.pop();
+    bridge_error.sendErrorToJS(std.heap.c_allocator, "executeJavaScript", err);
+}
+
+fn invalidateEvaluations(window_id: u32) void {
+    var cancelled: [desktop_window_evaluations.capacity]desktop_window_evaluations.Pending = undefined;
+    for (pending_evaluations.invalidateWindow(window_id, &cancelled)) |pending| {
+        if (pending.sender_id != window_id) sendEvaluationError(pending, error.Cancelled);
+    }
+}
+
+const EvaluationCallback = struct { ticket: u64 };
+
+fn onEvaluationFinished(webview: *anyopaque, async_result: *anyopaque, user_data: ?*anyopaque) callconv(.c) void {
+    const callback: *EvaluationCallback = @ptrCast(@alignCast(user_data orelse return));
+    defer std.heap.c_allocator.destroy(callback);
+    var native_error: ?*GError = null;
+    const native_result = webkit_web_view_run_javascript_finish(webview, async_result, &native_error);
+    defer if (native_error) |err| g_error_free(err);
+    defer if (native_result) |result| webkit_javascript_result_unref(result);
+    const pending = pending_evaluations.take(callback.ticket) orelse return;
+    if (desktop_windows.byId(pending.target_id) == null) return;
+    if (native_error != null or native_result == null) return sendEvaluationError(pending, error.NativeCallFailed);
+    const value = webkit_javascript_result_get_js_value(native_result.?);
+    const context = jsc_value_get_context(value) orelse return sendEvaluationError(pending, error.NativeCallFailed);
+    if (jsc_context_get_exception(context) != null) return sendEvaluationError(pending, error.NativeCallFailed);
+    if (jsc_value_is_undefined(value) != 0) return sendEvaluationResult(pending, "null");
+    const json_z = jsc_value_to_json(value, 0) orelse return sendEvaluationError(pending, error.NativeCallFailed);
+    defer g_free(@ptrCast(json_z));
+    const json = std.mem.span(json_z);
+    if (!desktop_window_evaluations.validResultJson(json)) return sendEvaluationError(pending, error.NativeCallFailed);
+    sendEvaluationResult(pending, json);
+}
+
+fn onWindowNavigation(webview: *anyopaque, load_event: c_int, _: ?*anyopaque) callconv(.c) void {
+    if (load_event != 0) return; // WEBKIT_LOAD_STARTED
+    const entry = desktop_windows.byWebview(@intFromPtr(webview)) orelse return;
+    invalidateEvaluations(entry.id);
+}
 
 pub fn getWindowById(id: u32) ?WindowEntry {
     const entry = desktop_windows.byId(id) orelse return null;
@@ -261,6 +323,7 @@ fn registerWindow(gtk_window: *anyopaque, webview: *anyopaque) ?u32 {
 /// webview eligible for bridge replies.
 fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
     if (desktop_windows.byWindow(@intFromPtr(widget))) |entry| {
+        invalidateEvaluations(entry.id);
         deliverWindowEvent(entry, "close", "");
     }
     const entry = desktop_windows.forgetWindow(@intFromPtr(widget)) orelse return;
@@ -584,6 +647,21 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const size = try desktop_window_controls.parseSize(data);
         const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
         try setWindowLimits(entry, limits);
+    } else if (std.mem.eql(u8, action, "executeJavaScript")) {
+        const json = data orelse return error.MissingData;
+        const decoded = (try json_utils.getStringDecoded(std.heap.c_allocator, json, "code")) orelse return error.InvalidParameter;
+        defer std.heap.c_allocator.free(decoded);
+        if (std.mem.indexOfScalar(u8, decoded, 0) != null) return error.InvalidParameter;
+        const sender_webview = window_context.currentWebView() orelse return error.WindowHandleNotSet;
+        const sender = desktop_windows.byWebview(sender_webview) orelse return error.WindowHandleNotSet;
+        const ticket = try pending_evaluations.begin(sender.id, entry.id, request_context.current());
+        errdefer _ = pending_evaluations.take(ticket);
+        const callback = try std.heap.c_allocator.create(EvaluationCallback);
+        errdefer std.heap.c_allocator.destroy(callback);
+        callback.* = .{ .ticket = ticket };
+        const code_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, decoded);
+        defer std.heap.c_allocator.free(code_z);
+        webkit_web_view_run_javascript(webview, code_z, null, onEvaluationFinished, callback);
     } else if (std.mem.eql(u8, action, "loadURL") or std.mem.eql(u8, action, "loadHTML")) {
         const json = data orelse return error.MissingData;
         const key: []const u8 = if (std.mem.eql(u8, action, "loadURL")) "url" else "html";
@@ -751,7 +829,9 @@ pub const Window = struct {
         const window_id = registerWindow(window, webview) orelse {
             return error.TooManyWindows;
         };
-        if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0) {
+        if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0 or
+            g_signal_connect_data(webview, "load-changed", @ptrCast(&onWindowNavigation), null, null, 0) == 0)
+        {
             _ = desktop_windows.forgetWindow(@intFromPtr(window));
             return error.SignalConnectionFailed;
         }

@@ -4,6 +4,7 @@
 //! promise in a new document or a reopened window.
 
 const std = @import("std");
+const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 
 pub const capacity = 256;
 
@@ -66,6 +67,15 @@ pub const Tracker = struct {
     }
 };
 
+/// Native engines return JSON text, which is inserted into a bridge reply.
+/// Reject malformed or unbounded results before they can become page script.
+pub fn validResultJson(json: []const u8) bool {
+    if (json.len == 0 or json.len > desktop_bridge_envelope.max_message_bytes) return false;
+    var parsed = std.json.parseFromSlice(std.json.Value, std.heap.page_allocator, json, .{}) catch return false;
+    defer parsed.deinit();
+    return true;
+}
+
 test "concurrent evaluations retain their sender, target, and request id" {
     var tracker: Tracker = .{};
     const first = try tracker.begin(1, 2, 41);
@@ -110,4 +120,15 @@ test "a full tracker refuses work without displacing an in-flight call" {
     try std.testing.expectError(error.Busy, tracker.begin(1, 2, 999));
     try std.testing.expectEqual(@as(?u64, 1), if (tracker.take(1)) |pending| pending.ticket else null);
     try std.testing.expectError(error.InvalidParameter, tracker.begin(0, 2, null));
+}
+
+test "only bounded JSON results may enter a bridge reply" {
+    try std.testing.expect(validResultJson("42"));
+    try std.testing.expect(validResultJson("{\"title\":\"Child\"}"));
+    try std.testing.expect(validResultJson("null"));
+    try std.testing.expect(!validResultJson("undefined"));
+    try std.testing.expect(!validResultJson("1);alert('injected')"));
+    const large = try std.testing.allocator.alloc(u8, desktop_bridge_envelope.max_message_bytes + 1);
+    defer std.testing.allocator.free(large);
+    try std.testing.expect(!validResultJson(large));
 }
