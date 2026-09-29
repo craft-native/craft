@@ -112,6 +112,20 @@ test "closed and reopened windows cannot inherit an old completion" {
     try std.testing.expectEqual(reopened, tracker.take(reopened).?.ticket);
 }
 
+test "navigation cannot deliver an old ticket into a replacement page" {
+    var tracker: Tracker = .{};
+    const before_navigation = try tracker.begin(1, 2, 17);
+    var cancelled: [capacity]Pending = undefined;
+    const affected = tracker.invalidateWindow(2, &cancelled);
+    try std.testing.expectEqual(@as(usize, 1), affected.len);
+    try std.testing.expectEqual(before_navigation, affected[0].ticket);
+
+    const after_navigation = try tracker.begin(1, 2, 17);
+    try std.testing.expect(before_navigation != after_navigation);
+    try std.testing.expect(tracker.take(before_navigation) == null);
+    try std.testing.expectEqual(after_navigation, tracker.take(after_navigation).?.ticket);
+}
+
 test "a full tracker refuses work without displacing an in-flight call" {
     var tracker: Tracker = .{};
     for (0..capacity) |i| {

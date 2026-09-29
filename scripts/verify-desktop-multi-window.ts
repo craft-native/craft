@@ -43,6 +43,25 @@ const mainPage = `<!doctype html><script>
       resolve()
     }, { once: true })
   })
+  const checkRacedEvaluation = async (pending, label) => {
+    let timer
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + ' evaluation never settled')), 10000)
+    })
+    try {
+      const outcome = await Promise.race([
+        pending.then(value => ({ value }), error => ({ error })),
+        timeout,
+      ])
+      // Evaluation may win the race. If navigation/close wins, it must reject
+      // the surviving creator page, never leave its promise stranded.
+      if (outcome.error) {
+        if (outcome.error.code !== 'CANCELLED') throw new Error(label + ' rejected with ' + outcome.error.code)
+      }
+      else if (outcome.value !== 42) throw new Error(label + ' returned a stale result')
+    }
+    finally { clearTimeout(timer) }
+  }
   try {
     if (!window.craft || !window.craft.window || !window.craft.window.open)
       throw new Error('document-start Craft bridge missing')
@@ -127,6 +146,15 @@ const mainPage = `<!doctype html><script>
       throw new Error('child controls changed the main window size')
     await report('controls')
 
+    const navigatingEvaluation = call('executeJavaScript', {
+      code: '(() => { const until = Date.now() + 250; while (Date.now() < until) {} return 42 })()',
+    })
+    await call('loadURL', { url: location.origin + '/child?cycle=1&reload=1' })
+    await waitFor('child-1-reloaded')
+    await checkRacedEvaluation(navigatingEvaluation, 'navigation')
+    if (await call('executeJavaScript', { code: 'document.title' }) !== 'Child 1')
+      throw new Error('new child page did not answer after navigation')
+
     const [queuedA, queuedB] = await Promise.all([
       window.craft.window.open({ name: 'queue-a', title: 'Child queue-a', url: location.origin + '/child?cycle=queue-a' }),
       window.craft.window.open({ name: 'queue-b', title: 'Child queue-b', url: location.origin + '/child?cycle=queue-b' }),
@@ -165,8 +193,12 @@ const mainPage = `<!doctype html><script>
         resolve()
       })
     })
+    const closingEvaluation = call('executeJavaScript', {
+      code: '(() => { const until = Date.now() + 250; while (Date.now() < until) {} return 42 })()',
+    })
     await window.craft.window._call('close', {}, 'settings')
     await closed
+    await checkRacedEvaluation(closingEvaluation, 'close')
     await report('closed')
     const survivingMain = await window.craft.window._call('getBounds', {}, 'main')
     if (!(survivingMain.width > 0 && survivingMain.height > 0))
@@ -193,6 +225,7 @@ const childPage = `<!doctype html><script>
 (async () => {
   try {
     const cycle = new URLSearchParams(location.search).get('cycle')
+    const reloaded = new URLSearchParams(location.search).has('reload')
     const expectedTitle = ['Child', cycle].join(' ')
     document.title = expectedTitle
     const bounds = await window.craft.window._call('getBounds', {}, 'main')
@@ -202,7 +235,7 @@ const childPage = `<!doctype html><script>
     const ownTitle = await window.craft.window._call('executeJavaScript', { code: 'document.title' }, 'main')
     if (ownTitle !== expectedTitle)
       throw new Error('child evaluation reply escaped to its creator page')
-    await fetch('/report?step=child-' + cycle, { method: 'POST' })
+    await fetch('/report?step=child-' + cycle + (reloaded ? '-reloaded' : ''), { method: 'POST' })
   }
   catch (error) {
     await fetch('/report?error=' + encodeURIComponent(String(error)), { method: 'POST' })
@@ -236,7 +269,7 @@ const server = createServer((request, response) => {
     if (step) steps.add(step)
     response.end('ok')
     if (step === 'done') {
-      const required = ['main', 'child-1', 'controls', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
+      const required = ['main', 'child-1', 'controls', 'child-1-reloaded', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
       if (required.every(name => steps.has(name))) resolveDone()
       else rejectDone(new Error(`incomplete smoke steps: ${[...steps].join(', ')}`))
     }

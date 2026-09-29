@@ -462,6 +462,18 @@ const stopWatching = inspector.on('resize', ({ width, height }) => {
 })
 ```
 
+`executeJavaScript()` runs in the addressed window and returns its JSON value
+to the page holding the handle, including when that page is a different
+window. `undefined` resolves as `null`; a thrown JavaScript exception rejects
+with `NATIVE_CALL_FAILED`. If the target navigates or closes before evaluation
+finishes, the still-live caller receives `CANCELLED`. Calls made by a page
+that itself navigates or closes are discarded with that page, so their old
+replies cannot resolve a new page's promises.
+
+```typescript
+const title = await inspector.executeJavaScript<string>('document.title')
+```
+
 Every operation on `inspector` carries that stable ID to the host, so it still
 targets the Inspector when called from the main page. Calling `createWindow`
 again with `id: 'inspector'` brings the existing native window forward and

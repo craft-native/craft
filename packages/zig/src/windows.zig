@@ -317,7 +317,10 @@ pub const ICoreWebView2 = extern struct {
 // ICoreWebView2_21 adds resultful script execution. Its inherited methods
 // occupy 122 vtable slots in the pinned WebView2 SDK header.
 const ICoreWebView2_21Vtbl = extern struct {
-    inherited: [122]usize,
+    QueryInterface: *const fn (*ICoreWebView2_21, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+    AddRef: *const fn (*ICoreWebView2_21) callconv(.c) c_ulong,
+    Release: *const fn (*ICoreWebView2_21) callconv(.c) c_ulong,
+    inherited: [119]usize,
     ExecuteScriptWithResult: *const fn (*ICoreWebView2_21, LPCWSTR, *ScriptResultHandler) callconv(.c) HRESULT,
 };
 
@@ -1455,7 +1458,7 @@ fn evaluateWindowScript(entry: desktop_window_registry.Entry, data: ?[]const u8)
     if (!succeeded(webview.lpVtbl.QueryInterface(webview, &iid_core_webview2_21, &interface)) or interface == null)
         return error.PlatformNotSupported;
     const result_webview: *ICoreWebView2_21 = @ptrCast(@alignCast(interface.?));
-    defer _ = webview.lpVtbl.Release(@ptrCast(result_webview));
+    defer _ = result_webview.lpVtbl.Release(result_webview);
 
     var wide = try desktop_script_encoding.encode(allocator, code);
     defer wide.deinit(allocator);
