@@ -158,7 +158,7 @@ async function launchViaSdk(): Promise<void> {
       }
       if (${testMacNotificationPermission}) {
         const permission = await Promise.race([
-          window.craft.notifications.requestPermission(),
+          window.craft.notifications.requestPermission({ provisional: true }),
           new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
         ])
         if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')

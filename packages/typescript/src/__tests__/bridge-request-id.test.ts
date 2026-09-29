@@ -115,6 +115,14 @@ describe('bridge reply correlation', () => {
     expect(await linux).toBe(true)
   })
 
+  it('passes a provisional notification request to the native bridge', async () => {
+    const h = loadBridge()
+    const request = h.craft.notifications.requestPermission({ provisional: true })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'requestPermission', d: '{"provisional":true}' })
+    h.reply('requestPermission', 'granted', h.sent.at(-1)!.i!)
+    expect(await request).toBe(true)
+  })
+
   it('reports a denied macOS notification permission separately from delivery', async () => {
     const h = loadBridge()
     const denied = h.craft.notifications.requestPermission()

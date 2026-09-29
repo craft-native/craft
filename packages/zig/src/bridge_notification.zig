@@ -42,6 +42,7 @@ pub const NotificationBridge = struct {
     allocator: std.mem.Allocator,
     notification_center: ?*anyopaque = null,
     delegate: ?*anyopaque = null,
+    authorization_requested: bool = false,
     pending_callbacks: std.StringHashMap([]const u8),
 
     const Self = @This();
@@ -85,17 +86,18 @@ pub const NotificationBridge = struct {
 
         self.notification_center = macos.msgSend0(UNUserNotificationCenter, "currentNotificationCenter");
 
-        if (self.notification_center) |center| {
-            // UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge
-            const options: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
+        if (self.notification_center != null) log.debug("Notification center initialized", .{});
+    }
 
-            // The completion handler is required even when the page did not
-            // ask for a permission result. A null block can crash AppKit.
-            const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, *const anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
-            msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, &noop_auth_block);
-
-            log.debug("Notification center initialized", .{});
-        }
+    /// Preserve the old implicit prompt when an app shows a notification
+    /// without first requesting permission. Merely obtaining the center must
+    /// not prompt: it would preempt an explicit provisional request.
+    fn requestDefaultAuthorization(self: *Self, center: *anyopaque) void {
+        if (self.authorization_requested) return;
+        self.authorization_requested = true;
+        const options: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
+        const msg = @as(*const fn (*anyopaque, macos_mod.objc.SEL, c_ulong, *const anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
+        msg(center, macos_mod.sel("requestAuthorizationWithOptions:completionHandler:"), options, &noop_auth_block);
     }
 
     /// Handle notification-related messages from JavaScript
@@ -111,7 +113,7 @@ pub const NotificationBridge = struct {
     pub fn handleLinuxDesktop(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, "schedule") or std.mem.eql(u8, action, "show"))
             return self.linuxShowNotification(data);
-        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
+        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission(data);
         return BridgeError.UnknownAction;
     }
 
@@ -126,7 +128,7 @@ pub const NotificationBridge = struct {
             if (parsed.value.delay == null or parsed.value.delay.? != 0) return BridgeError.PlatformNotSupported;
             return self.windowsShowNotification(data);
         }
-        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
+        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission(data);
         return BridgeError.UnknownAction;
     }
 
@@ -144,7 +146,7 @@ pub const NotificationBridge = struct {
         } else if (std.mem.eql(u8, action, "clearBadge")) {
             try self.clearBadge();
         } else if (std.mem.eql(u8, action, "requestPermission")) {
-            try self.requestPermission();
+            try self.requestPermission(data);
         } else if (std.mem.eql(u8, action, "hasDelivered")) {
             try self.hasDelivered(data);
         } else {
@@ -181,6 +183,7 @@ pub const NotificationBridge = struct {
 
         self.ensureNotificationCenter();
         const center = self.notification_center orelse return BridgeError.NativeCallFailed;
+        self.requestDefaultAuthorization(center);
         const macos = @import("macos.zig");
 
         const ShowParams = struct {
@@ -285,6 +288,7 @@ pub const NotificationBridge = struct {
 
         self.ensureNotificationCenter();
         const center = self.notification_center orelse return BridgeError.NativeCallFailed;
+        self.requestDefaultAuthorization(center);
         const macos = @import("macos.zig");
 
         const ScheduleParams = struct {
@@ -492,7 +496,7 @@ pub const NotificationBridge = struct {
     }
 
     /// Request notification permission
-    fn requestPermission(self: *Self) !void {
+    fn requestPermission(self: *Self, data: []const u8) !void {
         if (builtin.os.tag == .linux or builtin.os.tag == .windows) {
             // Linux/Windows: permissions are typically not required
             log.debug("requestPermission: granted by default on this platform", .{});
@@ -507,12 +511,22 @@ pub const NotificationBridge = struct {
 
         log.debug("requestPermission", .{});
 
-        // UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge
-        const options: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
+        const options = try permissionOptions(data);
 
         const ticket = ios_async.acquire("requestPermission") orelse return BridgeError.Busy;
+        self.authorization_requested = true;
         const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, *anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
         msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, ios_async.boolErrorBlock(ticket));
+    }
+
+    fn permissionOptions(data: []const u8) !c_ulong {
+        const standard: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
+        if (data.len == 0) return standard;
+        const Params = struct { provisional: bool = false };
+        const parsed = std.json.parseFromSlice(Params, std.heap.page_allocator, data, .{ .ignore_unknown_fields = true }) catch return BridgeError.InvalidJSON;
+        defer parsed.deinit();
+        // UNAuthorizationOptionProvisional is bit 6 in Apple's SDK.
+        return standard | if (parsed.value.provisional) @as(c_ulong, 1 << 6) else 0;
     }
 
     /// Whether Notification Center still holds the request with this ID.
@@ -841,6 +855,13 @@ test "macOS delivered notification query requires an ID" {
     var bridge = NotificationBridge.init(std.testing.allocator);
     defer bridge.deinit();
     try std.testing.expectError(BridgeError.MissingData, bridge.hasDelivered("{}"));
+}
+
+test "notification permission options only add provisional when requested" {
+    const standard = try NotificationBridge.permissionOptions("");
+    try std.testing.expectEqual(standard, try NotificationBridge.permissionOptions("{}"));
+    try std.testing.expectEqual(standard | @as(c_ulong, 1 << 6), try NotificationBridge.permissionOptions("{\"provisional\":true}"));
+    try std.testing.expectError(BridgeError.InvalidJSON, NotificationBridge.permissionOptions("{\"provisional\":\"yes\"}"));
 }
 
 test "Linux desktop notification dispatch refuses unsupported actions" {
