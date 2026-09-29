@@ -325,14 +325,19 @@ async function main(): Promise<void> {
       bundleId: receipt,
       platforms: [platform],
       macos: { dmg: false, pkg: true, urlSchemes: [deepLinkScheme] },
-      linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'] },
-      windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [] },
+      linux: { deb: true, rpm: false, appImage: false, debDependencies: ['libnotify-bin'], urlSchemes: [deepLinkScheme] },
+      windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [], urlSchemes: [deepLinkScheme] },
     })
     installer = artifact(results, platform === 'macos' ? 'pkg' : platform === 'windows' ? 'msi' : 'deb')
     if (platform === 'linux') {
       const dependencies = await command('inspect Linux DEB dependencies', ['dpkg-deb', '--field', installer, 'Depends'])
       if (!dependencies.split(',').map(item => item.trim()).includes('libnotify-bin'))
         throw new Error('Installed-app DEB did not declare the notify-send provider')
+      const inspected = join(work, 'deb-inspect')
+      await command('extract Linux DEB for protocol inspection', ['dpkg-deb', '--extract', installer, inspected])
+      const desktop = readFileSync(join(inspected, 'usr', 'share', 'applications', 'craft.desktop'), 'utf8')
+      if (!desktop.includes(`MimeType=x-scheme-handler/${deepLinkScheme};`) || !desktop.includes('Exec=/usr/bin/craft %u'))
+        throw new Error('Linux DEB did not register its declared URL scheme')
     }
 
     if (platform === 'windows') {
@@ -362,6 +367,8 @@ async function main(): Promise<void> {
       const shortcut = join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'craft.lnk')
       if (!existsSync(shortcut)) throw new Error(`Windows MSI did not install its Start-menu shortcut: ${shortcut}`)
       console.log('Windows MSI installed matching notification identity and Start-menu shortcut')
+      const protocol = await command('inspect Windows installed URL protocol', ['reg.exe', 'query', `HKCR\\${deepLinkScheme}`, '/v', 'URL Protocol'])
+      if (!protocol.includes('URL Protocol')) throw new Error('Windows MSI did not register its declared URL scheme')
     }
     await launchViaSdk()
   }

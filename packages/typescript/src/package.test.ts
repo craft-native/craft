@@ -2,11 +2,21 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 
 describe('Linux DEB runtime dependencies', () => {
   it('installs the notify-send provider used by the desktop notification bridge', () => {
     expect(DEFAULT_DEB_DEPENDENCIES).toContain('libnotify-bin')
+  })
+})
+
+describe('Linux DEB URI schemes', () => {
+  it('advertises deduplicated handlers and passes one URL to Craft', () => {
+    const entry = linuxDesktopEntry('Craft', 'craft', ['craft-test', 'CRAFT-TEST', 'craft+preview'])
+    expect(entry).toContain('Exec=/usr/bin/craft %u')
+    expect(entry).toContain('MimeType=x-scheme-handler/craft-test;x-scheme-handler/craft+preview;')
+    expect(linuxDesktopEntry('Craft', 'craft')).not.toContain('MimeType=')
+    expect(() => linuxDesktopEntry('Craft', 'craft', ['not a scheme'])).toThrow('Invalid URL scheme')
   })
 })
 
@@ -26,6 +36,16 @@ describe('Windows MSI packaging', () => {
     expect(first).toContain(`ShortcutProperty Key="System.AppUserModel.ID" Value="${windowsNotificationAppId('Craft App', 'Stacks & Co')}"`)
     expect(first).toContain(`Source="${WINDOWS_NOTIFICATION_ID_FILE}" KeyPath="yes"`)
     expect(first).not.toContain('exec(')
+  })
+
+  it('registers each requested URL protocol with a quoted executable and URL', () => {
+    const source = renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['craft-test', 'CRAFT-TEST', 'craft+preview'] }, 'Craft.exe')
+    expect(source).toContain('Key="Software\\Classes\\craft-test"')
+    expect(source).toContain('Name="URL Protocol" Value=""')
+    expect(source).toContain('Value="&quot;[#CraftFile]&quot; &quot;%1&quot;"')
+    expect(source).toContain('Key="Software\\Classes\\craft+preview"')
+    expect(source).not.toContain('CraftProtocol2')
+    expect(() => renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['bad scheme'] }, 'Craft.exe')).toThrow('Invalid URL scheme')
   })
 
   it('rejects versions WiX cannot compare', () => {

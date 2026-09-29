@@ -246,6 +246,9 @@ export interface PackageConfig {
     /** Files installed beside the executable (for example WebView2Loader.dll) */
     additionalFiles?: string[]
 
+    /** Custom URI schemes registered by the MSI installer */
+    urlSchemes?: string[]
+
     /** Architecture encoded in MSI metadata (defaults to the native host) */
     architecture?: 'x86' | 'x64' | 'arm64'
 
@@ -260,6 +263,9 @@ export interface PackageConfig {
   linux?: {
     /** Create DEB package */
     deb?: boolean
+
+    /** Custom URI schemes advertised by the DEB desktop entry */
+    urlSchemes?: string[]
 
     /** Create RPM package */
     rpm?: boolean
@@ -286,6 +292,7 @@ interface MSIOptions {
   manufacturer: string
   architecture: 'x86' | 'x64' | 'arm64'
   additionalFiles?: string[]
+  urlSchemes?: string[]
   certificatePath?: string
   certificatePassword?: string
 }
@@ -506,6 +513,7 @@ async function packageWindows(config: PackageConfig, outDir: string): Promise<Pa
       manufacturer: config.author || 'Unknown',
       architecture: opts.architecture || windowsArchitecture(process.arch),
       additionalFiles: opts.additionalFiles,
+      urlSchemes: opts.urlSchemes,
       certificatePath: opts.certificatePath,
       certificatePassword: opts.certificatePassword,
     })
@@ -560,6 +568,7 @@ async function packageLinux(config: PackageConfig, outDir: string): Promise<Pack
       // The Linux notification bridge invokes notify-send. An installed app
       // needs its provider even on a minimal desktop without it preinstalled.
       dependencies: opts.debDependencies || [...DEFAULT_DEB_DEPENDENCIES],
+      urlSchemes: opts.urlSchemes,
     })
     results.push({
       success: debResult.success,
@@ -646,19 +655,7 @@ const URL_SCHEME = /^[a-z][a-z0-9+.-]*$/i
  * dicts would only invent distinctions LaunchServices does not care about.
  */
 export function urlTypesEntry(bundleId: string, schemes: readonly string[]): string | null {
-  const seen = new Set<string>()
-  const unique: string[] = []
-
-  for (const scheme of schemes) {
-    if (!URL_SCHEME.test(scheme))
-      throw new Error(`Invalid URL scheme ${JSON.stringify(scheme)}: must start with a letter and contain only letters, digits, "+", "-" or "."`)
-    // LaunchServices matches case-insensitively, so `MyApp` and `myapp` are
-    // one scheme declared twice.
-    const key = scheme.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(scheme)
-  }
+  const unique = uniqueUrlSchemes(schemes)
 
   if (unique.length === 0) return null
 
@@ -676,6 +673,36 @@ ${list}
         </array>
       </dict>
     </array>`
+}
+
+function uniqueUrlSchemes(schemes: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const unique: string[] = []
+
+  for (const scheme of schemes) {
+    if (!URL_SCHEME.test(scheme))
+      throw new Error(`Invalid URL scheme ${JSON.stringify(scheme)}: must start with a letter and contain only letters, digits, "+", "-" or "."`)
+    // LaunchServices matches case-insensitively, so `MyApp` and `myapp` are
+    // one scheme declared twice.
+    const key = scheme.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(scheme)
+  }
+
+  return unique
+}
+
+/** Desktop-entry URI association; the OS passes one URL as `%u`. */
+export function linuxDesktopEntry(name: string, binaryName: string, urlSchemes: readonly string[] = []): string {
+  const schemes = uniqueUrlSchemes(urlSchemes)
+  return `[Desktop Entry]
+Type=Application
+Name=${name}
+Exec=/usr/bin/${binaryName}${schemes.length ? ' %u' : ''}
+Terminal=false
+Categories=Utility;
+${schemes.length ? `MimeType=${schemes.map(scheme => `x-scheme-handler/${scheme.toLowerCase()};`).join('')}\n` : ''}`
 }
 
 /**
@@ -1100,7 +1127,7 @@ export function windowsArchitecture(architecture: string): 'x86' | 'x64' | 'arm6
   throw new Error(`Unsupported Windows package architecture: ${architecture}`)
 }
 
-export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture'>, sourceName: string, additionalFileNames: string[] = []): string {
+export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture' | 'urlSchemes'>, sourceName: string, additionalFileNames: string[] = []): string {
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/.test(opts.version)) throw new Error(`MSI version must have 3 or 4 numeric parts: ${opts.version}`)
   const id = wixIdentifier(opts.name)
   const manufacturer = opts.manufacturer.trim() || 'Unknown'
@@ -1108,6 +1135,7 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
   const programFilesFolder = opts.architecture === 'x86' ? 'ProgramFilesFolder' : 'ProgramFiles64Folder'
   const win64 = opts.architecture === 'x86' ? 'no' : 'yes'
   const notificationAppId = windowsNotificationAppId(opts.name, manufacturer)
+  const schemes = uniqueUrlSchemes(opts.urlSchemes || [])
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="${xml(opts.name)}" Language="1033" Version="${opts.version}" Manufacturer="${xml(manufacturer)}" UpgradeCode="${upgradeCode}">
@@ -1130,6 +1158,15 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
 ${additionalFileNames.map((name, index) => `          <Component Id="${id}Extra${index}" Guid="*" Win64="${win64}">
             <File Id="${id}ExtraFile${index}" Source="${xml(name)}" KeyPath="yes" />
           </Component>`).join('\n')}
+${schemes.map((scheme, index) => `          <Component Id="${id}Protocol${index}" Guid="${deterministicGuid(`${manufacturer}/${opts.name}/protocol/${scheme.toLowerCase()}`)}" Win64="${win64}">
+            <RegistryKey Root="HKLM" Key="Software\\Classes\\${xml(scheme.toLowerCase())}" Action="createAndRemoveOnUninstall">
+              <RegistryValue Type="string" Value="URL:${xml(opts.name)} Protocol" KeyPath="yes" />
+              <RegistryValue Type="string" Name="URL Protocol" Value="" />
+              <RegistryKey Key="shell\\open\\command">
+                <RegistryValue Type="string" Value="&quot;[#${id}File]&quot; &quot;%1&quot;" />
+              </RegistryKey>
+            </RegistryKey>
+          </Component>`).join('\n')}
         </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder" />
@@ -1138,6 +1175,7 @@ ${additionalFileNames.map((name, index) => `          <Component Id="${id}Extra$
       <ComponentRef Id="${id}Executable" />
       <ComponentRef Id="${id}NotificationIdentity" />
 ${additionalFileNames.map((_, index) => `      <ComponentRef Id="${id}Extra${index}" />`).join('\n')}
+${schemes.map((_, index) => `      <ComponentRef Id="${id}Protocol${index}" />`).join('\n')}
     </Feature>
   </Product>
 </Wix>
@@ -1261,6 +1299,7 @@ async function createDEB(opts: {
   description: string
   maintainer: string
   dependencies: string[]
+  urlSchemes?: string[]
 }): Promise<{ success: boolean; outputPath?: string; error?: string }> {
   return new Promise((resolve) => {
     try {
@@ -1288,6 +1327,7 @@ async function createDEB(opts: {
           return
         }
       }
+      const desktopContent = linuxDesktopEntry(opts.name, sanitizedName, opts.urlSchemes)
 
       // Create DEB package structure
       const tempDir = mkdtempSync(join(tmpdir(), 'craft-deb-'))
@@ -1317,13 +1357,6 @@ Description: ${description || opts.name}
       writeFileSync(join(debianDir, 'control'), controlContent)
 
       // Create .desktop file
-      const desktopContent = `[Desktop Entry]
-Type=Application
-Name=${opts.name}
-Exec=/usr/bin/${binaryName}
-Terminal=false
-Categories=Utility;
-`
       writeFileSync(join(applicationsDir, `${binaryName}.desktop`), desktopContent)
 
       // Build DEB using dpkg-deb
