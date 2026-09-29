@@ -457,6 +457,21 @@ anything is submitted.
 - **MSI**: Upload to website or GitHub releases
 - **Microsoft Store**: Use Partner Center
 
+Files needed at runtime beside the `.exe` must be supplied explicitly for both
+MSI and ZIP output. For a Craft binary using WebView2, stage the matching
+`WebView2Loader.dll` and pass its path:
+
+```typescript
+windows: {
+  msi: true,
+  zip: true,
+  additionalFiles: ['path/to/WebView2Loader.dll'],
+}
+```
+
+The packager places each additional file beside the executable; it rejects
+missing files and duplicate Windows file names.
+
 ### Linux
 
 - **DEB**: Host on APT repository or provide direct download

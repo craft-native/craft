@@ -49,6 +49,49 @@ describe('Windows MSI packaging', () => {
     expect(windowsArchitecture('arm64')).toBe('arm64')
     expect(() => windowsArchitecture('mips')).toThrow('Unsupported Windows package architecture')
   })
+
+  it('installs companion DLLs in the same MSI directory as the executable', () => {
+    const source = renderWixSource(
+      { name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64' },
+      'Craft.exe',
+      ['WebView2Loader.dll', 'A&B.dll'],
+    )
+    expect(source).toContain('Source="WebView2Loader.dll" KeyPath="yes"')
+    expect(source).toContain('Source="A&amp;B.dll" KeyPath="yes"')
+    expect(source).toContain('<ComponentRef Id="CraftExtra0" />')
+    expect(source).toContain('<ComponentRef Id="CraftExtra1" />')
+  })
+
+  it('includes companion files in a Windows ZIP and rejects ambiguous names', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'craft-windows-zip-test-'))
+    try {
+      const binary = join(dir, 'source.exe')
+      const loader = join(dir, 'WebView2Loader.dll')
+      writeFileSync(binary, 'binary-contents')
+      writeFileSync(loader, 'loader-contents')
+      const config = {
+        name: 'Craft', version: '1.2.3', binaryPath: binary, outDir: dir,
+        platforms: ['windows' as const], windows: { msi: false, zip: true, additionalFiles: [loader] },
+      }
+      const [zip] = await packageApp(config)
+      expect(zip?.success).toBe(true)
+      expect(zip?.outputPath).toBeDefined()
+      const archive = readFileSync(zip!.outputPath!)
+      expect(archive.includes(Buffer.from('Craft.exe'))).toBe(true)
+      expect(archive.includes(Buffer.from('WebView2Loader.dll'))).toBe(true)
+
+      const [duplicate] = await packageApp({ ...config, windows: { ...config.windows, additionalFiles: [loader, loader] } })
+      expect(duplicate?.success).toBe(false)
+      expect(duplicate?.error).toContain('Duplicate Windows package file')
+
+      const [missing] = await packageApp({ ...config, windows: { ...config.windows, additionalFiles: [join(dir, 'missing.dll')] } })
+      expect(missing?.success).toBe(false)
+      expect(missing?.error).toContain('Windows companion file not found')
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('macOS pkg relocation', () => {

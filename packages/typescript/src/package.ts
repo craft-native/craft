@@ -240,6 +240,9 @@ export interface PackageConfig {
     /** Create ZIP archive */
     zip?: boolean
 
+    /** Files installed beside the executable (for example WebView2Loader.dll) */
+    additionalFiles?: string[]
+
     /** Architecture encoded in MSI metadata (defaults to the native host) */
     architecture?: 'x86' | 'x64' | 'arm64'
 
@@ -279,6 +282,7 @@ interface MSIOptions {
   outputPath: string
   manufacturer: string
   architecture: 'x86' | 'x64' | 'arm64'
+  additionalFiles?: string[]
   certificatePath?: string
   certificatePassword?: string
 }
@@ -498,6 +502,7 @@ async function packageWindows(config: PackageConfig, outDir: string): Promise<Pa
       outputPath: join(outDir, `${name}-${version}.msi`),
       manufacturer: config.author || 'Unknown',
       architecture: opts.architecture || windowsArchitecture(process.arch),
+      additionalFiles: opts.additionalFiles,
       certificatePath: opts.certificatePath,
       certificatePassword: opts.certificatePassword,
     })
@@ -516,6 +521,7 @@ async function packageWindows(config: PackageConfig, outDir: string): Promise<Pa
       name,
       version,
       binaryPath: config.binaryPath,
+      additionalFiles: opts.additionalFiles,
       outputPath: join(outDir, `${name}-${version}-windows.zip`),
     })
     results.push({
@@ -1081,7 +1087,7 @@ export function windowsArchitecture(architecture: string): 'x86' | 'x64' | 'arm6
   throw new Error(`Unsupported Windows package architecture: ${architecture}`)
 }
 
-export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture'>, sourceName: string): string {
+export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'manufacturer' | 'architecture'>, sourceName: string, additionalFileNames: string[] = []): string {
   if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/.test(opts.version)) throw new Error(`MSI version must have 3 or 4 numeric parts: ${opts.version}`)
   const id = wixIdentifier(opts.name)
   const manufacturer = opts.manufacturer.trim() || 'Unknown'
@@ -1100,15 +1106,35 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
           <Component Id="${id}Executable" Guid="*" Win64="${win64}">
             <File Id="${id}File" Source="${xml(sourceName)}" KeyPath="yes" />
           </Component>
+${additionalFileNames.map((name, index) => `          <Component Id="${id}Extra${index}" Guid="*" Win64="${win64}">
+            <File Id="${id}ExtraFile${index}" Source="${xml(name)}" KeyPath="yes" />
+          </Component>`).join('\n')}
         </Directory>
       </Directory>
     </Directory>
     <Feature Id="ProductFeature" Title="${xml(opts.name)}" Level="1">
       <ComponentRef Id="${id}Executable" />
+${additionalFileNames.map((_, index) => `      <ComponentRef Id="${id}Extra${index}" />`).join('\n')}
     </Feature>
   </Product>
 </Wix>
 `
+}
+
+function windowsCompanionFiles(paths: string[] | undefined, executableName: string): Array<{ path: string; name: string }> {
+  const seen = new Set([executableName.toLowerCase()])
+  return (paths || []).map((path) => {
+    const name = basename(path)
+    if (!name || /[<>:"/\\|?*\u0000-\u001F]/.test(name) || /[. ]$/.test(name)
+      || /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name))
+      throw new Error(`Invalid Windows companion file name: ${JSON.stringify(name)}`)
+    if (seen.has(name.toLowerCase()))
+      throw new Error(`Duplicate Windows package file: ${name}`)
+    seen.add(name.toLowerCase())
+    if (!existsSync(path) || lstatSync(path).isDirectory())
+      throw new Error(`Windows companion file not found: ${path}`)
+    return { path, name }
+  })
 }
 
 export function windowsExecutableName(name: string): string {
@@ -1145,11 +1171,13 @@ async function createMSI(opts: MSIOptions): Promise<{ success: boolean; outputPa
   const tempDir = mkdtempSync(join(tmpdir(), 'craft-msi-'))
   try {
     const binaryName = windowsExecutableName(opts.name)
+    const additionalFiles = windowsCompanionFiles(opts.additionalFiles, binaryName)
     const sourcePath = join(tempDir, binaryName)
     const wxsPath = join(tempDir, 'installer.wxs')
     const wixobjPath = join(tempDir, 'installer.wixobj')
     copyFileSync(opts.binaryPath, sourcePath)
-    writeFileSync(wxsPath, renderWixSource(opts, binaryName))
+    for (const file of additionalFiles) copyFileSync(file.path, join(tempDir, file.name))
+    writeFileSync(wxsPath, renderWixSource(opts, binaryName, additionalFiles.map(file => file.name)))
     await runCommand('candle.exe', candleArguments(opts.architecture, wixobjPath, wxsPath), tempDir)
     await runCommand('light.exe', ['-nologo', '-sval', '-out', opts.outputPath, wixobjPath], tempDir)
     if (opts.certificatePath) {
@@ -1178,11 +1206,16 @@ async function createZIP(opts: {
   name: string
   version: string
   binaryPath: string
+  additionalFiles?: string[]
   outputPath: string
 }): Promise<{ success: boolean; outputPath?: string; error?: string }> {
   try {
-    const data = new Uint8Array(readFileSync(opts.binaryPath))
-    const zip = buildZip([{ name: `${opts.name}.exe`, data }])
+    const binaryName = windowsExecutableName(opts.name)
+    const additionalFiles = windowsCompanionFiles(opts.additionalFiles, binaryName)
+    const entries = [{ name: binaryName, data: new Uint8Array(readFileSync(opts.binaryPath)) }]
+    for (const file of additionalFiles)
+      entries.push({ name: file.name, data: new Uint8Array(readFileSync(file.path)) })
+    const zip = buildZip(entries)
     writeFileSync(opts.outputPath, zip)
     return { success: true, outputPath: opts.outputPath }
   }
