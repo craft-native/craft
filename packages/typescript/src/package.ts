@@ -699,7 +699,7 @@ export function linuxDesktopEntry(name: string, binaryName: string, urlSchemes: 
   return `[Desktop Entry]
 Type=Application
 Name=${name}
-Exec=/usr/bin/${binaryName}${schemes.length ? ' %u' : ''}
+Exec=/usr/bin/${binaryName}${schemes.length ? ' --deep-link %u' : ''}
 Terminal=false
 Categories=Utility;
 ${schemes.length ? `MimeType=${schemes.map(scheme => `x-scheme-handler/${scheme.toLowerCase()};`).join('')}\n` : ''}`
@@ -1163,7 +1163,7 @@ ${schemes.map((scheme, index) => `          <Component Id="${id}Protocol${index}
               <RegistryValue Type="string" Value="URL:${xml(opts.name)} Protocol" KeyPath="yes" />
               <RegistryValue Type="string" Name="URL Protocol" Value="" />
               <RegistryKey Key="shell\\open\\command">
-                <RegistryValue Type="string" Value="&quot;[#${id}File]&quot; &quot;%1&quot;" />
+                <RegistryValue Type="string" Value="&quot;[#${id}File]&quot; --deep-link &quot;%1&quot;" />
               </RegistryKey>
             </RegistryKey>
           </Component>`).join('\n')}

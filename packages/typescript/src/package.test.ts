@@ -13,7 +13,7 @@ describe('Linux DEB runtime dependencies', () => {
 describe('Linux DEB URI schemes', () => {
   it('advertises deduplicated handlers and passes one URL to Craft', () => {
     const entry = linuxDesktopEntry('Craft', 'craft', ['craft-test', 'CRAFT-TEST', 'craft+preview'])
-    expect(entry).toContain('Exec=/usr/bin/craft %u')
+    expect(entry).toContain('Exec=/usr/bin/craft --deep-link %u')
     expect(entry).toContain('MimeType=x-scheme-handler/craft-test;x-scheme-handler/craft+preview;')
     expect(linuxDesktopEntry('Craft', 'craft')).not.toContain('MimeType=')
     expect(() => linuxDesktopEntry('Craft', 'craft', ['not a scheme'])).toThrow('Invalid URL scheme')
@@ -42,7 +42,7 @@ describe('Windows MSI packaging', () => {
     const source = renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['craft-test', 'CRAFT-TEST', 'craft+preview'] }, 'Craft.exe')
     expect(source).toContain('Key="Software\\Classes\\craft-test"')
     expect(source).toContain('Name="URL Protocol" Value=""')
-    expect(source).toContain('Value="&quot;[#CraftFile]&quot; &quot;%1&quot;"')
+    expect(source).toContain('Value="&quot;[#CraftFile]&quot; --deep-link &quot;%1&quot;"')
     expect(source).toContain('Key="Software\\Classes\\craft+preview"')
     expect(source).not.toContain('CraftProtocol2')
     expect(() => renderWixSource({ name: 'Craft', version: '1.2.3', manufacturer: 'Craft', architecture: 'x64', urlSchemes: ['bad scheme'] }, 'Craft.exe')).toThrow('Invalid URL scheme')

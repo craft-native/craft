@@ -336,7 +336,7 @@ async function main(): Promise<void> {
       const inspected = join(work, 'deb-inspect')
       await command('extract Linux DEB for protocol inspection', ['dpkg-deb', '--extract', installer, inspected])
       const desktop = readFileSync(join(inspected, 'usr', 'share', 'applications', 'craft.desktop'), 'utf8')
-      if (!desktop.includes(`MimeType=x-scheme-handler/${deepLinkScheme};`) || !desktop.includes('Exec=/usr/bin/craft %u'))
+      if (!desktop.includes(`MimeType=x-scheme-handler/${deepLinkScheme};`) || !desktop.includes('Exec=/usr/bin/craft --deep-link %u'))
         throw new Error('Linux DEB did not register its declared URL scheme')
     }
 
@@ -369,6 +369,9 @@ async function main(): Promise<void> {
       console.log('Windows MSI installed matching notification identity and Start-menu shortcut')
       const protocol = await command('inspect Windows installed URL protocol', ['reg.exe', 'query', `HKCR\\${deepLinkScheme}`, '/v', 'URL Protocol'])
       if (!protocol.includes('URL Protocol')) throw new Error('Windows MSI did not register its declared URL scheme')
+      const launch = await command('inspect Windows URL launch command', ['reg.exe', 'query', `HKCR\\${deepLinkScheme}\\shell\\open\\command`, '/ve'])
+      if (!launch.includes('--deep-link') || !launch.includes('"%1"'))
+        throw new Error('Windows MSI URL handler did not pass a separate deep-link argument')
     }
     await launchViaSdk()
   }
