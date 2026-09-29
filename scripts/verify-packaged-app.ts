@@ -255,6 +255,8 @@ async function launchViaSdk(): Promise<void> {
         if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
         const status = await window.craft.notifications.getPermissionStatus()
         if (typeof status !== 'string') throw new Error('macOS notification authorization status was not a string')
+        if (status === 'notDetermined' || status === 'unknown')
+          throw new Error(JSON.stringify({ message: 'macOS notification authorization did not reach a determined state', status }))
         if (permission || status === 'authorized' || status === 'provisional') {
           await window.craft.notifications.show({ id: ${JSON.stringify(notificationId)}, title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
           let delivered = false
@@ -311,7 +313,9 @@ async function launchViaSdk(): Promise<void> {
     const address = server.address() as AddressInfo
     app = createApp({
       url: `http://127.0.0.1:${address.port}/`,
-      quiet: true,
+      // Native NSError diagnostics must be visible when a CI host cannot
+      // authorize notifications; quiet mode keeps stderr only on app failure.
+      quiet: platform !== 'macos',
       window: { title: 'Craft packaged smoke', devTools: false, hotReload: false },
     })
     const shown = app.show()

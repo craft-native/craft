@@ -181,19 +181,28 @@ extern var _NSConcreteGlobalBlock: anyopaque;
 fn makeBoolInvoke(comptime index: u5) *const anyopaque {
     const S = struct {
         fn invoke(_: *const BoolBlock, granted: bool) callconv(.c) void {
-            completionFired(index, granted);
+            completionFired(index, granted, false);
         }
     };
     return @ptrCast(&S.invoke);
 }
 
 /// void (^)(BOOL, NSError *) — `requestAuthorizationWithOptions:` and friends.
-/// The error object is deliberately unused: the granted flag is the answer
-/// the page's contract carries, and Swift discarded the error here too.
+/// An NSError means the request failed, not that the user denied it. Preserve
+/// that distinction so a headless or ineligible app cannot appear to have a
+/// normal denial while its authorization status stays notDetermined.
 fn makeBoolErrorInvoke(comptime index: u5) *const anyopaque {
     const S = struct {
-        fn invoke(_: *const BoolBlock, granted: bool, _: objc.id) callconv(.c) void {
-            completionFired(index, granted);
+        fn invoke(_: *const BoolBlock, granted: bool, err: objc.id) callconv(.c) void {
+            if (err) |native_error| {
+                if (objc.sel_registerName("localizedDescription")) |sel| {
+                    if (objc.msgSendId(native_error, sel)) |description| {
+                        if (objc.getNSStringUTF8(description)) |utf8|
+                            std.log.warn("asynchronous authorization failed: {s}", .{std.mem.span(utf8)});
+                    }
+                }
+            }
+            completionFired(index, granted, err != null);
         }
     };
     return @ptrCast(&S.invoke);
@@ -251,7 +260,7 @@ extern "c" fn dispatch_async_f(queue: *anyopaque, context: ?*anyopaque, work: di
 /// `dispatch_get_main_queue()` is a macro over this global.
 extern var _dispatch_main_q: anyopaque;
 
-fn completionFired(index: u5, granted: bool) void {
+fn completionFired(index: u5, granted: bool, failed: bool) void {
     // Record the outcome under the lock, but deliver from the main queue:
     // the reply ends in `evaluateJavaScript`, which is main-thread-only, and
     // this may be running on whatever queue the framework chose.
@@ -266,6 +275,7 @@ fn completionFired(index: u5, granted: bool) void {
         if (!slot.completion_armed) return;
         slot.completion_armed = false;
         slot.granted = granted;
+        slot.failed = failed;
         ticket = .{ .index = index, .generation = slot.generation };
     }
 
@@ -649,12 +659,12 @@ test "a completion that fires twice answers with the first outcome, once" {
     _ = boolBlock(ticket);
     try testing.expect(slots[ticket.index].completion_armed);
 
-    completionFired(ticket.index, true);
+    completionFired(ticket.index, true, false);
     try testing.expect(!slots[ticket.index].completion_armed);
     try testing.expect(slots[ticket.index].granted);
 
     // The framework calls back again, with the opposite answer.
-    completionFired(ticket.index, false);
+    completionFired(ticket.index, false, false);
     try testing.expect(slots[ticket.index].granted);
 }
 
@@ -665,8 +675,18 @@ test "a fire for a lease that armed no block is not its answer to give" {
     defer abandon(ticket);
 
     try testing.expect(!slots[ticket.index].completion_armed);
-    completionFired(ticket.index, true);
+    completionFired(ticket.index, true, false);
     try testing.expect(!slots[ticket.index].granted);
+}
+
+test "BOOL plus NSError completion rejects instead of reporting a denial" {
+    const ticket = acquire("requestPermission") orelse return error.PoolUnexpectedlyFull;
+    defer abandon(ticket);
+
+    _ = boolErrorBlock(ticket);
+    completionFired(ticket.index, false, true);
+    try testing.expect(slots[ticket.index].failed);
+    try testing.expectEqual(bridge_error.BridgeError.NativeCallFailed, slots[ticket.index].fail_code);
 }
 
 test "a deadline's context carries the complete ticket" {
