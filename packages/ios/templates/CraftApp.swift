@@ -4264,6 +4264,10 @@ struct CraftWebView: UIViewRepresentable {
             }
             isLocationRecordingPaused = false
             persistLocationRecordingState()
+            // Set here too: a recording restored at launch while paused never
+            // got a delegate, so resuming it started updates nobody received
+            // and the route stopped at the pause.
+            locationManager?.delegate = self
             requestLocationAuthorization()
             configureBackgroundLocationIfNeeded()
             locationManager?.startUpdatingLocation()
