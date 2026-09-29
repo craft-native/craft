@@ -85,10 +85,12 @@ function settled(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('bridge reply correlation', () => {
-  it('posts notification show as an immediate native action', async () => {
+  it('posts notification show with zero delay', async () => {
     const h = loadBridge()
     await h.craft.notifications.show({ title: 'Now' })
-    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'show', d: '{"title":"Now"}' })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'schedule', d: '{"title":"Now","delay":0}' })
+    await h.craft.notifications.show({ title: 'Later', delay: 30 })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'schedule', d: '{"title":"Later","delay":30}' })
   })
 
   it('queries a delivered notification by ID and interprets native booleans', async () => {

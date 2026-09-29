@@ -116,9 +116,16 @@ pub const NotificationBridge = struct {
     }
 
     /// The MSI-backed desktop bridge supports immediate toasts and a permission
-    /// query. Scheduling/cancellation need a separate Windows implementation.
+    /// query. Delayed scheduling/cancellation need a separate implementation.
     pub fn handleWindowsDesktop(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, "show")) return self.windowsShowNotification(data);
+        if (std.mem.eql(u8, action, "schedule")) {
+            const Options = struct { delay: ?f64 = null };
+            const parsed = std.json.parseFromSlice(Options, self.allocator, data, .{ .ignore_unknown_fields = true }) catch return BridgeError.InvalidJSON;
+            defer parsed.deinit();
+            if (parsed.value.delay == null or parsed.value.delay.? != 0) return BridgeError.PlatformNotSupported;
+            return self.windowsShowNotification(data);
+        }
         if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
         return BridgeError.UnknownAction;
     }
@@ -826,6 +833,7 @@ test "Windows desktop notification dispatch refuses unsupported actions" {
     var bridge = NotificationBridge.init(std.testing.allocator);
     defer bridge.deinit();
     try std.testing.expectError(BridgeError.UnknownAction, bridge.handleWindowsDesktop("cancel", ""));
+    try std.testing.expectError(BridgeError.PlatformNotSupported, bridge.handleWindowsDesktop("schedule", "{\"title\":\"Later\",\"delay\":30}"));
 }
 
 test "macOS delivered notification query requires an ID" {

@@ -651,7 +651,10 @@
       if (typeof o.title !== 'string' || o.title.length === 0) {
         return Promise.reject(new Error('notification title is required'))
       }
-      return _send('notification', 'show', _stringify(o))
+      // `show` means now. The shared schedule path preserves explicit delay
+      // support on platforms that have it, and zero is the immediate form.
+      if (typeof o.delay !== 'number') o.delay = 0
+      return _send('notification', 'schedule', _stringify(o))
     },
     schedule:          function (opts) { return _send('notification', 'schedule', _stringify(opts || {})) },
     cancel:            function (id)   { return _send('notification', 'cancel', _stringify({ id: String(id) })) },
