@@ -68,9 +68,11 @@
   // `payload || {}` was wrong for every action whose answer is a bare boolean:
   // it turned a truthful `false` into `{}`, which is truthy, so a page reading
   // `if (await craft.share(...))` took the success branch on a cancelled share.
-  // Only genuinely absent payloads become `{}`; `false`, `0` and `""` are
-  // answers and survive.
-  function _orEmpty(payload) {
+  // Older response actions use `{}` for an absent/null payload. Script
+  // evaluation is different: JSON null is a real answer (including for
+  // JavaScript undefined), and must reach the caller unchanged.
+  function _orEmpty(action, payload) {
+    if (action === 'executeJavaScript' && payload === null) return null
     return payload === undefined || payload === null ? {} : payload
   }
 
@@ -86,7 +88,7 @@
       // call's own, with nothing to indicate anything had gone wrong.
       if (!e) return
       _forget(e)
-      if (e.resolve) e.resolve(_orEmpty(payload))
+      if (e.resolve) e.resolve(_orEmpty(action, payload))
       return
     }
 
@@ -96,7 +98,7 @@
     if (!q || q.length === 0) return
     const e = q[0]
     _forget(e)
-    if (e.resolve) e.resolve(_orEmpty(payload))
+    if (e.resolve) e.resolve(_orEmpty(action, payload))
   }
 
   // Native calls this when an action fails.

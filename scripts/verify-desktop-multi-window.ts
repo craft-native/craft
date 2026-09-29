@@ -96,8 +96,9 @@ const mainPage = `<!doctype html><script>
     const object = await call('executeJavaScript', { code: '({ nested: [true, "child"] })' })
     if (object?.nested?.[0] !== true || object.nested[1] !== 'child')
       throw new Error('child evaluation lost its JSON result')
-    if (await call('executeJavaScript', { code: 'undefined' }) !== null)
-      throw new Error('undefined evaluation did not resolve as null')
+    const undefinedResult = await call('executeJavaScript', { code: 'undefined' })
+    if (undefinedResult !== null)
+      throw new Error('undefined evaluation did not resolve as null: ' + JSON.stringify(undefinedResult))
     let rejected = false
     try { await call('executeJavaScript', { code: 'throw new Error("evaluation failed")' }) }
     catch (error) { rejected = error?.code === 'NATIVE_CALL_FAILED' }

@@ -103,6 +103,24 @@ describe('bridge reply correlation', () => {
     expect(await next).toEqual(['again'])
   })
 
+  it('preserves JSON null for local and named script results on both desktop transports', async () => {
+    for (const platform of ['webkit', 'webview2'] as const) {
+      const h = loadBridge(platform)
+      const local = h.craft.window._call('executeJavaScript', { code: 'undefined' }, 'main')
+      h.reply('executeJavaScript', null, h.sent.at(-1)!.i!)
+      expect(await local).toBeNull()
+
+      const named = h.craft.window._call('executeJavaScript', { code: 'null' }, 'settings')
+      h.reply('executeJavaScript', null, h.sent.at(-1)!.i!)
+      expect(await named).toBeNull()
+
+      // Keep the legacy empty-response behavior for unrelated actions.
+      const title = h.craft.window._call('getTitle', {}, 'settings')
+      h.reply('getTitle', null, h.sent.at(-1)!.i!)
+      expect(await title).toEqual({})
+    }
+  })
+
   it('gives each caller its own answer when two bridges share an action name', async () => {
     // `get` is served by both keychain and tags. Before request ids, both
     // callers queued under the string "get" and were matched by arrival order,
