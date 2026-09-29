@@ -8,6 +8,8 @@ const io_context = @import("io_context.zig");
 // in expression position.
 const macos_mod = @import("macos.zig");
 const ios_async = @import("ios_async.zig");
+const ios_pending = @import("ios_pending.zig");
+const json_utils = @import("json_utils.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.notification;
@@ -136,6 +138,8 @@ pub const NotificationBridge = struct {
             try self.clearBadge();
         } else if (std.mem.eql(u8, action, "requestPermission")) {
             try self.requestPermission();
+        } else if (std.mem.eql(u8, action, "hasDelivered")) {
+            try self.hasDelivered(data);
         } else {
             return BridgeError.UnknownAction;
         }
@@ -504,6 +508,25 @@ pub const NotificationBridge = struct {
         msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, ios_async.boolErrorBlock(ticket));
     }
 
+    /// Whether Notification Center still holds the request with this ID.
+    /// The callback may run off-main; ios_async restores the originating page
+    /// request ID and replies from the main queue.
+    fn hasDelivered(self: *Self, data: []const u8) !void {
+        if (comptime builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        const id = (try json_utils.getStringDecoded(std.heap.c_allocator, data, "id")) orelse return BridgeError.MissingData;
+        errdefer std.heap.c_allocator.free(id);
+        if (id.len == 0) return BridgeError.MissingData;
+        self.ensureNotificationCenter();
+        const center = self.notification_center orelse return BridgeError.NativeCallFailed;
+        const ticket = ios_async.acquire("hasDelivered") orelse return BridgeError.Busy;
+        errdefer ios_async.abandon(ticket);
+        const block = delivered_calls.claim(ticket, id) orelse return BridgeError.Busy;
+        ios_async.scheduleDeadline(ticket, 10_000, deliveredTimedOut);
+        const Fn = *const fn (@TypeOf(center), macos_mod.objc.SEL, *anyopaque) callconv(.c) void;
+        const msg: Fn = @ptrCast(&macos_mod.objc.objc_msgSend);
+        msg(center, macos_mod.sel("getDeliveredNotificationsWithCompletionHandler:"), deliveredBlock(block));
+    }
+
     // ============================================
     // Linux Notification Implementation (notify-send)
     // ============================================
@@ -675,6 +698,75 @@ pub const NotificationBridge = struct {
     }
 };
 
+const DeliveredBlockDescriptor = extern struct { reserved: c_ulong = 0, size: c_ulong };
+const DeliveredBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const anyopaque,
+    descriptor: *const DeliveredBlockDescriptor,
+};
+const delivered_descriptor = DeliveredBlockDescriptor{ .size = @sizeOf(DeliveredBlock) };
+var delivered_calls: ios_pending.Table([]u8) = .{};
+
+fn makeDeliveredInvoke(comptime index: u5) *const anyopaque {
+    const Impl = struct {
+        fn invoke(_: *const DeliveredBlock, notifications: macos_mod.objc.id) callconv(.c) void {
+            deliveredCompletion(index, notifications);
+        }
+    };
+    return @ptrCast(&Impl.invoke);
+}
+
+fn makeDeliveredBlocks() [ios_pending.block_count]DeliveredBlock {
+    var result: [ios_pending.block_count]DeliveredBlock = undefined;
+    for (&result, 0..) |*block, index| {
+        block.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = 1 << 28,
+            .invoke = makeDeliveredInvoke(@intCast(index)),
+            .descriptor = &delivered_descriptor,
+        };
+    }
+    return result;
+}
+
+var delivered_blocks: [ios_pending.block_count]DeliveredBlock =
+    if (builtin.os.tag == .macos) makeDeliveredBlocks() else undefined;
+
+fn deliveredBlock(index: u5) *anyopaque {
+    return @ptrCast(&delivered_blocks[index]);
+}
+
+fn deliveredCompletion(index: u5, notifications: macos_mod.objc.id) void {
+    if (comptime builtin.os.tag != .macos) return;
+    const entry = switch (delivered_calls.settle(index)) {
+        .reply => |waiting| waiting,
+        .late, .stray => return,
+    };
+    defer std.heap.c_allocator.free(entry.call);
+    if (@intFromPtr(notifications) == 0) return ios_async.deliverError(entry.ticket);
+
+    const count = macos_mod.msgSend0Ulong(notifications, "count");
+    for (0..count) |i| {
+        const notification = macos_mod.msgSend1(notifications, "objectAtIndex:", @as(c_ulong, @intCast(i)));
+        const request = macos_mod.msgSend0(notification, "request");
+        const identifier = macos_mod.msgSend0(request, "identifier");
+        const utf8 = macos_mod.msgSend0(identifier, "UTF8String") orelse continue;
+        const current: [*:0]const u8 = @ptrCast(@alignCast(utf8));
+        if (std.mem.eql(u8, std.mem.span(current), entry.call))
+            return ios_async.deliverJson(entry.ticket, "true");
+    }
+    ios_async.deliverJson(entry.ticket, "false");
+}
+
+fn deliveredTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (comptime builtin.os.tag != .macos) return;
+    const entry = delivered_calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    std.heap.c_allocator.free(entry.call);
+    ios_async.deliverErrorCode(entry.ticket, BridgeError.Timeout);
+}
+
 fn validWindowsAppId(value: []const u8) bool {
     if (value.len == 0 or value.len > 128) return false;
     for (value) |byte| {
@@ -734,6 +826,13 @@ test "Windows desktop notification dispatch refuses unsupported actions" {
     var bridge = NotificationBridge.init(std.testing.allocator);
     defer bridge.deinit();
     try std.testing.expectError(BridgeError.UnknownAction, bridge.handleWindowsDesktop("cancel", ""));
+}
+
+test "macOS delivered notification query requires an ID" {
+    if (comptime builtin.os.tag != .macos) return;
+    var bridge = NotificationBridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    try std.testing.expectError(BridgeError.MissingData, bridge.hasDelivered("{}"));
 }
 
 test "Linux desktop notification dispatch refuses unsupported actions" {

@@ -114,6 +114,8 @@ async function launchViaSdk(): Promise<void> {
   const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
   const deepLinkUrl = `${deepLinkScheme}://open/${randomUUID()}`
   const notificationMarker = `Craft installed notification ${randomUUID()}`
+  const notificationId = `craft-installed-${randomUUID()}`
+  let macPermissionDenied = false
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -160,6 +162,17 @@ async function launchViaSdk(): Promise<void> {
           new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
         ])
         if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
+        if (permission) {
+          await window.craft.notifications.show({ id: ${JSON.stringify(notificationId)}, title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
+          let delivered = false
+          for (let attempt = 0; attempt < 50; attempt++) {
+            delivered = await window.craft.notifications.hasDelivered(${JSON.stringify(notificationId)})
+            if (delivered) break
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          if (!delivered) throw new Error('macOS Notification Center did not report the installed app notification')
+        }
+        else await fetch('/notification-denied', { method: 'POST' })
       }
       if (${testWindowsNotification}) {
         if (!await window.craft.notifications.requestPermission())
@@ -183,6 +196,7 @@ async function launchViaSdk(): Promise<void> {
       const reason = new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')
       rejectReady(new Error(reason || 'Installed app reported a failure without details'))
     }
+    if (request.url === '/notification-denied' && request.method === 'POST') macPermissionDenied = true
     response.writeHead(200, { 'Content-Type': 'text/html' })
     response.end(page)
   })
@@ -228,7 +242,9 @@ async function launchViaSdk(): Promise<void> {
         console.log('Installed Linux app notification reached the desktop daemon')
       }
       if (testMacNotificationPermission)
-        console.log('Installed macOS app notification permission request answered')
+        console.log(macPermissionDenied
+          ? 'Installed macOS app notification permission was denied; delivery cannot be verified on this runner'
+          : 'Installed macOS app notification reached Notification Center')
       if (testWindowsNotification) {
         const appId = windowsNotificationAppId('craft', 'Craft Packaged Smoke')
         let delivered = false

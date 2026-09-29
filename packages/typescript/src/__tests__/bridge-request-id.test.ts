@@ -91,19 +91,34 @@ describe('bridge reply correlation', () => {
     expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'show', d: '{"title":"Now"}' })
   })
 
+  it('queries a delivered notification by ID and interprets native booleans', async () => {
+    const h = loadBridge()
+    const found = h.craft.notifications.hasDelivered('sample-1')
+    expect(h.sent.at(-1)).toMatchObject({ t: 'notification', a: 'hasDelivered', d: '{"id":"sample-1"}' })
+    h.reply('hasDelivered', true, h.sent.at(-1)!.i!)
+    expect(await found).toBe(true)
+    const absent = h.craft.notifications.hasDelivered('missing')
+    h.reply('hasDelivered', false, h.sent.at(-1)!.i!)
+    expect(await absent).toBe(false)
+  })
+
   it('accepts both native notification permission reply shapes', async () => {
     const h = loadBridge()
     const mac = h.craft.notifications.requestPermission()
     h.reply('requestPermission', 'granted', h.sent.at(-1)!.i!)
     expect(await mac).toBe(true)
 
-    const denied = h.craft.notifications.requestPermission()
-    h.reply('requestPermission', 'denied', h.sent.at(-1)!.i!)
-    expect(await denied).toBe(false)
-
     const linux = h.craft.notifications.requestPermission()
     h.reply('requestPermission', { granted: true }, h.sent.at(-1)!.i!)
     expect(await linux).toBe(true)
+  })
+
+  it('reports a denied macOS notification permission separately from delivery', async () => {
+    const h = loadBridge()
+    const denied = h.craft.notifications.requestPermission()
+    h.reply('requestPermission', 'denied', h.sent.at(-1)!.i!)
+    expect(await denied).toBe(false)
+    expect(h.sent.map(message => message.a)).toEqual(['requestPermission'])
   })
 
   it('uses WebView2 when WebKit is absent and preserves the reply id', async () => {
