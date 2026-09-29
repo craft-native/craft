@@ -149,6 +149,8 @@ pub const NotificationBridge = struct {
             try self.requestPermission(data);
         } else if (std.mem.eql(u8, action, "hasDelivered")) {
             try self.hasDelivered(data);
+        } else if (std.mem.eql(u8, action, "getPermissionStatus")) {
+            try self.getPermissionStatus();
         } else {
             return BridgeError.UnknownAction;
         }
@@ -548,6 +550,19 @@ pub const NotificationBridge = struct {
         msg(center, macos_mod.sel("getDeliveredNotificationsWithCompletionHandler:"), deliveredBlock(block));
     }
 
+    fn getPermissionStatus(self: *Self) !void {
+        if (comptime builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        self.ensureNotificationCenter();
+        const center = self.notification_center orelse return BridgeError.NativeCallFailed;
+        const ticket = ios_async.acquire("getPermissionStatus") orelse return BridgeError.Busy;
+        errdefer ios_async.abandon(ticket);
+        const block = permission_status_calls.claim(ticket, 0) orelse return BridgeError.Busy;
+        ios_async.scheduleDeadline(ticket, 10_000, permissionStatusTimedOut);
+        const Fn = *const fn (@TypeOf(center), macos_mod.objc.SEL, *anyopaque) callconv(.c) void;
+        const msg: Fn = @ptrCast(&macos_mod.objc.objc_msgSend);
+        msg(center, macos_mod.sel("getNotificationSettingsWithCompletionHandler:"), permissionStatusBlock(block));
+    }
+
     // ============================================
     // Linux Notification Implementation (notify-send)
     // ============================================
@@ -788,6 +803,65 @@ fn deliveredTimedOut(context: ?*anyopaque) callconv(.c) void {
     ios_async.deliverErrorCode(entry.ticket, BridgeError.Timeout);
 }
 
+var permission_status_calls: ios_pending.Table(u8) = .{};
+
+fn makePermissionStatusInvoke(comptime index: u5) *const anyopaque {
+    const Impl = struct {
+        fn invoke(_: *const DeliveredBlock, settings: macos_mod.objc.id) callconv(.c) void {
+            permissionStatusCompletion(index, settings);
+        }
+    };
+    return @ptrCast(&Impl.invoke);
+}
+
+fn makePermissionStatusBlocks() [ios_pending.block_count]DeliveredBlock {
+    var result: [ios_pending.block_count]DeliveredBlock = undefined;
+    for (&result, 0..) |*block, index| {
+        block.* = .{
+            .isa = &_NSConcreteGlobalBlock,
+            .flags = 1 << 28,
+            .invoke = makePermissionStatusInvoke(@intCast(index)),
+            .descriptor = &delivered_descriptor,
+        };
+    }
+    return result;
+}
+
+var permission_status_blocks: [ios_pending.block_count]DeliveredBlock =
+    if (builtin.os.tag == .macos) makePermissionStatusBlocks() else undefined;
+
+fn permissionStatusBlock(index: u5) *anyopaque {
+    return @ptrCast(&permission_status_blocks[index]);
+}
+
+fn permissionStatusJson(value: c_ulong) []const u8 {
+    return switch (value) {
+        0 => "\"notDetermined\"",
+        1 => "\"denied\"",
+        2 => "\"authorized\"",
+        3 => "\"provisional\"",
+        4 => "\"ephemeral\"",
+        else => "\"unknown\"",
+    };
+}
+
+fn permissionStatusCompletion(index: u5, settings: macos_mod.objc.id) void {
+    if (comptime builtin.os.tag != .macos) return;
+    const entry = switch (permission_status_calls.settle(index)) {
+        .reply => |waiting| waiting,
+        .late, .stray => return,
+    };
+    if (@intFromPtr(settings) == 0) return ios_async.deliverError(entry.ticket);
+    const status = macos_mod.msgSend0Ulong(settings, "authorizationStatus");
+    ios_async.deliverJson(entry.ticket, permissionStatusJson(status));
+}
+
+fn permissionStatusTimedOut(context: ?*anyopaque) callconv(.c) void {
+    if (comptime builtin.os.tag != .macos) return;
+    const entry = permission_status_calls.expireIfWaiting(ios_async.ticketFromDeadline(context)) orelse return;
+    ios_async.deliverErrorCode(entry.ticket, BridgeError.Timeout);
+}
+
 fn validWindowsAppId(value: []const u8) bool {
     if (value.len == 0 or value.len > 128) return false;
     for (value) |byte| {
@@ -862,6 +936,12 @@ test "notification permission options only add provisional when requested" {
     try std.testing.expectEqual(standard, try NotificationBridge.permissionOptions("{}"));
     try std.testing.expectEqual(standard | @as(c_ulong, 1 << 6), try NotificationBridge.permissionOptions("{\"provisional\":true}"));
     try std.testing.expectError(BridgeError.InvalidJSON, NotificationBridge.permissionOptions("{\"provisional\":\"yes\"}"));
+}
+
+test "notification permission status distinguishes denial from provisional delivery" {
+    try std.testing.expectEqualStrings("\"denied\"", permissionStatusJson(1));
+    try std.testing.expectEqualStrings("\"provisional\"", permissionStatusJson(3));
+    try std.testing.expectEqualStrings("\"unknown\"", permissionStatusJson(99));
 }
 
 test "Linux desktop notification dispatch refuses unsupported actions" {

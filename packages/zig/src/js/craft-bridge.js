@@ -662,6 +662,7 @@
     setBadge:          function (n)    { return _send('notification', 'setBadge', _stringify({ count: Number(n) || 0 })) },
     clearBadge:        function ()     { return _send('notification', 'clearBadge') },
     requestPermission: function (opts) { return _req('notification', 'requestPermission', opts ? _stringify(opts) : undefined).then(function (r) { return r === 'granted' || (r && r.granted) === true }) },
+    getPermissionStatus: function () { return _req('notification', 'getPermissionStatus').then(function (r) { return typeof r === 'string' ? r : 'unknown' }) },
     // macOS: query Notification Center for one delivered request ID.
     hasDelivered:     function (id)   { return _req('notification', 'hasDelivered', _stringify({ id: String(id) })).then(function (r) { return r === true }) },
     // The banner was a dead end: craft posted real notifications and

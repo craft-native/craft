@@ -37,9 +37,10 @@ async function command(label: string, argv: string[]): Promise<string> {
 }
 
 async function dispatchLinuxUri(label: string, url: string, observed: Promise<void>): Promise<void> {
-  // xdg-open may exec the handler and stay alive for the whole GUI session.
-  // Success means the installed page reported the URL, not that xdg-open quit.
-  const child = Bun.spawn(['xdg-open', url], { stdout: 'ignore', stderr: 'pipe' })
+  // GIO reads the installed x-scheme-handler desktop entry directly. The
+  // xdg-open wrapper on headless CI delegates to a broken document portal.
+  // Success means the installed page reported the URL, not just a zero exit.
+  const child = Bun.spawn(['gio', 'open', url], { stdout: 'ignore', stderr: 'pipe' })
   const stderr = new Response(child.stderr).text()
   const failed = child.exited.then(async (code) => {
     if (code !== 0) throw new Error(`${label} failed (${code}): ${await stderr}`)
@@ -205,6 +206,7 @@ async function launchViaSdk(): Promise<void> {
   const notificationMarker = `Craft installed notification ${randomUUID()}`
   const notificationId = `craft-installed-${randomUUID()}`
   let macPermissionDenied = false
+  let macPermissionStatus = 'unknown'
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -251,7 +253,9 @@ async function launchViaSdk(): Promise<void> {
           new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
         ])
         if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
-        if (permission) {
+        const status = await window.craft.notifications.getPermissionStatus()
+        if (typeof status !== 'string') throw new Error('macOS notification authorization status was not a string')
+        if (permission || status === 'authorized' || status === 'provisional') {
           await window.craft.notifications.show({ id: ${JSON.stringify(notificationId)}, title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
           let delivered = false
           for (let attempt = 0; attempt < 50; attempt++) {
@@ -261,7 +265,11 @@ async function launchViaSdk(): Promise<void> {
           }
           if (!delivered) throw new Error('macOS Notification Center did not report the installed app notification')
         }
-        else await fetch('/notification-denied', { method: 'POST' })
+        else {
+          const report = new URL('/notification-denied', location.origin)
+          report.searchParams.set('status', status)
+          await fetch(report, { method: 'POST' })
+        }
       }
       if (${testWindowsNotification}) {
         if (!await window.craft.notifications.requestPermission())
@@ -285,7 +293,10 @@ async function launchViaSdk(): Promise<void> {
       const reason = new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')
       rejectReady(new Error(reason || 'Installed app reported a failure without details'))
     }
-    if (request.url === '/notification-denied' && request.method === 'POST') macPermissionDenied = true
+    if (request.url?.startsWith('/notification-denied?') && request.method === 'POST') {
+      macPermissionDenied = true
+      macPermissionStatus = new URL(request.url, 'http://127.0.0.1').searchParams.get('status') || 'unknown'
+    }
     response.writeHead(200, { 'Content-Type': 'text/html' })
     response.end(page)
   })
@@ -332,7 +343,7 @@ async function launchViaSdk(): Promise<void> {
       }
       if (testMacNotificationPermission)
         console.log(macPermissionDenied
-          ? 'Installed macOS app notification permission was denied; delivery cannot be verified on this runner'
+          ? `Installed macOS app notification authorization is ${macPermissionStatus}; delivery cannot be verified on this runner`
           : 'Installed macOS app notification reached Notification Center')
       if (testWindowsNotification) {
         const appId = windowsNotificationAppId('craft', 'Craft Packaged Smoke')
