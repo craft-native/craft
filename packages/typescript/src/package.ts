@@ -523,6 +523,7 @@ async function packageWindows(config: PackageConfig, outDir: string): Promise<Pa
     const zipResult = await createZIP({
       name,
       version,
+      manufacturer: config.author || 'Unknown',
       binaryPath: config.binaryPath,
       additionalFiles: opts.additionalFiles,
       outputPath: join(outDir, `${name}-${version}-windows.zip`),
@@ -1086,6 +1087,13 @@ function deterministicGuid(value: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
+export const WINDOWS_NOTIFICATION_ID_FILE = 'craft-notification-id.txt'
+
+/** Shared by the MSI shortcut and the installed executable's toast bridge. */
+export function windowsNotificationAppId(name: string, manufacturer: string): string {
+  return `Craft.${deterministicGuid(`${manufacturer.trim() || 'Unknown'}/${name}`)}`
+}
+
 export function windowsArchitecture(architecture: string): 'x86' | 'x64' | 'arm64' {
   if (architecture === 'ia32' || architecture === 'x86') return 'x86'
   if (architecture === 'x64' || architecture === 'arm64') return architecture
@@ -1099,6 +1107,7 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
   const upgradeCode = deterministicGuid(`${manufacturer}/${opts.name}`)
   const programFilesFolder = opts.architecture === 'x86' ? 'ProgramFilesFolder' : 'ProgramFiles64Folder'
   const win64 = opts.architecture === 'x86' ? 'no' : 'yes'
+  const notificationAppId = windowsNotificationAppId(opts.name, manufacturer)
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*" Name="${xml(opts.name)}" Language="1033" Version="${opts.version}" Manufacturer="${xml(manufacturer)}" UpgradeCode="${upgradeCode}">
@@ -1109,16 +1118,25 @@ export function renderWixSource(opts: Pick<MSIOptions, 'name' | 'version' | 'man
       <Directory Id="${programFilesFolder}">
         <Directory Id="INSTALLFOLDER" Name="${xml(opts.name)}">
           <Component Id="${id}Executable" Guid="*" Win64="${win64}">
-            <File Id="${id}File" Source="${xml(sourceName)}" KeyPath="yes" />
+            <File Id="${id}File" Source="${xml(sourceName)}" KeyPath="yes">
+              <Shortcut Id="${id}StartMenuShortcut" Directory="ProgramMenuFolder" Name="${xml(opts.name)}" WorkingDirectory="INSTALLFOLDER">
+                <ShortcutProperty Key="System.AppUserModel.ID" Value="${notificationAppId}" />
+              </Shortcut>
+            </File>
+          </Component>
+          <Component Id="${id}NotificationIdentity" Guid="*" Win64="${win64}">
+            <File Id="${id}NotificationIdentityFile" Source="${WINDOWS_NOTIFICATION_ID_FILE}" KeyPath="yes" />
           </Component>
 ${additionalFileNames.map((name, index) => `          <Component Id="${id}Extra${index}" Guid="*" Win64="${win64}">
             <File Id="${id}ExtraFile${index}" Source="${xml(name)}" KeyPath="yes" />
           </Component>`).join('\n')}
         </Directory>
       </Directory>
+      <Directory Id="ProgramMenuFolder" />
     </Directory>
     <Feature Id="ProductFeature" Title="${xml(opts.name)}" Level="1">
       <ComponentRef Id="${id}Executable" />
+      <ComponentRef Id="${id}NotificationIdentity" />
 ${additionalFileNames.map((_, index) => `      <ComponentRef Id="${id}Extra${index}" />`).join('\n')}
     </Feature>
   </Product>
@@ -1127,7 +1145,7 @@ ${additionalFileNames.map((_, index) => `      <ComponentRef Id="${id}Extra${ind
 }
 
 function windowsCompanionFiles(paths: string[] | undefined, executableName: string): Array<{ path: string; name: string }> {
-  const seen = new Set([executableName.toLowerCase()])
+  const seen = new Set([executableName.toLowerCase(), WINDOWS_NOTIFICATION_ID_FILE.toLowerCase()])
   return (paths || []).map((path) => {
     const name = basename(path)
     if (!name || /[<>:"/\\|?*\u0000-\u001F]/.test(name) || /[. ]$/.test(name)
@@ -1181,6 +1199,7 @@ async function createMSI(opts: MSIOptions): Promise<{ success: boolean; outputPa
     const wxsPath = join(tempDir, 'installer.wxs')
     const wixobjPath = join(tempDir, 'installer.wixobj')
     copyFileSync(opts.binaryPath, sourcePath)
+    writeFileSync(join(tempDir, WINDOWS_NOTIFICATION_ID_FILE), windowsNotificationAppId(opts.name, opts.manufacturer))
     for (const file of additionalFiles) copyFileSync(file.path, join(tempDir, file.name))
     writeFileSync(wxsPath, renderWixSource(opts, binaryName, additionalFiles.map(file => file.name)))
     await runCommand('candle.exe', candleArguments(opts.architecture, wixobjPath, wxsPath), tempDir)
@@ -1210,6 +1229,7 @@ async function createMSI(opts: MSIOptions): Promise<{ success: boolean; outputPa
 async function createZIP(opts: {
   name: string
   version: string
+  manufacturer: string
   binaryPath: string
   additionalFiles?: string[]
   outputPath: string
@@ -1218,6 +1238,7 @@ async function createZIP(opts: {
     const binaryName = windowsExecutableName(opts.name)
     const additionalFiles = windowsCompanionFiles(opts.additionalFiles, binaryName)
     const entries = [{ name: binaryName, data: new Uint8Array(readFileSync(opts.binaryPath)) }]
+    entries.push({ name: WINDOWS_NOTIFICATION_ID_FILE, data: new TextEncoder().encode(windowsNotificationAppId(opts.name, opts.manufacturer)) })
     for (const file of additionalFiles)
       entries.push({ name: file.name, data: new Uint8Array(readFileSync(file.path)) })
     const zip = buildZip(entries)

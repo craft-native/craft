@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createApp, resolveCraftBinary } from '../packages/typescript/src/index'
-import { packageApp, type PackageResult } from '../packages/typescript/src/package'
+import { packageApp, type PackageResult, WINDOWS_NOTIFICATION_ID_FILE, windowsNotificationAppId } from '../packages/typescript/src/package'
 import { verifyNativeStartup } from './verify-native-startup'
 
 const [binaryArgument, version] = Bun.argv.slice(2)
@@ -319,6 +319,14 @@ async function main(): Promise<void> {
     verifyNativeStartup(installPath, version)
     if (platform === 'windows' && sha256(join(dirname(installPath), 'WebView2Loader.dll')) !== sha256(loader))
       throw new Error('Windows MSI did not install the WebView2 loader beside craft.exe')
+    if (platform === 'windows') {
+      const appId = windowsNotificationAppId('craft', 'Craft Packaged Smoke')
+      if (readFileSync(join(dirname(installPath), WINDOWS_NOTIFICATION_ID_FILE), 'utf8') !== appId)
+        throw new Error('Windows MSI notification identity did not match its package metadata')
+      const shortcut = join(process.env.ProgramData || 'C:\\ProgramData', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'craft.lnk')
+      if (!existsSync(shortcut)) throw new Error(`Windows MSI did not install its Start-menu shortcut: ${shortcut}`)
+      console.log('Windows MSI installed matching notification identity and Start-menu shortcut')
+    }
     await launchViaSdk()
   }
   finally {

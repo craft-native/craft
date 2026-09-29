@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, windowsArchitecture, windowsExecutableName } from './package.js'
+import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 
 describe('Linux DEB runtime dependencies', () => {
   it('installs the notify-send provider used by the desktop notification bridge', () => {
@@ -21,6 +21,10 @@ describe('Windows MSI packaging', () => {
     expect(first).toContain('Platform="x64"')
     expect(first).toContain('Directory Id="ProgramFiles64Folder"')
     expect(first).toContain('Win64="yes"')
+    expect(first).toContain('Directory Id="ProgramMenuFolder"')
+    expect(first).toContain('Shortcut Id="Craft_AppStartMenuShortcut" Directory="ProgramMenuFolder"')
+    expect(first).toContain(`ShortcutProperty Key="System.AppUserModel.ID" Value="${windowsNotificationAppId('Craft App', 'Stacks & Co')}"`)
+    expect(first).toContain(`Source="${WINDOWS_NOTIFICATION_ID_FILE}" KeyPath="yes"`)
     expect(first).not.toContain('exec(')
   })
 
@@ -85,6 +89,7 @@ describe('Windows MSI packaging', () => {
       const archive = readFileSync(zip!.outputPath!)
       expect(archive.includes(Buffer.from('Craft.exe'))).toBe(true)
       expect(archive.includes(Buffer.from('WebView2Loader.dll'))).toBe(true)
+      expect(archive.includes(Buffer.from(WINDOWS_NOTIFICATION_ID_FILE))).toBe(true)
 
       const [duplicate] = await packageApp({ ...config, windows: { ...config.windows, additionalFiles: [loader, loader] } })
       expect(duplicate?.success).toBe(false)
@@ -93,6 +98,12 @@ describe('Windows MSI packaging', () => {
       const [missing] = await packageApp({ ...config, windows: { ...config.windows, additionalFiles: [join(dir, 'missing.dll')] } })
       expect(missing?.success).toBe(false)
       expect(missing?.error).toContain('Windows companion file not found')
+
+      const identityFile = join(dir, WINDOWS_NOTIFICATION_ID_FILE)
+      writeFileSync(identityFile, 'spoofed')
+      const [identityCollision] = await packageApp({ ...config, windows: { ...config.windows, additionalFiles: [identityFile] } })
+      expect(identityCollision?.success).toBe(false)
+      expect(identityCollision?.error).toContain('Duplicate Windows package file')
     }
     finally {
       rmSync(dir, { recursive: true, force: true })
