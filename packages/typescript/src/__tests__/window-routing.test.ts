@@ -134,6 +134,28 @@ describe('typed window-handle routing', () => {
     )
   })
 
+  it('keeps local evaluations on the current page and propagates native errors', async () => {
+    const current = windowManager.current
+    callResult = { nested: [true, 'current'] }
+    await expect(current.executeJavaScript('({ nested: [true, "current"] })'))
+      .resolves.toEqual({ nested: [true, 'current'] })
+    expect(call).toHaveBeenCalledWith(
+      'executeJavaScript',
+      { code: '({ nested: [true, "current"] })' },
+      'main',
+    )
+
+    const nativeError = Object.assign(new Error('evaluation failed'), { code: 'NATIVE_CALL_FAILED' })
+    callResult = Promise.reject(nativeError)
+    await expect(new Window('settings').executeJavaScript('throw new Error("evaluation failed")'))
+      .rejects.toBe(nativeError)
+    expect(call).toHaveBeenCalledWith(
+      'executeJavaScript',
+      { code: 'throw new Error("evaluation failed")' },
+      'settings',
+    )
+  })
+
   it('destroys the retained child rather than the calling page', async () => {
     const settings = new Window('settings')
 

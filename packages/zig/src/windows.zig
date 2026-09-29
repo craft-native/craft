@@ -3,6 +3,7 @@ const bridge_error = @import("bridge_error.zig");
 const desktop_bridge_envelope = @import("desktop_bridge_envelope.zig");
 const desktop_bridge_text = @import("desktop_bridge_text.zig");
 const desktop_window_controls = @import("desktop_window_controls.zig");
+const desktop_window_evaluations = @import("desktop_window_evaluations.zig");
 const desktop_script_encoding = @import("desktop_script_encoding.zig");
 const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
@@ -311,6 +312,34 @@ pub const ICoreWebView2Vtbl = extern struct {
 
 pub const ICoreWebView2 = extern struct {
     lpVtbl: *ICoreWebView2Vtbl,
+};
+
+// ICoreWebView2_21 adds resultful script execution. Its inherited methods
+// occupy 122 vtable slots in the pinned WebView2 SDK header.
+const ICoreWebView2_21Vtbl = extern struct {
+    inherited: [122]usize,
+    ExecuteScriptWithResult: *const fn (*ICoreWebView2_21, LPCWSTR, *ScriptResultHandler) callconv(.c) HRESULT,
+};
+
+const ICoreWebView2_21 = extern struct {
+    lpVtbl: *const ICoreWebView2_21Vtbl,
+};
+
+const iid_core_webview2_21 = GUID{
+    .Data1 = 0xc4980dea,
+    .Data2 = 0x587b,
+    .Data3 = 0x43b9,
+    .Data4 = .{ 0x81, 0x43, 0x3e, 0xf3, 0xbf, 0x55, 0x2d, 0x95 },
+};
+
+const ICoreWebView2ExecuteScriptResult = extern struct {
+    lpVtbl: *const extern struct {
+        QueryInterface: *const fn (*ICoreWebView2ExecuteScriptResult, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*ICoreWebView2ExecuteScriptResult) callconv(.c) c_ulong,
+        Release: *const fn (*ICoreWebView2ExecuteScriptResult) callconv(.c) c_ulong,
+        get_Succeeded: *const fn (*ICoreWebView2ExecuteScriptResult, *BOOL) callconv(.c) HRESULT,
+        get_ResultAsJson: *const fn (*ICoreWebView2ExecuteScriptResult, *?LPWSTR) callconv(.c) HRESULT,
+    },
 };
 
 pub const ICoreWebView2WebMessageReceivedEventArgsVtbl = extern struct {
@@ -790,6 +819,144 @@ const ExecuteScriptCompletedHandler = extern struct {
 };
 
 pub const ICoreWebView2ExecuteScriptCompletedHandler = ExecuteScriptCompletedHandler;
+
+// -- Resultful page evaluation -----------------------------------------------
+
+var pending_evaluations: desktop_window_evaluations.Tracker = .{};
+
+fn sendEvaluationResult(pending: desktop_window_evaluations.Pending, json: []const u8) void {
+    const sender = desktop_windows.byId(pending.sender_id) orelse return;
+    window_context.push(sender.window, sender.webview);
+    defer window_context.pop();
+    request_context.push(pending.request_id);
+    defer request_context.pop();
+    bridge_error.sendResultToJS(std.heap.c_allocator, "executeJavaScript", json);
+}
+
+fn sendEvaluationError(pending: desktop_window_evaluations.Pending, err: bridge_error.BridgeError) void {
+    const sender = desktop_windows.byId(pending.sender_id) orelse return;
+    window_context.push(sender.window, sender.webview);
+    defer window_context.pop();
+    request_context.push(pending.request_id);
+    defer request_context.pop();
+    bridge_error.sendErrorToJS(std.heap.c_allocator, "executeJavaScript", err);
+}
+
+fn invalidateEvaluations(window_id: u32) void {
+    var cancelled: [desktop_window_evaluations.capacity]desktop_window_evaluations.Pending = undefined;
+    for (pending_evaluations.invalidateWindow(window_id, &cancelled)) |pending| {
+        if (pending.sender_id != window_id) sendEvaluationError(pending, error.Cancelled);
+    }
+}
+
+const ScriptResultHandler = extern struct {
+    lpVtbl: *const Vtbl,
+    ref_count: c_ulong,
+    ticket: u64,
+
+    const Vtbl = extern struct {
+        QueryInterface: *const fn (*ScriptResultHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*ScriptResultHandler) callconv(.c) c_ulong,
+        Release: *const fn (*ScriptResultHandler) callconv(.c) c_ulong,
+        Invoke: *const fn (*ScriptResultHandler, HRESULT, ?*ICoreWebView2ExecuteScriptResult) callconv(.c) HRESULT,
+    };
+
+    const vtbl_instance = Vtbl{ .QueryInterface = &queryInterface, .AddRef = &addRef, .Release = &release, .Invoke = &invoke };
+
+    fn queryInterface(self: *ScriptResultHandler, _: *const GUID, ppv: *?*anyopaque) callconv(.c) HRESULT {
+        ppv.* = @ptrCast(self);
+        _ = addRef(self);
+        return S_OK;
+    }
+
+    fn addRef(self: *ScriptResultHandler) callconv(.c) c_ulong {
+        self.ref_count += 1;
+        return self.ref_count;
+    }
+
+    fn release(self: *ScriptResultHandler) callconv(.c) c_ulong {
+        self.ref_count -= 1;
+        const remaining = self.ref_count;
+        if (remaining == 0) std.heap.c_allocator.destroy(self);
+        return remaining;
+    }
+
+    fn invoke(self: *ScriptResultHandler, hr: HRESULT, result: ?*ICoreWebView2ExecuteScriptResult) callconv(.c) HRESULT {
+        const pending = pending_evaluations.take(self.ticket) orelse return S_OK;
+        if (desktop_windows.byId(pending.target_id) == null) return S_OK;
+        if (!succeeded(hr) or result == null) {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        }
+        var script_succeeded: BOOL = 0;
+        if (!succeeded(result.?.lpVtbl.get_Succeeded(result.?, &script_succeeded)) or script_succeeded == 0) {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        }
+        var wide: ?LPWSTR = null;
+        if (!succeeded(result.?.lpVtbl.get_ResultAsJson(result.?, &wide)) or wide == null) {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        }
+        defer CoTaskMemFree(@ptrCast(wide.?));
+        const wide_json = wide.?;
+        var length: usize = 0;
+        while (length <= desktop_bridge_envelope.max_message_bytes and wide_json[length] != 0) : (length += 1) {}
+        if (length > desktop_bridge_envelope.max_message_bytes) {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        }
+        const json = desktop_bridge_text.fromUtf16(std.heap.c_allocator, wide_json[0..length]) catch {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        };
+        defer std.heap.c_allocator.free(json);
+        if (!desktop_window_evaluations.validResultJson(json)) {
+            sendEvaluationError(pending, error.NativeCallFailed);
+            return S_OK;
+        }
+        sendEvaluationResult(pending, json);
+        return S_OK;
+    }
+};
+
+const NavigationStartingHandler = extern struct {
+    lpVtbl: *const Vtbl,
+    ref_count: c_ulong,
+    window_id: u32,
+
+    const Vtbl = extern struct {
+        QueryInterface: *const fn (*NavigationStartingHandler, *const GUID, *?*anyopaque) callconv(.c) HRESULT,
+        AddRef: *const fn (*NavigationStartingHandler) callconv(.c) c_ulong,
+        Release: *const fn (*NavigationStartingHandler) callconv(.c) c_ulong,
+        Invoke: *const fn (*NavigationStartingHandler, *ICoreWebView2, *anyopaque) callconv(.c) HRESULT,
+    };
+
+    const vtbl_instance = Vtbl{ .QueryInterface = &queryInterface, .AddRef = &addRef, .Release = &release, .Invoke = &invoke };
+
+    fn queryInterface(self: *NavigationStartingHandler, _: *const GUID, ppv: *?*anyopaque) callconv(.c) HRESULT {
+        ppv.* = @ptrCast(self);
+        _ = addRef(self);
+        return S_OK;
+    }
+
+    fn addRef(self: *NavigationStartingHandler) callconv(.c) c_ulong {
+        self.ref_count += 1;
+        return self.ref_count;
+    }
+
+    fn release(self: *NavigationStartingHandler) callconv(.c) c_ulong {
+        self.ref_count -= 1;
+        const remaining = self.ref_count;
+        if (remaining == 0) std.heap.c_allocator.destroy(self);
+        return remaining;
+    }
+
+    fn invoke(self: *NavigationStartingHandler, _: *ICoreWebView2, _: *anyopaque) callconv(.c) HRESULT {
+        if (desktop_windows.byId(self.window_id) != null) invalidateEvaluations(self.window_id);
+        return S_OK;
+    }
+};
 
 // -- Document-start script completed handler ---------------------------------
 
@@ -1274,6 +1441,33 @@ fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
     bridge_error.sendResultToJS(allocator, action, json);
 }
 
+fn evaluateWindowScript(entry: desktop_window_registry.Entry, data: ?[]const u8) !void {
+    const allocator = std.heap.c_allocator;
+    const json = data orelse return error.MissingData;
+    const code = (try json_utils.getStringDecoded(allocator, json, "code")) orelse return error.InvalidParameter;
+    defer allocator.free(code);
+    if (std.mem.indexOfScalar(u8, code, 0) != null) return error.InvalidParameter;
+    const sender_webview = window_context.currentWebView() orelse return error.WindowHandleNotSet;
+    const sender = desktop_windows.byWebview(sender_webview) orelse return error.WindowHandleNotSet;
+
+    const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
+    var interface: ?*anyopaque = null;
+    if (!succeeded(webview.lpVtbl.QueryInterface(webview, &iid_core_webview2_21, &interface)) or interface == null)
+        return error.PlatformNotSupported;
+    const result_webview: *ICoreWebView2_21 = @ptrCast(@alignCast(interface.?));
+    defer _ = webview.lpVtbl.Release(@ptrCast(result_webview));
+
+    var wide = try desktop_script_encoding.encode(allocator, code);
+    defer wide.deinit(allocator);
+    const ticket = try pending_evaluations.begin(sender.id, entry.id, request_context.current());
+    errdefer _ = pending_evaluations.take(ticket);
+    const handler = try allocator.create(ScriptResultHandler);
+    handler.* = .{ .lpVtbl = &ScriptResultHandler.vtbl_instance, .ref_count = 1, .ticket = ticket };
+    const hr = result_webview.lpVtbl.ExecuteScriptWithResult(result_webview, wide.ptr(), handler);
+    _ = ScriptResultHandler.release(handler);
+    if (!succeeded(hr)) return error.NativeCallFailed;
+}
+
 fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     if (std.mem.eql(u8, action, "open") or std.mem.eql(u8, action, "create"))
         return openNamedWindow(action, data);
@@ -1283,6 +1477,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);
+    if (std.mem.eql(u8, action, "executeJavaScript")) return evaluateWindowScript(entry, data);
     const hwnd: HWND = @ptrFromInt(entry.window);
     const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
     if (std.mem.eql(u8, action, "show") or std.mem.eql(u8, action, "focus")) {
@@ -1353,6 +1548,11 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
 
 test "Windows portable controls require an authenticated live sender" {
     try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("setBounds", "{}"));
+}
+
+test "WebView2 resultful evaluation uses the pinned interface slot" {
+    try std.testing.expectEqual(@as(usize, 122 * @sizeOf(usize)), @offsetOf(ICoreWebView2_21Vtbl, "ExecuteScriptWithResult"));
+    try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("executeJavaScript", "{\"code\":\"42\"}"));
 }
 
 pub const WindowStyle = struct {
@@ -1521,6 +1721,16 @@ pub const Window = struct {
         }
         if (!desktop_windows.setMessageToken(@intFromPtr(hwnd), message_token.value)) {
             _ = webview.lpVtbl.remove_WebMessageReceived(webview, message_token);
+            return error.WebMessageRegistrationFailed;
+        }
+        const navigation_handler = try std.heap.c_allocator.create(NavigationStartingHandler);
+        navigation_handler.* = .{ .lpVtbl = &NavigationStartingHandler.vtbl_instance, .ref_count = 1, .window_id = window_id };
+        var navigation_token: EventRegistrationToken = .{ .value = 0 };
+        const navigation_hr = webview.lpVtbl.add_NavigationStarting(webview, @ptrCast(navigation_handler), &navigation_token);
+        _ = NavigationStartingHandler.release(navigation_handler);
+        if (!succeeded(navigation_hr)) return error.WebMessageRegistrationFailed;
+        if (!desktop_windows.setNavigationToken(@intFromPtr(hwnd), navigation_token.value)) {
+            _ = webview.lpVtbl.remove_NavigationStarting(webview, navigation_token);
             return error.WebMessageRegistrationFailed;
         }
         observeWindowGeometry(desktop_windows.byId(window_id).?);
@@ -1765,7 +1975,10 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
             return 0;
         },
         WM_DESTROY => {
-            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| deliverWindowEvent(entry, "close", "");
+            if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
+                invalidateEvaluations(entry.id);
+                deliverWindowEvent(entry, "close", "");
+            }
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
                 discardPendingOpens(entry.id);
                 const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
@@ -1774,6 +1987,9 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 window_registry.forget(entry.window);
                 if (entry.message_token) |token| {
                     _ = webview.lpVtbl.remove_WebMessageReceived(webview, .{ .value = token });
+                }
+                if (entry.navigation_token) |token| {
+                    _ = webview.lpVtbl.remove_NavigationStarting(webview, .{ .value = token });
                 }
                 _ = controller.lpVtbl.Close(controller);
                 _ = webview.lpVtbl.Release(webview);

@@ -14,6 +14,7 @@ whether it stores a window-specific target.
 | Stable named handles | Implemented | Implemented | Implemented |
 | Sender-authenticated local actions | Implemented | Implemented through WebKitGTK | Implemented through WebView2 |
 | Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
+| `executeJavaScript()` result and error replies | Implemented | Implemented with WebKitGTK | Implemented with WebView2 result API |
 | Per-window lifecycle events | Implemented | Implemented | Implemented |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
@@ -39,6 +40,16 @@ Windows therefore queues page-requested child creation onto the UI message
 queue, preserving the authenticated owner and reply ID until that callback
 returns. Concurrent opens are drained serially and abandoned if their creator
 window is destroyed before dispatch.
+
+`executeJavaScript()` evaluates in the addressed live window, but resolves or
+rejects the promise in the page that requested it. The result is a JSON value;
+JavaScript `undefined` resolves as `null`, while a JavaScript exception rejects
+with `NATIVE_CALL_FAILED`. Each in-flight operation retains a distinct request
+ID and monotonic native ticket, so concurrent calls cannot swap replies. A
+target navigation or close cancels its pending calls; a still-live requesting
+page receives `CANCELLED`. If the requesting page itself navigates or closes,
+its old promises are discarded rather than delivered into the replacement
+document. Closing and reopening a named window cannot inherit a stale result.
 
 ## Per-window state
 
