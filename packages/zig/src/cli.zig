@@ -3,6 +3,9 @@ const builtin = @import("builtin");
 
 pub const WindowOptions = struct {
     url: ?[]const u8 = null,
+    /// URL handed to this installed app by its registered protocol handler.
+    /// It is page data, not the document Craft should navigate to.
+    deep_link: ?[]const u8 = null,
     html: ?[]const u8 = null,
     title: []const u8 = "Craft App",
     width: u32 = 1200,
@@ -102,6 +105,7 @@ fn debugPrint(comptime fmt: []const u8, args: anytype) void {
 /// `title` defaults to a string literal, so only free it if it was replaced.
 pub fn freeOptionStrings(allocator: std.mem.Allocator, options: *WindowOptions) void {
     if (options.url) |s| allocator.free(s);
+    if (options.deep_link) |s| allocator.free(s);
     if (options.html) |s| allocator.free(s);
     if (!std.mem.eql(u8, options.title, "Craft App")) allocator.free(options.title);
     if (options.sidebar_config) |s| allocator.free(s);
@@ -454,6 +458,11 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
             options.url = try allocator.dupe(u8, args[i]);
+        } else if (std.mem.eql(u8, arg, "--deep-link")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            if (args[i].len == 0) return CliError.InvalidArgument;
+            options.deep_link = try allocator.dupe(u8, args[i]);
         } else if (std.mem.eql(u8, arg, "--html")) {
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
@@ -642,6 +651,7 @@ fn printHelp() void {
         \\
         \\Window Content:
         \\  -u, --url <URL>          Load URL in the window
+        \\      --deep-link <URL>    Deliver a protocol URL to the page without navigating to it
         \\      --html <HTML>        Load HTML content directly
         \\      --html-file <PATH>   Load HTML content from a file
         \\
@@ -888,6 +898,19 @@ test "logging is off unless asked for" {
 test "--log-file without a value is an error, not a silent default" {
     var args = [_][:0]const u8{ "craft", "--log-file" };
     try std.testing.expectError(CliError.MissingValue, parseArgs(std.testing.allocator, &args));
+}
+
+test "--deep-link preserves the page URL and rejects a missing link" {
+    var args = [_][:0]const u8{ "craft", "--url", "https://app.example", "--deep-link", "myapp://open/42" };
+    const options = try parseArgs(std.testing.allocator, &args);
+    defer {
+        var owned = options;
+        freeOptionStrings(std.testing.allocator, &owned);
+    }
+    try std.testing.expectEqualStrings("https://app.example", options.url.?);
+    try std.testing.expectEqualStrings("myapp://open/42", options.deep_link.?);
+    var missing = [_][:0]const u8{ "craft", "--deep-link" };
+    try std.testing.expectError(CliError.MissingValue, parseArgs(std.testing.allocator, &missing));
 }
 
 test "a manifest can ask for a log file" {

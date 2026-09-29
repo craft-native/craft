@@ -19,6 +19,7 @@ pub const Log = @import("log.zig");
 pub const Logging = @import("logging.zig");
 pub const io_context = @import("io_context.zig");
 pub const startup_timing = @import("startup_timing.zig");
+pub const desktop_deep_link = @import("desktop_deep_link.zig");
 pub const js_runtime = @import("js_runtime.zig");
 
 // Re-export iOS module (available on all platforms for cross-compilation)
