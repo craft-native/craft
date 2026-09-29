@@ -156,8 +156,9 @@ The next multi-window milestone needs product decisions in addition to code:
    WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
    launch a sample app through the SDK and compare escaped clipboard text
    through the page bridge with the host OS clipboard. The macOS job also
-   dispatches a registered URL scheme into the installed app. The Linux job
-   verifies a unique notification reached a desktop daemon over D-Bus.
+   dispatches a registered URL scheme into the installed app and checks that
+   notification permission returns a boolean. The Linux job verifies a unique
+   notification reached a desktop daemon over D-Bus.
    Windows toast delivery and signed/notarized release artifacts remain
    outside this smoke.
 

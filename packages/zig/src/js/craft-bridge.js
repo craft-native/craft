@@ -662,7 +662,7 @@
     cancelAll:         function ()     { return _send('notification', 'cancelAll') },
     setBadge:          function (n)    { return _send('notification', 'setBadge', _stringify({ count: Number(n) || 0 })) },
     clearBadge:        function ()     { return _send('notification', 'clearBadge') },
-    requestPermission: function ()     { return _req('notification', 'requestPermission').then(function (r) { return (r && r.granted) === true }) },
+    requestPermission: function ()     { return _req('notification', 'requestPermission').then(function (r) { return r === 'granted' || (r && r.granted) === true }) },
     // The banner was a dead end: craft posted real notifications and
     // registered no delegate, so a click reached nothing.
     //   onClick  -> { notificationId }

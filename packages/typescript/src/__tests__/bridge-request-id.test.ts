@@ -85,6 +85,21 @@ function settled(p: Promise<unknown>): Promise<unknown> {
 }
 
 describe('bridge reply correlation', () => {
+  it('accepts both native notification permission reply shapes', async () => {
+    const h = loadBridge()
+    const mac = h.craft.notifications.requestPermission()
+    h.reply('requestPermission', 'granted', h.sent.at(-1)!.i!)
+    expect(await mac).toBe(true)
+
+    const denied = h.craft.notifications.requestPermission()
+    h.reply('requestPermission', 'denied', h.sent.at(-1)!.i!)
+    expect(await denied).toBe(false)
+
+    const linux = h.craft.notifications.requestPermission()
+    h.reply('requestPermission', { granted: true }, h.sent.at(-1)!.i!)
+    expect(await linux).toBe(true)
+  })
+
   it('uses WebView2 when WebKit is absent and preserves the reply id', async () => {
     const h = loadBridge('webview2')
     const pending = h.craft.tags.get('/windows')

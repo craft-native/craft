@@ -108,6 +108,7 @@ async function launchViaSdk(): Promise<void> {
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
   const testDeepLink = testSystemClipboard && platform === 'macos'
+  const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
   const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
   const deepLinkUrl = `${deepLinkScheme}://open/${randomUUID()}`
@@ -151,6 +152,13 @@ async function launchViaSdk(): Promise<void> {
         if (!await window.craft.notifications.requestPermission())
           throw new Error('installed Linux app denied notification permission')
         await window.craft.notifications.show({ title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
+      }
+      if (${testMacNotificationPermission}) {
+        const permission = await Promise.race([
+          window.craft.notifications.requestPermission(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
+        ])
+        if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
       }
       await fetch('/ready', { method: 'POST' })
     })().catch((error) => {
@@ -213,6 +221,8 @@ async function launchViaSdk(): Promise<void> {
           throw new Error('Dunst history did not contain the installed app notification within 10 seconds')
         console.log('Installed Linux app notification reached the desktop daemon')
       }
+      if (testMacNotificationPermission)
+        console.log('Installed macOS app notification permission request answered')
       if (testDeepLink) {
         await command('dispatch installed app URL scheme', ['open', deepLinkUrl])
         let linkTimer: ReturnType<typeof setTimeout> | undefined

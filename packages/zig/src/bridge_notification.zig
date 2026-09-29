@@ -7,9 +7,31 @@ const io_context = @import("io_context.zig");
 // `@import("macos.zig")` and `.objc.objc_msgSend` were pulled in four times
 // in expression position.
 const macos_mod = @import("macos.zig");
+const ios_async = @import("ios_async.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.notification;
+
+// UNUserNotificationCenter requires a completion block even when Craft only
+// wants to trigger its first-run prompt. A global block never needs heap copy
+// helpers and stays valid when the OS invokes it asynchronously.
+const AuthBlockDescriptor = extern struct { reserved: usize = 0, size: usize };
+const AuthBlock = extern struct {
+    isa: ?*anyopaque,
+    flags: c_int,
+    reserved: c_int = 0,
+    invoke: *const fn (*const anyopaque, bool, ?*anyopaque) callconv(.c) void,
+    descriptor: *const AuthBlockDescriptor,
+};
+extern var _NSConcreteGlobalBlock: anyopaque;
+fn ignoreAuthResult(_: *const anyopaque, _: bool, _: ?*anyopaque) callconv(.c) void {}
+const auth_block_descriptor = AuthBlockDescriptor{ .size = @sizeOf(AuthBlock) };
+const noop_auth_block = AuthBlock{
+    .isa = &_NSConcreteGlobalBlock,
+    .flags = 1 << 28,
+    .invoke = ignoreAuthResult,
+    .descriptor = &auth_block_descriptor,
+};
 
 /// Bridge handler for native macOS notifications
 /// Uses UNUserNotificationCenter for modern notification support
@@ -64,9 +86,10 @@ pub const NotificationBridge = struct {
             // UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge
             const options: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
 
-            // Request authorization
-            const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, ?*anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
-            msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, null);
+            // The completion handler is required even when the page did not
+            // ask for a permission result. A null block can crash AppKit.
+            const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, *const anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
+            msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, &noop_auth_block);
 
             log.debug("Notification center initialized", .{});
         }
@@ -467,8 +490,9 @@ pub const NotificationBridge = struct {
         // UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge
         const options: c_ulong = (1 << 0) | (1 << 1) | (1 << 2);
 
-        const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, ?*anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
-        msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, null);
+        const ticket = ios_async.acquire("requestPermission") orelse return BridgeError.Busy;
+        const msg = @as(*const fn (@TypeOf(center), macos_mod.objc.SEL, c_ulong, *anyopaque) callconv(.c) void, @ptrCast(&macos_mod.objc.objc_msgSend));
+        msg(center, macos.sel("requestAuthorizationWithOptions:completionHandler:"), options, ios_async.boolErrorBlock(ticket));
     }
 
     // ============================================
