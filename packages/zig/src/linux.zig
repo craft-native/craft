@@ -864,6 +864,10 @@ pub const Window = struct {
         // Register the page API before any load. The user-content manager
         // reapplies this document-start script after navigation too.
         try created.injectScript(@embedFile("js/craft-bridge.js"));
+        if (try @import("desktop_deep_link.zig").initialScript(std.heap.c_allocator)) |script| {
+            defer std.heap.c_allocator.free(script);
+            try created.injectScript(script);
+        }
         return created;
     }
 

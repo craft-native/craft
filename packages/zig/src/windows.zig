@@ -1769,6 +1769,10 @@ pub const Window = struct {
         // Install before the first Navigate/NavigateToString so every page
         // starts with the same bridge surface as a macOS Craft window.
         try window.injectScript(@embedFile("js/craft-bridge.js"));
+        if (try @import("desktop_deep_link.zig").initialScript(std.heap.c_allocator)) |script| {
+            defer std.heap.c_allocator.free(script);
+            try window.injectScript(script);
+        }
         return window;
     }
 

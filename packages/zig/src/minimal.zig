@@ -113,6 +113,11 @@ pub fn main(init: std.process.Init) !void {
         cli.freeOptionStrings(allocator, &owned);
     }
 
+    // The protocol URL is application data, never the document URL. Install
+    // it before a Linux/Windows webview registers its document-start scripts.
+    if (builtin.os.tag == .linux or builtin.os.tag == .windows)
+        craft.desktop_deep_link.setInitial(options.deep_link);
+
     // Before anything builds a menu bar: `createApplicationMenu` reads the
     // process name once, and both branches below reach it.
     if (comptime builtin.os.tag == .macos) {
