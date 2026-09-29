@@ -153,7 +153,9 @@ The next multi-window milestone needs product decisions in addition to code:
    macOS retains a closed page, while Linux and Windows release it.
 5. Expand platform-native integration beyond named-window lifecycle and core
    geometry/control smokes. CI runs Linux WebKitGTK under Xvfb and Windows
-   WebView2 on a native runner; packaged-app behavior still needs coverage.
+   WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
+   launch a sample app through the SDK; signed and notarized release artifacts
+   and platform shell integration remain outside this CI smoke.
 
 ## Review checklist
 

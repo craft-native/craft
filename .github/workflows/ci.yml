@@ -94,9 +94,21 @@ jobs:
         if: runner.os == 'Linux'
         run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft
 
+      - name: Install SDK dependencies for packaged-app smoke
+        run: bun install --frozen-lockfile
+
+      - name: Package, install, and launch the real Craft app
+        run: |
+          VERSION="$(bun -p "require('./package.json').version")"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
+          else
+            bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
+          fi
+
   windows-multi-window:
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v6
@@ -138,6 +150,30 @@ jobs:
 
       - name: Smoke Windows multi-window bridge
         run: bun scripts/verify-desktop-multi-window.ts packages/zig/zig-out/bin/craft.exe
+
+      - name: Install SDK dependencies for packaged-app smoke
+        run: bun install --frozen-lockfile
+
+      - name: Locate WiX Toolset v3
+        shell: pwsh
+        run: |
+          $wixBin = {
+            Get-ChildItem "${env:ProgramFiles(x86)}\WiX Toolset v3*\bin" -Directory -ErrorAction SilentlyContinue |
+              Sort-Object Name -Descending | Select-Object -First 1
+          }
+          $bin = & $wixBin
+          if (-not $bin) {
+            choco install wixtoolset --version=3.14.1 --yes --no-progress
+            $bin = & $wixBin
+          }
+          if (-not $bin) { throw 'WiX Toolset v3 bin directory not found' }
+          $bin.FullName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Package, install, and launch the real Craft app
+        shell: pwsh
+        run: |
+          $version = bun -p "require('./package.json').version"
+          bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft.exe $version
 
   typescript-sdk:
     runs-on: ubuntu-latest
