@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.101...v0.0.102)
+
+## 🐛 Bug Fixes
+
+- **ios**: let an embedded frame load, so YouTube and Vimeo players play ([495ecc6](https://github.com/craft-native/craft/commit/495ecc6)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 📚 Documentation
+
+- **ios**: appearance, swipe navigation, the debug page log, and reading Apple Health ([eda1e8f](https://github.com/craft-native/craft/commit/eda1e8f)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.102 ([733f2a8](https://github.com/craft-native/craft/commit/733f2a8)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.100...v0.0.101)
 
 ## 🐛 Bug Fixes
