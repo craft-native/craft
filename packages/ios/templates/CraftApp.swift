@@ -1703,10 +1703,30 @@ struct CraftWebView: UIViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
+            // An iframe the app's page embeds loads in place. Only the main
+            // frame's navigations leave for Safari: cancelling the frame's
+            // too left every embed blank, a YouTube or Vimeo player among them.
+            if let frame = navigationAction.targetFrame, !frame.isMainFrame, isEmbeddableFrameURL(url) {
+                decisionHandler(.allow)
+                return
+            }
             if navigationAction.targetFrame?.isMainFrame != false {
                 UIApplication.shared.open(url)
             }
             decisionHandler(.cancel)
+        }
+
+        /// What an iframe inside the app's page may load: a video player, a
+        /// payment form, a map. It stays inside its frame, and the bridge
+        /// answers only `isTrustedOrigin`, so loading one reaches nothing
+        /// native. Plain http is left to the trusted local origins.
+        private func isEmbeddableFrameURL(_ url: URL) -> Bool {
+            switch url.scheme?.lowercased() {
+            case "https", "about", "data", "blob":
+                return true
+            default:
+                return false
+            }
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
