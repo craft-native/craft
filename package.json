@@ -80,5 +80,8 @@
   },
   "patchedDependencies": {
     "ts-maps@0.3.1": "patches/ts-maps@0.3.1.patch"
+  },
+  "overrides": {
+    "fast-uri": "^3.1.7"
   }
 }
