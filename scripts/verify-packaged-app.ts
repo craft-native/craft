@@ -16,6 +16,7 @@ if (!binaryArgument || !version)
 const binary = resolve(binaryArgument)
 const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : 'linux'
 const receipt = 'dev.craft.packaged-smoke'
+const deepLinkScheme = 'craftpackagedsmoke'
 const installPath = platform === 'macos'
   ? '/Applications/craft.app/Contents/MacOS/craft'
   : platform === 'windows'
@@ -61,10 +62,28 @@ async function launchViaSdk(): Promise<void> {
   // Hosted runners have disposable clipboards. Do not replace a developer's
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
+  const testDeepLink = testSystemClipboard && platform === 'macos'
   const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
+  const deepLinkUrl = `${deepLinkScheme}://open/${randomUUID()}`
+  let acceptDeepLink!: (url: string | null) => void
+  const receivedDeepLink = new Promise<string | null>((resolve) => {
+    acceptDeepLink = resolve
+  })
   const page = `<!doctype html><title>Craft packaged smoke</title><script>
     (async function () {
       if (!window.craft) throw new Error('Craft bridge missing from installed app')
+      if (${testDeepLink}) {
+        if (!window.craft.deepLink || !window.craft.deepLink.onUrl)
+          throw new Error('installed app has no deep-link bridge')
+        const reportLink = detail => {
+          const target = new URL('/deep-link', location.origin)
+          target.searchParams.set('url', detail.url)
+          return fetch(target, { method: 'POST' })
+        }
+        window.craft.deepLink.onUrl(reportLink)
+        const initial = window.craft.deepLink.getInitialUrl()
+        if (initial) reportLink({ url: initial })
+      }
       if (${testSystemClipboard}) {
         const expected = ${JSON.stringify(clipboardMarker)}
         if (!window.craft.clipboard || !window.craft.clipboard.writeText || !window.craft.clipboard.readText)
@@ -80,14 +99,21 @@ async function launchViaSdk(): Promise<void> {
           throw new Error(JSON.stringify({ message: 'clipboard bridge round trip differed', actual }))
       }
       await fetch('/ready', { method: 'POST' })
-    })().catch(error => fetch('/failed', { method: 'POST', body: String(error) }))
+    })().catch((error) => {
+      const target = new URL('/failed', location.origin)
+      target.searchParams.set('reason', String(error?.stack || error))
+      return fetch(target, { method: 'POST' })
+    })
   </script>`
   const server = createServer((request, response) => {
     if (request.url === '/ready' && request.method === 'POST') acceptReady()
-    if (request.url === '/failed' && request.method === 'POST') {
-      let body = ''
-      request.on('data', chunk => body += chunk.toString())
-      request.on('end', () => rejectReady(new Error(body)))
+    if (request.url?.startsWith('/deep-link?') && request.method === 'POST') {
+      const received = new URL(request.url, 'http://127.0.0.1').searchParams.get('url')
+      acceptDeepLink(received)
+    }
+    if (request.url?.startsWith('/failed?') && request.method === 'POST') {
+      const reason = new URL(request.url, 'http://127.0.0.1').searchParams.get('reason')
+      rejectReady(new Error(reason || 'Installed app reported a failure without details'))
     }
     response.writeHead(200, { 'Content-Type': 'text/html' })
     response.end(page)
@@ -124,6 +150,24 @@ async function launchViaSdk(): Promise<void> {
         if (osValue !== clipboardMarker)
           throw new Error(`Installed app clipboard write did not reach the OS: ${JSON.stringify(osValue)}`)
         console.log('Installed app clipboard bridge and OS clipboard agree')
+      }
+      if (testDeepLink) {
+        await command('dispatch installed app URL scheme', ['open', deepLinkUrl])
+        let linkTimer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const received = await Promise.race([
+            receivedDeepLink,
+            new Promise<never>((_, reject) => {
+              linkTimer = setTimeout(() => reject(new Error('Installed app did not receive its URL scheme within 15 seconds')), 15_000)
+            }),
+          ])
+          if (received !== deepLinkUrl)
+            throw new Error(`Installed app received the wrong deep link: ${JSON.stringify(received)}`)
+          console.log('Installed macOS app received its registered deep link')
+        }
+        finally {
+          if (linkTimer) clearTimeout(linkTimer)
+        }
       }
     }
     finally {
@@ -171,7 +215,7 @@ async function main(): Promise<void> {
       outDir: work,
       bundleId: receipt,
       platforms: [platform],
-      macos: { dmg: false, pkg: true },
+      macos: { dmg: false, pkg: true, urlSchemes: [deepLinkScheme] },
       linux: { deb: true, rpm: false, appImage: false, debDependencies: [] },
       windows: { msi: true, zip: true, additionalFiles: platform === 'windows' ? [loader] : [] },
     })

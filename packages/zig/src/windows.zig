@@ -755,6 +755,13 @@ const WebMessageReceivedHandler = extern struct {
         request_context.push(envelope.request_id);
         defer request_context.pop();
 
+        if (std.mem.eql(u8, envelope.kind, "clipboard")) {
+            var clipboard = @import("bridge_clipboard.zig").ClipboardBridge.init(std.heap.c_allocator);
+            clipboard.handleMessageWithData(envelope.action, envelope.data) catch |err| {
+                bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+            };
+            return S_OK;
+        }
         if (!std.mem.eql(u8, envelope.kind, "window")) {
             bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
             return S_OK;

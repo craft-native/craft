@@ -22,6 +22,14 @@ test "clipboard text payload decodes escaped JSON" {
     try std.testing.expectError(BridgeError.InvalidJSON, parseTextPayload(std.testing.allocator, "{\"text\":"));
 }
 
+test "desktop clipboard result escapes JSON text" {
+    var bridge = ClipboardBridge.init(std.testing.allocator);
+    var result: std.ArrayList(u8) = .empty;
+    defer result.deinit(std.testing.allocator);
+    try bridge.appendEscapedJson(&result, "Craft \"quoted\" \\ path\n");
+    try std.testing.expectEqualStrings("Craft \\\"quoted\\\" \\\\ path\\n", result.items);
+}
+
 // Import GTK clipboard API from linux.zig (works on both X11 and Wayland)
 const linux = if (builtin.os.tag == .linux) @import("linux.zig") else undefined;
 const capabilities = @import("capabilities.zig");
@@ -479,7 +487,7 @@ pub const ClipboardBridge = struct {
 
     // ============================================
     // Linux Clipboard Implementations
-    // Uses GDK native clipboard (X11 + Wayland) with xclip/xsel fallback
+    // Uses GTK3 clipboard (X11 + Wayland) with xclip/xsel fallback
     // ============================================
 
     fn linuxWriteText(self: *Self, data: ?[]const u8) !void {
@@ -488,14 +496,14 @@ pub const ClipboardBridge = struct {
         defer parsed.deinit();
         const text = parsed.value.text;
 
-        // Try GDK clipboard first (works on both X11 and Wayland)
+        // Try GTK clipboard first (works on both X11 and Wayland)
         if (self.linuxGdkWriteText(text)) {
-            log.debug("Linux: Wrote text to clipboard via GDK", .{});
+            log.debug("Linux: Wrote text to clipboard via GTK", .{});
             return;
         }
 
         // Fall back to xclip subprocess
-        log.debug("Linux: GDK clipboard unavailable, falling back to xclip", .{});
+        log.debug("Linux: GTK clipboard unavailable, falling back to xclip", .{});
         var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard" }, self.allocator);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Ignore;
@@ -521,42 +529,41 @@ pub const ClipboardBridge = struct {
         log.debug("Linux: Wrote text to clipboard via xclip", .{});
     }
 
-    /// Try to write text using GDK native clipboard API.
-    /// Returns true on success, false if GDK is unavailable.
+    /// Try to write text using the GTK3 clipboard API.
+    /// Returns true on success, false if GTK is unavailable.
     fn linuxGdkWriteText(_: *Self, text: []const u8) bool {
         if (builtin.os.tag != .linux) return false;
 
-        const display = linux.gdk_display_get_default() orelse return false;
-        const clipboard = linux.gdk_display_get_clipboard(display) orelse return false;
+        const clipboard = linux.systemClipboard() orelse return false;
 
         const text_z = @import("memory.zig").dupeZ(std.heap.c_allocator, u8, text) catch return false;
         defer std.heap.c_allocator.free(text_z);
 
-        linux.gdk_clipboard_set_text(clipboard, text_z);
+        linux.gtk_clipboard_set_text(clipboard, text_z, -1);
         return true;
     }
 
     fn linuxReadText(self: *Self) !void {
         var result_json: []const u8 = "{\"text\":\"\"}";
 
-        // Try GDK clipboard first (works on both X11 and Wayland)
+        // Try GTK clipboard first (works on both X11 and Wayland)
         if (self.linuxGdkReadText()) |gdk_text| {
             defer linux.g_free(@ptrCast(@constCast(gdk_text.ptr)));
             const text_str = std.mem.span(gdk_text);
 
             if (text_str.len > 0) {
-                log.debug("Linux: Read text from clipboard via GDK", .{});
-                var buf = std.ArrayList(u8).init(self.allocator);
-                defer buf.deinit();
+                log.debug("Linux: Read text from clipboard via GTK", .{});
+                var buf: std.ArrayList(u8) = .empty;
+                defer buf.deinit(self.allocator);
 
-                try buf.appendSlice("{\"text\":\"");
+                try buf.appendSlice(self.allocator, "{\"text\":\"");
                 try self.appendEscapedJson(&buf, text_str);
-                try buf.appendSlice("\"}");
-                result_json = try buf.toOwnedSlice();
+                try buf.appendSlice(self.allocator, "\"}");
+                result_json = try buf.toOwnedSlice(self.allocator);
             }
         } else {
             // Fall back to xclip subprocess
-            log.debug("Linux: GDK clipboard unavailable, falling back to xclip", .{});
+            log.debug("Linux: GTK clipboard unavailable, falling back to xclip", .{});
             var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard", "-o" }, self.allocator);
             child.stdout_behavior = .Pipe;
             child.stderr_behavior = .Ignore;
@@ -583,13 +590,13 @@ pub const ClipboardBridge = struct {
 
                     if (output.len > 0) {
                         log.debug("Linux: Read text from clipboard via xclip", .{});
-                        var buf = std.ArrayList(u8).init(self.allocator);
-                        defer buf.deinit();
+                        var buf: std.ArrayList(u8) = .empty;
+                        defer buf.deinit(self.allocator);
 
-                        try buf.appendSlice("{\"text\":\"");
+                        try buf.appendSlice(self.allocator, "{\"text\":\"");
                         try self.appendEscapedJson(&buf, output);
-                        try buf.appendSlice("\"}");
-                        result_json = try buf.toOwnedSlice();
+                        try buf.appendSlice(self.allocator, "\"}");
+                        result_json = try buf.toOwnedSlice(self.allocator);
                     }
                 }
             }
@@ -602,13 +609,10 @@ pub const ClipboardBridge = struct {
         }
     }
 
-    /// Try to read text using GDK native clipboard API.
-    /// GDK's clipboard read is async-only (gdk_clipboard_read_text_async),
-    /// so this always returns null to fall through to the xclip/xsel subprocess path.
-    /// The write and clear paths use GDK directly since gdk_clipboard_set_text is synchronous.
+    /// GTK3 provides a synchronous read, unlike GTK4's GDK clipboard API.
     fn linuxGdkReadText(_: *Self) ?[*:0]const u8 {
-        // GDK read is async-only; fall through to subprocess tools
-        return null;
+        const clipboard = linux.systemClipboard() orelse return null;
+        return linux.gtk_clipboard_wait_for_text(clipboard);
     }
 
     fn linuxWriteHTML(self: *Self, data: ?[]const u8) !void {
@@ -678,13 +682,13 @@ pub const ClipboardBridge = struct {
                 defer self.allocator.free(output);
 
                 if (output.len > 0) {
-                    var buf = std.ArrayList(u8).init(self.allocator);
-                    defer buf.deinit();
+                    var buf: std.ArrayList(u8) = .empty;
+                    defer buf.deinit(self.allocator);
 
-                    try buf.appendSlice("{\"html\":\"");
+                    try buf.appendSlice(self.allocator, "{\"html\":\"");
                     try self.appendEscapedJson(&buf, output);
-                    try buf.appendSlice("\"}");
-                    result_json = try buf.toOwnedSlice();
+                    try buf.appendSlice(self.allocator, "\"}");
+                    result_json = try buf.toOwnedSlice(self.allocator);
                 }
             }
         }
@@ -697,19 +701,17 @@ pub const ClipboardBridge = struct {
     }
 
     fn linuxClear(self: *Self) !void {
-        // Try GDK clipboard first (set empty text to clear)
+        // Try GTK clipboard first (set empty text to clear)
         if (builtin.os.tag == .linux) {
-            if (linux.gdk_display_get_default()) |display| {
-                if (linux.gdk_display_get_clipboard(display)) |clipboard| {
-                    linux.gdk_clipboard_set_text(clipboard, "");
-                    log.debug("Linux: Clipboard cleared via GDK", .{});
-                    return;
-                }
+            if (linux.systemClipboard()) |clipboard| {
+                linux.gtk_clipboard_set_text(clipboard, "", -1);
+                log.debug("Linux: Clipboard cleared via GTK", .{});
+                return;
             }
         }
 
         // Fall back to xclip: clear by writing empty string
-        log.debug("Linux: GDK unavailable, clearing clipboard via xclip", .{});
+        log.debug("Linux: GTK unavailable, clearing clipboard via xclip", .{});
         var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard" }, self.allocator);
         child.stdin_behavior = .Pipe;
         child.stdout_behavior = .Ignore;
@@ -941,13 +943,13 @@ pub const ClipboardBridge = struct {
                 if (pData != null) {
                     const text = std.mem.span(@as([*:0]const u8, @ptrCast(pData)));
 
-                    var buf = std.ArrayList(u8).init(self.allocator);
-                    defer buf.deinit();
+                    var buf: std.ArrayList(u8) = .empty;
+                    defer buf.deinit(self.allocator);
 
-                    try buf.appendSlice("{\"text\":\"");
+                    try buf.appendSlice(self.allocator, "{\"text\":\"");
                     try self.appendEscapedJson(&buf, text);
-                    try buf.appendSlice("\"}");
-                    result_json = try buf.toOwnedSlice();
+                    try buf.appendSlice(self.allocator, "\"}");
+                    result_json = try buf.toOwnedSlice(self.allocator);
 
                     _ = kernel32.GlobalUnlock(hData);
                 }
@@ -1032,13 +1034,13 @@ pub const ClipboardBridge = struct {
                 if (pData != null) {
                     const html = std.mem.span(@as([*:0]const u8, @ptrCast(pData)));
 
-                    var buf = std.ArrayList(u8).init(self.allocator);
-                    defer buf.deinit();
+                    var buf: std.ArrayList(u8) = .empty;
+                    defer buf.deinit(self.allocator);
 
-                    try buf.appendSlice("{\"html\":\"");
+                    try buf.appendSlice(self.allocator, "{\"html\":\"");
                     try self.appendEscapedJson(&buf, html);
-                    try buf.appendSlice("\"}");
-                    result_json = try buf.toOwnedSlice();
+                    try buf.appendSlice(self.allocator, "\"}");
+                    result_json = try buf.toOwnedSlice(self.allocator);
 
                     _ = kernel32.GlobalUnlock(hData);
                 }
@@ -1119,15 +1121,14 @@ pub const ClipboardBridge = struct {
     // ============================================
 
     fn appendEscapedJson(self: *Self, buf: *std.ArrayList(u8), str: []const u8) !void {
-        _ = self;
         for (str) |ch| {
             switch (ch) {
-                '"' => try buf.appendSlice("\\\""),
-                '\\' => try buf.appendSlice("\\\\"),
-                '\n' => try buf.appendSlice("\\n"),
-                '\r' => try buf.appendSlice("\\r"),
-                '\t' => try buf.appendSlice("\\t"),
-                else => try buf.append(ch),
+                '"' => try buf.appendSlice(self.allocator, "\\\""),
+                '\\' => try buf.appendSlice(self.allocator, "\\\\"),
+                '\n' => try buf.appendSlice(self.allocator, "\\n"),
+                '\r' => try buf.appendSlice(self.allocator, "\\r"),
+                '\t' => try buf.appendSlice(self.allocator, "\\t"),
+                else => try buf.append(self.allocator, ch),
             }
         }
     }

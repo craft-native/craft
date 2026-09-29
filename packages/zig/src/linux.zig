@@ -410,6 +410,13 @@ fn onScriptMessage(_: *anyopaque, result: *anyopaque, user_data: ?*anyopaque) ca
     request_context.push(envelope.request_id);
     defer request_context.pop();
 
+    if (std.mem.eql(u8, envelope.kind, "clipboard")) {
+        var clipboard = @import("bridge_clipboard.zig").ClipboardBridge.init(std.heap.c_allocator);
+        clipboard.handleMessageWithData(envelope.action, envelope.data) catch |err| {
+            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+        };
+        return;
+    }
     if (!std.mem.eql(u8, envelope.kind, "window")) {
         bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
         return;
@@ -1034,39 +1041,31 @@ pub fn showNotification(title: []const u8, message: []const u8) !void {
     _ = notify_notification_show(notification, null);
 }
 
-// Clipboard using GDK (works on both X11 and Wayland)
+// GTK3 clipboard APIs work on both X11 and Wayland. GTK4's
+// gdk_display_get_clipboard/gdk_clipboard_set_text are not linked here.
 pub extern "c" fn gdk_display_get_default() ?*anyopaque;
-pub extern "c" fn gdk_display_get_clipboard(display: *anyopaque) ?*anyopaque;
-pub extern "c" fn gdk_clipboard_set_text(clipboard: *anyopaque, text: [*:0]const u8) void;
-pub extern "c" fn gdk_clipboard_read_text_async(
-    clipboard: *anyopaque,
-    cancellable: ?*anyopaque,
-    callback: ?*const fn (*anyopaque, *anyopaque, ?*anyopaque) callconv(.c) void,
-    user_data: ?*anyopaque,
-) void;
+pub extern "c" fn gdk_atom_intern_static_string(atom_name: [*:0]const u8) ?*anyopaque;
+pub extern "c" fn gtk_clipboard_get_for_display(display: *anyopaque, selection: ?*anyopaque) ?*anyopaque;
+pub extern "c" fn gtk_clipboard_set_text(clipboard: *anyopaque, text: [*:0]const u8, len: c_int) void;
+pub extern "c" fn gtk_clipboard_wait_for_text(clipboard: *anyopaque) ?[*:0]u8;
+
+pub fn systemClipboard() ?*anyopaque {
+    const display = gdk_display_get_default() orelse return null;
+    const selection = gdk_atom_intern_static_string("CLIPBOARD") orelse return null;
+    return gtk_clipboard_get_for_display(display, selection);
+}
 
 pub fn setClipboard(text: []const u8) !void {
     const text_z = try @import("memory.zig").dupeZ(std.heap.c_allocator, u8, text);
     defer std.heap.c_allocator.free(text_z);
 
-    const display = gdk_display_get_default() orelse return error.NoDisplay;
-    const clipboard = gdk_display_get_clipboard(display) orelse return error.NoClipboard;
-    gdk_clipboard_set_text(clipboard, text_z);
+    const clipboard = systemClipboard() orelse return error.NoClipboard;
+    gtk_clipboard_set_text(clipboard, text_z, -1);
 }
-
-// GDK async read completion extern
-pub extern "c" fn gdk_clipboard_read_text_finish(
-    clipboard: *anyopaque,
-    result: *anyopaque,
-    error_ptr: ?*?*anyopaque,
-) ?[*:0]const u8;
 
 pub extern "c" fn g_free(mem: ?*anyopaque) void;
 
-// Clipboard read: tries xclip first, then xsel as fallback.
-// Note: GDK clipboard read is async-only (gdk_clipboard_read_text_async),
-// so we use subprocess tools for synchronous reads. The write path uses
-// GDK directly since gdk_clipboard_set_text is synchronous.
+// Standalone clipboard helper: tries xclip first, then xsel as fallback.
 pub fn getClipboard(allocator: std.mem.Allocator) ![]u8 {
     // Try using xclip first (most common on Linux)
     {
