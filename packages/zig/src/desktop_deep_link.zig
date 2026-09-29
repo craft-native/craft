@@ -14,11 +14,15 @@ pub fn setPage(url: ?[]const u8) void {
 }
 
 pub fn applicationId(allocator: std.mem.Allocator, executable: []const u8) ![:0]u8 {
+    return try std.fmt.allocPrintSentinel(allocator, "com.craft.app{x}", .{applicationHash(executable)}, 0);
+}
+
+pub fn applicationHash(executable: []const u8) u64 {
     var hash = std.hash.Wyhash.init(0);
     hash.update(executable);
     hash.update("\x00");
     hash.update(page_url orelse "");
-    return try std.fmt.allocPrintSentinel(allocator, "com.craft.app{x}", .{hash.final()}, 0);
+    return hash.final();
 }
 
 pub fn initialScript(allocator: std.mem.Allocator) !?[]u8 {

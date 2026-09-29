@@ -21,6 +21,7 @@ pub const io_context = @import("io_context.zig");
 pub const startup_timing = @import("startup_timing.zig");
 pub const desktop_deep_link = @import("desktop_deep_link.zig");
 pub const desktop_linux = if (builtin.os.tag == .linux) @import("linux.zig") else struct {};
+pub const desktop_windows = if (builtin.os.tag == .windows) @import("windows.zig") else struct {};
 pub const js_runtime = @import("js_runtime.zig");
 
 // Re-export iOS module (available on all platforms for cross-compilation)

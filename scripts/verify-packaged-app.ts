@@ -36,6 +36,19 @@ async function command(label: string, argv: string[]): Promise<string> {
   return output
 }
 
+async function dispatchLinuxUri(label: string, url: string, observed: Promise<void>): Promise<void> {
+  // xdg-open may exec the handler and stay alive for the whole GUI session.
+  // Success means the installed page reported the URL, not that xdg-open quit.
+  const child = Bun.spawn(['xdg-open', url], { stdout: 'ignore', stderr: 'pipe' })
+  const stderr = new Response(child.stderr).text()
+  const failed = child.exited.then(async (code) => {
+    if (code !== 0) throw new Error(`${label} failed (${code}): ${await stderr}`)
+    return new Promise<never>(() => {})
+  })
+  await Promise.race([observed, failed])
+  console.log(`${label}: installed page observed ${url}`)
+}
+
 async function startColdDeepLinkObserver(testWarm: boolean): Promise<{
   launchUrl: string
   waitFor: (expected: string) => Promise<void>
@@ -390,7 +403,7 @@ async function main(): Promise<void> {
   let coldObserver: Awaited<ReturnType<typeof startColdDeepLinkObserver>> | undefined
   try {
     if (process.env.GITHUB_ACTIONS === 'true' && platform !== 'macos')
-      coldObserver = await startColdDeepLinkObserver(platform === 'linux')
+      coldObserver = await startColdDeepLinkObserver(true)
     const loader = join(dirname(binary), 'WebView2Loader.dll')
     if (platform === 'windows' && !existsSync(loader))
       throw new Error(`Windows WebView2 loader missing beside binary: ${loader}`)
@@ -462,19 +475,20 @@ async function main(): Promise<void> {
         await command('select installed Linux URI handler', ['xdg-mime', 'default', 'craft.desktop', `x-scheme-handler/${deepLinkScheme}`])
         const selected = await command('inspect Linux URI handler', ['xdg-mime', 'query', 'default', `x-scheme-handler/${deepLinkScheme}`])
         if (selected !== 'craft.desktop') throw new Error(`Linux selected the wrong URI handler: ${selected}`)
-        await command('dispatch cold Linux URI', ['xdg-open', coldUrl])
+        await dispatchLinuxUri('dispatch cold Linux URI', coldUrl, coldObserver.waitFor(coldUrl))
       }
       else {
         await command('dispatch cold Windows URI', ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${coldUrl}'`])
       }
-      await coldObserver.waitFor(coldUrl)
+      if (platform !== 'linux') await coldObserver.waitFor(coldUrl)
       console.log(`Installed ${platform} app received its cold-launch deep link`)
+      const warmUrl = `${deepLinkScheme}://warm/${randomUUID()}`
       if (platform === 'linux') {
-        const warmUrl = `${deepLinkScheme}://warm/${randomUUID()}`
-        await command('dispatch warm Linux URI', ['xdg-open', warmUrl])
-        await coldObserver.waitForWarm(warmUrl)
-        console.log('Running Linux app received its warm deep link in the existing page')
+        await dispatchLinuxUri('dispatch warm Linux URI', warmUrl, coldObserver.waitForWarm(warmUrl))
       }
+      else await command('dispatch warm Windows URI', ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Start-Process -FilePath '${warmUrl}'`])
+      if (platform !== 'linux') await coldObserver.waitForWarm(warmUrl)
+      console.log(`Running ${platform} app received its warm deep link in the existing page`)
       // The page posts before asking Craft to close; let that native close
       // finish before another app instance starts or MSI uninstall begins.
       await new Promise(resolve => setTimeout(resolve, 500))

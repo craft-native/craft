@@ -188,6 +188,9 @@ pub fn main(init: std.process.Init) !void {
     if (builtin.os.tag == .linux and options.deep_link != null) {
         if (try craft.desktop_linux.forwardDeepLinkIfRunning(options.deep_link.?)) return;
     }
+    if (builtin.os.tag == .windows and options.deep_link != null) {
+        if (try craft.desktop_windows.forwardDeepLinkIfRunning(options.deep_link.?)) return;
+    }
 
     var app = craft.App.init(allocator);
     app.headless = options.headless;

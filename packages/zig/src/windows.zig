@@ -9,6 +9,8 @@ const desktop_window_events = @import("desktop_window_events.zig");
 const desktop_window_reads = @import("desktop_window_reads.zig");
 const desktop_window_registry = @import("desktop_window_registry.zig");
 const json_utils = @import("json_utils.zig");
+const io_context = @import("io_context.zig");
+const desktop_deep_link = @import("desktop_deep_link.zig");
 const request_context = @import("request_context.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
@@ -65,6 +67,12 @@ pub const RECT = extern struct {
     right: c_long,
     bottom: c_long,
 };
+
+const COPYDATASTRUCT = extern struct {
+    dwData: usize,
+    cbData: DWORD,
+    lpData: ?*const anyopaque,
+};
 pub const POINT = extern struct { x: c_long, y: c_long };
 pub const MINMAXINFO = extern struct {
     ptReserved: POINT,
@@ -113,6 +121,8 @@ pub const WM_ACTIVATE: UINT = 0x0006;
 pub const WM_CLOSE: UINT = 0x0010;
 pub const WM_GETMINMAXINFO: UINT = 0x0024;
 pub const WM_QUIT: UINT = 0x0012;
+const WM_COPYDATA: UINT = 0x004A;
+const SMTO_ABORTIFHUNG: UINT = 0x0002;
 const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
@@ -126,6 +136,10 @@ const MONITOR_DEFAULTTONEAREST: DWORD = 2;
 
 // Win32 API functions
 pub extern "user32" fn RegisterClassExW(*const WNDCLASSEXW) callconv(.c) u16;
+pub extern "user32" fn FindWindowExW(?HWND, ?HWND, ?LPCWSTR, ?LPCWSTR) callconv(.c) ?HWND;
+pub extern "user32" fn SetPropW(HWND, LPCWSTR, *anyopaque) callconv(.c) BOOL;
+pub extern "user32" fn GetPropW(HWND, LPCWSTR) callconv(.c) ?*anyopaque;
+pub extern "user32" fn SendMessageTimeoutW(HWND, UINT, WPARAM, LPARAM, UINT, UINT, *usize) callconv(.c) LRESULT;
 pub extern "user32" fn CreateWindowExW(
     dwExStyle: DWORD,
     lpClassName: LPCWSTR,
@@ -1078,6 +1092,34 @@ fn succeeded(hr: HRESULT) bool {
 var app_running = false;
 var window_class_registered = false;
 const CLASS_NAME: [:0]const u16 = &[_:0]u16{ 'Z', 'y', 't', 'e', 'W', 'i', 'n', 'd', 'o', 'w' };
+const DEEP_LINK_PROP: [:0]const u16 = &[_:0]u16{ 'C', 'r', 'a', 'f', 't', 'D', 'e', 'e', 'p', 'L', 'i', 'n', 'k', 'I', 'd' };
+const DEEP_LINK_COPY_TAG: usize = 0x43524C4B; // "CRLK"
+
+fn applicationKey() !usize {
+    const exe = try std.process.executablePathAlloc(io_context.get(), std.heap.c_allocator);
+    defer std.heap.c_allocator.free(exe);
+    const hash = desktop_deep_link.applicationHash(exe);
+    const key: usize = if (@sizeOf(usize) == 8) @intCast(hash) else @truncate(hash);
+    return if (key == 0) 1 else key;
+}
+
+/// A second protocol activation forwards to a window from the same installed
+/// executable and page, then exits without creating another WebView.
+pub fn forwardDeepLinkIfRunning(url: []const u8) !bool {
+    if (url.len == 0 or url.len > 8192 or std.mem.indexOfScalar(u8, url, 0) != null) return error.InvalidDeepLink;
+    const key = try applicationKey();
+    var previous: ?HWND = null;
+    while (FindWindowExW(null, previous, CLASS_NAME.ptr, null)) |hwnd| {
+        previous = hwnd;
+        const property = GetPropW(hwnd, DEEP_LINK_PROP.ptr) orelse continue;
+        if (@intFromPtr(property) != key) continue;
+        var packet = COPYDATASTRUCT{ .dwData = DEEP_LINK_COPY_TAG, .cbData = @intCast(url.len), .lpData = @ptrCast(url.ptr) };
+        var received: usize = 0;
+        const sent = SendMessageTimeoutW(hwnd, WM_COPYDATA, 0, @bitCast(@intFromPtr(&packet)), SMTO_ABORTIFHUNG, 5000, &received);
+        if (sent != 0 and received == 1) return true;
+    }
+    return false;
+}
 
 // Native callbacks arrive with an HWND, not the stack value returned by
 // Window.create. Keep stable handles for every live window here.
@@ -1568,6 +1610,11 @@ test "Windows portable controls require an authenticated live sender" {
     try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("setBounds", "{}"));
 }
 
+test "Windows installed-app deep-link forwarding is in the build" {
+    const forward = &forwardDeepLinkIfRunning;
+    try std.testing.expect(@intFromPtr(forward) != 0);
+}
+
 test "WebView2 resultful evaluation uses the pinned interface slot" {
     try std.testing.expectEqual(@as(usize, 122 * @sizeOf(usize)), @offsetOf(ICoreWebView2_21Vtbl, "ExecuteScriptWithResult"));
     try std.testing.expectError(error.WindowHandleNotSet, handleWindowAction("executeJavaScript", "{\"code\":\"42\"}"));
@@ -1658,6 +1705,8 @@ pub const Window = struct {
             null,
         ) orelse return error.WindowCreationFailed;
         errdefer _ = DestroyWindow(hwnd);
+        if (SetPropW(hwnd, DEEP_LINK_PROP.ptr, @ptrFromInt(try applicationKey())) == 0)
+            return error.DeepLinkIdentityFailed;
 
         // ----------------------------------------------------------------
         // Async WebView2 initialization
@@ -1955,6 +2004,19 @@ pub const Window = struct {
 
 fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c) LRESULT {
     switch (msg) {
+        WM_COPYDATA => {
+            if (GetPropW(hwnd, DEEP_LINK_PROP.ptr) == null or lParam == 0) return 0;
+            const packet: *const COPYDATASTRUCT = @ptrFromInt(@as(usize, @bitCast(lParam)));
+            if (packet.dwData != DEEP_LINK_COPY_TAG or packet.cbData == 0 or packet.cbData > 8192) return 0;
+            const data = packet.lpData orelse return 0;
+            const url = @as([*]const u8, @ptrCast(data))[0..packet.cbData];
+            if (std.mem.indexOfScalar(u8, url, 0) != null or !std.unicode.utf8ValidateSlice(url)) return 0;
+            const script = desktop_deep_link.deliveryScript(std.heap.c_allocator, url) catch return 0;
+            defer std.heap.c_allocator.free(script);
+            evalJS(script) catch return 0;
+            _ = ShowWindow(hwnd, SW_SHOW);
+            return 1;
+        },
         WM_GETMINMAXINFO => {
             if (desktop_windows.byWindow(@intFromPtr(hwnd))) |entry| {
                 const info: *MINMAXINFO = @ptrFromInt(@as(usize, @bitCast(lParam)));
