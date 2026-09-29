@@ -1,5 +1,5 @@
 /** Install a package containing the real Craft binary, then launch it via the SDK. */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
@@ -58,12 +58,29 @@ async function launchViaSdk(): Promise<void> {
     acceptReady = resolve
     rejectReady = reject
   })
+  // Hosted runners have disposable clipboards. Do not replace a developer's
+  // clipboard when this installer verifier is run manually.
+  const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
+  const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
   const page = `<!doctype html><title>Craft packaged smoke</title><script>
-    if (!window.craft) {
-      fetch('/failed', { method: 'POST', body: 'Craft bridge missing from installed app' })
-    } else {
-      fetch('/ready', { method: 'POST' })
-    }
+    (async function () {
+      if (!window.craft) throw new Error('Craft bridge missing from installed app')
+      if (${testSystemClipboard}) {
+        const expected = ${JSON.stringify(clipboardMarker)}
+        if (!window.craft.clipboard || !window.craft.clipboard.writeText || !window.craft.clipboard.readText)
+          throw new Error('installed app has no clipboard bridge')
+        await window.craft.clipboard.writeText(expected)
+        let actual = ''
+        for (let attempt = 0; attempt < 30; attempt++) {
+          actual = await window.craft.clipboard.readText()
+          if (actual === expected) break
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        if (actual !== expected)
+          throw new Error(JSON.stringify({ message: 'clipboard bridge round trip differed', actual }))
+      }
+      await fetch('/ready', { method: 'POST' })
+    })().catch(error => fetch('/failed', { method: 'POST', body: String(error) }))
   </script>`
   const server = createServer((request, response) => {
     if (request.url === '/ready' && request.method === 'POST') acceptReady()
@@ -97,6 +114,17 @@ async function launchViaSdk(): Promise<void> {
         }),
       ])
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
+      if (testSystemClipboard) {
+        const readCommand = platform === 'macos'
+          ? ['pbpaste']
+          : platform === 'windows'
+            ? ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'Get-Clipboard -Raw']
+            : ['xclip', '-selection', 'clipboard', '-o']
+        const osValue = await command('read system clipboard', readCommand)
+        if (osValue !== clipboardMarker)
+          throw new Error(`Installed app clipboard write did not reach the OS: ${JSON.stringify(osValue)}`)
+        console.log('Installed app clipboard bridge and OS clipboard agree')
+      }
     }
     finally {
       if (timer) clearTimeout(timer)

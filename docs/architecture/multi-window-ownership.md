@@ -154,8 +154,10 @@ The next multi-window milestone needs product decisions in addition to code:
 5. Expand platform-native integration beyond named-window lifecycle and core
    geometry/control smokes. CI runs Linux WebKitGTK under Xvfb and Windows
    WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
-   launch a sample app through the SDK; signed and notarized release artifacts
-   and platform shell integration remain outside this CI smoke.
+   launch a sample app through the SDK and compare escaped clipboard text
+   through the page bridge with the host OS clipboard. Notification delivery,
+   deep-link dispatch and signed/notarized release artifacts remain outside
+   this CI smoke.
 
 ## Review checklist
 

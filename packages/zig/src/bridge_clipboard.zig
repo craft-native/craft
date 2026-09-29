@@ -6,6 +6,22 @@ const logging = @import("logging.zig");
 const BridgeError = bridge_error.BridgeError;
 const log = logging.clipboard;
 
+const TextPayload = struct { text: []const u8 = "" };
+
+fn parseTextPayload(allocator: std.mem.Allocator, data: []const u8) BridgeError!std.json.Parsed(TextPayload) {
+    return std.json.parseFromSlice(TextPayload, allocator, data, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch BridgeError.InvalidJSON;
+}
+
+test "clipboard text payload decodes escaped JSON" {
+    const parsed = try parseTextPayload(std.testing.allocator, "{\"text\":\"Craft \\\"quoted\\\" \\\\ path\"}");
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("Craft \"quoted\" \\ path", parsed.value.text);
+    try std.testing.expectError(BridgeError.InvalidJSON, parseTextPayload(std.testing.allocator, "{\"text\":"));
+}
+
 // Import GTK clipboard API from linux.zig (works on both X11 and Wayland)
 const linux = if (builtin.os.tag == .linux) @import("linux.zig") else undefined;
 const capabilities = @import("capabilities.zig");
@@ -468,47 +484,41 @@ pub const ClipboardBridge = struct {
 
     fn linuxWriteText(self: *Self, data: ?[]const u8) !void {
         if (data == null) return;
-        const json_data = data.?;
+        const parsed = try parseTextPayload(self.allocator, data.?);
+        defer parsed.deinit();
+        const text = parsed.value.text;
 
-        // Parse text from JSON
-        if (std.mem.indexOf(u8, json_data, "\"text\":\"")) |idx| {
-            const start = idx + 8;
-            if (std.mem.indexOfPos(u8, json_data, start, "\"")) |end| {
-                const text = json_data[start..end];
-
-                // Try GDK clipboard first (works on both X11 and Wayland)
-                if (self.linuxGdkWriteText(text)) {
-                    log.debug("Linux: Wrote text to clipboard via GDK", .{});
-                    return;
-                }
-
-                // Fall back to xclip subprocess
-                log.debug("Linux: GDK clipboard unavailable, falling back to xclip", .{});
-                var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard" }, self.allocator);
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Ignore;
-                child.stderr_behavior = .Ignore;
-
-                try child.spawn();
-                // Ensure stdin is closed even on error to avoid fd leak
-                defer {
-                    if (child.stdin) |*stdin| stdin.close();
-                }
-                if (child.stdin) |stdin| {
-                    stdin.writeAll(text) catch |err| {
-                        std.log.warn("clipboard: write to xclip failed: {}", .{err});
-                    };
-                    // Close stdin to signal EOF to the child
-                    child.stdin.?.close();
-                    child.stdin = null; // Prevent double close in defer
-                }
-                _ = child.wait() catch |err| {
-                    std.log.warn("clipboard: waiting for xclip failed: {}", .{err});
-                };
-
-                log.debug("Linux: Wrote text to clipboard via xclip", .{});
-            }
+        // Try GDK clipboard first (works on both X11 and Wayland)
+        if (self.linuxGdkWriteText(text)) {
+            log.debug("Linux: Wrote text to clipboard via GDK", .{});
+            return;
         }
+
+        // Fall back to xclip subprocess
+        log.debug("Linux: GDK clipboard unavailable, falling back to xclip", .{});
+        var child = std.process.Child.init(&.{ "xclip", "-selection", "clipboard" }, self.allocator);
+        child.stdin_behavior = .Pipe;
+        child.stdout_behavior = .Ignore;
+        child.stderr_behavior = .Ignore;
+
+        try child.spawn();
+        // Ensure stdin is closed even on error to avoid fd leak
+        defer {
+            if (child.stdin) |*stdin| stdin.close();
+        }
+        if (child.stdin) |stdin| {
+            stdin.writeAll(text) catch |err| {
+                std.log.warn("clipboard: write to xclip failed: {}", .{err});
+            };
+            // Close stdin to signal EOF to the child
+            child.stdin.?.close();
+            child.stdin = null; // Prevent double close in defer
+        }
+        _ = child.wait() catch |err| {
+            std.log.warn("clipboard: waiting for xclip failed: {}", .{err});
+        };
+
+        log.debug("Linux: Wrote text to clipboard via xclip", .{});
     }
 
     /// Try to write text using GDK native clipboard API.
@@ -879,38 +889,33 @@ pub const ClipboardBridge = struct {
         }
 
         if (data == null) return;
-        const json_data = data.?;
+        const parsed = try parseTextPayload(self.allocator, data.?);
+        defer parsed.deinit();
+        const text = parsed.value.text;
 
-        if (std.mem.indexOf(u8, json_data, "\"text\":\"")) |idx| {
-            const start = idx + 8;
-            if (std.mem.indexOfPos(u8, json_data, start, "\"")) |end| {
-                const text = json_data[start..end];
+        const kernel32 = win32;
+        const user32 = win32;
 
-                const kernel32 = win32;
-                const user32 = win32;
+        const CF_TEXT = 1;
+        const GMEM_MOVEABLE = 0x0002;
 
-                const CF_TEXT = 1;
-                const GMEM_MOVEABLE = 0x0002;
+        if (user32.OpenClipboard(null) != 0) {
+            defer _ = user32.CloseClipboard();
+            _ = user32.EmptyClipboard();
 
-                if (user32.OpenClipboard(null) != 0) {
-                    defer _ = user32.CloseClipboard();
-                    _ = user32.EmptyClipboard();
-
-                    const len = text.len + 1;
-                    const hGlobal = kernel32.GlobalAlloc(GMEM_MOVEABLE, len);
-                    if (hGlobal != null) {
-                        const pGlobal = kernel32.GlobalLock(hGlobal);
-                        if (pGlobal != null) {
-                            @memcpy(@as([*]u8, @ptrCast(pGlobal))[0..text.len], text);
-                            @as([*]u8, @ptrCast(pGlobal))[text.len] = 0;
-                            _ = kernel32.GlobalUnlock(hGlobal);
-                            _ = user32.SetClipboardData(CF_TEXT, hGlobal);
-                        }
-                    }
-
-                    log.debug("Windows: Wrote text to clipboard", .{});
+            const len = text.len + 1;
+            const hGlobal = kernel32.GlobalAlloc(GMEM_MOVEABLE, len);
+            if (hGlobal != null) {
+                const pGlobal = kernel32.GlobalLock(hGlobal);
+                if (pGlobal != null) {
+                    @memcpy(@as([*]u8, @ptrCast(pGlobal))[0..text.len], text);
+                    @as([*]u8, @ptrCast(pGlobal))[text.len] = 0;
+                    _ = kernel32.GlobalUnlock(hGlobal);
+                    _ = user32.SetClipboardData(CF_TEXT, hGlobal);
                 }
             }
+
+            log.debug("Windows: Wrote text to clipboard", .{});
         }
     }
 
