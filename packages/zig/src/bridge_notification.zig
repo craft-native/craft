@@ -79,6 +79,16 @@ pub const NotificationBridge = struct {
         };
     }
 
+    /// The Linux desktop package currently supports immediate banners and a
+    /// permission query. Do not route macOS-only badge/cancel actions as if
+    /// they worked on a Linux notification daemon.
+    pub fn handleLinuxDesktop(self: *Self, action: []const u8, data: []const u8) !void {
+        if (std.mem.eql(u8, action, "schedule") or std.mem.eql(u8, action, "show"))
+            return self.linuxShowNotification(data);
+        if (std.mem.eql(u8, action, "requestPermission")) return self.requestPermission();
+        return BridgeError.UnknownAction;
+    }
+
     fn handleMessageInternal(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, "show")) {
             try self.showNotification(data);
@@ -519,12 +529,14 @@ pub const NotificationBridge = struct {
             .stderr = .ignore,
             .stdin = .ignore,
         }) catch |err| {
-            log.debug("notify-send spawn failed: {}", .{err});
-            return;
+            log.warn("notify-send spawn failed: {}", .{err});
+            return BridgeError.NativeCallFailed;
         };
-        _ = child.wait(io) catch |err| {
-            log.debug("notify-send wait failed: {}", .{err});
+        const term = child.wait(io) catch |err| {
+            log.warn("notify-send wait failed: {}", .{err});
+            return BridgeError.NativeCallFailed;
         };
+        if (term != .exited or term.exited != 0) return BridgeError.NativeCallFailed;
 
         log.debug("Linux: notification sent", .{});
     }
@@ -634,6 +646,13 @@ pub const NotificationBridge = struct {
         self.pending_callbacks.deinit();
     }
 };
+
+test "Linux desktop notification dispatch refuses unsupported actions" {
+    if (comptime builtin.os.tag != .linux) return;
+    var bridge = NotificationBridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    try std.testing.expectError(BridgeError.UnknownAction, bridge.handleLinuxDesktop("cancel", ""));
+}
 
 // =============================================================================
 // Responses: clicks and action buttons (#65)

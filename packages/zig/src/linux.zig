@@ -417,6 +417,14 @@ fn onScriptMessage(_: *anyopaque, result: *anyopaque, user_data: ?*anyopaque) ca
         };
         return;
     }
+    if (std.mem.eql(u8, envelope.kind, "notification")) {
+        var notification = @import("bridge_notification.zig").NotificationBridge.init(std.heap.c_allocator);
+        defer notification.deinit();
+        notification.handleLinuxDesktop(envelope.action, envelope.data orelse "") catch |err| {
+            bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, bridge_error.fromHandlerError(err));
+        };
+        return;
+    }
     if (!std.mem.eql(u8, envelope.kind, "window")) {
         bridge_error.sendErrorToJS(std.heap.c_allocator, envelope.action, error.PlatformNotSupported);
         return;

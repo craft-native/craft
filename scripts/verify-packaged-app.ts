@@ -47,6 +47,50 @@ function sha256(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex')
 }
 
+async function startLinuxNotificationObserver(marker: string): Promise<{ seen: Promise<boolean>, stop: () => Promise<void> }> {
+  // A private D-Bus session (created by CI) and Dunst let the host verify the
+  // exact banner that the installed app sent, not just that _send() posted JS.
+  const daemon = Bun.spawn(['dunst', '--print', '--config', '-'], {
+    stdin: 'ignore', stdout: 'pipe', stderr: 'ignore',
+  })
+  const seen = (async () => {
+    const reader = daemon.stdout.getReader()
+    const decoder = new TextDecoder()
+    let output = ''
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) return false
+        output += decoder.decode(value, { stream: true })
+        if (output.includes(marker)) return true
+        if (output.length > 64_000) output = output.slice(-32_000)
+      }
+    }
+    catch {
+      return false
+    }
+    finally {
+      reader.releaseLock()
+    }
+  })()
+  const stop = async () => {
+    daemon.kill()
+    await daemon.exited
+  }
+  try {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const probe = Bun.spawnSync(['dunstctl', 'is-paused'], { stdout: 'pipe', stderr: 'pipe' })
+      if (probe.exitCode === 0) return { seen, stop }
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error('Dunst did not become ready in the private D-Bus session')
+  }
+  catch (error) {
+    await stop()
+    throw error
+  }
+}
+
 async function launchViaSdk(): Promise<void> {
   const oldPath = process.env.PATH
   const oldCraftBin = process.env.CRAFT_BIN
@@ -63,8 +107,10 @@ async function launchViaSdk(): Promise<void> {
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
   const testDeepLink = testSystemClipboard && platform === 'macos'
+  const testLinuxNotification = testSystemClipboard && platform === 'linux'
   const clipboardMarker = `Craft "quoted" \\ path ${randomUUID()}`
   const deepLinkUrl = `${deepLinkScheme}://open/${randomUUID()}`
+  const notificationMarker = `Craft installed notification ${randomUUID()}`
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -98,6 +144,13 @@ async function launchViaSdk(): Promise<void> {
         if (actual !== expected)
           throw new Error(JSON.stringify({ message: 'clipboard bridge round trip differed', actual }))
       }
+      if (${testLinuxNotification}) {
+        if (!window.craft.notifications || !window.craft.notifications.requestPermission || !window.craft.notifications.show)
+          throw new Error('installed app has no notification bridge')
+        if (!await window.craft.notifications.requestPermission())
+          throw new Error('installed Linux app denied notification permission')
+        await window.craft.notifications.show({ title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
+      }
       await fetch('/ready', { method: 'POST' })
     })().catch((error) => {
       const target = new URL('/failed', location.origin)
@@ -119,10 +172,13 @@ async function launchViaSdk(): Promise<void> {
     response.end(page)
   })
   let app: ReturnType<typeof createApp> | undefined
+  let notificationObserver: Awaited<ReturnType<typeof startLinuxNotificationObserver>> | undefined
   try {
     if (resolveCraftBinary() !== 'craft')
       throw new Error('SDK did not select the PATH-based craft binary')
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    if (testLinuxNotification)
+      notificationObserver = await startLinuxNotificationObserver(notificationMarker)
     const address = server.address() as AddressInfo
     app = createApp({
       url: `http://127.0.0.1:${address.port}/`,
@@ -151,6 +207,22 @@ async function launchViaSdk(): Promise<void> {
           throw new Error(`Installed app clipboard write did not reach the OS: ${JSON.stringify(osValue)}`)
         console.log('Installed app clipboard bridge and OS clipboard agree')
       }
+      if (notificationObserver) {
+        let notificationTimer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const observed = await Promise.race([
+            notificationObserver.seen,
+            new Promise<never>((_, reject) => {
+              notificationTimer = setTimeout(() => reject(new Error('Dunst did not receive the installed app notification within 10 seconds')), 10_000)
+            }),
+          ])
+          if (!observed) throw new Error('Dunst exited before receiving the installed app notification')
+          console.log('Installed Linux app notification reached the desktop daemon')
+        }
+        finally {
+          if (notificationTimer) clearTimeout(notificationTimer)
+        }
+      }
       if (testDeepLink) {
         await command('dispatch installed app URL scheme', ['open', deepLinkUrl])
         let linkTimer: ReturnType<typeof setTimeout> | undefined
@@ -177,6 +249,7 @@ async function launchViaSdk(): Promise<void> {
     }
   }
   finally {
+    if (notificationObserver) await notificationObserver.stop()
     server.close()
     if (oldPath === undefined) delete process.env.PATH
     else process.env.PATH = oldPath
