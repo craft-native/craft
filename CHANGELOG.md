@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.102...v0.0.103)
+
+## 🐛 Bug Fixes
+
+- **deps**: pin fast-uri to 3.1.7+ for GHSA-qw65-cvwx-89v3 and GHSA-58mr-gqgx-xq4g ([dcff522](https://github.com/craft-native/craft/commit/dcff522)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.103 ([bf8b741](https://github.com/craft-native/craft/commit/bf8b741)) _(by Chris <chrisbreuer93@gmail.com>)_
+
+## Contributors
+
+- _Chris <chrisbreuer93@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.101...v0.0.102)
 
 ## 🐛 Bug Fixes
