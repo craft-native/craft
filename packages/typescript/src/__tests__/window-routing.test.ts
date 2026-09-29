@@ -86,6 +86,30 @@ describe('typed window-handle routing', () => {
     ])
   })
 
+  it('routes portable controls and their readbacks to the retained child', async () => {
+    const settings = new Window('settings')
+
+    await settings.setBounds({ x: -20, width: 700 })
+    await settings.center()
+    await settings.setResizable(false)
+    callResult = false
+    expect(await settings.isResizable()).toBe(false)
+    await settings.setFullscreen(true)
+    await settings.toggleFullscreen()
+
+    expect(call.mock.calls.map(args => [args[0], args[2]])).toEqual([
+      ['setBounds', 'settings'],
+      ['center', 'settings'],
+      ['setResizable', 'settings'],
+      ['isResizable', 'settings'],
+      ['setFullscreen', 'settings'],
+      ['toggleFullscreen', 'settings'],
+    ])
+    expect(call.mock.calls[0]?.[1]).toEqual({ x: -20, width: 700, animate: undefined })
+    expect(call.mock.calls[2]?.[1]).toEqual({ resizable: false })
+    expect(call.mock.calls[4]?.[1]).toEqual({ fullscreen: true })
+  })
+
   it('loads content in the retained handle instead of the calling page', async () => {
     const settings = new Window('settings')
 

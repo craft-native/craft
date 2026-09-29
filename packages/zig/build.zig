@@ -1273,6 +1273,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const desktop_window_controls_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/desktop_window_controls.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     const desktop_bridge_envelope_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/desktop_bridge_envelope.zig"),
@@ -1768,6 +1776,7 @@ pub fn build(b: *std.Build) void {
     const run_window_context_tests = b.addRunArtifact(window_context_tests);
     const run_window_reply_target_tests = b.addRunArtifact(window_reply_target_tests);
     const run_desktop_window_registry_tests = b.addRunArtifact(desktop_window_registry_tests);
+    const run_desktop_window_controls_tests = b.addRunArtifact(desktop_window_controls_tests);
     const run_desktop_bridge_envelope_tests = b.addRunArtifact(desktop_bridge_envelope_tests);
     const run_desktop_bridge_text_tests = b.addRunArtifact(desktop_bridge_text_tests);
     const run_desktop_window_events_tests = b.addRunArtifact(desktop_window_events_tests);
@@ -1924,6 +1933,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_window_context_tests.step);
     test_step.dependOn(&run_window_reply_target_tests.step);
     test_step.dependOn(&run_desktop_window_registry_tests.step);
+    test_step.dependOn(&run_desktop_window_controls_tests.step);
     test_step.dependOn(&run_desktop_bridge_envelope_tests.step);
     test_step.dependOn(&run_desktop_bridge_text_tests.step);
     test_step.dependOn(&run_desktop_window_events_tests.step);

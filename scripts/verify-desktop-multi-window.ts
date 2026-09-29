@@ -11,6 +11,7 @@ const platformName = isWindows ? 'Windows' : 'Linux'
 
 const mainPage = `<!doctype html><script>
 (async () => {
+  const isWindows = ${isWindows}
   const report = (step) => fetch('/report?step=' + encodeURIComponent(step), { method: 'POST' })
   const waitFor = async (step) => {
     for (let attempt = 0; attempt < 200; attempt++) {
@@ -23,6 +24,24 @@ const mainPage = `<!doctype html><script>
   const child = (cycle) => window.craft.window.open({
     name: 'settings', title: 'Child ' + cycle,
     url: location.origin + '/child?cycle=' + cycle,
+    minWidth: 300, maxWidth: 1200,
+  })
+  const call = (action, data = {}, id = 'settings') => window.craft.window._call(action, data, id)
+  const waitSize = async (predicate, label) => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const size = await call('getSize')
+      if (predicate(size)) return size
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(label + ': child size never reached expected bounds')
+  }
+  const waitWindowEvent = (name) => new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(name + ' event missing')), 10000)
+    window.addEventListener('craft:window:' + name, (event) => {
+      if (event.detail.windowId !== 'settings') return
+      clearTimeout(timeout)
+      resolve()
+    }, { once: true })
   })
   try {
     if (!window.craft || !window.craft.window || !window.craft.window.open)
@@ -33,6 +52,8 @@ const mainPage = `<!doctype html><script>
     await waitFor('child-1')
     const bounds = await window.craft.window._call('getBounds', {}, 'settings')
     if (!(bounds.width > 0 && bounds.height > 0)) throw new Error('child bounds not routed to creator')
+    await call('setSize', { width: 100, height: 100 })
+    await waitSize(size => size.width >= 280, 'one-axis creation limits')
     await window.craft.window._call('setSize', { width: 640, height: 480 }, 'settings')
     let resized = false
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -46,6 +67,49 @@ const mainPage = `<!doctype html><script>
     if (!resized) throw new Error('live child resize did not change its size')
     const title = await window.craft.window._call('getTitle', {}, 'settings')
     if (title !== 'Child 1') throw new Error('child title not routed to creator: ' + title)
+
+    const mainBefore = await call('getBounds', {}, 'main')
+    await call('setBounds', { x: bounds.x + 20, y: bounds.y + 15, width: 700, height: 500 })
+    await waitSize(size => Math.abs(size.width - 700) <= 40 && Math.abs(size.height - 500) <= 40, 'setBounds')
+    const moved = await call('getBounds')
+    if (isWindows && (Math.abs(moved.x - bounds.x - 20) > 16 || Math.abs(moved.y - bounds.y - 15) > 16))
+      throw new Error('setBounds did not move the addressed Windows child')
+    await call('center')
+    const centered = await call('getBounds')
+    if (!Number.isFinite(centered.x) || !Number.isFinite(centered.y))
+      throw new Error('center returned invalid child coordinates')
+    await call('setResizable', { resizable: false })
+    if (await call('isResizable') !== false) throw new Error('child stayed resizable')
+    await call('setResizable', { resizable: true })
+    if (await call('isResizable') !== true) throw new Error('child stayed fixed-size')
+    await call('setMinimumSize', { width: 600, height: 420 })
+    await call('setMaximumSize', { width: 820, height: 620 })
+    await call('setSize', { width: 300, height: 200 })
+    await waitSize(size => size.width >= 580 && size.height >= 400, 'minimum size')
+    await call('setSize', { width: 1000, height: 800 })
+    await waitSize(size => size.width <= 860 && size.height <= 660, 'maximum size')
+    await call('setMinimumSize', { width: 1, height: 1 })
+    await call('setMaximumSize', { width: 4096, height: 4096 })
+    await call('setSize', { width: 700, height: 500 })
+    await waitSize(size => Math.abs(size.width - 700) <= 40 && Math.abs(size.height - 500) <= 40, 'restored size')
+    if (isWindows) {
+      const entered = waitWindowEvent('enter-fullscreen')
+      await call('setFullscreen', { fullscreen: true })
+      await entered
+      const left = waitWindowEvent('leave-fullscreen')
+      await call('toggleFullscreen')
+      await left
+    }
+    else {
+      // A bare Xvfb server has no window manager to honor fullscreen requests.
+      await call('setFullscreen', { fullscreen: true })
+      await call('toggleFullscreen')
+      await call('setFullscreen', { fullscreen: false })
+    }
+    const mainAfter = await call('getBounds', {}, 'main')
+    if (Math.abs(mainAfter.width - mainBefore.width) > 40 || Math.abs(mainAfter.height - mainBefore.height) > 40)
+      throw new Error('child controls changed the main window size')
+    await report('controls')
 
     const [queuedA, queuedB] = await Promise.all([
       window.craft.window.open({ name: 'queue-a', title: 'Child queue-a', url: location.origin + '/child?cycle=queue-a' }),
@@ -151,7 +215,7 @@ const server = createServer((request, response) => {
     if (step) steps.add(step)
     response.end('ok')
     if (step === 'done') {
-      const required = ['main', 'child-1', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
+      const required = ['main', 'child-1', 'controls', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
       if (required.every(name => steps.has(name))) resolveDone()
       else rejectDone(new Error(`incomplete smoke steps: ${[...steps].join(', ')}`))
     }

@@ -32,8 +32,10 @@ The `craft-native` SDK returns a typed `Window` handle. Runtime-created
 windows are available on macOS, Linux, and Windows and must provide either
 `html` or `url` content. The common create, close, title, geometry, and event
 routes are cross-platform; some advanced window controls remain macOS-only.
-On Linux, the window manager may ignore position requests, especially before
-the window is shown.
+Bounds, centering, resizing constraints, resizability and fullscreen controls
+also work on the typed handle on all three desktop platforms. On Linux,
+position and fullscreen requests are advisory to the window manager (and
+global positioning can be unavailable under Wayland).
 
 ```typescript
 import { createWindow } from 'craft-native'
@@ -62,7 +64,21 @@ const settings = await createWindow({
 })
 
 await settings.setTitle('Settings — Account')
+await settings.setBounds({ x: 120, y: 80, width: 800 })
+await settings.setMinimumSize(480, 360)
+await settings.setMaximumSize(1600, 1200)
+await settings.setResizable(false)
+const canResize = await settings.isResizable()
+await settings.center()
+await settings.setFullscreen(true)
+await settings.toggleFullscreen()
 ```
+
+The bounds update preserves omitted coordinates and dimensions. Native window
+managers can adjust requested geometry for decorations or screen constraints;
+read `getBounds()` after a resize event if you need the actual result.
+Creation-time `minWidth`/`minHeight` and `maxWidth`/`maxHeight` may constrain
+either axis independently; the native window system's own minimum still applies.
 
 The older `createWindow(html, options)` overload remains available when the
 content is already in a string.
