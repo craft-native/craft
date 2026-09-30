@@ -197,6 +197,7 @@ async function launchViaSdk(): Promise<void> {
   // Hosted runners have disposable clipboards. Do not replace a developer's
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
+  const testMultiWindow = testSystemClipboard
   const testDeepLink = testSystemClipboard && platform === 'macos'
   const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
@@ -207,6 +208,7 @@ async function launchViaSdk(): Promise<void> {
   const notificationId = `craft-installed-${randomUUID()}`
   let macPermissionDenied = false
   let macPermissionStatus = 'unknown'
+  let installedChildReady = false
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -239,6 +241,42 @@ async function launchViaSdk(): Promise<void> {
         }
         if (actual !== expected)
           throw new Error(JSON.stringify({ message: 'clipboard bridge round trip differed', actual }))
+      }
+      if (${testMultiWindow}) {
+        if (!window.craft.window?.open || !window.craft.window?._call)
+          throw new Error('installed app has no multi-window bridge')
+        const child = await window.craft.window.open({
+          name: 'installed-child', title: 'Craft installed child',
+          url: new URL('/installed-child', location.href).href,
+        })
+        if (child?.name !== 'installed-child') throw new Error('installed child returned the wrong handle')
+        let loaded = false
+        for (let attempt = 0; attempt < 100; attempt++) {
+          loaded = (await (await fetch('/installed-child-status')).json()).ready
+          if (loaded) break
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        if (!loaded) throw new Error('installed child page did not load within 10 seconds')
+        const title = await window.craft.window._call('getTitle', {}, child.name)
+        if (title !== 'Craft installed child') throw new Error('installed child title reached the wrong window')
+        await new Promise((resolve, reject) => {
+          const listener = event => {
+            if (event.detail.windowId !== child.name) return
+            clearTimeout(timeout)
+            window.removeEventListener('craft:window:close', listener)
+            resolve()
+          }
+          const timeout = setTimeout(() => {
+            window.removeEventListener('craft:window:close', listener)
+            reject(new Error('creator did not receive installed child close event'))
+          }, 10000)
+          window.addEventListener('craft:window:close', listener)
+          window.craft.window._call('close', {}, child.name).catch(error => {
+            clearTimeout(timeout)
+            window.removeEventListener('craft:window:close', listener)
+            reject(error)
+          })
+        })
       }
       if (${testLinuxNotification}) {
         if (!window.craft.notifications || !window.craft.notifications.requestPermission || !window.craft.notifications.show)
@@ -281,11 +319,32 @@ async function launchViaSdk(): Promise<void> {
       await fetch('/ready', { method: 'POST' })
     })().catch((error) => {
       const target = new URL('/failed', location.origin)
-      target.searchParams.set('reason', String(error?.stack || error))
+      target.searchParams.set('reason', String(error?.stack || error?.message || JSON.stringify(error) || error))
+      return fetch(target, { method: 'POST' })
+    })
+  </script>`
+  const childPage = `<!doctype html><title>Craft installed child</title><script>
+    (async function () {
+      if (!window.craft?.window?._call) throw new Error('installed child has no window bridge')
+      const title = await window.craft.window._call('getTitle', {}, 'main')
+      if (title !== 'Craft installed child') throw new Error('installed child page addressed another window')
+      await fetch('/installed-child-ready', { method: 'POST' })
+    })().catch(error => {
+      const target = new URL('/failed', location.origin)
+      target.searchParams.set('reason', String(error?.stack || error?.message || JSON.stringify(error) || error))
       return fetch(target, { method: 'POST' })
     })
   </script>`
   const server = createServer((request, response) => {
+    if (request.url === '/installed-child-ready' && request.method === 'POST') {
+      installedChildReady = true
+      response.writeHead(200).end('ok')
+      return
+    }
+    if (request.url === '/installed-child-status' && request.method === 'GET') {
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedChildReady }))
+      return
+    }
     if (request.url === '/ready' && request.method === 'POST') acceptReady()
     if (request.url?.startsWith('/deep-link?') && request.method === 'POST') {
       const received = new URL(request.url, 'http://127.0.0.1').searchParams.get('url')
@@ -300,7 +359,7 @@ async function launchViaSdk(): Promise<void> {
       macPermissionStatus = new URL(request.url, 'http://127.0.0.1').searchParams.get('status') || 'unknown'
     }
     response.writeHead(200, { 'Content-Type': 'text/html' })
-    response.end(page)
+    response.end(request.url?.startsWith('/installed-child') ? childPage : page)
   })
   let app: ReturnType<typeof createApp> | undefined
   let notificationObserver: Awaited<ReturnType<typeof startLinuxNotificationObserver>> | undefined
@@ -329,6 +388,8 @@ async function launchViaSdk(): Promise<void> {
         }),
       ])
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
+      if (testMultiWindow)
+        console.log('Installed app opened and closed a child window with creator-scoped events')
       if (testSystemClipboard) {
         const readCommand = platform === 'macos'
           ? ['pbpaste']

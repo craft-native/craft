@@ -158,7 +158,9 @@ The next multi-window milestone needs product decisions in addition to code:
    geometry/control smokes. CI runs Linux WebKitGTK under Xvfb and Windows
    WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
    launch a sample app through the SDK and compare escaped clipboard text
-   through the page bridge with the host OS clipboard. The macOS job also
+   through the page bridge with the host OS clipboard. Each installed app also
+   opens a child page, reads its addressed title, closes it, and requires the
+   named close event in the creator page. The macOS job also
    dispatches a registered URL scheme into the installed app. Its notification
    check queries Notification Center for the delivered ID when permission is
    granted, and reports a denied permission separately. The Linux job verifies

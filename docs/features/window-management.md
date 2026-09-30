@@ -517,7 +517,8 @@ same ID reuses the typed handle and reattaches those listeners. The unnamed
 primary window cannot be force-destroyed through this API. CI exercises Linux
 create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
 including concurrent child creation, scoped child events while unrelated pages
-are open, and stale-handle cleanup.
+are open, and stale-handle cleanup. Installed PKG, DEB and MSI smokes also
+create and close a child through the packaged runtime.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
 implemented routing guarantees, application-level event sinks and remaining
