@@ -25,6 +25,24 @@ pub fn geometry(allocator: std.mem.Allocator, action: []const u8, bounds: deskto
     return error.UnknownAction;
 }
 
+pub const State = struct {
+    is_visible: bool,
+    is_minimized: bool,
+    is_maximized: bool,
+    is_fullscreen: bool,
+    is_focused: bool,
+    is_always_on_top: bool,
+    bounds: desktop_window_registry.Geometry,
+};
+
+pub fn state(allocator: std.mem.Allocator, value: State) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "{{\"isVisible\":{},\"isMinimized\":{},\"isMaximized\":{},\"isFullscreen\":{},\"isFocused\":{},\"isAlwaysOnTop\":{},\"bounds\":{{\"x\":{d},\"y\":{d},\"width\":{d},\"height\":{d}}}}}",
+        .{ value.is_visible, value.is_minimized, value.is_maximized, value.is_fullscreen, value.is_focused, value.is_always_on_top, value.bounds.x, value.bounds.y, value.bounds.width, value.bounds.height },
+    );
+}
+
 /// Never return a name for an OS window that has already been destroyed or
 /// belongs to another process. Every page calls its own window `main`.
 pub fn focusedName(
@@ -56,6 +74,18 @@ test "read results preserve SDK shapes and escape names" {
     const full = try geometry(allocator, "getBounds", bounds);
     defer allocator.free(full);
     try std.testing.expectEqualStrings("{\"x\":-20,\"y\":30,\"width\":800,\"height\":600}", full);
+
+    const window_state = try state(allocator, .{
+        .is_visible = true,
+        .is_minimized = false,
+        .is_maximized = false,
+        .is_fullscreen = true,
+        .is_focused = true,
+        .is_always_on_top = false,
+        .bounds = bounds,
+    });
+    defer allocator.free(window_state);
+    try std.testing.expectEqualStrings("{\"isVisible\":true,\"isMinimized\":false,\"isMaximized\":false,\"isFullscreen\":true,\"isFocused\":true,\"isAlwaysOnTop\":false,\"bounds\":{\"x\":-20,\"y\":30,\"width\":800,\"height\":600}}", window_state);
 }
 
 test "focused name is scoped to a live window and the sender alias" {

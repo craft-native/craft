@@ -45,6 +45,7 @@ pub extern "c" fn gtk_window_unmaximize(window: *anyopaque) void;
 pub extern "c" fn gtk_window_iconify(window: *anyopaque) void;
 pub extern "c" fn gtk_widget_hide(widget: *anyopaque) void;
 pub extern "c" fn gtk_widget_show(widget: *anyopaque) void;
+pub extern "c" fn gtk_widget_get_visible(widget: *anyopaque) c_int;
 pub extern "c" fn gtk_window_move(window: *anyopaque, x: c_int, y: c_int) void;
 pub extern "c" fn gtk_window_get_position(window: *anyopaque, x: *c_int, y: *c_int) void;
 pub extern "c" fn gtk_window_get_size(window: *anyopaque, width: *c_int, height: *c_int) void;
@@ -602,6 +603,17 @@ fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
         }
         const name = desktop_window_reads.focusedName(&desktop_windows, entry.window, focused, window_registry.nameOf(focused));
         break :blk try desktop_window_reads.string(allocator, name);
+    } else if (std.mem.eql(u8, action, "getState")) blk: {
+        const flags = if (gtk_widget_get_window(window)) |gdk_window| gdk_window_get_state(gdk_window) else 0;
+        break :blk try desktop_window_reads.state(allocator, .{
+            .is_visible = gtk_widget_get_visible(window) != 0,
+            .is_minimized = (flags & 2) != 0,
+            .is_maximized = (flags & 4) != 0,
+            .is_fullscreen = (flags & 16) != 0,
+            .is_focused = gtk_window_is_active(window) != 0,
+            .is_always_on_top = entry.always_on_top,
+            .bounds = try windowGeometry(window),
+        });
     } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(window));
     defer allocator.free(json);
     bridge_error.sendResultToJS(allocator, action, json);
@@ -612,7 +624,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         return openNamedWindow(action, data);
     if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
         std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
-        std.mem.eql(u8, action, "getFocused"))
+        std.mem.eql(u8, action, "getFocused") or std.mem.eql(u8, action, "getState"))
         return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);

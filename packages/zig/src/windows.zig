@@ -169,6 +169,9 @@ pub extern "user32" fn SetWindowTextW(hWnd: HWND, lpString: LPCWSTR) callconv(.c
 pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.c) c_int;
 pub extern "user32" fn GetWindowTextW(hWnd: HWND, lpString: LPWSTR, nMaxCount: c_int) callconv(.c) c_int;
 pub extern "user32" fn GetForegroundWindow() callconv(.c) ?HWND;
+pub extern "user32" fn IsWindowVisible(HWND) callconv(.c) BOOL;
+pub extern "user32" fn IsIconic(HWND) callconv(.c) BOOL;
+pub extern "user32" fn IsZoomed(HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: UINT) callconv(.c) BOOL;
 pub extern "user32" fn LoadCursorW(hInstance: ?HINSTANCE, lpCursorName: LPCWSTR) callconv(.c) ?*anyopaque;
 pub extern "user32" fn GetClientRect(hWnd: HWND, lpRect: *RECT) callconv(.c) BOOL;
@@ -1508,6 +1511,17 @@ fn sendWindowRead(action: []const u8, data: ?[]const u8) !void {
         const focused = if (GetForegroundWindow()) |window| @intFromPtr(window) else 0;
         const name = desktop_window_reads.focusedName(&desktop_windows, entry.window, focused, window_registry.nameOf(focused));
         break :blk try desktop_window_reads.string(allocator, name);
+    } else if (std.mem.eql(u8, action, "getState")) blk: {
+        const focused = if (GetForegroundWindow()) |window| window == hwnd else false;
+        break :blk try desktop_window_reads.state(allocator, .{
+            .is_visible = IsWindowVisible(hwnd) != 0,
+            .is_minimized = IsIconic(hwnd) != 0,
+            .is_maximized = IsZoomed(hwnd) != 0,
+            .is_fullscreen = entry.fullscreen,
+            .is_focused = focused,
+            .is_always_on_top = (windowExStyle(hwnd) & WS_EX_TOPMOST) != 0,
+            .bounds = try windowGeometry(hwnd),
+        });
     } else try desktop_window_reads.geometry(allocator, action, try windowGeometry(hwnd));
     defer allocator.free(json);
     bridge_error.sendResultToJS(allocator, action, json);
@@ -1545,7 +1559,7 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         return openNamedWindow(action, data);
     if (std.mem.eql(u8, action, "getTitle") or std.mem.eql(u8, action, "getSize") or
         std.mem.eql(u8, action, "getPosition") or std.mem.eql(u8, action, "getBounds") or
-        std.mem.eql(u8, action, "getFocused"))
+        std.mem.eql(u8, action, "getFocused") or std.mem.eql(u8, action, "getState"))
         return sendWindowRead(action, data);
 
     const entry = try targetWindow(data);

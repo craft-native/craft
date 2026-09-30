@@ -18,6 +18,7 @@ whether it stores a window-specific target.
 | Per-window lifecycle events | Implemented | Implemented | Implemented |
 | Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
 | Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
+| Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
@@ -32,7 +33,11 @@ WebKitGTK view or the per-WebView2 event subscription; names select a target
 only after that native source is known.
 
 Linux reports the requested always-on-top setting because GTK delegates actual
-stacking to the window manager, which may ignore that request.
+stacking to the window manager, which may ignore that request. `getState()`
+reports that same requested setting on Linux; its other flags and bounds come
+from the live GTK/GDK window. Windows reads visibility, minimization,
+maximization, focus and topmost status from Win32; its fullscreen flag comes
+from Craft's borderless-fullscreen state.
 
 Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. The Linux and Windows GUI smokes resize
