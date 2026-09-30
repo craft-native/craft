@@ -172,7 +172,10 @@ The next multi-window milestone needs product decisions in addition to code:
    window size, then closes it with a named close event. The macOS job also
    dispatches a registered URL scheme into the installed app. Its notification
    check queries Notification Center for the delivered ID when permission is
-   granted, and reports a denied permission separately. The Linux job verifies
+   granted, and reports a denied permission separately. If macOS rejects the
+   authorization request, the smoke queries the actual status: only a confirmed
+   denial skips delivery, while an undetermined or inconsistent state fails.
+   The Linux job verifies
    a unique notification reached a desktop daemon over D-Bus. The Windows job
    checks its MSI-installed toast identity and Start-menu shortcut, then looks
    for the notification in Action Center. Signed/notarized release artifacts

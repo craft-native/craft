@@ -325,16 +325,28 @@ async function launchViaSdk(): Promise<void> {
         await window.craft.notifications.show({ title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
       }
       if (${testMacNotificationPermission}) {
-        const permission = await Promise.race([
-          window.craft.notifications.requestPermission({ provisional: true }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
-        ])
-        if (typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
+        let permission = null
+        let requestError = null
+        try {
+          permission = await Promise.race([
+            window.craft.notifications.requestPermission({ provisional: true }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
+          ])
+        }
+        catch (error) {
+          // An NSError is not a normal denial. Ask Notification Center for
+          // its actual state before classifying a runner that cannot prompt.
+          if (error?.code !== 'NATIVE_CALL_FAILED') throw error
+          requestError = error
+        }
         const status = await window.craft.notifications.getPermissionStatus()
         if (typeof status !== 'string') throw new Error('macOS notification authorization status was not a string')
         if (status === 'notDetermined' || status === 'unknown')
-          throw new Error(JSON.stringify({ message: 'macOS notification authorization did not reach a determined state', status }))
-        if (permission || status === 'authorized' || status === 'provisional') {
+          throw new Error(JSON.stringify({ message: 'macOS notification authorization did not reach a determined state', status, requestError }))
+        if (requestError && status !== 'denied')
+          throw new Error(JSON.stringify({ message: 'macOS notification request failed despite a non-denied status', status, requestError }))
+        if (!requestError && typeof permission !== 'boolean') throw new Error('macOS notification permission reply was not boolean')
+        if (permission || status === 'authorized' || status === 'provisional' || status === 'ephemeral') {
           await window.craft.notifications.show({ id: ${JSON.stringify(notificationId)}, title: ${JSON.stringify(notificationMarker)}, body: 'Installed-app integration smoke' })
           let delivered = false
           for (let attempt = 0; attempt < 50; attempt++) {

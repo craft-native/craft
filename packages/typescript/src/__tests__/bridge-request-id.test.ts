@@ -139,6 +139,17 @@ describe('bridge reply correlation', () => {
     expect(h.sent.map(message => message.a)).toEqual(['requestPermission'])
   })
 
+  it('keeps an authorization failure distinct from the separately queried status', async () => {
+    const h = loadBridge()
+    const request = h.craft.notifications.requestPermission({ provisional: true })
+    h.fail({ action: 'requestPermission', code: 'NATIVE_CALL_FAILED', message: 'Notifications are not allowed for this application', id: h.sent.at(-1)!.i! })
+    await expect(request).rejects.toMatchObject({ code: 'NATIVE_CALL_FAILED' })
+
+    const status = h.craft.notifications.getPermissionStatus()
+    h.reply('getPermissionStatus', 'denied', h.sent.at(-1)!.i!)
+    expect(await status).toBe('denied')
+  })
+
   it('uses WebView2 when WebKit is absent and preserves the reply id', async () => {
     const h = loadBridge('webview2')
     const pending = h.craft.tags.get('/windows')
