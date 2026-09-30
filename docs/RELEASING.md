@@ -27,6 +27,8 @@ macOS architectures plus Linux and Windows, and attaches and verifies all three
 SBOMs. A final job
 downloads the staged files again, checks the draft and manifest, and only then
 publishes the GitHub release. The pantry registry is notified after that step.
+Discord is notified only after the complete release is public, never from an
+individual platform's staging job.
 The npm job separately scans and publishes the public JavaScript packages.
 
 Watch the entire Releaser run, not just the release page. Confirm its final

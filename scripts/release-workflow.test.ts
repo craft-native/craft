@@ -45,7 +45,11 @@ test('registry indexing waits for the public release and all of its verification
   expect(release.jobs['publish-release'].if).toBeUndefined() // A failed or skipped gate cannot publish a draft.
   expect(notify.if).toBeUndefined() // Default success gating: never bypass failed prerequisites.
   expect(steps(notify)).toContain('https://registry.pantry.dev/api/rebuild')
+  expect(steps(notify)).toContain('All platform archives and release SBOMs verified.')
+  expect(notify.steps!.find(step => step.name === 'Announce only the complete public release')?.env?.DISCORD_WEBHOOK_URL).toBe('${{ secrets.DISCORD_WEBHOOK_URL }}')
   expect(steps(release.jobs['verify-release'])).not.toContain('/api/rebuild')
+  const stage = release.jobs.pantry.steps!.find(step => step.name === 'Publish to pantry and stage draft release')
+  expect((stage?.with as Record<string, unknown>)?.['discord-webhook']).toBeUndefined()
 })
 
 test('npm publication follows artifact validation, and macOS downloads run on both matching architectures', () => {
@@ -194,6 +198,34 @@ test('a registry network failure remains a visible best-effort warning', () => {
     })
     expect(result.exitCode).toBe(0)
     expect(result.stdout.toString()).toContain('::warning::Registry request failed')
+  }
+  finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('the post-publication Discord announcement names the complete release', () => {
+  const command = release.jobs['notify-registry'].steps!.find(step => step.name === 'Announce only the complete public release')?.run
+  expect(command).toBeDefined()
+  const root = mkdtempSync(join(tmpdir(), 'craft-release-announcement-'))
+  try {
+    const curl = join(root, 'curl')
+    const calls = join(root, 'curl-args')
+    writeFileSync(curl, '#!/bin/sh\nprintf "%s\\n" "$*" > "$CRAFT_TEST_CURL_ARGS"\nprintf 204\n')
+    chmodSync(curl, 0o755)
+    const result = Bun.spawnSync(['/bin/bash', '-e', '-o', 'pipefail', '-c', command!], {
+      env: {
+        ...process.env,
+        PATH: `${root}:${process.env.PATH}`,
+        DISCORD_WEBHOOK_URL: 'https://example.invalid/webhook',
+        CRAFT_TEST_CURL_ARGS: calls,
+        GITHUB_REPOSITORY: 'craft-native/craft',
+        TAG: 'v0.0.106',
+      },
+      stdout: 'pipe', stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.toString()).toContain('Complete release announced')
+    expect(readFileSync(calls, 'utf8')).toContain('craft v0.0.106 — Published')
+    expect(readFileSync(calls, 'utf8')).toContain('https://github.com/craft-native/craft/releases/tag/v0.0.106')
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })
