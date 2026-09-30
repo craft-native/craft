@@ -3,6 +3,10 @@
 `bun run release:patch` bumps the public workspace and Zig versions, commits the
 changelog, creates a tag, and pushes both. Run it only from a clean `main` that
 matches `origin/main`, after the SDK, package, lint, and type checks are green.
+The release hook generates the next changelog section before that commit,
+deduplicates repeated issue references, and links the previous and new tags.
+Do not run the hook again after it has written the section.
+
 The tag starts [Releaser](../.github/workflows/release.yml); pushing a tag is
 the publication trigger, not proof that the release finished.
 

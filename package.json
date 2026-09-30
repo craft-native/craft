@@ -58,9 +58,9 @@
     "dev": "cd packages/typescript && bun run dev",
     "changelog": "bun x logsmith --verbose",
     "changelog:preview": "bun scripts/changelog-preview.ts",
-    "changelog:generate": "bun x logsmith --output CHANGELOG.md",
+    "changelog:generate": "bun scripts/generate-release-changelog.ts",
     "release": "bun x --bun @stacksjs/bumpx prompt --recursive",
-    "release:patch": "bun x --bun @stacksjs/bumpx patch --recursive --commit --tag --push --yes --execute \"bun scripts/sync-release-version.ts && git add packages/zig/build.zig.zon packages/zig/pantry.json\""
+    "release:patch": "bun x --bun @stacksjs/bumpx patch --recursive --commit --tag --push --yes --no-changelog --execute \"bun scripts/sync-release-version.ts && bun scripts/generate-release-changelog.ts && git add packages/zig/build.zig.zon packages/zig/pantry.json CHANGELOG.md\""
   },
   "devDependencies": {
     "@stacksjs/buddy": "0.72.56",

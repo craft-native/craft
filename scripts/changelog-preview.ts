@@ -10,6 +10,17 @@ function git(cwd: string, args: string[]): string {
   return result.stdout.toString().trim()
 }
 
+/** Logsmith can report the same #ref from a commit subject and its body. */
+export function dedupeChangelogReferences(markdown: string): string {
+  const trailing = /^(.*) \((\[#\d+\]\(https?:\/\/[^)]+\/(?:issues|pull)\/\d+\)(?:, \[#\d+\]\(https?:\/\/[^)]+\/(?:issues|pull)\/\d+\))*)\)$/
+  return markdown.split('\n').map((line) => {
+    const match = line.match(trailing)
+    if (!match) return line
+    const references = match[2]!.split(', ')
+    return `${match[1]} (${[...new Set(references)].join(', ')})`
+  }).join('\n')
+}
+
 export function previewChangelog(cwd: string, from?: string, to = 'HEAD'): string {
   // Resolve refs before invoking the generator, so only commit hashes reach it.
   const start = from ?? git(cwd, ['describe', '--tags', '--abbrev=0'])
@@ -27,7 +38,7 @@ export function previewChangelog(cwd: string, from?: string, to = 'HEAD'): strin
     if (result.exitCode !== 0)
       throw new Error(`Changelog generation failed: ${result.stderr.toString().trim()}`)
     // The dependency can log an error and exit zero; a missing output is still failure.
-    return readFileSync(output, 'utf8')
+    return dedupeChangelogReferences(readFileSync(output, 'utf8'))
   }
   finally {
     rmSync(directory, { recursive: true, force: true })
