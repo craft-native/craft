@@ -10,6 +10,10 @@ Do not run the hook again after it has written the section.
 The tag starts [Releaser](../.github/workflows/release.yml); pushing a tag is
 the publication trigger, not proof that the release finished.
 
+Both release and CI setup pin Pantry CLI 0.11.64 as well as the Pantry action
+revision; leaving the CLI at `latest` would add a GitHub API lookup before the
+build can even start.
+
 ## Publication gates
 
 The macOS and Linux jobs build, sign where credentials exist, scan, and upload

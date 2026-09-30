@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,14 +7,26 @@ type Job = {
   needs?: string | string[]
   if?: string
   uses?: string
-  with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string }
-  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string> }[]
+  with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string, version?: string }
+  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string>, with?: { version?: string } }[]
   strategy?: { 'fail-fast'?: boolean, matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
 const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
+
+test('CI and release setup use a known Pantry CLI instead of resolving latest', () => {
+  for (const file of ['ci.yml', 'release.yml']) {
+    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      for (const step of job.steps ?? []) {
+        if (step.uses?.startsWith('pantry-pm/pantry/packages/action@'))
+          expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe('0.11.64')
+      }
+    }
+  }
+})
 
 test('every publishing path depends on release identity validation', () => {
   for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release'])
@@ -117,15 +129,21 @@ test('a failed native leg cannot make a partial GitHub release public', () => {
   }
 })
 
-test('the finalizer refuses a draft missing either macOS archive', () => {
+test('the finalizer refuses a draft missing either macOS archive without publishing it', () => {
   const command = release.jobs['publish-release'].steps!.find(step => step.name === 'Recheck the draft and its exact staged artifacts')?.run
+  const publish = release.jobs['publish-release'].steps!.find(step => step.name === 'Publish the complete draft')?.run
   expect(command).toBeDefined()
+  expect(publish).toBeDefined()
   const root = mkdtempSync(join(tmpdir(), 'craft-incomplete-draft-'))
   try {
     const gh = join(root, 'gh')
+    const edits = join(root, 'release-edits')
     writeFileSync(gh, `#!/bin/sh
 if [ "$2" = view ]; then
   printf 'true\\n'
+elif [ "$2" = edit ]; then
+  printf '%s\\n' "$*" >> "$CRAFT_TEST_GH_EDITS"
+  exit 0
 elif [ "$2" = download ]; then
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --dir ]; then
@@ -140,13 +158,14 @@ fi
 exit 1
 `)
     chmodSync(gh, 0o755)
-    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', command!], {
+    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `${command}\n${publish}`], {
       cwd: join(import.meta.dir, '..'),
       env: {
         ...process.env,
         PATH: `${root}:${process.env.PATH}`,
         TMPDIR: root,
         GH_TOKEN: 'fixture-not-a-token',
+        CRAFT_TEST_GH_EDITS: edits,
         TAG: 'v0.0.106',
         GITHUB_REPOSITORY: 'craft-native/craft',
         GITHUB_REF_NAME: 'v0.0.106',
@@ -156,6 +175,7 @@ exit 1
     })
     expect(result.exitCode).not.toBe(0)
     expect(result.stderr.toString()).toContain('Missing release archives: craft-darwin-arm64.zip, craft-darwin-x64.zip')
+    expect(existsSync(edits)).toBe(false)
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })

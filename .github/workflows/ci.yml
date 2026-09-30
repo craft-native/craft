@@ -33,6 +33,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Verify Zig installation
         run: zig version
@@ -115,6 +117,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun and Zig)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -183,6 +187,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -226,6 +232,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -250,6 +258,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -276,6 +286,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -324,6 +336,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -340,6 +354,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -364,6 +380,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -426,6 +444,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install dependencies
         run: bun install
@@ -481,6 +501,8 @@ jobs:
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
 
       - name: Install Dependencies
         run: bun install
