@@ -114,3 +114,21 @@ test('patch release uses the guarded changelog generator before committing', () 
   expect(command).toContain('bun scripts/generate-release-changelog.ts')
   expect(command).toContain('git add packages/zig/build.zig.zon packages/zig/pantry.json CHANGELOG.md')
 })
+
+test('bumpx commits and tags the guarded changelog without its duplicate generator', () => {
+  fixture((directory, git) => {
+    git('commit', '--allow-empty', '-qm', 'Merge pull request #326 from example/feature')
+    const bumpx = Bun.resolveSync('@stacksjs/bumpx/bin/cli.js', import.meta.dir)
+    const generator = join(import.meta.dir, 'generate-release-changelog.ts')
+    const result = Bun.spawnSync([
+      process.execPath, bumpx, 'patch', '--commit', '--tag', '--no-push', '--yes', '--no-changelog',
+      '--execute', `bun ${JSON.stringify(generator)} && git add CHANGELOG.md`,
+    ], { cwd: directory, stdout: 'pipe', stderr: 'pipe', timeout: 30_000 })
+    expect(result.exitCode, result.stderr.toString()).toBe(0)
+    expect(git('tag', '--list', 'v1.0.2')).toBe('v1.0.2\n')
+    const notes = git('show', 'HEAD:CHANGELOG.md')
+    expect(notes).toContain('[Compare changes](https://github.com/example/fixture/compare/v1.0.0...v1.0.2)')
+    expect(notes.match(/\[#326\]\(https:\/\/github\.com\/example\/fixture\/issues\/326\)/g)).toHaveLength(1)
+    expect(git('status', '--porcelain')).toBe('')
+  })
+})

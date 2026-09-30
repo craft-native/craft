@@ -3,6 +3,8 @@
 `bun run release:patch` bumps the public workspace and Zig versions, commits the
 changelog, creates a tag, and pushes both. Run it only from a clean `main` that
 matches `origin/main`, after the SDK, package, lint, and type checks are green.
+Run `bun run test:release` too; it exercises the release gates and performs an
+isolated bumpx commit/tag rehearsal without publishing or pushing a tag.
 The release hook generates the next changelog section before that commit,
 deduplicates repeated issue references, and links the previous and new tags.
 Do not run the hook again after it has written the section.
