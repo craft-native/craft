@@ -141,6 +141,34 @@ pub fn parseBool(data: ?[]const u8, key: []const u8) !bool {
     return value.bool;
 }
 
+fn pixelOffset(value: std.json.Value) !i32 {
+    const number: f64 = switch (value) {
+        .integer => |integer_value| @floatFromInt(integer_value),
+        .float => |float_value| float_value,
+        else => return error.InvalidParameter,
+    };
+    if (!std.math.isFinite(number)) return error.InvalidParameter;
+    const rounded = @round(number);
+    if (rounded < @as(f64, @floatFromInt(std.math.minInt(i32))) or
+        rounded > @as(f64, @floatFromInt(std.math.maxInt(i32))))
+        return error.InvalidParameter;
+    return @intFromFloat(rounded);
+}
+
+/// Move relative to the native window's current coordinate system. A missing
+/// axis means no movement, matching the existing macOS bridge contract.
+pub fn moveBy(data: ?[]const u8, current: Position) !Position {
+    var parsed = try object(data orelse return error.MissingData);
+    defer parsed.deinit();
+    const fields = parsed.value.object;
+    const dx = if (fields.get("dx")) |value| try pixelOffset(value) else 0;
+    const dy = if (fields.get("dy")) |value| try pixelOffset(value) else 0;
+    return .{
+        .x = std.math.cast(i32, @as(i64, current.x) + @as(i64, dx)) orelse return error.InvalidParameter,
+        .y = std.math.cast(i32, @as(i64, current.y) + @as(i64, dy)) orelse return error.InvalidParameter,
+    };
+}
+
 test "partial bounds preserve missing fields and reject invalid dimensions" {
     const only_x = try parseBounds("{\"x\":-12,\"animate\":true}");
     try std.testing.expectEqual(@as(?i32, -12), only_x.x);
@@ -167,6 +195,15 @@ test "portable control inputs require actual JSON booleans and integers" {
     try std.testing.expectError(error.InvalidParameter, parseBool("{\"fullscreen\":null}", "fullscreen"));
     try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640.5,\"height\":480}"));
     try std.testing.expectError(error.InvalidParameter, parseSize("{\"width\":640,\"height\":0}"));
+}
+
+test "relative moves accept finite subpixel offsets without overflowing native coordinates" {
+    const origin: Position = .{ .x = -100, .y = 20 };
+    try std.testing.expectEqualDeep(Position{ .x = -59, .y = -10 }, try moveBy("{\"dx\":40.5,\"dy\":-29.5}", origin));
+    try std.testing.expectEqualDeep(origin, try moveBy("{}", origin));
+    try std.testing.expectError(error.InvalidParameter, moveBy("{\"dx\":\"40\"}", origin));
+    try std.testing.expectError(error.InvalidParameter, moveBy("{\"dx\":1e100}", origin));
+    try std.testing.expectError(error.InvalidParameter, moveBy("{\"dx\":1}", .{ .x = std.math.maxInt(i32), .y = 0 }));
 }
 
 test "centering uses the selected monitor workarea including negative origins" {

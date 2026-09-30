@@ -1582,6 +1582,10 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
         const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
         if (SetWindowPos(hwnd, null, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) == 0) return error.NativeCallFailed;
+    } else if (std.mem.eql(u8, action, "moveBy")) {
+        const current = try windowGeometry(hwnd);
+        const next = try desktop_window_controls.moveBy(data, .{ .x = current.x, .y = current.y });
+        if (SetWindowPos(hwnd, null, next.x, next.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "setBounds")) {
         const update = try desktop_window_controls.parseBounds(data);
         const current = try windowGeometry(hwnd);

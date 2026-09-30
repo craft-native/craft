@@ -648,6 +648,10 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const x = json_utils.getInt(i32, json, "x") orelse return error.InvalidParameter;
         const y = json_utils.getInt(i32, json, "y") orelse return error.InvalidParameter;
         gtk_window_move(window, x, y);
+    } else if (std.mem.eql(u8, action, "moveBy")) {
+        const current = try windowGeometry(window);
+        const next = try desktop_window_controls.moveBy(data, .{ .x = current.x, .y = current.y });
+        gtk_window_move(window, next.x, next.y);
     } else if (std.mem.eql(u8, action, "setBounds")) {
         const update = try desktop_window_controls.parseBounds(data);
         const current = try windowGeometry(window);

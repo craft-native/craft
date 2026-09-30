@@ -17,6 +17,7 @@ whether it stores a window-specific target.
 | `executeJavaScript()` result and error replies | Implemented | Implemented with WebKitGTK | Implemented with WebView2 result API |
 | Per-window lifecycle events | Implemented | Implemented | Implemented |
 | Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
+| Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
