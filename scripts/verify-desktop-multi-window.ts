@@ -248,6 +248,40 @@ const mainPage = `<!doctype html><script>
     await waitFor('child-2')
     const reopenedTitle = await window.craft.window._call('getTitle', {}, 'settings')
     if (reopenedTitle !== 'Child 2') throw new Error('reopened child retained stale title')
+    await waitFor('grandchild-opened')
+    await waitFor('child-grandchild')
+    let liveOwnerRejected = false
+    try {
+      await window.craft.window.open({ name: 'grandchild', title: 'Wrong owner', url: location.origin + '/child?cycle=grandchild' })
+    }
+    catch (_) { liveOwnerRejected = true }
+    if (!liveOwnerRejected) throw new Error('another page acquired a child with a live creator')
+    const creatorClosed = waitWindowEvent('close')
+    await call('close')
+    await creatorClosed
+    if (await call('getTitle', {}, 'grandchild') !== 'Child grandchild')
+      throw new Error('unparented child did not survive creator destruction')
+    const adopted = await window.craft.window.open({ name: 'grandchild', title: 'Child grandchild', url: location.origin + '/child?cycle=grandchild' })
+    if (adopted.name !== 'grandchild') throw new Error('orphaned child could not be adopted')
+    await call('executeJavaScript', { code: 'window.__expectAdoptedResize = true' }, 'grandchild')
+    const adoptedResize = new Promise((resolve, reject) => {
+      const listener = (event) => {
+        if (event.detail.windowId !== 'grandchild') return
+        clearTimeout(timeout)
+        window.removeEventListener('craft:window:resize', listener)
+        resolve()
+      }
+      const timeout = setTimeout(() => {
+        window.removeEventListener('craft:window:resize', listener)
+        reject(new Error('adopted child event did not reach its new creator'))
+      }, 10000)
+      window.addEventListener('craft:window:resize', listener)
+    })
+    await call('setSize', { width: 760, height: 540 }, 'grandchild')
+    await adoptedResize
+    await waitFor('grandchild-local-resize')
+    await call('close', {}, 'grandchild')
+    await report('orphan-adopted')
     await report('done')
   }
   catch (error) {
@@ -277,7 +311,16 @@ const childPage = `<!doctype html><script>
       }
       if (cycle === '1' && reloaded)
         fetch('/report?step=settings-local-resize', { method: 'POST' })
+      if (cycle === 'grandchild' && window.__expectAdoptedResize)
+        fetch('/report?step=grandchild-local-resize', { method: 'POST' })
     })
+    if (cycle === '2') {
+      const grandchild = await window.craft.window.open({
+        name: 'grandchild', title: 'Child grandchild', url: location.origin + '/child?cycle=grandchild',
+      })
+      if (grandchild.name !== 'grandchild') throw new Error('child page opened the wrong grandchild')
+      await fetch('/report?step=grandchild-opened', { method: 'POST' })
+    }
     await fetch('/report?step=child-' + cycle + (reloaded ? '-reloaded' : ''), { method: 'POST' })
   }
   catch (error) {
@@ -312,7 +355,7 @@ const server = createServer((request, response) => {
     if (step) steps.add(step)
     response.end('ok')
     if (step === 'done') {
-      const required = ['main', 'child-1', 'controls', 'child-1-reloaded', 'child-queue-a', 'child-queue-b', 'settings-local-resize', 'owned-events', 'queued-closed', 'closed', 'child-2', 'done']
+      const required = ['main', 'child-1', 'controls', 'child-1-reloaded', 'child-queue-a', 'child-queue-b', 'settings-local-resize', 'owned-events', 'queued-closed', 'closed', 'child-2', 'grandchild-opened', 'child-grandchild', 'grandchild-local-resize', 'orphan-adopted', 'done']
       if (required.every(name => steps.has(name))) resolveDone()
       else rejectDone(new Error(`incomplete smoke steps: ${[...steps].join(', ')}`))
     }
