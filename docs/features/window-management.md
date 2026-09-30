@@ -516,7 +516,8 @@ resources and detaches its SDK DOM listeners. A later `createWindow()` with the
 same ID reuses the typed handle and reattaches those listeners. The unnamed
 primary window cannot be force-destroyed through this API. CI exercises Linux
 create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
-including concurrent child creation and stale-handle cleanup.
+including concurrent child creation, scoped child events while unrelated pages
+are open, and stale-handle cleanup.
 Modal/parent semantics are not part of the runtime-created-window contract yet.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
 implemented routing guarantees, application-level event sinks and remaining

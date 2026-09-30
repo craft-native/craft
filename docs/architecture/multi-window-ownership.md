@@ -29,7 +29,10 @@ Linux and Windows keep their live native window/webview pairs in
 WebKitGTK view or the per-WebView2 event subscription; names select a target
 only after that native source is known.
 Replies go back to the requesting view, and lifecycle events go to the changed
-window plus its named handle's creator. Linux must register its `GtkApplication`
+window plus its named handle's creator. The Linux and Windows GUI smokes resize
+a child while two unrelated child pages are live, requiring the changed page's
+local event and the creator's named event without broadcasting to those pages.
+Linux must register its `GtkApplication`
 before constructing the first `GtkApplicationWindow`, because the CLI creates
 that window before entering `g_application_run()`. On Windows, the controller
 passed to the asynchronous WebView2 completion callback is borrowed. Each live

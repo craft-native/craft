@@ -36,12 +36,17 @@ const mainPage = `<!doctype html><script>
     throw new Error(label + ': child size never reached expected bounds')
   }
   const waitWindowEvent = (name) => new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error(name + ' event missing')), 10000)
-    window.addEventListener('craft:window:' + name, (event) => {
+    const listener = (event) => {
       if (event.detail.windowId !== 'settings') return
       clearTimeout(timeout)
+      window.removeEventListener('craft:window:' + name, listener)
       resolve()
-    }, { once: true })
+    }
+    const timeout = setTimeout(() => {
+      window.removeEventListener('craft:window:' + name, listener)
+      reject(new Error(name + ' event missing'))
+    }, 10000)
+    window.addEventListener('craft:window:' + name, listener)
   })
   const checkRacedEvaluation = async (pending, label) => {
     let timer
@@ -164,6 +169,14 @@ const mainPage = `<!doctype html><script>
       throw new Error('concurrent child opens returned the wrong handles')
     await waitFor('child-queue-a')
     await waitFor('child-queue-b')
+    const ownerResize = waitWindowEvent('resize')
+    await call('setSize', { width: 740, height: 530 })
+    await ownerResize
+    await waitFor('settings-local-resize')
+    // The queue pages have installed their listeners before reporting ready.
+    // Give an accidentally broadcast event time to reach either one.
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await report('owned-events')
     const queueClosed = new Set()
     const queueClosedDone = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('queued child close events missing')), 20000)
@@ -236,6 +249,14 @@ const childPage = `<!doctype html><script>
     const ownTitle = await window.craft.window._call('executeJavaScript', { code: 'document.title' }, 'main')
     if (ownTitle !== expectedTitle)
       throw new Error('child evaluation reply escaped to its creator page')
+    window.addEventListener('craft:window:resize', event => {
+      if (event.detail.windowId !== 'main') {
+        fetch('/report?error=' + encodeURIComponent('unrelated window resize reached ' + cycle), { method: 'POST' })
+        return
+      }
+      if (cycle === '1' && reloaded)
+        fetch('/report?step=settings-local-resize', { method: 'POST' })
+    })
     await fetch('/report?step=child-' + cycle + (reloaded ? '-reloaded' : ''), { method: 'POST' })
   }
   catch (error) {
@@ -270,7 +291,7 @@ const server = createServer((request, response) => {
     if (step) steps.add(step)
     response.end('ok')
     if (step === 'done') {
-      const required = ['main', 'child-1', 'controls', 'child-1-reloaded', 'child-queue-a', 'child-queue-b', 'queued-closed', 'closed', 'child-2', 'done']
+      const required = ['main', 'child-1', 'controls', 'child-1-reloaded', 'child-queue-a', 'child-queue-b', 'settings-local-resize', 'owned-events', 'queued-closed', 'closed', 'child-2', 'done']
       if (required.every(name => steps.has(name))) resolveDone()
       else rejectDone(new Error(`incomplete smoke steps: ${[...steps].join(', ')}`))
     }
