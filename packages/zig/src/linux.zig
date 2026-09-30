@@ -903,6 +903,16 @@ pub const Window = struct {
         };
         if (!desktop_windows.setAlwaysOnTop(@intFromPtr(window), options.always_on_top))
             return error.WindowHandleNotSet;
+        // GTK may not deliver the first configure notification until after
+        // the document starts. Seed the requested geometry now, or a page's
+        // first setSize becomes the registry's silent baseline instead of a
+        // resize event delivered to the child and its creator.
+        _ = desktop_windows.observeGeometry(@intFromPtr(window), .{
+            .x = x,
+            .y = y,
+            .width = options.width,
+            .height = options.height,
+        });
         if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0 or
             g_signal_connect_data(webview, "load-changed", @ptrCast(&onWindowNavigation), null, null, 0) == 0)
         {

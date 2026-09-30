@@ -37,9 +37,11 @@ Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. The Linux and Windows GUI smokes resize
 a child while two unrelated child pages are live, requiring the changed page's
 local event and the creator's named event without broadcasting to those pages.
-Linux must register its `GtkApplication`
-before constructing the first `GtkApplicationWindow`, because the CLI creates
-that window before entering `g_application_run()`. On Windows, the controller
+Linux must register its `GtkApplication` before constructing the first
+`GtkApplicationWindow`, because the CLI creates that window before entering
+`g_application_run()`. It seeds each window's initial geometry before the page
+loads so the first page-requested resize emits a lifecycle event instead of
+silently setting a baseline. On Windows, the controller
 passed to the asynchronous WebView2 completion callback is borrowed. Each live
 window retains its own controller reference until native destruction; otherwise
 WebView2 can close before the page bridge registers or navigation begins.

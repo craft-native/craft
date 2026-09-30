@@ -264,8 +264,10 @@ async function launchViaSdk(): Promise<void> {
         const mainSize = await window.craft.window._call('getSize', {}, 'main')
         await fetch('/installed-child-arm', { method: 'POST' })
         await new Promise((resolve, reject) => {
+          let lastResize = null
           const listener = event => {
             if (event.detail.windowId !== child.name) return
+            lastResize = event.detail
             if (!Number.isFinite(event.detail.width) || !Number.isFinite(event.detail.height)) return
             if (Math.abs(event.detail.width - 720) > 60 || Math.abs(event.detail.height - 510) > 60) return
             clearTimeout(timeout)
@@ -274,7 +276,7 @@ async function launchViaSdk(): Promise<void> {
           }
           const timeout = setTimeout(() => {
             window.removeEventListener('craft:window:resize', listener)
-            reject(new Error('creator did not receive installed child resize event'))
+            reject(new Error(['creator did not receive installed child resize event:', JSON.stringify(lastResize)].join(' ')))
           }, 10000)
           window.addEventListener('craft:window:resize', listener)
           window.craft.window._call('setSize', { width: 720, height: 510 }, child.name).catch(error => {
@@ -356,7 +358,7 @@ async function launchViaSdk(): Promise<void> {
       await fetch('/ready', { method: 'POST' })
     })().catch((error) => {
       const target = new URL('/failed', location.origin)
-      target.searchParams.set('reason', String(error?.stack || error?.message || JSON.stringify(error) || error))
+      target.searchParams.set('reason', [String(error?.message || error), error?.stack].filter(Boolean).join(' | '))
       return fetch(target, { method: 'POST' })
     })
   </script>`
@@ -374,7 +376,7 @@ async function launchViaSdk(): Promise<void> {
       await fetch('/installed-child-ready', { method: 'POST' })
     })().catch(error => {
       const target = new URL('/failed', location.origin)
-      target.searchParams.set('reason', String(error?.stack || error?.message || JSON.stringify(error) || error))
+      target.searchParams.set('reason', [String(error?.message || error), error?.stack].filter(Boolean).join(' | '))
       return fetch(target, { method: 'POST' })
     })
   </script>`
