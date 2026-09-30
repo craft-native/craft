@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const requiredAssets = ['craft-darwin-arm64.zip', 'craft-darwin-x64.zip', 'craft-linux-x64.zip', 'craft-windows-x64.zip']
+export const requiredReleaseAssets = ['craft-darwin-arm64.zip', 'craft-darwin-x64.zip', 'craft-linux-x64.zip', 'craft-windows-x64.zip'] as const
 
 type ReleaseIdentity = { repository: string, tag: string, commit: string }
 type ReleaseAsset = { name: string, size: number, sha256: string }
@@ -12,7 +12,7 @@ export function createReleaseManifest(identity: ReleaseIdentity, directory: stri
   if (!/^[\w.-]+\/[\w.-]+$/.test(identity.repository) || !/^v\d+\.\d+\.\d+(?:[-+][\w.+-]+)?$/.test(identity.tag) || !/^[a-f\d]{40}$/i.test(identity.commit))
     throw new Error('Release manifest requires repository, version tag, and full commit identity')
   const names = readdirSync(directory).filter(name => /^craft-.*\.zip$/.test(name)).sort()
-  const missing = requiredAssets.filter(name => !names.includes(name))
+  const missing = requiredReleaseAssets.filter(name => !names.includes(name))
   if (missing.length)
     throw new Error(`Missing release archives: ${missing.join(', ')}`)
   const assets = names.map((name) => {

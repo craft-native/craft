@@ -2,10 +2,10 @@ import { expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createReleaseManifest, verifyReleaseManifest } from './release-manifest'
+import { createReleaseManifest, requiredReleaseAssets, verifyReleaseManifest } from './release-manifest'
 
 const identity = { repository: 'craft-native/craft', tag: 'v0.0.93', commit: 'a'.repeat(40) }
-const names = ['craft-darwin-arm64.zip', 'craft-darwin-x64.zip', 'craft-linux-x64.zip', 'craft-windows-x64.zip']
+const names = requiredReleaseAssets
 
 function withArchives(check: (dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), 'craft-manifest-'))
@@ -35,13 +35,15 @@ test('rejects the macOS-only manifest shape that shipped in v0.0.92', () => {
   })
 })
 
-test('requires Windows and rejects empty archives', () => {
-  withArchives((dir) => {
-    rmSync(join(dir, 'craft-windows-x64.zip'))
-    expect(() => createReleaseManifest(identity, dir)).toThrow('craft-windows-x64.zip')
-    writeFileSync(join(dir, 'craft-windows-x64.zip'), '')
-    expect(() => createReleaseManifest(identity, dir)).toThrow('empty')
-  })
+test('requires every platform archive and rejects empty archives', () => {
+  for (const missing of names) {
+    withArchives((dir) => {
+      rmSync(join(dir, missing))
+      expect(() => createReleaseManifest(identity, dir)).toThrow(missing)
+      writeFileSync(join(dir, missing), '')
+      expect(() => createReleaseManifest(identity, dir)).toThrow('empty')
+    })
+  }
 })
 
 test('rejects changed bytes, duplicate assets, unexpected names and stale identity', () => {

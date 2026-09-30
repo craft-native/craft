@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { requiredReleaseAssets } from './release-manifest'
 
 type Job = {
   needs?: string | string[]
@@ -111,6 +112,8 @@ test('a failed native leg cannot make a partial GitHub release public', () => {
   expect(stage?.with?.['release-draft']).toBe('true')
   expect(steps(release.jobs.pantry)).not.toContain('gh release edit')
   expect(steps(release.jobs['verify-release'])).toContain('--json isDraft -q .isDraft')
+  const assetPrecheck = steps(release.jobs['verify-release']).match(/REQUIRED="([^"]+)"/)
+  expect(assetPrecheck?.[1]?.split(' ')).toEqual([...requiredReleaseAssets])
 
   const finalizer = release.jobs['publish-release']
   expect(finalizer).toBeDefined()
@@ -133,7 +136,7 @@ test('a failed native leg cannot make a partial GitHub release public', () => {
   }
 })
 
-test('the finalizer refuses a draft missing either macOS archive without publishing it', () => {
+test('the finalizer refuses a draft missing any required archive without publishing it', () => {
   const command = release.jobs['publish-release'].steps!.find(step => step.name === 'Recheck the draft and its exact staged artifacts')?.run
   const publish = release.jobs['publish-release'].steps!.find(step => step.name === 'Publish the complete draft')?.run
   expect(command).toBeDefined()
@@ -152,8 +155,11 @@ elif [ "$2" = download ]; then
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --dir ]; then
       mkdir -p "$2"
-      printf linux > "$2/craft-linux-x64.zip"
-      printf windows > "$2/craft-windows-x64.zip"
+      for asset in craft-darwin-arm64.zip craft-darwin-x64.zip craft-linux-x64.zip craft-windows-x64.zip; do
+        if [ "$asset" != "$CRAFT_TEST_MISSING_ASSET" ]; then
+          printf '%s' "$asset" > "$2/$asset"
+        fi
+      done
       exit 0
     fi
     shift
@@ -162,24 +168,27 @@ fi
 exit 1
 `)
     chmodSync(gh, 0o755)
-    const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `${command}\n${publish}`], {
-      cwd: join(import.meta.dir, '..'),
-      env: {
-        ...process.env,
-        PATH: `${root}:${process.env.PATH}`,
-        TMPDIR: root,
-        GH_TOKEN: 'fixture-not-a-token',
-        CRAFT_TEST_GH_EDITS: edits,
-        TAG: 'v0.0.106',
-        GITHUB_REPOSITORY: 'craft-native/craft',
-        GITHUB_REF_NAME: 'v0.0.106',
-        GITHUB_SHA: 'a'.repeat(40),
-      },
-      stdout: 'pipe', stderr: 'pipe',
-    })
-    expect(result.exitCode).not.toBe(0)
-    expect(result.stderr.toString()).toContain('Missing release archives: craft-darwin-arm64.zip, craft-darwin-x64.zip')
-    expect(existsSync(edits)).toBe(false)
+    for (const missing of requiredReleaseAssets) {
+      const result = Bun.spawnSync(['bash', '-e', '-o', 'pipefail', '-c', `${command}\n${publish}`], {
+        cwd: join(import.meta.dir, '..'),
+        env: {
+          ...process.env,
+          PATH: `${root}:${process.env.PATH}`,
+          TMPDIR: root,
+          GH_TOKEN: 'fixture-not-a-token',
+          CRAFT_TEST_GH_EDITS: edits,
+          CRAFT_TEST_MISSING_ASSET: missing,
+          TAG: 'v0.0.106',
+          GITHUB_REPOSITORY: 'craft-native/craft',
+          GITHUB_REF_NAME: 'v0.0.106',
+          GITHUB_SHA: 'a'.repeat(40),
+        },
+        stdout: 'pipe', stderr: 'pipe',
+      })
+      expect(result.exitCode, missing).not.toBe(0)
+      expect(result.stderr.toString()).toContain(`Missing release archives: ${missing}`)
+      expect(existsSync(edits), `${missing} must not publish`).toBe(false)
+    }
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })
