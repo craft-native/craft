@@ -36,6 +36,8 @@ jobs:
 
       - name: Setup Zig
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
       - name: Install Linux dependencies
         run: |
           sudo apt-get update

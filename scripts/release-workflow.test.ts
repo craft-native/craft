@@ -16,8 +16,8 @@ const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
 
-test('CI and release setup use a known Pantry CLI instead of resolving latest', () => {
-  for (const file of ['ci.yml', 'release.yml']) {
+test('workflow setup uses a known Pantry CLI instead of resolving latest', () => {
+  for (const file of ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'benchmarks.yml', 'binary-size.yml', 'native-lifecycle.yml']) {
     const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }
     for (const [name, job] of Object.entries(workflow.jobs)) {
       for (const step of job.steps ?? []) {
