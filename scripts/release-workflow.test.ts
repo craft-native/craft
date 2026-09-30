@@ -9,7 +9,7 @@ type Job = {
   if?: string
   uses?: string
   with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string, version?: string }
-  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string>, with?: { version?: string } }[]
+  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string>, with?: { version?: string, publish?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
   strategy?: { 'fail-fast'?: boolean, matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
@@ -30,7 +30,7 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
 })
 
 test('every publishing path depends on release identity validation', () => {
-  for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release'])
+  for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release', 'publish-pantry'])
     expect(needs(release.jobs[name])).toContain('validate-release')
   for (const name of ['verify-release', 'verify-macos-downloads'])
     expect(release.jobs[name].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' }}")
@@ -41,7 +41,7 @@ test('every publishing path depends on release identity validation', () => {
 test('registry indexing waits for the public release and all of its verification gates', () => {
   const notify = release.jobs['notify-registry']
   expect(notify).toBeDefined()
-  expect(needs(notify)).toEqual(['publish-release'])
+  expect(needs(notify)).toEqual(['publish-release', 'publish-pantry'])
   expect(needs(release.jobs['publish-release']).sort()).toEqual(['attach-release-sbom', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release'])
   expect(release.jobs['publish-release'].if).toBeUndefined() // A failed or skipped gate cannot publish a draft.
   expect(notify.if).toBeUndefined() // Default success gating: never bypass failed prerequisites.
@@ -49,7 +49,7 @@ test('registry indexing waits for the public release and all of its verification
   expect(steps(notify)).toContain('All platform archives and release SBOMs verified.')
   expect(notify.steps!.find(step => step.name === 'Announce only the complete public release')?.env?.DISCORD_WEBHOOK_URL).toBe('${{ secrets.DISCORD_WEBHOOK_URL }}')
   expect(steps(release.jobs['verify-release'])).not.toContain('/api/rebuild')
-  const stage = release.jobs.pantry.steps!.find(step => step.name === 'Publish to pantry and stage draft release')
+  const stage = release.jobs.pantry.steps!.find(step => step.name === 'Stage draft release')
   expect((stage?.with as Record<string, unknown>)?.['discord-webhook']).toBeUndefined()
 })
 
@@ -65,7 +65,7 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   expect(release.jobs.npm.steps!.find(step => step.name === 'Publish scanned npm archives')?.env?.NODE_AUTH_TOKEN).toBe('${{ secrets.NPM_TOKEN }}')
   const native = release.jobs.pantry.steps!
   expect(native.findIndex(step => step.name === 'Scan binaries prepared for publication')).toBeGreaterThan(native.findIndex(step => step.name === 'Notarize macOS binaries'))
-  expect(native.findIndex(step => step.name === 'Publish to pantry and stage draft release')).toBeGreaterThan(native.findIndex(step => step.name === 'Scan binaries prepared for publication'))
+  expect(native.findIndex(step => step.name === 'Stage draft release')).toBeGreaterThan(native.findIndex(step => step.name === 'Scan binaries prepared for publication'))
   expect(native.find(step => step.name === 'Scan binaries prepared for publication')?.run)
     .toBe('bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"')
   expect(native.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
@@ -91,11 +91,11 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   expect(steps(release.jobs['attach-release-sbom'])).toContain('cmp "sbom/$document" "$VERIFY_DIR/$document"')
 })
 
-test('Windows release stages the pinned WebView2 loader before scanning and publishing', () => {
+test('Windows release stages the pinned WebView2 loader before scanning and draft upload', () => {
   const native = release.jobs.pantry.steps!
   const staged = native.findIndex(step => step.name === 'Stage Windows WebView2 loader')
   const scan = native.findIndex(step => step.name === 'Scan binaries prepared for publication')
-  const publish = native.findIndex(step => step.name === 'Publish to pantry and stage draft release')
+  const publish = native.findIndex(step => step.name === 'Stage draft release')
   expect(staged).toBeGreaterThan(native.findIndex(step => step.name === 'Cross-compile additional targets (Linux)'))
   expect(scan).toBeGreaterThan(staged)
   expect(publish).toBeGreaterThan(scan)
@@ -105,11 +105,13 @@ test('Windows release stages the pinned WebView2 loader before scanning and publ
   expect(command).toContain('zig-out/cross/windows-x64/WebView2Loader.dll')
 })
 
-test('a failed native leg cannot make a partial GitHub release public', () => {
-  const stage = release.jobs.pantry.steps!.find(step => step.name === 'Publish to pantry and stage draft release')
+test('a failed native leg cannot make a partial GitHub release or Zig registry version public', () => {
+  const stage = release.jobs.pantry.steps!.find(step => step.name === 'Stage draft release')
   expect(release.jobs.pantry.strategy?.['fail-fast']).toBe(false)
   expect(stage?.with?.release).toBe('true')
   expect(stage?.with?.['release-draft']).toBe('true')
+  expect(stage?.with?.publish).toBeUndefined()
+  expect(release.jobs.pantry.steps!.filter(step => step.with?.publish === 'zig')).toHaveLength(0)
   expect(steps(release.jobs.pantry)).not.toContain('gh release edit')
   expect(steps(release.jobs['verify-release'])).toContain('--json isDraft -q .isDraft')
   const assetPrecheck = steps(release.jobs['verify-release']).match(/REQUIRED="([^"]+)"/)
@@ -130,6 +132,14 @@ test('a failed native leg cannot make a partial GitHub release public', () => {
   expect(finalizer.steps![verify]?.run).toContain('scripts/release-manifest.ts verify')
   expect(finalizer.steps![verify]?.run).toContain('scripts/verify-sbom.ts')
   expect(finalizer.steps![publish]?.run).toContain('--draft=false')
+  const registry = release.jobs['publish-pantry']
+  expect(registry.if).toBeUndefined()
+  expect(needs(registry)).toEqual(['validate-release', 'publish-release'])
+  const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
+  expect(zigPublish?.with).toMatchObject({ version: '0.11.64', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
+  expect(zigPublish?.with?.release).toBeUndefined()
+  expect(Object.entries(release.jobs).flatMap(([name, job]) =>
+    (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])
   for (const [name, job] of Object.entries(release.jobs)) {
     if (name !== 'publish-release')
       expect(steps(job), `${name} must not publish the draft`).not.toContain('--draft=false')

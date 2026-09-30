@@ -23,14 +23,15 @@ build can even start.
 The macOS and Linux jobs build, sign where credentials exist, scan, and upload
 their platform archives to a **draft** GitHub release. The Linux job also
 provides the Windows cross-build. A failed job may leave a private draft, but
-cannot make a partial release public.
+cannot make a partial GitHub release or Zig registry version public.
 
 After both native jobs succeed, the workflow checks the four required archives,
 publishes and verifies a SHA-256 manifest, runs downloaded binaries on both
 macOS architectures plus Linux and Windows, and attaches and verifies all three
 SBOMs. A final job
 downloads the staged files again, checks the draft and manifest, and only then
-publishes the GitHub release. The pantry registry is notified after that step.
+publishes the GitHub release. Only then does a separate job publish the Zig
+package to pantry and notify the registry to index the complete release.
 Discord is notified only after the complete release is public, never from an
 individual platform's staging job.
 The npm job separately scans and publishes the public JavaScript packages.
@@ -49,6 +50,8 @@ publishing the incomplete draft. Do not interpret a successful tag push or a
 partial set of staged archives as a completed release.
 
 The GitHub release is gated as a unit; the underlying package registries do not
-offer a cross-registry transaction. A Zig or npm version may become visible
-before the final GitHub publication gate, so the final workflow status remains
-the release signal.
+offer a cross-registry transaction. The Zig package waits for the completed
+GitHub release, but npm publication is deliberately independent and may become
+visible earlier. The final workflow status remains the release signal. If the
+post-release Zig publication fails, the GitHub release still contains the full
+verified archive set; rerun that failed job rather than republishing the draft.

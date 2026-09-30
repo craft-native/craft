@@ -335,22 +335,15 @@ jobs:
         run: bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"
 
       # ── Stage the release privately ────────────────────
-      # Pantry action handles everything:
-      # 1. Publishes to pantry registry (zig package)
-      # 2. Auto-packages binaries from zig-out/ into platform-named zips
-      # 3. Adds this leg's scanned archives to a draft GitHub release. Neither
-      #    leg can make a partial release public; publish-release does that only
-      #    after both legs and the downstream verification jobs succeed.
-      # Do not configure the action's webhook here: it sends that notification
-      # immediately after pantry publish, before the draft and its gates exist.
-      - name: Publish to pantry and stage draft release
+      # The action packages binaries from zig-out/ into platform-named zips
+      # and adds this leg's scanned archives to a draft GitHub release. Do not
+      # publish the Zig package here: a failed second leg would otherwise make
+      # an incomplete version visible in the pantry registry.
+      - name: Stage draft release
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
         with:
           version: '0.11.64'
           install: 'false'
-          publish: 'zig'
-          package-dir: packages/zig
-          token: ${{ secrets.PANTRY_TOKEN }}
           release: 'true'
           release-draft: 'true'
           release-changelog: CHANGELOG.md
@@ -426,9 +419,29 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json --dir "$ARCHIVE_DIR/verified"
           bun scripts/release-manifest.ts verify "$ARCHIVE_DIR" "$ARCHIVE_DIR/verified/release-manifest.json"
 
+  publish-pantry:
+    name: publish verified Zig package to pantry
+    needs: [validate-release, publish-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      # Zig publication reads build.zig.zon and packages its declared source
+      # paths; it does not rebuild a platform binary. The complete GitHub
+      # release is public before this registry version can become visible.
+      - name: Publish Zig package
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
+          install: 'false'
+          publish: 'zig'
+          package-dir: packages/zig
+          token: ${{ secrets.PANTRY_TOKEN }}
+
   notify-registry:
     name: notify registry and channel after publication
-    needs: publish-release
+    needs: [publish-release, publish-pantry]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
