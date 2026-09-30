@@ -165,9 +165,9 @@ export interface WindowCreateOptions {
   vibrancy?: 'appearance-based' | 'light' | 'dark' | 'titlebar' | 'selection' | 'menu' | 'popover' | 'sidebar' | 'header' | 'sheet' | 'window' | 'hud' | 'fullscreen-ui' | 'tooltip' | 'content' | 'under-window' | 'under-page'
   /** Background material (Windows 11) */
   backgroundMaterial?: 'auto' | 'none' | 'mica' | 'acrylic' | 'tabbed'
-  /** Parent window ID */
+  /** Proposed only: desktop native runtimes currently ignore this field. */
   parent?: string
-  /** Whether this is a modal window */
+  /** Proposed only: desktop native runtimes currently ignore this field. */
   modal?: boolean
   /** HTML content to load */
   html?: string

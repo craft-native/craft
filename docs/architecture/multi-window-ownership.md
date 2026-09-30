@@ -20,11 +20,12 @@ whether it stores a window-specific target.
 | Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
-| Modal and parent relationships | Unspecified | Unspecified | Unspecified |
+| Modal and parent relationships | Proposed, not implemented | Proposed, not implemented | Proposed, not implemented |
 
 The runtime-creation, stable-handle, reply-routing, and event-scoping contract
 from issue #67 is covered here. Modal/parent semantics remain separate future
-decisions. The Windows release archive stages an app-local WebView2 loader;
+decisions; the [proposal](./multi-window-parent-modal-proposal.md) is not a
+supported runtime contract. The Windows release archive stages an app-local WebView2 loader;
 users still need the Microsoft WebView2 Runtime.
 
 Linux and Windows keep their live native window/webview pairs in

@@ -1,0 +1,65 @@
+# Parent and modal windows: proposed contract
+
+**Status: proposal; not implemented.** `WindowCreateOptions` exposes `parent`
+and `modal`, and the SDK forwards them, but the current macOS, Linux and Windows
+native creation paths do not interpret either field. Applications must not yet
+depend on a parent relationship or modal blocking. This document separates the
+decision needed for issue #67 from the existing creator-page ownership contract.
+
+## Recommendation to approve
+
+1. `parent` names a live window controlled by the requesting page. `main`
+   means that page's own native window, not the process's first window. A
+   named parent must be a handle owned by the requesting page. Unknown,
+   destroyed, unrelated, or self-referential parents fail before a child is
+   created. Reject cycles rather than allowing a window to become its own
+   ancestor. A window opened without `parent` remains independent of its
+   creator, as the existing orphan-adoption tests require.
+2. A parented non-modal window remains above and follows its parent. Closing
+   the parent closes its attached descendants. On macOS, ordinary close may
+   retain those pages for same-name reopen; permanent destroy releases the
+   whole attached subtree. Linux and Windows close destroys their native
+   windows and attached descendants. Do not transfer a parented descendant's
+   handle to another page after its parent is destroyed.
+3. `modal: true` requires `parent`. It blocks interaction with that parent
+   while visible, but not with unrelated application windows. Dismissing or
+   destroying the modal window restores the parent's interaction; closing the
+   parent closes the modal window first. The modal relationship does not turn
+   creator-page events into a process-wide broadcast.
+4. Parent and modal relationships are fixed at first creation. Reopening an
+   existing name with incompatible relationship options rejects rather than
+   silently reparenting a live window. Decide whether `alwaysOnTop` on a
+   modal child is rejected or ignored before implementation; it must not
+   override parent-scoped modality by accident.
+
+The native APIs do not make this one portable call. AppKit has
+[attached child windows](https://developer.apple.com/documentation/appkit/nswindow/addchildwindow%28_%3Aordered%3A%29)
+and [parent-scoped sheets](https://developer.apple.com/documentation/appkit/nswindow/sheetparent).
+GTK has [transient windows](https://docs.gtk.org/gtk3/method.Window.set_transient_for.html)
+and optional [destroy-with-parent](https://docs.gtk.org/gtk3/method.Window.set_destroy_with_parent.html),
+but [`gtk_window_set_modal()`](https://docs.gtk.org/gtk3/method.Window.set_modal.html)
+blocks *every* window in the application. Win32
+[owned windows](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features)
+stay above and are destroyed with their owner, while a
+[modal dialog](https://learn.microsoft.com/en-us/windows/win32/dlgbox/about-dialog-boxes)
+disables its owner. Craft must enforce the same visible contract above rather
+than equating these APIs by name.
+
+## Implementation and acceptance plan
+
+- Keep native parent identity separate from the existing creator-webview
+  event owner. Authenticate a requested parent against the sender before
+  creating or showing anything, and retain a parent/child graph that can
+  reject cycles and release descendants exactly once.
+- Connect the platform-native parent relationship and parent-scoped modal
+  blocking. On every close, destroy, reopen, and failed creation path, unwind
+  modal blocking and native attachments without a stale handle or disabled
+  parent.
+- Extend macOS, Linux and Windows GUI smokes and installed PKG/DEB/MSI smokes.
+  Each must prove focus/z-order, parent-only blocking, sibling interactivity,
+  close propagation, destroy cleanup, same-name reopening, unrelated-parent
+  rejection, and the existing unparented orphan-adoption behavior.
+
+Approval is required before treating these proposed semantics as the public
+contract. In particular, the choice between parent-scoped modality here and
+application-wide modality changes which sibling windows remain usable.
