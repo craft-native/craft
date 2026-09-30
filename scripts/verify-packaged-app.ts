@@ -198,6 +198,7 @@ async function launchViaSdk(): Promise<void> {
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
   const testMultiWindow = testSystemClipboard
+  const testMacWindowAdoption = testMultiWindow && platform === 'macos'
   const testDeepLink = testSystemClipboard && platform === 'macos'
   const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
@@ -211,6 +212,8 @@ async function launchViaSdk(): Promise<void> {
   let installedChildReady = false
   let installedChildResizeArmed = false
   let installedChildResized = false
+  let installedGrandchildReady = false
+  let installedGrandchildResized = false
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -298,6 +301,24 @@ async function launchViaSdk(): Promise<void> {
         const mainAfter = await window.craft.window._call('getSize', {}, 'main')
         if (Math.abs(mainAfter.width - mainSize.width) > 40 || Math.abs(mainAfter.height - mainSize.height) > 40)
           throw new Error('installed child resize changed the main window size')
+        if (${testMacWindowAdoption}) {
+          let grandchildLoaded = false
+          for (let attempt = 0; attempt < 100; attempt++) {
+            grandchildLoaded = (await (await fetch('/installed-grandchild-status')).json()).ready
+            if (grandchildLoaded) break
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          if (!grandchildLoaded) throw new Error('installed grandchild page did not load within 10 seconds')
+          let stolen = false
+          try {
+            await window.craft.window.open({
+              name: 'installed-grandchild', title: 'Wrong owner',
+              url: new URL('/installed-grandchild', location.href).href,
+            })
+          }
+          catch (_) { stolen = true }
+          if (!stolen) throw new Error('installed grandchild handle was stolen from its live creator')
+        }
         await new Promise((resolve, reject) => {
           const listener = event => {
             if (event.detail.windowId !== child.name) return
@@ -316,6 +337,44 @@ async function launchViaSdk(): Promise<void> {
             reject(error)
           })
         })
+        if (${testMacWindowAdoption}) {
+          // macOS close retains the creator's webview and event ownership.
+          // Permanent destroy is what must release the grandchild's owner.
+          await window.craft.window._call('destroy', {}, child.name)
+          const title = await window.craft.window._call('getTitle', {}, 'installed-grandchild')
+          if (title !== 'Craft installed grandchild')
+            throw new Error('unparented installed grandchild did not survive creator destroy')
+          const adopted = await window.craft.window.open({
+            name: 'installed-grandchild', title: 'Craft installed grandchild',
+            url: new URL('/installed-grandchild', location.href).href,
+          })
+          if (adopted.name !== 'installed-grandchild')
+            throw new Error('installed grandchild could not be adopted')
+          await window.craft.window._call('executeJavaScript', { code: 'window.__expectAdoptedResize = true' }, adopted.name)
+          const adoptedResize = new Promise((resolve, reject) => {
+            const listener = event => {
+              if (event.detail.windowId !== adopted.name) return
+              clearTimeout(timeout)
+              window.removeEventListener('craft:window:resize', listener)
+              resolve()
+            }
+            const timeout = setTimeout(() => {
+              window.removeEventListener('craft:window:resize', listener)
+              reject(new Error('installed grandchild resize did not reach its new creator'))
+            }, 10000)
+            window.addEventListener('craft:window:resize', listener)
+          })
+          await window.craft.window._call('setSize', { width: 680, height: 470 }, adopted.name)
+          await adoptedResize
+          let grandchildResized = false
+          for (let attempt = 0; attempt < 100; attempt++) {
+            grandchildResized = (await (await fetch('/installed-grandchild-status')).json()).resized
+            if (grandchildResized) break
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          if (!grandchildResized) throw new Error('installed grandchild did not receive its local resize event')
+          await window.craft.window._call('destroy', {}, adopted.name)
+        }
       }
       if (${testLinuxNotification}) {
         if (!window.craft.notifications || !window.craft.notifications.requestPermission || !window.craft.notifications.show)
@@ -385,7 +444,32 @@ async function launchViaSdk(): Promise<void> {
         if (Math.abs(event.detail.width - 720) > 60 || Math.abs(event.detail.height - 510) > 60) return
         fetch('/installed-child-resized', { method: 'POST' })
       })
+      if (${testMacWindowAdoption}) {
+        const grandchild = await window.craft.window.open({
+          name: 'installed-grandchild', title: 'Craft installed grandchild',
+          url: new URL('/installed-grandchild', location.href).href,
+        })
+        if (grandchild.name !== 'installed-grandchild')
+          throw new Error('installed child opened the wrong grandchild')
+      }
       await fetch('/installed-child-ready', { method: 'POST' })
+    })().catch(error => {
+      const target = new URL('/failed', location.origin)
+      target.searchParams.set('reason', [String(error?.message || error), error?.stack].filter(Boolean).join(' | '))
+      return fetch(target, { method: 'POST' })
+    })
+  </script>`
+  const grandchildPage = `<!doctype html><title>Craft installed grandchild</title><script>
+    (async function () {
+      const title = await window.craft.window._call('getTitle', {}, 'main')
+      if (title !== 'Craft installed grandchild')
+        throw new Error('installed grandchild page addressed another window')
+      window.addEventListener('craft:window:resize', event => {
+        if (event.detail.windowId !== 'main' || !window.__expectAdoptedResize) return
+        if (Math.abs(event.detail.width - 680) > 60 || Math.abs(event.detail.height - 470) > 60) return
+        fetch('/installed-grandchild-resized', { method: 'POST' })
+      })
+      await fetch('/installed-grandchild-ready', { method: 'POST' })
     })().catch(error => {
       const target = new URL('/failed', location.origin)
       target.searchParams.set('reason', [String(error?.message || error), error?.stack].filter(Boolean).join(' | '))
@@ -413,6 +497,20 @@ async function launchViaSdk(): Promise<void> {
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedChildReady, resized: installedChildResized }))
       return
     }
+    if (request.url === '/installed-grandchild-ready' && request.method === 'POST') {
+      installedGrandchildReady = true
+      response.writeHead(200).end('ok')
+      return
+    }
+    if (request.url === '/installed-grandchild-resized' && request.method === 'POST') {
+      installedGrandchildResized = true
+      response.writeHead(200).end('ok')
+      return
+    }
+    if (request.url === '/installed-grandchild-status' && request.method === 'GET') {
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedGrandchildReady, resized: installedGrandchildResized }))
+      return
+    }
     if (request.url === '/ready' && request.method === 'POST') acceptReady()
     if (request.url?.startsWith('/deep-link?') && request.method === 'POST') {
       const received = new URL(request.url, 'http://127.0.0.1').searchParams.get('url')
@@ -427,7 +525,7 @@ async function launchViaSdk(): Promise<void> {
       macPermissionStatus = new URL(request.url, 'http://127.0.0.1').searchParams.get('status') || 'unknown'
     }
     response.writeHead(200, { 'Content-Type': 'text/html' })
-    response.end(request.url?.startsWith('/installed-child') ? childPage : page)
+    response.end(request.url?.startsWith('/installed-grandchild') ? grandchildPage : request.url?.startsWith('/installed-child') ? childPage : page)
   })
   let app: ReturnType<typeof createApp> | undefined
   let notificationObserver: Awaited<ReturnType<typeof startLinuxNotificationObserver>> | undefined
@@ -458,6 +556,8 @@ async function launchViaSdk(): Promise<void> {
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
       if (testMultiWindow)
         console.log('Installed app opened, resized, and closed a child window with creator-scoped events')
+      if (testMacWindowAdoption)
+        console.log('Installed macOS grandchild survived creator destroy and re-routed events after adoption')
       if (testSystemClipboard) {
         const readCommand = platform === 'macos'
           ? ['pbpaste']
