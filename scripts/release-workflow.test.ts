@@ -17,7 +17,7 @@ const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.ne
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
 
 test('every publishing path depends on release identity validation', () => {
-  for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'publish-release'])
+  for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release'])
     expect(needs(release.jobs[name])).toContain('validate-release')
   for (const name of ['verify-release', 'verify-macos-downloads'])
     expect(release.jobs[name].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' }}")
@@ -29,7 +29,7 @@ test('registry indexing waits for the public release and all of its verification
   const notify = release.jobs['notify-registry']
   expect(notify).toBeDefined()
   expect(needs(notify)).toEqual(['publish-release'])
-  expect(needs(release.jobs['publish-release']).sort()).toEqual(['attach-release-sbom', 'validate-release', 'verify-macos-downloads', 'verify-release'])
+  expect(needs(release.jobs['publish-release']).sort()).toEqual(['attach-release-sbom', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release'])
   expect(release.jobs['publish-release'].if).toBeUndefined() // A failed or skipped gate cannot publish a draft.
   expect(notify.if).toBeUndefined() // Default success gating: never bypass failed prerequisites.
   expect(steps(notify)).toContain('https://registry.pantry.dev/api/rebuild')
@@ -58,6 +58,13 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
     { os: 'macos-15-intel', name: 'darwin-x64' },
   ])
   expect(steps(release.jobs['verify-macos-downloads'])).toContain('scripts/verify-macos-release.ts')
+  expect(release.jobs['verify-desktop-downloads'].strategy?.matrix.platform).toEqual([
+    { os: 'ubuntu-latest', name: 'linux-x64' },
+    { os: 'windows-2025', name: 'windows-x64' },
+  ])
+  expect(steps(release.jobs['verify-desktop-downloads'])).toContain('craft-$PLATFORM.zip')
+  expect(steps(release.jobs['verify-desktop-downloads'])).toContain('scripts/verify-native-startup.ts')
+  expect(steps(release.jobs['verify-desktop-downloads'])).toContain('WebView2Loader.dll')
   expect(release.jobs['release-sbom'].uses).toBe('./.github/workflows/sbom.yml')
   expect(release.jobs['release-sbom'].with?.enforce_high).toBe(false)
   expect(needs(release.jobs.pantry)).toContain('release-sbom')
@@ -94,6 +101,7 @@ test('a failed native leg cannot make a partial GitHub release public', () => {
   expect(finalizer.if).toBeUndefined()
   expect(needs(finalizer)).toContain('verify-release')
   expect(needs(finalizer)).toContain('verify-macos-downloads')
+  expect(needs(finalizer)).toContain('verify-desktop-downloads')
   expect(needs(finalizer)).toContain('attach-release-sbom')
   const verify = finalizer.steps!.findIndex(step => step.name === 'Recheck the draft and its exact staged artifacts')
   const publish = finalizer.steps!.findIndex(step => step.name === 'Publish the complete draft')

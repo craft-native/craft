@@ -19,7 +19,8 @@ cannot make a partial release public.
 
 After both native jobs succeed, the workflow checks the four required archives,
 publishes and verifies a SHA-256 manifest, runs downloaded binaries on both
-macOS architectures, and attaches and verifies all three SBOMs. A final job
+macOS architectures plus Linux and Windows, and attaches and verifies all three
+SBOMs. A final job
 downloads the staged files again, checks the draft and manifest, and only then
 publishes the GitHub release. The pantry registry is notified after that step.
 The npm job separately scans and publishes the public JavaScript packages.

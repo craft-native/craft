@@ -504,6 +504,53 @@ jobs:
           ditto -x -k "$DOWNLOAD_DIR/craft-$PLATFORM.zip" "$DOWNLOAD_DIR/extracted"
           bun scripts/verify-macos-release.ts "$DOWNLOAD_DIR/extracted/craft" "${TAG#v}"
 
+  verify-desktop-downloads:
+    name: verify downloaded ${{ matrix.platform.name }}
+    needs: [validate-release, pantry]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { os: ubuntu-latest, name: linux-x64 }
+          - { os: windows-2025, name: windows-x64 }
+    runs-on: ${{ matrix.platform.os }}
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+      PLATFORM: ${{ matrix.platform.name }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Verify downloaded Linux CLI
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DIR=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "craft-$PLATFORM.zip" --dir "$DOWNLOAD_DIR"
+          mkdir "$DOWNLOAD_DIR/extracted"
+          unzip -q "$DOWNLOAD_DIR/craft-$PLATFORM.zip" -d "$DOWNLOAD_DIR/extracted"
+          bun scripts/verify-native-startup.ts "$DOWNLOAD_DIR/extracted/craft" "${TAG#v}"
+      - name: Verify downloaded Windows CLI and loader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path $env:RUNNER_TEMP "craft-$env:PLATFORM.zip"
+          $extracted = Join-Path $env:RUNNER_TEMP "craft-$env:PLATFORM"
+          gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --pattern "craft-$env:PLATFORM.zip" --dir $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Windows release archive download failed' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $extracted
+          $binary = Join-Path $extracted 'craft.exe'
+          if (-not (Test-Path -LiteralPath (Join-Path $extracted 'WebView2Loader.dll'))) { throw 'Windows release archive has no WebView2 loader' }
+          $version = $env:TAG -replace '^v', ''
+          bun scripts/verify-native-startup.ts $binary $version
+          if ($LASTEXITCODE -ne 0) { throw 'Downloaded Windows CLI failed to start' }
+
   attach-release-sbom:
     name: attach and verify release SBOMs
     needs: [pantry, release-sbom]
@@ -536,7 +583,7 @@ jobs:
 
   publish-release:
     name: publish complete verified release
-    needs: [validate-release, verify-release, verify-macos-downloads, attach-release-sbom]
+    needs: [validate-release, verify-release, verify-macos-downloads, verify-desktop-downloads, attach-release-sbom]
     runs-on: ubuntu-latest
     permissions:
       contents: write
