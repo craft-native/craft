@@ -198,7 +198,8 @@ async function launchViaSdk(): Promise<void> {
   // clipboard when this installer verifier is run manually.
   const testSystemClipboard = process.env.GITHUB_ACTIONS === 'true'
   const testMultiWindow = testSystemClipboard
-  const testMacWindowAdoption = testMultiWindow && platform === 'macos'
+  const testWindowAdoption = testMultiWindow
+  const testMacWindowAdoption = testWindowAdoption && platform === 'macos'
   const testDeepLink = testSystemClipboard && platform === 'macos'
   const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
@@ -301,7 +302,7 @@ async function launchViaSdk(): Promise<void> {
         const mainAfter = await window.craft.window._call('getSize', {}, 'main')
         if (Math.abs(mainAfter.width - mainSize.width) > 40 || Math.abs(mainAfter.height - mainSize.height) > 40)
           throw new Error('installed child resize changed the main window size')
-        if (${testMacWindowAdoption}) {
+        if (${testWindowAdoption}) {
           let grandchildLoaded = false
           for (let attempt = 0; attempt < 100; attempt++) {
             grandchildLoaded = (await (await fetch('/installed-grandchild-status')).json()).ready
@@ -337,13 +338,14 @@ async function launchViaSdk(): Promise<void> {
             reject(error)
           })
         })
-        if (${testMacWindowAdoption}) {
+        if (${testWindowAdoption}) {
           // macOS close retains the creator's webview and event ownership.
-          // Permanent destroy is what must release the grandchild's owner.
-          await window.craft.window._call('destroy', {}, child.name)
+          // Linux and Windows close destroys it; macOS needs permanent destroy.
+          if (${testMacWindowAdoption})
+            await window.craft.window._call('destroy', {}, child.name)
           const title = await window.craft.window._call('getTitle', {}, 'installed-grandchild')
           if (title !== 'Craft installed grandchild')
-            throw new Error('unparented installed grandchild did not survive creator destroy')
+            throw new Error('unparented installed grandchild did not survive creator teardown')
           const adopted = await window.craft.window.open({
             name: 'installed-grandchild', title: 'Craft installed grandchild',
             url: new URL('/installed-grandchild', location.href).href,
@@ -373,7 +375,7 @@ async function launchViaSdk(): Promise<void> {
             await new Promise(resolve => setTimeout(resolve, 100))
           }
           if (!grandchildResized) throw new Error('installed grandchild did not receive its local resize event')
-          await window.craft.window._call('destroy', {}, adopted.name)
+          await window.craft.window._call(${JSON.stringify(platform === 'macos' ? 'destroy' : 'close')}, {}, adopted.name)
         }
       }
       if (${testLinuxNotification}) {
@@ -444,7 +446,7 @@ async function launchViaSdk(): Promise<void> {
         if (Math.abs(event.detail.width - 720) > 60 || Math.abs(event.detail.height - 510) > 60) return
         fetch('/installed-child-resized', { method: 'POST' })
       })
-      if (${testMacWindowAdoption}) {
+      if (${testWindowAdoption}) {
         const grandchild = await window.craft.window.open({
           name: 'installed-grandchild', title: 'Craft installed grandchild',
           url: new URL('/installed-grandchild', location.href).href,
@@ -556,8 +558,8 @@ async function launchViaSdk(): Promise<void> {
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
       if (testMultiWindow)
         console.log('Installed app opened, resized, and closed a child window with creator-scoped events')
-      if (testMacWindowAdoption)
-        console.log('Installed macOS grandchild survived creator destroy and re-routed events after adoption')
+      if (testWindowAdoption)
+        console.log(`Installed ${platform} grandchild survived creator teardown and re-routed events after adoption`)
       if (testSystemClipboard) {
         const readCommand = platform === 'macos'
           ? ['pbpaste']
