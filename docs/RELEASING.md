@@ -5,6 +5,8 @@ changelog, creates a tag, and pushes both. Run it only from a clean `main` that
 matches `origin/main`, after the SDK, package, lint, and type checks are green.
 Run `bun run test:release` too; it exercises the release gates and performs an
 isolated bumpx commit/tag rehearsal without publishing or pushing a tag.
+Before tagging, the CI installed-app jobs must be green: they launch real PKG,
+DEB, and MSI installs and exercise child-window event routing from each package.
 The release hook generates the next changelog section before that commit,
 deduplicates repeated issue references, and links the previous and new tags.
 Do not run the hook again after it has written the section.

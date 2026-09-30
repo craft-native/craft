@@ -164,8 +164,9 @@ The next multi-window milestone needs product decisions in addition to code:
    WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
    launch a sample app through the SDK and compare escaped clipboard text
    through the page bridge with the host OS clipboard. Each installed app also
-   opens a child page, reads its addressed title, closes it, and requires the
-   named close event in the creator page. The macOS job also
+   opens a child page, reads its addressed title, resizes it, requires both the
+   child's local and creator's named resize events without changing the main
+   window size, then closes it with a named close event. The macOS job also
    dispatches a registered URL scheme into the installed app. Its notification
    check queries Notification Center for the delivered ID when permission is
    granted, and reports a denied permission separately. The Linux job verifies

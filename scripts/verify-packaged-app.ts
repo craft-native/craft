@@ -209,6 +209,8 @@ async function launchViaSdk(): Promise<void> {
   let macPermissionDenied = false
   let macPermissionStatus = 'unknown'
   let installedChildReady = false
+  let installedChildResizeArmed = false
+  let installedChildResized = false
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -259,6 +261,41 @@ async function launchViaSdk(): Promise<void> {
         if (!loaded) throw new Error('installed child page did not load within 10 seconds')
         const title = await window.craft.window._call('getTitle', {}, child.name)
         if (title !== 'Craft installed child') throw new Error('installed child title reached the wrong window')
+        const mainSize = await window.craft.window._call('getSize', {}, 'main')
+        await fetch('/installed-child-arm', { method: 'POST' })
+        await new Promise((resolve, reject) => {
+          const listener = event => {
+            if (event.detail.windowId !== child.name) return
+            if (!Number.isFinite(event.detail.width) || !Number.isFinite(event.detail.height)) return
+            if (Math.abs(event.detail.width - 720) > 60 || Math.abs(event.detail.height - 510) > 60) return
+            clearTimeout(timeout)
+            window.removeEventListener('craft:window:resize', listener)
+            resolve()
+          }
+          const timeout = setTimeout(() => {
+            window.removeEventListener('craft:window:resize', listener)
+            reject(new Error('creator did not receive installed child resize event'))
+          }, 10000)
+          window.addEventListener('craft:window:resize', listener)
+          window.craft.window._call('setSize', { width: 720, height: 510 }, child.name).catch(error => {
+            clearTimeout(timeout)
+            window.removeEventListener('craft:window:resize', listener)
+            reject(error)
+          })
+        })
+        let childResized = false
+        for (let attempt = 0; attempt < 100; attempt++) {
+          childResized = (await (await fetch('/installed-child-status')).json()).resized
+          if (childResized) break
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        if (!childResized) throw new Error('installed child page did not receive its local resize event')
+        const childSize = await window.craft.window._call('getSize', {}, child.name)
+        if (Math.abs(childSize.width - 720) > 60 || Math.abs(childSize.height - 510) > 60)
+          throw new Error('installed child did not reach the requested size')
+        const mainAfter = await window.craft.window._call('getSize', {}, 'main')
+        if (Math.abs(mainAfter.width - mainSize.width) > 40 || Math.abs(mainAfter.height - mainSize.height) > 40)
+          throw new Error('installed child resize changed the main window size')
         await new Promise((resolve, reject) => {
           const listener = event => {
             if (event.detail.windowId !== child.name) return
@@ -328,6 +365,12 @@ async function launchViaSdk(): Promise<void> {
       if (!window.craft?.window?._call) throw new Error('installed child has no window bridge')
       const title = await window.craft.window._call('getTitle', {}, 'main')
       if (title !== 'Craft installed child') throw new Error('installed child page addressed another window')
+      window.addEventListener('craft:window:resize', event => {
+        if (event.detail.windowId !== 'main') return
+        if (!Number.isFinite(event.detail.width) || !Number.isFinite(event.detail.height)) return
+        if (Math.abs(event.detail.width - 720) > 60 || Math.abs(event.detail.height - 510) > 60) return
+        fetch('/installed-child-resized', { method: 'POST' })
+      })
       await fetch('/installed-child-ready', { method: 'POST' })
     })().catch(error => {
       const target = new URL('/failed', location.origin)
@@ -341,8 +384,19 @@ async function launchViaSdk(): Promise<void> {
       response.writeHead(200).end('ok')
       return
     }
+    if (request.url === '/installed-child-arm' && request.method === 'POST') {
+      installedChildResizeArmed = true
+      installedChildResized = false
+      response.writeHead(200).end('ok')
+      return
+    }
+    if (request.url === '/installed-child-resized' && request.method === 'POST') {
+      if (installedChildResizeArmed) installedChildResized = true
+      response.writeHead(200).end('ok')
+      return
+    }
     if (request.url === '/installed-child-status' && request.method === 'GET') {
-      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedChildReady }))
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedChildReady, resized: installedChildResized }))
       return
     }
     if (request.url === '/ready' && request.method === 'POST') acceptReady()
@@ -389,7 +443,7 @@ async function launchViaSdk(): Promise<void> {
       ])
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
       if (testMultiWindow)
-        console.log('Installed app opened and closed a child window with creator-scoped events')
+        console.log('Installed app opened, resized, and closed a child window with creator-scoped events')
       if (testSystemClipboard) {
         const readCommand = platform === 'macos'
           ? ['pbpaste']

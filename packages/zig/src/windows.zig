@@ -1357,7 +1357,8 @@ fn windowExStyle(hwnd: HWND) DWORD {
 }
 
 fn setWindowAlwaysOnTop(hwnd: HWND, enabled: bool) !void {
-    const insert_after: HWND = @ptrFromInt(if (enabled) std.math.maxInt(usize) else std.math.maxInt(usize) - 1);
+    const insert_after_value: usize = if (enabled) std.math.maxInt(usize) else std.math.maxInt(usize) - 1;
+    const insert_after: HWND = @ptrFromInt(insert_after_value);
     if (SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) == 0)
         return error.NativeCallFailed;
 }
