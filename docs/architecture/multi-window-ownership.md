@@ -180,11 +180,13 @@ The next multi-window milestone needs product decisions in addition to code:
    through the page bridge with the host OS clipboard. Each installed app also
    opens a child page, reads its addressed title, resizes it, requires both the
    child's local and creator's named resize events without changing the main
-   window size, then closes it with a named close event. Each installed app
-   additionally opens an unparented grandchild from that child page, rejects
+   window size, reads addressed native state from the main and child, then
+   closes the child with a named close event. Each installed app additionally
+   opens an unparented grandchild from that child page, rejects
    a second page's attempt to steal its live handle, tears down its creator,
    and requires the surviving grandchild's local and newly adopted named
-   resize events. macOS explicitly destroys the retained creator after close;
+   resize events and addressed native state. macOS explicitly destroys the
+   retained creator after close;
    Linux and Windows release it on close. The macOS job also
    dispatches a registered URL scheme into the installed app. Its notification
    check queries Notification Center for the delivered ID when permission is

@@ -7,6 +7,7 @@ Run `bun run test:release` too; it exercises the release gates and performs an
 isolated bumpx commit/tag rehearsal without publishing or pushing a tag.
 Before tagging, the CI installed-app jobs must be green: they launch real PKG,
 DEB, and MSI installs and exercise child-window event routing from each package.
+They also read addressed native state from the main, child, and adopted windows.
 Each installed-app smoke also checks creator teardown and adoption of a
 surviving, unparented grandchild. The PKG case explicitly destroys the retained
 macOS creator after close; DEB and MSI close already releases it.

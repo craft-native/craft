@@ -299,9 +299,19 @@ async function launchViaSdk(): Promise<void> {
         const childSize = await window.craft.window._call('getSize', {}, child.name)
         if (Math.abs(childSize.width - 720) > 60 || Math.abs(childSize.height - 510) > 60)
           throw new Error('installed child did not reach the requested size')
+        const childState = await window.craft.window._call('getState', {}, child.name)
+        if (childState?.isVisible !== true || childState.isMinimized !== false || childState.isAlwaysOnTop !== false
+          || Math.abs(childState.bounds.width - childSize.width) > 40
+          || Math.abs(childState.bounds.height - childSize.height) > 40)
+          throw new Error('installed child state did not describe its addressed native window')
         const mainAfter = await window.craft.window._call('getSize', {}, 'main')
         if (Math.abs(mainAfter.width - mainSize.width) > 40 || Math.abs(mainAfter.height - mainSize.height) > 40)
           throw new Error('installed child resize changed the main window size')
+        const mainState = await window.craft.window._call('getState', {}, 'main')
+        if (mainState?.isVisible !== true
+          || Math.abs(mainState.bounds.width - mainAfter.width) > 40
+          || Math.abs(mainState.bounds.height - mainAfter.height) > 40)
+          throw new Error('installed main state was routed to another native window')
         if (${testWindowAdoption}) {
           let grandchildLoaded = false
           for (let attempt = 0; attempt < 100; attempt++) {
@@ -375,6 +385,11 @@ async function launchViaSdk(): Promise<void> {
             await new Promise(resolve => setTimeout(resolve, 100))
           }
           if (!grandchildResized) throw new Error('installed grandchild did not receive its local resize event')
+          const adoptedState = await window.craft.window._call('getState', {}, adopted.name)
+          if (adoptedState?.isVisible !== true
+            || Math.abs(adoptedState.bounds.width - 680) > 60
+            || Math.abs(adoptedState.bounds.height - 470) > 60)
+            throw new Error('installed adopted grandchild state did not describe its native window')
           await window.craft.window._call(${JSON.stringify(platform === 'macos' ? 'destroy' : 'close')}, {}, adopted.name)
         }
       }
@@ -557,7 +572,7 @@ async function launchViaSdk(): Promise<void> {
       ])
       console.log('SDK launched installed Craft from PATH and its WebView loaded the bridge')
       if (testMultiWindow)
-        console.log('Installed app opened, resized, and closed a child window with creator-scoped events')
+        console.log('Installed app opened, resized, read state, and closed a child window with creator-scoped events')
       if (testWindowAdoption)
         console.log(`Installed ${platform} grandchild survived creator teardown and re-routed events after adoption`)
       if (testSystemClipboard) {
