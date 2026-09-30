@@ -332,12 +332,14 @@ jobs:
           CRAFT_PLATFORM: ${{ runner.os == 'macOS' && 'macos' || 'linux' }}
         run: bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"
 
-      # ── Publish & Release ──────────────────────────────
+      # ── Stage the release privately ────────────────────
       # Pantry action handles everything:
       # 1. Publishes to pantry registry (zig package)
       # 2. Auto-packages binaries from zig-out/ into platform-named zips
-      # 3. Creates/updates GitHub release with all artifacts + changelog
-      - name: Publish & Release
+      # 3. Adds this leg's scanned archives to a draft GitHub release. Neither
+      #    leg can make a partial release public; publish-release does that only
+      #    after both legs and the downstream verification jobs succeed.
+      - name: Publish to pantry and stage draft release
         uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
         with:
           install: 'false'
@@ -345,6 +347,7 @@ jobs:
           package-dir: packages/zig
           token: ${{ secrets.PANTRY_TOKEN }}
           release: 'true'
+          release-draft: 'true'
           release-changelog: CHANGELOG.md
           release-token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           # Replaces the old `notify` job, which pointed at
@@ -360,19 +363,13 @@ jobs:
   # ── Gate: is this release actually installable? ─────────────────────
   #
   # v0.0.82 published with no macOS binaries at all. The darwin leg failed at
-  # notarization, so its "Publish & Release" step was skipped — but the linux
-  # leg had already created the GitHub release, and it created it complete-
-  # looking: tag, changelog, linux and windows zips, npm packages, the zig
-  # package on the registry. Everything except the two assets that make craft
-  # installable on a Mac.
-  #
-  # Nothing noticed. Pantry's recipe only surfaces a version whose release
-  # carries the whole prebuilt set, so v0.0.82 was quietly unlistable forever
-  # while looking, from GitHub, exactly like every other release.
+  # notarization while the linux leg had already made a partial GitHub release
+  # public. The matrix now stages a draft instead; this gate still names any
+  # missing platform archive and builds the manifest over the final bytes.
   #
   # `fail-fast: false` on the matrix is deliberate and stays — one platform's
-  # signing trouble should not throw away another's build. This job is the other
-  # half of that bargain: the run goes red, naming the assets that are missing.
+  # signing trouble should not throw away another's build. A failed leg keeps
+  # the release private; this job goes red, naming the assets that are missing.
   verify-release:
     name: verify release assets
     needs: [validate-release, pantry]
@@ -390,6 +387,11 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" != true ]; then
+            echo "::error::$TAG must remain a draft until every release gate passes."
+            exit 1
+          fi
 
           # Kept in step with the `required` list in pantry's recipe:
           # packages/ts-pantry/src/recipes/craft-native.org.ts
@@ -428,7 +430,7 @@ jobs:
 
   notify-registry:
     name: notify registry after artifact verification
-    needs: [verify-release, verify-macos-downloads, attach-release-sbom]
+    needs: publish-release
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -531,6 +533,47 @@ jobs:
           for document in craft-sbom.json full-sbom.cyclonedx.json full-sbom.spdx.json; do
             cmp "sbom/$document" "$VERIFY_DIR/$document"
           done
+
+  publish-release:
+    name: publish complete verified release
+    needs: [validate-release, verify-release, verify-macos-downloads, attach-release-sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+      - name: Recheck the draft and its exact staged artifacts
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" != true ]; then
+            echo "::error::$TAG is not a draft; refusing to publish or modify an already public release."
+            exit 1
+          fi
+
+          STAGED=$(mktemp -d)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'craft-*.zip' \
+            --pattern 'release-manifest.json' --pattern '*sbom*.json' --dir "$STAGED"
+          bun scripts/release-manifest.ts verify "$STAGED" "$STAGED/release-manifest.json"
+          bun scripts/verify-sbom.ts "$STAGED" "$TAG"
+
+      - name: Publish the complete draft
+        env:
+          GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            # Let GitHub's semantic-version ordering decide whether this tag
+            # becomes Latest; rerunning an older tag must not move it backward.
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          fi
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" = false
 
   npm:
     name: npm

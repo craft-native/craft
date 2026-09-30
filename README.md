@@ -962,7 +962,8 @@ Craft is **1351x**smaller than Electron,**2.4x**faster to start, and uses**4.3x*
 - 📘 [Getting Started](docs/GETTING_STARTED.md) - Detailed guide
 - ✨ [Features](docs/FEATURES.md) - Complete feature list
 - 🤝 [Contributing](.github/CONTRIBUTING.md) - Contribution guide
-- 📋 [Changelog](https://github.com/home-lang/craft/releases) - Release history
+- 📦 [Releasing](docs/RELEASING.md) - Publication gates and recovery
+- 📋 [Changelog](https://github.com/craft-native/craft/releases) - Release history
 
 ## Contributing
 
