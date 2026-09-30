@@ -123,6 +123,13 @@ const mainPage = `<!doctype html><script>
     if (await call('isResizable') !== false) throw new Error('child stayed resizable')
     await call('setResizable', { resizable: true })
     if (await call('isResizable') !== true) throw new Error('child stayed fixed-size')
+    if (await call('isAlwaysOnTop') !== false) throw new Error('child unexpectedly started topmost')
+    await call('setAlwaysOnTop', { alwaysOnTop: true })
+    if (await call('isAlwaysOnTop') !== true) throw new Error('child did not become topmost')
+    if (await call('isAlwaysOnTop', {}, 'main') !== false)
+      throw new Error('child topmost setting leaked to the main window')
+    await call('setAlwaysOnTop', { alwaysOnTop: false })
+    if (await call('isAlwaysOnTop') !== false) throw new Error('child stayed topmost')
     await call('setMinimumSize', { width: 600, height: 420 })
     await call('setMaximumSize', { width: 820, height: 620 })
     await call('setSize', { width: 300, height: 200 })
@@ -162,13 +169,15 @@ const mainPage = `<!doctype html><script>
       throw new Error('new child page did not answer after navigation')
 
     const [queuedA, queuedB] = await Promise.all([
-      window.craft.window.open({ name: 'queue-a', title: 'Child queue-a', url: location.origin + '/child?cycle=queue-a' }),
+      window.craft.window.open({ name: 'queue-a', title: 'Child queue-a', url: location.origin + '/child?cycle=queue-a', alwaysOnTop: true }),
       window.craft.window.open({ name: 'queue-b', title: 'Child queue-b', url: location.origin + '/child?cycle=queue-b' }),
     ])
     if (queuedA.name !== 'queue-a' || queuedB.name !== 'queue-b')
       throw new Error('concurrent child opens returned the wrong handles')
     await waitFor('child-queue-a')
     await waitFor('child-queue-b')
+    if (await call('isAlwaysOnTop', {}, 'queue-a') !== true || await call('isAlwaysOnTop', {}, 'queue-b') !== false)
+      throw new Error('creation topmost option did not stay with its own child')
     const ownerResize = waitWindowEvent('resize')
     await call('setSize', { width: 740, height: 530 })
     await ownerResize

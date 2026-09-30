@@ -16,6 +16,7 @@ whether it stores a window-specific target.
 | Named cross-window actions | Implemented | Implemented for core controls | Implemented for core controls |
 | `executeJavaScript()` result and error replies | Implemented | Implemented with WebKitGTK | Implemented with WebView2 result API |
 | Per-window lifecycle events | Implemented | Implemented | Implemented |
+| Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Unspecified | Unspecified | Unspecified |
 
@@ -28,6 +29,10 @@ Linux and Windows keep their live native window/webview pairs in
 `desktop_window_registry.zig`. Page messages are authenticated by the sending
 WebKitGTK view or the per-WebView2 event subscription; names select a target
 only after that native source is known.
+
+Linux reports the requested always-on-top setting because GTK delegates actual
+stacking to the window manager, which may ignore that request.
+
 Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. The Linux and Windows GUI smokes resize
 a child while two unrelated child pages are live, requiring the changed page's

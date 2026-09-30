@@ -127,6 +127,7 @@ const WM_CRAFT_OPEN_WINDOW: UINT = 0x8001; // WM_APP + 1
 pub const PM_REMOVE: UINT = 0x0001;
 pub const GWLP_USERDATA: c_int = -21;
 const GWL_STYLE: c_int = -16;
+const GWL_EXSTYLE: c_int = -20;
 const SWP_NOSIZE: UINT = 0x0001;
 const SWP_NOMOVE: UINT = 0x0002;
 const SWP_NOZORDER: UINT = 0x0004;
@@ -1351,6 +1352,16 @@ fn windowStyle(hwnd: HWND) DWORD {
     return @truncate(@as(usize, @bitCast(GetWindowLongPtrW(hwnd, GWL_STYLE))));
 }
 
+fn windowExStyle(hwnd: HWND) DWORD {
+    return @truncate(@as(usize, @bitCast(GetWindowLongPtrW(hwnd, GWL_EXSTYLE))));
+}
+
+fn setWindowAlwaysOnTop(hwnd: HWND, enabled: bool) !void {
+    const insert_after: HWND = @ptrFromInt(if (enabled) std.math.maxInt(usize) else std.math.maxInt(usize) - 1);
+    if (SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) == 0)
+        return error.NativeCallFailed;
+}
+
 fn setWindowStyle(hwnd: HWND, style: DWORD) void {
     _ = SetWindowLongPtrW(hwnd, GWL_STYLE, @bitCast(@as(usize, style)));
 }
@@ -1586,6 +1597,10 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "isResizable")) {
         const style: DWORD = if (entry.windowed_style) |saved| @truncate(@as(usize, @bitCast(saved))) else windowStyle(hwnd);
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
+    } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
+        try setWindowAlwaysOnTop(hwnd, try desktop_window_controls.parseBool(data, "alwaysOnTop"));
+    } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
+        bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((windowExStyle(hwnd) & WS_EX_TOPMOST) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
         const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
         try setWindowFullscreen(entry, fullscreen);

@@ -36,6 +36,7 @@ pub extern "c" fn gtk_window_close(window: *anyopaque) void;
 pub extern "c" fn gtk_window_set_decorated(window: *anyopaque, decorated: c_int) void;
 pub extern "c" fn gtk_window_set_resizable(window: *anyopaque, resizable: c_int) void;
 pub extern "c" fn gtk_window_get_resizable(window: *anyopaque) c_int;
+pub extern "c" fn gtk_window_set_keep_above(window: *anyopaque, setting: c_int) void;
 pub extern "c" fn gtk_window_set_geometry_hints(window: *anyopaque, geometry_widget: ?*anyopaque, geometry: ?*const GdkGeometry, geom_mask: c_int) void;
 pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
@@ -501,6 +502,7 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         .x = json_utils.getInt(i32, json, "x"),
         .y = json_utils.getInt(i32, json, "y"),
         .resizable = json_utils.getBool(json, "resizable") orelse true,
+        .always_on_top = json_utils.getBool(json, "alwaysOnTop") orelse false,
         .frameless = json_utils.getBool(json, "frameless") orelse false,
         .fullscreen = json_utils.getBool(json, "fullscreen") orelse false,
         .dev_tools = json_utils.getBool(json, "devTools") orelse false,
@@ -661,6 +663,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         gtk_window_set_resizable(window, if (try desktop_window_controls.parseBool(data, "resizable")) 1 else 0);
     } else if (std.mem.eql(u8, action, "isResizable")) {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if (gtk_window_get_resizable(window) != 0) "true" else "false");
+    } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
+        const enabled = try desktop_window_controls.parseBool(data, "alwaysOnTop");
+        gtk_window_set_keep_above(window, if (enabled) 1 else 0);
+        if (!desktop_windows.setAlwaysOnTop(entry.window, enabled)) return error.WindowHandleNotSet;
+    } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
+        bridge_error.sendResultToJS(std.heap.c_allocator, action, if (entry.always_on_top) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
         const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
         if (fullscreen) gtk_window_fullscreen(window) else gtk_window_unfullscreen(window);
@@ -867,6 +875,7 @@ pub const Window = struct {
         }
 
         gtk_window_set_resizable(window, if (options.resizable) 1 else 0);
+        gtk_window_set_keep_above(window, if (options.always_on_top) 1 else 0);
 
         if (options.fullscreen) {
             gtk_window_fullscreen(window);
@@ -892,6 +901,8 @@ pub const Window = struct {
         const window_id = registerWindow(window, webview) orelse {
             return error.TooManyWindows;
         };
+        if (!desktop_windows.setAlwaysOnTop(@intFromPtr(window), options.always_on_top))
+            return error.WindowHandleNotSet;
         if (g_signal_connect_data(window, "destroy", @ptrCast(&onWindowDestroyed), null, null, 0) == 0 or
             g_signal_connect_data(webview, "load-changed", @ptrCast(&onWindowNavigation), null, null, 0) == 0)
         {
@@ -1062,6 +1073,7 @@ fn createStyledWindow(title: []const u8, width: u32, height: u32, content: []con
         .x = style.x,
         .y = style.y,
         .resizable = style.resizable,
+        .always_on_top = style.always_on_top,
         .frameless = style.frameless,
         .transparent = style.transparent,
         .fullscreen = style.fullscreen,
