@@ -1,5 +1,64 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.104...v0.0.105)
+
+## 🚀 Features
+
+- forward Windows deep links to the running app ([198e715](https://github.com/craft-native/craft/commit/198e715)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- forward Linux deep links to the running app ([ad8fdfe](https://github.com/craft-native/craft/commit/ad8fdfe)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- smoke cold deep links from installed desktop packages ([27b7d3c](https://github.com/craft-native/craft/commit/27b7d3c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- pass desktop protocol URLs as deep links ([a5df29b](https://github.com/craft-native/craft/commit/a5df29b)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- seed desktop deep links before WebView loads ([1232c55](https://github.com/craft-native/craft/commit/1232c55)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- parse desktop protocol activation separately from page URL ([7c700bd](https://github.com/craft-native/craft/commit/7c700bd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- request provisional macOS notification delivery ([8ef0fb1](https://github.com/craft-native/craft/commit/8ef0fb1)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- register desktop URL schemes in DEB and MSI ([dcfb13a](https://github.com/craft-native/craft/commit/dcfb13a)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- check macOS delivered notification IDs ([68a95dd](https://github.com/craft-native/craft/commit/68a95dd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- deliver installed Windows desktop toasts ([4ea5b79](https://github.com/craft-native/craft/commit/4ea5b79)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- package Windows notification identity ([52e3779](https://github.com/craft-native/craft/commit/52e3779)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- verify installed Linux desktop notifications ([30a5ba4](https://github.com/craft-native/craft/commit/30a5ba4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- bundle Windows runtime companion files in app packages ([87b48fc](https://github.com/craft-native/craft/commit/87b48fc)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- return Windows window script results to their sender ([2e8d61f](https://github.com/craft-native/craft/commit/2e8d61f)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- return Linux window script results to their sender ([3e9efcd](https://github.com/craft-native/craft/commit/3e9efcd)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- track pending desktop window evaluations ([acda8fb](https://github.com/craft-native/craft/commit/acda8fb)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- add Windows portable window controls ([0750bf3](https://github.com/craft-native/craft/commit/0750bf3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- implement Linux typed window controls ([db0c772](https://github.com/craft-native/craft/commit/db0c772)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- validate portable window controls per live handle ([ed50868](https://github.com/craft-native/craft/commit/ed50868)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🐛 Bug Fixes
+
+- distinguish macOS notification errors from denied permission ([e3be1c4](https://github.com/craft-native/craft/commit/e3be1c4)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- inspect macOS authorization and dispatch Linux URI through GIO ([fc894ff](https://github.com/craft-native/craft/commit/fc894ff)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- preserve immediate notification bridge contract ([8c3b042](https://github.com/craft-native/craft/commit/8c3b042)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- resolve macOS notification permission requests ([1e3dd0e](https://github.com/craft-native/craft/commit/1e3dd0e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- stabilize installed Linux notification smoke ([07ee554](https://github.com/craft-native/craft/commit/07ee554)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- keep Windows logger off POSIX clock ([c38db81](https://github.com/craft-native/craft/commit/c38db81)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- limit desktop clipboard dispatch to text actions ([5c0434c](https://github.com/craft-native/craft/commit/5c0434c)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- route installed desktop clipboard bridges ([9bd41e5](https://github.com/craft-native/craft/commit/9bd41e5)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- preserve null desktop script evaluation results ([fa63760](https://github.com/craft-native/craft/commit/fa63760)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- preserve native tracking bounds for partial limits ([d28bdaf](https://github.com/craft-native/craft/commit/d28bdaf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- honor initial desktop window size limits without libc ([84f11cf](https://github.com/craft-native/craft/commit/84f11cf)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧪 Tests
+
+- sign installed macOS notification smoke app ([6fdc2b3](https://github.com/craft-native/craft/commit/6fdc2b3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- verify installed app clipboard integration ([87fa3f3](https://github.com/craft-native/craft/commit/87fa3f3)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- smoke installed Craft packages on native CI runners ([74d388e](https://github.com/craft-native/craft/commit/74d388e)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- cover evaluation navigation and close races ([caec6f2](https://github.com/craft-native/craft/commit/caec6f2)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+- smoke portable controls on live desktop windows ([115bade](https://github.com/craft-native/craft/commit/115bade)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 🧹 Chores
+
+- release v0.0.105 ([3ca41e8](https://github.com/craft-native/craft/commit/3ca41e8)) _(by glennmichael123 <gtorregosa@gmail.com>)_
+
+## 📄 Miscellaneous
+
+- Merge pull request #326 from craft-native/codex/portable-window-parity ([36af50e](https://github.com/craft-native/craft/commit/36af50e)) _(by Glenn Michael Torregosa <gtorregosa@gmail.com>)_ ([#326](https://github.com/craft-native/craft/issues/326), [#326](https://github.com/craft-native/craft/issues/326))
+
+## Contributors
+
+- _Glenn Michael Torregosa <gtorregosa@gmail.com>_
+- _glennmichael123 <gtorregosa@gmail.com>_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.103...v0.0.104)
 
 ## 🐛 Bug Fixes
