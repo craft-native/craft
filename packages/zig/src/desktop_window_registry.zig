@@ -40,6 +40,8 @@ pub const Entry = struct {
     /// GTK reports a request to the window manager, not a guaranteed state.
     /// Keep the request per window so the page can read back its own setting.
     always_on_top: bool = false,
+    /// Whether an owned modal found its parent enabled before Craft blocked it.
+    modal_parent_was_enabled: ?bool = null,
     limits: desktop_window_controls.Limits = .{},
     /// Windows restores these when leaving borderless fullscreen.
     windowed_geometry: ?Geometry = null,
@@ -92,6 +94,32 @@ pub const Registry = struct {
         for (self.entries) |slot| {
             if (slot) |entry| {
                 if (entry.webview == webview) return entry;
+            }
+        }
+        return null;
+    }
+
+    pub fn rememberModalParentState(self: *Registry, window: usize, was_enabled: bool) bool {
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    if (entry.modal_parent_was_enabled == null)
+                        entry.modal_parent_was_enabled = was_enabled;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn takeModalParentState(self: *Registry, window: usize) ?bool {
+        for (&self.entries) |*slot| {
+            if (slot.*) |*entry| {
+                if (entry.window == window) {
+                    const previous = entry.modal_parent_was_enabled;
+                    entry.modal_parent_was_enabled = null;
+                    return previous;
+                }
             }
         }
         return null;
@@ -325,6 +353,22 @@ test "portable controls belong to one live window and reset on reopen" {
     try std.testing.expect(registry.byWindow(0x1000).?.limits.minimum == null);
     try std.testing.expect(!registry.byWindow(0x1000).?.always_on_top);
     try std.testing.expect(registry.byWindow(0x1000).?.windowed_style == null);
+}
+
+test "modal parent blocking restores only the parent's previous state" {
+    var registry: Registry = .{};
+    _ = registry.remember(0x1000, 0x1001);
+    _ = registry.remember(0x2000, 0x2001);
+    try std.testing.expect(registry.rememberModalParentState(0x1000, true));
+    try std.testing.expect(registry.rememberModalParentState(0x1000, false));
+    try std.testing.expectEqual(@as(?bool, true), registry.byWindow(0x1000).?.modal_parent_was_enabled);
+    try std.testing.expect(registry.byWindow(0x2000).?.modal_parent_was_enabled == null);
+    try std.testing.expectEqual(@as(?bool, true), registry.takeModalParentState(0x1000));
+    try std.testing.expect(registry.takeModalParentState(0x1000) == null);
+    try std.testing.expect(registry.rememberModalParentState(0x1000, false));
+    _ = registry.forgetWindow(0x1000);
+    _ = registry.remember(0x1000, 0x3001);
+    try std.testing.expect(registry.byWindow(0x1000).?.modal_parent_was_enabled == null);
 }
 
 test "geometry changes belong to one live window and reset on reopen" {

@@ -179,6 +179,8 @@ pub extern "user32" fn GetWindowTextLengthW(hWnd: HWND) callconv(.c) c_int;
 pub extern "user32" fn GetWindowTextW(hWnd: HWND, lpString: LPWSTR, nMaxCount: c_int) callconv(.c) c_int;
 pub extern "user32" fn GetForegroundWindow() callconv(.c) ?HWND;
 pub extern "user32" fn IsWindowVisible(HWND) callconv(.c) BOOL;
+pub extern "user32" fn IsWindowEnabled(HWND) callconv(.c) BOOL;
+pub extern "user32" fn EnableWindow(HWND, BOOL) callconv(.c) BOOL;
 pub extern "user32" fn IsIconic(HWND) callconv(.c) BOOL;
 pub extern "user32" fn IsZoomed(HWND) callconv(.c) BOOL;
 pub extern "user32" fn SetWindowPos(hWnd: HWND, hWndInsertAfter: ?HWND, X: c_int, Y: c_int, cx: c_int, cy: c_int, uFlags: UINT) callconv(.c) BOOL;
@@ -1290,7 +1292,6 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         window_context.current() orelse 0,
         window_context.currentWebView() orelse 0,
     );
-    if (relationship.parent != null) return error.UnsupportedPlatform;
 
     const url = try json_utils.getStringDecoded(allocator, json, "url");
     defer if (url) |text| allocator.free(text);
@@ -1309,9 +1310,11 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     const owner = window_context.currentWebView() orelse return error.WebViewHandleNotSet;
     if (window_registry.byName(name)) |existing| {
         if (desktop_windows.byWindow(existing) == null) return error.WindowHandleNotSet;
+        if (!window_registry.bindRelationship(existing, relationship)) return error.InvalidParameter;
         if (!window_registry.rememberNamedOwned(existing, name, owner)) return error.InvalidParameter;
         _ = ShowWindow(@ptrFromInt(existing), SW_SHOW);
         _ = UpdateWindow(@ptrFromInt(existing));
+        if (relationship.parent) |parent| updateModalParent(parent);
         bridge_error.sendResultToJS(allocator, action, result);
         return;
     }
@@ -1321,6 +1324,8 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     const limits = try desktop_window_controls.parseCreateLimits(json);
     if (width == 0 or height == 0 or width > @as(u32, std.math.maxInt(c_int)) or height > @as(u32, std.math.maxInt(c_int)))
         return error.InvalidParameter;
+    if (relationship.modal) blockModalParent(relationship.parent.?);
+    errdefer if (relationship.parent) |parent| updateModalParent(parent);
     var created = try Window.create(.{
         .title = title orelse name,
         .width = width,
@@ -1332,6 +1337,7 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         .always_on_top = json_utils.getBool(json, "alwaysOnTop") orelse false,
         .fullscreen = json_utils.getBool(json, "fullscreen") orelse false,
         .dev_tools = json_utils.getBool(json, "devTools") orelse false,
+        .native_owner = if (relationship.parent) |parent| @ptrFromInt(parent) else null,
     });
     errdefer created.close();
     if (limits.minimum != null or limits.maximum != null)
@@ -1340,8 +1346,38 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     if (desktop_windows.byWebview(owner) == null) return error.WindowHandleNotSet;
     if (!window_registry.rememberNamedOwned(@intFromPtr(created.hwnd), name, owner))
         return error.TooManyWindows;
+    if (!window_registry.bindRelationship(@intFromPtr(created.hwnd), relationship))
+        return error.InvalidParameter;
     created.show();
+    if (relationship.parent) |parent| updateModalParent(parent);
     bridge_error.sendResultToJS(allocator, action, result);
+}
+
+fn blockModalParent(parent: window_registry.Handle) void {
+    const entry = desktop_windows.byWindow(parent) orelse return;
+    if (entry.modal_parent_was_enabled != null) return;
+    const hwnd: HWND = @ptrFromInt(parent);
+    if (desktop_windows.rememberModalParentState(parent, IsWindowEnabled(hwnd) != 0))
+        _ = EnableWindow(hwnd, 0);
+}
+
+/// Owned windows follow/die with their owner. Only the chosen owner is
+/// disabled for a modal child; siblings remain interactive.
+fn updateModalParent(parent: window_registry.Handle) void {
+    if (desktop_windows.byWindow(parent) == null) return;
+    var children: [window_registry.capacity]window_registry.Handle = undefined;
+    for (window_registry.childrenOf(parent, &children)) |handle| {
+        const relationship = window_registry.relationshipOf(handle) orelse continue;
+        if (relationship.modal and desktop_windows.byWindow(handle) != null and
+            IsWindowVisible(@ptrFromInt(handle)) != 0)
+        {
+            blockModalParent(parent);
+            return;
+        }
+    }
+    if (desktop_windows.takeModalParentState(parent)) |was_enabled| {
+        if (was_enabled) _ = EnableWindow(@ptrFromInt(parent), 1);
+    }
 }
 
 fn targetWindow(data: ?[]const u8) !desktop_window_registry.Entry {
@@ -1586,8 +1622,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     if (std.mem.eql(u8, action, "show") or std.mem.eql(u8, action, "focus")) {
         _ = ShowWindow(hwnd, SW_SHOW);
         _ = UpdateWindow(hwnd);
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "hide")) {
         _ = ShowWindow(hwnd, SW_HIDE);
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "toggle")) {
         if (IsWindowVisible(hwnd) != 0) {
             _ = ShowWindow(hwnd, SW_HIDE);
@@ -1595,6 +1635,8 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
             _ = ShowWindow(hwnd, SW_SHOW);
             _ = UpdateWindow(hwnd);
         }
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
         if (DestroyWindow(hwnd) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "minimize")) {
@@ -1705,6 +1747,7 @@ pub const WindowStyle = struct {
     dark_mode: ?bool = null,
     enable_hot_reload: bool = false,
     dev_tools: bool = true,
+    native_owner: ?HWND = null,
 };
 
 pub const Window = struct {
@@ -1771,7 +1814,7 @@ pub const Window = struct {
             y,
             @intCast(options.width),
             @intCast(options.height),
-            null,
+            options.native_owner,
             null,
             hInstance,
             null,
@@ -2136,11 +2179,13 @@ fn WindowProc(hwnd: HWND, msg: UINT, wParam: WPARAM, lParam: LPARAM) callconv(.c
                 deliverWindowEvent(entry, "close", "");
             }
             if (desktop_windows.forgetWindow(@intFromPtr(hwnd))) |entry| {
+                const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
                 discardPendingOpens(entry.id);
                 const controller: *ICoreWebView2Controller = @ptrFromInt(entry.context);
                 const webview: *ICoreWebView2 = @ptrFromInt(entry.webview);
                 window_registry.forgetOwner(entry.webview);
                 window_registry.forget(entry.window);
+                if (relationship.parent) |parent| updateModalParent(parent);
                 if (entry.message_token) |token| {
                     _ = webview.lpVtbl.remove_WebMessageReceived(webview, .{ .value = token });
                 }
@@ -2229,6 +2274,7 @@ fn createStyledWindow(title: []const u8, width: u32, height: u32, content: []con
         .fullscreen = style.fullscreen,
         .dark_mode = style.dark_mode,
         .dev_tools = style.dev_tools,
+        .native_owner = style.native_owner,
     });
     errdefer window.close();
     if (is_url) try window.loadURL(content) else try window.loadHTML(content);

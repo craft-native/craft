@@ -159,6 +159,8 @@ pub const WindowOptions = struct {
     fullscreen: bool = false,
     dark_mode: ?bool = null,
     dev_tools: bool = true,
+    /// Internal Win32 owner handle for a runtime-created top-level window.
+    native_owner: ?*anyopaque = null,
     titlebar_hidden: bool = false,
     // Permission policy (secure by default - sensitive permissions denied)
     allow_camera: bool = false,

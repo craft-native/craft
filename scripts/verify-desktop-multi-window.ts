@@ -74,31 +74,29 @@ const mainPage = `<!doctype html><script>
     const first = await child(1)
     if (first.name !== 'settings') throw new Error('wrong child handle')
     await waitFor('child-1')
-    if (!isWindows) {
-      const attached = await window.craft.window.open({
-        name: 'attached', title: 'Attached Linux child', parent: 'settings',
-        html: '<!doctype html><title>Attached Linux child</title>',
-      })
-      if (attached.name !== 'attached' || (await call('getState', {}, attached.name)).isVisible !== true)
-        throw new Error('Linux transient child was not created and shown')
-      const modal = await window.craft.window.open({
-        name: 'modal', title: 'Parent-scoped Linux modal', parent: 'settings', modal: true,
-        html: '<!doctype html><title>Parent-scoped Linux modal</title>',
-      })
-      if (modal.name !== 'modal' || (await call('getState', {}, modal.name)).isVisible !== true)
-        throw new Error('Linux parent-scoped modal was not created and shown')
-      await call('hide', {}, modal.name)
-      if ((await call('getState', {}, modal.name)).isVisible !== false)
-        throw new Error('Linux modal did not hide')
-      await call('show', {}, modal.name)
-      if ((await call('getState', {}, modal.name)).isVisible !== true)
-        throw new Error('Linux modal did not reopen')
-      await call('close', {}, modal.name)
-      let removed = false
-      try { await call('getState', {}, modal.name) }
-      catch (_) { removed = true }
-      if (!removed) throw new Error('closed Linux modal retained a stale handle')
-    }
+    const attached = await window.craft.window.open({
+      name: 'attached', title: 'Attached desktop child', parent: 'settings',
+      html: '<!doctype html><title>Attached desktop child</title>',
+    })
+    if (attached.name !== 'attached' || (await call('getState', {}, attached.name)).isVisible !== true)
+      throw new Error('native owned child was not created and shown')
+    const modal = await window.craft.window.open({
+      name: 'modal', title: 'Parent-scoped modal', parent: 'settings', modal: true,
+      html: '<!doctype html><title>Parent-scoped modal</title>',
+    })
+    if (modal.name !== 'modal' || (await call('getState', {}, modal.name)).isVisible !== true)
+      throw new Error('parent-scoped modal was not created and shown')
+    await call('hide', {}, modal.name)
+    if ((await call('getState', {}, modal.name)).isVisible !== false)
+      throw new Error('modal did not hide')
+    await call('show', {}, modal.name)
+    if ((await call('getState', {}, modal.name)).isVisible !== true)
+      throw new Error('modal did not reopen')
+    await call('close', {}, modal.name)
+    let removed = false
+    try { await call('getState', {}, modal.name) }
+    catch (_) { removed = true }
+    if (!removed) throw new Error('closed modal retained a stale handle')
     const bounds = await window.craft.window._call('getBounds', {}, 'settings')
     if (!(bounds.width > 0 && bounds.height > 0)) throw new Error('child bounds not routed to creator')
     const state = await call('getState')
@@ -269,26 +267,24 @@ const mainPage = `<!doctype html><script>
         resolve()
       })
     })
-    const attachedClosed = !isWindows ? new Promise((resolve, reject) => {
+    const attachedClosed = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('attached child close event missing')), 20000)
       window.addEventListener('craft:window:close', (event) => {
         if (event.detail.windowId !== 'attached') return
         clearTimeout(timeout)
         resolve()
       })
-    }) : Promise.resolve()
+    })
     const closingEvaluation = call('executeJavaScript', {
       code: '(() => { const until = Date.now() + 250; while (Date.now() < until) {} return 42 })()',
     })
     await window.craft.window._call('close', {}, 'settings')
     await closed
     await attachedClosed
-    if (!isWindows) {
-      let attachedForgotten = false
-      try { await call('getState', {}, 'attached') }
-      catch (_) { attachedForgotten = true }
-      if (!attachedForgotten) throw new Error('destroyed Linux parent left its attached child registered')
-    }
+    let attachedForgotten = false
+    try { await call('getState', {}, 'attached') }
+    catch (_) { attachedForgotten = true }
+    if (!attachedForgotten) throw new Error('destroyed parent left its attached child registered')
     await checkRacedEvaluation(closingEvaluation, 'close')
     await report('closed')
     const survivingMain = await window.craft.window._call('getBounds', {}, 'main')

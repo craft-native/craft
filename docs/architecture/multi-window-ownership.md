@@ -23,12 +23,12 @@ whether it stores a window-specific target.
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
-| Modal and parent relationships | Parent-scoped sheets and attached child windows implemented; installed-app smoke in CI | Transient child windows with parent-only input blocking; GUI smoke pending | Explicitly rejected pending native support |
+| Modal and parent relationships | Parent-scoped sheets and attached child windows implemented; installed-app smoke in CI | Transient child windows with parent-only input blocking; GUI and installed-app smokes in CI | Owned child windows with parent-only input blocking; GUI smoke pending |
 
 The runtime-creation, stable-handle, reply-routing, and event-scoping contract
 from issue #67 is covered here. Parent/modal behavior follows the approved
-[contract](./multi-window-parent-modal-proposal.md), but is not yet portable;
-Windows rejects it until native support is ready. The Windows release archive stages an app-local WebView2 loader;
+[contract](./multi-window-parent-modal-proposal.md); all three desktop
+backends now apply it. The Windows release archive stages an app-local WebView2 loader;
 users still need the Microsoft WebView2 Runtime.
 
 Linux and Windows keep their live native window/webview pairs in
