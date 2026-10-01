@@ -209,7 +209,8 @@ export interface WindowEventMap {
   'restore': void
   'resize': WindowSize
   'move': WindowPosition
-  'close': { preventDefault: () => void }
+  /** Notification after native closing begins; this event cannot cancel it. */
+  'close': void
   'closed': void
   'enter-fullscreen': void
   'leave-fullscreen': void
@@ -682,9 +683,7 @@ export class Window {
   // Windows Specific
   // ==========================================================================
 
-  /**
-   * Set background material (Windows 11)
-   */
+  /** Reserved for Windows 11 material support; current desktop hosts reject this action. */
   async setBackgroundMaterial(material: WindowCreateOptions['backgroundMaterial']): Promise<void> {
     await this._call('setBackgroundMaterial', { material })
   }
@@ -696,9 +695,7 @@ export class Window {
     await this._call('flashFrame', { flash })
   }
 
-  /**
-   * Set taskbar overlay icon (Windows)
-   */
+  /** Reserved for Windows taskbar overlay support; current desktop hosts reject this action. */
   async setOverlayIcon(icon: string | null, description?: string): Promise<void> {
     await this._call('setOverlayIcon', { icon, description })
   }

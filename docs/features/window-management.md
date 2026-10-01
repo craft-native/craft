@@ -135,16 +135,16 @@ const window = await createWindow(html, {
 
 ```typescript
 // Move to specific position
-window.setPosition(100, 200)
+await window.setPosition(100, 200)
 
 // Get current position
-const { x, y } = window.getPosition()
+const { x, y } = await window.getPosition()
 ```
 
 ### Center Programmatically
 
 ```typescript
-window.center()
+await window.center()
 ```
 
 ## Window Size
@@ -175,23 +175,20 @@ const window = await createWindow(html, {
 
 ```typescript
 // Set size
-window.setSize(1024, 768)
+await window.setSize(1024, 768)
 
 // Get current size
-const { width, height } = window.getSize()
-
-// Get inner size (content area)
-const { width: innerWidth, height: innerHeight } = window.getInnerSize()
+const { width, height } = await window.getSize()
 ```
 
 ### Resizable Control
 
 ```typescript
 // Make non-resizable
-window.setResizable(false)
+await window.setResizable(false)
 
 // Check if resizable
-const isResizable = window.isResizable()
+const isResizable = await window.isResizable()
 ```
 
 ## Window State
@@ -199,61 +196,61 @@ const isResizable = window.isResizable()
 ### Minimize
 
 ```typescript
-window.minimize()
+await window.minimize()
 
 // Check state
-const isMinimized = window.isMinimized()
+const { isMinimized } = await window.getState()
 ```
 
 ### Maximize
 
 ```typescript
-window.maximize()
+await window.maximize()
 
-// Toggle maximize
-window.toggleMaximize()
+// Restore to normal size
+await window.unmaximize()
 
 // Check state
-const isMaximized = window.isMaximized()
+const { isMaximized } = await window.getState()
 ```
 
 ### Fullscreen
 
 ```typescript
 // Enter fullscreen
-window.setFullscreen(true)
+await window.setFullscreen(true)
 
 // Exit fullscreen
-window.setFullscreen(false)
+await window.setFullscreen(false)
 
 // Toggle fullscreen
-window.toggleFullscreen()
+await window.toggleFullscreen()
 
 // Check state
-const isFullscreen = window.isFullscreen()
+const { isFullscreen } = await window.getState()
 ```
 
 ### Show/Hide
 
 ```typescript
 // Hide window
-window.hide()
+await window.hide()
 
 // Show window
-window.show()
+await window.show()
 
 // Check visibility
-const isVisible = window.isVisible()
+const { isVisible } = await window.getState()
 ```
 
 ### Focus
 
 ```typescript
 // Focus window
-window.focus()
+await window.focus()
 
 // Check focus
-const isFocused = window.isFocused()
+const { isFocused } = await window.getState()
 ```
 
 ## Window Controls (Traffic Lights)
@@ -374,7 +371,7 @@ Implement a custom title bar in HTML:
 ```html
 <div class="titlebar" style="-webkit-app-region: drag;">
   <span>My App</span>
-  <button onclick="window.craft.close()" style="-webkit-app-region: no-drag;">
+  <button onclick="window.craft.window.close()" style="-webkit-app-region: no-drag;">
     Close
   </button>
 </div>
@@ -462,10 +459,10 @@ back to the OS, so it follows a sunset switch again.
 
 ```typescript
 // Set always on top
-window.setAlwaysOnTop(true)
+await window.setAlwaysOnTop(true)
 
 // Toggle
-window.setAlwaysOnTop(!window.isAlwaysOnTop())
+await window.setAlwaysOnTop(!(await window.isAlwaysOnTop()))
 ```
 
 ## Multi-Window
@@ -549,48 +546,19 @@ create/close/reopen under Xvfb and the equivalent Windows WebView2 path,
 including concurrent child creation, scoped child events while unrelated pages
 are open, and stale-handle cleanup. Installed PKG, DEB and MSI smokes also
 create and close a child through the packaged runtime.
-Modal/parent semantics are not part of the runtime-created-window contract yet.
+Parent-only modal semantics are part of the runtime-created-window contract.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
 implemented routing guarantees, application-level event sinks and remaining
 cross-platform work.
 
 ## Multi-Monitor
 
-### Get Monitors
-
-```typescript
-import { getMonitors, getPrimaryMonitor } from 'craft-native'
-
-// All monitors
-const monitors = await getMonitors()
-monitors.forEach((monitor) => {
-  console.log(`${monitor.name}: ${monitor.width}x${monitor.height}`)
-})
-
-// Primary monitor
-const primary = await getPrimaryMonitor()
-```
-
-### Position on Specific Monitor
-
-```typescript
-const monitors = await getMonitors()
-const secondMonitor = monitors[1]
-
-const window = await createWindow(html, {
-  x: secondMonitor.x + 100,
-  y: secondMonitor.y + 100,
-  width: 800,
-  height: 600,
-})
-```
-
-### Get Monitor for Window
-
-```typescript
-const monitor = window.getCurrentMonitor()
-console.log(`Window is on: ${monitor.name}`)
-```
+The typed `Window` handle can request screen coordinates with `setPosition()`
+and read its actual bounds with `getBounds()`. The SDK does not currently expose
+the `getMonitors()`, `getPrimaryMonitor()`, or `getCurrentMonitor()` methods that
+older examples used. Avoid assuming a requested position is honored: a Linux
+window manager may adjust it, and global positioning can be unavailable under
+Wayland.
 
 ## Window Events
 
@@ -630,21 +598,19 @@ window.on('maximize', () => {
   console.log('Window maximized')
 })
 
-window.on('fullscreen', (isFullscreen) => {
-  console.log(`Fullscreen: ${isFullscreen}`)
+window.on('enter-fullscreen', () => {
+  console.log('Entered fullscreen')
+})
+
+window.on('leave-fullscreen', () => {
+  console.log('Left fullscreen')
 })
 ```
 
-### Prevent Close
-
-```typescript
-window.on('close', (event) => {
-  const shouldClose = confirm('Are you sure?')
-  if (!shouldClose) {
-    event.preventDefault()
-  }
-})
-```
+`close` is a notification, not a cancellable request. The native close path is
+already under way when the listener runs. For an explicit Close button, ask for
+confirmation before calling `window.close()`. Do not call `preventDefault()`
+on the `close` event.
 
 ## Window Title
 
@@ -652,10 +618,10 @@ window.on('close', (event) => {
 
 ```typescript
 // Set title
-window.setTitle('My App - Document.txt')
+await window.setTitle('My App - Document.txt')
 
 // Get title
-const title = window.getTitle()
+const title = await window.getTitle()
 ```
 
 ### Title from Web Content
@@ -664,85 +630,31 @@ const title = window.getTitle()
 <head>
   <title>Dynamic Title</title>
 </head>
-<script>
-  document.title = 'Updated Title'
-  // Automatically syncs to window title
-</script>
 ```
+
+An HTML `<title>` sets the document title. To change native window chrome after
+creation, call `await window.setTitle('Updated Title')` on the typed handle.
 
 ## Window Icon
 
-### Set Icon
-
-```typescript
-const window = await createWindow(html, {
-  icon: './assets/icon.png',
-})
-
-// Or change later
-window.setIcon('./assets/new-icon.png')
-```
+The typed runtime-created `Window` handle does not have a `setIcon()` method,
+and `WindowCreateOptions` does not accept `icon`. Set the application icon
+through the packaging configuration instead.
 
 ## Best Practices
 
 ### Window State Persistence
 
 ```typescript
-import { readFile, writeFile } from 'node:fs/promises'
-
-// Save window state
-async function saveWindowState(window) {
-  const state = {
-    x: window.getPosition().x,
-    y: window.getPosition().y,
-    width: window.getSize().width,
-    height: window.getSize().height,
-    maximized: window.isMaximized(),
-  }
-  await writeFile('window-state.json', JSON.stringify(state))
-}
-
-// Restore window state
-async function restoreWindowState() {
-  try {
-    const data = await readFile('window-state.json', 'utf-8')
-    return JSON.parse(data)
-  }
-  catch {
-    return null
-  }
-}
-
-// Usage
-const savedState = await restoreWindowState()
-const window = await createWindow(html, {
-  ...defaultOptions,
-  ...savedState,
-})
-
-window.on('close', () => saveWindowState(window))
+const state = await window.getState()
+localStorage.setItem('window-bounds', JSON.stringify(state.bounds))
 ```
 
-### Graceful Shutdown
-
-```typescript
-app.on('window-all-closed', () => {
-  // Save state, cleanup, etc.
-  app.quit()
-})
-
-// Prevent accidental close
-window.on('close', async (event) => {
-  if (hasUnsavedChanges()) {
-    event.preventDefault()
-    const save = await showSaveDialog()
-    if (save) {
-      await saveDocument()
-      window.close()
-    }
-  }
-})
-```
+Enable `persistentStorage` for a window that needs its `localStorage` to
+survive application restarts. Restore saved bounds by passing their `x`, `y`,
+`width`, and `height` fields into `createWindow()` on the next launch. Save
+from an explicit action or a debounced move/resize handler; an asynchronous
+write started by a `close` listener may outlive the page on Linux or Windows.
 
 ## Next Steps
 

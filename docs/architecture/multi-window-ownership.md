@@ -43,6 +43,21 @@ from the live GTK/GDK window. Windows reads visibility, minimization,
 maximization, focus and topmost status from Win32; its fullscreen flag comes
 from Craft's borderless-fullscreen state.
 
+The typed SDK contains some methods beyond this portable core. The host
+dispatchers define their current support, not the existence of a TypeScript
+method:
+
+| Action group | macOS | Linux and Windows |
+| --- | --- | --- |
+| `setMovable`, `startDrag`, `isMovable`, `setOpacity`, `getOpacity`, `setBackgroundColor`, `setHasShadow`, `setWindowLevel` | AppKit window bridge | `PlatformNotSupported` |
+| `setAppearance`, `setVibrancy` | AppKit-specific | `PlatformNotSupported` |
+| `setBackgroundMaterial`, `setOverlayIcon` | No window action handler | No window action handler |
+
+`flashFrame` is implemented on all three desktops, with platform-specific
+attention behavior described above. Do not present the reserved Windows
+material/overlay methods as working APIs until a native handler and installed
+app test exist. A missing handler rejects; it does not silently succeed.
+
 Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. The Linux and Windows GUI smokes resize
 a child while two unrelated child pages are live, requiring the changed page's
