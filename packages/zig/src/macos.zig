@@ -4019,12 +4019,43 @@ pub fn closeWindow(window_handle: anytype) void {
     msgSendVoid0(window, "close");
 }
 
+/// A native titlebar close does not pass through the bridge. The delegate
+/// calls this before emitting the parent's close event so attached children
+/// close in the same order whether the click or the SDK initiated the close.
+pub fn closeAttachedChildren(window: objc.id) void {
+    if (window == null) return;
+    var children: [window_registry.capacity]window_registry.Handle = undefined;
+    for (window_registry.childrenOf(@intFromPtr(window), &children)) |handle| {
+        const child: objc.id = @ptrFromInt(handle);
+        closeWindow(child);
+    }
+}
+
+pub fn detachParentWindow(window: objc.id) void {
+    if (window == null) return;
+    const relationship = window_registry.relationshipOf(@intFromPtr(window)) orelse return;
+    const parent_handle = relationship.parent orelse return;
+    if (!window_registry.isKnown(parent_handle)) return;
+    const parent: objc.id = @ptrFromInt(parent_handle);
+    if (relationship.modal) {
+        if (msgSend0(window, "sheetParent") != null)
+            msgSendVoid1(parent, "endSheet:", window);
+    } else if (msgSend0(window, "parentWindow") != null) {
+        msgSendVoid1(parent, "removeChildWindow:", window);
+    }
+}
+
 /// Permanently tear down a named runtime window. Ordinary `close` deliberately
 /// retains its page for reopen; this path pairs that policy with every cache
 /// and observer release before allowing AppKit to deallocate the window.
 pub fn destroyWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
     if (window == null) return;
+
+    var children: [window_registry.capacity]window_registry.Handle = undefined;
+    for (window_registry.childrenOf(@intFromPtr(window), &children)) |handle|
+        destroyWindow(@as(objc.id, @ptrFromInt(handle)));
+    detachParentWindow(window);
 
     const webview = webViewForWindow(window);
     if (global_native_ui_bridge) |bridge| bridge.forgetWindow(window);
@@ -4053,11 +4084,28 @@ pub fn destroyWindow(window_handle: anytype) void {
 
 pub fn hideWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
+    if (window_registry.relationshipOf(@intFromPtr(window))) |relationship| {
+        if (relationship.modal) detachParentWindow(window);
+    }
     msgSendVoid1(window, "orderOut:", @as(objc.id, null));
 }
 
 pub fn showWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
+    if (window_registry.relationshipOf(@intFromPtr(window))) |relationship| {
+        if (relationship.parent) |parent_handle| {
+            if (!window_registry.isKnown(parent_handle)) return;
+            const parent: objc.id = @ptrFromInt(parent_handle);
+            if (!msgSendBool(parent, "isVisible")) showWindow(parent);
+            if (relationship.modal) {
+                if (msgSend0(window, "sheetParent") == null)
+                    msgSendVoid2(parent, "beginSheet:completionHandler:", window, @as(?*anyopaque, null));
+                return;
+            }
+            if (msgSend0(window, "parentWindow") != parent)
+                msgSendVoid2(parent, "addChildWindow:ordered:", window, @as(c_long, 1));
+        }
+    }
     _ = msgSend1(window, "makeKeyAndOrderFront:", @as(?*anyopaque, null));
 }
 
@@ -7636,6 +7684,7 @@ pub const SecondaryWindow = struct {
     /// Webview of the page holding the typed handle returned by `open`.
     /// Zero is for native callers with no page owner.
     owner_webview: window_registry.Handle = 0,
+    relationship: window_registry.Relationship = .{},
 };
 
 /// The window open under this name, if one is.
@@ -7660,6 +7709,8 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
         return error.InvalidWindowName;
 
     if (findNamedWindow(spec.name)) |existing| {
+        if (!window_registry.bindRelationship(@intFromPtr(existing), spec.relationship))
+            return error.InvalidWindowRelationship;
         // A creator can be permanently destroyed while one of its children
         // remains retained. `forgetOwner` deliberately leaves that child
         // alive with no dangling webview; the next page to open its name then
@@ -7691,6 +7742,10 @@ pub fn openNamedWindow(spec: SecondaryWindow) !objc.id {
     if (!window_registry.rememberNamedOwned(@intFromPtr(window), spec.name, spec.owner_webview)) {
         destroyWindow(window);
         return error.WindowRegistrationFailed;
+    }
+    if (!window_registry.bindRelationship(@intFromPtr(window), spec.relationship)) {
+        destroyWindow(window);
+        return error.InvalidWindowRelationship;
     }
 
     // Focus, blur, move, resize and close events, the same as the first window

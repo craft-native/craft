@@ -180,6 +180,9 @@ export fn windowDidMove(_: objc.id, _: objc.SEL, notification: objc.id) callconv
 }
 
 export fn windowWillClose(_: objc.id, _: objc.SEL, notification: objc.id) callconv(.c) void {
+    const window = macos.msgSend0(notification, "object");
+    macos.closeAttachedChildren(window);
+    macos.detachParentWindow(window);
     fire(notification, "close", "");
 }
 

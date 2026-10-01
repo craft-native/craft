@@ -363,7 +363,6 @@ pub const WindowBridge = struct {
             window_context.current() orelse 0,
             window_context.currentWebView() orelse 0,
         );
-        if (relationship.parent != null) return BridgeError.PlatformNotSupported;
 
         const url = json_utils.getStringDecoded(self.allocator, json_data, "url") catch
             return BridgeError.InvalidJSON;
@@ -448,6 +447,7 @@ pub const WindowBridge = struct {
             // Keep the authenticated sender from `WKScriptMessage`, not a
             // window id asserted by the payload.
             .owner_webview = window_context.currentWebView() orelse 0,
+            .relationship = relationship,
         }) catch return BridgeError.NativeCallFailed;
 
         // A floor on the size, so a window with a fixed-width sidebar cannot be

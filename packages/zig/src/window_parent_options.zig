@@ -4,10 +4,7 @@
 const std = @import("std");
 const window_registry = @import("window_registry.zig");
 
-pub const Options = struct {
-    parent: ?window_registry.Handle = null,
-    modal: bool = false,
-};
+pub const Options = window_registry.Relationship;
 
 pub fn parse(
     allocator: std.mem.Allocator,

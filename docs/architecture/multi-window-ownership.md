@@ -23,12 +23,12 @@ whether it stores a window-specific target.
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
-| Modal and parent relationships | Proposed, not implemented | Proposed, not implemented | Proposed, not implemented |
+| Modal and parent relationships | Parent-scoped sheets and attached child windows implemented; installed-app verification pending | Explicitly rejected pending native support | Explicitly rejected pending native support |
 
 The runtime-creation, stable-handle, reply-routing, and event-scoping contract
-from issue #67 is covered here. Modal/parent semantics remain separate future
-decisions; the [proposal](./multi-window-parent-modal-proposal.md) is not a
-supported runtime contract. The Windows release archive stages an app-local WebView2 loader;
+from issue #67 is covered here. Parent/modal behavior follows the approved
+[contract](./multi-window-parent-modal-proposal.md), but is not yet portable;
+Linux and Windows reject it until native support is ready. The Windows release archive stages an app-local WebView2 loader;
 users still need the Microsoft WebView2 Runtime.
 
 Linux and Windows keep their live native window/webview pairs in
