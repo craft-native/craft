@@ -19,7 +19,7 @@ whether it stores a window-specific target.
 | Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
 | Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
 | Named-window size-limit short aliases (`setMinSize`, `setMaxSize`) | Implemented | Implemented | Implemented |
-| Named-window attention request (`flashFrame`) | App-level Dock attention; request IDs retained per handle for cancellation and destroy | Per-window GTK urgency hint; desktop may ignore | Per-window caption/taskbar flash |
+| Named-window attention request (`flashFrame`) | App-level Dock attention; request IDs retained per handle for cancellation and destroy; installed-app smoke | Per-window GTK urgency hint; desktop may ignore; installed-app smoke | Per-window caption/taskbar flash; installed-app smoke |
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |

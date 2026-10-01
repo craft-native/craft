@@ -304,10 +304,10 @@ async function launchViaSdk(): Promise<void> {
           || Math.abs(childState.bounds.width - childSize.width) > 40
           || Math.abs(childState.bounds.height - childSize.height) > 40)
           throw new Error('installed child state did not describe its addressed native window')
-        if (${platform !== 'macos'}) {
-          await window.craft.window._call('flashFrame', { flash: true }, child.name)
-          await window.craft.window._call('flashFrame', { flash: false }, child.name)
-        }
+        // AppKit owns the Dock bounce at app scope, but both calls must still
+        // accept the addressed child and cancel its saved request ID.
+        await window.craft.window._call('flashFrame', { flash: true }, child.name)
+        await window.craft.window._call('flashFrame', { flash: false }, child.name)
         const mainAfter = await window.craft.window._call('getSize', {}, 'main')
         if (Math.abs(mainAfter.width - mainSize.width) > 40 || Math.abs(mainAfter.height - mainSize.height) > 40)
           throw new Error('installed child resize changed the main window size')

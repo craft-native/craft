@@ -401,6 +401,22 @@ test "hide and force reload selectors receive their sender argument" {
     }
 }
 
+test "Dock attention cancellation uses the request returned for that window" {
+    const start = std.mem.indexOf(u8, window_bridge_source, "fn flashFrame(") orelse
+        return error.FlashFrameHandlerNotFound;
+    const body = enclosingFnBody(window_bridge_source, start);
+    try testing.expect(callsFunction(body, "msgSendNSInteger1("));
+    try testing.expect(callsFunction(body, "exchangeAttentionRequest("));
+    try testing.expect(callsFunction(body, "msgSendVoid1("));
+    try testing.expect(std.mem.indexOf(u8, body, "cancelUserAttentionRequest:\", @as(c_long, 0)") == null);
+
+    const destroy_start = std.mem.indexOf(u8, macos_source, "pub fn destroyWindow(") orelse
+        return error.DestroyWindowHandlerNotFound;
+    const destroy_body = enclosingFnBody(macos_source, destroy_start);
+    try testing.expect(callsFunction(destroy_body, "exchangeAttentionRequest("));
+    try testing.expect(std.mem.indexOf(u8, destroy_body, "cancelUserAttentionRequest:") != null);
+}
+
 test "runtime window creation applies the typed appearance and size constraints" {
     const start = std.mem.indexOf(u8, window_bridge_source, "fn open(") orelse
         return error.WindowOpenHandlerNotFound;
