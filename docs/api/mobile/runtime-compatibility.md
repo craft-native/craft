@@ -19,12 +19,17 @@ The native runtime rejects these classes of input:
 | A string containing an embedded NUL (`\u0000`) | Rejects the request before calling a C or Objective-C string API. | The native API could stop at the NUL and act on a different identifier or path. |
 | A saved-file name that is empty, `.`, `..`, or contains `/` | Rejects the request before constructing the destination path. | Joining the value directly to `Documents` could write outside that directory. |
 | A malformed or undecodable `data:` URL | Rejects without claiming that a file was written. | The shim could skip the write and still resolve with a destination path. |
+| A file-picker type that cannot map to a MIME type, extension, or declared UTI | Rejects the picker request instead of silently dropping the filter. | The shim could open a picker with fewer filters, or none, than the page requested. |
 | A value with the wrong JSON type, such as a non-numeric timestamp | Rejects with an invalid-parameter error. | A failed cast could silently select a default value or time window. |
 | A second operation that conflicts with an active picker, prompt, or scan | Rejects the second request and preserves the first request's callback. | One shared callback slot could be overwritten, leaving the first promise pending forever. |
 
 The checks apply only where the native API has the corresponding hazard. Craft
 does not reject arbitrary Unicode, dots within ordinary file names such as
 `notes.v2.txt`, or sequential interactive operations.
+
+For `pickFile`, prefer a MIME type such as `application/pdf` or a declared
+identifier such as `public.image`. `public.pdf` is not a declared identifier
+on the tested Apple runtime and is rejected rather than silently ignored.
 
 ## Writing Files Safely
 

@@ -222,12 +222,12 @@ const scannedCode = await window.craft.scanQRCode();
 console.log(scannedCode); // "https://example.com"
 
 // File Picker
-const file = await window.craft.pickFile(['public.image', 'public.pdf']);
+const file = await window.craft.pickFile(['public.image', 'application/pdf']);
 console.log(file.name, file.data); // base64 encoded
 
 // File Download
 await window.craft.downloadFile('https://example.com/file.pdf', 'document.pdf');
-await window.craft.saveFile(base64Data, 'image.png', 'image/png');
+await window.craft.saveFile('data:text/plain;base64,SGVsbG8=', 'hello.txt', 'text/plain');
 
 // Social Auth (Apple Sign In)
 const user = await window.craft.signInWithApple();

@@ -216,7 +216,9 @@ export interface CraftBridge {
 
   /**
    * Open file picker
-   * @param types - Optional array of MIME types or UTI types
+   * @param types - Optional MIME types or declared UTI identifiers. The native
+   * runtime rejects an entry it cannot map instead of silently dropping it;
+   * use `application/pdf`, not the undeclared `public.pdf` identifier.
    * @returns Selected file with name and base64 data
    */
   pickFile(types?: string[]): Promise<PickedFile>;
