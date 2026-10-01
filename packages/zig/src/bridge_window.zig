@@ -1369,7 +1369,7 @@ pub const WindowBridge = struct {
     /// Flash the window frame to get user attention (bounce dock icon on macOS)
     /// JSON: {"flash": true} or {"count": 3}
     fn flashFrame(self: *Self, data: ?[]const u8) !void {
-        _ = try self.requireWindowHandle(data);
+        const handle = try self.requireWindowHandle(data);
 
         const should_flash = if (data) |json_data|
             json_utils.getBool(json_data, "flash") orelse true
@@ -1380,21 +1380,20 @@ pub const WindowBridge = struct {
 
         if (builtin.os.tag == .macos) {
             const macos = @import("macos.zig");
+            const key = @intFromPtr(handle);
+            if (!window_registry.isKnown(key)) return BridgeError.InvalidParameter;
+            const app = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
+
+            if (window_registry.exchangeAttentionRequest(key, null)) |request| {
+                macos.msgSendVoid1(app, "cancelUserAttentionRequest:", request);
+            }
 
             if (should_flash) {
-                // Get NSApplication and request user attention
-                const NSApplication = macos.getClass("NSApplication");
-                const app = macos.msgSend0(NSApplication, "sharedApplication");
-
                 // NSCriticalRequest = 0, NSInformationalRequest = 10
                 // Use informational (bounce once) by default
                 const request_type: c_long = 10;
-                _ = macos.msgSend1(app, "requestUserAttention:", request_type);
-            } else {
-                // Cancel any pending attention request
-                const NSApplication = macos.getClass("NSApplication");
-                const app = macos.msgSend0(NSApplication, "sharedApplication");
-                _ = macos.msgSend1(app, "cancelUserAttentionRequest:", @as(c_long, 0));
+                const request = macos.msgSendNSInteger1(app, "requestUserAttention:", request_type);
+                _ = window_registry.exchangeAttentionRequest(key, request);
             }
         }
     }

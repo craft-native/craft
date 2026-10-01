@@ -269,6 +269,12 @@ pub fn msgSend1(target: anytype, selector: [*:0]const u8, arg1: anytype) objc.id
     return msg(target, sel(selector), arg1);
 }
 
+/// Message send returning NSInteger from a method with an NSInteger argument.
+pub fn msgSendNSInteger1(target: anytype, selector: [*:0]const u8, arg1: c_long) c_long {
+    const msg = @as(*const fn (@TypeOf(target), objc.SEL, c_long) callconv(.c) c_long, @ptrCast(&objc.objc_msgSend));
+    return msg(target, sel(selector), arg1);
+}
+
 pub fn msgSend2(target: anytype, selector: [*:0]const u8, arg1: anytype, arg2: anytype) objc.id {
     const Arg1Type = if (@TypeOf(arg1) == @TypeOf(null)) ?*anyopaque else @TypeOf(arg1);
     const Arg2Type = if (@TypeOf(arg2) == @TypeOf(null)) ?*anyopaque else @TypeOf(arg2);
@@ -4031,6 +4037,10 @@ pub fn destroyWindow(window_handle: anytype) void {
         @import("webview_recovery.zig").forget(@intFromPtr(view));
         window_registry.forgetOwner(@intFromPtr(view));
         msgSendVoid0(view, "stopLoading");
+    }
+    if (window_registry.exchangeAttentionRequest(@intFromPtr(window), null)) |request| {
+        const app = msgSend0(getClass("NSApplication"), "sharedApplication");
+        msgSendVoid1(app, "cancelUserAttentionRequest:", request);
     }
     window_registry.forget(@intFromPtr(window));
 

@@ -56,6 +56,8 @@ const Entry = struct {
     /// delivered both to the window's own page and to this owner, where the
     /// TypeScript `Window` handle and its listeners live.
     owner_webview: Handle = 0,
+    /// AppKit's requestUserAttention: token, scoped to the window that asked.
+    attention_request: ?c_long = null,
     name: [max_name]u8 = @splat(0),
     name_len: usize = 0,
 
@@ -175,6 +177,21 @@ pub fn isKnown(handle: Handle) bool {
     return false;
 }
 
+/// Replace the pending Dock attention token for a registered window.
+/// Returns the old token so the caller can cancel it with AppKit. A missing
+/// handle never creates a token that could outlive an unregistered window.
+pub fn exchangeAttentionRequest(handle: Handle, request: ?c_long) ?c_long {
+    if (handle == 0) return null;
+    for (&windows) |*slot| {
+        if (slot.handle == handle) {
+            const previous = slot.attention_request;
+            slot.attention_request = request;
+            return previous;
+        }
+    }
+    return null;
+}
+
 /// Drop a window during permanent teardown.
 pub fn forget(handle: Handle) void {
     for (&windows) |*slot| {
@@ -277,6 +294,30 @@ test "forgetting a window that was never known changes nothing" {
     forget(0x2000);
     try testing.expect(isKnown(0x1000));
     try testing.expectEqual(@as(usize, 1), count());
+}
+
+test "attention requests are replaced and cancelled per window" {
+    resetForTesting();
+    defer resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(remember(0x2000));
+
+    try testing.expectEqual(@as(?c_long, null), exchangeAttentionRequest(0x1000, 41));
+    try testing.expectEqual(@as(?c_long, null), exchangeAttentionRequest(0x2000, 42));
+    try testing.expectEqual(@as(?c_long, 41), exchangeAttentionRequest(0x1000, 43));
+    try testing.expectEqual(@as(?c_long, 42), exchangeAttentionRequest(0x2000, null));
+    try testing.expectEqual(@as(?c_long, 43), exchangeAttentionRequest(0x1000, null));
+    try testing.expectEqual(@as(?c_long, null), exchangeAttentionRequest(0x1000, null));
+}
+
+test "forgetting a window clears its attention request" {
+    resetForTesting();
+    defer resetForTesting();
+    try testing.expect(remember(0x1000));
+    _ = exchangeAttentionRequest(0x1000, 0);
+    forget(0x1000);
+    try testing.expect(remember(0x1000));
+    try testing.expectEqual(@as(?c_long, null), exchangeAttentionRequest(0x1000, null));
 }
 
 test "forgetting an owner leaves its child registered without a dangling target" {
