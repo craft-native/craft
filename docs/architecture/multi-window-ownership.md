@@ -45,6 +45,8 @@ Replies go back to the requesting view, and lifecycle events go to the changed
 window plus its named handle's creator. The Linux and Windows GUI smokes resize
 a child while two unrelated child pages are live, requiring the changed page's
 local event and the creator's named event without broadcasting to those pages.
+The GUI and installed-app smokes also watch every supported lifecycle channel
+on child pages, rejecting events for windows that page neither hosts nor owns.
 They also verify that an unparented child opened by another child page survives
 that creator's destruction: a different live page cannot steal its handle
 beforehand, but can adopt the orphaned name afterward and receive subsequent

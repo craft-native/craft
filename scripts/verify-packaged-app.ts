@@ -455,6 +455,12 @@ async function launchViaSdk(): Promise<void> {
       if (!window.craft?.window?._call) throw new Error('installed child has no window bridge')
       const title = await window.craft.window._call('getTitle', {}, 'main')
       if (title !== 'Craft installed child') throw new Error('installed child page addressed another window')
+      for (const name of ['focus', 'blur', 'move', 'resize', 'minimize', 'restore', 'enter-fullscreen', 'leave-fullscreen', 'close']) {
+        window.addEventListener('craft:window:' + name, event => {
+          if (event.detail.windowId === 'main' || (${testWindowAdoption} && event.detail.windowId === 'installed-grandchild')) return
+          fetch('/failed?reason=' + encodeURIComponent('unrelated installed window ' + name + ' reached child'), { method: 'POST' })
+        })
+      }
       window.addEventListener('craft:window:resize', event => {
         if (event.detail.windowId !== 'main') return
         if (!Number.isFinite(event.detail.width) || !Number.isFinite(event.detail.height)) return
@@ -481,6 +487,12 @@ async function launchViaSdk(): Promise<void> {
       const title = await window.craft.window._call('getTitle', {}, 'main')
       if (title !== 'Craft installed grandchild')
         throw new Error('installed grandchild page addressed another window')
+      for (const name of ['focus', 'blur', 'move', 'resize', 'minimize', 'restore', 'enter-fullscreen', 'leave-fullscreen', 'close']) {
+        window.addEventListener('craft:window:' + name, event => {
+          if (event.detail.windowId !== 'main')
+            fetch('/failed?reason=' + encodeURIComponent('unrelated installed window ' + name + ' reached grandchild'), { method: 'POST' })
+        })
+      }
       window.addEventListener('craft:window:resize', event => {
         if (event.detail.windowId !== 'main' || !window.__expectAdoptedResize) return
         if (Math.abs(event.detail.width - 680) > 60 || Math.abs(event.detail.height - 470) > 60) return

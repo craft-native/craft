@@ -312,11 +312,15 @@ const childPage = `<!doctype html><script>
     const ownTitle = await window.craft.window._call('executeJavaScript', { code: 'document.title' }, 'main')
     if (ownTitle !== expectedTitle)
       throw new Error('child evaluation reply escaped to its creator page')
+    const ownedWindows = new Set(cycle === '2' ? ['main', 'grandchild'] : ['main'])
+    for (const name of ['focus', 'blur', 'move', 'resize', 'minimize', 'restore', 'enter-fullscreen', 'leave-fullscreen', 'close']) {
+      window.addEventListener('craft:window:' + name, event => {
+        if (!ownedWindows.has(event.detail.windowId))
+          fetch('/report?error=' + encodeURIComponent('unrelated window ' + name + ' reached ' + cycle), { method: 'POST' })
+      })
+    }
     window.addEventListener('craft:window:resize', event => {
-      if (event.detail.windowId !== 'main') {
-        fetch('/report?error=' + encodeURIComponent('unrelated window resize reached ' + cycle), { method: 'POST' })
-        return
-      }
+      if (event.detail.windowId !== 'main') return
       if (cycle === '1' && reloaded)
         fetch('/report?step=settings-local-resize', { method: 'POST' })
       if (cycle === 'grandchild' && window.__expectAdoptedResize)
