@@ -42,6 +42,21 @@ const mainPage = `<!doctype html><script>
     }
     throw new Error([label, 'window did not receive focus'].join(': '))
   }
+  const checkNativeLinuxParent = async () => {
+    if (isWindows) return
+    const display = await window.craft.shell.getEnv('DISPLAY')
+    const xauthority = await window.craft.shell.getEnv('XAUTHORITY')
+    if (!display || !xauthority) throw new Error('Linux X11 display credentials missing')
+    const query = new URLSearchParams({ display, xauthority })
+    let state
+    for (let attempt = 0; attempt < 30; attempt++) {
+      state = await (await fetch(['/native-linux-parent-state?', query].join(''))).json()
+      if (state.attachedTransientForParent && state.modalTransientForParent &&
+        state.attachedAboveParent && state.modalAboveParent) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(['Linux transient ownership or stacking was wrong:', JSON.stringify(state)].join(' '))
+  }
   const waitSize = async (predicate, label) => {
     for (let attempt = 0; attempt < 40; attempt++) {
       const size = await call('getSize')
@@ -113,6 +128,7 @@ const mainPage = `<!doctype html><script>
       throw new Error('parent-scoped modal was not created and shown')
     await checkNativeModal(false, 'visible')
     if (!isWindows) {
+      await checkNativeLinuxParent()
       await call('focus', {}, 'main')
       await waitFocused('main', 'unrelated main window during Linux modal')
       await call('focus', {}, attached.name)
@@ -534,6 +550,49 @@ function OwnedBy([string]$childTitle, [string]$parentTitle) {
       })
       response.setHeader('content-type', 'application/json')
       response.end(output)
+    }
+    catch (error) {
+      response.writeHead(500, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: String(error) }))
+    }
+  }
+  else if (url.pathname === '/native-linux-parent-state' && !isWindows) {
+    try {
+      const display = url.searchParams.get('display')
+      const xauthority = url.searchParams.get('xauthority')
+      if (!display || !/^:\d+(?:\.\d+)?$/.test(display) || !xauthority)
+        throw new Error('invalid X11 display credentials')
+      const env = { ...process.env, DISPLAY: display, XAUTHORITY: xauthority }
+      const x11 = (args: string[]) => execFileSync(args[0]!, args.slice(1), {
+        encoding: 'utf8', env, timeout: 10_000,
+      })
+      const managed = x11(['wmctrl', '-l'])
+      const windowId = (title: string) => {
+        const row = managed.split(/\r?\n/).find(line => line.trimEnd().endsWith(` ${title}`))
+        const id = row?.match(/^\s*(0x[0-9a-f]+)/i)?.[1]
+        if (!id) throw new Error(`Openbox did not list ${title}: ${managed}`)
+        return BigInt(id)
+      }
+      const parent = windowId('Child 1')
+      const attached = windowId('Attached desktop child')
+      const modal = windowId('Parent-scoped modal')
+      const transientFor = (id: bigint) => {
+        const property = x11(['xprop', '-id', `0x${id.toString(16)}`, 'WM_TRANSIENT_FOR'])
+        const owner = property.match(/0x[0-9a-f]+/i)?.[0]
+        return owner ? BigInt(owner) : null
+      }
+      const stack = x11(['xprop', '-root', '_NET_CLIENT_LIST_STACKING'])
+        .match(/0x[0-9a-f]+/gi)?.map(id => BigInt(id)) ?? []
+      const parentIndex = stack.indexOf(parent)
+      response.setHeader('content-type', 'application/json')
+      response.end(JSON.stringify({
+        attachedTransientForParent: transientFor(attached) === parent,
+        modalTransientForParent: transientFor(modal) === parent,
+        attachedAboveParent: parentIndex >= 0 && stack.indexOf(attached) > parentIndex,
+        modalAboveParent: parentIndex >= 0 && stack.indexOf(modal) > parentIndex,
+        managed,
+        stack: stack.map(id => `0x${id.toString(16)}`),
+      }))
     }
     catch (error) {
       response.writeHead(500, { 'content-type': 'application/json' })

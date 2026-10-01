@@ -53,7 +53,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl x11-utils
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
