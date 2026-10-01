@@ -1,6 +1,6 @@
 # Parent and modal windows: proposed contract
 
-**Status: proposal; not implemented.** `WindowCreateOptions` exposes `parent`
+**Status: parent-scoped contract approved; native implementation in progress.** `WindowCreateOptions` exposes `parent`
 and `modal`, and the SDK forwards them, but the current macOS, Linux and Windows
 native creation paths do not interpret either field. Applications must not yet
 depend on a parent relationship or modal blocking. This document separates the
@@ -60,6 +60,5 @@ than equating these APIs by name.
   close propagation, destroy cleanup, same-name reopening, unrelated-parent
   rejection, and the existing unparented orphan-adoption behavior.
 
-Approval is required before treating these proposed semantics as the public
-contract. In particular, the choice between parent-scoped modality here and
-application-wide modality changes which sibling windows remain usable.
+The parent-scoped modality choice was approved on October 1, 2026. The native
+paths must still implement and verify it before apps can rely on these fields.

@@ -165,9 +165,9 @@ export interface WindowCreateOptions {
   vibrancy?: 'appearance-based' | 'light' | 'dark' | 'titlebar' | 'selection' | 'menu' | 'popover' | 'sidebar' | 'header' | 'sheet' | 'window' | 'hud' | 'fullscreen-ui' | 'tooltip' | 'content' | 'under-window' | 'under-page'
   /** Background material (Windows 11) */
   backgroundMaterial?: 'auto' | 'none' | 'mica' | 'acrylic' | 'tabbed'
-  /** Proposed only: desktop native runtimes currently ignore this field. */
+  /** Parent-scoped relationship approved for #67; native support is in progress. */
   parent?: string
-  /** Proposed only: desktop native runtimes currently ignore this field. */
+  /** Requires parent; blocks only that parent. Native support is in progress. */
   modal?: boolean
   /** HTML content to load */
   html?: string

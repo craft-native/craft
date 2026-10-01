@@ -44,6 +44,11 @@ pub const capacity = 16;
 /// no allocator to hand.
 pub const max_name = 64;
 
+pub const Relationship = struct {
+    parent: ?Handle = null,
+    modal: bool = false,
+};
+
 /// One row: the window, and what the app that opened it calls it.
 ///
 /// The name is what makes "open the settings window" idempotent. Without it
@@ -56,6 +61,9 @@ const Entry = struct {
     /// delivered both to the window's own page and to this owner, where the
     /// TypeScript `Window` handle and its listeners live.
     owner_webview: Handle = 0,
+    /// Native parenting is independent of the page that owns the typed handle.
+    relationship: Relationship = .{},
+    relationship_initialized: bool = false,
     /// AppKit's requestUserAttention: token, scoped to the window that asked.
     attention_request: ?c_long = null,
     name: [max_name]u8 = @splat(0),
@@ -113,6 +121,10 @@ pub fn rememberNamedOwned(handle: Handle, name: ?[]const u8, owner_webview: Hand
     for (&windows) |*slot| {
         if (slot.handle == handle) {
             if (slot.owner_webview != 0 and owner_webview != 0 and slot.owner_webview != owner_webview)
+                return false;
+            // An unparented orphan may be adopted. A parented child stays in
+            // its native family and cannot change the page holding its handle.
+            if (slot.relationship.parent != null and slot.owner_webview == 0 and owner_webview != 0)
                 return false;
             if (name) |n| setName(slot, n);
             if (slot.owner_webview == 0 and owner_webview != 0) slot.owner_webview = owner_webview;
@@ -175,6 +187,54 @@ pub fn isKnown(handle: Handle) bool {
         if (entry.handle == handle) return true;
     }
     return false;
+}
+
+/// Bind a window's native parent exactly once. Reopening the same name may
+/// repeat the relationship but cannot silently reparent a live window.
+/// Requiring a known parent also prevents a child from outliving a stale
+/// pointer after its parent has been destroyed.
+pub fn bindRelationship(handle: Handle, relationship: Relationship) bool {
+    if (handle == 0 or (relationship.modal and relationship.parent == null)) return false;
+    const parent = relationship.parent orelse 0;
+    if (parent != 0) {
+        var ancestor = parent;
+        while (ancestor != 0) {
+            if (ancestor == handle) return false;
+            const entry = find(ancestor) orelse return false;
+            ancestor = entry.relationship.parent orelse 0;
+        }
+    }
+    const slot = find(handle) orelse return false;
+    if (slot.relationship_initialized)
+        return slot.relationship.parent == relationship.parent and slot.relationship.modal == relationship.modal;
+    slot.relationship = relationship;
+    slot.relationship_initialized = true;
+    return true;
+}
+
+pub fn relationshipOf(handle: Handle) ?Relationship {
+    const slot = find(handle) orelse return null;
+    return slot.relationship;
+}
+
+/// Direct attached children; callers close descendants before their parent.
+pub fn childrenOf(parent: Handle, out: *[capacity]Handle) []const Handle {
+    var n: usize = 0;
+    for (windows) |entry| {
+        if (entry.handle != 0 and entry.relationship.parent == parent) {
+            out[n] = entry.handle;
+            n += 1;
+        }
+    }
+    return out[0..n];
+}
+
+fn find(handle: Handle) ?*Entry {
+    if (handle == 0) return null;
+    for (&windows) |*slot| {
+        if (slot.handle == handle) return slot;
+    }
+    return null;
 }
 
 /// Replace the pending Dock attention token for a registered window.
@@ -318,6 +378,44 @@ test "forgetting a window clears its attention request" {
     forget(0x1000);
     try testing.expect(remember(0x1000));
     try testing.expectEqual(@as(?c_long, null), exchangeAttentionRequest(0x1000, null));
+}
+
+test "a modal child requires a known parent and cannot form a cycle" {
+    resetForTesting();
+    defer resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(remember(0x2000));
+    try testing.expect(!bindRelationship(0x2000, .{ .modal = true }));
+    try testing.expect(!bindRelationship(0x2000, .{ .parent = 0x3000 }));
+    try testing.expect(!bindRelationship(0x2000, .{ .parent = 0x2000 }));
+    try testing.expect(bindRelationship(0x2000, .{ .parent = 0x1000, .modal = true }));
+    try testing.expect(!bindRelationship(0x1000, .{ .parent = 0x2000 }));
+    try testing.expectEqual(@as(?Handle, 0x1000), relationshipOf(0x2000).?.parent);
+}
+
+test "reopening cannot change the native relationship" {
+    resetForTesting();
+    defer resetForTesting();
+    try testing.expect(remember(0x1000));
+    try testing.expect(remember(0x2000));
+    try testing.expect(bindRelationship(0x2000, .{ .parent = 0x1000 }));
+    try testing.expect(bindRelationship(0x2000, .{ .parent = 0x1000 }));
+    try testing.expect(!bindRelationship(0x2000, .{ .parent = 0x1000, .modal = true }));
+    try testing.expect(!bindRelationship(0x2000, .{}));
+}
+
+test "attached children are enumerated independently of typed-handle owners" {
+    resetForTesting();
+    defer resetForTesting();
+    try testing.expect(rememberNamedOwned(0x2000, "child", 0x9000));
+    try testing.expect(remember(0x1000));
+    try testing.expect(bindRelationship(0x2000, .{ .parent = 0x1000 }));
+    var children: [capacity]Handle = undefined;
+    try testing.expectEqualSlices(Handle, &.{0x2000}, childrenOf(0x1000, &children));
+    forgetOwner(0x9000);
+    try testing.expect(!rememberNamedOwned(0x2000, "child", 0xA000));
+    forget(0x2000);
+    try testing.expectEqual(@as(usize, 0), childrenOf(0x1000, &children).len);
 }
 
 test "forgetting an owner leaves its child registered without a dangling target" {
