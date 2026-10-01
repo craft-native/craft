@@ -53,7 +53,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -103,7 +103,7 @@ jobs:
         run: |
           VERSION="$(bun -p "require('./package.json').version")"
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a dbus-run-session -- bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
+            sh scripts/run-linux-with-wm.sh bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
           else
             bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
           fi

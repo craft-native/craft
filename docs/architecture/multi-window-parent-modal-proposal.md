@@ -63,6 +63,9 @@ than equating these APIs by name.
   parent-only blocking from mere visibility checks. It also checks native owner
   handles for the modal and its non-modal sibling, and verifies that sibling
   remains enabled while their common parent is blocked.
+  The Linux GUI and installed-DEB smokes run under Openbox rather than a bare
+  Xvfb server, and require an unrelated window, a non-modal sibling, and the
+  modal itself to take focus in turn while the modal remains visible.
 
 The parent-scoped modality choice was approved on October 1, 2026. The native
 paths implement it; cross-platform installed-app CI and the acceptance checks

@@ -35,6 +35,13 @@ const mainPage = `<!doctype html><script>
       (modalPresent && (state.modal !== true || state.modalOwnedByParent !== true)))
       throw new Error([phase, 'Win32 modality was not parent-scoped:', JSON.stringify(state)].join(' '))
   }
+  const waitFocused = async (id, label) => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if ((await call('getState', {}, id)).isFocused) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error([label, 'window did not receive focus'].join(': '))
+  }
   const waitSize = async (predicate, label) => {
     for (let attempt = 0; attempt < 40; attempt++) {
       const size = await call('getSize')
@@ -105,6 +112,14 @@ const mainPage = `<!doctype html><script>
     if (modal.name !== 'modal' || (await call('getState', {}, modal.name)).isVisible !== true)
       throw new Error('parent-scoped modal was not created and shown')
     await checkNativeModal(false, 'visible')
+    if (!isWindows) {
+      await call('focus', {}, 'main')
+      await waitFocused('main', 'unrelated main window during Linux modal')
+      await call('focus', {}, attached.name)
+      await waitFocused(attached.name, 'non-modal sibling during Linux modal')
+      await call('focus', {}, modal.name)
+      await waitFocused(modal.name, 'Linux modal after sibling focus')
+    }
     let reparented = false
     try { await window.craft.window.open({ name: 'modal', parent: 'main', modal: true, html: '<!doctype html>' }) }
     catch (_) { reparented = true }
@@ -228,7 +243,8 @@ const mainPage = `<!doctype html><script>
       await left
     }
     else {
-      // A bare Xvfb server has no window manager to honor fullscreen requests.
+      // Openbox handles focus and stacking above; fullscreen support varies
+      // across virtual-display and window-manager configurations.
       await call('setFullscreen', { fullscreen: true })
       await call('toggleFullscreen')
       await call('setFullscreen', { fullscreen: false })
@@ -549,7 +565,7 @@ const port = (server.address() as AddressInfo).port
 const startedAt = Date.now()
 const child = spawn(isWindows ? binary : 'timeout', isWindows
   ? ['--url', `http://127.0.0.1:${port}/main`]
-  : ['110s', 'xvfb-run', '-a', binary, '--url', `http://127.0.0.1:${port}/main`], {
+  : ['110s', 'sh', 'scripts/run-linux-with-wm.sh', binary, '--url', `http://127.0.0.1:${port}/main`], {
   detached: !isWindows,
   stdio: ['ignore', 'pipe', 'pipe'],
 })

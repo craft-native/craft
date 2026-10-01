@@ -357,6 +357,20 @@ async function launchViaSdk(): Promise<void> {
           // the main page must remain able to address its own native window.
           if ((await window.craft.window._call('getState', {}, 'main')).isVisible !== true)
             throw new Error('installed Linux modal changed an unrelated window')
+          for (const [name, label] of [
+            ['main', 'unrelated main window'],
+            [attached.name, 'non-modal sibling'],
+            [modal.name, 'modal after sibling focus'],
+          ]) {
+            await window.craft.window._call('focus', {}, name)
+            let focused = false
+            for (let attempt = 0; attempt < 40; attempt++) {
+              focused = (await window.craft.window._call('getState', {}, name)).isFocused
+              if (focused) break
+              await new Promise(resolve => setTimeout(resolve, 100))
+            }
+            if (!focused) throw new Error(['installed Linux', label, 'did not receive focus'].join(' '))
+          }
           await window.craft.window._call('close', {}, modal.name)
         }
         if (${testWindowsParenting}) {
