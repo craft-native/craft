@@ -31,7 +31,8 @@ const mainPage = `<!doctype html><script>
     if (!isWindows) return
     const state = await (await fetch('/native-modal-state')).json()
     if (state.error || state.parent !== parentEnabled || state.main !== true ||
-      (modalPresent && state.modal !== true))
+      state.attached !== true || state.attachedOwnedByParent !== true ||
+      (modalPresent && (state.modal !== true || state.modalOwnedByParent !== true)))
       throw new Error([phase, 'Win32 modality was not parent-scoped:', JSON.stringify(state)].join(' '))
   }
   const waitSize = async (predicate, label) => {
@@ -467,6 +468,8 @@ public static class CraftWindowProbe {
   [DllImport("user32.dll")]
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool IsWindowEnabled(IntPtr window);
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetWindow(IntPtr window, uint command);
 }
 '@
 Add-Type -TypeDefinition $signature
@@ -481,6 +484,8 @@ $callback = [CraftWindowProbe+EnumWindowsProc]{
     [void][CraftWindowProbe]::GetWindowText($handle, $title, $title.Capacity)
     [void]$script:probeRows.Add([pscustomobject]@{
       title = $title.ToString()
+      handle = $handle.ToInt64()
+      owner = [CraftWindowProbe]::GetWindow($handle, 4).ToInt64()
       enabled = [CraftWindowProbe]::IsWindowEnabled($handle)
     })
   }
@@ -492,7 +497,21 @@ function Enabled([string]$title) {
   if ($matches.Count -eq 0) { return $null }
   return $matches[0].enabled
 }
-@{ main = (Enabled 'Craft App'); parent = (Enabled 'Child 1'); modal = (Enabled 'Parent-scoped modal'); windows = @($script:probeRows.ToArray()) } | ConvertTo-Json -Compress -Depth 4
+function OwnedBy([string]$childTitle, [string]$parentTitle) {
+  $children = @($script:probeRows | Where-Object { $_.title -eq $childTitle })
+  $parents = @($script:probeRows | Where-Object { $_.title -eq $parentTitle })
+  if ($children.Count -eq 0 -or $parents.Count -eq 0) { return $false }
+  return $children[0].owner -eq $parents[0].handle
+}
+@{
+  main = (Enabled 'Craft App')
+  parent = (Enabled 'Child 1')
+  modal = (Enabled 'Parent-scoped modal')
+  attached = (Enabled 'Attached desktop child')
+  modalOwnedByParent = (OwnedBy 'Parent-scoped modal' 'Child 1')
+  attachedOwnedByParent = (OwnedBy 'Attached desktop child' 'Child 1')
+  windows = @($script:probeRows.ToArray())
+} | ConvertTo-Json -Compress -Depth 4
 `
       const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
         encoding: 'utf8', timeout: 15_000,
