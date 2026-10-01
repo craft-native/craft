@@ -87,6 +87,13 @@ pub const MONITORINFO = extern struct {
     rcWork: RECT,
     dwFlags: DWORD,
 };
+pub const FLASHWINFO = extern struct {
+    cbSize: UINT,
+    hwnd: HWND,
+    dwFlags: DWORD,
+    uCount: UINT,
+    dwTimeout: DWORD,
+};
 
 // COM base type
 pub const GUID = extern struct {
@@ -109,6 +116,7 @@ pub const WS_THICKFRAME: DWORD = 0x00040000;
 pub const WS_MAXIMIZEBOX: DWORD = 0x00010000;
 pub const WS_EX_TOPMOST: DWORD = 0x00000008;
 pub const WS_EX_LAYERED: DWORD = 0x00080000;
+const FLASHW_ALL: DWORD = 0x00000003;
 pub const CW_USEDEFAULT: c_int = @bitCast(@as(c_uint, 0x80000000));
 pub const SW_SHOW: c_int = 5;
 pub const SW_HIDE: c_int = 0;
@@ -156,6 +164,7 @@ pub extern "user32" fn CreateWindowExW(
     lpParam: LPVOID,
 ) callconv(.c) ?HWND;
 pub extern "user32" fn ShowWindow(hWnd: HWND, nCmdShow: c_int) callconv(.c) BOOL;
+pub extern "user32" fn FlashWindowEx(pfwi: *const FLASHWINFO) callconv(.c) BOOL;
 pub extern "user32" fn UpdateWindow(hWnd: HWND) callconv(.c) BOOL;
 pub extern "user32" fn GetMessageW(lpMsg: *MSG, hWnd: ?HWND, wMsgFilterMin: UINT, wMsgFilterMax: UINT) callconv(.c) BOOL;
 pub extern "user32" fn PeekMessageW(lpMsg: *MSG, hWnd: ?HWND, wMsgFilterMin: UINT, wMsgFilterMax: UINT, wRemoveMsg: UINT) callconv(.c) BOOL;
@@ -1625,6 +1634,17 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((style & WS_THICKFRAME) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setAlwaysOnTop")) {
         try setWindowAlwaysOnTop(hwnd, try desktop_window_controls.parseBool(data, "alwaysOnTop"));
+    } else if (std.mem.eql(u8, action, "flashFrame")) {
+        const flash = if (data) |json| json_utils.getBool(json, "flash") orelse true else true;
+        const request = FLASHWINFO{
+            .cbSize = @sizeOf(FLASHWINFO),
+            .hwnd = hwnd,
+            .dwFlags = if (flash) FLASHW_ALL else 0,
+            .uCount = if (flash) 3 else 0,
+            .dwTimeout = 0,
+        };
+        // The return value is the window's previous active state, not success.
+        _ = FlashWindowEx(&request);
     } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if ((windowExStyle(hwnd) & WS_EX_TOPMOST) != 0) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {

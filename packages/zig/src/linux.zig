@@ -37,6 +37,7 @@ pub extern "c" fn gtk_window_set_decorated(window: *anyopaque, decorated: c_int)
 pub extern "c" fn gtk_window_set_resizable(window: *anyopaque, resizable: c_int) void;
 pub extern "c" fn gtk_window_get_resizable(window: *anyopaque) c_int;
 pub extern "c" fn gtk_window_set_keep_above(window: *anyopaque, setting: c_int) void;
+pub extern "c" fn gtk_window_set_urgency_hint(window: *anyopaque, setting: c_int) void;
 pub extern "c" fn gtk_window_set_geometry_hints(window: *anyopaque, geometry_widget: ?*anyopaque, geometry: ?*const GdkGeometry, geom_mask: c_int) void;
 pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
@@ -685,6 +686,9 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         const enabled = try desktop_window_controls.parseBool(data, "alwaysOnTop");
         gtk_window_set_keep_above(window, if (enabled) 1 else 0);
         if (!desktop_windows.setAlwaysOnTop(entry.window, enabled)) return error.WindowHandleNotSet;
+    } else if (std.mem.eql(u8, action, "flashFrame")) {
+        const flash = if (data) |json| json_utils.getBool(json, "flash") orelse true else true;
+        gtk_window_set_urgency_hint(window, if (flash) 1 else 0);
     } else if (std.mem.eql(u8, action, "isAlwaysOnTop")) {
         bridge_error.sendResultToJS(std.heap.c_allocator, action, if (entry.always_on_top) "true" else "false");
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {

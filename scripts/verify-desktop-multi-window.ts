@@ -150,6 +150,8 @@ const mainPage = `<!doctype html><script>
       throw new Error('child getState leaked to the main window')
     await call('setAlwaysOnTop', { alwaysOnTop: false })
     if (await call('isAlwaysOnTop') !== false) throw new Error('child stayed topmost')
+    await call('flashFrame', { flash: true })
+    await call('flashFrame', { flash: false })
     await call('setMinimumSize', { width: 600, height: 420 })
     await call('setMaximumSize', { width: 820, height: 620 })
     await call('setSize', { width: 300, height: 200 })
