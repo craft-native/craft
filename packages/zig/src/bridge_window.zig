@@ -6,6 +6,7 @@ const logging = @import("logging.zig");
 const json_utils = @import("json_utils.zig");
 const window_context = @import("window_context.zig");
 const window_registry = @import("window_registry.zig");
+const window_parent_options = @import("window_parent_options.zig");
 
 const BridgeError = bridge_error.BridgeError;
 const log = logging.window;
@@ -355,6 +356,14 @@ pub const WindowBridge = struct {
             name.len > window_registry.max_name or
             std.mem.indexOfScalar(u8, name, 0) != null)
             return BridgeError.InvalidParameter;
+
+        const relationship = try window_parent_options.parse(
+            self.allocator,
+            json_data,
+            window_context.current() orelse 0,
+            window_context.currentWebView() orelse 0,
+        );
+        if (relationship.parent != null) return BridgeError.PlatformNotSupported;
 
         const url = json_utils.getStringDecoded(self.allocator, json_data, "url") catch
             return BridgeError.InvalidJSON;

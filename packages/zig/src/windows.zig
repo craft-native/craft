@@ -1284,6 +1284,14 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         std.mem.eql(u8, name, "main") or std.mem.indexOfScalar(u8, name, 0) != null)
         return error.InvalidParameter;
 
+    const relationship = try @import("window_parent_options.zig").parse(
+        allocator,
+        json,
+        window_context.current() orelse 0,
+        window_context.currentWebView() orelse 0,
+    );
+    if (relationship.parent != null) return error.UnsupportedPlatform;
+
     const url = try json_utils.getStringDecoded(allocator, json, "url");
     defer if (url) |text| allocator.free(text);
     const html = try json_utils.getStringDecoded(allocator, json, "html");
