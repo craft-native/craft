@@ -23,7 +23,7 @@ whether it stores a window-specific target.
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
-| Modal and parent relationships | Parent-scoped sheets and attached child windows; installed-app smoke in CI | Transient child windows with parent-only input blocking and prior sensitivity restored; GUI and installed-app smokes in CI | Owned child windows with parent-only input blocking and prior enabled state restored; GUI and installed-app smokes plus Win32 enabled-state probe in CI |
+| Modal and parent relationships | Parent-scoped sheets and attached child windows; installed-app smoke in CI | Transient child windows with parent-only input blocking and prior sensitivity restored; GUI and installed-app smokes in CI | Owned child windows with parent-only input blocking and prior enabled state restored; GUI and installed-app smokes plus process-scoped Win32 enabled-state probe in CI |
 
 The runtime-creation, stable-handle, reply-routing, and event-scoping contract
 from issue #67 is covered here. Parent/modal behavior follows the approved

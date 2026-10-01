@@ -58,9 +58,9 @@ than equating these APIs by name.
   Each must prove focus/z-order, parent-only blocking, sibling interactivity,
   close propagation, destroy cleanup, same-name reopening, unrelated-parent
   rejection, and the existing unparented orphan-adoption behavior.
-  The Windows GUI smoke also reads Win32 enabled state directly during modal
-  show, hide, reopen and close to distinguish parent-only blocking from mere
-  visibility checks.
+  The Windows GUI smoke also enumerates its native process windows and reads
+  Win32 enabled state during modal show, hide, reopen and close to distinguish
+  parent-only blocking from mere visibility checks.
 
 The parent-scoped modality choice was approved on October 1, 2026. The native
 paths implement it; cross-platform installed-app CI and the acceptance checks

@@ -455,21 +455,44 @@ const server = createServer((request, response) => {
 $signature = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public static class CraftWindowProbe {
+  public delegate bool EnumWindowsProc(IntPtr window, IntPtr state);
+  [DllImport("user32.dll")]
+  public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr state);
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  public static extern IntPtr FindWindow(string className, string windowName);
+  public static extern int GetWindowText(IntPtr window, StringBuilder title, int capacity);
   [DllImport("user32.dll")]
   [return: MarshalAs(UnmanagedType.Bool)]
   public static extern bool IsWindowEnabled(IntPtr window);
 }
 '@
 Add-Type -TypeDefinition $signature
-function Enabled([string]$title) {
-  $handle = [CraftWindowProbe]::FindWindow($null, $title)
-  if ($handle -eq [IntPtr]::Zero) { return $null }
-  return [CraftWindowProbe]::IsWindowEnabled($handle)
+$script:probePid = [uint32]${child.pid}
+$script:probeRows = [System.Collections.ArrayList]::new()
+$callback = [CraftWindowProbe+EnumWindowsProc]{
+  param([IntPtr]$handle, [IntPtr]$state)
+  [uint32]$processId = 0
+  [void][CraftWindowProbe]::GetWindowThreadProcessId($handle, [ref]$processId)
+  if ($processId -eq $script:probePid) {
+    $title = [System.Text.StringBuilder]::new(512)
+    [void][CraftWindowProbe]::GetWindowText($handle, $title, $title.Capacity)
+    [void]$script:probeRows.Add([pscustomobject]@{
+      title = $title.ToString()
+      enabled = [CraftWindowProbe]::IsWindowEnabled($handle)
+    })
+  }
+  return $true
 }
-@{ main = (Enabled 'Craft App'); parent = (Enabled 'Child 1'); modal = (Enabled 'Parent-scoped modal') } | ConvertTo-Json -Compress
+[void][CraftWindowProbe]::EnumWindows($callback, [IntPtr]::Zero)
+function Enabled([string]$title) {
+  $matches = @($script:probeRows | Where-Object { $_.title -eq $title })
+  if ($matches.Count -eq 0) { return $null }
+  return $matches[0].enabled
+}
+@{ main = (Enabled 'Craft App'); parent = (Enabled 'Child 1'); modal = (Enabled 'Parent-scoped modal'); windows = @($script:probeRows.ToArray()) } | ConvertTo-Json -Compress -Depth 4
 `
       const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
         encoding: 'utf8', timeout: 15_000,
