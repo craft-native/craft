@@ -38,6 +38,9 @@ pub extern "c" fn gtk_window_set_resizable(window: *anyopaque, resizable: c_int)
 pub extern "c" fn gtk_window_get_resizable(window: *anyopaque) c_int;
 pub extern "c" fn gtk_window_set_keep_above(window: *anyopaque, setting: c_int) void;
 pub extern "c" fn gtk_window_set_urgency_hint(window: *anyopaque, setting: c_int) void;
+pub extern "c" fn gtk_window_set_transient_for(window: *anyopaque, parent: ?*anyopaque) void;
+pub extern "c" fn gtk_window_set_destroy_with_parent(window: *anyopaque, setting: c_int) void;
+pub extern "c" fn gtk_widget_set_sensitive(widget: *anyopaque, sensitive: c_int) void;
 pub extern "c" fn gtk_window_set_geometry_hints(window: *anyopaque, geometry_widget: ?*anyopaque, geometry: ?*const GdkGeometry, geom_mask: c_int) void;
 pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
@@ -336,8 +339,27 @@ fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
         deliverWindowEvent(entry, "close", "");
     }
     const entry = desktop_windows.forgetWindow(@intFromPtr(widget)) orelse return;
+    const relationship: window_registry.Relationship = window_registry.relationshipOf(entry.window) orelse .{};
     window_registry.forgetOwner(entry.webview);
     window_registry.forget(entry.window);
+    if (relationship.parent) |parent| updateModalParent(parent);
+}
+
+/// GTK's `set_modal` blocks every app window. Keep only the chosen parent
+/// insensitive while at least one of its modal children is actually visible.
+fn updateModalParent(parent: window_registry.Handle) void {
+    if (desktop_windows.byWindow(parent) == null) return;
+    var children: [window_registry.capacity]window_registry.Handle = undefined;
+    for (window_registry.childrenOf(parent, &children)) |handle| {
+        const relationship = window_registry.relationshipOf(handle) orelse continue;
+        if (relationship.modal and desktop_windows.byWindow(handle) != null and
+            gtk_widget_get_visible(@ptrFromInt(handle)) != 0)
+        {
+            gtk_widget_set_sensitive(@ptrFromInt(parent), 0);
+            return;
+        }
+    }
+    gtk_widget_set_sensitive(@ptrFromInt(parent), 1);
 }
 
 fn deliverToWebview(webview: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
@@ -473,7 +495,6 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
         window_context.current() orelse 0,
         window_context.currentWebView() orelse 0,
     );
-    if (relationship.parent != null) return error.UnsupportedPlatform;
 
     const url = try json_utils.getStringDecoded(allocator, json, "url");
     defer if (url) |text| allocator.free(text);
@@ -494,8 +515,10 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     const owner = window_context.currentWebView() orelse return error.WebViewHandleNotSet;
     if (window_registry.byName(name)) |existing| {
         if (desktop_windows.byWindow(existing) == null) return error.WindowHandleNotSet;
+        if (!window_registry.bindRelationship(existing, relationship)) return error.InvalidParameter;
         if (!window_registry.rememberNamedOwned(existing, name, owner)) return error.InvalidParameter;
         gtk_window_present(@ptrFromInt(existing));
+        if (relationship.parent) |parent| updateModalParent(parent);
         bridge_error.sendResultToJS(allocator, action, result);
         return;
     }
@@ -523,7 +546,14 @@ fn openNamedWindow(action: []const u8, data: ?[]const u8) !void {
     if (url) |text| try created.loadURL(text) else if (html) |text| try created.loadHTML(text);
     if (!window_registry.rememberNamedOwned(@intFromPtr(created.gtk_window), name, owner))
         return error.TooManyWindows;
+    if (!window_registry.bindRelationship(@intFromPtr(created.gtk_window), relationship))
+        return error.InvalidParameter;
+    if (relationship.parent) |parent| {
+        gtk_window_set_transient_for(created.gtk_window, @ptrFromInt(parent));
+        gtk_window_set_destroy_with_parent(created.gtk_window, 1);
+    }
     created.show();
+    if (relationship.parent) |parent| updateModalParent(parent);
     bridge_error.sendResultToJS(allocator, action, result);
 }
 
@@ -641,10 +671,16 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     const webview: *anyopaque = @ptrFromInt(entry.webview);
     if (std.mem.eql(u8, action, "show") or std.mem.eql(u8, action, "focus")) {
         gtk_window_present(window);
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "hide")) {
         gtk_widget_hide(window);
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "toggle")) {
         if (gtk_widget_get_visible(window) != 0) gtk_widget_hide(window) else gtk_window_present(window);
+        if (window_registry.relationshipOf(entry.window)) |relationship|
+            if (relationship.parent) |parent| updateModalParent(parent);
     } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
         gtk_window_close(window);
     } else if (std.mem.eql(u8, action, "minimize")) {

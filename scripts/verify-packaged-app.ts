@@ -200,6 +200,7 @@ async function launchViaSdk(): Promise<void> {
   const testMultiWindow = testSystemClipboard
   const testWindowAdoption = testMultiWindow
   const testMacWindowAdoption = testWindowAdoption && platform === 'macos'
+  const testLinuxParenting = testWindowAdoption && platform === 'linux'
   const testDeepLink = testSystemClipboard && platform === 'macos'
   const testMacNotificationPermission = testSystemClipboard && platform === 'macos'
   const testLinuxNotification = testSystemClipboard && platform === 'linux'
@@ -339,6 +340,24 @@ async function launchViaSdk(): Promise<void> {
             throw new Error('closing the installed modal sheet left it visible')
           await window.craft.window._call('destroy', {}, modal.name)
         }
+        if (${testLinuxParenting}) {
+          const attached = await window.craft.window.open({
+            name: 'installed-attached', title: 'Craft installed attached',
+            parent: child.name, html: '<!doctype html><title>Attached child</title>',
+          })
+          if (attached.name !== 'installed-attached') throw new Error('installed Linux attached child returned the wrong handle')
+          const modal = await window.craft.window.open({
+            name: 'installed-modal', title: 'Craft installed modal',
+            parent: child.name, modal: true, html: '<!doctype html><title>Parent-scoped dialog</title>',
+          })
+          if (modal.name !== 'installed-modal' || (await window.craft.window._call('getState', {}, modal.name)).isVisible !== true)
+            throw new Error('installed Linux parent-scoped modal did not appear')
+          // GTK's application-wide modal flag would block unrelated windows;
+          // the main page must remain able to address its own native window.
+          if ((await window.craft.window._call('getState', {}, 'main')).isVisible !== true)
+            throw new Error('installed Linux modal changed an unrelated window')
+          await window.craft.window._call('close', {}, modal.name)
+        }
         // AppKit owns the Dock bounce at app scope, but both calls must still
         // accept the addressed child and cancel its saved request ID.
         await window.craft.window._call('flashFrame', { flash: true }, child.name)
@@ -369,7 +388,7 @@ async function launchViaSdk(): Promise<void> {
           catch (_) { stolen = true }
           if (!stolen) throw new Error('installed grandchild handle was stolen from its live creator')
         }
-        const attachedClose = ${testMacWindowAdoption} ? new Promise((resolve, reject) => {
+        const attachedClose = ${testMacWindowAdoption || testLinuxParenting} ? new Promise((resolve, reject) => {
           const listener = event => {
             if (event.detail.windowId !== 'installed-attached') return
             clearTimeout(timeout)
@@ -405,6 +424,12 @@ async function launchViaSdk(): Promise<void> {
           const attachedState = await window.craft.window._call('getState', {}, 'installed-attached')
           if (attachedState?.isVisible !== false)
             throw new Error('closing the installed parent left its attached child visible')
+        }
+        if (${testLinuxParenting}) {
+          let attachedForgotten = false
+          try { await window.craft.window._call('getState', {}, 'installed-attached') }
+          catch (_) { attachedForgotten = true }
+          if (!attachedForgotten) throw new Error('installed Linux parent left its attached child registered')
         }
         if (${testWindowAdoption}) {
           // macOS close retains the creator's webview and event ownership.
