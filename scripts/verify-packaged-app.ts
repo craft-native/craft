@@ -304,6 +304,41 @@ async function launchViaSdk(): Promise<void> {
           || Math.abs(childState.bounds.width - childSize.width) > 40
           || Math.abs(childState.bounds.height - childSize.height) > 40)
           throw new Error('installed child state did not describe its addressed native window')
+        if (${testMacWindowAdoption}) {
+          const attached = await window.craft.window.open({
+            name: 'installed-attached', title: 'Craft installed attached',
+            parent: child.name, html: '<!doctype html><title>Attached child</title>',
+          })
+          if (attached.name !== 'installed-attached') throw new Error('attached child returned the wrong handle')
+          const modal = await window.craft.window.open({
+            name: 'installed-modal', title: 'Craft installed modal',
+            parent: 'main', modal: true, html: '<!doctype html><title>Parent-scoped sheet</title>',
+          })
+          if (modal.name !== 'installed-modal') throw new Error('modal sheet returned the wrong handle')
+          if ((await window.craft.window._call('getState', {}, modal.name)).isVisible !== true)
+            throw new Error('installed modal sheet was not visible')
+          let reparented = false
+          try {
+            await window.craft.window.open({
+              name: modal.name, parent: child.name, modal: true,
+              html: '<!doctype html><title>Wrong parent</title>',
+            })
+          }
+          catch (_) { reparented = true }
+          if (!reparented) throw new Error('installed modal sheet accepted a different parent on reopen')
+          await window.craft.window._call('focus', {}, child.name)
+          let siblingFocused = false
+          for (let attempt = 0; attempt < 30; attempt++) {
+            siblingFocused = (await window.craft.window._call('getState', {}, child.name)).isFocused
+            if (siblingFocused) break
+            await new Promise(resolve => setTimeout(resolve, 100))
+          }
+          if (!siblingFocused) throw new Error('parent-scoped modal blocked an unrelated child window')
+          await window.craft.window._call('close', {}, modal.name)
+          if ((await window.craft.window._call('getState', {}, modal.name)).isVisible !== false)
+            throw new Error('closing the installed modal sheet left it visible')
+          await window.craft.window._call('destroy', {}, modal.name)
+        }
         // AppKit owns the Dock bounce at app scope, but both calls must still
         // accept the addressed child and cancel its saved request ID.
         await window.craft.window._call('flashFrame', { flash: true }, child.name)
@@ -334,6 +369,19 @@ async function launchViaSdk(): Promise<void> {
           catch (_) { stolen = true }
           if (!stolen) throw new Error('installed grandchild handle was stolen from its live creator')
         }
+        const attachedClose = ${testMacWindowAdoption} ? new Promise((resolve, reject) => {
+          const listener = event => {
+            if (event.detail.windowId !== 'installed-attached') return
+            clearTimeout(timeout)
+            window.removeEventListener('craft:window:close', listener)
+            resolve()
+          }
+          const timeout = setTimeout(() => {
+            window.removeEventListener('craft:window:close', listener)
+            reject(new Error('creator did not receive attached child close event'))
+          }, 10000)
+          window.addEventListener('craft:window:close', listener)
+        }) : Promise.resolve()
         await new Promise((resolve, reject) => {
           const listener = event => {
             if (event.detail.windowId !== child.name) return
@@ -352,6 +400,12 @@ async function launchViaSdk(): Promise<void> {
             reject(error)
           })
         })
+        await attachedClose
+        if (${testMacWindowAdoption}) {
+          const attachedState = await window.craft.window._call('getState', {}, 'installed-attached')
+          if (attachedState?.isVisible !== false)
+            throw new Error('closing the installed parent left its attached child visible')
+        }
         if (${testWindowAdoption}) {
           // macOS close retains the creator's webview and event ownership.
           // Linux and Windows close destroys it; macOS needs permanent destroy.

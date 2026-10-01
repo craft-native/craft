@@ -404,7 +404,9 @@ test "hide and force reload selectors receive their sender argument" {
 test "Dock attention cancellation uses the request returned for that window" {
     const start = std.mem.indexOf(u8, window_bridge_source, "fn flashFrame(") orelse
         return error.FlashFrameHandlerNotFound;
-    const body = enclosingFnBody(window_bridge_source, start);
+    const end = std.mem.indexOfPos(u8, window_bridge_source, start, "    fn setProgressBar(") orelse
+        return error.ProgressBarHandlerNotFound;
+    const body = window_bridge_source[start..end];
     try testing.expect(callsFunction(body, "msgSendNSInteger1("));
     try testing.expect(callsFunction(body, "exchangeAttentionRequest("));
     try testing.expect(callsFunction(body, "msgSendVoid1("));
@@ -415,6 +417,25 @@ test "Dock attention cancellation uses the request returned for that window" {
     const destroy_body = enclosingFnBody(macos_source, destroy_start);
     try testing.expect(callsFunction(destroy_body, "exchangeAttentionRequest("));
     try testing.expect(std.mem.indexOf(u8, destroy_body, "cancelUserAttentionRequest:") != null);
+}
+
+test "parented macOS windows attach and unwind through the native lifecycle" {
+    const open_start = std.mem.indexOf(u8, macos_source, "pub fn openNamedWindow(") orelse
+        return error.NamedWindowOpenerNotFound;
+    const open_body = enclosingFnBody(macos_source, open_start);
+    try testing.expect(callsFunction(open_body, "bindRelationship("));
+
+    const show_start = std.mem.indexOf(u8, macos_source, "pub fn showWindow(") orelse
+        return error.WindowShowHandlerNotFound;
+    const show_body = enclosingFnBody(macos_source, show_start);
+    try testing.expect(std.mem.indexOf(u8, show_body, "addChildWindow:ordered:") != null);
+    try testing.expect(std.mem.indexOf(u8, show_body, "beginSheet:completionHandler:") != null);
+
+    const close_start = std.mem.indexOf(u8, @embedFile("src/macos_window_events.zig"), "export fn windowWillClose(") orelse
+        return error.WindowCloseDelegateNotFound;
+    const close_body = enclosingFnBody(@embedFile("src/macos_window_events.zig"), close_start);
+    try testing.expect(callsFunction(close_body, "closeAttachedChildren("));
+    try testing.expect(callsFunction(close_body, "detachParentWindow("));
 }
 
 test "runtime window creation applies the typed appearance and size constraints" {
