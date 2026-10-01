@@ -1,5 +1,5 @@
 /** Exercise the shipped Linux or Windows binary's page-to-native multi-window bridge. */
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { platform } from 'node:os'
@@ -27,6 +27,13 @@ const mainPage = `<!doctype html><script>
     minWidth: 300, maxWidth: 1200,
   })
   const call = (action, data = {}, id = 'settings') => window.craft.window._call(action, data, id)
+  const checkNativeModal = async (parentEnabled, phase, modalPresent = true) => {
+    if (!isWindows) return
+    const state = await (await fetch('/native-modal-state')).json()
+    if (state.error || state.parent !== parentEnabled || state.main !== true ||
+      (modalPresent && state.modal !== true))
+      throw new Error([phase, 'Win32 modality was not parent-scoped:', JSON.stringify(state)].join(' '))
+  }
   const waitSize = async (predicate, label) => {
     for (let attempt = 0; attempt < 40; attempt++) {
       const size = await call('getSize')
@@ -96,6 +103,7 @@ const mainPage = `<!doctype html><script>
     })
     if (modal.name !== 'modal' || (await call('getState', {}, modal.name)).isVisible !== true)
       throw new Error('parent-scoped modal was not created and shown')
+    await checkNativeModal(false, 'visible')
     let reparented = false
     try { await window.craft.window.open({ name: 'modal', parent: 'main', modal: true, html: '<!doctype html>' }) }
     catch (_) { reparented = true }
@@ -103,12 +111,15 @@ const mainPage = `<!doctype html><script>
     await call('hide', {}, modal.name)
     if ((await call('getState', {}, modal.name)).isVisible !== false)
       throw new Error('modal did not hide')
+    await checkNativeModal(true, 'hidden')
     await call('show', {}, modal.name)
     if ((await call('getState', {}, modal.name)).isVisible !== true)
       throw new Error('modal did not reopen')
+    await checkNativeModal(false, 'reopened')
     const modalClosed = waitWindowEvent('close', modal.name)
     await call('close', {}, modal.name)
     await modalClosed
+    await checkNativeModal(true, 'closed', false)
     let removed = false
     try { await call('getState', {}, modal.name) }
     catch (_) { removed = true }
@@ -437,6 +448,39 @@ const server = createServer((request, response) => {
   else if (url.pathname === '/status') {
     response.setHeader('content-type', 'application/json')
     response.end(JSON.stringify({ steps: [...steps] }))
+  }
+  else if (url.pathname === '/native-modal-state' && isWindows) {
+    try {
+      const command = `
+$signature = @'
+using System;
+using System.Runtime.InteropServices;
+public static class CraftWindowProbe {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  public static extern IntPtr FindWindow(string className, string windowName);
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool IsWindowEnabled(IntPtr window);
+}
+'@
+Add-Type -TypeDefinition $signature
+function Enabled([string]$title) {
+  $handle = [CraftWindowProbe]::FindWindow($null, $title)
+  if ($handle -eq [IntPtr]::Zero) { return $null }
+  return [CraftWindowProbe]::IsWindowEnabled($handle)
+}
+@{ main = (Enabled 'Craft App'); parent = (Enabled 'Child 1'); modal = (Enabled 'Parent-scoped modal') } | ConvertTo-Json -Compress
+`
+      const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+        encoding: 'utf8', timeout: 15_000,
+      })
+      response.setHeader('content-type', 'application/json')
+      response.end(output)
+    }
+    catch (error) {
+      response.writeHead(500, { 'content-type': 'application/json' })
+      response.end(JSON.stringify({ error: String(error) }))
+    }
   }
   else if (url.pathname === '/report') {
     const error = url.searchParams.get('error')
