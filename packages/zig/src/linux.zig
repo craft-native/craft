@@ -694,9 +694,12 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
     } else if (std.mem.eql(u8, action, "setFullscreen") or std.mem.eql(u8, action, "toggleFullscreen")) {
         const fullscreen = if (std.mem.eql(u8, action, "toggleFullscreen")) !entry.fullscreen else try desktop_window_controls.parseBool(data, "fullscreen");
         if (fullscreen) gtk_window_fullscreen(window) else gtk_window_unfullscreen(window);
-    } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMaximumSize")) {
+    } else if (std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMinSize") or
+        std.mem.eql(u8, action, "setMaximumSize") or std.mem.eql(u8, action, "setMaxSize"))
+    {
         const size = try desktop_window_controls.parseSize(data);
-        const limits = if (std.mem.eql(u8, action, "setMinimumSize")) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
+        const minimum = std.mem.eql(u8, action, "setMinimumSize") or std.mem.eql(u8, action, "setMinSize");
+        const limits = if (minimum) try entry.limits.withMinimum(size) else try entry.limits.withMaximum(size);
         try setWindowLimits(entry, limits);
     } else if (std.mem.eql(u8, action, "executeJavaScript")) {
         const json = data orelse return error.MissingData;

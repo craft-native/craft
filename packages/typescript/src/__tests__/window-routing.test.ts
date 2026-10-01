@@ -72,6 +72,8 @@ describe('typed window-handle routing', () => {
     await settings.restore()
     await settings.setMinimumSize(320, 240)
     await settings.setMaximumSize(1600, 1200)
+    await settings.setMinSize(320, 240)
+    await settings.setMaxSize(1600, 1200)
     await settings.setBounds({ x: 40, width: 900 })
     await settings.setWindowLevel(3)
 
@@ -81,6 +83,8 @@ describe('typed window-handle routing', () => {
       ['restore', 'settings'],
       ['setMinimumSize', 'settings'],
       ['setMaximumSize', 'settings'],
+      ['setMinSize', 'settings'],
+      ['setMaxSize', 'settings'],
       ['setBounds', 'settings'],
       ['setWindowLevel', 'settings'],
     ])

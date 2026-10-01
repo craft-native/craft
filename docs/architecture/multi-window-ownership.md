@@ -18,6 +18,7 @@ whether it stores a window-specific target.
 | Per-window lifecycle events | Implemented | Implemented | Implemented |
 | Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
 | Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
+| Named-window size-limit short aliases (`setMinSize`, `setMaxSize`) | Implemented | Implemented | Implemented |
 | Named-window attention request (`flashFrame`) | App-level Dock attention | Per-window GTK urgency hint; desktop may ignore | Per-window caption/taskbar flash |
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
 | Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
