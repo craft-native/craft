@@ -1571,6 +1571,13 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         _ = UpdateWindow(hwnd);
     } else if (std.mem.eql(u8, action, "hide")) {
         _ = ShowWindow(hwnd, SW_HIDE);
+    } else if (std.mem.eql(u8, action, "toggle")) {
+        if (IsWindowVisible(hwnd) != 0) {
+            _ = ShowWindow(hwnd, SW_HIDE);
+        } else {
+            _ = ShowWindow(hwnd, SW_SHOW);
+            _ = UpdateWindow(hwnd);
+        }
     } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
         if (DestroyWindow(hwnd) == 0) return error.NativeCallFailed;
     } else if (std.mem.eql(u8, action, "minimize")) {

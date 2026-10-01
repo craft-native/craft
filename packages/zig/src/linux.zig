@@ -634,6 +634,8 @@ fn handleWindowAction(action: []const u8, data: ?[]const u8) !void {
         gtk_window_present(window);
     } else if (std.mem.eql(u8, action, "hide")) {
         gtk_widget_hide(window);
+    } else if (std.mem.eql(u8, action, "toggle")) {
+        if (gtk_widget_get_visible(window) != 0) gtk_widget_hide(window) else gtk_window_present(window);
     } else if (std.mem.eql(u8, action, "close") or std.mem.eql(u8, action, "destroy")) {
         gtk_window_close(window);
     } else if (std.mem.eql(u8, action, "minimize")) {

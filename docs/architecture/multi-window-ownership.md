@@ -19,6 +19,7 @@ whether it stores a window-specific target.
 | Named-window always-on-top control | Implemented | Implemented as a window-manager request | Implemented |
 | Named-window relative movement | Implemented | Implemented as a window-manager request | Implemented |
 | Addressed `getState()` reads | Implemented | Implemented with GTK/GDK state | Implemented with Win32 state |
+| Named-window `toggle()` visibility | Implemented | Implemented; GUI smoke in CI | Implemented; WebView2 GUI smoke in CI |
 | Permanent destroy and cleanup | Implemented for named windows | Implemented on close/destroy | Implemented on close/destroy |
 | Modal and parent relationships | Proposed, not implemented | Proposed, not implemented | Proposed, not implemented |
 
