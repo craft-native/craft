@@ -40,7 +40,8 @@ pub const Entry = struct {
     /// GTK reports a request to the window manager, not a guaranteed state.
     /// Keep the request per window so the page can read back its own setting.
     always_on_top: bool = false,
-    /// Whether an owned modal found its parent enabled before Craft blocked it.
+    /// Whether a scoped modal found its parent interactive before Craft blocked
+    /// it. Win32 stores enabled state; GTK stores the widget's own sensitivity.
     modal_parent_was_enabled: ?bool = null,
     limits: desktop_window_controls.Limits = .{},
     /// Windows restores these when leaving borderless fullscreen.
@@ -365,6 +366,8 @@ test "modal parent blocking restores only the parent's previous state" {
     try std.testing.expect(registry.byWindow(0x2000).?.modal_parent_was_enabled == null);
     try std.testing.expectEqual(@as(?bool, true), registry.takeModalParentState(0x1000));
     try std.testing.expect(registry.takeModalParentState(0x1000) == null);
+    try std.testing.expect(registry.rememberModalParentState(0x1000, false));
+    try std.testing.expectEqual(@as(?bool, false), registry.takeModalParentState(0x1000));
     try std.testing.expect(registry.rememberModalParentState(0x1000, false));
     _ = registry.forgetWindow(0x1000);
     _ = registry.remember(0x1000, 0x3001);

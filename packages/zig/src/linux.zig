@@ -41,6 +41,7 @@ pub extern "c" fn gtk_window_set_urgency_hint(window: *anyopaque, setting: c_int
 pub extern "c" fn gtk_window_set_transient_for(window: *anyopaque, parent: ?*anyopaque) void;
 pub extern "c" fn gtk_window_set_destroy_with_parent(window: *anyopaque, setting: c_int) void;
 pub extern "c" fn gtk_widget_set_sensitive(widget: *anyopaque, sensitive: c_int) void;
+pub extern "c" fn gtk_widget_get_sensitive(widget: *anyopaque) c_int;
 pub extern "c" fn gtk_window_set_geometry_hints(window: *anyopaque, geometry_widget: ?*anyopaque, geometry: ?*const GdkGeometry, geom_mask: c_int) void;
 pub extern "c" fn gtk_window_fullscreen(window: *anyopaque) void;
 pub extern "c" fn gtk_window_unfullscreen(window: *anyopaque) void;
@@ -348,18 +349,21 @@ fn onWindowDestroyed(widget: *anyopaque, _: ?*anyopaque) callconv(.c) void {
 /// GTK's `set_modal` blocks every app window. Keep only the chosen parent
 /// insensitive while at least one of its modal children is actually visible.
 fn updateModalParent(parent: window_registry.Handle) void {
-    if (desktop_windows.byWindow(parent) == null) return;
+    const parent_entry = desktop_windows.byWindow(parent) orelse return;
     var children: [window_registry.capacity]window_registry.Handle = undefined;
     for (window_registry.childrenOf(parent, &children)) |handle| {
         const relationship = window_registry.relationshipOf(handle) orelse continue;
         if (relationship.modal and desktop_windows.byWindow(handle) != null and
             gtk_widget_get_visible(@ptrFromInt(handle)) != 0)
         {
-            gtk_widget_set_sensitive(@ptrFromInt(parent), 0);
+            if (parent_entry.modal_parent_was_enabled == null and
+                desktop_windows.rememberModalParentState(parent, gtk_widget_get_sensitive(@ptrFromInt(parent)) != 0))
+                gtk_widget_set_sensitive(@ptrFromInt(parent), 0);
             return;
         }
     }
-    gtk_widget_set_sensitive(@ptrFromInt(parent), 1);
+    if (desktop_windows.takeModalParentState(parent)) |was_sensitive|
+        gtk_widget_set_sensitive(@ptrFromInt(parent), if (was_sensitive) 1 else 0);
 }
 
 fn deliverToWebview(webview: usize, name: []const u8, detail_json: []const u8, window_name: ?[]const u8) void {
