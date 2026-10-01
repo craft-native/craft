@@ -166,20 +166,18 @@ make it the new sink.
 
 ## Remaining decisions
 
-The next multi-window milestone needs product decisions in addition to code:
+The parent/child and parent-only modal contract is implemented and covered by
+the desktop GUI and installed-app smokes. The remaining product choices are:
 
-1. Define parent/child and modal behavior, including focus, close propagation,
-   sheets, always-on-top interaction and ownership after the creator is
-   destroyed.
-2. Choose primary-only, broadcast or per-subscriber delivery for each
+1. Choose primary-only, broadcast or per-subscriber delivery for each
    application-level asynchronous source above.
-3. Decide whether Touch Bar should stay primary-window scoped or follow the
+2. Decide whether Touch Bar should stay primary-window scoped or follow the
    key window with separately owned item definitions and callbacks.
-4. Decide the portability contract for advanced actions beyond bounds,
+3. Decide the portability contract for advanced actions beyond bounds,
    centering, resizability, size limits and fullscreen. Closing still differs:
    macOS retains a closed page, while Linux and Windows release it.
-5. Expand platform-native integration beyond named-window lifecycle and core
-   geometry/control smokes. CI runs Linux WebKitGTK under Xvfb and Windows
+4. Expand platform-native integration beyond named-window lifecycle and core
+   geometry/control smokes. CI runs Linux WebKitGTK under Xvfb with Openbox and Windows
    WebView2 on a native runner. Installed PKG, DEB and MSI smoke tests now
    launch a sample app through the SDK and compare escaped clipboard text
    through the page bridge with the host OS clipboard. Each installed app also

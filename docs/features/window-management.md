@@ -83,6 +83,36 @@ either axis independently; the native window system's own minimum still applies.
 The older `createWindow(html, options)` overload remains available when the
 content is already in a string.
 
+### Parent and modal windows
+
+Pass `parent` when a child should stay attached to another native window.
+`main` means the calling page's own window; a named parent must be a live
+handle owned by that page. A modal child requires `parent` and blocks only
+that parent while visible. Unrelated windows remain usable.
+
+```typescript
+const settings = await createWindow({
+  id: 'settings',
+  html: '<h1>Settings</h1>',
+})
+
+const accountDialog = await createWindow({
+  id: 'account-dialog',
+  parent: settings.id,
+  modal: true,
+  html: '<h1>Account</h1>',
+})
+
+await accountDialog.close()
+```
+
+Closing a parent closes its attached descendants. A named window cannot be
+reparented by opening the same ID again with different `parent` or `modal`
+options. On macOS an ordinary close retains the page for reopening, while
+Linux and Windows release it; call `destroy()` for permanent teardown on
+macOS. Application-wide events such as deep links and tray actions currently
+go to the primary page, not every child page.
+
 ## Window Positioning
 
 ### Center on Screen

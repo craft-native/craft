@@ -165,9 +165,9 @@ export interface WindowCreateOptions {
   vibrancy?: 'appearance-based' | 'light' | 'dark' | 'titlebar' | 'selection' | 'menu' | 'popover' | 'sidebar' | 'header' | 'sheet' | 'window' | 'hud' | 'fullscreen-ui' | 'tooltip' | 'content' | 'under-window' | 'under-page'
   /** Background material (Windows 11) */
   backgroundMaterial?: 'auto' | 'none' | 'mica' | 'acrylic' | 'tabbed'
-  /** Parent-scoped relationship approved for #67; native support is in progress. */
+  /** Native parent window: `main` means this page's own window, or use a named handle owned by this page. */
   parent?: string
-  /** Requires parent; blocks only that parent. Native support is in progress. */
+  /** Requires `parent`; blocks only that parent while visible, not every app window. */
   modal?: boolean
   /** HTML content to load */
   html?: string
