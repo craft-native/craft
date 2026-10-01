@@ -64,6 +64,12 @@ describe('typed window-handle routing', () => {
     )
   })
 
+  it('forwards parent-scoped modal options through typed window creation', async () => {
+    const id = fixtureId('modal')
+    await windowManager.create({ id, parent: 'main', modal: true, html: '<p>Dialog</p>' })
+    expect(open).toHaveBeenCalledWith({ id, parent: 'main', modal: true, html: '<p>Dialog</p>' })
+  })
+
   it('keeps every common mutation on the retained handle', async () => {
     const settings = new Window('settings')
 
