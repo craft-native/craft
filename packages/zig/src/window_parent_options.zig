@@ -1,6 +1,6 @@
-//! Parse and authenticate the proposed parent/modal relationship before any
-//! platform creates or reopens a native window. Native attachment is added
-//! separately; until then callers must reject a requested parent explicitly.
+//! Parse and authenticate the parent/modal relationship before any platform
+//! creates or reopens a native window. Each backend then applies its own
+//! parent-scoped attachment and modality, using the same validated handles.
 const std = @import("std");
 const window_registry = @import("window_registry.zig");
 

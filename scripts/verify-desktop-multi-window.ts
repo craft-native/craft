@@ -35,9 +35,9 @@ const mainPage = `<!doctype html><script>
     }
     throw new Error(label + ': child size never reached expected bounds')
   }
-  const waitWindowEvent = (name) => new Promise((resolve, reject) => {
+  const waitWindowEvent = (name, id = 'settings') => new Promise((resolve, reject) => {
     const listener = (event) => {
-      if (event.detail.windowId !== 'settings') return
+      if (event.detail.windowId !== id) return
       clearTimeout(timeout)
       window.removeEventListener('craft:window:' + name, listener)
       resolve()
@@ -74,6 +74,16 @@ const mainPage = `<!doctype html><script>
     const first = await child(1)
     if (first.name !== 'settings') throw new Error('wrong child handle')
     await waitFor('child-1')
+    for (const [name, options] of [
+      ['unknown parent was accepted', { name: 'invalid-parent', parent: 'not-open', html: '<!doctype html>' }],
+      ['parentless modal was accepted', { name: 'invalid-modal', modal: true, html: '<!doctype html>' }],
+      ['global topmost modal was accepted', { name: 'invalid-topmost', parent: 'settings', modal: true, alwaysOnTop: true, html: '<!doctype html>' }],
+    ]) {
+      let rejected = false
+      try { await window.craft.window.open(options) }
+      catch (_) { rejected = true }
+      if (!rejected) throw new Error(name)
+    }
     const attached = await window.craft.window.open({
       name: 'attached', title: 'Attached desktop child', parent: 'settings',
       html: '<!doctype html><title>Attached desktop child</title>',
@@ -86,13 +96,19 @@ const mainPage = `<!doctype html><script>
     })
     if (modal.name !== 'modal' || (await call('getState', {}, modal.name)).isVisible !== true)
       throw new Error('parent-scoped modal was not created and shown')
+    let reparented = false
+    try { await window.craft.window.open({ name: 'modal', parent: 'main', modal: true, html: '<!doctype html>' }) }
+    catch (_) { reparented = true }
+    if (!reparented) throw new Error('live modal accepted a different parent')
     await call('hide', {}, modal.name)
     if ((await call('getState', {}, modal.name)).isVisible !== false)
       throw new Error('modal did not hide')
     await call('show', {}, modal.name)
     if ((await call('getState', {}, modal.name)).isVisible !== true)
       throw new Error('modal did not reopen')
+    const modalClosed = waitWindowEvent('close', modal.name)
     await call('close', {}, modal.name)
+    await modalClosed
     let removed = false
     try { await call('getState', {}, modal.name) }
     catch (_) { removed = true }
@@ -298,10 +314,24 @@ const mainPage = `<!doctype html><script>
     const second = await child(2)
     if (second.name !== 'settings') throw new Error('reopened child has wrong handle')
     await waitFor('child-2')
+    const attachedAgain = await window.craft.window.open({
+      name: 'attached', title: 'Attached after parent recreation', parent: 'settings',
+      html: '<!doctype html><title>Attached after parent recreation</title>',
+    })
+    if (attachedAgain.name !== 'attached' || (await call('getState', {}, attachedAgain.name)).isVisible !== true)
+      throw new Error('attached name could not be reused after its original parent was destroyed')
     const reopenedTitle = await window.craft.window._call('getTitle', {}, 'settings')
     if (reopenedTitle !== 'Child 2') throw new Error('reopened child retained stale title')
     await waitFor('grandchild-opened')
     await waitFor('child-grandchild')
+    let unrelatedParentRejected = false
+    try {
+      await window.craft.window.open({
+        name: 'invalid-unrelated-parent', parent: 'grandchild', html: '<!doctype html>',
+      })
+    }
+    catch (_) { unrelatedParentRejected = true }
+    if (!unrelatedParentRejected) throw new Error('a page parented a window under another page’s child')
     let liveOwnerRejected = false
     try {
       await window.craft.window.open({ name: 'grandchild', title: 'Wrong owner', url: location.origin + '/child?cycle=grandchild' })
@@ -311,6 +341,10 @@ const mainPage = `<!doctype html><script>
     const creatorClosed = waitWindowEvent('close')
     await call('close')
     await creatorClosed
+    let repeatedAttachmentForgotten = false
+    try { await call('getState', {}, 'attached') }
+    catch (_) { repeatedAttachmentForgotten = true }
+    if (!repeatedAttachmentForgotten) throw new Error('recreated parent left its attached child registered')
     if (await call('getTitle', {}, 'grandchild') !== 'Child grandchild')
       throw new Error('unparented child did not survive creator destruction')
     const adopted = await window.craft.window.open({ name: 'grandchild', title: 'Child grandchild', url: location.origin + '/child?cycle=grandchild' })

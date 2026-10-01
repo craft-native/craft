@@ -1,12 +1,12 @@
-# Parent and modal windows: proposed contract
+# Parent and modal windows: approved contract
 
-**Status: parent-scoped contract approved; native implementation in progress.** `WindowCreateOptions` exposes `parent`
-and `modal`, and the SDK forwards them, but the current macOS, Linux and Windows
-native creation paths do not interpret either field. Applications must not yet
-depend on a parent relationship or modal blocking. This document separates the
-decision needed for issue #67 from the existing creator-page ownership contract.
+**Status: implemented on macOS, Linux, and Windows; platform smokes in CI.**
+`WindowCreateOptions` exposes `parent` and `modal`, and each native creation
+path now applies them. The installed-app tests and the remaining acceptance
+checks below still determine whether issue #67 can be closed. Native parenting
+is distinct from the existing creator-page ownership contract.
 
-## Recommendation to approve
+## Contract
 
 1. `parent` names a live window controlled by the requesting page. `main`
    means that page's own native window, not the process's first window. A
@@ -28,9 +28,8 @@ decision needed for issue #67 from the existing creator-page ownership contract.
    creator-page events into a process-wide broadcast.
 4. Parent and modal relationships are fixed at first creation. Reopening an
    existing name with incompatible relationship options rejects rather than
-   silently reparenting a live window. Decide whether `alwaysOnTop` on a
-   modal child is rejected or ignored before implementation; it must not
-   override parent-scoped modality by accident.
+   silently reparenting a live window. `alwaysOnTop` on a modal child is
+   rejected so it cannot override parent-scoped modality.
 
 The native APIs do not make this one portable call. AppKit has
 [attached child windows](https://developer.apple.com/documentation/appkit/nswindow/addchildwindow%28_%3Aordered%3A%29)
@@ -61,4 +60,5 @@ than equating these APIs by name.
   rejection, and the existing unparented orphan-adoption behavior.
 
 The parent-scoped modality choice was approved on October 1, 2026. The native
-paths must still implement and verify it before apps can rely on these fields.
+paths implement it; cross-platform installed-app CI and the acceptance checks
+above remain the release gate.
