@@ -14,5 +14,8 @@ exec xvfb-run -a dbus-run-session -- sh -c '
     fi
     sleep 0.1
   done
+  if [ "${CRAFT_X11_CONTEXT:-}" = 1 ]; then
+    printf "CRAFT_X11_CONTEXT\t%s\t%s\n" "$DISPLAY" "${XAUTHORITY:-}"
+  fi
   exec "$@"
 ' craft-window-manager "$@"

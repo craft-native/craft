@@ -44,13 +44,9 @@ const mainPage = `<!doctype html><script>
   }
   const checkNativeLinuxParent = async () => {
     if (isWindows) return
-    const display = await window.craft.shell.getEnv('DISPLAY')
-    const xauthority = await window.craft.shell.getEnv('XAUTHORITY')
-    if (!display || !xauthority) throw new Error('Linux X11 display credentials missing')
-    const query = new URLSearchParams({ display, xauthority })
     let state
     for (let attempt = 0; attempt < 30; attempt++) {
-      state = await (await fetch(['/native-linux-parent-state?', query].join(''))).json()
+      state = await (await fetch('/native-linux-parent-state')).json()
       if (state.attachedTransientForParent && state.modalTransientForParent &&
         state.attachedAboveParent && state.modalAboveParent) return
       await new Promise(resolve => setTimeout(resolve, 100))
@@ -415,7 +411,7 @@ const mainPage = `<!doctype html><script>
     await report('done')
   }
   catch (error) {
-    await fetch('/report?error=' + encodeURIComponent(String(error)), { method: 'POST' })
+    await fetch('/report?error=' + encodeURIComponent(String(error?.message ?? JSON.stringify(error))), { method: 'POST' })
   }
 })()
 </script>`
@@ -465,6 +461,8 @@ const childPage = `<!doctype html><script>
 
 const steps = new Set<string>()
 const requests: string[] = []
+let x11Display = ''
+let x11Authority = ''
 let resolveDone!: () => void
 let rejectDone!: (error: Error) => void
 const done = new Promise<void>((resolve, reject) => {
@@ -558,11 +556,9 @@ function OwnedBy([string]$childTitle, [string]$parentTitle) {
   }
   else if (url.pathname === '/native-linux-parent-state' && !isWindows) {
     try {
-      const display = url.searchParams.get('display')
-      const xauthority = url.searchParams.get('xauthority')
-      if (!display || !/^:\d+(?:\.\d+)?$/.test(display) || !xauthority)
-        throw new Error('invalid X11 display credentials')
-      const env = { ...process.env, DISPLAY: display, XAUTHORITY: xauthority }
+      if (!/^:\d+(?:\.\d+)?$/.test(x11Display) || !x11Authority)
+        throw new Error('Openbox display context was not reported by the launcher')
+      const env = { ...process.env, DISPLAY: x11Display, XAUTHORITY: x11Authority }
       const x11 = (args: string[]) => execFileSync(args[0]!, args.slice(1), {
         encoding: 'utf8', env, timeout: 10_000,
       })
@@ -626,12 +622,20 @@ const child = spawn(isWindows ? binary : 'timeout', isWindows
   ? ['--url', `http://127.0.0.1:${port}/main`]
   : ['110s', 'sh', 'scripts/run-linux-with-wm.sh', binary, '--url', `http://127.0.0.1:${port}/main`], {
   detached: !isWindows,
+  env: isWindows ? process.env : { ...process.env, CRAFT_X11_CONTEXT: '1' },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 let output = ''
-for (const stream of [child.stdout, child.stderr]) {
-  stream.on('data', chunk => { output = (output + chunk.toString()).slice(-16_000) })
-}
+child.stdout.on('data', chunk => {
+  output = (output + chunk.toString()).slice(-16_000)
+  const context = output.match(/CRAFT_X11_CONTEXT\t([^\t\r\n]+)\t([^\r\n]+)/)
+  if (context) {
+    x11Display = context[1]!
+    x11Authority = context[2]!
+    output = output.replace(context[0], 'CRAFT_X11_CONTEXT [redacted]')
+  }
+})
+child.stderr.on('data', chunk => { output = (output + chunk.toString()).slice(-16_000) })
 child.once('error', error => rejectDone(error))
 child.once('exit', (code, signal) => rejectDone(new Error(`Craft exited before smoke completed (${code ?? signal}, ${Date.now() - startedAt} ms)`)))
 const timer = setTimeout(() => rejectDone(new Error(`${platformName} multi-window smoke timed out`)), 100_000)

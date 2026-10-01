@@ -66,7 +66,8 @@ than equating these APIs by name.
   The Linux GUI and installed-DEB smokes run under Openbox rather than a bare
   Xvfb server, and require an unrelated window, a non-modal sibling, and the
   modal itself to take focus in turn while the modal remains visible. The GUI
-  smoke also reads each child window's `WM_TRANSIENT_FOR` owner and Openbox's
+  smoke uses the launcher's X11 display context to read each child window's
+  `WM_TRANSIENT_FOR` owner and Openbox's
   bottom-to-top `_NET_CLIENT_LIST_STACKING` to verify both children remain
   above their parent.
 
