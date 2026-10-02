@@ -1,0 +1,8 @@
+{
+  "initialScreen": "home",
+  "screens": {
+    "home": "Home.stx",
+    "details": "Details.stx",
+    "summary": "Summary.stx"
+  }
+}

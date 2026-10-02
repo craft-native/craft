@@ -1,0 +1,14 @@
+<script>
+let name = globalThis.craft.route.params.name
+
+function goBack() {
+  globalThis.craft.navigation.back()
+}
+</script>
+
+<template>
+  <View class="p-4">
+    <Text testID="summary-title">Summary for {name}</Text>
+    <Button testID="summary-back" onPress={goBack}>Back to home</Button>
+  </View>
+</template>

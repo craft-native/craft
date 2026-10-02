@@ -1,0 +1,21 @@
+<script>
+let name = globalThis.craft.route.params.name
+let count = globalThis.craft.route.params.count
+
+function goBack() {
+  globalThis.craft.navigation.back()
+}
+
+function replaceWithSummary() {
+  globalThis.craft.navigation.replace('summary', { name, count })
+}
+</script>
+
+<template>
+  <View class="p-4">
+    <Text testID="details-title">Details for {name}</Text>
+    <Text testID="details-count">Count: {count}</Text>
+    <Button testID="details-back" onPress={goBack}>Back in app</Button>
+    <Button testID="open-summary" onPress={replaceWithSummary}>Show summary</Button>
+  </View>
+</template>

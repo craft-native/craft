@@ -9,11 +9,11 @@ import UIKit
 struct CraftNativeScreen: UIViewControllerRepresentable {
     let config: CraftConfig
 
-    func makeUIViewController(context: Context) -> CraftNativeScreenController {
-        CraftNativeScreenController(config: config)
+    func makeUIViewController(context: Context) -> UINavigationController {
+        UINavigationController(rootViewController: CraftNativeScreenController(config: config))
     }
 
-    func updateUIViewController(_ controller: CraftNativeScreenController, context: Context) {}
+    func updateUIViewController(_ controller: UINavigationController, context: Context) {}
 }
 
 final class CraftNativeScreenController: UIViewController {
@@ -33,13 +33,17 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private let config: CraftConfig
+    private let routeName: String?
+    private let routeParams: [String: Any]
     private let jsContext = JSContext()!
     private let rootStack = UIStackView()
     private var handlers: [ObjectIdentifier: String] = [:]
     private var renderedRoot: RenderedNode?
 
-    init(config: CraftConfig) {
+    init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
+        self.routeName = routeName
+        self.routeParams = routeParams
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -49,6 +53,7 @@ final class CraftNativeScreenController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        navigationItem.title = routeName ?? config.appName
         view.backgroundColor = config.resolvedBackgroundColor
         rootStack.axis = .vertical
         rootStack.alignment = .fill
@@ -66,6 +71,10 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private func setupJavaScript() {
+        if let routeName = routeName {
+            jsContext.setObject(routeName, forKeyedSubscript: "__stxNativeRoute" as NSString)
+        }
+        jsContext.setObject(routeParams as NSDictionary, forKeyedSubscript: "__stxNativeParams" as NSString)
         jsContext.exceptionHandler = { _, exception in
             NSLog("[craft native] JavaScript exception: %@", exception?.toString() ?? "unknown")
         }
@@ -93,6 +102,9 @@ final class CraftNativeScreenController: UIViewController {
             return
         }
         jsContext.evaluateScript(script)
+        if routeName == nil, let selected = jsContext.objectForKeyedSubscript("__stxNativeRoute")?.toString() {
+            navigationItem.title = selected
+        }
     }
 
     private func showError(_ message: String) {
@@ -115,6 +127,21 @@ final class CraftNativeScreenController: UIViewController {
         case "RENDER":
             guard let document = payload["document"] as? [String: Any] else { return }
             render(document)
+        case "NAVIGATE", "NAVIGATE_REPLACE":
+            guard navigationController?.topViewController === self,
+                  let screen = payload["screen"] as? String, !screen.isEmpty,
+                  let navigation = navigationController else { return }
+            let params = payload["params"] as? [String: Any] ?? [:]
+            let next = CraftNativeScreenController(config: config, routeName: screen, routeParams: params)
+            if type == "NAVIGATE" {
+                navigation.pushViewController(next, animated: true)
+            } else {
+                navigation.setViewControllers(Array(navigation.viewControllers.dropLast()) + [next], animated: true)
+            }
+        case "NAVIGATE_BACK":
+            if navigationController?.topViewController === self {
+                navigationController?.popViewController(animated: true)
+            }
         case "API_REQUEST":
             guard let id = message["id"] as? String else { return }
             let args = payload["args"] as? [Any] ?? []

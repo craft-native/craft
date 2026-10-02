@@ -1,0 +1,27 @@
+<script>
+let name = ''
+let count = 0
+
+function changeName(event) {
+  name = event.text
+}
+
+function increment() {
+  count += 1
+}
+
+function openDetails() {
+  globalThis.craft.navigation.push('details', { name, count })
+}
+</script>
+
+<template>
+  <View class="p-4">
+    <Text testID="home-title">Home</Text>
+    <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
+    <Text testID="greeting">Hello {name}</Text>
+    <Button testID="increment" onPress={increment}>Increment</Button>
+    <Text testID="count">Count: {count}</Text>
+    <Button testID="open-details" onPress={openDetails}>Open details</Button>
+  </View>
+</template>
