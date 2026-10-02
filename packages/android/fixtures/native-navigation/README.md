@@ -18,4 +18,6 @@ CI uses the pinned stx-native compiler at `49cc3f0425`.
 
 `--prepare-only` compiles the `.stx` bundle and generates the Android fixture
 without needing an emulator. Set `CRAFT_KEEP_ANDROID_NATIVE_PROJECT=1` to keep
-the generated project for inspection.
+the generated project for inspection. On an emulator failure, the test prints
+the activity's native view tree and the harness dumps `CraftNativeAndroid`
+errors from logcat.

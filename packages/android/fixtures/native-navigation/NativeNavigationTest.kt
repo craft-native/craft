@@ -50,7 +50,18 @@ class NativeNavigationTest {
             if (found != null) return found!!
             SystemClock.sleep(200)
         }
-        throw AssertionError("Timed out waiting for native control $id")
+        var tree = ""
+        instrumentation.runOnMainSync { tree = describe(activity.window.decorView) }
+        throw AssertionError("Timed out waiting for native control $id. View tree: $tree")
+    }
+
+    private fun describe(view: View): String {
+        val own = "${view.javaClass.simpleName}[${view.contentDescription}]" +
+            if (view is TextView) "=${view.text}" else ""
+        if (view !is ViewGroup) return own
+        return own + (0 until view.childCount).joinToString(prefix = "(", postfix = ")") {
+            describe(view.getChildAt(it))
+        }
     }
 
     private fun click(activity: MainActivity, id: String) {

@@ -26,7 +26,13 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), join(testDirectory, 'NativeNavigationTest.kt'))
 
   if (!process.argv.includes('--prepare-only')) {
-    run(['gradle', '--no-daemon', ':app:connectedDebugAndroidTest'], output)
+    try {
+      run(['gradle', '--no-daemon', ':app:connectedDebugAndroidTest'], output)
+    }
+    catch (error) {
+      run(['adb', 'logcat', '-d', '-s', 'CraftNativeAndroid:E'], output)
+      throw error
+    }
   }
   console.log(process.argv.includes('--prepare-only') ? 'Android native navigation fixture prepared' : 'Android native navigation test passed')
 }
