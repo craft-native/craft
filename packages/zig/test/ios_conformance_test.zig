@@ -829,18 +829,17 @@ test "every flag Zig can read is a flag the spec's config actually has" {
     try testing.expect(checked >= 35);
 }
 
-/// Every key `ios_config.zig` will decode: the three literal lists plus every
-/// `Feature`'s json key.
+/// Every stored key whose present value `ios_config.zig` validates.
 ///
 /// Built from the declarations rather than by searching the whole file, so a
 /// key that appears only in a doc comment does not count as mirrored. That
 /// distinction is the whole value of this scan: the header prose names most of
 /// these keys, so a whole-file search would pass for a key nothing decodes.
-fn collectZigRequiredKeys(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+fn collectZigKnownKeys(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
     errdefer set.deinit();
 
-    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys" }) |decl| {
+    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys", "const optional_string_keys", "const optional_bool_keys" }) |decl| {
         const at = std.mem.indexOf(u8, zig_config_source, decl) orelse return error.KeyListNotFound;
         const line_end = std.mem.indexOfScalarPos(u8, zig_config_source, at, '\n').?;
         const line = zig_config_source[at..line_end];
@@ -869,21 +868,18 @@ fn collectZigRequiredKeys(allocator: std.mem.Allocator) !std.StringHashMap(void)
     return set;
 }
 
-test "Zig requires exactly the keys the spec's decoder requires" {
-    // The faithfulness the all-or-nothing rule depends on. Swift's synthesized
-    // `init(from:)` calls `decode` for every non-optional stored property and
-    // throws when one is missing, so the two runtimes agree about a given file
-    // only while they require the same set. When `CraftConfig` grows a key this
-    // fails until `ios_config.zig` grows it too — otherwise Swift refuses a
-    // config Zig accepts, in one process, from one file.
-    var zig_keys = try collectZigRequiredKeys(testing.allocator);
+test "Zig validates exactly the stored keys Swift decodes" {
+    // Swift overlays defaults before decoding. Missing and null fields keep
+    // those defaults; present fields must have the declared type. Zig must
+    // validate the same fields even when it does not use their values.
+    var zig_keys = try collectZigKnownKeys(testing.allocator);
     defer zig_keys.deinit();
 
     const at = std.mem.indexOf(u8, swift_spec, "struct CraftConfig: Codable {").?;
     const rest = swift_spec[at..];
     const end = std.mem.indexOf(u8, rest, "\n}").?;
 
-    var required: usize = 0;
+    var fields: usize = 0;
     var optional_seen: usize = 0;
     var it = std.mem.splitScalar(u8, rest[0..end], '\n');
     while (it.next()) |line| {
@@ -896,38 +892,24 @@ test "Zig requires exactly the keys the spec's decoder requires" {
         const type_end = std.mem.indexOf(u8, after_colon, " =") orelse after_colon.len;
         const type_name = std.mem.trim(u8, after_colon[0..type_end], " \t\r");
 
-        // An optional is decoded with `decodeIfPresent`, so its absence is not
-        // a throw and Zig must NOT require it.
         if (std.mem.endsWith(u8, type_name, "?")) {
             optional_seen += 1;
-            if (zig_keys.contains(name)) {
-                std.debug.print(
-                    "ios_config requires '{s}', which is optional in the spec — Zig would " ++
-                        "refuse a config Swift accepts.\n",
-                    .{name},
-                );
-                return error.OptionalKeyTreatedAsRequired;
-            }
-            continue;
         }
 
-        required += 1;
+        fields += 1;
         if (!zig_keys.contains(name)) {
             std.debug.print(
-                "the spec's CraftConfig requires '{s}' and ios_config.zig does not decode it.\n" ++
-                    "  Swift throws on the missing key and falls back to every flag false; " ++
-                    "Zig would accept the same file.\n",
+                "the spec's CraftConfig validates '{s}' and ios_config.zig does not.\n",
                 .{name},
             );
-            return error.RequiredKeyNotMirrored;
+            return error.ConfigKeyNotMirrored;
         }
     }
 
-    // Both directions: a key Zig requires that the spec does not have would
-    // make Zig refuse every config the generator writes.
-    try testing.expectEqual(required, zig_keys.count());
-    try testing.expect(required >= 40);
-    try testing.expect(optional_seen >= 1);
+    // A stale Zig key could reject a file Swift accepts.
+    try testing.expectEqual(fields, zig_keys.count());
+    try testing.expect(fields >= 40);
+    try testing.expect(optional_seen >= 4);
 }
 
 test "getDeviceInfo answers every field the spec answers" {

@@ -19,25 +19,19 @@
 //! opinions about whether clipboard is enabled is one app that both allows and
 //! refuses the same capability depending on which arm answered.
 //!
-//! That is why the decode below is all-or-nothing rather than per-key, which
-//! looks like a bug until you check what Swift does. `CraftConfig`'s properties
-//! carry default values, but a synthesized `Decodable` does not use them: it
-//! calls `decode(Bool.self, forKey:)`, which *throws* when the key is missing.
-//! `try?` turns the throw into nil, and line 178 falls back to `CraftConfig()`
-//! — every flag false. So a config missing one of its 40 required keys disables
-//! all 35 capabilities, not the one key. Reading it per-key here would be more
-//! useful and would disagree with Swift on the same file.
+//! Swift overlays the bundled object on `CraftConfig()` defaults before
+//! decoding. A missing or null field therefore keeps its default; every
+//! capability defaults off. A present field of the wrong type still makes the
+//! decode fail and all capabilities fall back to off. Zig mirrors both rules.
 //!
 //! Each of these was verified against a real `swiftc` decode rather than
 //! assumed, because "faithful" is a claim about another language's behaviour:
 //!
-//!  - a missing required key throws          -> all false
+//!  - a missing or null key keeps its default
 //!  - `1` for a `Bool` throws                -> all false  (not coerced)
-//!  - `null` for a `Bool` throws             -> all false
 //!  - `"true"` for a `Bool` throws           -> all false
 //!  - a non-string in `trustedOrigins` throws-> all false
 //!  - an unknown extra key is ignored
-//!  - `devServerURL` absent or null is fine  (it is the one optional)
 //!
 //! ## What a disabled capability answers, and why it is not what Swift answers
 //!
@@ -121,8 +115,8 @@ pub const Feature = enum {
     /// `enableAR`, `enablePDFViewer` and `enableMLKit` are not the
     /// camel-casing of `nfc`, `ar`, `pdf_viewer` or `ml_kit`, and a derivation
     /// that got them wrong would look up a key that is not there — which, under
-    /// the all-or-nothing rule above, disables the entire app rather than
-    /// failing visibly.
+    /// the type check below, disables the entire app rather than failing
+    /// visibly.
     pub fn jsonKey(self: Feature) []const u8 {
         return switch (self) {
             .ar => "enableAR",
@@ -167,22 +161,18 @@ pub const Feature = enum {
 /// Which flags are on.
 pub const Flags = std.EnumSet(Feature);
 
-/// The keys Swift's synthesized `init(from:)` calls `decode` for.
-///
-/// Missing any one of them throws, and the throw disables everything. Only
-/// `devServerURL` is optional (`String?` -> `decodeIfPresent`), so it is not
-/// listed.
+/// Stored config keys whose present values Swift validates after overlaying
+/// the bundled object on its defaults. Missing and null values keep defaults.
 const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{"trustedOrigins"};
-const optional_string_keys = [_][]const u8{"devServerURL"};
+const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "devServerURL" };
+const optional_bool_keys = [_][]const u8{"swipeNavigation"};
 
 /// Decode `json` the way Swift decodes it.
 ///
-/// Returns the empty set for anything Swift's `JSONDecoder` would throw on,
-/// which is the same value line 178 falls back to. Pure and allocator-taking so
-/// the faithfulness above is testable without a bundle, a simulator, or a run
-/// loop.
+/// Missing or null keys retain the Swift defaults; invalid present values
+/// return the empty set, matching `CraftConfig.load`'s decode fallback.
 pub fn parse(allocator: std.mem.Allocator, json: []const u8) Flags {
     var parsed = std.json.parseFromSlice(std.json.Value, allocator, json, .{
         // Swift keeps the *first* of a duplicated key and does not throw —
@@ -203,39 +193,49 @@ pub fn parse(allocator: std.mem.Allocator, json: []const u8) Flags {
     };
 
     inline for (string_keys) |key| {
-        const v = root.get(key) orelse return Flags.empty;
-        if (v != .string) return Flags.empty;
-    }
-
-    inline for (extra_bool_keys) |key| {
-        const v = root.get(key) orelse return Flags.empty;
-        if (v != .bool) return Flags.empty;
-    }
-
-    inline for (array_of_string_keys) |key| {
-        const v = root.get(key) orelse return Flags.empty;
-        if (v != .array) return Flags.empty;
-        for (v.array.items) |item| {
-            if (item != .string) return Flags.empty;
-        }
-    }
-
-    inline for (optional_string_keys) |key| {
-        // Absent is fine; so is an explicit null. Present and not a string is
-        // a `typeMismatch`, which throws like any other.
         if (root.get(key)) |v| {
             if (v != .string and v != .null) return Flags.empty;
         }
     }
 
+    inline for (extra_bool_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .bool and v != .null) return Flags.empty;
+        }
+    }
+
+    inline for (array_of_string_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .null) {
+                if (v != .array) return Flags.empty;
+                for (v.array.items) |item| {
+                    if (item != .string) return Flags.empty;
+                }
+            }
+        }
+    }
+
+    inline for (optional_string_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .string and v != .null) return Flags.empty;
+        }
+    }
+
+    inline for (optional_bool_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .bool and v != .null) return Flags.empty;
+        }
+    }
+
     var flags_out = Flags.empty;
     inline for (comptime std.enums.values(Feature)) |feature| {
-        const v = root.get(feature.jsonKey()) orelse return Flags.empty;
-        // `.bool` only. A JSON `1` is `.integer` here and `NSNumber`-bridged in
-        // Swift, and Swift throws on it rather than coercing — verified, not
-        // assumed, because coercing would be the obvious thing to write.
-        if (v != .bool) return Flags.empty;
-        if (v.bool) flags_out.insert(feature);
+        if (root.get(feature.jsonKey())) |v| {
+            // Swift's overlay drops null, but rejects a present non-boolean.
+            if (v != .null) {
+                if (v != .bool) return Flags.empty;
+                if (v.bool) flags_out.insert(feature);
+            }
+        }
     }
     return flags_out;
 }
@@ -298,8 +298,7 @@ fn readFromBundle() Flags {
         // otherwise indistinguishable from it in the field.
         std.log.info(
             "ios config: craft.config.json enables no capabilities; " ++
-                "if that is unexpected, check every required key is present, " ++
-                "since one missing key disables all of them",
+                "if that is unexpected, check capability flags and value types",
             .{},
         );
     }
@@ -355,8 +354,7 @@ fn readConfigFile(allocator: std.mem.Allocator, path: []const u8) !?[]u8 {
 
     // A short read is not a truncated config to parse leniently: JSON that
     // stops early is either invalid (all-false, correctly) or — worse —
-    // valid-looking with the tail of the flags missing, which under the
-    // all-or-nothing rule is also all-false. Refusing here says why.
+    // valid-looking with the tail of the flags missing. Refusing here says why.
     if (read != buf.len) {
         std.log.warn(
             "ios config: read {d} of {d} bytes from '{s}'",
@@ -531,17 +529,12 @@ test "a complete config enables exactly the flags it sets" {
     try testing.expectEqual(std.enums.values(Feature).len - 2, f.count());
 }
 
-test "one missing key disables every capability, as Swift's decoder does" {
-    // The behaviour this whole file is shaped around, and the one that looks
-    // like a bug: `CraftConfig`'s properties have defaults, but a synthesized
-    // `Decodable` never uses them — it throws `keyNotFound`, `try?` swallows
-    // it, and `CraftApp.swift:178` falls back to an all-false `CraftConfig()`.
-    // Verified against a real swiftc decode before being written here.
+test "missing capability keys keep their disabled defaults" {
     const complete = try completeConfig(testing.allocator, "");
     defer testing.allocator.free(complete);
     try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, complete).count());
 
-    // Drop `enableHaptics` alone. Per-key decoding would lose one capability.
+    // Swift overlays this partial file on CraftConfig() before decoding.
     const needle = ",\"enableHaptics\":true";
     const at = std.mem.indexOf(u8, complete, needle).?;
     const without = try std.mem.concat(testing.allocator, u8, &.{
@@ -549,16 +542,13 @@ test "one missing key disables every capability, as Swift's decoder does" {
     });
     defer testing.allocator.free(without);
 
-    try testing.expectEqual(@as(usize, 0), parse(testing.allocator, without).count());
+    const flags_out = parse(testing.allocator, without);
+    try testing.expectEqual(std.enums.values(Feature).len - 1, flags_out.count());
+    try testing.expect(!flags_out.contains(.haptics));
 }
 
-test "a required non-capability key is required too" {
-    // `darkMode`, `appName`, `bundleId`, `backgroundColor` and `trustedOrigins`
-    // gate nothing, so it is tempting to ignore them. Swift decodes all five,
-    // and throwing on them is how a config that is merely *stale* — written by
-    // an older generator that had fewer keys — disables the app rather than
-    // half-enabling it.
-    inline for (.{ "\"darkMode\":true,", "\"appName\":\"T\",", "\"trustedOrigins\":[]," }) |needle| {
+test "missing non-capability keys keep Swift defaults" {
+    inline for (.{ "\"darkMode\":true,", "\"appName\":\"T\",", "\"renderer\":\"T\",", "\"trustedOrigins\":[]," }) |needle| {
         const complete = try completeConfig(testing.allocator, "");
         defer testing.allocator.free(complete);
         const at = std.mem.indexOf(u8, complete, needle).?;
@@ -566,8 +556,15 @@ test "a required non-capability key is required too" {
             complete[0..at], complete[at + needle.len ..],
         });
         defer testing.allocator.free(without);
-        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, without).count());
+        try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, without).count());
     }
+}
+
+test "a partial config enables only explicitly true capabilities" {
+    const flags_out = parse(testing.allocator, "{\"renderer\":\"native\",\"enableClipboard\":true,\"enableHaptics\":null}");
+    try testing.expectEqual(@as(usize, 1), flags_out.count());
+    try testing.expect(flags_out.contains(.clipboard));
+    try testing.expect(!flags_out.contains(.haptics));
 }
 
 test "a wrongly typed flag is a throw, not a coercion" {
@@ -576,11 +573,14 @@ test "a wrongly typed flag is a throw, not a coercion" {
     // Foundation bridges both to `NSNumber`, and coercing would be the
     // reasonable-looking choice — but Swift throws, so an app whose config was
     // hand-edited to `"enableCamera": 1` has *no* capabilities, not camera.
-    inline for (.{ "1", "0", "null", "\"true\"", "[]" }) |bad| {
+    inline for (.{ "1", "0", "\"true\"", "[]" }) |bad| {
         const json = try completeConfig(testing.allocator, "\"enableCamera\":" ++ bad);
         defer testing.allocator.free(json);
         try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
     }
+    const with_null = try completeConfig(testing.allocator, "\"enableCamera\":null");
+    defer testing.allocator.free(with_null);
+    try testing.expectEqual(std.enums.values(Feature).len - 1, parse(testing.allocator, with_null).count());
 }
 
 test "an unknown key is ignored, and devServerURL may be absent or null" {
@@ -588,8 +588,7 @@ test "an unknown key is ignored, and devServerURL may be absent or null" {
     defer testing.allocator.free(with_extra);
     try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, with_extra).count());
 
-    // `devServerURL` is the one `String?` in the struct, so it is the one key
-    // whose absence is not a throw.
+    // Optional values and explicit null are overlaid on the defaults.
     const with_null = try completeConfig(testing.allocator, "\"devServerURL\":null");
     defer testing.allocator.free(with_null);
     try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, with_null).count());
@@ -611,6 +610,14 @@ test "trustedOrigins is checked element by element" {
     try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, good).count());
 }
 
+test "optional fields are type-checked when present" {
+    inline for (.{ "\"appearance\":7", "\"backgroundColorDark\":false", "\"swipeNavigation\":\"true\"", "\"renderer\":true" }) |bad| {
+        const json = try completeConfig(testing.allocator, bad);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
+}
+
 test "malformed or non-object JSON is all-false rather than a crash" {
     inline for (.{ "", "{", "[]", "null", "\"a string\"", "{\"appName\":}" }) |bad| {
         try testing.expectEqual(@as(usize, 0), parse(testing.allocator, bad).count());
@@ -618,9 +625,7 @@ test "malformed or non-object JSON is all-false rather than a crash" {
 }
 
 test "every capability key is spelled the way Swift spells it" {
-    // A key that does not exist in the file reads as missing, and a missing key
-    // disables all 35 — so a single typo here is not a one-flag bug, it is an
-    // app that serves nothing. The four irregular ones are the risk:
+    // A typo leaves a capability on its disabled default. The four irregular ones are the risk:
     // camel-casing the enum member would produce `enableNfc`, `enableAr`,
     // `enablePdfViewer` and `enableMlKit`, none of which are in the file.
     try testing.expectEqualStrings("enableNFC", Feature.nfc.jsonKey());

@@ -106,7 +106,7 @@ In Xcode:
 
 ### Experimental WebView-free screen
 
-The opt-in `native` renderer hosts a compiled `.stx` screen in JavaScriptCore and renders its `View`, `Text`, `Button`, and `TextInput` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is a vertical slice, not yet a replacement for the WebView renderer: the native bridge supports device info, haptics, and clipboard read/write. Navigation, lists, and the rest of Craft's device APIs still need native adapters. Enable `enableHaptics` and `enableClipboard` in `craft.config.json` before using those two capabilities; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code.
+The opt-in `native` renderer hosts compiled `.stx` screens in JavaScriptCore and renders their `View`, `Text`, `Button`, and `TextInput` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is a vertical slice, not yet a replacement for the WebView renderer: the native bridge supports device info, haptics, clipboard read/write, and multi-screen navigation. Lists and the rest of Craft's device APIs still need native adapters. Enable `enableHaptics` and `enableClipboard` in `craft.config.json` before using those two capabilities; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code.
 
 ```bash
 craft ios init NativeDemo --renderer native --output ./ios-native
@@ -120,6 +120,8 @@ craft ios run --output ./ios-native --simulator
 Native screen updates reconcile the UIKit tree by sibling-scoped `key` (or `testID` for existing screens); unkeyed children reuse their position. `TextInput` objects therefore keep focus and selection while unrelated labels and buttons change. On macOS, `bun packages/ios/scripts/test-native-render.ts` runs the renderer's unit and simulator UI tests.
 
 For multiple native screens, configure named `.stx` routes and an initial screen in `stx-native.config.json` (see [`fixtures/native-navigation`](./fixtures/native-navigation)). Compile without a positional file: `stx-native compile --format bundle --output ./screen.js`. A screen can call `craft.navigation.push('details', { id: 7 })`, `.replace('home')`, or `.back()`; the destination reads `craft.route.params`. Craft uses a native navigation stack, so the back button and edge-swipe reveal the existing controller and retain its JavaScript and input state. `bun packages/ios/scripts/test-native-navigation.ts` compiles the fixture and runs its simulator test; the default WebView renderer is unchanged.
+
+The iOS host overlays `craft.config.json` on its defaults. Missing or `null` capability flags stay disabled; explicitly set a flag to `true` to enable it. Both the Swift host and Zig bridge reject malformed values and fall back to all capabilities disabled.
 
 Edit `craft.config.json` in your iOS project:
 
