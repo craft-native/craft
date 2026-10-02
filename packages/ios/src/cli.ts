@@ -22,7 +22,9 @@ const { values, positionals } = parseArgs({
     name: { type: 'string', short: 'n' },
     'bundle-id': { type: 'string', short: 'b' },
     'team-id': { type: 'string', short: 't' },
+    renderer: { type: 'string' },
     'html-path': { type: 'string' },
+    'native-bundle': { type: 'string' },
     'dev-server': { type: 'string', short: 'd' },
     output: { type: 'string', short: 'o' },
     simulator: { type: 'boolean', short: 's' },
@@ -49,7 +51,9 @@ Options:
   -n, --name <name>         App name
   -b, --bundle-id <id>      Bundle identifier (e.g., com.example.app)
   -t, --team-id <id>        Apple Developer Team ID
+  --renderer <kind>         iOS renderer: web (default) or native
   --html-path <path>        Path to HTML file or directory
+  --native-bundle <path>    JavaScript bundle compiled by stx-native
   -d, --dev-server <url>    Development server URL
   -o, --output <dir>        Output directory (default: ./ios)
   -s, --simulator           Run on simulator instead of device
@@ -59,6 +63,8 @@ Options:
 Examples:
   craft-ios init MyApp
   craft-ios build --html-path ./dist/index.html
+  craft-ios init MyApp --renderer native
+  craft-ios build --native-bundle ./screen.js
   craft-ios build --dev-server http://localhost:3456
   craft-ios run --simulator
 `)
@@ -79,12 +85,14 @@ async function main() {
           bundleId: values['bundle-id'],
           teamId: values['team-id'],
           output: values.output || './ios',
+          config: values.renderer ? { renderer: values.renderer as 'web' | 'native' } : undefined,
         })
         break
 
       case 'build':
         await build({
           htmlPath: values['html-path'],
+          nativeBundlePath: values['native-bundle'],
           devServer: values['dev-server'],
           output: values.output || './ios',
         })

@@ -104,6 +104,19 @@ In Xcode:
 
 ## Configuration
 
+### Experimental WebView-free screen
+
+The opt-in `native` renderer hosts a compiled `.stx` screen in JavaScriptCore and renders its `View`, `Text`, `Button`, and `TextInput` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is a vertical slice, not yet a replacement for the WebView renderer: the native bridge currently exposes `craft.device.getInfo()`, and navigation, lists, and the rest of Craft's device APIs still need native adapters.
+
+```bash
+craft ios init NativeDemo --renderer native --output ./ios-native
+stx-native compile Screen.stx --format bundle --output ./screen.js
+craft ios build --output ./ios-native --native-bundle ./screen.js
+craft ios run --output ./ios-native --simulator
+```
+
+`stx-native` is currently a private package in the sibling [stx repository](https://github.com/stacksjs/stx). Run its source CLI with Bun until it is published or linked locally. A runnable screen is in [`fixtures/native-screen/Screen.stx`](./fixtures/native-screen/Screen.stx). In native mode, the app never instantiates `WKWebView`; a missing `dist/native-screen.js` fails the build rather than silently opening the web placeholder.
+
 Edit `craft.config.json` in your iOS project:
 
 ```json

@@ -22,6 +22,11 @@ if (spawnedFrom) {
 }
 
 const cli = new CLI('craft')
+// Keep mobile builders as separate runtime modules. Bundling their imports
+// into this CLI changes import.meta.dir and makes them look for templates next
+// to the CLI instead of in dist/ios/templates or dist/android/templates.
+const iosModuleURL = new URL('../dist/ios/src/index.js', import.meta.url).href
+const androidModuleURL = new URL('../dist/android/src/index.js', import.meta.url).href
 
 /**
  * Run the `craft` native binary with the given argv. Craft ships through
@@ -423,37 +428,42 @@ cli
   .command('ios init <name>', 'Initialize a new iOS project')
   .option('--bundle-id <id>', 'Bundle identifier (e.g., com.example.app)')
   .option('--team-id <id>', 'Apple Developer Team ID')
+  .option('--renderer <kind>', 'iOS renderer: web (default) or native')
   .option('-o, --output <dir>', 'Output directory', { default: './ios' })
   .example('craft ios init MyApp')
   .example('craft ios init MyApp --bundle-id com.example.myapp')
   .action(async (name: string, options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const iosModule = await import('../dist/ios/src/index.js')
+    const iosModule = await import(iosModuleURL)
     await iosModule.init({
       name,
       bundleId: options?.bundleId,
       teamId: options?.teamId,
       output: options?.output || './ios',
+      config: options?.renderer ? { renderer: options.renderer } : undefined,
     })
   })
 
 cli
   .command('ios build', 'Build iOS project')
   .option('--html-path <path>', 'Path to HTML file')
+  .option('--native-bundle <path>', 'JavaScript bundle compiled by stx-native')
   .option('-d, --dev-server <url>', 'Development server URL')
   .option('-o, --output <dir>', 'iOS project directory', { default: './ios' })
   .option('-w, --watch', 'Watch for file changes and rebuild')
   .example('craft ios build')
   .example('craft ios build --html-path ./dist/index.html')
+  .example('craft ios build --native-bundle ./screen.js')
   .example('craft ios build --dev-server http://localhost:3456')
   .example('craft ios build --watch')
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const iosModule = await import('../dist/ios/src/index.js')
+    const iosModule = await import(iosModuleURL)
 
     const doBuild = async () => {
       await iosModule.build({
         htmlPath: options?.htmlPath,
+        nativeBundlePath: options?.nativeBundle,
         devServer: options?.devServer,
         output: options?.output || './ios',
       })
@@ -484,7 +494,7 @@ cli
   .option('-o, --output <dir>', 'iOS project directory', { default: './ios' })
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const iosModule = await import('../dist/ios/src/index.js')
+    const iosModule = await import(iosModuleURL)
     await iosModule.open({
       output: options?.output || './ios',
     })
@@ -498,7 +508,7 @@ cli
   .example('craft ios run --simulator')
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const iosModule = await import('../dist/ios/src/index.js')
+    const iosModule = await import(iosModuleURL)
     await iosModule.run({
       simulator: options?.simulator || false,
       output: options?.output || './ios',
@@ -514,7 +524,7 @@ cli
   .example('craft android init MyApp --package com.example.myapp')
   .action(async (name: string, options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const androidModule = await import('../dist/android/src/index.js')
+    const androidModule = await import(androidModuleURL)
     await androidModule.init({
       name,
       packageName: options?.package,
@@ -534,7 +544,7 @@ cli
   .example('craft android build --watch')
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const androidModule = await import('../dist/android/src/index.js')
+    const androidModule = await import(androidModuleURL)
 
     const doBuild = async () => {
       await androidModule.build({
@@ -570,7 +580,7 @@ cli
   .option('-o, --output <dir>', 'Android project directory', { default: './android' })
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const androidModule = await import('../dist/android/src/index.js')
+    const androidModule = await import(androidModuleURL)
     await androidModule.open({
       output: options?.output || './android',
     })
@@ -584,7 +594,7 @@ cli
   .example('craft android run --device emulator-5554')
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
-    const androidModule = await import('../dist/android/src/index.js')
+    const androidModule = await import(androidModuleURL)
     await androidModule.run({
       device: options?.device,
       output: options?.output || './android',
@@ -917,7 +927,7 @@ export default {
     if (template === 'ios' || template === 'all') {
       console.log('📱 Creating iOS project...')
       // @ts-ignore -- sibling package may not exist at typecheck time
-    const iosModule = await import('../dist/ios/src/index.js')
+      const iosModule = await import(iosModuleURL)
       await iosModule.init({
         name,
         bundleId: options?.bundleId,
@@ -929,7 +939,7 @@ export default {
     if (template === 'android' || template === 'all') {
       console.log('🤖 Creating Android project...')
       // @ts-ignore -- sibling package may not exist at typecheck time
-    const androidModule = await import('../dist/android/src/index.js')
+      const androidModule = await import(androidModuleURL)
       await androidModule.init({
         name,
         packageName: options?.bundleId,
@@ -958,4 +968,11 @@ export default {
 
 cli.version(version)
 cli.help()
+// Clapp matches a multi-word command when it arrives as one argv token. A
+// normal shell splits `craft ios init` into two; without normalizing, the
+// catch-all desktop `[url]` command consumes `ios` instead.
+if ((process.argv[2] === 'ios' || process.argv[2] === 'android')
+  && ['init', 'build', 'open', 'run'].includes(process.argv[3])) {
+  process.argv.splice(2, 2, `${process.argv[2]} ${process.argv[3]}`)
+}
 cli.parse()

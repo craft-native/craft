@@ -39,7 +39,9 @@ describe('Craft iOS builder', () => {
     writeFileSync(bundle, 'globalThis.screenLoaded = true')
     await build({ output, nativeBundlePath: bundle, generateProject: false, runtimeDir: null })
     expect(readFileSync(join(output, 'dist', 'native-screen.js'), 'utf8')).toBe('globalThis.screenLoaded = true')
+    await build({ output, nativeBundlePath: join(output, 'dist', 'native-screen.js'), generateProject: false, runtimeDir: null })
     await expect(build({ output, htmlPath: bundle, generateProject: false, runtimeDir: null })).rejects.toThrow('cannot use --html-path')
+    await expect(init({ runtimeDir: null, name: 'Invalid', output: join(output, 'invalid'), config: { renderer: 'canvas' as 'native' } })).rejects.toThrow('Unknown iOS renderer')
   })
 
   it('copies a complete web distribution and removes stale assets', () => {

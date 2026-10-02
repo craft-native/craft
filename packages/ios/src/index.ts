@@ -612,6 +612,9 @@ export async function init(options: InitOptions): Promise<void> {
     teamId: teamId || '',
     ...given,
   }
+  if (config.renderer !== 'web' && config.renderer !== 'native') {
+    throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
+  }
   if (config.enableBackgroundLocation) config.enableGeolocation = true
 
   writeFileSync(join(output, 'craft.config.json'), JSON.stringify(config, null, 2))
@@ -797,8 +800,14 @@ export async function init(options: InitOptions): Promise<void> {
   console.log('')
   console.log('Next steps:')
   console.log(`  1. cd ${output}`)
-  console.log('  2. Add your web content to dist/index.html')
-  console.log('  3. Run: craft ios build')
+  if (config.renderer === 'native') {
+    console.log('  2. Compile your screen: stx-native compile Screen.stx --format bundle --output screen.js')
+    console.log('  3. Run: craft ios build --native-bundle screen.js')
+  }
+  else {
+    console.log('  2. Add your web content to dist/index.html')
+    console.log('  3. Run: craft ios build')
+  }
   console.log('  4. Run: craft ios open')
   console.log('')
 }
@@ -818,13 +827,17 @@ export async function build(options: BuildOptions): Promise<void> {
   }
 
   const config: CraftConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+  if (config.renderer !== undefined && config.renderer !== 'web' && config.renderer !== 'native') {
+    throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
+  }
 
   if (config.renderer === 'native') {
     if (htmlPath || devServer) {
       throw new Error('A native iOS screen cannot use --html-path or --dev-server.')
     }
     if (nativeBundlePath) {
-      cpSync(nativeBundlePath, join(output, 'dist', 'native-screen.js'))
+      const destination = join(output, 'dist', 'native-screen.js')
+      if (resolve(nativeBundlePath) !== resolve(destination)) cpSync(nativeBundlePath, destination)
     }
     if (!existsSync(join(output, 'dist', 'native-screen.js'))) {
       throw new Error('Native iOS mode needs dist/native-screen.js. Compile a .stx screen with stx-native first.')
