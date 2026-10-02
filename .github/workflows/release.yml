@@ -618,9 +618,49 @@ jobs:
             cmp "sbom/$document" "$VERIFY_DIR/$document"
           done
 
+  prepare-npm:
+    name: verify and stage npm packages
+    needs: [validate-release, release-sbom]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Pantry (provides Bun, Zig, etc.)
+        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        with:
+          version: '0.11.64'
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - uses: ./.github/actions/setup-release-scanners
+
+      - name: Test package regressions
+        run: bun run test:packages
+
+      - name: Build and verify every npm artifact
+        run: bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"
+
+      - name: Scan packed npm artifacts and production dependencies
+        run: bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"
+
+      - name: Stage verified npm archives privately
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-archives
+          path: ${{ runner.temp }}/craft-npm-archives/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
   publish-release:
     name: publish complete verified release
-    needs: [validate-release, verify-release, verify-macos-downloads, verify-desktop-downloads, attach-release-sbom]
+    needs: [validate-release, verify-release, verify-macos-downloads, verify-desktop-downloads, attach-release-sbom, prepare-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -661,14 +701,12 @@ jobs:
 
   npm:
     name: npm
-    # Publish only after the complete native release is public. The previous
-    # explicit `if` checked release identity and SBOM but not the native job:
-    # an `if` with !cancelled() can run despite a failed `needs` job, making
-    # npm visible while the GitHub release is still an incomplete draft.
-    # Missing Apple signing secrets do not fail native staging; the macOS leg
-    # stages an unsigned binary, which still has to pass download verification.
-    needs: [validate-release, release-sbom, publish-release]
-    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.publish-release.result == 'success' }}
+    # A failed package test, build, or scan leaves the native release private.
+    # Publish only the exact archives prepared above, after the complete
+    # native release becomes public. The manifest checks every archive hash
+    # again after artifact download and before each npm publish.
+    needs: [validate-release, release-sbom, prepare-npm, publish-release]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.prepare-npm.result == 'success' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -688,22 +726,15 @@ jobs:
           node-version: '24'
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Install Dependencies
-        run: bun install --frozen-lockfile
 
       - name: Install npm CLI with trusted publishing support
         run: npm install --global npm@11.15.0
 
-      - uses: ./.github/actions/setup-release-scanners
-
-      - name: Test package regressions
-        run: bun run test:packages
-
-      - name: Build and verify every npm artifact
-        run: bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"
-
-      - name: Scan packed npm artifacts and production dependencies
-        run: bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"
+      - name: Download verified npm archives
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm-archives
+          path: ${{ runner.temp }}/craft-npm-archives
 
       - name: Publish scanned npm archives
         run: bun scripts/publish-npm-archives.ts "$RUNNER_TEMP/craft-npm-archives"

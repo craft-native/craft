@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { publishNpmArchives } from './publish-npm-archives'
@@ -102,4 +102,27 @@ test('publisher uses only hash-verified archives and skips an existing version',
   expect(calls.find(args => args[0] === 'publish')).toContain('--ignore-scripts')
   expect(calls.find(args => args[0] === 'publish')).toContain('--provenance')
   expect(calls.some(args => args[0] === 'publish' && args[1] === join(root, packages[0]!.file))).toBe(false)
+})
+
+test('publisher rechecks transferred npm archives before any registry call', () => {
+  const prepared = fixture()
+  const downloaded = fixture()
+  const packages = archives(prepared)
+  for (const file of ['manifest.json', ...packages.map(archive => archive.file)])
+    copyFileSync(join(prepared, file), join(downloaded, file))
+
+  const calls: string[][] = []
+  const command = (args: string[]) => {
+    calls.push(args)
+    return args[0] === 'view'
+      ? { exitCode: 1, stdout: '', stderr: 'E404' }
+      : { exitCode: 0, stdout: '', stderr: '' }
+  }
+  publishNpmArchives(downloaded, command)
+  expect(calls.filter(args => args[0] === 'publish')).toHaveLength(packages.length)
+
+  calls.length = 0
+  writeFileSync(join(downloaded, packages[0]!.file), 'changed after upload')
+  expect(() => publishNpmArchives(downloaded, command)).toThrow('hash mismatch')
+  expect(calls).toHaveLength(0)
 })

@@ -30,19 +30,21 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
 })
 
 test('every publishing path depends on release identity validation', () => {
-  for (const name of ['pantry', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release', 'publish-pantry'])
+  for (const name of ['pantry', 'prepare-npm', 'npm', 'release-sbom', 'verify-release', 'verify-macos-downloads', 'verify-desktop-downloads', 'publish-release', 'publish-pantry'])
     expect(needs(release.jobs[name])).toContain('validate-release')
   for (const name of ['verify-release', 'verify-macos-downloads'])
     expect(release.jobs[name].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' }}")
-  expect(needs(release.jobs.npm)).toEqual(['validate-release', 'release-sbom', 'publish-release'])
-  expect(release.jobs.npm.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.publish-release.result == 'success' }}")
+  expect(needs(release.jobs['prepare-npm'])).toEqual(['validate-release', 'release-sbom'])
+  expect(release.jobs['prepare-npm'].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}")
+  expect(needs(release.jobs.npm)).toEqual(['validate-release', 'release-sbom', 'prepare-npm', 'publish-release'])
+  expect(release.jobs.npm.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.prepare-npm.result == 'success' && needs.publish-release.result == 'success' }}")
 })
 
 test('registry indexing waits for the public release and all of its verification gates', () => {
   const notify = release.jobs['notify-registry']
   expect(notify).toBeDefined()
   expect(needs(notify)).toEqual(['publish-release', 'publish-pantry'])
-  expect(needs(release.jobs['publish-release']).sort()).toEqual(['attach-release-sbom', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release'])
+  expect(needs(release.jobs['publish-release']).sort()).toEqual(['attach-release-sbom', 'prepare-npm', 'validate-release', 'verify-desktop-downloads', 'verify-macos-downloads', 'verify-release'])
   expect(release.jobs['publish-release'].if).toBeUndefined() // A failed or skipped gate cannot publish a draft.
   expect(notify.if).toBeUndefined() // Default success gating: never bypass failed prerequisites.
   expect(steps(notify)).toContain('https://registry.pantry.dev/api/rebuild')
@@ -54,14 +56,25 @@ test('registry indexing waits for the public release and all of its verification
 })
 
 test('npm publication follows artifact validation, and macOS downloads run on both matching architectures', () => {
-  const npm = release.jobs.npm.steps!.map(step => step.run ?? '')
-  const verify = npm.indexOf('bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"')
-  const scan = npm.indexOf('bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"')
-  const publish = npm.indexOf('bun scripts/publish-npm-archives.ts "$RUNNER_TEMP/craft-npm-archives"')
+  const prepare = release.jobs['prepare-npm'].steps!
+  const verify = prepare.findIndex(step => step.run === 'bun scripts/npm-packages.ts --archive-dir "$RUNNER_TEMP/craft-npm-archives"')
+  const scan = prepare.findIndex(step => step.run === 'bun scripts/scan-release-artifacts.ts npm "$RUNNER_TEMP/craft-npm-archives" "$RUNNER_TEMP/npm-release-scan"')
+  const upload = prepare.findIndex(step => step.name === 'Stage verified npm archives privately')
+  const npm = release.jobs.npm.steps!
+  const download = npm.findIndex(step => step.name === 'Download verified npm archives')
+  const publish = npm.findIndex(step => step.run === 'bun scripts/publish-npm-archives.ts "$RUNNER_TEMP/craft-npm-archives"')
   expect(verify).toBeGreaterThan(-1)
   expect(scan).toBeGreaterThan(verify)
-  expect(publish).toBeGreaterThan(scan)
+  expect(upload).toBeGreaterThan(scan)
+  expect(prepare[upload]?.uses).toBe('actions/upload-artifact@v4')
+  expect(prepare[upload]?.with).toMatchObject({ name: 'npm-archives', path: '${{ runner.temp }}/craft-npm-archives/', 'if-no-files-found': 'error', overwrite: true })
+  expect(download).toBeGreaterThan(-1)
+  expect(npm[download]?.uses).toBe(artifactDownload)
+  expect(npm[download]?.with).toMatchObject({ name: 'npm-archives', path: '${{ runner.temp }}/craft-npm-archives' })
+  expect(publish).toBeGreaterThan(download)
   expect(steps(release.jobs.npm)).not.toContain('pantry publish --npm')
+  expect(steps(release.jobs.npm)).not.toContain('npm-packages.ts')
+  expect(steps(release.jobs['prepare-npm'])).not.toContain('publish-npm-archives.ts')
   expect(release.jobs.npm.steps!.find(step => step.name === 'Publish scanned npm archives')?.env?.NODE_AUTH_TOKEN).toBe('${{ secrets.NPM_TOKEN }}')
   const native = release.jobs.pantry.steps!
   expect(native.findIndex(step => step.name === 'Scan binaries prepared for publication')).toBeGreaterThan(native.findIndex(step => step.name === 'Notarize macOS binaries'))
@@ -69,7 +82,8 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   expect(native.find(step => step.name === 'Scan binaries prepared for publication')?.run)
     .toBe('bun scripts/scan-release-artifacts.ts "$CRAFT_PLATFORM" packages/zig/zig-out "$RUNNER_TEMP/native-release-scan"')
   expect(native.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
-  expect(release.jobs.npm.steps!.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
+  expect(prepare.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(1)
+  expect(npm.filter(step => step.uses === './.github/actions/setup-release-scanners')).toHaveLength(0)
   expect(release.jobs['verify-macos-downloads'].strategy?.matrix.platform).toEqual([
     { os: 'macos-15', name: 'darwin-arm64' },
     { os: 'macos-15-intel', name: 'darwin-x64' },
@@ -86,7 +100,7 @@ test('npm publication follows artifact validation, and macOS downloads run on bo
   expect(release.jobs['release-sbom'].with?.enforce_high).toBe(false)
   expect(needs(release.jobs.pantry)).toContain('release-sbom')
   expect(steps(release.jobs.pantry)).toContain('bun install --frozen-lockfile')
-  expect(steps(release.jobs.npm)).toContain('bun install --frozen-lockfile')
+  expect(steps(release.jobs['prepare-npm'])).toContain('bun install --frozen-lockfile')
   expect(needs(release.jobs['attach-release-sbom'])).toContain('release-sbom')
   expect(steps(release.jobs['attach-release-sbom'])).toContain('cmp "sbom/$document" "$VERIFY_DIR/$document"')
 })
@@ -124,6 +138,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(needs(finalizer)).toContain('verify-macos-downloads')
   expect(needs(finalizer)).toContain('verify-desktop-downloads')
   expect(needs(finalizer)).toContain('attach-release-sbom')
+  expect(needs(finalizer)).toContain('prepare-npm')
   const verify = finalizer.steps!.findIndex(step => step.name === 'Recheck the draft and its exact staged artifacts')
   const publish = finalizer.steps!.findIndex(step => step.name === 'Publish the complete draft')
   expect(verify).toBeGreaterThan(-1)
@@ -139,6 +154,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   // while the GitHub release remains a draft. The explicit npm `if` must
   // check the finalizer result; listing it in `needs` alone is insufficient.
   expect(needs(release.jobs.npm)).toContain('publish-release')
+  expect(release.jobs.npm.if).toContain("needs.prepare-npm.result == 'success'")
   expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
   expect(zigPublish?.with).toMatchObject({ version: '0.11.64', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
