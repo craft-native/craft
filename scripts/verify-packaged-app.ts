@@ -217,6 +217,7 @@ async function launchViaSdk(): Promise<void> {
   let installedChildResized = false
   let installedGrandchildReady = false
   let installedGrandchildResized = false
+  let multiWindowVerified = false
   let acceptDeepLink!: (url: string | null) => void
   const receivedDeepLink = new Promise<string | null>((resolve) => {
     acceptDeepLink = resolve
@@ -507,6 +508,10 @@ async function launchViaSdk(): Promise<void> {
           await window.craft.window._call(${JSON.stringify(platform === 'macos' ? 'destroy' : 'close')}, {}, adopted.name)
         }
       }
+      // Keep window acceptance observable even if a later, unrelated
+      // notification-permission check fails on a headless macOS runner.
+      if (${testMultiWindow})
+        await fetch('/multi-window-verified', { method: 'POST' })
       if (${testLinuxNotification}) {
         if (!window.craft.notifications || !window.craft.notifications.requestPermission || !window.craft.notifications.show)
           throw new Error('installed app has no notification bridge')
@@ -654,7 +659,17 @@ async function launchViaSdk(): Promise<void> {
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ ready: installedGrandchildReady, resized: installedGrandchildResized }))
       return
     }
-    if (request.url === '/ready' && request.method === 'POST') acceptReady()
+    if (request.url === '/multi-window-verified' && request.method === 'POST') {
+      multiWindowVerified = true
+      console.log(`Installed ${platform} multi-window and parent/modal smoke passed before notification checks`)
+      response.writeHead(204).end()
+      return
+    }
+    if (request.url === '/ready' && request.method === 'POST') {
+      if (testMultiWindow && !multiWindowVerified)
+        rejectReady(new Error('Installed app reported ready without completing multi-window verification'))
+      else acceptReady()
+    }
     if (request.url?.startsWith('/deep-link?') && request.method === 'POST') {
       const received = new URL(request.url, 'http://127.0.0.1').searchParams.get('url')
       acceptDeepLink(received)

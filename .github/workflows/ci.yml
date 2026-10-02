@@ -423,6 +423,9 @@ jobs:
       - name: Test non-mutating changelog previews
         run: bun test ./scripts/changelog-preview.test.ts
 
+      - name: Test installed-app smoke checkpoints
+        run: bun test ./scripts/verify-packaged-app.test.ts
+
       - name: Run pickier (lint + format check)
         run: bun run lint
 
