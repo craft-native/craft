@@ -32,6 +32,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('Native STX requires Android JavaScriptSandbox, which is unavailable on this device.')
       expect(nativeActivity).toContain('JS_FEATURE_MESSAGE_PORTS')
       expect(nativeActivity).toContain('JS_FEATURE_PROMISE_RETURN')
+      expect(nativeActivity).toContain('JS_FEATURE_CONSOLE_MESSAGING')
+      expect(nativeActivity).toContain('Native STX bridge:')
       expect(nativeActivity).toContain('Color.luminance(background)')
       expect(nativeActivity).toContain('screen.controls.putAll(next)')
       expect(nativeActivity).toContain('if (getChildAt(index) === childView) continue')

@@ -21,12 +21,14 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.javascriptengine.JavaScriptIsolate
+import androidx.javascriptengine.JavaScriptConsoleCallback
 import androidx.javascriptengine.JavaScriptSandbox
 import androidx.javascriptengine.Message
 import androidx.javascriptengine.MessagePort
 import androidx.javascriptengine.MessagePortClient
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
 /** WebView-free host for a compiled stx-native route bundle. */
 class MainActivity : AppCompatActivity() {
@@ -35,7 +37,7 @@ class MainActivity : AppCompatActivity() {
         val params: JSONObject,
         val view: LinearLayout,
         val isolate: JavaScriptIsolate,
-        val port: MessagePort
+        val port: MessagePort?
     ) {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
@@ -44,7 +46,7 @@ class MainActivity : AppCompatActivity() {
 
         fun close() {
             active = false
-            port.close()
+            port?.close()
             isolate.close()
         }
     }
@@ -55,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private var bundle = ""
     private var hapticsEnabled = false
     private var defaultTextColor = Color.WHITE
+    private var useMessagePorts = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,12 +90,14 @@ class MainActivity : AppCompatActivity() {
                     engine.close()
                     return@addListener
                 }
-                if (!engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)
-                    || !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN)) {
+                useMessagePorts = engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)
+                    && engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN)
+                if (!useMessagePorts && !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_CONSOLE_MESSAGING)) {
                     engine.close()
-                    showError("Native STX requires JavaScript message ports and promises, unavailable on this device.")
+                    showError("Native STX requires JavaScript message ports or console messaging, unavailable on this device.")
                     return@addListener
                 }
+                Log.i(TAG, "Native STX bridge: ${if (useMessagePorts) "message ports" else "console callback"}")
                 sandbox = engine
                 openScreen(null)
             } catch (error: Exception) {
@@ -111,24 +116,45 @@ class MainActivity : AppCompatActivity() {
         }
         var screen: Screen? = null
         val executor = ContextCompat.getMainExecutor(this)
-        val port = isolate.createMessageChannel("craft", executor, MessagePortClient { message ->
-            val current = screen ?: return@MessagePortClient
-            if (current.active && message.type == Message.TYPE_STRING) receive(current, message.string)
-        })
+        val token = UUID.randomUUID().toString()
+        val prefix = "CRAFT_STX_$token:"
+        val port = if (useMessagePorts) {
+            isolate.createMessageChannel("craft", executor, MessagePortClient { message ->
+                val current = screen ?: return@MessagePortClient
+                if (current.active && message.type == Message.TYPE_STRING) receive(current, message.string)
+            })
+        } else {
+            isolate.setConsoleCallback(executor, JavaScriptConsoleCallback { entry ->
+                val current = screen ?: return@JavaScriptConsoleCallback
+                if (current.active && entry.message.startsWith(prefix)) {
+                    receive(current, entry.message.removePrefix(prefix))
+                }
+            })
+            null
+        }
         val activeScreen = Screen(route, params, view, isolate, port)
         screen = activeScreen
         screens.add(activeScreen)
         show(activeScreen)
-        val prelude = """
+        val routePrelude = """
+            globalThis.__stxNativeRoute = ${route?.let { JSONObject.quote(it) } ?: "undefined"};
+            globalThis.__stxNativeParams = ${params};
+        """.trimIndent()
+        val prelude = if (useMessagePorts) """
             (async function() {
               const port = await android.getNamedPort('craft');
-              globalThis.__stxNativeRoute = ${route?.let { JSONObject.quote(it) } ?: "undefined"};
-              globalThis.__stxNativeParams = ${params};
+              $routePrelude
               globalThis.__stxNativeBridge = {
                 postMessage: function(value) { port.postMessage(value); },
                 onMessage: function(callback) { port.onmessage = function(event) { callback(event.data); }; }
               };
             })()
+        """.trimIndent() else """
+            $routePrelude
+            globalThis.__stxNativeBridge = {
+              postMessage: function(value) { console.log(${JSONObject.quote(prefix)} + value); },
+              onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
+            };
         """.trimIndent()
         val setup = isolate.evaluateJavaScriptAsync(prelude)
         setup.addListener({
@@ -322,7 +348,12 @@ class MainActivity : AppCompatActivity() {
         if (!screen.active) return
         val message = JSONObject().put("type", type).put("payload", payload)
         if (correlationId != null) message.put("correlationId", correlationId)
-        screen.port.postMessage(Message.createStringMessage(message.toString()))
+        if (screen.port != null) {
+            screen.port.postMessage(Message.createStringMessage(message.toString()))
+        } else {
+            val script = "globalThis.__stxNativeCallback && globalThis.__stxNativeCallback(${JSONObject.quote(message.toString())})"
+            screen.isolate.evaluateJavaScriptAsync(script)
+        }
     }
 
     private fun back() {

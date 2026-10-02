@@ -103,11 +103,12 @@ state; Android's system back button pops the route. Native mode accepts neither
 clipboard read/write, and haptic impact (when `enableHaptics` is set); the
 broader browser bridge remains specific to WebView mode.
 
-The native runtime requires Android's JavaScriptSandbox with message ports and
-promise-return support. The app checks these features at launch and displays a
-clear unsupported-device error if unavailable; it never silently opens a
-WebView. This can depend on the installed WebView provider, so validate on each
-device class you plan to ship. The [Android JavaScriptEngine guide](https://developer.android.com/develop/ui/views/layout/webapps/jsengine)
+The native runtime requires Android's JavaScriptSandbox. It prefers message
+ports with promise-return support and uses the sandbox's console callback
+when those features are unavailable. If neither bridge is supported, the app
+displays a clear unsupported-device error; it never silently opens a WebView.
+Support depends on the installed WebView provider, so validate on each device
+class you plan to ship. The [Android JavaScriptEngine guide](https://developer.android.com/develop/ui/views/layout/webapps/jsengine)
 documents the sandbox and device-support check.
 
 ### 3. Open in Android Studio
