@@ -117,6 +117,8 @@ craft ios run --output ./ios-native --simulator
 
 `stx-native` is currently a private package in the sibling [stx repository](https://github.com/stacksjs/stx). Run its source CLI with Bun until it is published or linked locally. A runnable screen is in [`fixtures/native-screen/Screen.stx`](./fixtures/native-screen/Screen.stx). In native mode, the app never instantiates `WKWebView`; a missing `dist/native-screen.js` fails the build rather than silently opening the web placeholder.
 
+Native screen updates reconcile the UIKit tree by sibling-scoped `key` (or `testID` for existing screens); unkeyed children reuse their position. `TextInput` objects therefore keep focus and selection while unrelated labels and buttons change. On macOS, `bun packages/ios/scripts/test-native-render.ts` runs the renderer's unit and simulator UI tests.
+
 Edit `craft.config.json` in your iOS project:
 
 ```json
