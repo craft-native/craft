@@ -172,8 +172,11 @@ class MainActivity : AppCompatActivity() {
         // Keep live controls (especially the focused EditText) across renders.
         val next = mutableMapOf<String, View>()
         val tree = makeView(screen, document, "root", next)
-        screen.view.removeAllViews()
-        screen.view.addView(tree)
+        if (screen.view.getChildAt(0) !== tree) {
+            (tree.parent as? ViewGroup)?.removeView(tree)
+            screen.view.removeAllViews()
+            screen.view.addView(tree)
+        }
         screen.controls.clear()
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(next.values.toSet())
@@ -185,9 +188,10 @@ class MainActivity : AppCompatActivity() {
         val style = node.optJSONObject("style") ?: JSONObject()
         val events = node.optJSONObject("events") ?: JSONObject()
         val children = node.optJSONArray("children") ?: JSONArray()
-        val key = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
-            .firstOrNull { it.isNotBlank() } ?: path
-        val previous = screen.controls[key]
+        val explicitKey = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
+            .firstOrNull { it.isNotBlank() }
+        val identity = explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" } ?: path
+        val previous = screen.controls[identity]
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
                 text = childText(children)
@@ -206,14 +210,14 @@ class MainActivity : AppCompatActivity() {
             "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
                 hint = props.optString("placeholder")
                 if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
-                else if (previous == null && screen.drafts.containsKey(key)) setText(screen.drafts[key])
+                else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
-                if (previous == null) addTextChangedListener(object : TextWatcher {
+                if (this !== previous) addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                         val updated = s?.toString().orEmpty()
-                        screen.drafts[key] = updated
+                        screen.drafts[identity] = updated
                         val current = screen.handlers[this@apply] ?: return
                         send(screen, "EVENT", JSONObject()
                             .put("handlerName", current)
@@ -222,7 +226,7 @@ class MainActivity : AppCompatActivity() {
                     override fun afterTextChanged(s: Editable?) {}
                 })
             }
-            else -> LinearLayout(this).apply {
+            else -> (previous as? LinearLayout ?: LinearLayout(this)).apply {
                 orientation = if (style.optString("flexDirection") == "row")
                     LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
                 val padding = style.optDouble("padding", 0.0)
@@ -232,6 +236,7 @@ class MainActivity : AppCompatActivity() {
                     dp(style.optDouble("paddingRight", padding)),
                     dp(style.optDouble("paddingBottom", padding))
                 )
+                val desired = mutableListOf<View>()
                 for (index in 0 until children.length()) {
                     val child = children.opt(index)
                     val childView = when (child) {
@@ -239,15 +244,20 @@ class MainActivity : AppCompatActivity() {
                         is String -> TextView(this@MainActivity).apply { text = child }
                         else -> null
                     }
-                    if (childView != null) {
-                        (childView.parent as? ViewGroup)?.removeView(childView)
-                        addView(childView)
-                    }
+                    if (childView != null) desired.add(childView)
                 }
+                val desiredSet = desired.toSet()
+                for ((index, childView) in desired.withIndex()) {
+                    if (getChildAt(index) === childView) continue
+                    if (index < childCount && getChildAt(index) !in desiredSet) removeViewAt(index)
+                    (childView.parent as? ViewGroup)?.removeView(childView)
+                    addView(childView, index)
+                }
+                while (childCount > desired.size) removeViewAt(childCount - 1)
             }
         }
-        control.contentDescription = key
-        if (type == "Text" || type == "Button" || type == "TextInput") next[key] = control
+        control.contentDescription = explicitKey ?: path
+        next[identity] = control
         if (style.has("backgroundColor")) control.setBackgroundColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
         control.layoutParams = LinearLayout.LayoutParams(
             if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.MATCH_PARENT,

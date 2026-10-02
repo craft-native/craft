@@ -97,14 +97,20 @@ class NativeNavigationTest {
         ) as MainActivity
         try {
             val name = awaitView(activity, "name-input")
-            assertTrue("View did not render as LinearLayout", awaitView(activity, "root") is LinearLayout)
+            val root = awaitView(activity, "root")
+            assertTrue("View did not render as LinearLayout", root is LinearLayout)
             assertTrue(name is EditText)
             assertTrue(awaitView(activity, "home-title") is TextView)
             assertNoWebView(activity)
 
-            instrumentation.runOnMainSync { (name as EditText).setText("Ada") }
+            instrumentation.runOnMainSync {
+                name.requestFocus()
+                (name as EditText).setText("Ada")
+            }
             awaitText(activity, "greeting", "Hello Ada")
+            assertSame("View container was replaced after typing", root, awaitView(activity, "root"))
             assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
+            assertTrue("TextInput lost focus after typing", name.isFocused)
 
             click(activity, "increment")
             click(activity, "increment")

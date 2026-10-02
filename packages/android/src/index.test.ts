@@ -33,6 +33,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('JS_FEATURE_MESSAGE_PORTS')
       expect(nativeActivity).toContain('JS_FEATURE_PROMISE_RETURN')
       expect(nativeActivity).toContain('screen.controls.putAll(next)')
+      expect(nativeActivity).toContain('if (getChildAt(index) === childView) continue')
       expect(nativeActivity).toContain('override fun onBackPressed() = back()')
       expect(nativeActivity).not.toContain('import android.webkit.WebView')
       expect(nativeActivity).not.toContain('WebView(')
