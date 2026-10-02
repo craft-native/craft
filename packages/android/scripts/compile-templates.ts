@@ -102,6 +102,9 @@ try {
     )
     mkdirSync(testDirectory, { recursive: true })
     for (const testTemplate of compileTestTemplates) {
+      // Bundled-page fallback belongs to the WebView activity, not the native
+      // STX activity. The other bridge policy tests apply to both renderers.
+      if (config.renderer === 'native' && testTemplate.name === 'CraftLoadFailureTest.kt') continue
       writeFileSync(
         join(testDirectory, testTemplate.name),
         testTemplate.source.replaceAll('{{PACKAGE_NAME}}', fixture.packageName),

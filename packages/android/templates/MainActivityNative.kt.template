@@ -163,7 +163,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 openScreen(route, payload.optJSONObject("params") ?: JSONObject())
             }
-            "NAVIGATE_BACK" -> back()
+            "NAVIGATE_BACK" -> if (screens.lastOrNull() === screen) back()
             "API_REQUEST" -> answerAPI(screen, message, payload)
         }
     }
@@ -189,7 +189,7 @@ class MainActivity : AppCompatActivity() {
             .firstOrNull { it.isNotBlank() } ?: path
         val previous = screen.controls[key]
         val control = when (type) {
-            "Text" -> (previous as? TextView ?: TextView(this)).apply {
+            "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
                 text = childText(children)
                 setTextColor(color(style.optString("color"), Color.BLACK))
                 if (style.has("fontSize")) textSize = style.optDouble("fontSize").toFloat()
