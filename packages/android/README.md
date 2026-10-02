@@ -6,7 +6,7 @@ Build native Android apps with web technologies using Craft.
 
 ### Core
 
-- **WebView** - Native Android WebView with full JavaScript support
+- **WebView or native STX** - Choose the browser renderer or Android views driven by a compiled STX bundle
 - **Dark Mode** - Native dark/light theme support
 
 ### Input & Feedback
@@ -85,6 +85,30 @@ craft android build --html-path ../dist/index.html
 # or
 craft android build --dev-server http://10.0.2.2:3456
 ```
+
+For a WebView-free app, initialize with `--renderer native` and give the build
+the same route bundle that `stx-native` produces for iOS:
+
+```bash
+craft android init MyApp --package com.example.myapp --renderer native
+cd android
+stx-native compile ../screens --format bundle --output ../native-screen.js
+craft android build --native-bundle ../native-screen.js
+```
+
+Native mode maps STX `View`, `Text`, `Button`, and `TextInput` to Android views.
+Push, replace, and back preserve the previous screen's views and JavaScript
+state; Android's system back button pops the route. Native mode accepts neither
+`--html-path` nor `--dev-server`. Its initial bridge supports device info,
+clipboard read/write, and haptic impact (when `enableHaptics` is set); the
+broader browser bridge remains specific to WebView mode.
+
+The native runtime requires Android's JavaScriptSandbox with message ports and
+promise-return support. The app checks these features at launch and displays a
+clear unsupported-device error if unavailable; it never silently opens a
+WebView. This can depend on the installed WebView provider, so validate on each
+device class you plan to ship. The [Android JavaScriptEngine guide](https://developer.android.com/develop/ui/views/layout/webapps/jsengine)
+documents the sandbox and device-support check.
 
 ### 3. Open in Android Studio
 

@@ -8,6 +8,7 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -58,6 +59,19 @@ class NativeNavigationTest {
         instrumentation.runOnMainSync { view.performClick() }
     }
 
+    private fun awaitText(activity: MainActivity, id: String, expected: String): TextView {
+        repeat(75) {
+            var matching: TextView? = null
+            instrumentation.runOnMainSync {
+                val view = find(activity.window.decorView, id)
+                if (view is TextView && view.text.toString() == expected) matching = view
+            }
+            if (matching != null) return matching!!
+            SystemClock.sleep(100)
+        }
+        throw AssertionError("Timed out waiting for $id to read $expected")
+    }
+
     private fun assertNoWebView(activity: MainActivity) {
         var present = false
         instrumentation.runOnMainSync { present = containsWebView(activity.window.decorView) }
@@ -72,27 +86,18 @@ class NativeNavigationTest {
         ) as MainActivity
         try {
             val name = awaitView(activity, "name-input")
+            assertTrue("View did not render as LinearLayout", awaitView(activity, "root") is LinearLayout)
             assertTrue(name is EditText)
             assertTrue(awaitView(activity, "home-title") is TextView)
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync { (name as EditText).setText("Ada") }
-            val greeting = awaitView(activity, "greeting") as TextView
-            for (attempt in 0 until 75) {
-                if (greeting.text.toString() == "Hello Ada") break
-                SystemClock.sleep(100)
-            }
-            assertEquals("Hello Ada", greeting.text.toString())
+            awaitText(activity, "greeting", "Hello Ada")
             assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
 
             click(activity, "increment")
             click(activity, "increment")
-            val count = awaitView(activity, "count") as TextView
-            for (attempt in 0 until 75) {
-                if (count.text.toString() == "Count: 2") break
-                SystemClock.sleep(100)
-            }
-            assertEquals("Count: 2", count.text.toString())
+            awaitText(activity, "count", "Count: 2")
 
             click(activity, "open-details")
             assertEquals("Details for Ada", (awaitView(activity, "details-title") as TextView).text.toString())
