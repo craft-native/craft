@@ -521,7 +521,10 @@ export async function init(options: InitOptions): Promise<void> {
   }
 
   // Copy templates
-  const mainActivityTemplate = readFileSync(join(TEMPLATES_DIR, 'MainActivity.kt.template'), 'utf-8')
+  const mainActivityTemplate = readFileSync(join(
+    TEMPLATES_DIR,
+    config.renderer === 'native' ? 'MainActivityNative.kt.template' : 'MainActivity.kt.template',
+  ), 'utf-8')
   const mainActivity = mainActivityTemplate
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
     .replace(/\{\{APP_NAME\}\}/g, name)
@@ -639,6 +642,9 @@ export async function init(options: InitOptions): Promise<void> {
       ? `    implementation("androidx.health.connect:connect-client:1.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")`
       : '')
+    .replace(/\{\{JAVASCRIPT_ENGINE_DEPENDENCY\}\}/g, config.renderer === 'native'
+      ? '    implementation("androidx.javascriptengine:javascriptengine:1.1.0")'
+      : '')
 
   writeFileSync(join(output, 'app/build.gradle.kts'), appGradle)
   const proguardTemplate = readFileSync(join(TEMPLATES_DIR, 'proguard-rules.pro.template'), 'utf-8')
@@ -727,7 +733,14 @@ zipStorePath=wrapper/dists
   writeFileSync(join(output, 'app/src/main/res/values/themes.xml'), themesXml)
 
   // Create activity_main.xml
-  const activityMainXml = `<?xml version="1.0" encoding="utf-8"?>
+  const activityMainXml = config.renderer === 'native'
+    ? `<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/native_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent" />
+`
+    : `<?xml version="1.0" encoding="utf-8"?>
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

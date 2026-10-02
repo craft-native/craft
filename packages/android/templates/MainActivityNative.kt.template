@@ -1,0 +1,327 @@
+package {{PACKAGE_NAME}}
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.graphics.Color
+import android.os.Build
+import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.text.Editable
+import android.text.TextWatcher
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.javascriptengine.JavaScriptIsolate
+import androidx.javascriptengine.JavaScriptSandbox
+import androidx.javascriptengine.Message
+import androidx.javascriptengine.MessagePort
+import androidx.javascriptengine.MessagePortClient
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** WebView-free host for a compiled stx-native route bundle. */
+class MainActivity : AppCompatActivity() {
+    private class Screen(
+        val route: String?,
+        val params: JSONObject,
+        val view: LinearLayout,
+        val isolate: JavaScriptIsolate,
+        val port: MessagePort
+    ) {
+        val drafts = mutableMapOf<String, String>()
+        var active = true
+
+        fun close() {
+            active = false
+            port.close()
+            isolate.close()
+        }
+    }
+
+    private lateinit var root: FrameLayout
+    private var sandbox: JavaScriptSandbox? = null
+    private val screens = mutableListOf<Screen>()
+    private var bundle = ""
+    private var hapticsEnabled = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        root = findViewById(R.id.native_root)
+        hapticsEnabled = runCatching {
+            assets.open("craft.config.json").bufferedReader().use {
+                JSONObject(it.readText()).optBoolean("enableHaptics", false)
+            }
+        }.getOrDefault(false)
+        bundle = runCatching {
+            assets.open("native-screen.js").bufferedReader().use { it.readText() }
+        }.getOrElse {
+            showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")
+            return
+        }
+        if (!JavaScriptSandbox.isSupported()) {
+            showError("Native STX requires Android JavaScriptSandbox, which is unavailable on this device.")
+            return
+        }
+        val connection = JavaScriptSandbox.createConnectedInstanceAsync(this)
+        connection.addListener({
+            try {
+                val engine = connection.get()
+                if (isDestroyed) {
+                    engine.close()
+                    return@addListener
+                }
+                if (!engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)
+                    || !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN)) {
+                    engine.close()
+                    showError("Native STX requires JavaScript message ports and promises, unavailable on this device.")
+                    return@addListener
+                }
+                sandbox = engine
+                openScreen(null)
+            } catch (error: Exception) {
+                Log.e(TAG, "JavaScriptSandbox connection failed", error)
+                showError("Native STX JavaScript engine could not start: ${error.message}")
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun openScreen(route: String?, params: JSONObject = JSONObject()) {
+        val engine = sandbox ?: return
+        val isolate = engine.createIsolate()
+        val view = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+        }
+        var screen: Screen? = null
+        val executor = ContextCompat.getMainExecutor(this)
+        val port = isolate.createMessageChannel("craft", executor, MessagePortClient { message ->
+            val current = screen ?: return@MessagePortClient
+            if (current.active && message.type == Message.TYPE_STRING) receive(current, message.string)
+        })
+        val activeScreen = Screen(route, params, view, isolate, port)
+        screen = activeScreen
+        screens.add(activeScreen)
+        show(activeScreen)
+        val prelude = """
+            (async function() {
+              const port = await android.getNamedPort('craft');
+              globalThis.__stxNativeRoute = ${route?.let { JSONObject.quote(it) } ?: "undefined"};
+              globalThis.__stxNativeParams = ${params};
+              globalThis.__stxNativeBridge = {
+                postMessage: function(value) { port.postMessage(value); },
+                onMessage: function(callback) { port.onmessage = function(event) { callback(event.data); }; }
+              };
+            })()
+        """.trimIndent()
+        val setup = isolate.evaluateJavaScriptAsync(prelude)
+        setup.addListener({
+            if (!activeScreen.active) return@addListener
+            try {
+                setup.get()
+                val load = isolate.evaluateJavaScriptAsync(bundle)
+                load.addListener({
+                    try { load.get() } catch (error: Exception) {
+                        Log.e(TAG, "Native STX bundle failed", error)
+                        if (activeScreen.active) showError("Native STX bundle failed: ${error.message}")
+                    }
+                }, executor)
+            } catch (error: Exception) {
+                Log.e(TAG, "Native STX bridge failed", error)
+                showError("Native STX bridge failed: ${error.message}")
+            }
+        }, executor)
+    }
+
+    private fun show(screen: Screen) {
+        root.removeAllViews()
+        (screen.view.parent as? ViewGroup)?.removeView(screen.view)
+        root.addView(screen.view)
+    }
+
+    private fun receive(screen: Screen, raw: String) {
+        val message = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val payload = message.optJSONObject("payload") ?: JSONObject()
+        when (message.optString("type")) {
+            "RENDER" -> payload.optJSONObject("document")?.let { render(screen, it) }
+            "NAVIGATE", "NAVIGATE_REPLACE" -> {
+                if (screens.lastOrNull() !== screen) return
+                val route = payload.optString("screen").takeIf { it.isNotBlank() } ?: return
+                if (message.optString("type") == "NAVIGATE_REPLACE") {
+                    screens.removeAt(screens.lastIndex).close()
+                }
+                openScreen(route, payload.optJSONObject("params") ?: JSONObject())
+            }
+            "NAVIGATE_BACK" -> back()
+            "API_REQUEST" -> answerAPI(screen, message, payload)
+        }
+    }
+
+    private fun render(screen: Screen, document: JSONObject) {
+        // The route's isolate and draft values survive while another screen is
+        // on top. Fresh renders replace only this route's native view subtree.
+        val tree = makeView(screen, document, "root")
+        screen.view.removeAllViews()
+        screen.view.addView(tree)
+    }
+
+    private fun makeView(screen: Screen, node: JSONObject, path: String): View {
+        val type = node.optString("type", "View")
+        val props = node.optJSONObject("props") ?: JSONObject()
+        val style = node.optJSONObject("style") ?: JSONObject()
+        val events = node.optJSONObject("events") ?: JSONObject()
+        val children = node.optJSONArray("children") ?: JSONArray()
+        val key = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
+            .firstOrNull { it.isNotBlank() } ?: path
+        val control = when (type) {
+            "Text" -> TextView(this).apply {
+                text = childText(children)
+                setTextColor(color(style.optString("color"), Color.BLACK))
+                if (style.has("fontSize")) textSize = style.optDouble("fontSize").toFloat()
+            }
+            "Button" -> Button(this).apply {
+                text = props.optString("title").ifBlank { childText(children) }
+                val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
+                if (handler.isNotBlank()) setOnClickListener {
+                    send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject()))
+                }
+            }
+            "TextInput" -> EditText(this).apply {
+                hint = props.optString("placeholder")
+                val value = if (props.has("value")) props.optString("value") else screen.drafts[key].orEmpty()
+                setText(value)
+                val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                        val updated = s?.toString().orEmpty()
+                        screen.drafts[key] = updated
+                        if (handler.isNotBlank()) send(screen, "EVENT", JSONObject()
+                            .put("handlerName", handler)
+                            .put("nativeEvent", JSONObject().put("text", updated)))
+                    }
+                    override fun afterTextChanged(s: Editable?) {}
+                })
+            }
+            else -> LinearLayout(this).apply {
+                orientation = if (style.optString("flexDirection") == "row")
+                    LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+                val padding = style.optDouble("padding", 0.0)
+                setPadding(
+                    dp(style.optDouble("paddingLeft", padding)),
+                    dp(style.optDouble("paddingTop", padding)),
+                    dp(style.optDouble("paddingRight", padding)),
+                    dp(style.optDouble("paddingBottom", padding))
+                )
+                for (index in 0 until children.length()) {
+                    val child = children.opt(index)
+                    val childView = when (child) {
+                        is JSONObject -> makeView(screen, child, "$path.$index")
+                        is String -> TextView(this@MainActivity).apply { text = child }
+                        else -> null
+                    }
+                    if (childView != null) addView(childView)
+                }
+            }
+        }
+        control.contentDescription = key
+        if (style.has("backgroundColor")) control.setBackgroundColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
+        control.layoutParams = LinearLayout.LayoutParams(
+            if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.MATCH_PARENT,
+            if (style.has("height")) dp(style.optDouble("height")) else ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        return control
+    }
+
+    private fun childText(children: JSONArray): String = buildString {
+        for (index in 0 until children.length()) {
+            val value = children.opt(index)
+            if (value is String) append(value)
+        }
+    }
+
+    private fun dp(value: Double) = (value * resources.displayMetrics.density).toInt()
+    private fun color(raw: String, fallback: Int) = runCatching { Color.parseColor(raw) }.getOrDefault(fallback)
+
+    private fun answerAPI(screen: Screen, message: JSONObject, payload: JSONObject) {
+        val id = message.optString("id")
+        if (id.isBlank()) return
+        val args = payload.optJSONArray("args") ?: JSONArray()
+        val response = JSONObject().put("requestId", id)
+        val result = when (payload.optString("module") to payload.optString("method")) {
+            "Device" to "getInfo" -> response.put("data", JSONObject()
+                .put("platform", "android")
+                .put("osVersion", Build.VERSION.RELEASE)
+                .put("model", Build.MODEL)
+                .put("manufacturer", Build.MANUFACTURER))
+            "Clipboard" to "write" -> {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("", args.optString(0)))
+                response.put("data", JSONObject().put("ok", true))
+            }
+            "Clipboard" to "read" -> {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                response.put("data", clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
+            }
+            "Haptics" to "impact" -> {
+                if (!hapticsEnabled) response.put("code", "CAPABILITY_DISABLED")
+                    .put("message", "Haptics are disabled")
+                else {
+                    val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                    vibrator.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
+                    response.put("data", JSONObject().put("ok", true))
+                }
+            }
+            else -> response.put("code", "UNKNOWN_ACTION").put("message", "Unsupported native API")
+        }
+        send(screen, if (result.has("code")) "API_ERROR" else "API_RESPONSE", result, id)
+    }
+
+    private fun send(screen: Screen, type: String, payload: JSONObject, correlationId: String? = null) {
+        if (!screen.active) return
+        val message = JSONObject().put("type", type).put("payload", payload)
+        if (correlationId != null) message.put("correlationId", correlationId)
+        screen.port.postMessage(Message.createStringMessage(message.toString()))
+    }
+
+    private fun back() {
+        if (screens.size > 1) {
+            screens.removeAt(screens.lastIndex).close()
+            show(screens.last())
+        } else {
+            finish()
+        }
+    }
+
+    @Deprecated("Uses the activity back callback for native route navigation")
+    override fun onBackPressed() = back()
+
+    private fun showError(message: String) {
+        root.removeAllViews()
+        root.addView(TextView(this).apply {
+            text = message
+            setTextColor(Color.RED)
+            textSize = 16f
+            setPadding(24, 24, 24, 24)
+        })
+        Log.e(TAG, message)
+    }
+
+    override fun onDestroy() {
+        screens.forEach { it.close() }
+        screens.clear()
+        sandbox?.close()
+        super.onDestroy()
+    }
+
+    companion object { private const val TAG = "CraftNativeAndroid" }
+}
