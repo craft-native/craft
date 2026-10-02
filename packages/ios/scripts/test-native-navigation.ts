@@ -1,0 +1,60 @@
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { bootSimulator, build, init, pickSimulator } from '../src/index'
+
+const fixture = join(import.meta.dir, '..', 'fixtures', 'native-navigation')
+const stxCli = process.env.STX_NATIVE_CLI || resolve(import.meta.dir, '../../../../stx/packages/stx-native/src/cli/index.ts')
+const workspace = mkdtempSync(join(tmpdir(), 'craft-native-navigation-'))
+const output = join(workspace, 'NativeNavigation')
+const bundle = join(workspace, 'routes.js')
+
+function run(args: string[], cwd: string): void {
+  console.log(args.join(' '))
+  const result = Bun.spawnSync(args, { cwd, stdout: 'inherit', stderr: 'inherit' })
+  if (result.exitCode !== 0)
+    throw new Error(`${args[0]} exited with ${result.exitCode}`)
+}
+
+try {
+  run([process.execPath, stxCli, 'compile', '--format', 'bundle', '--output', bundle], fixture)
+  await init({
+    name: 'NativeNavigation',
+    bundleId: 'dev.craft.native-navigation',
+    output,
+    config: { renderer: 'native' },
+    runtimeDir: null,
+  })
+  await build({ output, nativeBundlePath: bundle, generateProject: false, runtimeDir: null })
+
+  mkdirSync(join(output, 'UITests'))
+  copyFileSync(join(fixture, 'NativeNavigationUITests.swift'), join(output, 'UITests', 'NativeNavigationUITests.swift'))
+  const project = join(output, 'project.yml')
+  writeFileSync(project, readFileSync(project, 'utf8') + `
+  NativeNavigationUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests
+    dependencies:
+      - target: NativeNavigation
+`)
+  run(['xcodegen', 'generate'], output)
+
+  const device = await pickSimulator()
+  if (!device) throw new Error('No iOS simulator is available for native navigation tests')
+  await bootSimulator(device)
+  run([
+    'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
+    '-configuration', 'Debug', '-destination', `id=${device.udid}`,
+    '-derivedDataPath', join(workspace, 'DerivedData'),
+    '-parallel-testing-enabled', 'NO', 'CODE_SIGNING_ALLOWED=NO', 'test',
+  ], output)
+  console.log('Native navigation simulator tests passed')
+}
+finally {
+  if (process.env.CRAFT_KEEP_NATIVE_NAVIGATION_PROJECT === '1')
+    console.log(`Kept generated test project: ${workspace}`)
+  else
+    rmSync(workspace, { recursive: true, force: true })
+}

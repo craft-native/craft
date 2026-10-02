@@ -124,6 +124,24 @@ jobs:
       - name: Test native UIKit reconciliation
         run: bun packages/ios/scripts/test-native-render.ts
 
+      # The multi-screen fixture is compiled from real .stx sources. Pin its
+      # private compiler so this Craft job cannot silently change underneath us.
+      - name: Checkout stx-native compiler
+        uses: actions/checkout@v6
+        with:
+          repository: stacksjs/stx
+          ref: 49cc3f0425bfbe4af8da6e0c8ee00c34297a9356
+          path: .stx-native-compiler
+
+      - name: Install stx-native compiler dependencies
+        working-directory: .stx-native-compiler
+        run: bun install --frozen-lockfile
+
+      - name: Test native multi-screen navigation
+        env:
+          STX_NATIVE_CLI: ${{ github.workspace }}/.stx-native-compiler/packages/stx-native/src/cli/index.ts
+        run: bun packages/ios/scripts/test-native-navigation.ts
+
       - name: Cache Zig artifacts
         uses: actions/cache@v5
         with:
