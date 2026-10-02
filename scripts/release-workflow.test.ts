@@ -34,8 +34,8 @@ test('every publishing path depends on release identity validation', () => {
     expect(needs(release.jobs[name])).toContain('validate-release')
   for (const name of ['verify-release', 'verify-macos-downloads'])
     expect(release.jobs[name].if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' }}")
-  expect(release.jobs.npm.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}")
-  expect(needs(release.jobs.npm)).toContain('release-sbom')
+  expect(needs(release.jobs.npm)).toEqual(['validate-release', 'release-sbom', 'publish-release'])
+  expect(release.jobs.npm.if).toBe("${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.publish-release.result == 'success' }}")
 })
 
 test('registry indexing waits for the public release and all of its verification gates', () => {
@@ -105,7 +105,7 @@ test('Windows release stages the pinned WebView2 loader before scanning and draf
   expect(command).toContain('zig-out/cross/windows-x64/WebView2Loader.dll')
 })
 
-test('a failed native leg cannot make a partial GitHub release or Zig registry version public', () => {
+test('a failed native leg cannot publish a partial GitHub, Zig, or npm release', () => {
   const stage = release.jobs.pantry.steps!.find(step => step.name === 'Stage draft release')
   expect(release.jobs.pantry.strategy?.['fail-fast']).toBe(false)
   expect(stage?.with?.release).toBe('true')
@@ -135,6 +135,11 @@ test('a failed native leg cannot make a partial GitHub release or Zig registry v
   const registry = release.jobs['publish-pantry']
   expect(registry.if).toBeUndefined()
   expect(needs(registry)).toEqual(['validate-release', 'publish-release'])
+  // A native or downloaded-archive failure must not publish npm packages
+  // while the GitHub release remains a draft. The explicit npm `if` must
+  // check the finalizer result; listing it in `needs` alone is insufficient.
+  expect(needs(release.jobs.npm)).toContain('publish-release')
+  expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
   expect(zigPublish?.with).toMatchObject({ version: '0.11.64', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
   expect(zigPublish?.with?.release).toBeUndefined()

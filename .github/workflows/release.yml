@@ -661,21 +661,14 @@ jobs:
 
   npm:
     name: npm
-    # Ordered after the binaries, not gated on them.
-    #
-    # `needs:` alone waits for every matrix leg to *succeed*, and the
-    # darwin-arm64 leg exits early when the Apple signing secrets are absent —
-    # so a missing certificate has been silently blocking every npm publish
-    # since v0.0.55. Fifteen releases where the tag, the changelog and the
-    # GitHub release all landed and not one package reached the registry.
-    #
-    # Nothing here consumes the binary job's artifacts: this checks out, runs
-    # `bun install`, and publishes packages built from TypeScript. Signing a Zig
-    # binary and publishing an SDK are independent, and the workflow now says
-    # so. The full-source scan's Critical gate still applies to both paths.
-    # `!cancelled()` rather than `always()` so a cancelled run still stops.
-    needs: [validate-release, release-sbom, pantry]
-    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' }}
+    # Publish only after the complete native release is public. The previous
+    # explicit `if` checked release identity and SBOM but not the native job:
+    # an `if` with !cancelled() can run despite a failed `needs` job, making
+    # npm visible while the GitHub release is still an incomplete draft.
+    # Missing Apple signing secrets do not fail native staging; the macOS leg
+    # stages an unsigned binary, which still has to pass download verification.
+    needs: [validate-release, release-sbom, publish-release]
+    if: ${{ !cancelled() && needs.validate-release.result == 'success' && needs.release-sbom.result == 'success' && needs.publish-release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
