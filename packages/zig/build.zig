@@ -649,6 +649,9 @@ pub fn build(b: *std.Build) void {
     ios_conformance_tests.root_module.addAnonymousImport("CraftApp.swift", .{
         .root_source_file = b.path("../ios/templates/CraftApp.swift"),
     });
+    ios_conformance_tests.root_module.addAnonymousImport("CraftNativeActions.swift", .{
+        .root_source_file = b.path("../ios/templates/CraftNativeActions.swift"),
+    });
     ios_conformance_tests.root_module.addAnonymousImport("src/ios_config.zig", .{
         .root_source_file = b.path("src/ios_config.zig"),
     });

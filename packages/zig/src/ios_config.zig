@@ -172,7 +172,7 @@ pub const Flags = std.EnumSet(Feature);
 /// Missing any one of them throws, and the throw disables everything. Only
 /// `devServerURL` is optional (`String?` -> `decodeIfPresent`), so it is not
 /// listed.
-const string_keys = [_][]const u8{ "appName", "bundleId", "backgroundColor" };
+const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{"trustedOrigins"};
 const optional_string_keys = [_][]const u8{"devServerURL"};

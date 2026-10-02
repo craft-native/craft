@@ -18,6 +18,7 @@ const testing = std.testing;
 /// Embedded with `@embedFile` rather than read from disk, so the test is
 /// hermetic and reads exactly the bytes the build saw.
 const swift_spec = @embedFile("CraftApp.swift");
+const swift_shared_actions = @embedFile("CraftNativeActions.swift");
 
 /// Every Zig module that serves part of the `mobile` namespace. A module
 /// migrating actions out of the Swift spec adds itself here — and the ratchet
@@ -135,6 +136,26 @@ fn dispatcherRegion() []const u8 {
     return rest[0..end];
 }
 
+fn sharedActionRegion() []const u8 {
+    const begin = std.mem.indexOf(u8, swift_shared_actions, "static func perform(") orelse return "";
+    const rest = swift_shared_actions[begin..];
+    const end = std.mem.indexOf(u8, rest, "static func triggerHaptic(") orelse return "";
+    return rest[0..end];
+}
+
+fn collectSpecCases(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var cases = try collectCases(allocator, dispatcherRegion());
+    errdefer cases.deinit();
+    var shared = try collectCases(allocator, sharedActionRegion());
+    defer shared.deinit();
+    var it = shared.keyIterator();
+    while (it.next()) |name| {
+        if (cases.contains(name.*)) return error.DuplicateSwiftAction;
+        try cases.put(name.*, {});
+    }
+    return cases;
+}
+
 /// Every `case "name":` in a region, as a set.
 fn collectCases(allocator: std.mem.Allocator, region: []const u8) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
@@ -226,7 +247,7 @@ test "every action the page can call is one the spec handles" {
     // settled. There is deliberately no allow-list here: a page-callable method
     // with nothing behind it is always a bug, and "documented exception" is how
     // it would come back.
-    var handled = try collectCases(testing.allocator, dispatcherRegion());
+    var handled = try collectSpecCases(testing.allocator);
     defer handled.deinit();
 
     var posted = try collectPostedActions(testing.allocator);
@@ -322,7 +343,7 @@ const deliberate_deferrals = [_]Deferral{
 test "every recorded deferral is real, and still a deferral" {
     // The anti-rot property. A deferral that has been migrated must fail here
     // rather than sit in a list telling the next reader not to bother.
-    var spec = try collectCases(testing.allocator, dispatcherRegion());
+    var spec = try collectSpecCases(testing.allocator);
     defer spec.deinit();
 
     var zig = try collectZigActions(testing.allocator);
@@ -369,7 +390,7 @@ test "nothing has been dropped on the way from Swift to Zig" {
     // Without this, moving an action across is indistinguishable from losing
     // it: both leave a page calling something nothing answers, which is exactly
     // the state iOS was already in.
-    var spec = try collectCases(testing.allocator, dispatcherRegion());
+    var spec = try collectSpecCases(testing.allocator);
     defer spec.deinit();
 
     var zig = try collectZigActions(testing.allocator);
@@ -406,7 +427,7 @@ test "every action Zig declares is one the spec actually has" {
     // The other direction. A Zig action the spec does not list is either a
     // typo — `getDeviceinfo` for `getDeviceInfo`, which a page would never
     // reach — or a surface invented on the Zig side that no page knows to call.
-    var spec = try collectCases(testing.allocator, dispatcherRegion());
+    var spec = try collectSpecCases(testing.allocator);
     defer spec.deinit();
 
     var zig = try collectZigActions(testing.allocator);
@@ -452,7 +473,12 @@ fn collectSpecGates(allocator: std.mem.Allocator) !std.StringHashMap([]const u8)
     var map = std.StringHashMap([]const u8).init(allocator);
     errdefer map.deinit();
 
-    const region = dispatcherRegion();
+    try addSpecGates(&map, dispatcherRegion());
+    try addSpecGates(&map, sharedActionRegion());
+    return map;
+}
+
+fn addSpecGates(map: *std.StringHashMap([]const u8), region: []const u8) !void {
     var search: usize = 0;
     while (std.mem.indexOfPos(u8, region, search, "case \"")) |at| {
         const name_start = at + "case \"".len;
@@ -466,17 +492,17 @@ fn collectSpecGates(allocator: std.mem.Allocator) !std.StringHashMap([]const u8)
             region.len;
         const block = region[name_end..block_end];
 
-        const needle = "if config.";
-        if (std.mem.indexOf(u8, block, needle)) |flag_at| {
-            const flag_start = flag_at + needle.len;
-            var flag_end = flag_start;
-            while (flag_end < block.len and (std.ascii.isAlphanumeric(block[flag_end]) or
-                block[flag_end] == '_')) : (flag_end += 1)
-            {}
-            try map.put(action, block[flag_start..flag_end]);
-        }
+        const if_at = std.mem.indexOf(u8, block, "if config.");
+        const guard_at = std.mem.indexOf(u8, block, "guard config.");
+        const flag_at = if (if_at) |position| position else if (guard_at) |position| position else continue;
+        const needle = if (if_at != null) "if config." else "guard config.";
+        const flag_start = flag_at + needle.len;
+        var flag_end = flag_start;
+        while (flag_end < block.len and (std.ascii.isAlphanumeric(block[flag_end]) or
+            block[flag_end] == '_')) : (flag_end += 1)
+        {}
+        try map.put(action, block[flag_start..flag_end]);
     }
-    return map;
 }
 
 /// `.{ "action", .feature },` from `gateFor`'s table, paired with the JSON key
@@ -912,19 +938,9 @@ test "getDeviceInfo answers every field the spec answers" {
     // success, which is the exact failure `.unavailable` exists to prevent and
     // could not catch, because the action does work; it just works less.
     //
-    // Keys are read out of the spec rather than listed here, so a field added
-    // to `CraftApp.swift` fails this test until Zig answers it too.
-    // Anchored to the function, not to `let info:` — the spec has more than
-    // one dictionary spelled that way (`getMemoryUsage` has another), and the
-    // first match is not this one.
-    const fn_start = std.mem.indexOf(u8, swift_spec, "private func getDeviceInfo(callbackId:") orelse
-        return error.SpecShapeChanged;
-    const body = swift_spec[fn_start..];
-    const start = std.mem.indexOf(u8, body, "let info: [String: Any] = [") orelse
-        return error.SpecShapeChanged;
-    const after = body[start..];
-    const end = std.mem.indexOf(u8, after, "\n            ]") orelse return error.SpecShapeChanged;
-    const block = after[0..end];
+    // The shared action router serves both WebKit and native screens. Require
+    // its dispatcher to call the helper whose dictionary we compare to Zig.
+    const block = try sharedDeviceInfoBlock();
 
     // Narrowed to the implementation for the reason `implementationOf`
     // documents: `bridge_mobile.zig`'s own tests quote these keys back.
@@ -952,6 +968,20 @@ test "getDeviceInfo answers every field the spec answers" {
 
     // A shape change that silently matched nothing would otherwise pass.
     try testing.expectEqual(@as(usize, 14), checked);
+}
+
+fn sharedDeviceInfoBlock() ![]const u8 {
+    if (std.mem.indexOf(u8, swift_spec, "CraftNativeActions.perform(action: action") == null)
+        return error.SharedRouterNotReachable;
+    if (std.mem.indexOf(u8, sharedActionRegion(), "case \"getDeviceInfo\":\n            return .success(deviceInfo())") == null)
+        return error.SharedDeviceInfoNotDispatched;
+    const helper = std.mem.indexOf(u8, swift_shared_actions, "private static func deviceInfo()") orelse
+        return error.SpecShapeChanged;
+    const start = std.mem.indexOfPos(u8, swift_shared_actions, helper, "return [") orelse
+        return error.SpecShapeChanged;
+    const end = std.mem.indexOfPos(u8, swift_shared_actions, start, "\n        ]") orelse
+        return error.SpecShapeChanged;
+    return swift_shared_actions[start..end];
 }
 
 // ---------------------------------------------------------------------------
@@ -1374,6 +1404,14 @@ fn forEachReplyKey(
             }
         }
     }
+
+    // The shared router builds this reply outside CraftApp.swift. Keep its
+    // fourteen fields in the same per-action comparison as the other replies.
+    const device_info = try sharedDeviceInfoBlock();
+    var at_key: usize = 0;
+    while (nextDictKey(device_info, at_key)) |k| : (at_key = k.next) {
+        try visit(context, "getDeviceInfo", k.key);
+    }
 }
 
 const ReplyCounter = struct {
@@ -1457,8 +1495,8 @@ test "the reply scan attributes dictionaries to actions, not to nothing" {
 
     // And the attribution has to reach the two shapes it was written for: a
     // reply built in a private helper, and one built inline in the case arm.
-    const helper = actionProducing("getDeviceInfo", 0) orelse return error.AttributionLostTheHelperShape;
-    try testing.expectEqualStrings("getDeviceInfo", helper);
+    const helper = try sharedDeviceInfoBlock();
+    try testing.expect(std.mem.indexOf(u8, helper, "\"screenWidth\":") != null);
 
     const inline_at = std.mem.indexOf(u8, swift_spec, "\"isConnected\": isConnected") orelse
         return error.SpecShapeChanged;
@@ -1880,6 +1918,12 @@ fn specResolves(region: []const u8, action: []const u8) bool {
     return caseUsesCallback(region, action, .resolves);
 }
 
+fn sharedActionResolves(action: []const u8) bool {
+    const body = caseBody(sharedActionRegion(), action) orelse return false;
+    return std.mem.indexOf(u8, body, "return .success(") != null and
+        std.mem.indexOf(u8, swift_spec, "case .success(let value): resolveCallback(callbackId, result: value)") != null;
+}
+
 /// Whether a `case` line lists `action` among its labels.
 fn labels(case_line: []const u8, action: []const u8) bool {
     var search: usize = 0;
@@ -1960,7 +2004,7 @@ test "every call the spec answers carries a callbackId to answer it on" {
         const action = post.action orelse continue;
         literal_posts += 1;
         if (post.carries_callback) continue;
-        if (!specAnswers(region, action)) continue;
+        if (!specAnswers(region, action) and !sharedActionResolves(action)) continue;
 
         std.debug.print(
             "the page posts `{s}` with no callbackId, and the spec answers it.\n" ++
@@ -2102,7 +2146,7 @@ test "every call the page waits on has a case that can resolve it" {
 
     var it = awaited.keyIterator();
     while (it.next()) |action| {
-        if (specResolves(region, action.*)) continue;
+        if (specResolves(region, action.*) or sharedActionResolves(action.*)) continue;
         std.debug.print(
             "the page waits on `{s}`, and the spec's case never resolves it.\n" ++
                 "  If the case only rejects (or has no case at all), every call that\n" ++
