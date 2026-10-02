@@ -2,6 +2,8 @@
 let count = 0
 let name = ''
 let model = 'Waiting for device info'
+let clipboardResult = 'Clipboard not used'
+let hapticResult = 'Haptics not used'
 
 function increment() {
   count += 1
@@ -16,6 +18,38 @@ function loadDevice() {
     model = info.model
   })
 }
+
+function writeClipboard() {
+  return globalThis.craft.clipboard.write(name || 'Craft native').then(function() {
+    clipboardResult = 'Wrote to clipboard'
+  }, function(error) {
+    clipboardResult = error.code
+  })
+}
+
+function readClipboard() {
+  return globalThis.craft.clipboard.read().then(function(text) {
+    clipboardResult = 'Read: ' + text
+  }, function(error) {
+    clipboardResult = error.code
+  })
+}
+
+function writeInvalidClipboard() {
+  return globalThis.craft.clipboard.write().then(function() {
+    clipboardResult = 'Unexpected success'
+  }, function(error) {
+    clipboardResult = error.code
+  })
+}
+
+function playHaptic() {
+  return globalThis.craft.haptic('light').then(function() {
+    hapticResult = 'Haptic accepted'
+  }, function(error) {
+    hapticResult = error.code
+  })
+}
 </script>
 
 <template>
@@ -26,5 +60,11 @@ function loadDevice() {
     <Text testID="name">Hello {name}</Text>
     <Button testID="device-button" onPress={loadDevice}>Read device info</Button>
     <Text testID="device-result">Device: {model}</Text>
+    <Button testID="clipboard-write" onPress={writeClipboard}>Write clipboard</Button>
+    <Button testID="clipboard-read" onPress={readClipboard}>Read clipboard</Button>
+    <Button testID="clipboard-invalid" onPress={writeInvalidClipboard}>Write invalid value</Button>
+    <Text testID="clipboard-result">{clipboardResult}</Text>
+    <Button testID="haptic-button" onPress={playHaptic}>Play haptic</Button>
+    <Text testID="haptic-result">{hapticResult}</Text>
   </View>
 </template>

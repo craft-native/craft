@@ -34,6 +34,11 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
+    expect(swift).toContain('CraftNativeActions.perform(action: action, body: body, config: config)')
+    expect(actionsSwift).toContain('case "getDeviceInfo":')
+    expect(actionsSwift).toContain('case "haptic":')
+    expect(actionsSwift).toContain('case "clipboardWrite":')
+    expect(actionsSwift).toContain('case "clipboardRead":')
     expect(actionsSwift).toContain('CAPABILITY_DISABLED')
     expect(actionsSwift).toContain('INVALID_ARGUMENT')
 

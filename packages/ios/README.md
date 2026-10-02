@@ -106,7 +106,7 @@ In Xcode:
 
 ### Experimental WebView-free screen
 
-The opt-in `native` renderer hosts a compiled `.stx` screen in JavaScriptCore and renders its `View`, `Text`, `Button`, and `TextInput` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is a vertical slice, not yet a replacement for the WebView renderer: the native bridge currently exposes `craft.device.getInfo()`, and navigation, lists, and the rest of Craft's device APIs still need native adapters.
+The opt-in `native` renderer hosts a compiled `.stx` screen in JavaScriptCore and renders its `View`, `Text`, `Button`, and `TextInput` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is a vertical slice, not yet a replacement for the WebView renderer: the native bridge supports device info, haptics, and clipboard read/write. Navigation, lists, and the rest of Craft's device APIs still need native adapters. Enable `enableHaptics` and `enableClipboard` in `craft.config.json` before using those two capabilities; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code.
 
 ```bash
 craft ios init NativeDemo --renderer native --output ./ios-native
