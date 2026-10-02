@@ -12,6 +12,39 @@ function generatedFiles(path: string): string[] {
 }
 
 describe('Craft Android builder', () => {
+  it('packages a compiled STX bundle only for native projects', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'craft-android-native-bundle-'))
+    try {
+      const native = join(root, 'native')
+      const web = join(root, 'web')
+      const bundle = join(root, 'screen.js')
+      writeFileSync(bundle, 'globalThis.__stxNativeRoute = "home";')
+      await init({ name: 'Native', output: native, runtimeDir: null, config: { renderer: 'native' } })
+      await init({ name: 'Web', output: web, runtimeDir: null })
+
+      expect(JSON.parse(readFileSync(join(native, 'craft.config.json'), 'utf8')).renderer).toBe('native')
+      expect(JSON.parse(readFileSync(join(web, 'craft.config.json'), 'utf8')).renderer).toBe('web')
+      await expect(build({ output: native, compile: false, runtimeDir: null }))
+        .rejects.toThrow('Native Android mode needs app/src/main/assets/native-screen.js')
+      await expect(build({ output: native, nativeBundlePath: bundle, htmlPath: bundle, compile: false, runtimeDir: null }))
+        .rejects.toThrow('cannot use --html-path or --dev-server')
+      await expect(build({ output: web, nativeBundlePath: bundle, compile: false, runtimeDir: null }))
+        .rejects.toThrow('--native-bundle requires renderer: "native"')
+
+      await build({ output: native, nativeBundlePath: bundle, compile: false, runtimeDir: null })
+      expect(readFileSync(join(native, 'app/src/main/assets/native-screen.js'), 'utf8'))
+        .toBe('globalThis.__stxNativeRoute = "home";')
+    }
+    finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('rejects unknown native renderers before creating a project', async () => {
+    const output = join(mkdtempSync(join(tmpdir(), 'craft-android-renderer-')), 'invalid')
+    await expect(init({ name: 'Invalid', output, config: { renderer: 'canvas' as 'web' } }))
+      .rejects.toThrow('Unknown Android renderer: canvas')
+    expect(existsSync(output)).toBe(false)
+  })
+
   it('rejects Android API levels below the runtime floor before writing a project', async () => {
     const root = mkdtempSync(join(tmpdir(), 'craft-android-sdk-floor-'))
     try {

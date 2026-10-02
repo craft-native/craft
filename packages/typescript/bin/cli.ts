@@ -519,6 +519,7 @@ cli
 cli
   .command('android init <name>', 'Initialize a new Android project')
   .option('--package <name>', 'Package name (e.g., com.example.app)')
+  .option('--renderer <kind>', 'Android renderer: web (default) or native')
   .option('-o, --output <dir>', 'Output directory', { default: './android' })
   .example('craft android init MyApp')
   .example('craft android init MyApp --package com.example.myapp')
@@ -529,18 +530,21 @@ cli
       name,
       packageName: options?.package,
       output: options?.output || './android',
+      config: options?.renderer ? { renderer: options.renderer } : undefined,
     })
   })
 
 cli
   .command('android build', 'Build Android project')
   .option('--html-path <path>', 'Path to HTML file')
+  .option('--native-bundle <path>', 'JavaScript bundle compiled by stx-native')
   .option('-d, --dev-server <url>', 'Development server URL')
   .option('-o, --output <dir>', 'Android project directory', { default: './android' })
   .option('--release', 'Build release APK')
   .option('-w, --watch', 'Watch for file changes and rebuild')
   .example('craft android build')
   .example('craft android build --release')
+  .example('craft android build --native-bundle ./screen.js')
   .example('craft android build --watch')
   .action(async (options?: any) => {
     // @ts-ignore -- sibling package may not exist at typecheck time
@@ -549,6 +553,7 @@ cli
     const doBuild = async () => {
       await androidModule.build({
         htmlPath: options?.htmlPath,
+        nativeBundlePath: options?.nativeBundle,
         devServer: options?.devServer,
         output: options?.output || './android',
         release: options?.release || false,

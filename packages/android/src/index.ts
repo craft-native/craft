@@ -48,6 +48,7 @@ export const ANDROID_MIN_SDK = 26
 export interface CraftAndroidConfig {
   appName: string
   packageName: string
+  renderer?: 'web' | 'native'
   version?: string
   versionCode?: number
   darkMode?: boolean
@@ -93,6 +94,7 @@ export interface InitOptions {
 
 export interface BuildOptions {
   htmlPath?: string
+  nativeBundlePath?: string
   devServer?: string
   output: string
   release?: boolean
@@ -111,6 +113,7 @@ export interface RunOptions {
 }
 
 const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
+  renderer: 'web',
   version: '1.0.0',
   versionCode: 1,
   darkMode: true,
@@ -240,6 +243,9 @@ function normalizeAndroidNetworkConfig(config: CraftAndroidConfig): void {
 
 function validateAndroidConfig(config: CraftAndroidConfig): void {
   if (!config.appName.trim()) throw new Error('Android app name must not be empty')
+  if (config.renderer !== undefined && config.renderer !== 'web' && config.renderer !== 'native') {
+    throw new Error(`Unknown Android renderer: ${config.renderer}. Expected web or native.`)
+  }
 
   const packageSegments = config.packageName.split('.')
   if (packageSegments.length < 2
@@ -791,8 +797,14 @@ zipStorePath=wrapper/dists
   console.log('')
   console.log('Next steps:')
   console.log(`  1. cd ${output}`)
-  console.log('  2. Add your web content to app/src/main/assets/index.html')
-  console.log('  3. Run: craft android build')
+  if (config.renderer === 'native') {
+    console.log('  2. Compile your screen: stx-native compile Screen.stx --format bundle --output screen.js')
+    console.log('  3. Run: craft android build --native-bundle screen.js')
+  }
+  else {
+    console.log('  2. Add your web content to app/src/main/assets/index.html')
+    console.log('  3. Run: craft android build')
+  }
   console.log('  4. Run: craft android open')
   console.log('')
 }
@@ -801,7 +813,7 @@ zipStorePath=wrapper/dists
  * Build Android project
  */
 export async function build(options: BuildOptions): Promise<void> {
-  const { htmlPath, devServer, output, release, compile = true } = options
+  const { htmlPath, nativeBundlePath, devServer, output, release, compile = true } = options
 
   console.log('\n📦 Building Craft Android project...')
 
@@ -812,6 +824,19 @@ export async function build(options: BuildOptions): Promise<void> {
   }
 
   const config: CraftAndroidConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+  validateAndroidConfig(config)
+
+  if (config.renderer === 'native') {
+    if (htmlPath || devServer) throw new Error('A native Android screen cannot use --html-path or --dev-server.')
+    const destination = join(output, 'app/src/main/assets/native-screen.js')
+    if (nativeBundlePath && resolve(nativeBundlePath) !== resolve(destination)) cpSync(nativeBundlePath, destination)
+    if (!existsSync(destination)) {
+      throw new Error('Native Android mode needs app/src/main/assets/native-screen.js. Compile a .stx screen with stx-native first.')
+    }
+  }
+  else if (nativeBundlePath) {
+    throw new Error('--native-bundle requires renderer: "native" in craft.config.json.')
+  }
 
   // Refresh the runtime the same way the iOS builder does: only for a project
   // that already has one, so `craft android build` in a shim-only project does
