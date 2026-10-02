@@ -24,7 +24,7 @@ try {
   })
   await build({
     output,
-    nativeBundlePath: join(fixture, 'render-test.js'),
+    nativeBundlePath: process.env.CRAFT_NATIVE_RENDER_BUNDLE || join(fixture, 'render-test.js'),
     generateProject: false,
     runtimeDir: null,
   })

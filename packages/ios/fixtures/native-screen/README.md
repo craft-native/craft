@@ -19,4 +19,6 @@ The native mode is opt-in. The generated `Sources/CraftNativeScreen.swift` creat
 
 Run `bun packages/ios/scripts/test-native-render.ts` from the Craft repository on a Mac with XcodeGen and an iOS simulator. It generates a temporary native app and runs simulator-hosted XCTest: a unit test checks that keyed UIKit controls keep their object identity through property changes and moves, while a UI test types through repeated label and button updates without losing the keyboard. The test bundle is deliberately plain JavaScriptCore input so CI does not need a sibling stx checkout. The `.stx` fixture above remains the compiler integration smoke screen.
 
+To run the same UI test against the actual compiler output, compile `Screen.stx` as shown above and set `CRAFT_NATIVE_RENDER_BUNDLE` to the absolute bundle path when invoking `test-native-render.ts`.
+
 Within one parent, use a unique `key` on children whose identity must survive reordering. The current compiler emits it as `props.key`; the native host also accepts a top-level IR `key` and uses `testID` for existing screens. Unkeyed children are matched by position. Duplicate sibling keys fall back to position, so they cannot promise identity through moves.

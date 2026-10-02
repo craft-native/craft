@@ -4,6 +4,7 @@ final class NativeRenderUITests: XCTestCase {
     func testTypingAndButtonUpdatesDoNotDropTheKeyboard() throws {
         let app = XCUIApplication()
         app.launch()
+        XCTAssertFalse(app.webViews.firstMatch.exists, "native mode created a WebView")
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))
         field.tap()
