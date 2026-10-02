@@ -54,16 +54,21 @@ class MainActivity : AppCompatActivity() {
     private val screens = mutableListOf<Screen>()
     private var bundle = ""
     private var hapticsEnabled = false
+    private var defaultTextColor = Color.WHITE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         root = findViewById(R.id.native_root)
-        hapticsEnabled = runCatching {
+        val config = runCatching {
             assets.open("craft.config.json").bufferedReader().use {
-                JSONObject(it.readText()).optBoolean("enableHaptics", false)
+                JSONObject(it.readText())
             }
-        }.getOrDefault(false)
+        }.getOrDefault(JSONObject())
+        hapticsEnabled = config.optBoolean("enableHaptics", false)
+        val background = color(config.optString("backgroundColor", "#1a1a2e"), Color.BLACK)
+        root.setBackgroundColor(background)
+        defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
         bundle = runCatching {
             assets.open("native-screen.js").bufferedReader().use { it.readText() }
         }.getOrElse {
@@ -195,7 +200,7 @@ class MainActivity : AppCompatActivity() {
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
                 text = childText(children)
-                setTextColor(color(style.optString("color"), Color.BLACK))
+                setTextColor(color(style.optString("color"), defaultTextColor))
                 if (style.has("fontSize")) textSize = style.optDouble("fontSize").toFloat()
             }
             "Button" -> (previous as? Button ?: Button(this)).apply {
@@ -241,7 +246,10 @@ class MainActivity : AppCompatActivity() {
                     val child = children.opt(index)
                     val childView = when (child) {
                         is JSONObject -> makeView(screen, child, "$path.$index", next)
-                        is String -> TextView(this@MainActivity).apply { text = child }
+                        is String -> TextView(this@MainActivity).apply {
+                            text = child
+                            setTextColor(defaultTextColor)
+                        }
                         else -> null
                     }
                     if (childView != null) desired.add(childView)

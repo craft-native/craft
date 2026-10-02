@@ -1,6 +1,7 @@
 package dev.craft.navigationtest
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -100,7 +101,9 @@ class NativeNavigationTest {
             val root = awaitView(activity, "root")
             assertTrue("View did not render as LinearLayout", root is LinearLayout)
             assertTrue(name is EditText)
-            assertTrue(awaitView(activity, "home-title") is TextView)
+            val title = awaitView(activity, "home-title")
+            assertTrue(title is TextView)
+            assertEquals(Color.WHITE, (title as TextView).currentTextColor)
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {
