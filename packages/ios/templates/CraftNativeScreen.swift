@@ -16,41 +16,6 @@ struct CraftNativeScreen: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: CraftNativeScreenController, context: Context) {}
 }
 
-enum CraftDeviceInfo {
-    static func values() -> [String: Any] {
-        let device = UIDevice.current
-        let screen = UIScreen.main
-        #if targetEnvironment(simulator)
-        let isSimulator = true
-        #else
-        let isSimulator = false
-        #endif
-        let batteryState: String
-        switch device.batteryState {
-        case .charging: batteryState = "charging"
-        case .full: batteryState = "full"
-        case .unplugged: batteryState = "unplugged"
-        default: batteryState = "unknown"
-        }
-        return [
-            "platform": "ios",
-            "model": device.model,
-            "name": device.name,
-            "systemName": device.systemName,
-            "systemVersion": device.systemVersion,
-            "identifierForVendor": device.identifierForVendor?.uuidString ?? "",
-            "isSimulator": isSimulator,
-            "screenWidth": screen.bounds.width,
-            "screenHeight": screen.bounds.height,
-            "screenScale": screen.scale,
-            "batteryLevel": device.batteryLevel,
-            "batteryState": batteryState,
-            "locale": Locale.current.identifier,
-            "timezone": TimeZone.current.identifier
-        ]
-    }
-}
-
 final class CraftNativeScreenController: UIViewController {
     private let config: CraftConfig
     private let jsContext = JSContext()!
@@ -137,10 +102,30 @@ final class CraftNativeScreenController: UIViewController {
             render(document)
         case "API_REQUEST":
             guard let id = message["id"] as? String else { return }
-            if payload["module"] as? String == "Device", payload["method"] as? String == "getInfo" {
-                send(type: "API_RESPONSE", payload: ["requestId": id, "data": CraftDeviceInfo.values()], correlationId: id)
-            } else {
-                send(type: "API_ERROR", payload: ["requestId": id, "message": "Unsupported native API"], correlationId: id)
+            let args = payload["args"] as? [Any] ?? []
+            let route: (action: String, body: [String: Any])?
+            switch (payload["module"] as? String, payload["method"] as? String) {
+            case ("Device", "getInfo"):
+                route = ("getDeviceInfo", [:])
+            case ("Haptics", "impact"):
+                route = ("haptic", ["style": args.first ?? NSNull()])
+            case ("Clipboard", "write"):
+                route = ("clipboardWrite", ["text": args.first ?? NSNull()])
+            case ("Clipboard", "read"):
+                route = ("clipboardRead", [:])
+            default:
+                route = nil
+            }
+            guard let route = route,
+                  let answer = CraftNativeActions.perform(action: route.action, body: route.body, config: config) else {
+                send(type: "API_ERROR", payload: ["requestId": id, "code": "UNKNOWN_ACTION", "message": "Unsupported native API"], correlationId: id)
+                return
+            }
+            switch answer {
+            case .success(let data):
+                send(type: "API_RESPONSE", payload: ["requestId": id, "data": data], correlationId: id)
+            case .failure(let error):
+                send(type: "API_ERROR", payload: ["requestId": id, "code": error.code, "message": error.message], correlationId: id)
             }
         default:
             break

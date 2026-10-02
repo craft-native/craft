@@ -881,6 +881,13 @@ struct CraftWebView: UIViewRepresentable {
         /// `craft_ios_deliver_result` instead of evaluating JavaScript here —
         /// one reply path, owned by whichever side received the page's message.
         func dispatch(action: String, body: [String: Any], callbackId: String?) {
+            if let answer = CraftNativeActions.perform(action: action, body: body, config: config) {
+                switch answer {
+                case .success(let value): resolveCallback(callbackId, result: value)
+                case .failure(let error): rejectCallback(callbackId, error: error.message, code: error.code)
+                }
+                return
+            }
             switch action {
             case "startListening":
                 if config.enableSpeechRecognition {
@@ -896,14 +903,6 @@ struct CraftWebView: UIViewRepresentable {
             case "stopListening":
                 stopSpeechRecognition()
                 resolveCallback(callbackId, result: true)
-            case "haptic":
-                if config.enableHaptics {
-                    let style = body["style"] as? String ?? "medium"
-                    triggerHaptic(style: style)
-                    resolveCallback(callbackId, result: true)
-                } else {
-                    rejectCallback(callbackId, error: "Haptics is disabled", code: "CAPABILITY_DISABLED")
-                }
             case "share":
                 if config.enableShare {
                     if let options = body["options"] as? [String: Any] {
@@ -1036,28 +1035,6 @@ struct CraftWebView: UIViewRepresentable {
                 getLocationRecordingState(callbackId: callbackId)
             case "readLocationRecording":
                 readLocationRecording(callbackId: callbackId)
-            // Clipboard
-            case "clipboardWrite":
-            if config.enableClipboard {
-                    if let text = body["text"] as? String {
-                            UIPasteboard.general.string = text
-                            resolveCallback(callbackId, result: true)
-                    } else {
-                        rejectCallback(callbackId, error: "clipboardWrite was called without the values it needs", code: "INVALID_ARGUMENT")
-                    }
-            } else {
-                rejectCallback(callbackId, error: "Clipboard is disabled", code: "CAPABILITY_DISABLED")
-            }
-            case "clipboardRead":
-                if config.enableClipboard {
-                    let text = UIPasteboard.general.string ?? ""
-                    resolveCallback(callbackId, result: text)
-                } else {
-                    rejectCallback(callbackId, error: "Clipboard is disabled", code: "CAPABILITY_DISABLED")
-                }
-            // Device Info
-            case "getDeviceInfo":
-                getDeviceInfo(callbackId: callbackId)
             // App Badge
             case "setBadge":
                 if let count = body["count"] as? Int {
@@ -1086,7 +1063,7 @@ struct CraftWebView: UIViewRepresentable {
                 if let pattern = body["pattern"] as? [Int] {
                     vibratePattern(pattern)
                 } else {
-                    triggerHaptic(style: "medium")
+                    CraftNativeActions.triggerHaptic(style: "medium")
                 }
                 resolveCallback(callbackId, result: true)
             // Open URL
@@ -3701,7 +3678,7 @@ struct CraftWebView: UIViewRepresentable {
             do {
                 try audioEngine.start()
                 sendToWeb("craftSpeechStart", data: [:])
-                triggerHaptic(style: "light")
+                CraftNativeActions.triggerHaptic(style: "light")
             } catch {
                 sendToWeb("craftSpeechError", data: ["error": "Audio engine failed"])
             }
@@ -3715,27 +3692,7 @@ struct CraftWebView: UIViewRepresentable {
             recognitionTask?.cancel()
             recognitionTask = nil
             sendToWeb("craftSpeechEnd", data: [:])
-            triggerHaptic(style: "light")
-        }
-
-        // MARK: - Haptics
-        private func triggerHaptic(style: String) {
-            switch style {
-            case "light":
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            case "heavy":
-                UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-            case "success":
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            case "warning":
-                UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            case "error":
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
-            case "selection":
-                UISelectionFeedbackGenerator().selectionChanged()
-            default:
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            }
+            CraftNativeActions.triggerHaptic(style: "light")
         }
 
         // MARK: - Share
@@ -4418,11 +4375,6 @@ struct CraftWebView: UIViewRepresentable {
             } else {
                 resolveCallbackJSON(callbackId, json: ["usedMB": 0, "error": "Failed to get memory info"])
             }
-        }
-
-        // MARK: - Device Info
-        private func getDeviceInfo(callbackId: String?) {
-            resolveCallback(callbackId, result: CraftDeviceInfo.values())
         }
 
         // MARK: - App Badge

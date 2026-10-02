@@ -626,6 +626,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
   writeFileSync(join(output, 'Sources', `${name}App.swift`), swiftSource)
   cpSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), join(output, 'Sources', 'CraftNativeScreen.swift'))
+  cpSync(join(TEMPLATES_DIR, 'CraftNativeActions.swift'), join(output, 'Sources', 'CraftNativeActions.swift'))
 
   // Generate Info.plist
   const infoPlistTemplate = readFileSync(join(TEMPLATES_DIR, 'Info.plist.template'), 'utf-8')
