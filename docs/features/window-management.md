@@ -548,8 +548,9 @@ are open, and stale-handle cleanup. Installed PKG, DEB and MSI smokes also
 create and close a child through the packaged runtime.
 Parent-only modal semantics are part of the runtime-created-window contract.
 See [Multi-window ownership](../architecture/multi-window-ownership.md) for the
-implemented routing guarantees, application-level event sinks and remaining
-cross-platform work.
+implemented routing guarantees and remaining cross-platform work. App-wide
+event delivery remains primary-page-only pending the separate policy and test
+work in [#331](https://github.com/craft-native/craft/issues/331).
 
 ## Multi-Monitor
 

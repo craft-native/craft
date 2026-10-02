@@ -3,8 +3,8 @@
 **Status: implemented on macOS, Linux, and Windows; platform smokes pass in CI.**
 `WindowCreateOptions` exposes `parent` and `modal`, and each native creation
 path now applies them. Native parenting is distinct from the existing
-creator-page ownership contract. Issue #67 remains open for the separate
-application-level event-delivery decision.
+creator-page ownership contract. The completed window contract is tracked in
+issue #67; application-level event delivery is a separate follow-up in #331.
 
 ## Contract
 
@@ -72,5 +72,6 @@ than equating these APIs by name.
   above their parent.
 
 The parent-scoped modality choice was approved on October 1, 2026. The native
-paths and cross-platform installed-app CI implement and exercise it; the
-application-level event-delivery choice remains outside this contract.
+paths and cross-platform installed-app CI implement and exercise it;
+application-level event delivery remains outside this contract and is tracked
+in #331.

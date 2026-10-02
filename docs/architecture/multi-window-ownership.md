@@ -31,6 +31,9 @@ from issue #67 is covered here. Parent/modal behavior follows the approved
 backends now apply it. The Windows release archive stages an app-local WebView2 loader;
 users still need the Microsoft WebView2 Runtime.
 
+Application-wide asynchronous event delivery is separate from the completed
+window-scoped contract and is tracked in issue #331.
+
 Linux and Windows keep their live native window/webview pairs in
 `desktop_window_registry.zig`. Page messages are authenticated by the sending
 WebKitGTK view or the per-WebView2 event subscription; names select a target
@@ -177,14 +180,14 @@ This is an explicit compatibility contract, not per-window subscription
 behavior. Before changing one of these sources, choose and document whether it
 should remain primary-only, broadcast to every page, or track individual
 subscribers and their owning webviews. Opening a child must never implicitly
-make it the new sink.
+make it the new sink. Issue #331 tracks that per-source decision and its tests.
 
 ## Remaining decisions
 
 The parent/child and parent-only modal contract is implemented and covered by
 the desktop GUI and installed-app smokes. The remaining product choices are:
 
-1. Choose primary-only, broadcast or per-subscriber delivery for each
+1. In #331, choose primary-only, broadcast or per-subscriber delivery for each
    application-level asynchronous source above.
 2. Decide whether Touch Bar should stay primary-window scoped or follow the
    key window with separately owned item definitions and callbacks.
