@@ -29,6 +29,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('class MainActivity : AppCompatActivity()')
       expect(nativeActivity).toContain('JavaScriptSandbox.isSupported()')
       expect(nativeActivity).toContain('createMessageChannel')
+      expect(nativeActivity).toContain('screen.controls.putAll(next)')
+      expect(nativeActivity).toContain('override fun onBackPressed() = back()')
       expect(nativeActivity).not.toContain('import android.webkit.WebView')
       expect(nativeActivity).not.toContain('WebView(')
       expect(nativeLayout).toContain('native_root')

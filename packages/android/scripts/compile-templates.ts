@@ -26,6 +26,12 @@ const workspace = mkdtempSync(join(tmpdir(), 'craft-android-templates-'))
 
 const fixtures: CompileFixture[] = [
   {
+    directoryName: 'native',
+    name: 'CraftNativeTemplate',
+    packageName: 'dev.craft.fixture.nativeapp',
+    config: { renderer: 'native' },
+  },
+  {
     directoryName: 'minimal',
     name: 'Craft & "Kotlin" $Build',
     packageName: 'dev.craft.fixture.minimal',

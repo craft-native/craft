@@ -38,6 +38,8 @@ class MainActivity : AppCompatActivity() {
         val port: MessagePort
     ) {
         val drafts = mutableMapOf<String, String>()
+        val controls = mutableMapOf<String, View>()
+        val handlers = mutableMapOf<View, String>()
         var active = true
 
         fun close() {
@@ -167,14 +169,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(screen: Screen, document: JSONObject) {
-        // The route's isolate and draft values survive while another screen is
-        // on top. Fresh renders replace only this route's native view subtree.
-        val tree = makeView(screen, document, "root")
+        // Keep live controls (especially the focused EditText) across renders.
+        val next = mutableMapOf<String, View>()
+        val tree = makeView(screen, document, "root", next)
         screen.view.removeAllViews()
         screen.view.addView(tree)
+        screen.controls.clear()
+        screen.controls.putAll(next)
+        screen.handlers.keys.retainAll(next.values.toSet())
     }
 
-    private fun makeView(screen: Screen, node: JSONObject, path: String): View {
+    private fun makeView(screen: Screen, node: JSONObject, path: String, next: MutableMap<String, View>): View {
         val type = node.optString("type", "View")
         val props = node.optJSONObject("props") ?: JSONObject()
         val style = node.optJSONObject("style") ?: JSONObject()
@@ -182,31 +187,36 @@ class MainActivity : AppCompatActivity() {
         val children = node.optJSONArray("children") ?: JSONArray()
         val key = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
             .firstOrNull { it.isNotBlank() } ?: path
+        val previous = screen.controls[key]
         val control = when (type) {
-            "Text" -> TextView(this).apply {
+            "Text" -> (previous as? TextView ?: TextView(this)).apply {
                 text = childText(children)
                 setTextColor(color(style.optString("color"), Color.BLACK))
                 if (style.has("fontSize")) textSize = style.optDouble("fontSize").toFloat()
             }
-            "Button" -> Button(this).apply {
+            "Button" -> (previous as? Button ?: Button(this)).apply {
                 text = props.optString("title").ifBlank { childText(children) }
                 val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
-                if (handler.isNotBlank()) setOnClickListener {
-                    send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject()))
+                if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                setOnClickListener {
+                    val current = screen.handlers[this] ?: return@setOnClickListener
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                 }
             }
-            "TextInput" -> EditText(this).apply {
+            "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
                 hint = props.optString("placeholder")
-                val value = if (props.has("value")) props.optString("value") else screen.drafts[key].orEmpty()
-                setText(value)
+                if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
+                else if (previous == null && screen.drafts.containsKey(key)) setText(screen.drafts[key])
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
-                addTextChangedListener(object : TextWatcher {
+                if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                if (previous == null) addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                         val updated = s?.toString().orEmpty()
                         screen.drafts[key] = updated
-                        if (handler.isNotBlank()) send(screen, "EVENT", JSONObject()
-                            .put("handlerName", handler)
+                        val current = screen.handlers[this@apply] ?: return
+                        send(screen, "EVENT", JSONObject()
+                            .put("handlerName", current)
                             .put("nativeEvent", JSONObject().put("text", updated)))
                     }
                     override fun afterTextChanged(s: Editable?) {}
@@ -225,15 +235,19 @@ class MainActivity : AppCompatActivity() {
                 for (index in 0 until children.length()) {
                     val child = children.opt(index)
                     val childView = when (child) {
-                        is JSONObject -> makeView(screen, child, "$path.$index")
+                        is JSONObject -> makeView(screen, child, "$path.$index", next)
                         is String -> TextView(this@MainActivity).apply { text = child }
                         else -> null
                     }
-                    if (childView != null) addView(childView)
+                    if (childView != null) {
+                        (childView.parent as? ViewGroup)?.removeView(childView)
+                        addView(childView)
+                    }
                 }
             }
         }
         control.contentDescription = key
+        if (type == "Text" || type == "Button" || type == "TextInput") next[key] = control
         if (style.has("backgroundColor")) control.setBackgroundColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
         control.layoutParams = LinearLayout.LayoutParams(
             if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.MATCH_PARENT,
