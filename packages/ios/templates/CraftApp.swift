@@ -221,8 +221,14 @@ struct CraftApp: App {
 
     var body: some SwiftUI.Scene {
         WindowGroup {
-            CraftWebView(config: appState.config)
-                .ignoresSafeArea()
+            Group {
+                if appState.config.renderer == "native" {
+                    CraftNativeScreen(config: appState.config)
+                } else {
+                    CraftWebView(config: appState.config)
+                        .ignoresSafeArea()
+                }
+            }
                 .preferredColorScheme(appState.config.colorScheme)
                 .environmentObject(appState)
                 .onOpenURL { url in
@@ -375,6 +381,8 @@ extension CraftConfig {
 struct CraftConfig: Codable {
     var appName: String = "Craft App"
     var bundleId: String = "com.craft.app"
+    /// Opt-in UIKit + JavaScriptCore screen; existing apps keep WKWebView.
+    var renderer: String = "web"
     var darkMode: Bool = true
     /// "light", "dark" or "system". Absent in configs older than the field,
     /// which keep what `darkMode` pinned.
@@ -4414,39 +4422,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Device Info
         private func getDeviceInfo(callbackId: String?) {
-            let device = UIDevice.current
-            let screen = UIScreen.main
-            #if targetEnvironment(simulator)
-            let isSimulator = true
-            #else
-            let isSimulator = false
-            #endif
-            let info: [String: Any] = [
-                "platform": "ios",
-                "model": device.model,
-                "name": device.name,
-                "systemName": device.systemName,
-                "systemVersion": device.systemVersion,
-                "identifierForVendor": device.identifierForVendor?.uuidString ?? "",
-                "isSimulator": isSimulator,
-                "screenWidth": screen.bounds.width,
-                "screenHeight": screen.bounds.height,
-                "screenScale": screen.scale,
-                "batteryLevel": device.batteryLevel,
-                "batteryState": getBatteryState(device.batteryState),
-                "locale": Locale.current.identifier,
-                "timezone": TimeZone.current.identifier
-            ]
-            resolveCallback(callbackId, result: info)
-        }
-
-        private func getBatteryState(_ state: UIDevice.BatteryState) -> String {
-            switch state {
-            case .charging: return "charging"
-            case .full: return "full"
-            case .unplugged: return "unplugged"
-            default: return "unknown"
-            }
+            resolveCallback(callbackId, result: CraftDeviceInfo.values())
         }
 
         // MARK: - App Badge

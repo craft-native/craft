@@ -1,0 +1,30 @@
+<script>
+let count = 0
+let name = ''
+let model = 'Waiting for device info'
+
+function increment() {
+  count += 1
+}
+
+function changeName(event) {
+  name = event.text
+}
+
+function loadDevice() {
+  return globalThis.craft.device.getInfo().then(function(info) {
+    model = info.model
+  })
+}
+</script>
+
+<template>
+  <View class="p-4">
+    <Text testID="count" class="text-lg">Count: {count}</Text>
+    <Button testID="increment" onPress={increment}>Increment</Button>
+    <TextInput testID="name-input" placeholder="Type your name" onChange={changeName} />
+    <Text testID="name">Hello {name}</Text>
+    <Button testID="device-button" onPress={loadDevice}>Read device info</Button>
+    <Text testID="device-result">Device: {model}</Text>
+  </View>
+</template>

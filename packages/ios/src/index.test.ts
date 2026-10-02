@@ -22,6 +22,26 @@ import {
 } from './index'
 
 describe('Craft iOS builder', () => {
+  it('keeps WebView as the default and opt-in native screens load a compiled bundle', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-'))
+    await init({ runtimeDir: null, name: 'Native Slice', output, config: { renderer: 'native' } })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    const swift = readFileSync(join(output, 'Sources', 'NativeSliceApp.swift'), 'utf8')
+    const nativeSwift = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(config.renderer).toBe('native')
+    expect(swift).toContain('if appState.config.renderer == "native"')
+    expect(nativeSwift).toContain('import JavaScriptCore')
+    expect(nativeSwift).not.toContain('WKWebView')
+    expect(nativeSwift).toContain('CraftDeviceInfo.values()')
+
+    await expect(build({ output, generateProject: false, runtimeDir: null })).rejects.toThrow('native-screen.js')
+    const bundle = join(output, 'compiled.js')
+    writeFileSync(bundle, 'globalThis.screenLoaded = true')
+    await build({ output, nativeBundlePath: bundle, generateProject: false, runtimeDir: null })
+    expect(readFileSync(join(output, 'dist', 'native-screen.js'), 'utf8')).toBe('globalThis.screenLoaded = true')
+    await expect(build({ output, htmlPath: bundle, generateProject: false, runtimeDir: null })).rejects.toThrow('cannot use --html-path')
+  })
+
   it('copies a complete web distribution and removes stale assets', () => {
     const root = mkdtempSync(join(tmpdir(), 'craft-ios-assets-'))
     const source = join(root, 'web')

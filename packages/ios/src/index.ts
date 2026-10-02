@@ -15,6 +15,8 @@ export type CraftAppearance = 'light' | 'dark' | 'system'
 export interface CraftConfig {
   appName: string
   bundleId: string
+  /** Opt in to UIKit + JavaScriptCore instead of the default WebView. */
+  renderer?: 'web' | 'native'
   version?: string
   buildNumber?: string
   darkMode?: boolean
@@ -121,6 +123,8 @@ export interface InitOptions {
 
 export interface BuildOptions {
   htmlPath?: string
+  /** JavaScript bundle emitted by `stx-native compile Screen.stx --format bundle`. */
+  nativeBundlePath?: string
   devServer?: string
   output: string
   generateProject?: boolean
@@ -142,6 +146,7 @@ export interface RunOptions {
 }
 
 const DEFAULT_CONFIG: Omit<CraftConfig, 'appName' | 'bundleId'> = {
+  renderer: 'web',
   version: '1.0.0',
   buildNumber: '1',
   darkMode: true,
@@ -617,6 +622,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/CraftApp/g, `${name}App`)
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
   writeFileSync(join(output, 'Sources', `${name}App.swift`), swiftSource)
+  cpSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), join(output, 'Sources', 'CraftNativeScreen.swift'))
 
   // Generate Info.plist
   const infoPlistTemplate = readFileSync(join(TEMPLATES_DIR, 'Info.plist.template'), 'utf-8')
@@ -801,7 +807,7 @@ export async function init(options: InitOptions): Promise<void> {
  * Build web assets and generate Xcode project
  */
 export async function build(options: BuildOptions): Promise<void> {
-  const { htmlPath, devServer, output, generateProject = true } = options
+  const { htmlPath, nativeBundlePath, devServer, output, generateProject = true } = options
 
   console.log('\n📦 Building Craft iOS project...')
 
@@ -812,6 +818,21 @@ export async function build(options: BuildOptions): Promise<void> {
   }
 
   const config: CraftConfig = JSON.parse(readFileSync(configPath, 'utf-8'))
+
+  if (config.renderer === 'native') {
+    if (htmlPath || devServer) {
+      throw new Error('A native iOS screen cannot use --html-path or --dev-server.')
+    }
+    if (nativeBundlePath) {
+      cpSync(nativeBundlePath, join(output, 'dist', 'native-screen.js'))
+    }
+    if (!existsSync(join(output, 'dist', 'native-screen.js'))) {
+      throw new Error('Native iOS mode needs dist/native-screen.js. Compile a .stx screen with stx-native first.')
+    }
+  }
+  else if (nativeBundlePath) {
+    throw new Error('--native-bundle requires renderer: "native" in craft.config.json.')
+  }
 
   // Update dev server URL if provided
   if (devServer) {
