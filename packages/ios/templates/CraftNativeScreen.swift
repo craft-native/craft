@@ -17,11 +17,26 @@ struct CraftNativeScreen: UIViewControllerRepresentable {
 }
 
 final class CraftNativeScreenController: UIViewController {
+    private final class RenderedNode {
+        let identity: String
+        let type: String
+        let view: UIView
+        var children: [RenderedNode] = []
+        var widthConstraint: NSLayoutConstraint?
+        var heightConstraint: NSLayoutConstraint?
+
+        init(identity: String, type: String, view: UIView) {
+            self.identity = identity
+            self.type = type
+            self.view = view
+        }
+    }
+
     private let config: CraftConfig
     private let jsContext = JSContext()!
     private let rootStack = UIStackView()
     private var handlers: [ObjectIdentifier: String] = [:]
-    private var textFields: [String: UITextField] = [:]
+    private var renderedRoot: RenderedNode?
 
     init(config: CraftConfig) {
         self.config = config
@@ -132,76 +147,58 @@ final class CraftNativeScreenController: UIViewController {
         }
     }
 
-    private func render(_ document: [String: Any]) {
-        // Rebuilding the tiny tree keeps the first slice deterministic. Keep
-        // the active field and cursor across renders so typing does not drop
-        // the keyboard when its onChange handler updates another Text node.
-        let focused = textFields.first { $0.value.isFirstResponder }
-        let focusedText = focused?.value.text
-        let cursor = focused.flatMap { pair -> Int? in
-            guard let range = pair.value.selectedTextRange else { return nil }
-            return pair.value.offset(from: pair.value.beginningOfDocument, to: range.start)
+    // Internal so simulator-hosted XCTest can assert actual UIView identity.
+    func render(_ document: [String: Any]) {
+        let previous = renderedRoot
+        let next = reconcile(document, identity: "root", path: "root", previous: previous)
+        if previous?.view !== next.view {
+            if let old = previous { detach(old, from: rootStack) }
+            rootStack.addArrangedSubview(next.view)
         }
-        rootStack.arrangedSubviews.forEach { child in
-            rootStack.removeArrangedSubview(child)
-            child.removeFromSuperview()
-        }
-        handlers.removeAll()
-        textFields.removeAll()
-        rootStack.addArrangedSubview(makeView(document, path: "root"))
-        if let key = focused?.key, let field = textFields[key] {
-            if let focusedText = focusedText { field.text = focusedText }
-            field.becomeFirstResponder()
-            if let cursor = cursor,
-               let position = field.position(from: field.beginningOfDocument, offset: min(cursor, field.text?.count ?? 0)) {
-                field.selectedTextRange = field.textRange(from: position, to: position)
-            }
-        }
+        renderedRoot = next
     }
 
-    private func makeView(_ node: [String: Any], path: String) -> UIView {
+    private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?) -> RenderedNode {
         let type = node["type"] as? String ?? "View"
         let props = node["props"] as? [String: Any] ?? [:]
         let style = node["style"] as? [String: Any] ?? [:]
         let events = node["events"] as? [String: String] ?? [:]
         let children = node["children"] as? [Any] ?? []
-        let key = node["key"] as? String ?? props["testID"] as? String ?? path
-        let result: UIView
+        let current: RenderedNode
+        if let previous = previous, previous.identity == identity, previous.type == type {
+            current = previous
+        } else {
+            current = RenderedNode(identity: identity, type: type, view: makeView(type))
+        }
+
+        let result = current.view
+        result.accessibilityIdentifier = explicitKey(node, props: props) ?? path
+        if type != "View" && type != "SafeAreaView" {
+            result.setContentHuggingPriority(.required, for: .vertical)
+        }
+        result.backgroundColor = color(style["backgroundColor"]) ?? .clear
+        result.layer.cornerRadius = number(style["borderRadius"]) ?? 0
+        updateDimension(number(style["width"]), constraint: &current.widthConstraint, anchor: result.widthAnchor)
+        updateDimension(number(style["height"]), constraint: &current.heightConstraint, anchor: result.heightAnchor)
 
         switch type {
         case "Text":
-            let label = UILabel()
-            label.numberOfLines = 0
+            let label = result as! UILabel
             label.text = children.compactMap { $0 as? String }.joined()
             label.textColor = color(style["color"]) ?? .label
-            if let size = number(style["fontSize"]) {
-                label.font = .systemFont(ofSize: size)
-            }
-            result = label
+            label.font = .systemFont(ofSize: number(style["fontSize"]) ?? UIFont.systemFontSize)
         case "Button":
-            let button = UIButton(type: .system)
+            let button = result as! UIButton
             button.setTitle(props["title"] as? String ?? children.compactMap { $0 as? String }.joined(), for: .normal)
-            button.addTarget(self, action: #selector(buttonPressed(_:)), for: .touchUpInside)
-            if let handler = events["onPress"] ?? events["onClick"] {
-                handlers[ObjectIdentifier(button)] = handler
-            }
-            result = button
+            updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
-            let field = UITextField()
-            field.borderStyle = .roundedRect
+            let field = result as! UITextField
             field.placeholder = props["placeholder"] as? String
-            field.text = props["value"] as? String
-            field.addTarget(self, action: #selector(textChanged(_:)), for: .editingChanged)
-            if let handler = events["onChange"] ?? events["onChangeText"] {
-                handlers[ObjectIdentifier(field)] = handler
-            }
-            textFields[key] = field
-            result = field
+            updateField(field, value: props["value"] as? String)
+            updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
         default:
-            let stack = UIStackView()
+            let stack = result as! UIStackView
             stack.axis = style["flexDirection"] as? String == "row" ? .horizontal : .vertical
-            stack.alignment = .fill
-            stack.distribution = .fill
             stack.spacing = number(style["gap"]) ?? 0
             let padding = number(style["padding"]) ?? 0
             stack.layoutMargins = UIEdgeInsets(
@@ -210,35 +207,122 @@ final class CraftNativeScreenController: UIViewController {
                 bottom: number(style["paddingBottom"]) ?? padding,
                 right: number(style["paddingRight"]) ?? padding
             )
+            reconcileChildren(children, in: stack, parent: current, path: path)
+        }
+        return current
+    }
+
+    private func makeView(_ type: String) -> UIView {
+        switch type {
+        case "Text":
+            let label = UILabel()
+            label.numberOfLines = 0
+            return label
+        case "Button":
+            let button = UIButton(type: .system)
+            button.addTarget(self, action: #selector(buttonPressed(_:)), for: .touchUpInside)
+            return button
+        case "TextInput":
+            let field = UITextField()
+            field.borderStyle = .roundedRect
+            field.addTarget(self, action: #selector(textChanged(_:)), for: .editingChanged)
+            return field
+        default:
+            let stack = UIStackView()
+            stack.alignment = .fill
+            stack.distribution = .fill
             stack.isLayoutMarginsRelativeArrangement = true
-            for (index, child) in children.enumerated() {
-                if let child = child as? [String: Any] {
-                    stack.addArrangedSubview(makeView(child, path: "\(key).\(index)"))
-                }
-            }
-            if path == "root", stack.axis == .vertical {
-                stack.addArrangedSubview(UIView())
-            }
-            result = stack
+            return stack
+        }
+    }
+
+    private func explicitKey(_ node: [String: Any], props: [String: Any]) -> String? {
+        // The current stx-native compiler emits key in props; accept the IR
+        // field too so keyed children keep working when the compiler adopts it.
+        [node["key"], props["key"], props["testID"]]
+            .compactMap { $0 as? String }
+            .first { !$0.isEmpty }
+    }
+
+    private func reconcileChildren(_ children: [Any], in stack: UIStackView, parent: RenderedNode, path: String) {
+        let nodes = children.compactMap { $0 as? [String: Any] }
+        let keys = nodes.compactMap { explicitKey($0, props: $0["props"] as? [String: Any] ?? [:]) }
+        let counts = Dictionary(keys.map { ($0, 1) }, uniquingKeysWith: +)
+        let old = Dictionary(uniqueKeysWithValues: parent.children.map { ($0.identity, $0) })
+        var next: [RenderedNode] = []
+
+        for (index, node) in nodes.enumerated() {
+            let key = explicitKey(node, props: node["props"] as? [String: Any] ?? [:])
+            // Keys are local to a parent. Ambiguous sibling keys fall back to
+            // position so a move never attaches the wrong live control.
+            let identity = key.flatMap { counts[$0] == 1 ? "key:\($0)" : nil } ?? "index:\(index)"
+            let child = reconcile(node, identity: identity, path: "\(path).\(index)", previous: old[identity])
+            next.append(child)
         }
 
-        result.accessibilityIdentifier = key
-        if type != "View" && type != "SafeAreaView" {
-            result.setContentHuggingPriority(.required, for: .vertical)
+        for child in parent.children where !next.contains(where: { $0 === child }) {
+            detach(child, from: stack)
         }
-        if let background = color(style["backgroundColor"]) {
-            result.backgroundColor = background
+        for (index, child) in next.enumerated() {
+            if index < stack.arrangedSubviews.count, stack.arrangedSubviews[index] === child.view { continue }
+            if stack.arrangedSubviews.contains(where: { $0 === child.view }) {
+                stack.removeArrangedSubview(child.view)
+            }
+            stack.insertArrangedSubview(child.view, at: index)
         }
-        if let radius = number(style["borderRadius"]) {
-            result.layer.cornerRadius = radius
+        parent.children = next
+        if path == "root" && stack.axis == .vertical {
+            // Keep the initial screen pinned to the safe-area top.
+            if stack.arrangedSubviews.count == next.count { stack.addArrangedSubview(UIView()) }
+        } else if stack.arrangedSubviews.count > next.count {
+            for filler in stack.arrangedSubviews.dropFirst(next.count) {
+                stack.removeArrangedSubview(filler)
+                filler.removeFromSuperview()
+            }
         }
-        if let width = number(style["width"]) {
-            result.widthAnchor.constraint(equalToConstant: width).isActive = true
+    }
+
+    private func detach(_ node: RenderedNode, from stack: UIStackView) {
+        forgetHandlers(node)
+        stack.removeArrangedSubview(node.view)
+        node.view.removeFromSuperview()
+    }
+
+    private func forgetHandlers(_ node: RenderedNode) {
+        handlers.removeValue(forKey: ObjectIdentifier(node.view))
+        for child in node.children { forgetHandlers(child) }
+    }
+
+    private func updateHandler(_ handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        if let handler = handler { handlers[id] = handler }
+        else { handlers.removeValue(forKey: id) }
+    }
+
+    private func updateField(_ field: UITextField, value: String?) {
+        guard let value = value, field.text != value, field.markedTextRange == nil else { return }
+        let selection = field.selectedTextRange
+        let start = selection.map { field.offset(from: field.beginningOfDocument, to: $0.start) }
+        let end = selection.map { field.offset(from: field.beginningOfDocument, to: $0.end) }
+        field.text = value
+        if let start = start, let end = end,
+           let from = field.position(from: field.beginningOfDocument, offset: min(start, value.utf16.count)),
+           let to = field.position(from: field.beginningOfDocument, offset: min(end, value.utf16.count)) {
+            field.selectedTextRange = field.textRange(from: from, to: to)
         }
-        if let height = number(style["height"]) {
-            result.heightAnchor.constraint(equalToConstant: height).isActive = true
+    }
+
+    private func updateDimension(_ value: CGFloat?, constraint: inout NSLayoutConstraint?, anchor: NSLayoutDimension) {
+        if let value = value {
+            if let constraint = constraint { constraint.constant = value }
+            else {
+                constraint = anchor.constraint(equalToConstant: value)
+                constraint?.isActive = true
+            }
+        } else {
+            constraint?.isActive = false
+            constraint = nil
         }
-        return result
     }
 
     @objc private func buttonPressed(_ sender: UIButton) {
