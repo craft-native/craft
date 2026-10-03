@@ -1,5 +1,99 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.105...v0.0.106)
+
+## 🚀 Features
+
+- **android**: bridge STX through sandbox console when ports lack support ([5be5f2a](https://github.com/craft-native/craft/commit/5be5f2a)) _(by glennmichael123)_
+- **android**: host STX screens in native views ([40dfcd9](https://github.com/craft-native/craft/commit/40dfcd9)) _(by glennmichael123)_
+- **android**: package compiled native STX screens ([fd4e37b](https://github.com/craft-native/craft/commit/fd4e37b)) _(by glennmichael123)_
+- **ios**: host native screens in a navigation stack ([3b842ba](https://github.com/craft-native/craft/commit/3b842ba)) _(by glennmichael123)_
+- reconcile native iOS screen views incrementally ([a247d99](https://github.com/craft-native/craft/commit/a247d99)) _(by glennmichael123)_
+- expose native iOS screens through Craft CLI ([b1b7da7](https://github.com/craft-native/craft/commit/b1b7da7)) _(by glennmichael123)_
+- host stx-native screens in UIKit without WebView ([b10103f](https://github.com/craft-native/craft/commit/b10103f)) _(by glennmichael123)_
+- support parent-scoped windows on Windows ([cd19fec](https://github.com/craft-native/craft/commit/cd19fec)) _(by glennmichael123)_
+- support parent-scoped windows on Linux ([97775fa](https://github.com/craft-native/craft/commit/97775fa)) _(by glennmichael123)_
+- attach parented windows and modal sheets on macOS ([25ae7b3](https://github.com/craft-native/craft/commit/25ae7b3)) _(by glennmichael123)_
+- model parented desktop window relationships ([7f79299](https://github.com/craft-native/craft/commit/7f79299)) _(by glennmichael123)_
+- request named-window attention on desktop ([80aa81d](https://github.com/craft-native/craft/commit/80aa81d)) _(by glennmichael123)_
+- support desktop window visibility toggle ([73941e2](https://github.com/craft-native/craft/commit/73941e2)) _(by glennmichael123)_
+- expose desktop window state on Linux and Windows ([68e2756](https://github.com/craft-native/craft/commit/68e2756)) _(by glennmichael123)_
+- support relative movement of desktop child windows ([5a58975](https://github.com/craft-native/craft/commit/5a58975)) _(by glennmichael123)_
+- support topmost controls in desktop child windows ([82aebf9](https://github.com/craft-native/craft/commit/82aebf9)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **macos**: enable element fullscreen in every web view ([1560dee](https://github.com/craft-native/craft/commit/1560dee)) _(by Chris)_
+- **android**: contrast native STX text with app background ([ec8397c](https://github.com/craft-native/craft/commit/ec8397c)) _(by glennmichael123)_
+- **android**: preserve native focus through STX rerenders ([bccb834](https://github.com/craft-native/craft/commit/bccb834)) _(by glennmichael123)_
+- **android**: separate native and web fixture tests ([df1fbee](https://github.com/craft-native/craft/commit/df1fbee)) _(by glennmichael123)_
+- **android**: retain native controls across STX renders ([ddead5e](https://github.com/craft-native/craft/commit/ddead5e)) _(by glennmichael123)_
+- **ios**: align Zig capability config with Swift defaults ([8dbee58](https://github.com/craft-native/craft/commit/8dbee58)) _(by glennmichael123)_
+- verify npm archives before publishing release ([c98264c](https://github.com/craft-native/craft/commit/c98264c)) _(by glennmichael123)_
+- gate npm publication on complete native release ([1afbac7](https://github.com/craft-native/craft/commit/1afbac7)) _(by glennmichael123)_
+- **linux**: restore parent sensitivity after modal ([d1354c7](https://github.com/craft-native/craft/commit/d1354c7)) _(by glennmichael123)_
+- reject unsupported parented window requests ([f61c045](https://github.com/craft-native/craft/commit/f61c045)) _(by glennmichael123)_
+- cancel macOS window attention by request ID ([c803bda](https://github.com/craft-native/craft/commit/c803bda)) _(by glennmichael123)_
+- honor desktop window size-limit aliases ([4511070](https://github.com/craft-native/craft/commit/4511070)) _(by glennmichael123)_
+- publish pantry package after verified release ([5f53453](https://github.com/craft-native/craft/commit/5f53453)) _(by glennmichael123)_
+- emit first Linux child resize from installed apps ([782d854](https://github.com/craft-native/craft/commit/782d854)) _(by glennmichael123)_
+- verify child controls in installed desktop apps ([33fbd66](https://github.com/craft-native/craft/commit/33fbd66)) _(by glennmichael123)_
+- announce releases only after publication ([c4d4e5a](https://github.com/craft-native/craft/commit/c4d4e5a)) _(by glennmichael123)_
+- pin Pantry CLI across remaining workflows ([0b091a6](https://github.com/craft-native/craft/commit/0b091a6)) _(by glennmichael123)_
+- pin Pantry CLI for CI and release setup ([4d69a26](https://github.com/craft-native/craft/commit/4d69a26)) _(by glennmichael123)_
+- deduplicate references in release changelogs ([aecc383](https://github.com/craft-native/craft/commit/aecc383)) _(by glennmichael123)_
+- keep release drafts private until artifacts pass gates ([b5a07e0](https://github.com/craft-native/craft/commit/b5a07e0)) _(by glennmichael123)_
+
+## ♻️ Code Refactoring
+
+- share iOS native actions across screen hosts ([94da2b4](https://github.com/craft-native/craft/commit/94da2b4)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **android**: explain native STX support and evidence ([ae9c6a3](https://github.com/craft-native/craft/commit/ae9c6a3)) _(by glennmichael123)_
+- separate app-wide events from multi-window contract ([dbb468a](https://github.com/craft-native/craft/commit/dbb468a)) _(by glennmichael123)_
+- align window guide with native handle contract ([7500e75](https://github.com/craft-native/craft/commit/7500e75)) _(by glennmichael123)_
+- mark desktop parent modal contract implemented ([8ceb9f4](https://github.com/craft-native/craft/commit/8ceb9f4)) _(by glennmichael123)_
+- **ios**: clarify strict file picker filters ([0870b52](https://github.com/craft-native/craft/commit/0870b52)) _(by glennmichael123)_
+- propose parent-scoped desktop window semantics ([12d3175](https://github.com/craft-native/craft/commit/12d3175)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **android**: report native emulator bootstrap failures ([d2b215a](https://github.com/craft-native/craft/commit/d2b215a)) _(by glennmichael123)_
+- **android**: exercise native STX navigation on emulator ([40b2ce3](https://github.com/craft-native/craft/commit/40b2ce3)) _(by glennmichael123)_
+- **ios**: scan shared native action dispatcher ([5f01e90](https://github.com/craft-native/craft/commit/5f01e90)) _(by glennmichael123)_
+- **ios**: verify native route lifecycles on simulator ([6d0b693](https://github.com/craft-native/craft/commit/6d0b693)) _(by glennmichael123)_
+- exercise compiled stx screens on the iOS simulator ([5c9702c](https://github.com/craft-native/craft/commit/5c9702c)) _(by glennmichael123)_
+- run native renderer simulator checks in mobile CI ([0f6eadf](https://github.com/craft-native/craft/commit/0f6eadf)) _(by glennmichael123)_
+- exercise native iOS capability responses ([2db0fff](https://github.com/craft-native/craft/commit/2db0fff)) _(by glennmichael123)_
+- report installed multi-window checks before notifications ([14ddaae](https://github.com/craft-native/craft/commit/14ddaae)) _(by glennmichael123)_
+- pass Openbox display context to native probe ([c4c24b6](https://github.com/craft-native/craft/commit/c4c24b6)) _(by glennmichael123)_
+- verify Linux transient stacking under Openbox ([7440c89](https://github.com/craft-native/craft/commit/7440c89)) _(by glennmichael123)_
+- exercise Linux modal focus under Openbox ([f70a71f](https://github.com/craft-native/craft/commit/f70a71f)) _(by glennmichael123)_
+- verify native Windows modal ownership ([c569ed3](https://github.com/craft-native/craft/commit/c569ed3)) _(by glennmichael123)_
+- **windows**: enumerate native windows by process ([f1233a1](https://github.com/craft-native/craft/commit/f1233a1)) _(by glennmichael123)_
+- **windows**: inspect parent-only modal state ([ef2cd4c](https://github.com/craft-native/craft/commit/ef2cd4c)) _(by glennmichael123)_
+- reject invalid desktop window parenting ([4849e50](https://github.com/craft-native/craft/commit/4849e50)) _(by glennmichael123)_
+- verify parented windows in installed MSI ([5f6adc4](https://github.com/craft-native/craft/commit/5f6adc4)) _(by glennmichael123)_
+- verify macOS parented windows in installed app ([1187b26](https://github.com/craft-native/craft/commit/1187b26)) _(by glennmichael123)_
+- exercise macOS window attention in installed app ([c6cbdde](https://github.com/craft-native/craft/commit/c6cbdde)) _(by glennmichael123)_
+- guard desktop child lifecycle event ownership ([db86e38](https://github.com/craft-native/craft/commit/db86e38)) _(by glennmichael123)_
+- verify addressed window state in installed apps ([0660213](https://github.com/craft-native/craft/commit/0660213)) _(by glennmichael123)_
+- verify installed window adoption on every desktop ([1dc6db7](https://github.com/craft-native/craft/commit/1dc6db7)) _(by glennmichael123)_
+- verify installed macOS window adoption ([5fc86e1](https://github.com/craft-native/craft/commit/5fc86e1)) _(by glennmichael123)_
+- cover orphaned child window adoption ([01db103](https://github.com/craft-native/craft/commit/01db103)) _(by glennmichael123)_
+- distinguish macOS notification denial in installed smoke ([e114267](https://github.com/craft-native/craft/commit/e114267)) _(by glennmichael123)_
+- reject every incomplete release draft ([5e9ea97](https://github.com/craft-native/craft/commit/5e9ea97)) _(by glennmichael123)_
+- rehearse guarded release commit and tag ([61b61d9](https://github.com/craft-native/craft/commit/61b61d9)) _(by glennmichael123)_
+- exercise child windows in installed desktop apps ([4187cb1](https://github.com/craft-native/craft/commit/4187cb1)) _(by glennmichael123)_
+- assert child window events stay with their owners ([9256687](https://github.com/craft-native/craft/commit/9256687)) _(by glennmichael123)_
+- verify downloaded Linux and Windows release binaries ([ad84e80](https://github.com/craft-native/craft/commit/ad84e80)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.104...v0.0.105)
 
 ## 🚀 Features
