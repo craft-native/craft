@@ -522,19 +522,33 @@ async function launchViaSdk(): Promise<void> {
       if (${testMacNotificationPermission}) {
         let permission = null
         let requestError = null
-        try {
-          permission = await Promise.race([
-            window.craft.notifications.requestPermission({ provisional: true }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
-          ])
+        let status = null
+        const requestErrors = []
+        // A request Notification Center could not answer leaves the state
+        // notDetermined. That is retried with backoff (the bundle may not be
+        // registered yet on a fresh runner), never treated as a pass: a state
+        // still undetermined after the last attempt fails below as before.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          requestError = null
+          try {
+            permission = await Promise.race([
+              window.craft.notifications.requestPermission({ provisional: true }),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('macOS notification permission did not answer within 15 seconds')), 15000)),
+            ])
+          }
+          catch (error) {
+            // An NSError is not a normal denial. Ask Notification Center for
+            // its actual state before classifying a runner that cannot prompt.
+            if (error?.code !== 'NATIVE_CALL_FAILED') throw error
+            requestError = error
+            requestErrors.push(String(error?.message || error))
+          }
+          status = await window.craft.notifications.getPermissionStatus()
+          if (!(requestError && (status === 'notDetermined' || status === 'unknown'))) break
+          await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt))
         }
-        catch (error) {
-          // An NSError is not a normal denial. Ask Notification Center for
-          // its actual state before classifying a runner that cannot prompt.
-          if (error?.code !== 'NATIVE_CALL_FAILED') throw error
-          requestError = error
-        }
-        const status = await window.craft.notifications.getPermissionStatus()
+        if (requestErrors.length > 0 && requestError)
+          requestError = { ...requestError, attempts: requestErrors }
         if (typeof status !== 'string') throw new Error('macOS notification authorization status was not a string')
         if (status === 'notDetermined' || status === 'unknown')
           throw new Error(JSON.stringify({ message: 'macOS notification authorization did not reach a determined state', status, requestError }))
@@ -856,8 +870,16 @@ async function main(): Promise<void> {
     installed = true
 
     if (!existsSync(installPath)) throw new Error(`Installer did not create ${installPath}`)
-    if (platform === 'macos')
+    if (platform === 'macos') {
       await command('verify installed macOS app signature', ['codesign', '--verify', '--deep', '--strict', '/Applications/craft.app'])
+      // Notification Center resolves an app by its LaunchServices record. A
+      // PKG-installed bundle is registered asynchronously, and on a fresh
+      // hosted runner the first authorization request can arrive before that
+      // record does: it fails with "Notifications are not allowed for this
+      // application" and the state stays notDetermined (craft-native/craft#330).
+      // Registering explicitly removes the race instead of waiting on it.
+      await command('register installed app with LaunchServices', ['/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', '-f', '/Applications/craft.app'])
+    }
     verifyNativeStartup(installPath, version)
     if (platform === 'windows' && sha256(join(dirname(installPath), 'WebView2Loader.dll')) !== sha256(loader))
       throw new Error('Windows MSI did not install the WebView2 loader beside craft.exe')
