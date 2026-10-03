@@ -69,7 +69,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
 
@@ -340,7 +340,7 @@ jobs:
       # publish the Zig package here: a failed second leg would otherwise make
       # an incomplete version visible in the pantry registry.
       - name: Stage draft release
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
           install: 'false'
@@ -431,7 +431,7 @@ jobs:
       # paths; it does not rebuild a platform binary. The complete GitHub
       # release is public before this registry version can become visible.
       - name: Publish Zig package
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
           install: 'false'
@@ -631,7 +631,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
 
@@ -718,7 +718,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777 # pinned: last SHA whose bundled typescript resolves on linux-x64
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
       - uses: actions/setup-node@v6
