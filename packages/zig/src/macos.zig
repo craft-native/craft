@@ -1033,6 +1033,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
         // Enable JavaScript explicitly (should be enabled by default, but let's be explicit)
         msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
+        enableElementFullscreen(prefs);
 
         // Enable developer extras (DevTools) only when requested
         if (style.dev_tools) {
@@ -2534,6 +2535,7 @@ pub fn createWindowWithSidebar(
     const prefs = msgSend0(prefs_alloc, "init");
     defer msgSendVoid0(prefs, "release");
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
+    enableElementFullscreen(prefs);
 
     // Enable developer extras
     const key_str = createNSString("developerExtrasEnabled");
@@ -3601,6 +3603,7 @@ pub fn createWindowWithSidebarURL(
     const prefs = msgSend0(prefs_alloc, "init");
     defer msgSendVoid0(prefs, "release");
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
+    enableElementFullscreen(prefs);
 
     const key_str = createNSString("developerExtrasEnabled");
     const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
@@ -4008,6 +4011,17 @@ pub fn minimizeWindow(window_handle: anytype) void {
 
 pub fn maximizeWindow(window: objc.id) void {
     msgSendVoid1(window, "zoom:", @as(objc.id, null));
+}
+
+/// Let pages enter element fullscreen (`Element.requestFullscreen`). WKWebView
+/// leaves it off, so the standard API is undefined in every Craft window while
+/// Safari exposes it: an engine's fullscreen button (three.js, Babylon, a Godot
+/// web export) silently did nothing (measured by stacksjs/stacks#877). It is
+/// still gated on a user gesture by WebKit, like in Safari. Public on macOS
+/// 12.3+; older systems keep the previous behaviour.
+fn enableElementFullscreen(prefs: objc.id) void {
+    if (!msgSendBool1Sel(prefs, "respondsToSelector:", objc.sel_registerName("setElementFullscreenEnabled:"))) return;
+    msgSendVoid1(prefs, "setElementFullscreenEnabled:", true);
 }
 
 pub fn toggleFullscreen(window: objc.id) void {
