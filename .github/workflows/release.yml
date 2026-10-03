@@ -521,12 +521,15 @@ jobs:
           - { os: macos-15, name: darwin-arm64 }
           - { os: macos-15-intel, name: darwin-x64 }
     runs-on: ${{ matrix.platform.os }}
+    # write, though this job only downloads: the release is still a draft
+    # here, and GitHub hides drafts from read-only tokens, so `gh release
+    # download` answered "release not found" (v0.0.106).
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v6
       - name: Setup Pantry
-        uses: pantry-pm/pantry/packages/action@235036fa0f48bae99b2293df5a3dc35c809b1777
+        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
         with:
           version: '0.11.64'
       - name: Verify the final downloadable executable
@@ -551,8 +554,11 @@ jobs:
           - { os: ubuntu-latest, name: linux-x64 }
           - { os: windows-2025, name: windows-x64 }
     runs-on: ${{ matrix.platform.os }}
+    # write, though this job only downloads: the release is still a draft
+    # here, and GitHub hides drafts from read-only tokens, so `gh release
+    # download` answered "release not found" (v0.0.106).
     permissions:
-      contents: read
+      contents: write
     env:
       GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
       TAG: ${{ github.ref_name }}
