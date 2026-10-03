@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.106...v0.0.107)
+
+## 🐛 Bug Fixes
+
+- **release**: let the download verifiers see the draft release ([8077cdf](https://github.com/craft-native/craft/commit/8077cdf)) _(by Chris)_
+
+## 🤖 Continuous Integration
+
+- pin the pantry action at v0.11.66, whose matrix legs share one draft ([a1ab4f7](https://github.com/craft-native/craft/commit/a1ab4f7)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.105...v0.0.106)
 
 ## 🚀 Features
