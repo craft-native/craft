@@ -1038,6 +1038,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // Key names in menu shortcuts ("cmd+delete", "cmd+up") and the AppKit
+    // key equivalents they stand for. Pure data, like the role table.
+    const menu_keys_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/menu_keys.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
     // Accelerator strings ("Cmd+Shift+H") and the Carbon hotkey binding they
     // are registered through. Both are pure enough to test without a window.
     const accelerator_tests = b.addTest(.{
@@ -1777,6 +1787,7 @@ pub fn build(b: *std.Build) void {
     const run_space_list_tests = b.addRunArtifact(space_list_tests);
     const run_local_tls_tests = b.addRunArtifact(local_tls_tests);
     const run_menu_roles_tests = b.addRunArtifact(menu_roles_tests);
+    const run_menu_keys_tests = b.addRunArtifact(menu_keys_tests);
     const run_capabilities_tests = b.addRunArtifact(capabilities_tests);
     const run_compat_mutex_tests = b.addRunArtifact(compat_mutex_tests);
     const run_bridge_log_tests = b.addRunArtifact(bridge_log_tests);
@@ -1935,6 +1946,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
+    test_step.dependOn(&run_menu_keys_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
     test_step.dependOn(&run_compat_mutex_tests.step);
     test_step.dependOn(&run_bridge_log_tests.step);

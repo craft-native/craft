@@ -319,7 +319,7 @@ pub const MenuBridge = struct {
                 // The token after the last `+` is the key; everything else is
                 // a modifier (cmd/ctrl/alt/opt/shift, case-insensitive).
                 if (it.peek() == null) {
-                    key_equiv = tok;
+                    key_equiv = @import("menu_keys.zig").keyEquivalent(tok);
                     break;
                 }
                 if (std.ascii.eqlIgnoreCase(tok, "cmd")) {
