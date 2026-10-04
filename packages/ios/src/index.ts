@@ -48,6 +48,8 @@ export interface CraftConfig {
   enableOrientationLock?: boolean
   enableDeepLinks?: boolean
   enableQRScanner?: boolean
+  /** Reach devices on the local network (a Mac on the same Wi-Fi); iOS asks first. */
+  enableLocalNetwork?: boolean
   enableFilePicker?: boolean
   enableFileDownload?: boolean
   enableSocialAuth?: boolean
@@ -168,6 +170,7 @@ const DEFAULT_CONFIG: Omit<CraftConfig, 'appName' | 'bundleId'> = {
   enableOrientationLock: false,
   enableDeepLinks: false,
   enableQRScanner: false,
+  enableLocalNetwork: false,
   enableFilePicker: false,
   enableFileDownload: false,
   enableSocialAuth: false,
@@ -249,6 +252,7 @@ export function renderUsageDescriptions(config: CraftConfig): string {
     [config.enableBluetooth, 'NSBluetoothAlwaysUsageDescription', `${config.appName} uses Bluetooth to connect to nearby devices.`],
     [config.enableMotionSensors, 'NSMotionUsageDescription', `${config.appName} uses motion data for activity features.`],
     [config.enableNFC, 'NFCReaderUsageDescription', `${config.appName} reads NFC tags when you start a scan.`],
+    [config.enableLocalNetwork, 'NSLocalNetworkUsageDescription', `${config.appName} connects to your own devices on this network.`],
     [config.enableHealthKit, 'NSHealthShareUsageDescription', `${config.appName} reads health data you choose to share.`],
     [config.enableHealthKit, 'NSHealthUpdateUsageDescription', `${config.appName} writes health data only with your permission.`],
     [config.enableBiometric, 'NSFaceIDUsageDescription', `${config.appName} uses Face ID to protect your account.`],

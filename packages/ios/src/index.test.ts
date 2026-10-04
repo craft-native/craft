@@ -84,6 +84,9 @@ describe('Craft iOS builder', () => {
     expect(renderUsageDescriptions(config)).toContain('NSLocationAlwaysAndWhenInUseUsageDescription')
     expect(renderUsageDescriptions(config)).toContain('NSFaceIDUsageDescription')
     expect(renderUsageDescriptions(config)).not.toContain('NSCameraUsageDescription')
+    // Only an app that asks for it explains reaching the local network.
+    expect(renderUsageDescriptions(config)).not.toContain('NSLocalNetworkUsageDescription')
+    expect(renderUsageDescriptions({ ...config, enableLocalNetwork: true })).toContain('<key>NSLocalNetworkUsageDescription</key>')
     expect(renderOrientations(config)).toContain('UIInterfaceOrientationPortrait')
     expect(renderUrlTypes(config)).toContain('<string>wildloop</string>')
     expect(renderBackgroundModes(config)).toContain('<string>location</string>')
