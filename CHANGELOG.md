@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.111...v0.0.112)
+
+## 🚀 Features
+
+- **macos**: a live native sidebar - updates, badges and selection events ([02dbe22](https://github.com/craft-native/craft/commit/02dbe22)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.110...v0.0.111)
 
 ## 🚀 Features
