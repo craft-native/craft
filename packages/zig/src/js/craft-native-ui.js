@@ -42,7 +42,11 @@ createSpacesSidebar(o={}){const id=o.id||`spaces-${Date.now()}-${Math.random().t
 _emitSpaceChange(id,spaceId){const h=spacesRegistry.get(id);if(h)h._emit(spaceId)},
 createFileBrowser(o={}){const id=o.id||`browser-${Date.now()}-${Math.random().toString(36).substr(2,9)}`;s('createFileBrowser',{id});return new FileBrowser(id)},
 createSplitView(o){if(!o.sidebar||!o.browser)throw new Error('createSplitView requires both sidebar and browser options');const id=o.id||`splitview-${Date.now()}-${Math.random().toString(36).substr(2,9)}`;s('createSplitView',{id:id,sidebarId:o.sidebar.id,browserId:o.browser.id});return new SplitView(id,o.sidebar,o.browser)},
-showContextMenu(o){if(!o.items||!o.items.length)throw new Error('showContextMenu requires items array');s('showContextMenu',{targetId:o.targetId||'',targetType:o.targetType||'general',x:o.x||0,y:o.y||0,items:o.items})},
+// Resolves with {id,targetId,targetType} once the menu closes; id is null
+// when it was dismissed. x/y are the event's clientX/clientY.
+showContextMenu(o){if(!o.items||!o.items.length)throw new Error('showContextMenu requires items array');const d={targetId:o.targetId||'',targetType:o.targetType||'general',x:o.x||0,y:o.y||0,items:o.items};if(typeof window.craft.invoke==='function')return window.craft.invoke('nativeUI.showContextMenu',d);s('showContextMenu',d);return Promise.resolve({id:null,targetId:d.targetId,targetType:d.targetType})},
+// Every context menu's outcome, whoever opened it. Returns an unsubscribe.
+onContextMenuAction(cb){const h=e=>cb(e.detail||{});window.addEventListener('craft:contextmenu:action',h);return()=>window.removeEventListener('craft:contextmenu:action',h)},
 showQuickLook(o){if(!o.files||!o.files.length)throw new Error('showQuickLook requires files array');s('showQuickLook',{files:o.files,currentIndex:o.currentIndex||0})},
 closeQuickLook(){s('closeQuickLook',{})},
 toggleQuickLook(o){if(!o.files||!o.files.length)throw new Error('toggleQuickLook requires files array');s('toggleQuickLook',{files:o.files,currentIndex:o.currentIndex||0})},

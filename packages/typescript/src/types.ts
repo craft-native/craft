@@ -1257,6 +1257,47 @@ export interface CraftWindowControls {
   replicas: 'none' | null
 }
 
+/** One row of a native context menu. */
+export interface CraftContextMenuItem {
+  id: string
+  title: string
+  /** `'separator'` draws a divider; `'submenu'` nests `submenu` one level. */
+  type?: 'standard' | 'separator' | 'submenu'
+  /** SF Symbol name, e.g. `'archivebox'`. */
+  icon?: string
+  /**
+   * `'cmd+e'`, `'cmd+delete'`, `'cmd+shift+up'`: modifiers, then a character
+   * or a key name (delete, forwarddelete, return, escape, tab, space, up,
+   * down, left, right, home, end, pageup, pagedown, f1-f12, plus, minus).
+   */
+  shortcut?: string
+  enabled?: boolean
+  submenu?: CraftContextMenuItem[]
+}
+
+/** How a context menu closed. `id` is null when it was dismissed. */
+export interface CraftContextMenuResult {
+  id: string | null
+  targetId: string
+  targetType: string
+}
+
+export interface CraftNativeUIAPI {
+  /**
+   * Open a native context menu at the page point `x`/`y` (an event's
+   * `clientX`/`clientY`). Resolves when the menu closes.
+   */
+  showContextMenu: (options: {
+    items: CraftContextMenuItem[]
+    x: number
+    y: number
+    targetId?: string
+    targetType?: string
+  }) => Promise<CraftContextMenuResult>
+  /** Every context menu's outcome. Returns an unsubscribe function. */
+  onContextMenuAction: (callback: (result: CraftContextMenuResult) => void) => () => void
+}
+
 export interface CraftBridgeAPI {
   /**
    * Where the platform drew this window's close/minimise/zoom buttons.
@@ -1315,6 +1356,12 @@ export interface CraftBridgeAPI {
    * Native sidebar APIs (macOS)
    */
   sidebar?: CraftSidebarAPI
+
+  /**
+   * Native AppKit controls the page can open (macOS). Also reachable as
+   * `craft.components`.
+   */
+  nativeUI?: CraftNativeUIAPI
 
   /**
    * Crypto APIs

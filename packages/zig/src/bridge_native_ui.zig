@@ -8,6 +8,7 @@ const NativeSplitView = @import("components/native_split_view.zig").NativeSplitV
 const NativeSplitViewController = @import("components/native_split_view_controller.zig").NativeSplitViewController;
 const space_switcher = @import("components/native_space_switcher.zig");
 const context_menu = @import("components/context_menu.zig");
+const bridge_error = @import("bridge_error.zig");
 const quick_look = @import("components/quick_look.zig");
 
 const WindowState = struct {
@@ -1006,6 +1007,14 @@ pub const NativeUIBridge = struct {
             }
         }
 
+        // A menu the page opens for itself is anchored to the page: the
+        // coordinates it sends are the event's clientX/clientY, which only
+        // mean something in its own webview.
+        const from_page = view == null;
+        if (from_page) {
+            view = macos.getMessageWebView();
+        }
+
         // Fallback to window's content view
         if (view == null) {
             view = macos.msgSend0(state.window, "contentView");
@@ -1029,10 +1038,32 @@ pub const NativeUIBridge = struct {
         if (state.active_context_menu_delegate) |prev_delegate| prev_delegate.deinit();
         state.active_context_menu_delegate = delegate;
 
-        // Show the menu
-        context_menu.showContextMenu(menu, view, .{ .x = x, .y = y });
+        // Page coordinates run down from the top. AppKit's run up from the
+        // bottom unless the view is flipped, so an unflipped view would open
+        // the menu mirrored about the middle of the window.
+        const point = pagePointInView(view, from_page, x, y);
+
+        // Show the menu. This returns once the menu has closed, by which time
+        // the delegate knows which item was chosen, if any.
+        context_menu.showContextMenu(menu, view, point);
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Showed context menu for {s} '{s}' at ({d}, {d})\n", .{ target_type, target_id, x, y });
+
+        // Tell the page. Clicking an item used to end at a native callback
+        // nothing ever registered, so a context menu could be shown but never
+        // acted on. The reply resolves `craft.nativeUI.showContextMenu()`, and
+        // the event reaches `onContextMenuAction` listeners - including the
+        // menus a dismissal closes, as `id: null`.
+        const json = try contextMenuResultJson(self.allocator, delegate.callback_data.selectedItemId(), target_id, target_type);
+        defer self.allocator.free(json);
+        bridge_error.sendResultToJS(self.allocator, "showContextMenu", json);
+        const script = try std.fmt.allocPrint(
+            self.allocator,
+            "window.dispatchEvent(new CustomEvent('craft:contextmenu:action',{{detail:{s}}}))",
+            .{json},
+        );
+        defer self.allocator.free(script);
+        macos.tryEvalJSInWebView(macos.getMessageWebView(), script) catch {};
     }
 
     /// Show Quick Look panel for files
@@ -1126,6 +1157,46 @@ pub const NativeUIBridge = struct {
             std.debug.print("[NativeUI] Toggled Quick Look ON\n", .{});
     }
 };
+
+/// Convert a point the page measured (CSS pixels from the top left of its
+/// viewport) into `view`'s coordinate space. Only a page-anchored point needs
+/// it; sidebar and file-browser menus are already in their view's space.
+fn pagePointInView(view: macos.objc.id, from_page: bool, x: f64, y: f64) macos.NSPoint {
+    if (!from_page or macos.msgSendBool(view, "isFlipped")) return .{ .x = x, .y = y };
+    const height = macos.msgSendRect(view, "bounds").size.height;
+    return .{ .x = x, .y = height - y };
+}
+
+/// `{"id":…,"targetId":…,"targetType":…}`, with `id` null when the menu was
+/// dismissed. Ids come from the page, so they are escaped like any other
+/// string headed back into JavaScript.
+fn contextMenuResultJson(allocator: std.mem.Allocator, chosen: ?[]const u8, target_id: []const u8, target_type: []const u8) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
+    try out.appendSlice(allocator, "{\"id\":");
+    if (chosen) |id| {
+        try out.append(allocator, '"');
+        try bridge_error.appendJsonEscaped(allocator, &out, id);
+        try out.append(allocator, '"');
+    } else try out.appendSlice(allocator, "null");
+    try out.appendSlice(allocator, ",\"targetId\":\"");
+    try bridge_error.appendJsonEscaped(allocator, &out, target_id);
+    try out.appendSlice(allocator, "\",\"targetType\":\"");
+    try bridge_error.appendJsonEscaped(allocator, &out, target_type);
+    try out.appendSlice(allocator, "\"}");
+    return out.toOwnedSlice(allocator);
+}
+
+test "a context menu result names the chosen item and escapes page-supplied ids" {
+    const allocator = std.testing.allocator;
+    const chosen = try contextMenuResultJson(allocator, "archive", "chat \"1\"", "general");
+    defer allocator.free(chosen);
+    try std.testing.expectEqualStrings("{\"id\":\"archive\",\"targetId\":\"chat \\\"1\\\"\",\"targetType\":\"general\"}", chosen);
+
+    const dismissed = try contextMenuResultJson(allocator, null, "line\nbreak", "general");
+    defer allocator.free(dismissed);
+    try std.testing.expectEqualStrings("{\"id\":null,\"targetId\":\"line\\nbreak\",\"targetType\":\"general\"}", dismissed);
+}
 
 test "native UI component registries are isolated by sending window" {
     var bridge = NativeUIBridge.init(std.testing.allocator);

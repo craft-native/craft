@@ -8,6 +8,7 @@ The Craft JavaScript Bridge provides a seamless interface for your web applicati
 - [Getting Started](#getting-started)
 - [System Tray API](#system-tray-api)
 - [Application Menu (macOS)](#application-menu-macos)
+- [Context Menus (macOS)](#context-menus-macos)
 - [Global Shortcuts (macOS)](#global-shortcuts-macos)
 - [Settings and Preferences (macOS)](#settings-and-preferences-macos)
 - [Headless mode](#headless-mode)
@@ -235,7 +236,7 @@ interface MenuItemDefinition {
   /** Echoed back by `onAction` when this item is clicked. */
   id?: string
   label?: string
-  /** Accelerator, e.g. `cmd+n`, `cmd+shift+r`. */
+  /** Accelerator, e.g. `cmd+n`, `cmd+shift+r`, `cmd+delete` - see "Shortcut keys". */
   shortcut?: string
   /** Icon name (SF Symbol, resolved through Craft's cross-platform icon table). */
   icon?: string
@@ -289,6 +290,55 @@ a newer bridge surface therefore fails soft on an older binary.
 | `enableItem(itemId)` / `disableItem(itemId)` | greyed out or not |
 | `checkItem(itemId)` / `uncheckItem(itemId)` | checkmark |
 | `setItemLabel(itemId, label)` | rename in place |
+
+### Shortcut keys
+
+A shortcut is modifiers (`cmd`, `ctrl`, `alt`/`opt`, `shift`) joined by `+`,
+then one key. The key is a single character (`cmd+e`, `cmd+,`) or, for keys that
+type nothing, a name: `delete` (⌫), `forwarddelete` (⌦), `return`/`enter`,
+`escape`/`esc`, `tab`, `space`, `up`, `down`, `left`, `right`, `home`, `end`,
+`pageup`, `pagedown`, `f1`-`f12`, and `plus`/`minus` since `+` is the separator.
+Names are case-insensitive. The same spelling works in context menus.
+
+Before 0.0.108 a name was passed through as text, so AppKit bound its first
+letter: `cmd+delete` became ⌘D.
+
+## Context Menus (macOS)
+
+### `window.craft.nativeUI.showContextMenu(options): Promise<{ id, targetId, targetType }>`
+
+Open a native menu at a point on the page - pass the `contextmenu` event's
+`clientX`/`clientY`. The promise resolves when the menu closes, with the chosen
+item's `id`, or `id: null` if it was dismissed.
+
+```javascript
+row.addEventListener('contextmenu', async (event) => {
+  event.preventDefault()
+  const { id } = await window.craft.nativeUI.showContextMenu({
+    x: event.clientX,
+    y: event.clientY,
+    targetId: row.dataset.key,
+    items: [
+      { id: 'archive', title: 'Archive', icon: 'archivebox', shortcut: 'cmd+e' },
+      { id: 'sep', title: '', type: 'separator' },
+      { id: 'delete', title: 'Delete', icon: 'trash', shortcut: 'cmd+delete' },
+    ],
+  })
+  if (id === 'archive') archive(row.dataset.key)
+})
+```
+
+Items take `id`, `title`, an SF Symbol `icon`, a `shortcut` (drawn, not bound:
+the menu is only open while it is showing), `enabled`, and `type` `'separator'`
+or `'submenu'` with one level of `submenu` items.
+
+### `window.craft.nativeUI.onContextMenuAction(handler): () => void`
+
+Every context menu's outcome, whoever opened it, with the same payload. Returns
+an unsubscribe function.
+
+Before 0.0.108 a chosen item never reached the page, so a context menu could be
+shown but not acted on.
 
 ## Global Shortcuts (macOS)
 

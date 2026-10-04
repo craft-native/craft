@@ -630,6 +630,9 @@ export async function loadURL(url: string, options?: WindowOptions): Promise<voi
 export type {
   WindowOptions,
   CraftSidebarAPI,
+  CraftNativeUIAPI,
+  CraftContextMenuItem,
+  CraftContextMenuResult,
   AppConfig,
   CraftTrayAPI,
   CraftWindowAPI,

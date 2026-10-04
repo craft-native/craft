@@ -36,6 +36,8 @@ pub const MenuCallbackData = struct {
     target_type: []const u8,
     item_ids: std.ArrayList([]const u8),
     allocator: std.mem.Allocator,
+    /// Index into `item_ids` of the item the person chose; null until then.
+    selected_index: ?usize = null,
 
     pub fn init(allocator: std.mem.Allocator, target_id: []const u8, target_type: []const u8) !*MenuCallbackData {
         const data = try allocator.create(MenuCallbackData);
@@ -68,6 +70,12 @@ pub const MenuCallbackData = struct {
         const tag = self.item_ids.items.len;
         try self.item_ids.append(self.allocator, id_copy);
         return tag;
+    }
+
+    /// The id of the item the person chose, or null if they dismissed the menu.
+    pub fn selectedItemId(self: *MenuCallbackData) ?[]const u8 {
+        const index = self.selected_index orelse return null;
+        return self.getItemId(index);
     }
 
     pub fn getItemId(self: *MenuCallbackData, index: usize) ?[]const u8 {
@@ -228,6 +236,11 @@ export fn menuItemClickedHandler(
         callback_data.target_type,
     });
 
+    // `popUpMenuPositioningItem:` runs its own tracking loop and returns once
+    // the menu closes, so the code that opened the menu reads this afterwards
+    // to tell the page which item, if any, was chosen.
+    callback_data.selected_index = tag;
+
     if (callback_data.on_menu_action) |callback| {
         callback(item_id, callback_data.target_id, callback_data.target_type);
     }
@@ -344,7 +357,7 @@ fn createMenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     // Set icon if provided
     if (item.icon) |icon_name| {
         const sf_symbols = @import("../macos/sf_symbols.zig");
-        if (sf_symbols.createSFSymbol(@ptrCast(icon_name.ptr), .{ .point_size = 14.0 })) |image| {
+        if (sf_symbols.createSFSymbolNamed(icon_name, .{ .point_size = 14.0 })) |image| {
             _ = macos.msgSend1(menu_item, "setImage:", image);
         }
     }
@@ -440,7 +453,7 @@ fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     // Set icon if provided
     if (item.icon) |icon_name| {
         const sf_symbols = @import("../macos/sf_symbols.zig");
-        if (sf_symbols.createSFSymbol(@ptrCast(icon_name.ptr), .{ .point_size = 14.0 })) |image| {
+        if (sf_symbols.createSFSymbolNamed(icon_name, .{ .point_size = 14.0 })) |image| {
             _ = macos.msgSend1(menu_item, "setImage:", image);
         }
     }
@@ -477,8 +490,9 @@ fn parseShortcut(shortcut: []const u8) ParsedShortcut {
         } else if (std.mem.eql(u8, trimmed, "ctrl") or std.mem.eql(u8, trimmed, "control")) {
             modifiers |= NSEventModifierFlagControl;
         } else {
-            // This is the key
-            key = trimmed;
+            // This is the key, by name for the ones with no printable
+            // character ("delete", "up", "enter").
+            key = @import("../menu_keys.zig").keyEquivalent(trimmed);
         }
     }
 
