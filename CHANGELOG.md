@@ -1,5 +1,23 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.109...v0.0.110)
+
+## 🚀 Features
+
+- **macos**: context menu items can show a checkmark ([e081f03](https://github.com/craft-native/craft/commit/e081f03)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios**: expose craft.db, and bind SQLite text and integers safely ([a9ed5b8](https://github.com/craft-native/craft/commit/a9ed5b8)) _(by Chris)_
+
+## 📚 Documentation
+
+- the context menu and shortcut-name fixes shipped in 0.0.109 ([e64c63d](https://github.com/craft-native/craft/commit/e64c63d)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.108...v0.0.109)
 
 ## 🐛 Bug Fixes
