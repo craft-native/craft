@@ -300,7 +300,7 @@ type nothing, a name: `delete` (⌫), `forwarddelete` (⌦), `return`/`enter`,
 `pageup`, `pagedown`, `f1`-`f12`, and `plus`/`minus` since `+` is the separator.
 Names are case-insensitive. The same spelling works in context menus.
 
-Before 0.0.108 a name was passed through as text, so AppKit bound its first
+Before 0.0.109 a name was passed through as text, so AppKit bound its first
 letter: `cmd+delete` became ⌘D.
 
 ## Context Menus (macOS)
@@ -337,7 +337,7 @@ or `'submenu'` with one level of `submenu` items.
 Every context menu's outcome, whoever opened it, with the same payload. Returns
 an unsubscribe function.
 
-Before 0.0.108 a chosen item never reached the page, so a context menu could be
+Before 0.0.109 a chosen item never reached the page, so a context menu could be
 shown but not acted on.
 
 ## Global Shortcuts (macOS)
