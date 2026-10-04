@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.108...v0.0.109)
+
+## 🐛 Bug Fixes
+
+- **release**: build the Linux and Windows binaries for a baseline CPU ([3f90816](https://github.com/craft-native/craft/commit/3f90816)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.107...v0.0.108)
 
 ## 🐛 Bug Fixes
