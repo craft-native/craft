@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.110...v0.0.111)
+
+## 🚀 Features
+
+- **android**: enableLocalNetwork allows plain HTTP to the person's own devices ([285103f](https://github.com/craft-native/craft/commit/285103f)) _(by Chris)_
+- **ios**: enableLocalNetwork adds the Local Network usage description ([300af18](https://github.com/craft-native/craft/commit/300af18)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.109...v0.0.110)
 
 ## 🚀 Features
