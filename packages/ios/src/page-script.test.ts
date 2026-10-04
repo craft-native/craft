@@ -404,3 +404,33 @@ describe('the injected iOS page script', () => {
     expect(page.last('getInitialURL').callbackId).toMatch(/^cb_\d+$/)
   })
 })
+
+describe('craft.db', () => {
+  // Native has handled dbExecute/dbQuery for a long time; the page had no way
+  // to reach them, so localDatabase did nothing on iOS while Android worked.
+  it('posts SQL with its parameters and resolves with what native answers', async () => {
+    const { craft, last, answer } = loadPage()
+    const executed = craft.db.execute('INSERT INTO t (at, text) VALUES (?, ?)', [1791136990820, 'hi'])
+    expect(last('dbExecute')).toMatchObject({ sql: 'INSERT INTO t (at, text) VALUES (?, ?)', params: [1791136990820, 'hi'] })
+    answer('dbExecute', { rowsAffected: 1, lastInsertId: 7 })
+    expect(await executed).toEqual({ rowsAffected: 1, lastInsertId: 7 })
+
+    const queried = craft.db.query('SELECT 1 AS one')
+    expect(last('dbQuery')).toMatchObject({ sql: 'SELECT 1 AS one', params: [] })
+    answer('dbQuery', [{ one: 1 }])
+    expect(await queried).toEqual([{ one: 1 }])
+  })
+})
+
+describe('native SQLite binding', () => {
+  // Swift side, checked as source: text must be copied by SQLite
+  // (SQLITE_TRANSIENT) and integers carried as 64-bit, or strings are read
+  // from freed memory and millisecond timestamps wrap.
+  it('binds text as transient and integers as 64-bit', () => {
+    expect(template).toContain('sqlite3_bind_text(statement, idx, str, -1, sqliteTransient)')
+    expect(template).not.toContain('sqlite3_bind_text(statement, idx, str, -1, nil)')
+    expect(template).toContain('sqlite3_bind_int64(statement, idx, number.int64Value)')
+    expect(template).toContain('sqlite3_column_int64(statement, i)')
+    expect(template).not.toMatch(/sqlite3_column_int\(statement/)
+  })
+})

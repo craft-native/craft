@@ -3392,6 +3392,11 @@ struct CraftWebView: UIViewRepresentable {
                     getBiometricType: function() { return Promise.resolve(craft.capabilities.biometric ? 'faceId' : null); },
                     authenticate: function(reason) { return legacyAuthenticate(reason); }
                 };
+                // The app's own SQLite database (Documents/craft.db), as on Android.
+                craft.db = {
+                    execute: function(sql, params) { return craft._invoke('dbExecute', { sql: sql, params: params || [] }); },
+                    query: function(sql, params) { return craft._invoke('dbQuery', { sql: sql, params: params || [] }); }
+                };
                 craft.secureStorage = {
                     set: function(key, value) { return legacySecureStore.set(key, value).then(function() {}); },
                     get: function(key) { return legacySecureStore.get(key); },
@@ -5044,6 +5049,34 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         // MARK: - Local Database (SQLite)
+        /// SQLite copies what it is given only when told to (SQLITE_TRANSIENT);
+        /// with a nil destructor it keeps a pointer to a Swift string that is
+        /// freed as soon as the bind call returns, and stores whatever is there
+        /// later.
+        private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+        /// Binds JSON-bridged values: strings, integers as 64-bit (JS numbers
+        /// that are whole, such as millisecond timestamps), other numbers as
+        /// doubles, booleans as 0/1, and null.
+        private func bindParameters(_ statement: OpaquePointer?, _ params: [Any]) {
+            for (index, param) in params.enumerated() {
+                let idx = Int32(index + 1)
+                if let str = param as? String {
+                    sqlite3_bind_text(statement, idx, str, -1, sqliteTransient)
+                } else if let number = param as? NSNumber {
+                    if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                        sqlite3_bind_int64(statement, idx, number.boolValue ? 1 : 0)
+                    } else if CFNumberIsFloatType(number), number.doubleValue.rounded() != number.doubleValue {
+                        sqlite3_bind_double(statement, idx, number.doubleValue)
+                    } else {
+                        sqlite3_bind_int64(statement, idx, number.int64Value)
+                    }
+                } else {
+                    sqlite3_bind_null(statement, idx)
+                }
+            }
+        }
+
         private func dbExecute(sql: String, params: [Any]?, callbackId: String?) {
             guard let db = db else {
                 rejectCallback(callbackId, error: "Database not initialized")
@@ -5054,18 +5087,7 @@ struct CraftWebView: UIViewRepresentable {
             if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
                 // Bind parameters
                 if let params = params {
-                    for (index, param) in params.enumerated() {
-                        let idx = Int32(index + 1)
-                        if let str = param as? String {
-                            sqlite3_bind_text(statement, idx, str, -1, nil)
-                        } else if let int = param as? Int {
-                            sqlite3_bind_int(statement, idx, Int32(int))
-                        } else if let double = param as? Double {
-                            sqlite3_bind_double(statement, idx, double)
-                        } else {
-                            sqlite3_bind_null(statement, idx)
-                        }
-                    }
+                    bindParameters(statement, params)
                 }
 
                 if sqlite3_step(statement) == SQLITE_DONE {
@@ -5095,18 +5117,7 @@ struct CraftWebView: UIViewRepresentable {
             if sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK {
                 // Bind parameters
                 if let params = params {
-                    for (index, param) in params.enumerated() {
-                        let idx = Int32(index + 1)
-                        if let str = param as? String {
-                            sqlite3_bind_text(statement, idx, str, -1, nil)
-                        } else if let int = param as? Int {
-                            sqlite3_bind_int(statement, idx, Int32(int))
-                        } else if let double = param as? Double {
-                            sqlite3_bind_double(statement, idx, double)
-                        } else {
-                            sqlite3_bind_null(statement, idx)
-                        }
-                    }
+                    bindParameters(statement, params)
                 }
 
                 let columnCount = sqlite3_column_count(statement)
@@ -5119,7 +5130,8 @@ struct CraftWebView: UIViewRepresentable {
 
                         switch type {
                         case SQLITE_INTEGER:
-                            row[columnName] = sqlite3_column_int(statement, i)
+                            // 64-bit: millisecond timestamps overflow Int32.
+                            row[columnName] = sqlite3_column_int64(statement, i)
                         case SQLITE_FLOAT:
                             row[columnName] = sqlite3_column_double(statement, i)
                         case SQLITE_TEXT:
