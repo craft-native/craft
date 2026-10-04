@@ -167,7 +167,7 @@ jobs:
             "x86_64-windows:windows-x64:craft.exe"; do
             IFS=: read -r zig_target dir_name bin_name <<< "$target_spec"
             echo "::group::Cross-compile $dir_name"
-            zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$zig_target"
+            zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$zig_target" -Dcpu=baseline
             mkdir -p "zig-out/cross/$dir_name" && cp "zig-out/bin/$bin_name" "zig-out/cross/$dir_name/$bin_name"
             echo "Built $dir_name"
             echo "::endgroup::"
@@ -179,7 +179,11 @@ jobs:
           # so craft-linux-x64.zip shipped a Windows PE binary alongside the
           # Linux one.
           rm -rf zig-out/bin
-          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION"
+          # -Dcpu=baseline: a host build otherwise targets the build runner's
+          # own CPU, and the binary then dies with SIGILL on any machine
+          # without the same extensions - which is how v0.0.108's Linux CLI
+          # failed its own download check on a different runner.
+          zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dcpu=baseline
 
       # The Windows binary dynamically loads WebView2Loader.dll. The runtime
       # alone does not provide the app-local loader, so stage the x64 DLL beside

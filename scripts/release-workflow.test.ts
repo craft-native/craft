@@ -341,3 +341,12 @@ test('every run script in every workflow is valid bash', () => {
     }
   }
 })
+
+test('Linux and Windows release binaries target a baseline CPU, not the build runner', () => {
+  // A host build compiles for the runner's own CPU; the published binary then
+  // dies with SIGILL wherever those extensions are missing (v0.0.108).
+  const builds = steps(release.jobs.pantry).split('\n').filter(line => /^\s*zig build\b/.test(line) && !/-Dtarget="\$(?:X64|ARM64)_TARGET"/.test(line))
+  expect(builds.length).toBeGreaterThan(0)
+  for (const line of builds)
+    expect(line, line.trim()).toContain('-Dcpu=baseline')
+})
