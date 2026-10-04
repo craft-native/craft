@@ -65,6 +65,8 @@ export interface CraftAndroidConfig {
   enableHealthConnect?: boolean
   enableKeepAwake?: boolean
   enableDeepLinks?: boolean
+  /** Reach the person's own devices on the local network over plain HTTP (a Mac companion). */
+  enableLocalNetwork?: boolean
   urlSchemes?: string[]
   trustedOrigins?: string[]
   appIconPath?: string
@@ -600,7 +602,9 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
     .replace(/\{\{APP_NAME\}\}/g, name)
     .replace(/\{\{PERMISSIONS\}\}/g, renderAndroidPermissions(config))
-    .replace(/\{\{USES_CLEARTEXT\}\}/g, config.devServerURL?.startsWith('http://') ? 'true' : 'false')
+    // Plain HTTP only for a local dev server, or an app that talks to the
+    // person's own devices on the LAN (which have no public certificate).
+    .replace(/\{\{USES_CLEARTEXT\}\}/g, config.devServerURL?.startsWith('http://') || config.enableLocalNetwork ? 'true' : 'false')
     .replace(/\{\{DEEP_LINK_INTENT_FILTERS\}\}/g, renderAndroidDeepLinks(config))
     .replace(/\{\{BACKGROUND_SERVICE\}\}/g, config.enableBackgroundLocation
       ? '        <service android:name="com.craft.runtime.LocationRecordingService" android:exported="false" android:foregroundServiceType="location" android:stopWithTask="false" />'
