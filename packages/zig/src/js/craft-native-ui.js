@@ -1,13 +1,19 @@
 (function(){'use strict';if(!window.craft)window.craft={};
 function s(a,d){if(!window.webkit?.messageHandlers?.craft)throw new Error('Craft bridge not available');
 window.webkit.messageHandlers.craft.postMessage({t:'nativeUI',a:a,d:d})}
+// A native source list. setSections replaces everything (counts, rows that
+// come and go) keeping the selection by id; updateItem changes one row in
+// place. onSelect hears the person's picks only - setSelectedItem is silent.
 class Sidebar{constructor(id){this.id=id;this._selectCallbacks=[];this._contextMenuCallbacks=[]}
 addSection(section){s('addSidebarSection',{sidebarId:this.id,section:section});return this}
+setSections(sections){s('setSidebarSections',{sidebarId:this.id,sections:sections||[]});return this}
+updateItem(itemId,changes){s('updateSidebarItem',Object.assign({},changes||{},{sidebarId:this.id,itemId:itemId}));return this}
 setSelectedItem(itemId){s('setSelectedItem',{sidebarId:this.id,itemId:itemId});return this}
-onSelect(cb){this._selectCallbacks.push(cb);return this}
+onSelect(cb){if(typeof cb==='function')this._selectCallbacks.push(cb);return this}
+_emit(itemId){for(const cb of this._selectCallbacks.slice()){try{cb(itemId)}catch(e){console.error('[craft] sidebar select listener threw',e)}}}
 onContextMenu(cb){this._contextMenuCallbacks.push(cb);return this}
 showContextMenu(o){s('showContextMenu',{targetId:o.itemId,targetType:'sidebar',x:o.x,y:o.y,items:o.items||[{id:'rename',title:'Rename...',icon:'pencil'},{id:'s1',title:'',type:'separator'},{id:'new_folder',title:'New Folder',icon:'folder.badge.plus',shortcut:'cmd+shift+n'},{id:'s2',title:'',type:'separator'},{id:'remove',title:'Remove from Sidebar',icon:'minus.circle'}]});return this}
-destroy(){s('destroyComponent',{id:this.id,type:'sidebar'})}}
+destroy(){sidebarRegistry.delete(this.id);s('destroyComponent',{id:this.id,type:'sidebar'})}}
 class FileBrowser{constructor(id){this.id=id;this._selectCallbacks=[];this._doubleClickCallbacks=[];this._contextMenuCallbacks=[]}
 addFile(f){s('addFile',{browserId:this.id,file:f});return this}
 addFiles(f){s('addFiles',{browserId:this.id,files:f});return this}
@@ -34,8 +40,11 @@ class SplitView{constructor(id,sb,br){this.id=id;this.sidebar=sb;this.browser=br
 setDividerPosition(p){s('setDividerPosition',{splitViewId:this.id,position:p});return this}
 destroy(){s('destroyComponent',{id:this.id,type:'splitView'})}}
 const spacesRegistry=new Map();
+const sidebarRegistry=new Map();
 window.craft.nativeUI={
-createSidebar(o={}){const id=o.id||`sidebar-${Date.now()}-${Math.random().toString(36).substr(2,9)}`;s('createSidebar',Object.assign({},o,{id}));return new Sidebar(id)},
+createSidebar(o={}){const id=o.id||`sidebar-${Date.now()}-${Math.random().toString(36).substr(2,9)}`;const h=new Sidebar(id);sidebarRegistry.set(id,h);s('createSidebar',Object.assign({},o,{id}));return h},
+// Called by the host when the person picks a row. Late events after destroy() are ignored.
+_emitSidebarSelect(id,itemId){const h=sidebarRegistry.get(id);if(h)h._emit(itemId)},
 createSpacesSidebar(o={}){const id=o.id||`spaces-${Date.now()}-${Math.random().toString(36).substr(2,9)}`;const h=new SpacesSidebar(id);spacesRegistry.set(id,h);s('createSpacesSidebar',{id:id,spaces:o.spaces||[],activeSpace:o.activeSpace});const d=h.destroy.bind(h);h.destroy=()=>{spacesRegistry.delete(id);d()};return h},
 // Called by the host when the native control is clicked. Unknown ids are
 // ignored rather than thrown on: a late event after destroy() is expected.

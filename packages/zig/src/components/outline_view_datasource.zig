@@ -19,18 +19,25 @@ pub const OutlineViewDataSource = struct {
             header: ?[]const u8,
             items: std.ArrayList(Item),
             is_expanded: bool = true,
+            /// The object NSOutlineView holds for this row. NSOutlineView keys
+            /// selection, expansion and row reuse on item *identity*, so each
+            /// row keeps one retained object for its whole life rather than a
+            /// fresh wrapper per call (which also leaked one per call).
+            handle: macos.objc.id = null,
 
             pub const Item = struct {
                 id: []const u8,
                 label: []const u8,
                 icon: ?[]const u8 = null,
                 badge: ?[]const u8 = null,
+                handle: macos.objc.id = null,
 
                 pub fn deinit(self: *const Item, allocator: std.mem.Allocator) void {
                     allocator.free(self.id);
                     allocator.free(self.label);
                     if (self.icon) |icon| allocator.free(icon);
                     if (self.badge) |badge| allocator.free(badge);
+                    releaseHandle(self.handle);
                 }
             };
 
@@ -39,8 +46,45 @@ pub const OutlineViewDataSource = struct {
                 if (self.header) |header| allocator.free(header);
                 for (self.items.items) |*item| item.deinit(allocator);
                 self.items.deinit(allocator);
+                releaseHandle(self.handle);
             }
         };
+
+        /// Where a row's object sits: a section, or an item within one.
+        pub const Location = struct { section: usize, item: ?usize };
+
+        pub fn locate(self: *const DataStore, handle: macos.objc.id) ?Location {
+            if (handle == null) return null;
+            for (self.sections.items, 0..) |*section, s| {
+                if (section.handle == handle) return .{ .section = s, .item = null };
+                for (section.items.items, 0..) |*item, i| {
+                    if (item.handle == handle) return .{ .section = s, .item = i };
+                }
+            }
+            return null;
+        }
+
+        pub fn itemAt(self: *const DataStore, location: Location) ?*Section.Item {
+            if (location.section >= self.sections.items.len) return null;
+            const items = self.sections.items[location.section].items.items;
+            const index = location.item orelse return null;
+            return if (index < items.len) &items[index] else null;
+        }
+
+        pub fn findItem(self: *const DataStore, id: []const u8) ?*Section.Item {
+            for (self.sections.items) |*section| {
+                for (section.items.items) |*item| {
+                    if (std.mem.eql(u8, item.id, id)) return item;
+                }
+            }
+            return null;
+        }
+
+        /// Drop every section and item, releasing their row objects.
+        pub fn clear(self: *DataStore) void {
+            for (self.sections.items) |*section| section.deinit(self.allocator);
+            self.sections.clearRetainingCapacity();
+        }
 
         pub fn init(allocator: std.mem.Allocator) DataStore {
             return .{
@@ -56,6 +100,15 @@ pub const OutlineViewDataSource = struct {
             self.sections.deinit(self.allocator);
         }
     };
+
+    /// A new retained row object. Its content only aids debugging; rows are
+    /// compared by pointer.
+    pub fn newHandle() macos.objc.id {
+        handle_counter += 1;
+        var buf: [32]u8 = undefined;
+        const text = std.fmt.bufPrint(&buf, "craft-row-{d}", .{handle_counter}) catch "craft-row";
+        return macos.msgSend0(macos.createNSString(text), "retain");
+    }
 
     /// Create a new data source with dynamic Objective-C class
     pub fn init(allocator: std.mem.Allocator) !OutlineViewDataSource {
@@ -182,8 +235,15 @@ test "outline data store releases owned sections and items" {
     try store.sections.append(allocator, section);
 }
 
-/// Helper to get data store from Objective-C instance
-fn getDataStore(instance: macos.objc.id) ?*OutlineViewDataSource.DataStore {
+var handle_counter: u64 = 0;
+
+fn releaseHandle(handle: macos.objc.id) void {
+    if (handle != null) _ = macos.msgSend0(handle, "release");
+}
+
+/// The data store behind a data source instance (also used by the delegate).
+pub fn storeOf(instance: macos.objc.id) ?*OutlineViewDataSource.DataStore {
+    if (instance == null) return null;
     const associated = macos.objc.objc_getAssociatedObject(instance, @ptrFromInt(0x1234));
     if (associated == @as(macos.objc.id, null)) return null;
 
@@ -202,60 +262,14 @@ export fn outlineViewNumberOfChildrenOfItem(
     _: macos.objc.id, // outlineView
     item: macos.objc.id,
 ) callconv(.c) c_long {
-    const data = getDataStore(self) orelse return 0;
-
-    // If item is nil, return number of root items (sections)
-    if (item == @as(macos.objc.id, null)) {
-        return @intCast(data.sections.items.len);
-    }
-
-    // Decode the wrapper
-    const decoded = decodeItemWrapper(item);
-
-    // If item_idx is null, this is a section - return number of children
-    if (decoded.item_idx == null) {
-        if (decoded.section_idx >= data.sections.items.len) return 0;
-        return @intCast(data.sections.items[decoded.section_idx].items.items.len);
-    }
-
-    // Items don't have children
-    return 0;
+    const data = storeOf(self) orelse return 0;
+    if (item == @as(macos.objc.id, null)) return @intCast(data.sections.items.len);
+    const location = data.locate(item) orelse return 0;
+    if (location.item != null) return 0;
+    return @intCast(data.sections.items[location.section].items.items.len);
 }
 
-/// Helper to create an NSNumber wrapper for indices
-fn createItemWrapper(section_idx: usize, item_idx: ?usize) macos.objc.id {
-    const NSMutableDictionary = macos.getClass("NSMutableDictionary");
-    const dict = macos.msgSend0(macos.msgSend0(NSMutableDictionary, "alloc"), "init");
-
-    const NSNumber = macos.getClass("NSNumber");
-    const section_num = macos.msgSend1(NSNumber, "numberWithUnsignedLong:", @as(c_ulong, section_idx));
-    _ = macos.msgSend2(dict, "setObject:forKey:", section_num, macos.createNSString("section"));
-
-    if (item_idx) |idx| {
-        const item_num = macos.msgSend1(NSNumber, "numberWithUnsignedLong:", @as(c_ulong, idx));
-        _ = macos.msgSend2(dict, "setObject:forKey:", item_num, macos.createNSString("item"));
-    }
-
-    return dict;
-}
-
-/// Helper to decode indices from NSNumber wrapper
-fn decodeItemWrapper(wrapper: macos.objc.id) struct { section_idx: usize, item_idx: ?usize } {
-    const section_obj = macos.msgSend1(wrapper, "objectForKey:", macos.createNSString("section"));
-    const section_val = macos.msgSend0(section_obj, "unsignedLongValue");
-    const section_idx: usize = @intCast(@intFromPtr(section_val));
-
-    const item_obj = macos.msgSend1(wrapper, "objectForKey:", macos.createNSString("item"));
-    const item_idx: ?usize = if (item_obj != @as(macos.objc.id, null)) blk: {
-        const item_val = macos.msgSend0(item_obj, "unsignedLongValue");
-        break :blk @intCast(@intFromPtr(item_val));
-    } else null;
-
-    return .{ .section_idx = section_idx, .item_idx = item_idx };
-}
-
-/// NSOutlineViewDataSource method: child:ofItem
-/// We use NSDictionary wrappers as item identifiers to avoid pointer issues
+/// NSOutlineViewDataSource method: child:ofItem - the row's own retained object.
 export fn outlineViewChildOfItem(
     self: macos.objc.id,
     _: macos.objc.SEL,
@@ -263,56 +277,36 @@ export fn outlineViewChildOfItem(
     index: c_long,
     item: macos.objc.id,
 ) callconv(.c) macos.objc.id {
-    const data = getDataStore(self) orelse return null;
-
+    const data = storeOf(self) orelse return null;
+    if (index < 0) return null;
     const idx: usize = @intCast(index);
 
-    // If item is nil, return root item (section) at index
     if (item == @as(macos.objc.id, null)) {
         if (idx >= data.sections.items.len) return null;
-        return createItemWrapper(idx, null);
+        return data.sections.items[idx].handle;
     }
-
-    // Decode the item to get section/item indices
-    const decoded = decodeItemWrapper(item);
-
-    // If item_idx is null, this is a section - return child at index
-    if (decoded.item_idx == null) {
-        if (decoded.section_idx >= data.sections.items.len) return null;
-        if (idx >= data.sections.items[decoded.section_idx].items.items.len) return null;
-        return createItemWrapper(decoded.section_idx, idx);
-    }
-
-    // Items don't have children
-    return null;
+    const location = data.locate(item) orelse return null;
+    if (location.item != null) return null;
+    const items = data.sections.items[location.section].items.items;
+    return if (idx < items.len) items[idx].handle else null;
 }
 
-/// NSOutlineViewDataSource method: isItemExpandable
+/// NSOutlineViewDataSource method: isItemExpandable - sections with items.
 export fn outlineViewIsItemExpandable(
     self: macos.objc.id,
     _: macos.objc.SEL,
     _: macos.objc.id, // outlineView
     item: macos.objc.id,
 ) callconv(.c) c_int {
-    const data = getDataStore(self) orelse return 0;
-
-    // Root items (nil) are not expandable
-    if (item == @as(macos.objc.id, null)) return 0;
-
-    // Decode the wrapper
-    const decoded = decodeItemWrapper(item);
-
-    // Sections are expandable if they have children
-    if (decoded.item_idx == null) {
-        if (decoded.section_idx >= data.sections.items.len) return 0;
-        return if (data.sections.items[decoded.section_idx].items.items.len > 0) 1 else 0;
-    }
-
-    // Regular items are not expandable
-    return 0;
+    const data = storeOf(self) orelse return 0;
+    const location = data.locate(item) orelse return 0;
+    if (location.item != null) return 0;
+    return if (data.sections.items[location.section].items.items.len > 0) 1 else 0;
 }
 
-/// NSOutlineViewDataSource method: objectValueForTableColumn:byItem
+/// NSOutlineViewDataSource method: objectValueForTableColumn:byItem - the
+/// text shown: a section's header or an item's label. Never an id: code that
+/// needs the item's id looks it up through `storeOf(...).locate(item)`.
 export fn outlineViewObjectValueForTableColumnByItem(
     self: macos.objc.id,
     _: macos.objc.SEL,
@@ -320,30 +314,11 @@ export fn outlineViewObjectValueForTableColumnByItem(
     _: macos.objc.id, // tableColumn
     item: macos.objc.id,
 ) callconv(.c) macos.objc.id {
-    const data = getDataStore(self) orelse return null;
-
-    if (item == @as(macos.objc.id, null)) return null;
-
-    // Decode the wrapper
-    const decoded = decodeItemWrapper(item);
-
-    // Bounds check
-    if (decoded.section_idx >= data.sections.items.len) return null;
-
-    const section = &data.sections.items[decoded.section_idx];
-
-    // If it's a section header (item_idx is null)
-    if (decoded.item_idx == null) {
-        if (section.header) |header| {
-            return macos.createNSString(header);
-        }
-        return macos.createNSString(section.id);
-    }
-
-    // It's an item within a section
-    const item_index = decoded.item_idx.?;
-    if (item_index >= section.items.items.len) return null;
-
-    const child = &section.items.items[item_index];
+    const data = storeOf(self) orelse return null;
+    const location = data.locate(item) orelse return null;
+    const section = &data.sections.items[location.section];
+    if (location.item == null)
+        return macos.createNSString(section.header orelse section.id);
+    const child = data.itemAt(location) orelse return null;
     return macos.createNSString(child.label);
 }

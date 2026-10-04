@@ -239,6 +239,16 @@ pub const NativeUIBridge = struct {
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                     std.debug.print("[NativeUI] ERROR adding sidebar section: {any}\n", .{err});
             };
+        } else if (std.mem.eql(u8, action, "setSidebarSections")) {
+            self.setSidebarSections(data) catch |err| {
+                if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                    std.debug.print("[NativeUI] ERROR setting sidebar sections: {any}\n", .{err});
+            };
+        } else if (std.mem.eql(u8, action, "updateSidebarItem")) {
+            self.updateSidebarItem(data) catch |err| {
+                if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
+                    std.debug.print("[NativeUI] ERROR updating sidebar item: {any}\n", .{err});
+            };
         } else if (std.mem.eql(u8, action, "setSelectedItem")) {
             self.setSelectedItem(data) catch |err| {
                 if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -590,6 +600,12 @@ pub const NativeUIBridge = struct {
             state.original_webview = original_webview;
             state.split_view_controller = split_vc;
             state.sidebars.putAssumeCapacityNoClobber(id_copy, sidebar);
+            // Selections go back to the page that made the sidebar.
+            sidebar.reportSelectionsTo(id_str, if (window_context.currentWebView()) |webview| @ptrFromInt(webview) else macos.webViewForWindow(state.window) orelse null) catch {};
+            if (root.get("selected")) |selected| switch (selected) {
+                .string => |item_id| sidebar.setSelectedItem(item_id),
+                else => {},
+            };
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[LiquidGlass] Set NSSplitViewController as window content view controller\n", .{});
 
@@ -675,6 +691,64 @@ pub const NativeUIBridge = struct {
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[NativeUI] Added section '{s}' to sidebar '{s}'\n", .{ section_id, sidebar_id });
+    }
+
+    /// Replace every section of a live sidebar (counts, sources, rows that
+    /// come and go). The selection is kept by id when it still exists.
+    fn setSidebarSections(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
+        const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
+        defer parsed.deinit();
+        const root = try objectValue(parsed.value);
+        const sidebar = state.sidebars.get(try requiredString(root, "sidebarId")) orelse return error.SidebarNotFound;
+
+        // Item slices borrow from `parsed`; NativeSidebar copies what it keeps.
+        var sections: std.ArrayList(NativeSidebar.SidebarSection) = .empty;
+        defer sections.deinit(self.allocator);
+        var item_lists: std.ArrayList(std.ArrayList(NativeSidebar.SidebarItem)) = .empty;
+        defer {
+            for (item_lists.items) |*list| list.deinit(self.allocator);
+            item_lists.deinit(self.allocator);
+        }
+        for (try requiredArray(root, "sections")) |section_value| {
+            const section_obj = try objectValue(section_value);
+            var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
+            errdefer items.deinit(self.allocator);
+            if (section_obj.get("items")) |items_value| {
+                for (try arrayValue(items_value)) |item_value| {
+                    const item_obj = try objectValue(item_value);
+                    try items.append(self.allocator, .{
+                        .id = try requiredString(item_obj, "id"),
+                        .label = try optionalString(item_obj, "label") orelse try requiredString(item_obj, "id"),
+                        .icon = try optionalString(item_obj, "icon"),
+                        .badge = try optionalString(item_obj, "badge"),
+                    });
+                }
+            }
+            try item_lists.append(self.allocator, items);
+            const section_id = try optionalString(section_obj, "id") orelse "section";
+            try sections.append(self.allocator, .{
+                .id = section_id,
+                .header = try optionalString(section_obj, "header") orelse try optionalString(section_obj, "label") orelse try optionalString(section_obj, "title"),
+                .items = item_lists.items[item_lists.items.len - 1].items,
+            });
+        }
+        try sidebar.setSections(sections.items);
+    }
+
+    /// Change one item's label, icon or badge without rebuilding the sidebar.
+    fn updateSidebarItem(self: *Self, data: []const u8) !void {
+        const state = try self.currentState();
+        const parsed = try std.json.parseFromSlice(std.json.Value, self.allocator, data, .{});
+        defer parsed.deinit();
+        const root = try objectValue(parsed.value);
+        const sidebar = state.sidebars.get(try requiredString(root, "sidebarId")) orelse return error.SidebarNotFound;
+        try sidebar.updateItem(
+            try requiredString(root, "itemId"),
+            try optionalString(root, "label"),
+            try optionalString(root, "icon"),
+            try optionalString(root, "badge"),
+        );
     }
 
     /// Set selected item in sidebar

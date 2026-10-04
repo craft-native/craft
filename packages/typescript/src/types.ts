@@ -1272,6 +1272,8 @@ export interface CraftContextMenuItem {
    */
   shortcut?: string
   enabled?: boolean
+  /** Shows a checkmark: the choice in effect. */
+  checked?: boolean
   submenu?: CraftContextMenuItem[]
 }
 
@@ -1296,6 +1298,41 @@ export interface CraftNativeUIAPI {
   }) => Promise<CraftContextMenuResult>
   /** Every context menu's outcome. Returns an unsubscribe function. */
   onContextMenuAction: (callback: (result: CraftContextMenuResult) => void) => () => void
+  /**
+   * A native source-list sidebar (macOS): the window's content becomes a
+   * split view with the sidebar on the left and the page on the right. One
+   * per window.
+   */
+  createSidebar: (options: { id?: string, sections?: CraftSidebarSection[], selected?: string }) => CraftSidebar
+}
+
+export interface CraftSidebarItem {
+  id: string
+  label: string
+  /** SF Symbol name, e.g. `'tray'`. */
+  icon?: string
+  /** A count or short text drawn right-aligned, like Mail's unread counts. */
+  badge?: string
+}
+
+export interface CraftSidebarSection {
+  id: string
+  /** The section's heading; omit for none. */
+  header?: string
+  items: CraftSidebarItem[]
+}
+
+export interface CraftSidebar {
+  readonly id: string
+  /** Replace every section, keeping the selection by id when it still exists. */
+  setSections: (sections: CraftSidebarSection[]) => CraftSidebar
+  /** Change one row's label, icon or badge in place; `badge: ''` clears it. */
+  updateItem: (itemId: string, changes: Partial<Omit<CraftSidebarItem, 'id'>>) => CraftSidebar
+  /** Select a row without reporting it as a pick. */
+  setSelectedItem: (itemId: string) => CraftSidebar
+  /** The person picked a row. */
+  onSelect: (callback: (itemId: string) => void) => CraftSidebar
+  destroy: () => void
 }
 
 export interface CraftBridgeAPI {

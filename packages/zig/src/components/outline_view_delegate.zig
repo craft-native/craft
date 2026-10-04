@@ -1,6 +1,7 @@
 const std = @import("std");
 const macos = @import("../macos.zig");
 const sf_symbols = @import("../macos/sf_symbols.zig");
+const datasource = @import("outline_view_datasource.zig");
 
 /// NSOutlineViewDelegate implementation in Zig
 /// Handles cell views, selection, and user interactions
@@ -11,7 +12,14 @@ pub const OutlineViewDelegate = struct {
     allocator: std.mem.Allocator,
 
     pub const CallbackData = struct {
-        on_select: ?*const fn (item_id: []const u8) void = null,
+        /// Called with the selected item's *id* (never its label) and the
+        /// context it was registered with - the sidebar, so it can tell its
+        /// own web view.
+        on_select: ?*const fn (context: ?*anyopaque, item_id: []const u8) void = null,
+        select_context: ?*anyopaque = null,
+        /// Set while code (not the person) changes the selection, so a
+        /// programmatic selection is not reported back as a click.
+        suppress_select: bool = false,
         allocator: std.mem.Allocator,
 
         pub fn init(allocator: std.mem.Allocator) CallbackData {
@@ -130,8 +138,13 @@ pub const OutlineViewDelegate = struct {
         return self.instance;
     }
 
-    pub fn setOnSelectCallback(self: *OutlineViewDelegate, callback: *const fn (item_id: []const u8) void) void {
+    pub fn setOnSelectCallback(self: *OutlineViewDelegate, context: ?*anyopaque, callback: *const fn (context: ?*anyopaque, item_id: []const u8) void) void {
         self.callback_data.on_select = callback;
+        self.callback_data.select_context = context;
+    }
+
+    pub fn setSuppressSelect(self: *OutlineViewDelegate, suppress: bool) void {
+        self.callback_data.suppress_select = suppress;
     }
 };
 
@@ -145,39 +158,15 @@ fn getCallbackData(instance: macos.objc.id) ?*OutlineViewDelegate.CallbackData {
     return @ptrCast(@alignCast(ptr));
 }
 
-/// Helper to get icon name for sidebar item from data source
-fn getIconForItem(outlineView: macos.objc.id, item: macos.objc.id) ?[]const u8 {
-    // Get the data source and retrieve icon info
-    const dataSource = macos.msgSend0(outlineView, "dataSource");
-    if (dataSource == @as(macos.objc.id, null)) return null;
-
-    // Get associated data to find the icon
-    const associated = macos.objc.objc_getAssociatedObject(dataSource, @ptrFromInt(0x1234));
-    if (associated == @as(macos.objc.id, null)) return null;
-
-    const ptr = macos.msgSend0(associated, "pointerValue");
-    if (@intFromPtr(ptr) == 0) return null;
-
-    const DataStore = @import("outline_view_datasource.zig").OutlineViewDataSource.DataStore;
-    const data: *DataStore = @ptrFromInt(@intFromPtr(ptr));
-
-    // Decode item wrapper to get indices
-    const section_obj = macos.msgSend1(item, "objectForKey:", macos.createNSString("section"));
-    const section_val = macos.msgSend0(section_obj, "unsignedLongValue");
-    const section_idx: usize = @intCast(@intFromPtr(section_val));
-
-    const item_obj = macos.msgSend1(item, "objectForKey:", macos.createNSString("item"));
-    if (item_obj == @as(macos.objc.id, null)) return null; // Sections don't have icons
-
-    const item_val = macos.msgSend0(item_obj, "unsignedLongValue");
-    const item_idx: usize = @intCast(@intFromPtr(item_val));
-
-    if (section_idx >= data.sections.items.len) return null;
-    const section = &data.sections.items[section_idx];
-    if (item_idx >= section.items.items.len) return null;
-
-    return section.items.items[item_idx].icon;
+/// The data item behind a row, through the outline view's data source.
+fn itemForRow(outlineView: macos.objc.id, item: macos.objc.id) ?*datasource.OutlineViewDataSource.DataStore.Section.Item {
+    const store = datasource.storeOf(macos.msgSend0(outlineView, "dataSource")) orelse return null;
+    const location = store.locate(item) orelse return null;
+    return store.itemAt(location);
 }
+
+/// Tag of the right-aligned count in an item row, like Mail's unread counts.
+const badge_tag: c_long = 7701;
 
 /// NSOutlineViewDelegate method: viewForTableColumn:item
 export fn outlineViewViewForTableColumnItem(
@@ -219,8 +208,10 @@ export fn outlineViewViewForTableColumnItem(
     const text: [*:0]const u8 = @ptrCast(cstr);
     const text_slice = std.mem.span(text);
 
-    // Get icon for this item (if not a header)
-    const icon_name = if (!is_header) getIconForItem(outlineView, item) else null;
+    // Icon and badge for this item (headers have neither)
+    const data_item = if (!is_header) itemForRow(outlineView, item) else null;
+    const icon_name = if (data_item) |entry| entry.icon else null;
+    const badge_text = if (data_item) |entry| entry.badge else null;
 
     // Try to reuse an existing cell
     var cellView = macos.msgSend2(outlineView, "makeViewWithIdentifier:owner:", identifierStr, @as(?*anyopaque, null));
@@ -269,13 +260,39 @@ export fn outlineViewViewForTableColumnItem(
         _ = macos.msgSend1(cellView, "setTextField:", textField);
         _ = macos.msgSend1(cellView, "addSubview:", textField);
 
-        // Frame-based layout with space for icon
+        // Frame-based layout with space for icon (and, on item rows, the
+        // count). The cell spans the column; the text resizes with it rather
+        // than stopping at a fixed 180pt.
+        const column_width: f64 = if (tableColumn != @as(macos.objc.id, null)) macos.msgSend0Double(tableColumn, "width") else 240.0;
+        const badge_width: f64 = if (is_header) 0 else 34.0;
+        _ = macos.msgSend1(cellView, "setFrame:", NSRect{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = column_width, .height = row_height } });
         const frame = NSRect{
             .origin = .{ .x = text_x, .y = 0 },
-            .size = .{ .width = 180, .height = row_height },
+            .size = .{ .width = @max(40.0, column_width - text_x - badge_width - 6.0), .height = row_height },
         };
         _ = macos.msgSend1(textField, "setFrame:", frame);
         _ = macos.msgSend1(textField, "setAutoresizingMask:", @as(c_ulong, 2)); // NSViewWidthSizable
+        _ = macos.msgSend1(textField, "setLineBreakMode:", @as(c_ulong, 4)); // NSLineBreakByTruncatingTail
+
+        if (!is_header) {
+            const badge = macos.msgSend0(macos.msgSend0(NSTextField, "alloc"), "init");
+            _ = macos.msgSend1(badge, "setBordered:", @as(c_int, 0));
+            _ = macos.msgSend1(badge, "setDrawsBackground:", @as(c_int, 0));
+            _ = macos.msgSend1(badge, "setEditable:", @as(c_int, 0));
+            _ = macos.msgSend1(badge, "setSelectable:", @as(c_int, 0));
+            _ = macos.msgSend1(badge, "setAlignment:", @as(c_long, 1)); // NSTextAlignmentRight
+            _ = macos.msgSend1(badge, "setTag:", badge_tag);
+            const NSFontClass = macos.getClass("NSFont");
+            _ = macos.msgSend1(badge, "setFont:", macos.msgSend2(NSFontClass, "monospacedDigitSystemFontOfSize:weight:", @as(f64, 11.0), @as(f64, 0.0)));
+            _ = macos.msgSend1(badge, "setTextColor:", macos.msgSend0(macos.getClass("NSColor"), "secondaryLabelColor"));
+            _ = macos.msgSend1(badge, "setFrame:", NSRect{
+                .origin = .{ .x = column_width - badge_width - 8.0, .y = (row_height - 15.0) / 2.0 },
+                .size = .{ .width = badge_width, .height = 15.0 },
+            });
+            _ = macos.msgSend1(badge, "setAutoresizingMask:", @as(c_ulong, 1)); // NSViewMinXMargin: stays at the right edge
+            _ = macos.msgSend1(cellView, "addSubview:", badge);
+            _ = macos.msgSend0(badge, "release");
+        }
 
         // Set header font style
         if (is_header) {
@@ -294,6 +311,13 @@ export fn outlineViewViewForTableColumnItem(
     if (textField != @as(macos.objc.id, null)) {
         const nsString = macos.createNSString(text_slice);
         _ = macos.msgSend1(textField, "setStringValue:", nsString);
+    }
+
+    // Update the count: reused cells must not keep another row's number.
+    if (!is_header) {
+        const badge = macos.msgSend1(cellView, "viewWithTag:", badge_tag);
+        if (badge != @as(macos.objc.id, null))
+            _ = macos.msgSend1(badge, "setStringValue:", macos.createNSString(badge_text orelse ""));
     }
 
     // Update the icon (for non-header items)
@@ -369,30 +393,13 @@ export fn outlineViewSelectionDidChange(
     const item = macos.msgSend1(outlineView, "itemAtRow:", row);
     if (item == @as(macos.objc.id, null)) return;
 
-    // Get item label from data source
-    const dataSource = macos.msgSend0(outlineView, "dataSource");
-    if (dataSource == @as(macos.objc.id, null)) return;
+    if (callback_data.suppress_select) return;
 
-    const objectValue = macos.msgSend3(
-        dataSource,
-        "outlineView:objectValueForTableColumn:byItem:",
-        outlineView,
-        @as(macos.objc.id, null),
-        item,
-    );
-
-    if (objectValue == @as(macos.objc.id, null)) return;
-
-    // Convert to C string
-    const cstr = macos.msgSend0(objectValue, "UTF8String");
-    if (@intFromPtr(cstr) == 0) return;
-
-    const item_id: [*:0]const u8 = @ptrCast(cstr);
-    const item_id_slice = std.mem.span(item_id);
-
-    // Call the callback if set
+    // The item's id, looked up through its row object - not the text the
+    // row displays, which is what the data source's object value is.
+    const entry = itemForRow(outlineView, item) orelse return;
     if (callback_data.on_select) |callback| {
-        callback(item_id_slice);
+        callback(callback_data.select_context, entry.id);
     }
 }
 

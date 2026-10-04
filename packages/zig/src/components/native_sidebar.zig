@@ -4,6 +4,17 @@ const OutlineViewDataSource = @import("outline_view_datasource.zig").OutlineView
 const OutlineViewDelegate = @import("outline_view_delegate.zig").OutlineViewDelegate;
 const keyboard_handler = @import("keyboard_handler.zig");
 
+/// NSInteger-returning messages, typed so the result is read as a signed long.
+fn rowForItem(outline_view: macos.objc.id, item: macos.objc.id) c_long {
+    const send: *const fn (macos.objc.id, macos.objc.SEL, macos.objc.id) callconv(.c) c_long = @ptrCast(&macos.objc.objc_msgSend);
+    return send(outline_view, macos.sel("rowForItem:"), item);
+}
+
+fn selectedRow(outline_view: macos.objc.id) c_long {
+    const send: *const fn (macos.objc.id, macos.objc.SEL) callconv(.c) c_long = @ptrCast(&macos.objc.objc_msgSend);
+    return send(outline_view, macos.sel("selectedRow"));
+}
+
 fn cloneSidebarItem(allocator: std.mem.Allocator, item: NativeSidebar.SidebarItem) !OutlineViewDataSource.DataStore.Section.Item {
     const id = try allocator.dupe(u8, item.id);
     errdefer allocator.free(id);
@@ -13,7 +24,7 @@ fn cloneSidebarItem(allocator: std.mem.Allocator, item: NativeSidebar.SidebarIte
     errdefer if (icon) |value| allocator.free(value);
     const badge = if (item.badge) |value| try allocator.dupe(u8, value) else null;
 
-    return .{ .id = id, .label = label, .icon = icon, .badge = badge };
+    return .{ .id = id, .label = label, .icon = icon, .badge = badge, .handle = OutlineViewDataSource.newHandle() };
 }
 
 fn initOwnedSection(allocator: std.mem.Allocator, section: NativeSidebar.SidebarSection) !OutlineViewDataSource.DataStore.Section {
@@ -21,7 +32,7 @@ fn initOwnedSection(allocator: std.mem.Allocator, section: NativeSidebar.Sidebar
     errdefer allocator.free(id);
     const header = if (section.header) |value| try allocator.dupe(u8, value) else null;
 
-    return .{ .id = id, .header = header, .items = .empty, .is_expanded = true };
+    return .{ .id = id, .header = header, .items = .empty, .is_expanded = true, .handle = OutlineViewDataSource.newHandle() };
 }
 
 /// High-level wrapper for NSOutlineView-based sidebar
@@ -32,6 +43,10 @@ pub const NativeSidebar = struct {
     data_source: OutlineViewDataSource,
     delegate: OutlineViewDelegate,
     allocator: std.mem.Allocator,
+    /// The bridge's id for this sidebar, and the web view its selections are
+    /// reported to (see `reportSelectionsTo`).
+    id: []const u8 = "",
+    webview: macos.objc.id = null,
 
     pub const SidebarSection = struct {
         id: []const u8,
@@ -157,6 +172,7 @@ pub const NativeSidebar = struct {
     }
 
     pub fn deinit(self: *NativeSidebar) void {
+        if (self.id.len > 0) self.allocator.free(self.id);
         keyboard_handler.clearOutlineViewCallbacks(self.outline_view);
         _ = macos.msgSend1(self.outline_view, "setDelegate:", @as(?*anyopaque, null));
         _ = macos.msgSend1(self.outline_view, "setDataSource:", @as(?*anyopaque, null));
@@ -212,32 +228,120 @@ pub const NativeSidebar = struct {
         }
     }
 
-    /// Set the selected item programmatically
+    /// Select an item by id, without reporting it as a selection the
+    /// person made. Found by its row object, so collapsed sections and
+    /// changed contents do not shift it onto the wrong row.
     pub fn setSelectedItem(self: *NativeSidebar, item_id: []const u8) void {
-        // Find the item in the data structure
-        var row_index: c_long = 0;
-
-        for (self.data_source.data.sections.items) |*section| {
-            row_index += 1; // Section itself takes a row
-
-            for (section.items.items) |*item| {
-                if (std.mem.eql(u8, item.id, item_id)) {
-                    // Create NSIndexSet for the row
-                    const NSIndexSet = macos.getClass("NSIndexSet");
-                    const index_set = macos.msgSend1(NSIndexSet, "indexSetWithIndex:", @as(c_ulong, @intCast(row_index)));
-
-                    // Select this row (NO = don't extend selection)
-                    _ = macos.msgSend2(self.outline_view, "selectRowIndexes:byExtendingSelection:", index_set, @as(c_int, 0));
-                    return;
-                }
-                row_index += 1;
-            }
-        }
+        const item = self.data_source.data.findItem(item_id) orelse return;
+        const row = rowForItem(self.outline_view, item.handle);
+        if (row < 0) return;
+        const NSIndexSet = macos.getClass("NSIndexSet");
+        const index_set = macos.msgSend1(NSIndexSet, "indexSetWithIndex:", @as(c_ulong, @intCast(row)));
+        self.delegate.setSuppressSelect(true);
+        defer self.delegate.setSuppressSelect(false);
+        _ = macos.msgSend2(self.outline_view, "selectRowIndexes:byExtendingSelection:", index_set, @as(c_int, 0));
+        _ = macos.msgSend1(self.outline_view, "scrollRowToVisible:", row);
     }
 
-    /// Register callback for selection events
-    pub fn setOnSelectCallback(self: *NativeSidebar, callback: *const fn (item_id: []const u8) void) void {
-        self.delegate.setOnSelectCallback(callback);
+    /// The selected item's id, if an item (not a header) is selected.
+    pub fn selectedItemId(self: *NativeSidebar) ?[]const u8 {
+        const row = selectedRow(self.outline_view);
+        if (row < 0) return null;
+        const handle = macos.msgSend1(self.outline_view, "itemAtRow:", row);
+        const location = self.data_source.data.locate(handle) orelse return null;
+        const item = self.data_source.data.itemAt(location) orelse return null;
+        return item.id;
+    }
+
+    /// Replace every section at once - what a live sidebar does as its
+    /// counts and sources change. The selection is kept by id when the item
+    /// is still there.
+    pub fn setSections(self: *NativeSidebar, sections: []const SidebarSection) !void {
+        var keep: ?[]u8 = null;
+        if (self.selectedItemId()) |current| keep = try self.allocator.dupe(u8, current);
+        defer if (keep) |value| self.allocator.free(value);
+
+        var fresh: std.ArrayList(OutlineViewDataSource.DataStore.Section) = .empty;
+        errdefer {
+            for (fresh.items) |*section| section.deinit(self.allocator);
+            fresh.deinit(self.allocator);
+        }
+        for (sections) |section| {
+            var owned = try initOwnedSection(self.allocator, section);
+            errdefer owned.deinit(self.allocator);
+            for (section.items) |item| {
+                const new_item = try cloneSidebarItem(self.allocator, item);
+                owned.items.append(self.allocator, new_item) catch |err| {
+                    new_item.deinit(self.allocator);
+                    return err;
+                };
+            }
+            try fresh.append(self.allocator, owned);
+        }
+
+        // Swap only once everything is built, so a failure leaves the sidebar as it was.
+        self.delegate.setSuppressSelect(true);
+        defer self.delegate.setSuppressSelect(false);
+        self.data_source.data.clear();
+        self.data_source.data.sections.deinit(self.allocator);
+        self.data_source.data.sections = fresh;
+        fresh = .empty;
+        _ = macos.msgSend0(self.outline_view, "reloadData");
+        for (self.data_source.data.sections.items) |*section|
+            _ = macos.msgSend1(self.outline_view, "expandItem:", section.handle);
+        if (keep) |id| self.setSelectedItem(id);
+    }
+
+    /// Change one item's label, icon or badge in place (null leaves a field
+    /// as it is; an empty badge clears it), redrawing only that row.
+    pub fn updateItem(self: *NativeSidebar, item_id: []const u8, label: ?[]const u8, icon: ?[]const u8, badge: ?[]const u8) !void {
+        const item = self.data_source.data.findItem(item_id) orelse return error.ItemNotFound;
+        if (label) |value| {
+            const copy = try self.allocator.dupe(u8, value);
+            self.allocator.free(item.label);
+            item.label = copy;
+        }
+        if (icon) |value| {
+            const copy = try self.allocator.dupe(u8, value);
+            if (item.icon) |old| self.allocator.free(old);
+            item.icon = copy;
+        }
+        if (badge) |value| {
+            const copy: ?[]const u8 = if (value.len == 0) null else try self.allocator.dupe(u8, value);
+            if (item.badge) |old| self.allocator.free(old);
+            item.badge = copy;
+        }
+        _ = macos.msgSend1(self.outline_view, "reloadItem:", item.handle);
+    }
+
+    /// Report every selection the person makes to `webview` as
+    /// `craft.nativeUI._emitSidebarSelect(<id>, <itemId>)`.
+    pub fn reportSelectionsTo(self: *NativeSidebar, id: []const u8, webview: macos.objc.id) !void {
+        if (self.id.len > 0) self.allocator.free(self.id);
+        self.id = try self.allocator.dupe(u8, id);
+        self.webview = webview;
+        self.delegate.setOnSelectCallback(@ptrCast(self), emitSelect);
+    }
+
+    fn emitSelect(context: ?*anyopaque, item_id: []const u8) void {
+        const self: *NativeSidebar = @ptrCast(@alignCast(context orelse return));
+        if (self.webview == null) return;
+        var id_buf: [128]u8 = undefined;
+        var item_buf: [128]u8 = undefined;
+        var js_buf: [512]u8 = undefined;
+        const sanitize = @import("native_space_switcher.zig").sanitizeId;
+        // Guarded like _emitSpaceChange: an event racing a navigation is a no-op.
+        const js = std.fmt.bufPrint(
+            &js_buf,
+            "window.craft&&window.craft.nativeUI&&window.craft.nativeUI._emitSidebarSelect&&window.craft.nativeUI._emitSidebarSelect(\"{s}\",\"{s}\")",
+            .{ sanitize(&id_buf, self.id), sanitize(&item_buf, item_id) },
+        ) catch return;
+        macos.tryEvalJSInWebView(self.webview, js) catch {};
+    }
+
+    /// Register callback for selection events (receives the item's id).
+    pub fn setOnSelectCallback(self: *NativeSidebar, context: ?*anyopaque, callback: *const fn (context: ?*anyopaque, item_id: []const u8) void) void {
+        self.delegate.setOnSelectCallback(context, callback);
     }
 
     /// Register callback for spacebar key (Quick Look)
