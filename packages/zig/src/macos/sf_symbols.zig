@@ -146,11 +146,20 @@ pub const SymbolCache = struct {
 
 /// Create an SF Symbol image
 pub fn createSFSymbol(name: [*:0]const u8, config: SymbolConfiguration) ?objc.id {
+    return createSFSymbolNamed(std.mem.span(name), config);
+}
+
+/// The same, for a name that is a slice rather than a C string - one parsed
+/// out of a bridge message's JSON, say. Such a slice points into the middle of
+/// the payload with no terminator after it, so casting its pointer to
+/// `[*:0]const u8` read on to the next NUL: `archivebox","shortcut":...`,
+/// which names no symbol, and every context-menu icon silently went missing.
+pub fn createSFSymbolNamed(name: []const u8, config: SymbolConfiguration) ?objc.id {
     const NSImage = macos.getClass("NSImage");
     if (NSImage == null) return null;
 
     // Create NSString for symbol name
-    const nsstring = macos.createNSString(std.mem.span(name));
+    const nsstring = macos.createNSString(name);
     if (nsstring == @as(objc.id, null)) return null;
 
     // Create image with symbol name

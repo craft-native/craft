@@ -185,9 +185,11 @@ fn createNameCellView(text: []const u8, icon_name: ?[]const u8) macos.objc.id {
     _ = macos.msgSend1(imageView, "setImageScaling:", @as(c_long, 2)); // NSImageScaleProportionallyUpOrDown
 
     // Set icon image
+    // The buffer lives at function scope: `symbol_name` points into it and is
+    // read below, after an `if` block that owned it would already have ended.
+    var icon_buf: [64]u8 = undefined;
     var symbol_name: [*:0]const u8 = "doc";
     if (icon_name) |icon| {
-        var icon_buf: [64]u8 = undefined;
         symbol_name = @import("../memory.zig").bufPrintZ(&icon_buf, "{s}", .{icon}) catch "doc";
     }
 
