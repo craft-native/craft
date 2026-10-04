@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.107...v0.0.108)
+
+## 🐛 Bug Fixes
+
+- **macos**: a chosen context-menu item reaches the page ([3618695](https://github.com/craft-native/craft/commit/3618695)) _(by Chris)_
+- **macos**: context menu icons read past the end of their names ([b597d33](https://github.com/craft-native/craft/commit/b597d33)) _(by Chris)_
+- **macos**: menu shortcuts take key names like delete, up and enter ([fab0cbe](https://github.com/craft-native/craft/commit/fab0cbe)) _(by Chris)_
+
+## 🧪 Tests
+
+- **macos**: register the installed app and retry an unanswered notification request ([e5e33d4](https://github.com/craft-native/craft/commit/e5e33d4)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.106...v0.0.107)
 
 ## 🐛 Bug Fixes
