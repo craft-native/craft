@@ -967,6 +967,7 @@ pub const NativeUIBridge = struct {
                             .icon = try optionalString(sub_obj, "icon"),
                             .shortcut = try optionalString(sub_obj, "shortcut"),
                             .enabled = try optionalBool(sub_obj, "enabled") orelse true,
+                            .checked = try optionalBool(sub_obj, "checked") orelse false,
                             .item_type = sub_type,
                             .submenu_items = null, // Only one level deep
                         });
@@ -986,6 +987,7 @@ pub const NativeUIBridge = struct {
                 .icon = try optionalString(item_obj, "icon"),
                 .shortcut = try optionalString(item_obj, "shortcut"),
                 .enabled = try optionalBool(item_obj, "enabled") orelse true,
+                .checked = try optionalBool(item_obj, "checked") orelse false,
                 .item_type = item_type,
                 .submenu_items = submenu_items,
             });

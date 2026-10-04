@@ -18,6 +18,8 @@ pub const MenuItem = struct {
     icon: ?[]const u8 = null, // SF Symbol name
     shortcut: ?[]const u8 = null, // e.g., "cmd+c"
     enabled: bool = true,
+    /// Shows a checkmark (NSMenuItem state on), for the choice in effect.
+    checked: bool = false,
     item_type: MenuItemType = .standard,
     submenu_items: ?[]const MenuItem = null,
 };
@@ -354,6 +356,15 @@ fn createMenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
     );
     setEnabled(menu_item, macos.sel("setEnabled:"), item.enabled);
 
+    // A checkmark for the choice in effect (NSControlStateValueOn = 1).
+    if (item.checked) {
+        const setState = @as(
+            *const fn (objc.id, objc.SEL, c_long) callconv(.c) void,
+            @ptrCast(&objc.objc_msgSend),
+        );
+        setState(menu_item, macos.sel("setState:"), 1);
+    }
+
     // Set icon if provided
     if (item.icon) |icon_name| {
         const sf_symbols = @import("../macos/sf_symbols.zig");
@@ -449,6 +460,15 @@ fn createSubmenuItem(item: MenuItem, delegate: *ContextMenuDelegate) !objc.id {
         @ptrCast(&objc.objc_msgSend),
     );
     setEnabled(menu_item, macos.sel("setEnabled:"), item.enabled);
+
+    // A checkmark for the choice in effect (NSControlStateValueOn = 1).
+    if (item.checked) {
+        const setState = @as(
+            *const fn (objc.id, objc.SEL, c_long) callconv(.c) void,
+            @ptrCast(&objc.objc_msgSend),
+        );
+        setState(menu_item, macos.sel("setState:"), 1);
+    }
 
     // Set icon if provided
     if (item.icon) |icon_name| {
