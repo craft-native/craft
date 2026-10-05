@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { build, init } from '../src/index'
@@ -16,8 +16,15 @@ function run(args: string[], cwd: string): void {
   if (result.exitCode !== 0) throw new Error(`${args[0]} exited with ${result.exitCode}`)
 }
 
+function assertMutationBundle(path: string): void {
+  const source = readFileSync(path, 'utf8')
+  if (!source.includes('mutationProtocolVersion') || !source.includes("send('MUTATE'"))
+    throw new Error('stx-native compiler did not emit the native mutation protocol')
+}
+
 try {
   run([process.execPath, stxCli, 'compile', '--format', 'bundle', '--output', bundle], fixture)
+  assertMutationBundle(bundle)
   await init({ name: 'NativeNavigation', packageName, output, config: { renderer: 'native' }, runtimeDir: null })
   await build({ output, nativeBundlePath: bundle, compile: false, runtimeDir: null })
 

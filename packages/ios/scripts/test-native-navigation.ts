@@ -16,8 +16,15 @@ function run(args: string[], cwd: string): void {
     throw new Error(`${args[0]} exited with ${result.exitCode}`)
 }
 
+function assertMutationBundle(path: string): void {
+  const source = readFileSync(path, 'utf8')
+  if (!source.includes('mutationProtocolVersion') || !source.includes("send('MUTATE'"))
+    throw new Error('stx-native compiler did not emit the native mutation protocol')
+}
+
 try {
   run([process.execPath, stxCli, 'compile', '--format', 'bundle', '--output', bundle], fixture)
+  assertMutationBundle(bundle)
   await init({
     name: 'NativeNavigation',
     bundleId: 'dev.craft.native-navigation',
