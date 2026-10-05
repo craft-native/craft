@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.112...v0.0.113)
+
+## 🐛 Bug Fixes
+
+- **macos**: the native sidebar looks and behaves like Finder's ([c7e4899](https://github.com/craft-native/craft/commit/c7e4899)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.111...v0.0.112)
 
 ## 🚀 Features
