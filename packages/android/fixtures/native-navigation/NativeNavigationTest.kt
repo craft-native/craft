@@ -47,6 +47,14 @@ class NativeNavigationTest {
         return false
     }
 
+    private inline fun <reified T : View> findType(view: View): T? {
+        if (view is T) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) findType<T>(view.getChildAt(index))?.let { return it }
+        }
+        return null
+    }
+
     private fun containsWebView(view: View): Boolean {
         if (view is WebView) return true
         if (view is ViewGroup) {
@@ -136,6 +144,10 @@ class NativeNavigationTest {
             val scroll = awaitView(activity, "native-scroll")
             val image = awaitView(activity, "native-image")
             assertTrue("ScrollView did not render an Android ScrollView", containsType<ScrollView>(scroll))
+            val nativeScroller = findType<ScrollView>(scroll)!!
+            instrumentation.runOnMainSync { nativeScroller.fullScroll(View.FOCUS_DOWN) }
+            instrumentation.waitForIdleSync()
+            assertTrue("native ScrollView did not move through overflow content", nativeScroller.scrollY > 0)
             assertTrue("Image did not render as ImageView", image is ImageView)
             assertTrue("Image data did not decode", (image as ImageView).drawable != null)
             assertEquals("Native pixel", image.contentDescription.toString())

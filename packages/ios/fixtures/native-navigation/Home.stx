@@ -46,6 +46,8 @@ function openDetails() {
         accessibilityLabel="Unsupported image"
         style={{"width":16,"height":16}}
       />
+      <View style={{"height":120}} />
+      <Text testID="scroll-end">End of native scroll content</Text>
     </ScrollView>
     <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
     <Text testID="greeting">Hello {name}</Text>

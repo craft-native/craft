@@ -5,12 +5,18 @@ final class NativeNavigationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
-        XCTAssertTrue(app.scrollViews["native-scroll"].waitForExistence(timeout: 15))
+        let scroll = app.scrollViews["native-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 15))
         let image = app.images["native-image"]
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertEqual(image.label, "Native pixel")
         image.tap()
         XCTAssertEqual(app.staticTexts["native-caption"].label, "Image taps: 1")
+        let scrollEnd = app.staticTexts["scroll-end"]
+        XCTAssertFalse(scrollEnd.isHittable)
+        scroll.swipeUp()
+        XCTAssertTrue(scrollEnd.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollEnd.isHittable, "native ScrollView did not reveal overflow content")
 
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))
