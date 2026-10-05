@@ -16,6 +16,41 @@ struct CraftNativeScreen: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UINavigationController, context: Context) {}
 }
 
+private final class CraftNativeScrollView: UIScrollView {
+    let contentStack = UIStackView()
+    private var crossAxisConstraint: NSLayoutConstraint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentStack.axis = .vertical
+        contentStack.alignment = .fill
+        contentStack.distribution = .fill
+        contentStack.isLayoutMarginsRelativeArrangement = true
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentStack.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor)
+        ])
+        setAxis(.vertical)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    func setAxis(_ axis: NSLayoutConstraint.Axis) {
+        contentStack.axis = axis
+        crossAxisConstraint?.isActive = false
+        crossAxisConstraint = axis == .vertical
+            ? contentStack.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor)
+            : contentStack.heightAnchor.constraint(equalTo: frameLayoutGuide.heightAnchor)
+        crossAxisConstraint?.isActive = true
+        alwaysBounceVertical = axis == .vertical
+        alwaysBounceHorizontal = axis == .horizontal
+    }
+}
+
 final class CraftNativeScreenController: UIViewController {
     private final class RenderedNode {
         let identity: String
@@ -38,6 +73,8 @@ final class CraftNativeScreenController: UIViewController {
     private let jsContext = JSContext()!
     private let rootStack = UIStackView()
     private var handlers: [ObjectIdentifier: String] = [:]
+    private var imageSources: [ObjectIdentifier: String] = [:]
+    private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
@@ -200,7 +237,7 @@ final class CraftNativeScreenController: UIViewController {
 
         let result = current.view
         result.accessibilityIdentifier = explicitKey(node, props: props) ?? path
-        if type != "View" && type != "SafeAreaView" {
+        if type != "View" && type != "SafeAreaView" && type != "ScrollView" {
             result.setContentHuggingPriority(.required, for: .vertical)
         }
         result.backgroundColor = color(style["backgroundColor"]) ?? .clear
@@ -223,19 +260,24 @@ final class CraftNativeScreenController: UIViewController {
             field.placeholder = props["placeholder"] as? String
             updateField(field, value: props["value"] as? String)
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
+        case "Image":
+            let image = result as! UIImageView
+            image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
+            image.clipsToBounds = image.contentMode == .scaleAspectFill
+            updateImage(image, source: props["source"])
+        case "ScrollView":
+            let scroll = result as! CraftNativeScrollView
+            let direction = (props["horizontal"] as? Bool) == true || style["flexDirection"] as? String == "row"
+                ? NSLayoutConstraint.Axis.horizontal : .vertical
+            scroll.setAxis(direction)
+            configureStack(scroll.contentStack, style: style)
+            reconcileChildren(children, in: scroll.contentStack, parent: current, path: path)
         default:
             let stack = result as! UIStackView
-            stack.axis = style["flexDirection"] as? String == "row" ? .horizontal : .vertical
-            stack.spacing = number(style["gap"]) ?? 0
-            let padding = number(style["padding"]) ?? 0
-            stack.layoutMargins = UIEdgeInsets(
-                top: number(style["paddingTop"]) ?? padding,
-                left: number(style["paddingLeft"]) ?? padding,
-                bottom: number(style["paddingBottom"]) ?? padding,
-                right: number(style["paddingRight"]) ?? padding
-            )
+            configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path)
         }
+        applyAccessibility(props, type: type, to: result)
         return current
     }
 
@@ -254,6 +296,10 @@ final class CraftNativeScreenController: UIViewController {
             field.borderStyle = .roundedRect
             field.addTarget(self, action: #selector(textChanged(_:)), for: .editingChanged)
             return field
+        case "Image":
+            return UIImageView()
+        case "ScrollView":
+            return CraftNativeScrollView()
         default:
             let stack = UIStackView()
             stack.alignment = .fill
@@ -316,7 +362,10 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private func forgetHandlers(_ node: RenderedNode) {
-        handlers.removeValue(forKey: ObjectIdentifier(node.view))
+        let id = ObjectIdentifier(node.view)
+        handlers.removeValue(forKey: id)
+        imageSources.removeValue(forKey: id)
+        imageTasks.removeValue(forKey: id)?.cancel()
         for child in node.children { forgetHandlers(child) }
     }
 
@@ -336,6 +385,95 @@ final class CraftNativeScreenController: UIViewController {
            let from = field.position(from: field.beginningOfDocument, offset: min(start, value.utf16.count)),
            let to = field.position(from: field.beginningOfDocument, offset: min(end, value.utf16.count)) {
             field.selectedTextRange = field.textRange(from: from, to: to)
+        }
+    }
+
+    private func configureStack(_ stack: UIStackView, style: [String: Any]) {
+        stack.axis = style["flexDirection"] as? String == "row" ? .horizontal : .vertical
+        stack.spacing = number(style["gap"]) ?? 0
+        switch style["alignItems"] as? String {
+        case "flex-start": stack.alignment = .leading
+        case "center": stack.alignment = .center
+        case "flex-end": stack.alignment = .trailing
+        case "baseline": stack.alignment = .firstBaseline
+        default: stack.alignment = .fill
+        }
+        switch style["justifyContent"] as? String {
+        case "space-between", "space-around", "space-evenly": stack.distribution = .equalSpacing
+        default: stack.distribution = .fill
+        }
+        let padding = number(style["padding"]) ?? 0
+        stack.layoutMargins = UIEdgeInsets(
+            top: number(style["paddingTop"]) ?? padding,
+            left: number(style["paddingLeft"]) ?? padding,
+            bottom: number(style["paddingBottom"]) ?? padding,
+            right: number(style["paddingRight"]) ?? padding
+        )
+    }
+
+    private func imageContentMode(_ value: Any?) -> UIView.ContentMode {
+        switch value as? String {
+        case "cover": return .scaleAspectFill
+        case "stretch": return .scaleToFill
+        case "center": return .center
+        default: return .scaleAspectFit
+        }
+    }
+
+    private func updateImage(_ view: UIImageView, source: Any?) {
+        let uri = (source as? String) ?? (source as? [String: Any])?["uri"] as? String
+        let id = ObjectIdentifier(view)
+        guard let uri, !uri.isEmpty else {
+            imageTasks.removeValue(forKey: id)?.cancel()
+            imageSources.removeValue(forKey: id)
+            view.image = nil
+            view.accessibilityValue = "Image source is missing"
+            return
+        }
+        guard imageSources[id] != uri else { return }
+        imageTasks.removeValue(forKey: id)?.cancel()
+        imageSources[id] = uri
+        view.image = nil
+        view.accessibilityValue = nil
+
+        if uri.hasPrefix("data:image/"), let comma = uri.firstIndex(of: ","),
+           let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])),
+           let image = UIImage(data: data) {
+            view.image = image
+            return
+        }
+        if let url = URL(string: uri), url.scheme == "https" {
+            let task = URLSession.shared.dataTask(with: url) { [weak self, weak view] data, _, _ in
+                guard let self, let view, let data, let image = UIImage(data: data) else { return }
+                DispatchQueue.main.async {
+                    guard self.imageSources[ObjectIdentifier(view)] == uri else { return }
+                    view.image = image
+                }
+            }
+            imageTasks[id] = task
+            task.resume()
+            return
+        }
+        if !uri.contains(":"), let image = UIImage(named: uri) {
+            view.image = image
+            return
+        }
+        view.accessibilityValue = "Unsupported image source"
+        NSLog("[craft native] Unsupported image source: %@", uri)
+    }
+
+    private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
+        view.accessibilityLabel = props["accessibilityLabel"] as? String
+        view.accessibilityHint = props["accessibilityHint"] as? String
+        let role = props["accessibilityRole"] as? String
+        view.isAccessibilityElement = view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Image", "TextInput"].contains(type)
+        switch role ?? type.lowercased() {
+        case "button": view.accessibilityTraits = .button
+        case "image": view.accessibilityTraits = .image
+        case "header": view.accessibilityTraits = .header
+        case "link": view.accessibilityTraits = .link
+        case "search": view.accessibilityTraits = .searchField
+        default: view.accessibilityTraits = []
         }
     }
 

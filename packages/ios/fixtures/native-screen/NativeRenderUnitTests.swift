@@ -84,4 +84,31 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(first.text, "Updated")
         XCTAssertNil(second.superview)
     }
+
+    func testImageAndScrollViewAreNativeAccessibleAndStable() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        let pixel = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XhO6WQAAAABJRU5ErkJggg=="
+        let image: [String: Any] = [
+            "type": "Image",
+            "props": ["key": "avatar", "source": ["uri": pixel], "accessibilityLabel": "Profile photo", "accessibilityRole": "image"],
+            "style": ["width": 24, "height": 24, "resizeMode": "cover"]
+        ]
+        let scroll: [String: Any] = [
+            "type": "ScrollView", "props": ["key": "feed"], "style": ["height": 80, "gap": 6],
+            "children": [image, node("Text", key: "caption", text: "Native content")]
+        ]
+        controller.render(document([scroll]))
+
+        let scrollView = try XCTUnwrap(find(UIScrollView.self, key: "feed", below: controller.view))
+        let imageView = try XCTUnwrap(find(UIImageView.self, key: "avatar", below: controller.view))
+        XCTAssertNotNil(imageView.image)
+        XCTAssertEqual(imageView.accessibilityLabel, "Profile photo")
+        XCTAssertTrue(imageView.accessibilityTraits.contains(.image))
+        XCTAssertEqual(imageView.contentMode, .scaleAspectFill)
+
+        controller.render(document([scroll]))
+        XCTAssertTrue(scrollView === find(UIScrollView.self, key: "feed", below: controller.view))
+        XCTAssertTrue(imageView === find(UIImageView.self, key: "avatar", below: controller.view))
+    }
 }

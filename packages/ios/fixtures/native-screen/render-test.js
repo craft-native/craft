@@ -15,6 +15,21 @@
           type: 'View',
           style: { padding: 16 },
           children: [
+            {
+              type: 'ScrollView',
+              props: { key: 'native-scroll' },
+              style: { height: 72 },
+              children: [{
+                type: 'Image',
+                props: {
+                  key: 'native-image',
+                  source: { uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XhO6WQAAAABJRU5ErkJggg==' },
+                  accessibilityLabel: 'Native pixel',
+                  accessibilityRole: 'image',
+                },
+                style: { width: 24, height: 24, resizeMode: 'cover' },
+              }],
+            },
             { type: 'Text', props: { key: 'count' }, children: [`Count: ${count}`] },
             { type: 'Button', props: { key: 'increment' }, events: { onPress: 'increment' }, children: ['Increment'] },
             { type: 'TextInput', props: { key: 'name-input', placeholder: 'Type your name' }, events: { onChange: 'changeName' } },
