@@ -39,7 +39,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('screen.mutations.apply(payload)')
       const mutation = readFileSync(join(native, 'app/src/main/java/com/craft/native/CraftNativeMutation.kt'), 'utf8')
       expect(mutation).toContain('class CraftNativeMutationDocument')
-      expect(mutation).toContain('"moveChild" -> moveChild')
+      expect(mutation).toContain('"moveChild" -> {')
       expect(nativeActivity).toContain('Color.luminance(background)')
       expect(nativeActivity).toContain('"Image" -> (previous as? ImageView')
       expect(nativeActivity).toContain('"ScrollView" -> (previous as? CraftNativeScrollView')

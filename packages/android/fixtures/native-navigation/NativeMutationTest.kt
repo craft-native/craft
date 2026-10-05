@@ -33,6 +33,9 @@ class NativeMutationTest {
             ]
         """.trimIndent()))
         assertEquals(1, result.revision)
+        assertEquals(listOf("root", "second"), result.affectedNodeIds)
+        assertEquals(listOf("second"), result.updatedNodeIds)
+        assertEquals(true, result.requiresFullRender)
         val rendered = requireNotNull(result.document)
         assertEquals("second", rendered.getJSONArray("children").getJSONObject(0).getString("id"))
         assertEquals("Updated", rendered.getJSONArray("children").getJSONObject(0)

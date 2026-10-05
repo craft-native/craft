@@ -237,7 +237,8 @@ final class NativeRenderUnitTests: XCTestCase {
         let move = try controller.applyMutation(batch(3, [
             ["op": "moveChild", "parentId": "root-node", "childId": "scroll-node", "index": 0],
         ]))
-        XCTAssertTrue(move.requiresFullRender)
+        XCTAssertFalse(move.requiresFullRender)
+        XCTAssertEqual(move.affectedNodeIds, ["root-node"])
         XCTAssertTrue(field === find(UITextField.self, key: "field", below: controller.view))
         XCTAssertTrue(scroll === find(UIScrollView.self, key: "scroll", below: controller.view))
     }
