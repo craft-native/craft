@@ -1,6 +1,7 @@
 <script>
 let name = ''
 let count = 0
+let imageTaps = 0
 
 function changeName(event) {
   name = event.text
@@ -8,6 +9,10 @@ function changeName(event) {
 
 function increment() {
   count += 1
+}
+
+function tapImage() {
+  imageTaps += 1
 }
 
 function openDetails() {
@@ -24,9 +29,10 @@ function openDetails() {
         source={{"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XhO6WQAAAABJRU5ErkJggg=="}}
         accessibilityLabel="Native pixel"
         accessibilityRole="image"
+        onPress={tapImage}
         style={{"width":24,"height":24,"resizeMode":"cover"}}
       />
-      <Text testID="native-caption">Native scroll content</Text>
+      <Text testID="native-caption">Image taps: {imageTaps}</Text>
     </ScrollView>
     <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
     <Text testID="greeting">Hello {name}</Text>

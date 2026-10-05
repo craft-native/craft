@@ -26,6 +26,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.AccessibilityDelegateCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.javascriptengine.JavaScriptIsolate
 import androidx.javascriptengine.JavaScriptConsoleCallback
 import androidx.javascriptengine.JavaScriptSandbox
@@ -314,9 +317,22 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style)
             }
         }
-        control.tag = explicitKey ?: path
-        control.contentDescription = props.optString("accessibilityLabel").ifBlank { explicitKey ?: path }
-        props.optString("accessibilityHint").takeIf { it.isNotBlank() }?.let { control.tooltipText = it }
+        if (type != "Button" && type != "TextInput") {
+            val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
+            if (handler.isNotBlank()) {
+                screen.handlers[control] = handler
+                control.isClickable = true
+                control.setOnClickListener {
+                    val current = screen.handlers[control] ?: return@setOnClickListener
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                }
+            } else {
+                screen.handlers.remove(control)
+                control.isClickable = false
+                control.setOnClickListener(null)
+            }
+        }
+        applyAccessibility(control, props, type, explicitKey ?: path)
         if (control is ImageView) imageErrors[control]?.let { control.contentDescription = "${control.contentDescription}, $it" }
         next[identity] = control
         if (style.has("backgroundColor")) control.setBackgroundColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
@@ -448,6 +464,28 @@ class MainActivity : AppCompatActivity() {
         view.setImageDrawable(null)
         view.contentDescription = "${view.tag ?: "Image"}, $message"
         Log.e(TAG, "$message: $uri")
+    }
+
+    private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
+        view.tag = fallbackLabel
+        view.contentDescription = props.optString("accessibilityLabel").ifBlank { fallbackLabel }
+        props.optString("accessibilityHint").takeIf { it.isNotBlank() }?.let { view.tooltipText = it }
+        val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
+        ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = when (role) {
+                    "button" -> Button::class.java.name
+                    "image" -> ImageView::class.java.name
+                    "search" -> EditText::class.java.name
+                    "scrollbar" -> ScrollView::class.java.name
+                    else -> host.javaClass.name
+                }
+                info.isHeading = role == "header"
+                info.roleDescription = role.takeIf { it !in setOf("view", "text", "textinput", "scrollview") }
+            }
+        })
+        ViewCompat.setImportantForAccessibility(view, ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES)
     }
 
     private fun dp(value: Double) = (value * resources.displayMetrics.density).toInt()

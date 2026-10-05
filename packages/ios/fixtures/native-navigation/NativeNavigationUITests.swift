@@ -9,6 +9,8 @@ final class NativeNavigationUITests: XCTestCase {
         let image = app.images["native-image"]
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertEqual(image.label, "Native pixel")
+        image.tap()
+        XCTAssertEqual(app.staticTexts["native-caption"].label, "Image taps: 1")
 
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))

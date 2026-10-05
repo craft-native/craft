@@ -73,6 +73,7 @@ final class CraftNativeScreenController: UIViewController {
     private let jsContext = JSContext()!
     private let rootStack = UIStackView()
     private var handlers: [ObjectIdentifier: String] = [:]
+    private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
@@ -277,6 +278,9 @@ final class CraftNativeScreenController: UIViewController {
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path)
         }
+        if type != "Button" && type != "TextInput" {
+            updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
+        }
         applyAccessibility(props, type: type, to: result)
         return current
     }
@@ -364,6 +368,9 @@ final class CraftNativeScreenController: UIViewController {
     private func forgetHandlers(_ node: RenderedNode) {
         let id = ObjectIdentifier(node.view)
         handlers.removeValue(forKey: id)
+        if let recognizer = tapRecognizers.removeValue(forKey: id) {
+            node.view.removeGestureRecognizer(recognizer)
+        }
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
         for child in node.children { forgetHandlers(child) }
@@ -373,6 +380,19 @@ final class CraftNativeScreenController: UIViewController {
         let id = ObjectIdentifier(view)
         if let handler = handler { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
+    }
+
+    private func updatePressHandler(_ handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        updateHandler(handler, for: view)
+        if handler != nil, tapRecognizers[id] == nil {
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(viewPressed(_:)))
+            tapRecognizers[id] = recognizer
+            view.addGestureRecognizer(recognizer)
+        } else if handler == nil, let recognizer = tapRecognizers.removeValue(forKey: id) {
+            view.removeGestureRecognizer(recognizer)
+        }
+        if view is UIImageView { view.isUserInteractionEnabled = handler != nil }
     }
 
     private func updateField(_ field: UITextField, value: String?) {
@@ -498,6 +518,11 @@ final class CraftNativeScreenController: UIViewController {
     @objc private func textChanged(_ sender: UITextField) {
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
+    }
+
+    @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
+        guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
 
     private func send(type: String, payload: [String: Any], correlationId: String? = nil) {

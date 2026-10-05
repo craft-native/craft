@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
@@ -120,6 +121,11 @@ class NativeNavigationTest {
             assertTrue("Image did not render as ImageView", image is ImageView)
             assertTrue("Image data did not decode", (image as ImageView).drawable != null)
             assertEquals("Native pixel", image.contentDescription.toString())
+            var imageInfo: AccessibilityNodeInfo? = null
+            instrumentation.runOnMainSync { imageInfo = image.createAccessibilityNodeInfo() }
+            assertEquals(ImageView::class.java.name, imageInfo?.className?.toString())
+            instrumentation.runOnMainSync { image.performClick() }
+            awaitText(activity, "native-caption", "Image taps: 1")
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {
