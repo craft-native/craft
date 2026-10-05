@@ -3,6 +3,7 @@ package {{PACKAGE_NAME}}
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -11,12 +12,17 @@ import android.os.Vibrator
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Log
+import android.util.Base64
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -28,7 +34,33 @@ import androidx.javascriptengine.MessagePort
 import androidx.javascriptengine.MessagePortClient
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URL
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.UUID
+
+private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
+    val content = LinearLayout(context)
+    private val vertical = ScrollView(context)
+    private val horizontal = HorizontalScrollView(context)
+    private var horizontalMode: Boolean? = null
+
+    init { setHorizontal(false) }
+
+    fun setHorizontal(value: Boolean) {
+        if (horizontalMode == value) return
+        horizontalMode = value
+        (content.parent as? ViewGroup)?.removeView(content)
+        removeAllViews()
+        val scroller: ViewGroup = if (value) horizontal else vertical
+        scroller.removeAllViews()
+        content.orientation = if (value) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        scroller.addView(content, if (value)
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        else ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+}
 
 /** WebView-free host for a compiled stx-native route bundle. */
 class MainActivity : AppCompatActivity() {
@@ -58,6 +90,10 @@ class MainActivity : AppCompatActivity() {
     private var hapticsEnabled = false
     private var defaultTextColor = Color.WHITE
     private var useMessagePorts = false
+    private val imageExecutor = Executors.newFixedThreadPool(2)
+    private val imageSources = mutableMapOf<ImageView, String>()
+    private val imageJobs = mutableMapOf<ImageView, Future<*>>()
+    private val imageErrors = mutableMapOf<ImageView, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -257,40 +293,31 @@ class MainActivity : AppCompatActivity() {
                     override fun afterTextChanged(s: Editable?) {}
                 })
             }
+            "Image" -> (previous as? ImageView ?: ImageView(this)).apply {
+                scaleType = when (style.optString("resizeMode").ifBlank { props.optString("resizeMode") }) {
+                    "cover" -> ImageView.ScaleType.CENTER_CROP
+                    "stretch" -> ImageView.ScaleType.FIT_XY
+                    "center" -> ImageView.ScaleType.CENTER
+                    else -> ImageView.ScaleType.CENTER_INSIDE
+                }
+                adjustViewBounds = false
+                updateImage(this, props.opt("source"))
+            }
+            "ScrollView" -> (previous as? CraftNativeScrollView ?: CraftNativeScrollView(this)).apply {
+                val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
+                setHorizontal(horizontal)
+                configureContainer(content, style)
+                reconcileChildren(screen, content, children, path, next, style)
+            }
             else -> (previous as? LinearLayout ?: LinearLayout(this)).apply {
-                orientation = if (style.optString("flexDirection") == "row")
-                    LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-                val padding = style.optDouble("padding", 0.0)
-                setPadding(
-                    dp(style.optDouble("paddingLeft", padding)),
-                    dp(style.optDouble("paddingTop", padding)),
-                    dp(style.optDouble("paddingRight", padding)),
-                    dp(style.optDouble("paddingBottom", padding))
-                )
-                val desired = mutableListOf<View>()
-                for (index in 0 until children.length()) {
-                    val child = children.opt(index)
-                    val childView = when (child) {
-                        is JSONObject -> makeView(screen, child, "$path.$index", next)
-                        is String -> TextView(this@MainActivity).apply {
-                            text = child
-                            setTextColor(defaultTextColor)
-                        }
-                        else -> null
-                    }
-                    if (childView != null) desired.add(childView)
-                }
-                val desiredSet = desired.toSet()
-                for ((index, childView) in desired.withIndex()) {
-                    if (getChildAt(index) === childView) continue
-                    if (index < childCount && getChildAt(index) !in desiredSet) removeViewAt(index)
-                    (childView.parent as? ViewGroup)?.removeView(childView)
-                    addView(childView, index)
-                }
-                while (childCount > desired.size) removeViewAt(childCount - 1)
+                configureContainer(this, style)
+                reconcileChildren(screen, this, children, path, next, style)
             }
         }
-        control.contentDescription = explicitKey ?: path
+        control.tag = explicitKey ?: path
+        control.contentDescription = props.optString("accessibilityLabel").ifBlank { explicitKey ?: path }
+        props.optString("accessibilityHint").takeIf { it.isNotBlank() }?.let { control.tooltipText = it }
+        if (control is ImageView) imageErrors[control]?.let { control.contentDescription = "${control.contentDescription}, $it" }
         next[identity] = control
         if (style.has("backgroundColor")) control.setBackgroundColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
         control.layoutParams = LinearLayout.LayoutParams(
@@ -305,6 +332,122 @@ class MainActivity : AppCompatActivity() {
             val value = children.opt(index)
             if (value is String) append(value)
         }
+    }
+
+    private fun configureContainer(layout: LinearLayout, style: JSONObject) {
+        val direction = style.optString("flexDirection")
+        layout.orientation = if (direction == "row" || direction == "row-reverse")
+            LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        val main = when (style.optString("justifyContent")) {
+            "center" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
+            "flex-end" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.END else Gravity.BOTTOM
+            else -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.START else Gravity.TOP
+        }
+        val cross = when (style.optString("alignItems")) {
+            "center" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
+            "flex-end" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.BOTTOM else Gravity.END
+            else -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.TOP else Gravity.START
+        }
+        layout.gravity = main or cross
+        val padding = style.optDouble("padding", 0.0)
+        layout.setPadding(
+            dp(style.optDouble("paddingLeft", padding)),
+            dp(style.optDouble("paddingTop", padding)),
+            dp(style.optDouble("paddingRight", padding)),
+            dp(style.optDouble("paddingBottom", padding))
+        )
+    }
+
+    private fun reconcileChildren(
+        screen: Screen,
+        layout: LinearLayout,
+        children: JSONArray,
+        path: String,
+        next: MutableMap<String, View>,
+        style: JSONObject
+    ) {
+        val desired = mutableListOf<View>()
+        for (index in 0 until children.length()) {
+            val child = children.opt(index)
+            val childView = when (child) {
+                is JSONObject -> makeView(screen, child, "$path.$index", next)
+                is String -> TextView(this).apply { text = child; setTextColor(defaultTextColor) }
+                else -> null
+            }
+            if (childView != null) desired.add(childView)
+        }
+        if (style.optString("flexDirection").endsWith("-reverse")) desired.reverse()
+        val desiredSet = desired.toSet()
+        for ((index, childView) in desired.withIndex()) {
+            if (layout.getChildAt(index) !== childView) {
+                if (index < layout.childCount && layout.getChildAt(index) !in desiredSet) layout.removeViewAt(index)
+                (childView.parent as? ViewGroup)?.removeView(childView)
+                layout.addView(childView, index)
+            }
+            val gap = dp(style.optDouble("gap", 0.0))
+            val params = childView.layoutParams as? LinearLayout.LayoutParams
+                ?: LinearLayout.LayoutParams(childView.layoutParams?.width ?: -1, childView.layoutParams?.height ?: -2)
+            params.leftMargin = if (layout.orientation == LinearLayout.HORIZONTAL && index > 0) gap else 0
+            params.topMargin = if (layout.orientation == LinearLayout.VERTICAL && index > 0) gap else 0
+            childView.layoutParams = params
+        }
+        while (layout.childCount > desired.size) layout.removeViewAt(layout.childCount - 1)
+    }
+
+    private fun updateImage(view: ImageView, source: Any?) {
+        val uri = when (source) {
+            is String -> source
+            is JSONObject -> source.optString("uri")
+            else -> ""
+        }
+        if (uri.isBlank()) {
+            imageJobs.remove(view)?.cancel(true)
+            imageSources.remove(view)
+            imageErrors[view] = "Image source is missing"
+            view.setImageDrawable(null)
+            return
+        }
+        if (imageSources[view] == uri) return
+        imageJobs.remove(view)?.cancel(true)
+        imageSources[view] = uri
+        imageErrors.remove(view)
+        view.setImageDrawable(null)
+
+        if (uri.startsWith("data:image/") && uri.contains(',')) {
+            val bytes = runCatching { Base64.decode(uri.substringAfter(','), Base64.DEFAULT) }.getOrNull()
+            val bitmap = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+            if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Image data is invalid")
+            return
+        }
+        if (!uri.contains(':')) {
+            val bitmap = runCatching { assets.open(uri).use { BitmapFactory.decodeStream(it) } }.getOrNull()
+            if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Bundled image was not found")
+            return
+        }
+        if (!uri.startsWith("https://")) {
+            imageFailure(view, uri, "Unsupported image source")
+            return
+        }
+        imageJobs[view] = imageExecutor.submit {
+            val bitmap = runCatching {
+                val connection = URL(uri).openConnection().apply {
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                }
+                connection.getInputStream().use(BitmapFactory::decodeStream)
+            }.getOrNull()
+            runOnUiThread {
+                if (imageSources[view] != uri) return@runOnUiThread
+                if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Image download failed")
+            }
+        }
+    }
+
+    private fun imageFailure(view: ImageView, uri: String, message: String) {
+        imageErrors[view] = message
+        view.setImageDrawable(null)
+        view.contentDescription = "${view.tag ?: "Image"}, $message"
+        Log.e(TAG, "$message: $uri")
     }
 
     private fun dp(value: Double) = (value * resources.displayMetrics.density).toInt()
@@ -382,6 +525,9 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         screens.forEach { it.close() }
         screens.clear()
+        imageJobs.values.forEach { it.cancel(true) }
+        imageJobs.clear()
+        imageExecutor.shutdownNow()
         sandbox?.close()
         super.onDestroy()
     }

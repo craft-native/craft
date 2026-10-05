@@ -5,6 +5,10 @@ final class NativeNavigationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
+        XCTAssertTrue(app.scrollViews["native-scroll"].waitForExistence(timeout: 15))
+        let image = app.images["native-image"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertEqual(image.label, "Native pixel")
 
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))

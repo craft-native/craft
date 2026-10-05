@@ -9,7 +9,9 @@ import android.view.ViewGroup
 import android.webkit.WebView
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -25,13 +27,21 @@ class NativeNavigationTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     private fun find(view: View, id: String): View? {
-        if (view.contentDescription?.toString() == id) return view
+        if (view.tag?.toString() == id || view.contentDescription?.toString() == id) return view
         if (view is ViewGroup) {
             for (index in 0 until view.childCount) {
                 find(view.getChildAt(index), id)?.let { return it }
             }
         }
         return null
+    }
+
+    private inline fun <reified T : View> containsType(view: View): Boolean {
+        if (view is T) return true
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) if (containsType<T>(view.getChildAt(index))) return true
+        }
+        return false
     }
 
     private fun containsWebView(view: View): Boolean {
@@ -104,6 +114,12 @@ class NativeNavigationTest {
             val title = awaitView(activity, "home-title")
             assertTrue(title is TextView)
             assertEquals(Color.WHITE, (title as TextView).currentTextColor)
+            val scroll = awaitView(activity, "native-scroll")
+            val image = awaitView(activity, "native-image")
+            assertTrue("ScrollView did not render an Android ScrollView", containsType<ScrollView>(scroll))
+            assertTrue("Image did not render as ImageView", image is ImageView)
+            assertTrue("Image data did not decode", (image as ImageView).drawable != null)
+            assertEquals("Native pixel", image.contentDescription.toString())
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {

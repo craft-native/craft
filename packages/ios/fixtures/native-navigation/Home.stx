@@ -18,6 +18,16 @@ function openDetails() {
 <template>
   <View class="p-4">
     <Text testID="home-title">Home</Text>
+    <ScrollView testID="native-scroll" style={{"height":72,"gap":4}}>
+      <Image
+        testID="native-image"
+        source={{"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XhO6WQAAAABJRU5ErkJggg=="}}
+        accessibilityLabel="Native pixel"
+        accessibilityRole="image"
+        style={{"width":24,"height":24,"resizeMode":"cover"}}
+      />
+      <Text testID="native-caption">Native scroll content</Text>
+    </ScrollView>
     <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
     <Text testID="greeting">Hello {name}</Text>
     <Button testID="increment" onPress={increment}>Increment</Button>
