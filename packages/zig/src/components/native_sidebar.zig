@@ -175,7 +175,6 @@ pub const NativeSidebar = struct {
         const clearColorObj = macos.msgSend0(NSColorClass, "clearColor");
         _ = macos.msgSend1(scroll_view, "setBackgroundColor:", clearColorObj);
 
-
         self.* = .{
             .outline_view = outline_view,
             .scroll_view = scroll_view,

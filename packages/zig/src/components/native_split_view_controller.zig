@@ -148,7 +148,6 @@ pub const NativeSplitViewController = struct {
         _ = macos.msgSend1(sidebar_item, "setCollapsed:", @as(c_int, 0)); // NO
 
         self.sidebar_item = sidebar_item;
-
     }
 
     /// Set the content view (typically a WKWebView)
@@ -172,7 +171,6 @@ pub const NativeSplitViewController = struct {
         _ = macos.msgSend1(self.split_view_controller, "addSplitViewItem:", content_item);
 
         self.content_item = content_item;
-
     }
 
     /// Get the root view of the split view controller (for setting as window content view)
