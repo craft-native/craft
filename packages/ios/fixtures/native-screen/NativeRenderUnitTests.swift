@@ -4,6 +4,21 @@ import XCTest
 
 @MainActor
 final class NativeRenderUnitTests: XCTestCase {
+    private func batch(
+        _ revision: Int,
+        _ operations: [[String: Any]],
+        version: Int = 1,
+        baseRevision: Int? = nil
+    ) -> [String: Any] {
+        [
+            "version": version,
+            "batchId": "batch-\(revision)",
+            "baseRevision": baseRevision ?? revision - 1,
+            "revision": revision,
+            "operations": operations,
+        ]
+    }
+
     private func node(_ type: String, key: String, text: String? = nil, style: [String: Any] = [:]) -> [String: Any] {
         var result: [String: Any] = ["type": type, "props": ["key": key], "style": style]
         if let text = text { result["children"] = [text] }
@@ -169,5 +184,83 @@ final class NativeRenderUnitTests: XCTestCase {
 
         controller.render(document([["type": "Image", "props": ["key": "broken"]]]))
         XCTAssertEqual(image.accessibilityValue, "Image source is missing")
+    }
+
+    func testMutationBatchesPreserveControlsFocusScrollAndHandlers() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(["id": "root-node", "type": "View", "children": []])
+        try controller.applyMutation(batch(1, [
+            ["op": "createNode", "id": "field", "node": [
+                "type": "TextInput", "props": ["testID": "field"], "events": ["onChange": "changed"]
+            ]],
+            ["op": "createNode", "id": "scroll", "node": [
+                "type": "ScrollView", "props": ["testID": "scroll"], "style": ["height": 40]
+            ]],
+            ["op": "createNode", "id": "label", "node": [
+                "type": "Text", "props": ["testID": "label", "accessibilityLabel": "Before"],
+                "children": ["Before"]
+            ]],
+            ["op": "insertChild", "parentId": "scroll", "childId": "label", "index": 0],
+            ["op": "insertChild", "parentId": "root-node", "childId": "field", "index": 0],
+            ["op": "insertChild", "parentId": "root-node", "childId": "scroll", "index": 1],
+        ]))
+
+        let field = try XCTUnwrap(find(UITextField.self, key: "field", below: controller.view))
+        let scroll = try XCTUnwrap(find(UIScrollView.self, key: "scroll", below: controller.view))
+        let label = try XCTUnwrap(find(UILabel.self, key: "label", below: controller.view))
+        field.text = "draft"
+        let caret = try XCTUnwrap(field.position(from: field.beginningOfDocument, offset: 3))
+        field.selectedTextRange = field.textRange(from: caret, to: caret)
+        scroll.contentOffset = CGPoint(x: 0, y: 17)
+
+        try controller.applyMutation(batch(2, [
+            ["op": "updateNode", "id": "label", "patch": [
+                "children": ["After"],
+                "props": ["testID": "label", "accessibilityLabel": "After"],
+                "events": ["onPress": "pressed"],
+            ]],
+            ["op": "moveChild", "parentId": "root-node", "childId": "scroll", "index": 0],
+        ]))
+
+        XCTAssertTrue(field === find(UITextField.self, key: "field", below: controller.view))
+        XCTAssertTrue(scroll === find(UIScrollView.self, key: "scroll", below: controller.view))
+        XCTAssertTrue(label === find(UILabel.self, key: "label", below: controller.view))
+        XCTAssertEqual(field.text, "draft")
+        let selection = try XCTUnwrap(field.selectedTextRange)
+        XCTAssertEqual(field.offset(from: field.beginningOfDocument, to: selection.start), 3)
+        XCTAssertEqual(scroll.contentOffset.y, 17)
+        XCTAssertEqual(label.text, "After")
+        XCTAssertEqual(label.accessibilityLabel, "After")
+    }
+
+    func testMutationValidationIsAtomicAndDeterministic() throws {
+        let document = CraftNativeMutationDocument()
+        XCTAssertThrowsError(try document.apply(batch(1, [
+            ["op": "createNode", "id": "root", "root": true, "node": ["type": "View"]],
+            ["op": "removeNode", "id": "missing"],
+        ]))) { error in
+            XCTAssertEqual(error as? CraftNativeMutationFailure, CraftNativeMutationFailure(
+                "UNKNOWN_NODE", "node missing does not exist", operationIndex: 1
+            ))
+        }
+        XCTAssertEqual(document.revision, 0)
+
+        _ = try document.apply(batch(1, [
+            ["op": "createNode", "id": "root", "root": true, "node": ["type": "View"]],
+        ]))
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "updateNode", "id": "root", "patch": ["type": "Text"]],
+        ]))) { error in
+            XCTAssertEqual(error as? CraftNativeMutationFailure, CraftNativeMutationFailure(
+                "INVALID_PATCH", "unsupported patch field type", operationIndex: 0
+            ))
+        }
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "removeNode", "id": "root"],
+        ], version: 2, baseRevision: 1))) { error in
+            XCTAssertEqual((error as? CraftNativeMutationFailure)?.code, "UNSUPPORTED_VERSION")
+        }
+        XCTAssertEqual(document.revision, 1)
     }
 }

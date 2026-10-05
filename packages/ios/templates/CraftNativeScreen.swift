@@ -79,6 +79,7 @@ final class CraftNativeScreenController: UIViewController {
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
+    private let mutationDocument = CraftNativeMutationDocument()
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -164,13 +165,38 @@ final class CraftNativeScreenController: UIViewController {
     private func receive(_ raw: String) {
         guard let data = raw.data(using: .utf8),
               let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = message["type"] as? String,
-              let payload = message["payload"] as? [String: Any] else { return }
+              let type = message["type"] as? String else { return }
+        let payload = message["payload"] as? [String: Any] ?? [:]
 
         switch type {
         case "RENDER":
             guard let document = payload["document"] as? [String: Any] else { return }
             render(document)
+        case "MUTATE":
+            do {
+                let result = try applyMutation(payload)
+                send(type: "MUTATION_ACK", payload: [
+                    "batchId": result.batchId,
+                    "revision": result.revision,
+                    "version": craftNativeMutationProtocolVersion,
+                ])
+            } catch let failure as CraftNativeMutationFailure {
+                var error: [String: Any] = [
+                    "batchId": payload["batchId"] as? String ?? "",
+                    "code": failure.code,
+                    "message": failure.message,
+                    "version": craftNativeMutationProtocolVersion,
+                ]
+                if let operationIndex = failure.operationIndex { error["operationIndex"] = operationIndex }
+                send(type: "MUTATION_ERROR", payload: error)
+            } catch {
+                send(type: "MUTATION_ERROR", payload: [
+                    "batchId": payload["batchId"] as? String ?? "",
+                    "code": "INVALID_BATCH",
+                    "message": "mutation batch could not be applied",
+                    "version": craftNativeMutationProtocolVersion,
+                ])
+            }
         case "NAVIGATE", "NAVIGATE_REPLACE":
             guard navigationController?.topViewController === self,
                   let screen = payload["screen"] as? String, !screen.isEmpty,
@@ -220,6 +246,19 @@ final class CraftNativeScreenController: UIViewController {
 
     // Internal so simulator-hosted XCTest can assert actual UIView identity.
     func render(_ document: [String: Any]) {
+        mutationDocument.replace(with: document)
+        renderCommitted(document)
+    }
+
+    @discardableResult
+    func applyMutation(_ payload: [String: Any]) throws -> CraftNativeMutationResult {
+        let result = try mutationDocument.apply(payload)
+        if let document = result.document { renderCommitted(document) }
+        else { clearRenderedTree() }
+        return result
+    }
+
+    private func renderCommitted(_ document: [String: Any]) {
         let previous = renderedRoot
         let next = reconcile(document, identity: "root", path: "root", previous: previous)
         if previous?.view !== next.view {
@@ -227,6 +266,11 @@ final class CraftNativeScreenController: UIViewController {
             rootStack.addArrangedSubview(next.view)
         }
         renderedRoot = next
+    }
+
+    private func clearRenderedTree() {
+        if let root = renderedRoot { detach(root, from: rootStack) }
+        renderedRoot = nil
     }
 
     private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?) -> RenderedNode {
@@ -325,7 +369,7 @@ final class CraftNativeScreenController: UIViewController {
     private func explicitKey(_ node: [String: Any], props: [String: Any]) -> String? {
         // The current stx-native compiler emits key in props; accept the IR
         // field too so keyed children keep working when the compiler adopts it.
-        [node["key"], props["key"], props["testID"]]
+        [node["id"], node["key"], props["key"], props["testID"]]
             .compactMap { $0 as? String }
             .first { !$0.isEmpty }
     }
