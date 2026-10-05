@@ -51,6 +51,8 @@ private final class CraftNativeScrollView: UIScrollView {
     }
 }
 
+private final class CraftNativeFlexSpacer: UIView {}
+
 final class CraftNativeScreenController: UIViewController {
     private final class RenderedNode {
         let identity: String
@@ -241,24 +243,27 @@ final class CraftNativeScreenController: UIViewController {
         if type != "View" && type != "SafeAreaView" && type != "ScrollView" {
             result.setContentHuggingPriority(.required, for: .vertical)
         }
-        result.backgroundColor = color(style["backgroundColor"]) ?? .clear
-        result.layer.cornerRadius = number(style["borderRadius"]) ?? 0
-        updateDimension(number(style["width"]), constraint: &current.widthConstraint, anchor: result.widthAnchor)
-        updateDimension(number(style["height"]), constraint: &current.heightConstraint, anchor: result.heightAnchor)
+        applyViewStyle(style, to: result, node: current)
 
         switch type {
         case "Text":
             let label = result as! UILabel
-            label.text = children.compactMap { $0 as? String }.joined()
-            label.textColor = color(style["color"]) ?? .label
-            label.font = .systemFont(ofSize: number(style["fontSize"]) ?? UIFont.systemFontSize)
+            configureText(label, text: children.compactMap { $0 as? String }.joined(), style: style)
         case "Button":
             let button = result as! UIButton
             button.setTitle(props["title"] as? String ?? children.compactMap { $0 as? String }.joined(), for: .normal)
+            button.setTitleColor(color(style["color"]) ?? .systemBlue, for: .normal)
+            button.titleLabel?.font = textFont(
+                style,
+                default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)
+            )
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
             let field = result as! UITextField
             field.placeholder = props["placeholder"] as? String
+            field.textColor = color(style["color"]) ?? .label
+            field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
+            field.textAlignment = textAlignment(style["textAlign"])
             updateField(field, value: props["value"] as? String)
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
         case "Image":
@@ -272,11 +277,11 @@ final class CraftNativeScreenController: UIViewController {
                 ? NSLayoutConstraint.Axis.horizontal : .vertical
             scroll.setAxis(direction)
             configureStack(scroll.contentStack, style: style)
-            reconcileChildren(children, in: scroll.contentStack, parent: current, path: path)
+            reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: style)
         default:
             let stack = result as! UIStackView
             configureStack(stack, style: style)
-            reconcileChildren(children, in: stack, parent: current, path: path)
+            reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
         if type != "Button" && type != "TextInput" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
@@ -321,7 +326,17 @@ final class CraftNativeScreenController: UIViewController {
             .first { !$0.isEmpty }
     }
 
-    private func reconcileChildren(_ children: [Any], in stack: UIStackView, parent: RenderedNode, path: String) {
+    private func reconcileChildren(
+        _ children: [Any],
+        in stack: UIStackView,
+        parent: RenderedNode,
+        path: String,
+        style: [String: Any]
+    ) {
+        for spacer in stack.arrangedSubviews.compactMap({ $0 as? CraftNativeFlexSpacer }) {
+            stack.removeArrangedSubview(spacer)
+            spacer.removeFromSuperview()
+        }
         let nodes = children.compactMap { $0 as? [String: Any] }
         let keys = nodes.compactMap { explicitKey($0, props: $0["props"] as? [String: Any] ?? [:]) }
         let counts = Dictionary(keys.map { ($0, 1) }, uniquingKeysWith: +)
@@ -336,6 +351,7 @@ final class CraftNativeScreenController: UIViewController {
             let child = reconcile(node, identity: identity, path: "\(path).\(index)", previous: old[identity])
             next.append(child)
         }
+        if (style["flexDirection"] as? String)?.hasSuffix("-reverse") == true { next.reverse() }
 
         for child in parent.children where !next.contains(where: { $0 === child }) {
             detach(child, from: stack)
@@ -348,15 +364,7 @@ final class CraftNativeScreenController: UIViewController {
             stack.insertArrangedSubview(child.view, at: index)
         }
         parent.children = next
-        if path == "root" && stack.axis == .vertical {
-            // Keep the initial screen pinned to the safe-area top.
-            if stack.arrangedSubviews.count == next.count { stack.addArrangedSubview(UIView()) }
-        } else if stack.arrangedSubviews.count > next.count {
-            for filler in stack.arrangedSubviews.dropFirst(next.count) {
-                stack.removeArrangedSubview(filler)
-                filler.removeFromSuperview()
-            }
-        }
+        addJustificationSpacers(to: stack, value: style["justifyContent"] as? String)
     }
 
     private func detach(_ node: RenderedNode, from stack: UIStackView) {
@@ -409,8 +417,10 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private func configureStack(_ stack: UIStackView, style: [String: Any]) {
-        stack.axis = style["flexDirection"] as? String == "row" ? .horizontal : .vertical
-        stack.spacing = number(style["gap"]) ?? 0
+        let direction = style["flexDirection"] as? String
+        stack.axis = direction == "row" || direction == "row-reverse" ? .horizontal : .vertical
+        stack.spacing = number(stack.axis == .horizontal ? style["columnGap"] : style["rowGap"])
+            ?? number(style["gap"]) ?? 0
         switch style["alignItems"] as? String {
         case "flex-start": stack.alignment = .leading
         case "center": stack.alignment = .center
@@ -423,12 +433,99 @@ final class CraftNativeScreenController: UIViewController {
         default: stack.distribution = .fill
         }
         let padding = number(style["padding"]) ?? 0
+        let horizontal = number(style["paddingHorizontal"]) ?? padding
+        let vertical = number(style["paddingVertical"]) ?? padding
         stack.layoutMargins = UIEdgeInsets(
-            top: number(style["paddingTop"]) ?? padding,
-            left: number(style["paddingLeft"]) ?? padding,
-            bottom: number(style["paddingBottom"]) ?? padding,
-            right: number(style["paddingRight"]) ?? padding
+            top: number(style["paddingTop"]) ?? vertical,
+            left: number(style["paddingLeft"]) ?? horizontal,
+            bottom: number(style["paddingBottom"]) ?? vertical,
+            right: number(style["paddingRight"]) ?? horizontal
         )
+    }
+
+    private func addJustificationSpacers(to stack: UIStackView, value: String?) {
+        guard !stack.arrangedSubviews.isEmpty else { return }
+        let leading = value == "center" || value == "flex-end"
+        let trailing = value == nil || value == "flex-start" || value == "center"
+        if leading { stack.insertArrangedSubview(CraftNativeFlexSpacer(), at: 0) }
+        if trailing { stack.addArrangedSubview(CraftNativeFlexSpacer()) }
+    }
+
+    private func applyViewStyle(_ style: [String: Any], to view: UIView, node: RenderedNode) {
+        view.backgroundColor = color(style["backgroundColor"]) ?? .clear
+        view.alpha = number(style["opacity"]) ?? 1
+        view.isHidden = style["display"] as? String == "none"
+        view.layer.cornerRadius = number(style["borderRadius"]) ?? 0
+        view.layer.borderWidth = number(style["borderWidth"]) ?? 0
+        view.layer.borderColor = (color(style["borderColor"]) ?? .clear).cgColor
+        view.clipsToBounds = style["overflow"] as? String == "hidden"
+        updateDimension(number(style["width"]), constraint: &node.widthConstraint, anchor: view.widthAnchor)
+        updateDimension(number(style["height"]), constraint: &node.heightConstraint, anchor: view.heightAnchor)
+    }
+
+    private func configureText(_ label: UILabel, text: String, style: [String: Any]) {
+        let transformed: String
+        switch style["textTransform"] as? String {
+        case "uppercase": transformed = text.uppercased()
+        case "lowercase": transformed = text.lowercased()
+        case "capitalize": transformed = text.capitalized
+        default: transformed = text
+        }
+        label.textColor = color(style["color"]) ?? .label
+        label.font = textFont(style, default: .systemFont(ofSize: UIFont.systemFontSize))
+        label.textAlignment = textAlignment(style["textAlign"])
+        var attributes: [NSAttributedString.Key: Any] = [:]
+        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let lineHeight = number(style["lineHeight"]) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            paragraph.alignment = label.textAlignment
+            attributes[.paragraphStyle] = paragraph
+        }
+        switch style["textDecorationLine"] as? String {
+        case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        case "line-through": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        case "underline line-through":
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        default: break
+        }
+        label.attributedText = attributes.isEmpty ? nil : NSAttributedString(string: transformed, attributes: attributes)
+        if attributes.isEmpty { label.text = transformed }
+    }
+
+    private func textFont(_ style: [String: Any], default fallback: UIFont) -> UIFont {
+        let size = number(style["fontSize"]) ?? fallback.pointSize
+        let weight: UIFont.Weight
+        switch style["fontWeight"] as? String {
+        case "100": weight = .ultraLight
+        case "200": weight = .thin
+        case "300": weight = .light
+        case "500": weight = .medium
+        case "600": weight = .semibold
+        case "bold", "700": weight = .bold
+        case "800": weight = .heavy
+        case "900": weight = .black
+        default: weight = .regular
+        }
+        var font = (style["fontFamily"] as? String).flatMap { UIFont(name: $0, size: size) }
+            ?? .systemFont(ofSize: size, weight: weight)
+        if style["fontStyle"] as? String == "italic",
+           let descriptor = font.fontDescriptor.withSymbolicTraits(.traitItalic) {
+            font = UIFont(descriptor: descriptor, size: size)
+        }
+        return font
+    }
+
+    private func textAlignment(_ value: Any?) -> NSTextAlignment {
+        switch value as? String {
+        case "left": return .left
+        case "right": return .right
+        case "center": return .center
+        case "justify": return .justified
+        default: return .natural
+        }
     }
 
     private func imageContentMode(_ value: Any?) -> UIView.ContentMode {

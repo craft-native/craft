@@ -111,4 +111,44 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(scrollView === find(UIScrollView.self, key: "feed", below: controller.view))
         XCTAssertTrue(imageView === find(UIImageView.self, key: "avatar", below: controller.view))
     }
+
+    func testSharedLayoutColorAndTextStylesMapToUIKit() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        let first = node("Text", key: "first", text: "first", style: [
+            "color": "#123456", "fontSize": 21, "fontWeight": "700", "fontStyle": "italic",
+            "textAlign": "right", "letterSpacing": 2, "lineHeight": 28, "textTransform": "uppercase",
+            "textDecorationLine": "underline"
+        ])
+        let second = node("Text", key: "second", text: "second")
+        controller.render(document([[
+            "type": "View", "props": ["key": "styled"],
+            "style": [
+                "flexDirection": "row-reverse", "alignItems": "center", "justifyContent": "center",
+                "gap": 7, "paddingHorizontal": 11, "paddingVertical": 5,
+                "width": 240, "height": 80, "backgroundColor": "#abcdef", "opacity": 0.75,
+                "borderWidth": 3, "borderColor": "#654321", "borderRadius": 9, "overflow": "hidden"
+            ],
+            "children": [first, second]
+        ]]))
+
+        let stack = try XCTUnwrap(find(UIStackView.self, key: "styled", below: controller.view))
+        let label = try XCTUnwrap(find(UILabel.self, key: "first", below: controller.view))
+        XCTAssertEqual(stack.axis, .horizontal)
+        XCTAssertEqual(stack.alignment, .center)
+        XCTAssertEqual(stack.spacing, 7)
+        XCTAssertEqual(stack.layoutMargins.left, 11)
+        XCTAssertEqual(stack.layoutMargins.top, 5)
+        XCTAssertEqual(stack.arrangedSubviews.compactMap { $0.accessibilityIdentifier }, ["second", "first"])
+        XCTAssertEqual(stack.alpha, 0.75)
+        XCTAssertEqual(stack.layer.borderWidth, 3)
+        XCTAssertEqual(stack.layer.cornerRadius, 9)
+        XCTAssertTrue(stack.clipsToBounds)
+        XCTAssertEqual(label.text, "FIRST")
+        XCTAssertEqual(label.font.pointSize, 21)
+        XCTAssertTrue(label.font.fontDescriptor.symbolicTraits.contains(.traitItalic))
+        XCTAssertEqual(label.textAlignment, .right)
+        XCTAssertEqual(label.attributedText?.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat, 2)
+        XCTAssertNotNil(label.attributedText?.attribute(.underlineStyle, at: 0, effectiveRange: nil))
+    }
 }
