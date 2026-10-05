@@ -80,6 +80,8 @@ final class CraftNativeScreenController: UIViewController {
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
+    private var flatListRows: [ObjectIdentifier: [String: RenderedNode]] = [:]
+    private var flatListOwners: [String: String] = [:]
     private let mutationDocument = CraftNativeMutationDocument()
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
@@ -261,9 +263,12 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private func applyTargetedUpdates(_ ids: [String]) -> Bool {
+        var applied = Set<String>()
         for id in ids {
-            guard let document = mutationDocument.node(id), let previous = renderedNode(id) else { return false }
-            _ = reconcile(document, identity: previous.identity, path: id, previous: previous)
+            let target = flatListOwners[id] ?? id
+            guard applied.insert(target).inserted else { continue }
+            guard let document = mutationDocument.node(target), let previous = renderedNode(target) else { return false }
+            _ = reconcile(document, identity: previous.identity, path: target, previous: previous)
         }
         return true
     }
@@ -308,7 +313,7 @@ final class CraftNativeScreenController: UIViewController {
         let result = current.view
         current.protocolId = node["id"] as? String
         result.accessibilityIdentifier = accessibilityIdentifier(node, props: props) ?? path
-        if type != "View" && type != "SafeAreaView" && type != "ScrollView" {
+        if type != "View" && type != "SafeAreaView" && type != "ScrollView" && type != "FlatList" {
             result.setContentHuggingPriority(.required, for: .vertical)
         }
         applyViewStyle(style, to: result, node: current)
@@ -346,6 +351,16 @@ final class CraftNativeScreenController: UIViewController {
             scroll.setAxis(direction)
             configureStack(scroll.contentStack, style: style)
             reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: style)
+        case "FlatList":
+            let list = result as! CraftNativeFlatList
+            reconcileFlatList(
+                children.compactMap { $0 as? [String: Any] },
+                in: list,
+                parent: current,
+                path: path,
+                props: props,
+                events: events
+            )
         default:
             let stack = result as! UIStackView
             configureStack(stack, style: style)
@@ -377,6 +392,8 @@ final class CraftNativeScreenController: UIViewController {
             return UIImageView()
         case "ScrollView":
             return CraftNativeScrollView()
+        case "FlatList":
+            return CraftNativeFlatList()
         default:
             let stack = UIStackView()
             stack.alignment = .fill
@@ -441,6 +458,62 @@ final class CraftNativeScreenController: UIViewController {
         addJustificationSpacers(to: stack, value: style["justifyContent"] as? String)
     }
 
+    private func reconcileFlatList(
+        _ children: [[String: Any]],
+        in list: CraftNativeFlatList,
+        parent: RenderedNode,
+        path: String,
+        props: [String: Any],
+        events: [String: String]
+    ) {
+        let listKey = ObjectIdentifier(list)
+        let owner = parent.protocolId ?? path
+        flatListOwners = flatListOwners.filter { $0.value != owner }
+        for child in children { registerFlatListOwnership(child, owner: owner) }
+
+        list.apply(
+            nodes: children,
+            horizontal: props["horizontal"] as? Bool == true,
+            columns: (props["numColumns"] as? NSNumber)?.intValue ?? 1,
+            inverted: props["inverted"] as? Bool == true,
+            endReachedThreshold: (props["onEndReachedThreshold"] as? NSNumber)?.doubleValue
+                ?? (props["threshold"] as? NSNumber)?.doubleValue
+                ?? 0.1,
+            renderItem: { [weak self, weak list] node, identity, _ in
+                guard let self = self, let list = list else { return UIView() }
+                let previous = self.flatListRows[listKey]?[identity]
+                let next = self.reconcile(
+                    node,
+                    identity: "list:\(identity)",
+                    path: "\(path).\(identity)",
+                    previous: previous
+                )
+                self.flatListRows[listKey, default: [:]][identity] = next
+                list.collectionViewLayout.invalidateLayout()
+                return next.view
+            },
+            recycleItem: { [weak self] identity in
+                guard let self = self,
+                      let row = self.flatListRows[listKey]?.removeValue(forKey: identity) else { return }
+                self.forgetHandlers(row)
+            },
+            endReached: events["onEndReached"].map { [weak self] handler in
+                { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+            }
+        )
+        parent.children = []
+    }
+
+    private func registerFlatListOwnership(_ node: [String: Any], owner: String) {
+        let props = node["props"] as? [String: Any] ?? [:]
+        for identity in [node["id"], node["key"], props["key"], props["testID"]].compactMap({ $0 as? String }) {
+            if !identity.isEmpty { flatListOwners[identity] = owner }
+        }
+        for child in (node["children"] as? [Any] ?? []).compactMap({ $0 as? [String: Any] }) {
+            registerFlatListOwnership(child, owner: owner)
+        }
+    }
+
     private func detach(_ node: RenderedNode, from stack: UIStackView) {
         forgetHandlers(node)
         stack.removeArrangedSubview(node.view)
@@ -448,6 +521,12 @@ final class CraftNativeScreenController: UIViewController {
     }
 
     private func forgetHandlers(_ node: RenderedNode) {
+        if let list = node.view as? CraftNativeFlatList {
+            let listKey = ObjectIdentifier(list)
+            list.discardAll()
+            flatListRows.removeValue(forKey: listKey)
+            if let owner = node.protocolId { flatListOwners = flatListOwners.filter { $0.value != owner } }
+        }
         let id = ObjectIdentifier(node.view)
         handlers.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {

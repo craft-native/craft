@@ -630,6 +630,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
   writeFileSync(join(output, 'Sources', `${name}App.swift`), swiftSource)
   cpSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), join(output, 'Sources', 'CraftNativeScreen.swift'))
+  cpSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.swift'), join(output, 'Sources', 'CraftNativeFlatList.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftNativeActions.swift'), join(output, 'Sources', 'CraftNativeActions.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftNativeMutation.swift'), join(output, 'Sources', 'CraftNativeMutation.swift'))
 

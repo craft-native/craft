@@ -318,4 +318,57 @@ final class NativeRenderUnitTests: XCTestCase {
         }
         XCTAssertEqual(document.revision, 1)
     }
+
+    func testFlatListRecyclesTenThousandKeyedRowsAndKeepsItsViewport() {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        let rows: [[String: Any]] = (0..<10_000).map { index in
+            ["id": "row-\(index)", "type": "Text", "children": ["Row \(index)"]]
+        }
+        var rendered: [String: UIView] = [:]
+        var renderCount = 0
+        let render: CraftNativeFlatList.RenderItem = { node, identity, previous in
+            renderCount += 1
+            if let previous = previous { return previous }
+            let label = UILabel()
+            label.text = (node["children"] as? [String])?.first
+            rendered[identity] = label
+            return label
+        }
+
+        list.apply(
+            nodes: rows,
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: nil
+        )
+        list.layoutIfNeeded()
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 10_000)
+        XCTAssertGreaterThan(renderCount, 0)
+        XCTAssertLessThan(renderCount, 100)
+
+        list.contentOffset = CGPoint(x: 0, y: 240)
+        list.layoutIfNeeded()
+        let retainedAnchor = list.visibleItemIdentities.first
+        let moved = [rows[1], rows[0]] + Array(rows.dropFirst(2))
+        list.apply(
+            nodes: moved,
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: nil
+        )
+        list.layoutIfNeeded()
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 10_000)
+        XCTAssertNotNil(retainedAnchor)
+        XCTAssertTrue(retainedAnchor.map(list.visibleItemIdentities.contains) ?? false)
+        XCTAssertLessThan(rendered.count, 100)
+    }
 }
