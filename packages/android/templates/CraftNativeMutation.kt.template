@@ -1,0 +1,291 @@
+package {{PACKAGE_NAME}}
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+const val CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION = 1
+
+data class CraftNativeMutationFailure(
+    val code: String,
+    override val message: String,
+    val operationIndex: Int? = null
+) : Exception(message)
+
+data class CraftNativeMutationResult(
+    val batchId: String,
+    val revision: Int,
+    val document: JSONObject?
+)
+
+/** Validates a complete batch against a copy before committing any state. */
+class CraftNativeMutationDocument {
+    private data class Node(
+        val id: String,
+        var type: String,
+        var props: JSONObject,
+        var style: JSONObject,
+        var events: JSONObject,
+        var text: MutableList<String>,
+        var children: MutableList<String>,
+        var parent: String?
+    ) {
+        fun duplicate(): Node = copy(
+            props = JSONObject(props.toString()),
+            style = JSONObject(style.toString()),
+            events = JSONObject(events.toString()),
+            text = text.toMutableList(),
+            children = children.toMutableList()
+        )
+    }
+
+    private var nodes = linkedMapOf<String, Node>()
+    private var rootId: String? = null
+    var revision: Int = 0
+        private set
+
+    fun replace(document: JSONObject) {
+        val replacement = linkedMapOf<String, Node>()
+        val root = importNode(document, "root", null, replacement)
+        nodes = replacement
+        rootId = root
+        revision = 0
+    }
+
+    fun apply(payload: JSONObject): CraftNativeMutationResult {
+        val batchId = payload.optString("batchId")
+        if (batchId.isBlank()) fail("INVALID_BATCH", "batchId must be a non-empty string")
+        if (strictInteger(payload.opt("version")) != CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION) {
+            fail(
+                "UNSUPPORTED_VERSION",
+                "mutation protocol version must be $CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION"
+            )
+        }
+        if (strictInteger(payload.opt("baseRevision")) != revision) {
+            fail("REVISION_MISMATCH", "baseRevision must equal the current revision $revision")
+        }
+        val nextRevision = strictInteger(payload.opt("revision"))
+        if (nextRevision != revision + 1) {
+            fail("INVALID_REVISION", "revision must advance exactly once from $revision")
+        }
+        val operations = payload.opt("operations") as? JSONArray
+        if (operations == null || operations.length() == 0) {
+            fail("INVALID_BATCH", "operations must be a non-empty array")
+        }
+
+        val candidateNodes = linkedMapOf<String, Node>().apply {
+            nodes.forEach { (id, node) -> put(id, node.duplicate()) }
+        }
+        var candidateRoot = rootId
+        for (index in 0 until operations.length()) {
+            val operation = operations.opt(index) as? JSONObject
+                ?: failAt("INVALID_OPERATION", "operation must be an object with an op string", index)
+            val name = operation.opt("op") as? String
+            if (name.isNullOrBlank()) {
+                failAt("INVALID_OPERATION", "operation must be an object with an op string", index)
+            }
+            try {
+                when (name) {
+                    "createNode" -> candidateRoot = createNode(operation, candidateNodes, candidateRoot)
+                    "updateNode" -> updateNode(operation, candidateNodes)
+                    "insertChild" -> insertChild(operation, candidateNodes)
+                    "moveChild" -> moveChild(operation, candidateNodes)
+                    "removeNode" -> candidateRoot = removeNode(operation, candidateNodes, candidateRoot)
+                    else -> fail("UNKNOWN_OPERATION", "unsupported operation $name")
+                }
+            }
+            catch (failure: CraftNativeMutationFailure) {
+                throw CraftNativeMutationFailure(failure.code, failure.message, index)
+            }
+        }
+        if (candidateRoot == null && candidateNodes.isNotEmpty()) {
+            fail("MISSING_ROOT", "a non-empty document must have one root node")
+        }
+
+        nodes = candidateNodes
+        rootId = candidateRoot
+        revision = nextRevision!!
+        return CraftNativeMutationResult(batchId, revision, candidateRoot?.let { materialize(it, candidateNodes) })
+    }
+
+    private fun createNode(
+        operation: JSONObject,
+        nodes: MutableMap<String, Node>,
+        root: String?
+    ): String? {
+        val id = requiredId(operation, "id", "createNode")
+        if (nodes.containsKey(id)) fail("DUPLICATE_NODE", "node $id already exists")
+        val value = operation.opt("node") as? JSONObject
+            ?: fail("INVALID_NODE", "createNode.node.type must be a non-empty string")
+        val type = value.opt("type") as? String
+        if (type.isNullOrBlank()) fail("INVALID_NODE", "createNode.node.type must be a non-empty string")
+        val makeRoot = operation.opt("root") == true
+        if (makeRoot && root != null) fail("ROOT_EXISTS", "the document already has a root node")
+        nodes[id] = Node(
+            id,
+            type,
+            dictionary(value.opt("props")),
+            dictionary(value.opt("style")),
+            dictionary(value.opt("events")),
+            textChildren(if (value.has("children")) value.opt("children") else value.opt("text")),
+            mutableListOf(),
+            null
+        )
+        return if (makeRoot) id else root
+    }
+
+    private fun updateNode(operation: JSONObject, nodes: MutableMap<String, Node>) {
+        val id = requiredId(operation, "id", "updateNode")
+        val node = nodes[id] ?: fail("UNKNOWN_NODE", "node $id does not exist")
+        val patch = operation.opt("patch") as? JSONObject
+            ?: fail("INVALID_PATCH", "updateNode.patch must be an object")
+        val allowed = setOf("props", "style", "events", "children", "text")
+        val unknown = patch.keys().asSequence().filter { it !in allowed }.sorted().firstOrNull()
+        if (unknown != null) fail("INVALID_PATCH", "unsupported patch field $unknown")
+        if (patch.has("props")) node.props = dictionary(patch.opt("props"))
+        if (patch.has("style")) node.style = dictionary(patch.opt("style"))
+        if (patch.has("events")) node.events = dictionary(patch.opt("events"))
+        if (patch.has("children") || patch.has("text")) {
+            node.text = textChildren(if (patch.has("children")) patch.opt("children") else patch.opt("text"))
+        }
+    }
+
+    private fun insertChild(operation: JSONObject, nodes: MutableMap<String, Node>) {
+        val parentId = requiredId(operation, "parentId", "insertChild")
+        val childId = requiredId(operation, "childId", "insertChild")
+        val parent = nodes[parentId] ?: fail("UNKNOWN_PARENT", "parent node $parentId does not exist")
+        val child = nodes[childId] ?: fail("UNKNOWN_NODE", "node $childId does not exist")
+        if (!acceptsChildren(parent.type)) fail("INVALID_PARENT", "node $parentId cannot contain child nodes")
+        if (child.parent != null) fail("NODE_ATTACHED", "node $childId already has a parent")
+        if (parentId == childId || parentId in descendants(childId, nodes)) {
+            fail("CYCLE", "inserting node $childId would create a cycle")
+        }
+        val index = insertionIndex(operation, parent.children.size)
+        parent.children.add(index, childId)
+        child.parent = parentId
+    }
+
+    private fun moveChild(operation: JSONObject, nodes: MutableMap<String, Node>) {
+        val parentId = requiredId(operation, "parentId", "moveChild")
+        val childId = requiredId(operation, "childId", "moveChild")
+        val parent = nodes[parentId] ?: fail("UNKNOWN_PARENT", "parent node $parentId does not exist")
+        val oldIndex = parent.children.indexOf(childId)
+        if (nodes[childId]?.parent != parentId || oldIndex < 0) {
+            fail("NOT_A_CHILD", "node $childId is not a child of $parentId")
+        }
+        parent.children.removeAt(oldIndex)
+        parent.children.add(insertionIndex(operation, parent.children.size), childId)
+    }
+
+    private fun removeNode(
+        operation: JSONObject,
+        nodes: MutableMap<String, Node>,
+        root: String?
+    ): String? {
+        val id = requiredId(operation, "id", "removeNode")
+        val node = nodes[id] ?: fail("UNKNOWN_NODE", "node $id does not exist")
+        node.parent?.let { nodes[it]?.children?.remove(id) }
+        (descendants(id, nodes) + id).forEach { nodes.remove(it) }
+        return if (root == id) null else root
+    }
+
+    private fun requiredId(operation: JSONObject, field: String, name: String): String {
+        val id = operation.opt(field) as? String
+        if (id.isNullOrBlank()) fail("INVALID_NODE", "$name.$field must be a non-empty string")
+        return id
+    }
+
+    private fun insertionIndex(operation: JSONObject, count: Int): Int {
+        val index = strictInteger(operation.opt("index"))
+        if (index == null || index < 0 || index > count) {
+            fail("INVALID_INDEX", "index must be between 0 and $count")
+        }
+        return index
+    }
+
+    private fun textChildren(value: Any?): MutableList<String> {
+        if (value == null || value == JSONObject.NULL) return mutableListOf()
+        if (value is String) return mutableListOf(value)
+        val values = value as? JSONArray
+            ?: fail("INVALID_NODE", "node children may contain text only; use insertChild for node relationships")
+        val result = mutableListOf<String>()
+        for (index in 0 until values.length()) {
+            val text = values.opt(index) as? String
+                ?: fail("INVALID_NODE", "node children may contain text only; use insertChild for node relationships")
+            result.add(text)
+        }
+        return result
+    }
+
+    private fun acceptsChildren(type: String): Boolean =
+        type == "View" || type == "SafeAreaView" || type == "ScrollView"
+
+    private fun descendants(id: String, nodes: Map<String, Node>): Set<String> {
+        val result = linkedSetOf<String>()
+        nodes[id]?.children?.forEach { child ->
+            result.add(child)
+            result.addAll(descendants(child, nodes))
+        }
+        return result
+    }
+
+    private fun materialize(id: String, nodes: Map<String, Node>): JSONObject? {
+        val node = nodes[id] ?: return null
+        val children = JSONArray()
+        node.text.forEach { children.put(it) }
+        node.children.forEach { child -> materialize(child, nodes)?.let { children.put(it) } }
+        return JSONObject()
+            .put("id", node.id)
+            .put("type", node.type)
+            .put("props", node.props)
+            .put("style", node.style)
+            .put("events", node.events)
+            .put("children", children)
+    }
+
+    private fun importNode(
+        value: JSONObject,
+        preferredId: String,
+        parent: String?,
+        nodes: MutableMap<String, Node>
+    ): String {
+        val props = dictionary(value.opt("props"))
+        val explicit = (value.opt("id") as? String)?.takeIf { it.isNotBlank() }
+        val key = listOf(value.opt("key"), props.opt("key"), props.opt("testID"))
+            .filterIsInstance<String>().firstOrNull { it.isNotBlank() }
+        var id = explicit ?: key?.let { "${parent ?: "root"}/key:$it" } ?: preferredId
+        if (nodes.containsKey(id)) id = "$preferredId#${nodes.size}"
+        val children = value.optJSONArray("children") ?: JSONArray()
+        val node = Node(
+            id,
+            value.optString("type", "View"),
+            props,
+            dictionary(value.opt("style")),
+            dictionary(value.opt("events")),
+            mutableListOf(),
+            mutableListOf(),
+            parent
+        )
+        nodes[id] = node
+        for (index in 0 until children.length()) {
+            when (val child = children.opt(index)) {
+                is String -> node.text.add(child)
+                is JSONObject -> node.children.add(importNode(child, "$id/index:$index", id, nodes))
+            }
+        }
+        return id
+    }
+
+    private fun dictionary(value: Any?): JSONObject =
+        if (value is JSONObject) JSONObject(value.toString()) else JSONObject()
+
+    private fun strictInteger(value: Any?): Int? {
+        if (value !is Number) return null
+        val integer = value.toInt()
+        return integer.takeIf { value.toDouble() == integer.toDouble() }
+    }
+
+    private fun fail(code: String, message: String): Nothing = throw CraftNativeMutationFailure(code, message)
+
+    private fun failAt(code: String, message: String, index: Int): Nothing =
+        throw CraftNativeMutationFailure(code, message, index)
+}

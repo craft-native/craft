@@ -532,6 +532,13 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{APP_NAME\}\}/g, name)
 
   writeFileSync(join(output, 'app/src/main/java', packagePath, 'MainActivity.kt'), mainActivity)
+  if (config.renderer === 'native') {
+    const mutationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeMutation.kt.template'), 'utf-8')
+    writeFileSync(
+      join(output, 'app/src/main/java', packagePath, 'CraftNativeMutation.kt'),
+      mutationTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+    )
+  }
 
   // Create CraftBridge.kt
   const craftBridgeTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftBridge.kt.template'), 'utf-8')
