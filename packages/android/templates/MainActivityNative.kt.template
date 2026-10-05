@@ -235,7 +235,7 @@ class MainActivity : AppCompatActivity() {
                 if (screens.lastOrNull() !== screen) return
                 val route = payload.optString("screen").takeIf { it.isNotBlank() } ?: return
                 if (message.optString("type") == "NAVIGATE_REPLACE") {
-                    screens.removeAt(screens.lastIndex).close()
+                    closeScreen(screens.removeAt(screens.lastIndex))
                 }
                 openScreen(route, payload.optJSONObject("params") ?: JSONObject())
             }
@@ -253,6 +253,7 @@ class MainActivity : AppCompatActivity() {
             screen.view.removeAllViews()
             screen.view.addView(tree)
         }
+        releaseImages(screen.controls.values.filter { it !in next.values })
         screen.controls.clear()
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(next.values.toSet())
@@ -557,6 +558,7 @@ class MainActivity : AppCompatActivity() {
             }.getOrNull()
             runOnUiThread {
                 if (imageSources[view] != uri) return@runOnUiThread
+                imageJobs.remove(view)
                 if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Image download failed")
             }
         }
@@ -642,11 +644,26 @@ class MainActivity : AppCompatActivity() {
 
     private fun back() {
         if (screens.size > 1) {
-            screens.removeAt(screens.lastIndex).close()
+            closeScreen(screens.removeAt(screens.lastIndex))
             show(screens.last())
         } else {
             finish()
         }
+    }
+
+    private fun releaseImages(views: Collection<View>) {
+        views.filterIsInstance<ImageView>().forEach { image ->
+            imageJobs.remove(image)?.cancel(true)
+            imageSources.remove(image)
+            imageErrors.remove(image)
+        }
+    }
+
+    private fun closeScreen(screen: Screen) {
+        releaseImages(screen.controls.values)
+        screen.controls.clear()
+        screen.handlers.clear()
+        screen.close()
     }
 
     @Deprecated("Uses the activity back callback for native route navigation")
@@ -664,7 +681,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        screens.forEach { it.close() }
+        screens.forEach { closeScreen(it) }
         screens.clear()
         imageJobs.values.forEach { it.cancel(true) }
         imageJobs.clear()

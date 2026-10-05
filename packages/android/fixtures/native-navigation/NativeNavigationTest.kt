@@ -144,6 +144,9 @@ class NativeNavigationTest {
             assertEquals(ImageView::class.java.name, imageInfo?.className?.toString())
             instrumentation.runOnMainSync { image.performClick() }
             awaitText(activity, "native-caption", "Image taps: 1")
+            val unsupported = awaitView(activity, "unsupported-image") as ImageView
+            assertTrue(unsupported.drawable == null)
+            assertTrue(unsupported.contentDescription.toString().contains("Unsupported image source"))
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {

@@ -151,4 +151,23 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(label.attributedText?.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat, 2)
         XCTAssertNotNil(label.attributedText?.attribute(.underlineStyle, at: 0, effectiveRange: nil))
     }
+
+    func testImageFailuresAreExplicitAndClearStaleContent() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([[
+            "type": "Image", "props": ["key": "broken", "source": ["uri": "data:image/png;base64,invalid"]]
+        ]]))
+        let image = try XCTUnwrap(find(UIImageView.self, key: "broken", below: controller.view))
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Image data is invalid")
+
+        controller.render(document([[
+            "type": "Image", "props": ["key": "broken", "source": ["uri": "http://example.com/image.png"]]
+        ]]))
+        XCTAssertEqual(image.accessibilityValue, "Unsupported image source")
+
+        controller.render(document([["type": "Image", "props": ["key": "broken"]]]))
+        XCTAssertEqual(image.accessibilityValue, "Image source is missing")
+    }
 }

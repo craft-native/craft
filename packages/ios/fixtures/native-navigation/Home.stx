@@ -40,6 +40,12 @@ function openDetails() {
         style={{"width":24,"height":24,"resizeMode":"cover"}}
       />
       <Text testID="native-caption">Image taps: {imageTaps}</Text>
+      <Image
+        testID="unsupported-image"
+        source={{"uri":"http://example.com/image.png"}}
+        accessibilityLabel="Unsupported image"
+        style={{"width":16,"height":16}}
+      />
     </ScrollView>
     <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
     <Text testID="greeting">Hello {name}</Text>

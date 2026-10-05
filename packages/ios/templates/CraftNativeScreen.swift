@@ -91,6 +91,10 @@ final class CraftNativeScreenController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        imageTasks.values.forEach { $0.cancel() }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.title = routeName ?? config.appName
@@ -543,8 +547,7 @@ final class CraftNativeScreenController: UIViewController {
         guard let uri, !uri.isEmpty else {
             imageTasks.removeValue(forKey: id)?.cancel()
             imageSources.removeValue(forKey: id)
-            view.image = nil
-            view.accessibilityValue = "Image source is missing"
+            imageFailure(view, uri: nil, message: "Image source is missing")
             return
         }
         guard imageSources[id] != uri else { return }
@@ -553,17 +556,26 @@ final class CraftNativeScreenController: UIViewController {
         view.image = nil
         view.accessibilityValue = nil
 
-        if uri.hasPrefix("data:image/"), let comma = uri.firstIndex(of: ","),
-           let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])),
-           let image = UIImage(data: data) {
+        if uri.hasPrefix("data:image/") {
+            guard let comma = uri.firstIndex(of: ","),
+                  let data = Data(base64Encoded: String(uri[uri.index(after: comma)...])),
+                  let image = UIImage(data: data) else {
+                imageFailure(view, uri: uri, message: "Image data is invalid")
+                return
+            }
             view.image = image
             return
         }
         if let url = URL(string: uri), url.scheme == "https" {
             let task = URLSession.shared.dataTask(with: url) { [weak self, weak view] data, _, _ in
-                guard let self, let view, let data, let image = UIImage(data: data) else { return }
+                guard let self, let view else { return }
                 DispatchQueue.main.async {
                     guard self.imageSources[ObjectIdentifier(view)] == uri else { return }
+                    self.imageTasks.removeValue(forKey: ObjectIdentifier(view))
+                    guard let data, let image = UIImage(data: data) else {
+                        self.imageFailure(view, uri: uri, message: "Image download failed")
+                        return
+                    }
                     view.image = image
                 }
             }
@@ -571,12 +583,21 @@ final class CraftNativeScreenController: UIViewController {
             task.resume()
             return
         }
-        if !uri.contains(":"), let image = UIImage(named: uri) {
+        if !uri.contains(":") {
+            guard let image = UIImage(named: uri) else {
+                imageFailure(view, uri: uri, message: "Bundled image was not found")
+                return
+            }
             view.image = image
             return
         }
-        view.accessibilityValue = "Unsupported image source"
-        NSLog("[craft native] Unsupported image source: %@", uri)
+        imageFailure(view, uri: uri, message: "Unsupported image source")
+    }
+
+    private func imageFailure(_ view: UIImageView, uri: String?, message: String) {
+        view.image = nil
+        view.accessibilityValue = message
+        NSLog("[craft native] %@: %@", message, uri ?? "<missing>")
     }
 
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
