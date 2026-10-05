@@ -1,0 +1,177 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
+import org.json.JSONObject
+import kotlin.math.ceil
+
+internal typealias CraftNativeRenderItem = (node: JSONObject, identity: String, previous: View?) -> View
+
+/** A stable-key RecyclerView host for stx-native FlatList nodes. */
+internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
+    private data class Item(
+        val identity: String,
+        val node: JSONObject,
+        val signature: String,
+        val chrome: Boolean,
+    )
+
+    private class Holder(val host: FrameLayout) : ViewHolder(host) {
+        var identity: String? = null
+        val hostedView: View? get() = host.getChildAt(0)
+    }
+
+    private val listAdapter = object : ListAdapter<Item, Holder>(object : DiffUtil.ItemCallback<Item>() {
+        override fun areItemsTheSame(oldItem: Item, newItem: Item) = oldItem.identity == newItem.identity
+        override fun areContentsTheSame(oldItem: Item, newItem: Item) = oldItem.signature == newItem.signature
+    }) {
+        init { setHasStableIds(true) }
+
+        override fun getItemId(position: Int): Long = stableId(getItem(position).identity)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(FrameLayout(parent.context).apply {
+            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        })
+
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val item = getItem(position)
+            if (holder.identity != null && holder.identity != item.identity) release(holder)
+            val view = renderItem?.invoke(item.node, item.identity, holder.hostedView) ?: View(holder.host.context)
+            holder.identity = item.identity
+            if (holder.hostedView !== view) {
+                (view.parent as? ViewGroup)?.removeView(view)
+                holder.host.removeAllViews()
+                holder.host.addView(view, FrameLayout.LayoutParams(
+                    LayoutParams.MATCH_PARENT,
+                    LayoutParams.WRAP_CONTENT,
+                ))
+            }
+        }
+
+        override fun onViewRecycled(holder: Holder) {
+            release(holder)
+            super.onViewRecycled(holder)
+        }
+
+        private fun release(holder: Holder) {
+            holder.identity?.let { recycleItem?.invoke(it) }
+            holder.host.removeAllViews()
+            holder.identity = null
+        }
+    }
+
+    private var renderItem: CraftNativeRenderItem? = null
+    private var recycleItem: ((String) -> Unit)? = null
+    private var endReached: (() -> Unit)? = null
+    private var threshold = 0.1
+    private var endReachedSignature: String? = null
+    private var horizontal = false
+    private var columns = 1
+
+    init {
+        adapter = listAdapter
+        itemAnimator = null
+        addOnScrollListener(object : OnScrollListener() {
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = evaluateEndReached()
+        })
+    }
+
+    fun apply(
+        nodes: List<JSONObject>,
+        horizontal: Boolean,
+        columns: Int,
+        inverted: Boolean,
+        endReachedThreshold: Double,
+        renderItem: CraftNativeRenderItem,
+        recycleItem: (String) -> Unit,
+        endReached: (() -> Unit)?,
+    ) {
+        this.renderItem = renderItem
+        this.recycleItem = recycleItem
+        this.endReached = endReached
+        threshold = endReachedThreshold.coerceAtLeast(0.0)
+
+        val nextColumns = columns.coerceAtLeast(1)
+        val layoutChanged = this.horizontal != horizontal || this.columns != nextColumns
+        val retainedState = if (layoutChanged) null else layoutManager?.onSaveInstanceState()
+        this.horizontal = horizontal
+        this.columns = nextColumns
+        if (layoutChanged || layoutManager == null) configureLayoutManager()
+
+        val seen = mutableMapOf<String, Int>()
+        val next = nodes.mapIndexed { index, node ->
+            val base = identity(node) ?: "index:$index"
+            val occurrence = seen.getOrDefault(base, 0)
+            seen[base] = occurrence + 1
+            val unique = if (occurrence == 0) base else "$base#$occurrence"
+            val role = node.optJSONObject("props")?.optString("listRole").orEmpty()
+            Item(unique, node, node.toString(), role.isNotBlank() && role != "item")
+        }.let { if (inverted) it.reversed() else it }
+
+        val oldIds = listAdapter.currentList.mapTo(mutableSetOf()) { it.identity }
+        val nextIds = next.mapTo(mutableSetOf()) { it.identity }
+        (oldIds - nextIds).forEach(recycleItem)
+        val contentSignature = "${next.size}:${next.lastOrNull()?.identity.orEmpty()}"
+        if (contentSignature != endReachedSignature) endReachedSignature = null
+        listAdapter.submitList(next) {
+            retainedState?.let { layoutManager?.onRestoreInstanceState(it) }
+            evaluateEndReached()
+        }
+    }
+
+    fun discardAll() {
+        listAdapter.currentList.forEach { recycleItem?.invoke(it.identity) }
+        listAdapter.submitList(emptyList())
+        renderItem = null
+        recycleItem = null
+        endReached = null
+    }
+
+    private fun configureLayoutManager() {
+        layoutManager = when {
+            horizontal -> LinearLayoutManager(context, HORIZONTAL, false)
+            columns > 1 -> GridLayoutManager(context, columns).also { grid ->
+                grid.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                    override fun getSpanSize(position: Int): Int =
+                        if (listAdapter.currentList.getOrNull(position)?.chrome == true) columns else 1
+                }
+            }
+            else -> LinearLayoutManager(context)
+        }
+    }
+
+    private fun evaluateEndReached() {
+        val manager = layoutManager as? LinearLayoutManager ?: return
+        val count = listAdapter.itemCount
+        if (count == 0 || endReached == null) return
+        val remaining = count - manager.findLastVisibleItemPosition() - 1
+        val thresholdItems = maxOf(1, ceil(count * threshold).toInt())
+        if (remaining > thresholdItems) return
+        val signature = "$count:${listAdapter.currentList.lastOrNull()?.identity.orEmpty()}"
+        if (endReachedSignature == signature) return
+        endReachedSignature = signature
+        endReached?.invoke()
+    }
+
+    private fun identity(node: JSONObject): String? {
+        val props = node.optJSONObject("props") ?: JSONObject()
+        return listOf(node.optString("id"), node.optString("key"), props.optString("key"), props.optString("testID"))
+            .firstOrNull { it.isNotBlank() }
+    }
+
+    private fun stableId(value: String): Long {
+        var hash = -0x340d631b7bdddcdbL
+        for (byte in value.encodeToByteArray()) {
+            hash = hash xor (byte.toLong() and 0xff)
+            hash *= 0x100000001b3L
+        }
+        return hash
+    }
+}

@@ -83,6 +83,9 @@ class MainActivity : AppCompatActivity() {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val flatListRows = mutableMapOf<CraftNativeFlatList, MutableMap<String, MutableMap<String, View>>>()
+        val flatListOwners = mutableMapOf<String, String>()
+        val flatListOwnerByView = mutableMapOf<CraftNativeFlatList, String>()
         val mutations = CraftNativeMutationDocument()
         var active = true
 
@@ -283,10 +286,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyTargetedUpdates(screen: Screen, ids: List<String>): Boolean {
+        val applied = mutableSetOf<String>()
         for (id in ids) {
-            val document = screen.mutations.node(id) ?: return false
-            if (!screen.controls.containsKey("id:$id")) return false
-            makeView(screen, document, id, screen.controls)
+            val target = screen.flatListOwners[id] ?: id
+            if (!applied.add(target)) continue
+            val document = screen.mutations.node(target) ?: return false
+            if (!screen.controls.containsKey("id:$target")) return false
+            makeView(screen, document, target, screen.controls)
         }
         return true
     }
@@ -300,20 +306,29 @@ class MainActivity : AppCompatActivity() {
             screen.view.removeAllViews()
             screen.view.addView(tree)
         }
-        releaseImages(screen.controls.values.filter { it !in next.values })
+        releaseViewState(screen, screen.controls.values.filter { it !in next.values })
         screen.controls.clear()
         screen.controls.putAll(next)
-        screen.handlers.keys.retainAll(next.values.toSet())
+        screen.handlers.keys.retainAll(retainedViews(screen))
     }
 
     private fun clearRenderedTree(screen: Screen) {
-        releaseImages(screen.controls.values)
+        releaseViewState(screen, retainedViews(screen).toList())
         screen.view.removeAllViews()
         screen.controls.clear()
         screen.handlers.clear()
+        screen.flatListRows.clear()
+        screen.flatListOwners.clear()
+        screen.flatListOwnerByView.clear()
     }
 
-    private fun makeView(screen: Screen, node: JSONObject, path: String, next: MutableMap<String, View>): View {
+    private fun makeView(
+        screen: Screen,
+        node: JSONObject,
+        path: String,
+        next: MutableMap<String, View>,
+        previousControls: Map<String, View> = screen.controls,
+    ): View {
         val type = node.optString("type", "View")
         val props = node.optJSONObject("props") ?: JSONObject()
         val style = node.optJSONObject("style") ?: JSONObject()
@@ -325,7 +340,7 @@ class MainActivity : AppCompatActivity() {
         val identity = protocolId?.let { "id:$it" }
             ?: explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" }
             ?: path
-        val previous = screen.controls[identity]
+        val previous = previousControls[identity]
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
                 configureText(this, childText(children), style)
@@ -372,11 +387,14 @@ class MainActivity : AppCompatActivity() {
                 val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
                 setHorizontal(horizontal)
                 configureContainer(content, style)
-                reconcileChildren(screen, content, children, path, next, style)
+                reconcileChildren(screen, content, children, path, next, style, previousControls)
+            }
+            "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
+                reconcileFlatList(screen, this, children, path, protocolId ?: path, props, events)
             }
             else -> (previous as? LinearLayout ?: LinearLayout(this)).apply {
                 configureContainer(this, style)
-                reconcileChildren(screen, this, children, path, next, style)
+                reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
         if (type != "Button" && type != "TextInput") {
@@ -449,7 +467,8 @@ class MainActivity : AppCompatActivity() {
         children: JSONArray,
         path: String,
         next: MutableMap<String, View>,
-        style: JSONObject
+        style: JSONObject,
+        previousControls: Map<String, View>,
     ) {
         for (index in layout.childCount - 1 downTo 0) {
             if (layout.getChildAt(index) is CraftNativeFlexSpacer) layout.removeViewAt(index)
@@ -458,7 +477,7 @@ class MainActivity : AppCompatActivity() {
         for (index in 0 until children.length()) {
             val child = children.opt(index)
             val childView = when (child) {
-                is JSONObject -> makeView(screen, child, "$path.$index", next)
+                is JSONObject -> makeView(screen, child, "$path.$index", next, previousControls)
                 is String -> TextView(this).apply { text = child; setTextColor(defaultTextColor) }
                 else -> null
             }
@@ -482,6 +501,58 @@ class MainActivity : AppCompatActivity() {
         }
         while (layout.childCount > desired.size) layout.removeViewAt(layout.childCount - 1)
         addJustificationSpacers(layout, style.optString("justifyContent"))
+    }
+
+    private fun reconcileFlatList(
+        screen: Screen,
+        list: CraftNativeFlatList,
+        children: JSONArray,
+        path: String,
+        owner: String,
+        props: JSONObject,
+        events: JSONObject,
+    ) {
+        screen.flatListOwners.entries.removeAll { it.value == owner }
+        screen.flatListOwnerByView[list] = owner
+        val nodes = (0 until children.length()).mapNotNull { children.optJSONObject(it) }
+        nodes.forEach { registerFlatListOwnership(screen, it, owner) }
+        list.apply(
+            nodes = nodes,
+            horizontal = props.optBoolean("horizontal", false),
+            columns = props.optInt("numColumns", 1),
+            inverted = props.optBoolean("inverted", false),
+            endReachedThreshold = when {
+                props.has("onEndReachedThreshold") -> props.optDouble("onEndReachedThreshold", 0.1)
+                else -> props.optDouble("threshold", 0.1)
+            },
+            renderItem = { node, itemIdentity, _ ->
+                val rows = screen.flatListRows.getOrPut(list) { mutableMapOf() }
+                val previous = rows[itemIdentity].orEmpty()
+                val next = mutableMapOf<String, View>()
+                val view = makeView(screen, node, "$path.$itemIdentity", next, previous)
+                releaseViewState(screen, previous.values.filter { it !in next.values })
+                rows[itemIdentity] = next
+                view
+            },
+            recycleItem = { itemIdentity ->
+                val controls = screen.flatListRows[list]?.remove(itemIdentity).orEmpty()
+                releaseViewState(screen, controls.values.toList())
+            },
+            endReached = events.optString("onEndReached").takeIf { it.isNotBlank() }?.let { handler ->
+                { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject())) }
+            },
+        )
+    }
+
+    private fun registerFlatListOwnership(screen: Screen, node: JSONObject, owner: String) {
+        val props = node.optJSONObject("props") ?: JSONObject()
+        listOf(node.optString("id"), node.optString("key"), props.optString("key"), props.optString("testID"))
+            .filter { it.isNotBlank() }
+            .forEach { screen.flatListOwners[it] = owner }
+        val children = node.optJSONArray("children") ?: JSONArray()
+        for (index in 0 until children.length()) {
+            children.optJSONObject(index)?.let { registerFlatListOwnership(screen, it, owner) }
+        }
     }
 
     private fun addJustificationSpacers(layout: LinearLayout, value: String) {
@@ -716,10 +787,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun retainedViews(screen: Screen): MutableSet<View> = screen.controls.values.toMutableSet().apply {
+        screen.flatListRows.values.forEach { rows -> rows.values.forEach { addAll(it.values) } }
+    }
+
+    private fun releaseViewState(screen: Screen, views: Collection<View>) {
+        val released = views.toSet()
+        released.filterIsInstance<CraftNativeFlatList>().forEach { list ->
+            val owner = screen.flatListOwnerByView.remove(list)
+            list.discardAll()
+            screen.flatListRows.remove(list)?.values?.forEach { releaseViewState(screen, it.values) }
+            if (owner != null) screen.flatListOwners.entries.removeAll { it.value == owner }
+        }
+        releaseImages(released)
+        screen.handlers.keys.removeAll(released)
+    }
+
     private fun closeScreen(screen: Screen) {
-        releaseImages(screen.controls.values)
+        releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
+        screen.flatListRows.clear()
+        screen.flatListOwners.clear()
+        screen.flatListOwnerByView.clear()
         screen.close()
     }
 

@@ -534,9 +534,14 @@ export async function init(options: InitOptions): Promise<void> {
   writeFileSync(join(output, 'app/src/main/java', packagePath, 'MainActivity.kt'), mainActivity)
   if (config.renderer === 'native') {
     const mutationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeMutation.kt.template'), 'utf-8')
+    const flatListTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.kt.template'), 'utf-8')
     writeFileSync(
       join(output, 'app/src/main/java', packagePath, 'CraftNativeMutation.kt'),
       mutationTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+    )
+    writeFileSync(
+      join(output, 'app/src/main/java', packagePath, 'CraftNativeFlatList.kt'),
+      flatListTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
     )
   }
 
