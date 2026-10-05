@@ -23,7 +23,7 @@
                 type: 'Image',
                 props: {
                   key: 'native-image',
-                  source: { uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XhO6WQAAAABJRU5ErkJggg==' },
+                  source: { uri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' },
                   accessibilityLabel: 'Native pixel',
                   accessibilityRole: 'image',
                 },

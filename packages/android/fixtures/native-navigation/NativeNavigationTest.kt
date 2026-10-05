@@ -115,6 +115,28 @@ class NativeNavigationTest {
         assertFalse("Native STX route created a WebView instance", present)
     }
 
+    private fun assertScrolls(scroll: ScrollView) {
+        var viewportHeight = 0
+        var contentHeight = 0
+        repeat(50) {
+            var moved = false
+            instrumentation.runOnMainSync {
+                viewportHeight = scroll.height
+                contentHeight = scroll.getChildAt(0)?.height ?: 0
+                if (contentHeight > viewportHeight) {
+                    scroll.scrollTo(0, contentHeight - viewportHeight)
+                    moved = scroll.scrollY > 0
+                }
+            }
+            if (moved) return
+            SystemClock.sleep(100)
+        }
+        throw AssertionError(
+            "native ScrollView did not move through overflow content " +
+                "(viewport=$viewportHeight, content=$contentHeight, offset=${scroll.scrollY})"
+        )
+    }
+
     @Test
     fun compiledBundleRendersNavigatesAndRetainsNativeControls() {
         val context = instrumentation.targetContext
@@ -149,9 +171,7 @@ class NativeNavigationTest {
             val image = awaitView(activity, "native-image")
             assertTrue("ScrollView did not render an Android ScrollView", containsType(scroll, ScrollView::class.java))
             val nativeScroller = findType(scroll, ScrollView::class.java)!!
-            instrumentation.runOnMainSync { nativeScroller.fullScroll(View.FOCUS_DOWN) }
-            instrumentation.waitForIdleSync()
-            assertTrue("native ScrollView did not move through overflow content", nativeScroller.scrollY > 0)
+            assertScrolls(nativeScroller)
             assertTrue("Image did not render as ImageView", image is ImageView)
             assertTrue("Image data did not decode", (image as ImageView).drawable != null)
             assertEquals("Native pixel", image.contentDescription.toString())
