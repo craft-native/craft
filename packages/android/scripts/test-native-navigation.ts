@@ -24,6 +24,7 @@ try {
   const testDirectory = join(output, 'app/src/androidTest/java', ...packageName.split('.'))
   mkdirSync(testDirectory, { recursive: true })
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), join(testDirectory, 'NativeNavigationTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMutationTest.kt'), join(testDirectory, 'NativeMutationTest.kt'))
 
   if (!process.argv.includes('--prepare-only')) {
     try {

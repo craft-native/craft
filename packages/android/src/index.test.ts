@@ -34,6 +34,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('JS_FEATURE_PROMISE_RETURN')
       expect(nativeActivity).toContain('JS_FEATURE_CONSOLE_MESSAGING')
       expect(nativeActivity).toContain('Native STX bridge:')
+      expect(nativeActivity).toContain('"MUTATE" -> try')
+      expect(nativeActivity).toContain('screen.mutations.apply(payload)')
       const mutation = readFileSync(join(native, 'app/src/main/java/com/craft/native/CraftNativeMutation.kt'), 'utf8')
       expect(mutation).toContain('class CraftNativeMutationDocument')
       expect(mutation).toContain('"moveChild" -> moveChild')

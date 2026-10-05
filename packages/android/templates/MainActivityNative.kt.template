@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val mutations = CraftNativeMutationDocument()
         var active = true
 
         fun close() {
@@ -231,6 +232,29 @@ class MainActivity : AppCompatActivity() {
         val payload = message.optJSONObject("payload") ?: JSONObject()
         when (message.optString("type")) {
             "RENDER" -> payload.optJSONObject("document")?.let { render(screen, it) }
+            "MUTATE" -> try {
+                val result = applyMutation(screen, payload)
+                send(screen, "MUTATION_ACK", JSONObject()
+                    .put("batchId", result.batchId)
+                    .put("revision", result.revision)
+                    .put("version", CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION))
+            }
+            catch (failure: CraftNativeMutationFailure) {
+                val error = JSONObject()
+                    .put("batchId", payload.optString("batchId"))
+                    .put("code", failure.code)
+                    .put("message", failure.message)
+                    .put("version", CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION)
+                failure.operationIndex?.let { error.put("operationIndex", it) }
+                send(screen, "MUTATION_ERROR", error)
+            }
+            catch (_: Exception) {
+                send(screen, "MUTATION_ERROR", JSONObject()
+                    .put("batchId", payload.optString("batchId"))
+                    .put("code", "INVALID_BATCH")
+                    .put("message", "mutation batch could not be applied")
+                    .put("version", CRAFT_NATIVE_MUTATION_PROTOCOL_VERSION))
+            }
             "NAVIGATE", "NAVIGATE_REPLACE" -> {
                 if (screens.lastOrNull() !== screen) return
                 val route = payload.optString("screen").takeIf { it.isNotBlank() } ?: return
@@ -245,6 +269,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(screen: Screen, document: JSONObject) {
+        screen.mutations.replace(document)
+        renderCommitted(screen, document)
+    }
+
+    private fun applyMutation(screen: Screen, payload: JSONObject): CraftNativeMutationResult {
+        val result = screen.mutations.apply(payload)
+        result.document?.let { renderCommitted(screen, it) } ?: clearRenderedTree(screen)
+        return result
+    }
+
+    private fun renderCommitted(screen: Screen, document: JSONObject) {
         // Keep live controls (especially the focused EditText) across renders.
         val next = mutableMapOf<String, View>()
         val tree = makeView(screen, document, "root", next)
@@ -259,13 +294,22 @@ class MainActivity : AppCompatActivity() {
         screen.handlers.keys.retainAll(next.values.toSet())
     }
 
+    private fun clearRenderedTree(screen: Screen) {
+        releaseImages(screen.controls.values)
+        screen.view.removeAllViews()
+        screen.controls.clear()
+        screen.handlers.clear()
+    }
+
     private fun makeView(screen: Screen, node: JSONObject, path: String, next: MutableMap<String, View>): View {
         val type = node.optString("type", "View")
         val props = node.optJSONObject("props") ?: JSONObject()
         val style = node.optJSONObject("style") ?: JSONObject()
         val events = node.optJSONObject("events") ?: JSONObject()
         val children = node.optJSONArray("children") ?: JSONArray()
-        val explicitKey = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
+        val explicitKey = listOf(
+            node.optString("id"), node.optString("key"), props.optString("key"), props.optString("testID")
+        )
             .firstOrNull { it.isNotBlank() }
         val identity = explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" } ?: path
         val previous = screen.controls[identity]
