@@ -108,7 +108,8 @@ Error codes are deterministic across iOS and Android: `INVALID_BATCH`,
 `INVALID_OPERATION`, `UNKNOWN_OPERATION`, `INVALID_NODE`, `DUPLICATE_NODE`,
 `ROOT_EXISTS`, `INVALID_PATCH`, `UNKNOWN_PARENT`, `UNKNOWN_NODE`,
 `INVALID_PARENT`, `NODE_ATTACHED`, `CYCLE`, `INVALID_INDEX`, `NOT_A_CHILD`, and
-`MISSING_ROOT`.
+`MISSING_ROOT`, and `INVALID_TREE`. A successful batch must leave every node
+reachable from its single, unattached root.
 
 Stable node IDs are derived from sibling-scoped `key` values, with `testID`
 accepted for existing screens and position used as the fallback. Updating a

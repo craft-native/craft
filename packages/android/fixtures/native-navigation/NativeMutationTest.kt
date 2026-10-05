@@ -81,4 +81,62 @@ class NativeMutationTest {
         }
         assertEquals(1, document.revision)
     }
+
+    @Test
+    fun rejectsInvalidTreeShapesWithoutAdvancingRevision() {
+        val document = CraftNativeMutationDocument()
+        document.apply(batch(1, """
+            [{"op":"createNode","id":"root","root":true,"node":{"type":"View"}}]
+        """.trimIndent()))
+
+        val orphan = failure(document, batch(2, """
+            [{"op":"createNode","id":"orphan","node":{"type":"Text"}}]
+        """.trimIndent()))
+        assertEquals("INVALID_TREE", orphan.code)
+        assertEquals("all nodes must be reachable from the root", orphan.message)
+        assertNull(orphan.operationIndex)
+        assertEquals(1, document.revision)
+        assertNull(document.node("orphan"))
+
+        val nestedRoot = failure(document, batch(2, """
+            [
+              {"op":"createNode","id":"parent","node":{"type":"View"}},
+              {"op":"insertChild","parentId":"parent","childId":"root","index":0}
+            ]
+        """.trimIndent()))
+        assertEquals("INVALID_TREE", nestedRoot.code)
+        assertEquals("root node must not have a parent", nestedRoot.message)
+        assertEquals(1, document.revision)
+        assertNull(document.node("parent"))
+
+        val invalidIndex = failure(document, batch(2, """
+            [
+              {"op":"createNode","id":"child","node":{"type":"Text"}},
+              {"op":"insertChild","parentId":"root","childId":"child","index":2}
+            ]
+        """.trimIndent()))
+        assertEquals("INVALID_INDEX", invalidIndex.code)
+        assertEquals(1, invalidIndex.operationIndex)
+        assertEquals(1, document.revision)
+        assertNull(document.node("child"))
+
+        val stale = failure(document, batch(2, """
+            [{"op":"removeNode","id":"root"}]
+        """.trimIndent(), base = 0))
+        assertEquals("REVISION_MISMATCH", stale.code)
+        assertNull(stale.operationIndex)
+        assertEquals(1, document.revision)
+    }
+
+    private fun failure(
+        document: CraftNativeMutationDocument,
+        payload: JSONObject
+    ): CraftNativeMutationFailure = try {
+        document.apply(payload)
+        fail("batch should have failed")
+        throw AssertionError("unreachable")
+    }
+    catch (error: CraftNativeMutationFailure) {
+        error
+    }
 }

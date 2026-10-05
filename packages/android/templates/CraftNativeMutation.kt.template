@@ -126,6 +126,15 @@ class CraftNativeMutationDocument {
         if (candidateRoot == null && candidateNodes.isNotEmpty()) {
             fail("MISSING_ROOT", "a non-empty document must have one root node")
         }
+        if (candidateRoot != null) {
+            val root = candidateNodes[candidateRoot]
+            if (root == null || root.parent != null) {
+                fail("INVALID_TREE", "root node must not have a parent")
+            }
+            if (descendants(candidateRoot, candidateNodes).size + 1 != candidateNodes.size) {
+                fail("INVALID_TREE", "all nodes must be reachable from the root")
+            }
+        }
 
         nodes = candidateNodes
         rootId = candidateRoot

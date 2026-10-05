@@ -272,4 +272,50 @@ final class NativeRenderUnitTests: XCTestCase {
         }
         XCTAssertEqual(document.revision, 1)
     }
+
+    func testMutationRejectsInvalidTreeShapesWithoutAdvancingRevision() throws {
+        let document = CraftNativeMutationDocument()
+        _ = try document.apply(batch(1, [
+            ["op": "createNode", "id": "root", "root": true, "node": ["type": "View"]],
+        ]))
+
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "createNode", "id": "orphan", "node": ["type": "Text"]],
+        ]))) { error in
+            XCTAssertEqual(error as? CraftNativeMutationFailure, CraftNativeMutationFailure(
+                "INVALID_TREE", "all nodes must be reachable from the root"
+            ))
+        }
+        XCTAssertEqual(document.revision, 1)
+        XCTAssertNil(document.node("orphan"))
+
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "createNode", "id": "parent", "node": ["type": "View"]],
+            ["op": "insertChild", "parentId": "parent", "childId": "root", "index": 0],
+        ]))) { error in
+            XCTAssertEqual(error as? CraftNativeMutationFailure, CraftNativeMutationFailure(
+                "INVALID_TREE", "root node must not have a parent"
+            ))
+        }
+        XCTAssertEqual(document.revision, 1)
+        XCTAssertNil(document.node("parent"))
+
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "createNode", "id": "child", "node": ["type": "Text"]],
+            ["op": "insertChild", "parentId": "root", "childId": "child", "index": 2],
+        ]))) { error in
+            XCTAssertEqual((error as? CraftNativeMutationFailure)?.code, "INVALID_INDEX")
+            XCTAssertEqual((error as? CraftNativeMutationFailure)?.operationIndex, 1)
+        }
+        XCTAssertEqual(document.revision, 1)
+        XCTAssertNil(document.node("child"))
+
+        XCTAssertThrowsError(try document.apply(batch(2, [
+            ["op": "removeNode", "id": "root"],
+        ], baseRevision: 0))) { error in
+            XCTAssertEqual((error as? CraftNativeMutationFailure)?.code, "REVISION_MISMATCH")
+            XCTAssertNil((error as? CraftNativeMutationFailure)?.operationIndex)
+        }
+        XCTAssertEqual(document.revision, 1)
+    }
 }

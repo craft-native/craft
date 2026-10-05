@@ -124,6 +124,14 @@ final class CraftNativeMutationDocument {
         if candidateRoot == nil, !candidateNodes.isEmpty {
             throw CraftNativeMutationFailure("MISSING_ROOT", "a non-empty document must have one root node")
         }
+        if let candidateRoot {
+            guard let root = candidateNodes[candidateRoot], root.parent == nil else {
+                throw CraftNativeMutationFailure("INVALID_TREE", "root node must not have a parent")
+            }
+            guard descendants(of: candidateRoot, nodes: candidateNodes).count + 1 == candidateNodes.count else {
+                throw CraftNativeMutationFailure("INVALID_TREE", "all nodes must be reachable from the root")
+            }
+        }
 
         nodes = candidateNodes
         rootId = candidateRoot
