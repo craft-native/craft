@@ -21,6 +21,7 @@ pub const capabilities = @import("capabilities.zig");
 const bridge_app = @import("bridge_app.zig");
 const bridge_capabilities = @import("bridge_capabilities.zig");
 const bridge_clipboard = @import("bridge_clipboard.zig");
+const bridge_haptics = @import("bridge_haptics.zig");
 const bridge_screen = @import("bridge_screen.zig");
 const bridge_tray = @import("bridge_tray.zig");
 
@@ -54,6 +55,9 @@ pub const registry = [_]capabilities.NamespaceDecl{
     .{ .name = "focus", .status = .undeclared },
     .{ .name = "fs", .status = .undeclared },
     .{ .name = "handoff", .status = .undeclared },
+    // Declared from its first commit rather than retrofitted: the trackpad
+    // half of the haptics API the phones already serve.
+    .{ .name = "haptics", .status = .declared, .actions = &bridge_haptics.capability_actions },
     .{ .name = "iap", .status = .undeclared },
     .{ .name = "keychain", .status = .undeclared },
     .{ .name = "localServer", .status = .undeclared },

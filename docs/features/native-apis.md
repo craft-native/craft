@@ -11,6 +11,7 @@ Native APIs include:
 - **File Dialogs**: Open, save, select directories
 - **System Info**: OS, CPU, memory, battery
 - **Shell**: Open URLs, files, folders
+- **Haptic Feedback**: Force Touch trackpad taps (macOS), through the same API as mobile
 
 ## Notifications
 
@@ -372,6 +373,31 @@ console.log(`Primary: ${primary.width}x${primary.height}`)
 ```typescript
 const display = await screen.getDisplayNearestPoint(100, 200)
 ```
+
+## Haptic Feedback
+
+On macOS the `haptics` helpers the mobile apps use play on the Force Touch
+trackpad, so one call works on every host.
+
+```typescript
+import { haptics } from 'craft-native'
+
+await haptics.selection() // Alignment: a value snapping into place
+await haptics.impact('heavy') // LevelChange: the firmest tap
+await haptics.notification('success') // Generic
+```
+
+A trackpad has three patterns rather than a phone's range, so styles are
+folded: `selection` plays Alignment, `heavy` and `error` play LevelChange, and
+everything else plays Generic. `vibrate(pattern)` plays one tap if the pattern
+asks for anything, since a trackpad tap has no duration.
+
+AppKit plays feedback only while a finger is on the trackpad and the app is
+active, and stays silent on a Mac without a Force Touch trackpad. The call
+still succeeds: it means AppKit accepted the tap, not that it was felt. On
+Linux and Windows the helpers resolve without doing anything, and the raw
+`window.craft.haptic(style)` rejects with `PLATFORM_NOT_SUPPORTED` for code
+that needs to know. See the [Haptics API](../api/mobile/haptics.md).
 
 ## URL Schemes
 

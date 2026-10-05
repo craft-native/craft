@@ -9,6 +9,14 @@ with no vibration motor. They reject only when the native call itself fails.
 The raw `window.craft.haptic()` is different: it rejects with
 `CAPABILITY_DISABLED`, for code that needs to know.
 
+The same calls work in a macOS desktop window, where they play on the Force
+Touch trackpad. AppKit plays feedback only while a finger is on the trackpad and
+the app is active, and stays silent on a Mac without one; either way the call
+succeeds, because it means AppKit accepted the tap, not that it was felt. On
+Linux and Windows there is nothing to play, so the helpers resolve without doing
+anything and the raw `window.craft.haptic()` rejects with
+`PLATFORM_NOT_SUPPORTED`.
+
 ## Import
 
 ```typescript
@@ -208,12 +216,17 @@ async function onRefreshComplete(success: boolean) {
 
 ## Platform Differences
 
-| Feature | iOS | Android |
-|---------|-----|---------|
-| Impact styles | All 5 styles | 3 styles (light/medium/heavy) |
-| Notification types | All 3 types | Mapped to vibration patterns |
-| Selection | Yes | Yes |
-| Custom patterns | Limited | Full support |
+| Feature | iOS | Android | macOS |
+|---------|-----|---------|-------|
+| Impact styles | All 5 styles | 3 styles (light/medium/heavy) | `heavy` plays LevelChange, the rest Generic |
+| Notification types | All 3 types | Mapped to vibration patterns | `error` plays LevelChange, the rest Generic |
+| Selection | Yes | Yes | Alignment |
+| Custom patterns | Limited | Full support | One tap if the pattern fires at all |
+
+A Mac trackpad has three feedback patterns (Generic, Alignment, LevelChange)
+and no intensity or duration, which is why the styles fold onto them. Linux
+and Windows have no haptics API, so every method resolves without playing
+anything there.
 
 ## Types
 

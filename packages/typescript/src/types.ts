@@ -32,7 +32,7 @@
  * Windows Hello        |   -   |   -   |    ✓    |  -  |    -
  * Toast Notifications  |   -   |   -   |    ✓    |  -  |    -
  * Biometrics           |   -   |   -   |    -    |  ✓  |    ✓
- * Haptic Feedback      |   -   |   -   |    -    |  ✓  |    ✓
+ * Haptic Feedback      |   ✓   |   -   |    -    |  ✓  |    ✓
  * Secure Storage       |   -   |   -   |    -    |  ✓  |    ✓
  * Location             |   -   |   -   |    -    |  ✓  |    ✓
  * Share Sheet          |   -   |   -   |    -    |  ✓  |    ✓
@@ -44,6 +44,10 @@
  * Play Billing (IAP)   |   -   |   -   |    -    |  -  |    ✓
  * Work Manager         |   -   |   -   |    -    |  -  |    ✓
  * Predictive Back      |   -   |   -   |    -    |  -  |    ✓
+ *
+ * Haptic Feedback on macOS is the Force Touch trackpad (NSHapticFeedbackManager):
+ * the same `haptics.*` calls, played only while a finger is on the trackpad and
+ * the app is active. Linux and Windows have no haptics API to call.
  *
  * Mobile-only bridge APIs (window.craft, defined in types/craft.d.ts):
  *   AR (ARKit/ARCore), ML (Core ML/ML Kit), Deep Links, OTA Updates,
@@ -1416,6 +1420,24 @@ export interface CraftBridgeAPI {
   screenSharing?: CraftScreenSharingAPI
 
   /**
+   * Trigger one haptic tap on a Force Touch trackpad (macOS), as
+   * `window.craft.haptic` does on iOS and Android.
+   *
+   * Resolves `true` once AppKit has taken the call, which is not a promise
+   * anything was felt: AppKit plays feedback only while a finger is on the
+   * trackpad and the app is active. Rejects `PLATFORM_NOT_SUPPORTED` on Linux
+   * and Windows.
+   */
+  haptic?: (style?: string) => Promise<boolean>
+
+  /**
+   * Haptic feedback with the shape the mobile bridges give it (macOS: Force
+   * Touch trackpad). Use `haptics` from `craft-native` rather than this
+   * directly. See `CraftHapticsAPI`.
+   */
+  haptics?: CraftHapticsAPI
+
+  /**
    * System-wide hotkeys (macOS).
    *
    * Absent in effect on Linux and Windows: the calls exist, and every
@@ -1779,6 +1801,26 @@ export interface ScreenSharingState {
     screenRecording: boolean
   }
   sources: ScreenSharingSource[]
+}
+
+/**
+ * `window.craft.haptics` in a desktop window.
+ *
+ * Feedback, not a capability check: on a host with nothing to play (Linux,
+ * Windows) every method resolves without doing anything, as the mobile
+ * bridges do for an app built without haptics. Use `craft.haptic()` to find
+ * out instead.
+ *
+ * A trackpad has three patterns, not the phone's range, so styles are folded:
+ * `selection` plays Alignment, `heavy` and `error` play LevelChange, and
+ * everything else plays Generic.
+ */
+export interface CraftHapticsAPI {
+  impact(style?: string): Promise<void>
+  notification(type?: 'success' | 'warning' | 'error'): Promise<void>
+  selection(): Promise<void>
+  /** One tap if the pattern fires at all: a trackpad tap has no duration. */
+  vibrate(pattern?: number[]): Promise<void>
 }
 
 /**

@@ -640,6 +640,7 @@ export type {
   CraftBridgeAPI,
   Permission,
   HapticType,
+  CraftHapticsAPI,
   CameraOptions,
   PhotoPickerOptions,
   CraftMobileAPI,

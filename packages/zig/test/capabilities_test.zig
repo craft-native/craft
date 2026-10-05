@@ -36,6 +36,7 @@ const declared_sources = [_]struct {
     .{ .namespace = "tray", .path = "src/bridge_tray.zig", .source = @embedFile("src/bridge_tray.zig") },
     .{ .namespace = "app", .path = "src/bridge_app.zig", .source = @embedFile("src/bridge_app.zig") },
     .{ .namespace = "screen", .path = "src/bridge_screen.zig", .source = @embedFile("src/bridge_screen.zig") },
+    .{ .namespace = "haptics", .path = "src/bridge_haptics.zig", .source = @embedFile("src/bridge_haptics.zig") },
     .{
         .namespace = "capabilities",
         .path = "src/bridge_capabilities.zig",
@@ -488,6 +489,7 @@ const field_checked = [_]struct {
     .{ .namespace = "bluetooth", .source = @embedFile("src/bridge_bluetooth.zig") },
     .{ .namespace = "serial", .source = @embedFile("src/bridge_serial.zig") },
     .{ .namespace = "localServer", .source = @embedFile("src/bridge_local_server.zig") },
+    .{ .namespace = "haptics", .source = @embedFile("src/bridge_haptics.zig") },
 };
 
 /// The body of `fn <action>(...)`, from its signature to the next `    fn `.

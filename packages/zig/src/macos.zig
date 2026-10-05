@@ -5119,6 +5119,7 @@ var global_focus_bridge: ?*@import("bridge_focus.zig").FocusBridge = null;
 var global_screen_sharing_bridge: ?*@import("bridge_screen_sharing.zig").ScreenSharingBridge = null;
 var global_prefs_bridge: ?*@import("bridge_prefs.zig").PrefsBridge = null;
 var global_capabilities_bridge: ?*@import("bridge_capabilities.zig").CapabilitiesBridge = null;
+var global_haptics_bridge: ?*@import("bridge_haptics.zig").HapticsBridge = null;
 
 pub fn setGlobalTrayHandle(handle: *anyopaque) void {
     global_tray_handle_for_bridge = handle;
@@ -5416,6 +5417,11 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
         const T = @import("bridge_capabilities.zig").CapabilitiesBridge;
         global_capabilities_bridge = try allocator.create(T);
         global_capabilities_bridge.?.* = T.init(allocator);
+    }
+    if (global_haptics_bridge == null) {
+        const T = @import("bridge_haptics.zig").HapticsBridge;
+        global_haptics_bridge = try allocator.create(T);
+        global_haptics_bridge.?.* = T.init(allocator);
     }
 
     // theme + dragOut + deepLink: native modules with their own state, no
@@ -5961,6 +5967,9 @@ pub fn handleBridgeMessageJSON(json_str: []const u8) !void {
         if (global_prefs_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
     } else if (std.mem.eql(u8, msg_type, "capabilities")) {
         if (global_capabilities_bridge) |bridge| try bridge.handleMessage(action, data_json_str);
+    } else if (std.mem.eql(u8, msg_type, "haptics")) {
+        // Reports its own failures, so there is nothing to `try`.
+        if (global_haptics_bridge) |bridge| bridge.handleMessage(action, data_json_str);
     } else if (std.mem.eql(u8, msg_type, "debug")) {
         // Handle debug messages
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug")) {

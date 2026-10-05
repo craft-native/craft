@@ -1122,6 +1122,40 @@
   }
 
   // -------------------------------------------------------------------------
+  // haptics — Force Touch trackpad feedback (macOS)
+  // -------------------------------------------------------------------------
+  // The same two entry points the iOS and Android bridges inject, so
+  // `haptics.selection()` from craft-native is one call on every host.
+  //
+  // `craft.haptic()` resolves `true` once AppKit has taken the tap. That is not
+  // the user feeling it: AppKit plays feedback only while a finger is on a
+  // Force Touch trackpad and the app is active, and says nothing when it does
+  // not. On Linux and Windows it rejects PLATFORM_NOT_SUPPORTED, for code that
+  // needs to know.
+  function _haptic(style) {
+    return _req('haptics', 'haptic', _stringify({ style: String(style || 'medium') }))
+  }
+  // Feedback, as on the phones: a host with nothing to play settles instead of
+  // failing the flow that asked, the way the mobile shims absorb
+  // CAPABILITY_DISABLED. Any other failure still rejects.
+  function _hapticFeedback(answer) {
+    return answer.then(function () {}, function (err) {
+      if (err && err.code === 'PLATFORM_NOT_SUPPORTED') return
+      throw err
+    })
+  }
+  window.craft.haptic = _haptic
+  window.craft.haptics = {
+    impact:       function (style)   { return _hapticFeedback(_haptic(style || 'medium')) },
+    // The type itself rather than the impact the phones translate it to:
+    // native folds success, warning and error onto the trackpad's patterns.
+    notification: function (type)    { return _hapticFeedback(_haptic(type || 'success')) },
+    selection:    function ()        { return _hapticFeedback(_haptic('selection')) },
+    // One tap if the pattern asks for anything: a trackpad has no duration.
+    vibrate:      function (pattern) { return _hapticFeedback(_req('haptics', 'vibrate', _stringify({ pattern: pattern || [] }))) },
+  }
+
+  // -------------------------------------------------------------------------
   // keychain — secure secret storage (macOS Keychain / Win Credential
   // Manager / Linux Secret Service via DBus)
   // -------------------------------------------------------------------------

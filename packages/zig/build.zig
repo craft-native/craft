@@ -1354,6 +1354,23 @@ pub fn build(b: *std.Build) void {
     });
     bridge_shell_tests.root_module.link_libc = true;
 
+    // The trackpad haptics bridge: payload parsing, the fold from the phone
+    // styles onto AppKit's three patterns, and the dispatch chain. On a Mac its
+    // tests also ride along in every binary that reaches `macos.zig`; this is
+    // the artifact that runs them on Linux and Windows, where nothing else
+    // imports the file and the off-macOS refusal is the thing to prove. Linked
+    // like the binary because on a Mac the dispatch test really calls
+    // NSHapticFeedbackManager, and an unlinked AppKit answers its class lookup
+    // with nil.
+    const bridge_haptics_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_haptics.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    linkPlatformLibraries(b, bridge_haptics_tests.root_module, target_os, macos_sdk);
+
     // The host logger's own internals. `test/log_test.zig` already exercises it
     // through the module boundary, which cannot reach the config storage or the
     // formatter — the three places it was wrong. Rooted at the source file so
@@ -1414,6 +1431,7 @@ pub fn build(b: *std.Build) void {
         "src/bridge_tray.zig",
         "src/bridge_app.zig",
         "src/bridge_screen.zig",
+        "src/bridge_haptics.zig",
         "src/bridge_capabilities.zig",
         "src/bridge_capabilities_actions.zig",
         "src/js/craft-bridge.js",
@@ -1793,6 +1811,7 @@ pub fn build(b: *std.Build) void {
     const run_bridge_log_tests = b.addRunArtifact(bridge_log_tests);
     const run_log_unit_tests = b.addRunArtifact(log_unit_tests);
     const run_bridge_shell_tests = b.addRunArtifact(bridge_shell_tests);
+    const run_bridge_haptics_tests = b.addRunArtifact(bridge_haptics_tests);
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_window_context_tests = b.addRunArtifact(window_context_tests);
@@ -1952,6 +1971,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_bridge_log_tests.step);
     test_step.dependOn(&run_log_unit_tests.step);
     test_step.dependOn(&run_bridge_shell_tests.step);
+    test_step.dependOn(&run_bridge_haptics_tests.step);
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_window_context_tests.step);
