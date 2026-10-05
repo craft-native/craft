@@ -39,18 +39,22 @@ class NativeNavigationTest {
         return null
     }
 
-    private inline fun <reified T : View> containsType(view: View): Boolean {
-        if (view is T) return true
+    private fun containsType(view: View, type: Class<out View>): Boolean {
+        if (type.isInstance(view)) return true
         if (view is ViewGroup) {
-            for (index in 0 until view.childCount) if (containsType<T>(view.getChildAt(index))) return true
+            for (index in 0 until view.childCount) {
+                if (containsType(view.getChildAt(index), type)) return true
+            }
         }
         return false
     }
 
-    private inline fun <reified T : View> findType(view: View): T? {
-        if (view is T) return view
+    private fun <T : View> findType(view: View, type: Class<T>): T? {
+        if (type.isInstance(view)) return type.cast(view)
         if (view is ViewGroup) {
-            for (index in 0 until view.childCount) findType<T>(view.getChildAt(index))?.let { return it }
+            for (index in 0 until view.childCount) {
+                findType(view.getChildAt(index), type)?.let { return it }
+            }
         }
         return null
     }
@@ -143,8 +147,8 @@ class NativeNavigationTest {
             assertEquals((70 * density).toInt(), styledFirst.layoutParams.width)
             val scroll = awaitView(activity, "native-scroll")
             val image = awaitView(activity, "native-image")
-            assertTrue("ScrollView did not render an Android ScrollView", containsType<ScrollView>(scroll))
-            val nativeScroller = findType<ScrollView>(scroll)!!
+            assertTrue("ScrollView did not render an Android ScrollView", containsType(scroll, ScrollView::class.java))
+            val nativeScroller = findType(scroll, ScrollView::class.java)!!
             instrumentation.runOnMainSync { nativeScroller.fullScroll(View.FOCUS_DOWN) }
             instrumentation.waitForIdleSync()
             assertTrue("native ScrollView did not move through overflow content", nativeScroller.scrollY > 0)
