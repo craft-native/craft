@@ -130,6 +130,7 @@ final class CraftNativeScreenController: UIViewController {
         jsContext.evaluateScript("""
             globalThis.__stxNativeCallback = null;
             globalThis.__stxNativeBridge = {
+                mutationProtocolVersion: 1,
                 postMessage: function(message) { craftNativePostMessage(message); },
                 onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };

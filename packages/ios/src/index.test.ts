@@ -35,6 +35,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
+    expect(nativeSwift).toContain('mutationProtocolVersion: 1')
     expect(swift).toContain('CraftNativeActions.perform(action: action, body: body, config: config)')
     expect(mutationSwift).toContain('final class CraftNativeMutationDocument')
     expect(mutationSwift).toContain('case "moveChild"')

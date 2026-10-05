@@ -191,6 +191,7 @@ class MainActivity : AppCompatActivity() {
               const port = await android.getNamedPort('craft');
               $routePrelude
               globalThis.__stxNativeBridge = {
+                mutationProtocolVersion: 1,
                 postMessage: function(value) { port.postMessage(value); },
                 onMessage: function(callback) { port.onmessage = function(event) { callback(event.data); }; }
               };
@@ -198,6 +199,7 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent() else """
             $routePrelude
             globalThis.__stxNativeBridge = {
+              mutationProtocolVersion: 1,
               postMessage: function(value) { console.log(${JSONObject.quote(prefix)} + value); },
               onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
