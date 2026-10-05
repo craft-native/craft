@@ -1,6 +1,26 @@
 <script>
 let name = globalThis.craft.route.params.name
 let count = globalThis.craft.route.params.count
+let people = Array.from({ length: 40 }, (_, index) => ({ id: `person-${index}`, name: `Person ${index}` }))
+let listEvents = 0
+
+function shufflePeople() {
+  people = [people[1], { ...people[0], name: 'Person zero updated' }, ...people.slice(2)]
+  listEvents += 1
+}
+
+function clearPeople() {
+  people = []
+  listEvents += 1
+}
+
+function loadMorePeople() {
+  if (people.length !== 40)
+    return
+  const index = people.length
+  people = [...people, { id: `person-${index}`, name: `Person ${index}` }]
+  listEvents += 1
+}
 
 function goBack() {
   globalThis.craft.navigation.back()
@@ -15,6 +35,27 @@ function replaceWithSummary() {
   <View class="p-4">
     <Text testID="details-title">Details for {name}</Text>
     <Text testID="details-count">Count: {count}</Text>
+    <Text testID="people-count">People: {people.length}; events: {listEvents}</Text>
+    <FlatList
+      testID="people-list"
+      data={people}
+      keyExtractor={item.id}
+      numColumns={2}
+      onEndReached={loadMorePeople}
+      onEndReachedThreshold={0.1}
+      style={{"height":160}}
+    >
+      <Text listRole="header" testID="people-header">People directory</Text>
+      <View listRole="item" accessibilityLabel={item.name}>
+        <Text testID={'person-label-' + item.id}>{index}: {item.name}</Text>
+        <TextInput testID={'person-input-' + item.id} placeholder="Note" />
+      </View>
+      <View listRole="separator" style={{"height":1,"backgroundColor":"#abcdef"}} />
+      <Text listRole="empty" testID="people-empty">Nobody here</Text>
+      <Text listRole="footer" testID="people-footer">End of people</Text>
+    </FlatList>
+    <Button testID="shuffle-people" onPress={shufflePeople}>Shuffle people</Button>
+    <Button testID="clear-people" onPress={clearPeople}>Clear people</Button>
     <Button testID="details-back" onPress={goBack}>Back in app</Button>
     <Button testID="open-summary" onPress={replaceWithSummary}>Show summary</Button>
   </View>

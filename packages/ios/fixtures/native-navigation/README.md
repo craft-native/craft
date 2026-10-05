@@ -1,9 +1,9 @@
 # WebView-free native navigation fixture
 
-The three `.stx` screens and `stx-native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a `TextInput` and counter; returning to it must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
+The three `.stx` screens and `stx-native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a `TextInput`, counter, and keyed `FlatList`; the list covers two-column recycling, header/footer/empty content, row moves, focused-input retention, and `onEndReached`. Returning home must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
 
 From the Craft repository, with the sibling stx checkout at or after
-`fa5b1e1673`:
+`390fb80852`:
 
 ```bash
 bun packages/ios/scripts/test-native-navigation.ts

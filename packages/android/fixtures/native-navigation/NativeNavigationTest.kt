@@ -18,6 +18,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.recyclerview.widget.RecyclerView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -201,6 +202,25 @@ class NativeNavigationTest {
             click(activity, "open-details")
             assertEquals("Details for Ada", (awaitView(activity, "details-title") as TextView).text.toString())
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
+            val people = awaitView(activity, "people-list") as RecyclerView
+            val personZero = awaitView(activity, "person-label-person-0") as TextView
+            val personInput = awaitView(activity, "person-input-person-0") as EditText
+            instrumentation.runOnMainSync {
+                personInput.requestFocus()
+                personInput.setText("draft")
+            }
+            click(activity, "shuffle-people")
+            awaitText(activity, "person-label-person-0", "1: Person zero updated")
+            assertSame("keyed list update replaced a visible row", personZero, awaitView(activity, "person-label-person-0"))
+            assertSame("keyed list update replaced a focused input", personInput, awaitView(activity, "person-input-person-0"))
+            assertEquals("draft", personInput.text.toString())
+            assertTrue("keyed list update dropped input focus", personInput.isFocused)
+            instrumentation.runOnMainSync { people.scrollToPosition(people.adapter!!.itemCount - 1) }
+            awaitText(activity, "people-count", "People: 41; events: 2")
+            click(activity, "clear-people")
+            assertEquals("Nobody here", (awaitView(activity, "people-empty") as TextView).text.toString())
+            assertEquals("End of people", (awaitView(activity, "people-footer") as TextView).text.toString())
+            awaitText(activity, "people-count", "People: 0; events: 3")
             assertNoWebView(activity)
 
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
