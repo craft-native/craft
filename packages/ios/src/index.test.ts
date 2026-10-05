@@ -40,6 +40,7 @@ describe('Craft iOS builder', () => {
     expect(flatListSwift).toContain('UICollectionViewDiffableDataSource<Int, String>')
     expect(flatListSwift).toContain('reconfigureItems(changedLive)')
     expect(flatListSwift).toContain('preferredLayoutAttributesFitting')
+    expect(flatListSwift).toContain('pendingApply')
     expect(swift).toContain('CraftNativeActions.perform(action: action, body: body, config: config)')
     expect(mutationSwift).toContain('final class CraftNativeMutationDocument')
     expect(mutationSwift).toContain('case "moveChild"')

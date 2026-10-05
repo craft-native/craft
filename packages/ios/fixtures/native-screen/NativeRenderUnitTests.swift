@@ -409,4 +409,66 @@ final class NativeRenderUnitTests: XCTestCase {
         list.layoutIfNeeded()
         XCTAssertEqual(list.numberOfItems(inSection: 0), 40)
     }
+
+    func testFlatListCoalescesAnEndReachedRenderDuringSnapshotApplication() {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        let first = (0..<2).map { index in
+            ["id": "row-\(index)", "type": "Text", "children": ["Row \(index)"]] as [String: Any]
+        }
+        let appended = first + [["id": "row-2", "type": "Text", "children": ["Row 2"]]]
+        let render: CraftNativeFlatList.RenderItem = { _, _, previous in previous ?? UILabel() }
+        var endReachedCount = 0
+        let endReached = expectation(description: "end reached after initial snapshot")
+
+        list.apply(
+            nodes: first,
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: {
+                endReachedCount += 1
+                list.apply(
+                    nodes: appended,
+                    horizontal: false,
+                    columns: 1,
+                    inverted: false,
+                    endReachedThreshold: 0.1,
+                    renderItem: render,
+                    recycleItem: { _ in },
+                    endReached: nil
+                )
+                endReached.fulfill()
+            }
+        )
+        list.layoutIfNeeded()
+        wait(for: [endReached], timeout: 2)
+        list.layoutIfNeeded()
+
+        XCTAssertEqual(endReachedCount, 1)
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 3)
+
+        let chromeOnlyEndReached = expectation(description: "chrome-only list does not reach data end")
+        chromeOnlyEndReached.isInverted = true
+        let chromeOnly: [[String: Any]] = [
+            ["id": "header", "type": "Text", "props": ["listRole": "header"]],
+            ["id": "empty", "type": "Text", "props": ["listRole": "empty"]],
+            ["id": "footer", "type": "Text", "props": ["listRole": "footer"]],
+        ]
+        list.apply(
+            nodes: chromeOnly,
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: { chromeOnlyEndReached.fulfill() }
+        )
+        list.layoutIfNeeded()
+        wait(for: [chromeOnlyEndReached], timeout: 0.2)
+    }
 }

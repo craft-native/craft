@@ -89,6 +89,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var endReachedThreshold = 0.1
     private var endReachedSignature: String?
     private var columns = 1
+    private var isApplyingSnapshot = false
+    private var pendingApply: (() -> Void)?
 
     init() {
         let layout = CraftNativeFlatListLayout()
@@ -135,6 +137,23 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         recycleItem: @escaping (String) -> Void,
         endReached: (() -> Void)?
     ) {
+        if isApplyingSnapshot {
+            pendingApply = { [weak self] in
+                self?.apply(
+                    nodes: nodes,
+                    horizontal: horizontal,
+                    columns: columns,
+                    inverted: inverted,
+                    endReachedThreshold: endReachedThreshold,
+                    renderItem: renderItem,
+                    recycleItem: recycleItem,
+                    endReached: endReached
+                )
+            }
+            return
+        }
+        isApplyingSnapshot = true
+
         self.renderItem = renderItem
         self.recycleItem = recycleItem
         self.endReached = endReached
@@ -189,7 +208,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
                 } else {
                     self.setContentOffset(self.clamped(retainedOffset), animated: false)
                 }
-                self.evaluateEndReached()
+                self.finishApplyingSnapshot()
             }
             if !changedLive.isEmpty {
                 var update = self.diffableDataSource.snapshot()
@@ -200,7 +219,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             }
         }
 
-        let contentSignature = "\(next.count):\(next.last?.identity ?? "empty")"
+        let dataItems = next.filter { !$0.isChrome }
+        let contentSignature = "\(dataItems.count):\(dataItems.last?.identity ?? "empty")"
         if contentSignature != endReachedSignature { endReachedSignature = nil }
     }
 
@@ -232,15 +252,33 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     }
 
     private func evaluateEndReached() {
-        guard let endReached = endReached, !items.isEmpty,
-              let last = indexPathsForVisibleItems.map(\.item).max() else { return }
-        let remaining = items.count - last - 1
-        let thresholdItems = max(1, Int(ceil(Double(items.count) * endReachedThreshold)))
+        guard !isApplyingSnapshot, pendingApply == nil,
+              let endReached = endReached,
+              let lastVisible = indexPathsForVisibleItems.map(\.item).max() else { return }
+        let dataIndices = items.indices.filter { !items[$0].isChrome }
+        guard !dataIndices.isEmpty,
+              let lastDataOrdinal = dataIndices.lastIndex(where: { $0 <= lastVisible }) else { return }
+        let remaining = dataIndices.count - lastDataOrdinal - 1
+        let thresholdItems = max(1, Int(ceil(Double(dataIndices.count) * endReachedThreshold)))
         guard remaining <= thresholdItems else { return }
-        let signature = "\(items.count):\(items.last?.identity ?? "empty")"
+        let lastIdentity = items[dataIndices[dataIndices.count - 1]].identity
+        let signature = "\(dataIndices.count):\(lastIdentity)"
         guard endReachedSignature != signature else { return }
         endReachedSignature = signature
         endReached()
+    }
+
+    private func finishApplyingSnapshot() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.isApplyingSnapshot = false
+            if let pendingApply = self.pendingApply {
+                self.pendingApply = nil
+                pendingApply()
+                return
+            }
+            self.evaluateEndReached()
+        }
     }
 
     private func clamped(_ offset: CGPoint) -> CGPoint {
