@@ -479,8 +479,8 @@ final class CraftNativeScreenController: UIViewController {
             endReachedThreshold: (props["onEndReachedThreshold"] as? NSNumber)?.doubleValue
                 ?? (props["threshold"] as? NSNumber)?.doubleValue
                 ?? 0.1,
-            renderItem: { [weak self, weak list] node, identity, _ in
-                guard let self = self, let list = list else { return UIView() }
+            renderItem: { [weak self] node, identity, _ in
+                guard let self = self else { return UIView() }
                 let previous = self.flatListRows[listKey]?[identity]
                 let next = self.reconcile(
                     node,
@@ -489,7 +489,6 @@ final class CraftNativeScreenController: UIViewController {
                     previous: previous
                 )
                 self.flatListRows[listKey, default: [:]][identity] = next
-                list.collectionViewLayout.invalidateLayout()
                 return next.view
             },
             recycleItem: { [weak self] identity in

@@ -371,4 +371,42 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(retainedAnchor.map(list.visibleItemIdentities.contains) ?? false)
         XCTAssertLessThan(rendered.count, 100)
     }
+
+    func testFlatListControllerLaysOutAndMovesMulticolumnRowsWithoutReentrantInvalidation() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let rows: [[String: Any]] = (0..<40).map { index in
+            [
+                "id": "row-\(index)",
+                "type": "View",
+                "props": ["key": "row-\(index)", "listRole": "item"],
+                "children": [[
+                    "id": "label-\(index)", "type": "Text",
+                    "props": ["testID": "label-\(index)"], "children": ["Row \(index)"],
+                ]],
+            ]
+        }
+        func document(_ children: [[String: Any]]) -> [String: Any] {
+            [
+                "id": "root-node", "type": "View", "children": [[
+                    "id": "list-node", "type": "FlatList",
+                    "props": ["testID": "grid", "numColumns": 2],
+                    "style": ["height": 300], "children": children,
+                ]],
+            ]
+        }
+
+        controller.render(document(rows))
+        controller.view.layoutIfNeeded()
+        let list = try XCTUnwrap(find(CraftNativeFlatList.self, key: "grid", below: controller.view))
+        list.layoutIfNeeded()
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 40)
+        XCTAssertNotNil(find(UILabel.self, key: "label-0", below: controller.view))
+
+        controller.render(document(Array(rows.reversed())))
+        controller.view.layoutIfNeeded()
+        list.layoutIfNeeded()
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 40)
+    }
 }

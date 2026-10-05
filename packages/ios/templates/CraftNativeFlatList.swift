@@ -1,5 +1,14 @@
 import UIKit
 
+private final class CraftNativeFlatListLayout: UICollectionViewFlowLayout {
+    override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool {
+        guard let current = collectionView?.bounds else { return true }
+        return scrollDirection == .vertical
+            ? abs(current.width - newBounds.width) > .ulpOfOne
+            : abs(current.height - newBounds.height) > .ulpOfOne
+    }
+}
+
 /// A keyed, recycling native list used by the stx-native FlatList primitive.
 /// The screen controller owns rendered row state; this view owns collection
 /// diffs, viewport state, and UICollectionView cell reuse.
@@ -82,7 +91,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var columns = 1
 
     init() {
-        let layout = UICollectionViewFlowLayout()
+        let layout = CraftNativeFlatListLayout()
         layout.estimatedItemSize = CGSize(width: 320, height: 44)
         layout.minimumLineSpacing = 0
         layout.minimumInteritemSpacing = 0
