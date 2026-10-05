@@ -29,6 +29,7 @@ Learn how to build cross-platform applications with Craft.
 
 ## Mobile Development
 
+- [Native STX](./native-stx.md) - Render one compiled STX route bundle as UIKit and Android views
 - [iOS Development](./ios-development.md) - Building for iOS
 - [Android Development](./android-development.md) - Building for Android
 - [Mobile APIs](./mobile-apis.md) - Haptics, biometrics, etc.
