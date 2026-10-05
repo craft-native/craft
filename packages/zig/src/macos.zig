@@ -3382,6 +3382,34 @@ fn ensureWebChromeResponder() void {
     objc.objc_registerClassPair(webChromeResponderClass);
 }
 
+/// Marks Craft's web-sidebar title-bar buttons, so a native sidebar taking
+/// over the window can find them again.
+const web_chrome_button_tag: c_long = 0x0C4AF7;
+
+/// Take the web-sidebar row (toggle, back, forward) off a window whose
+/// sidebar has become a native one. The split view brings its own sidebar
+/// behaviour, and the row was left floating over it: a toggle for a web
+/// sidebar no longer there, and history arrows for a page that is an app.
+pub fn removeWebSidebarChromeControls(window: objc.id) void {
+    if (window == null) return;
+    const contentView = msgSend0(window, "contentView");
+    const themeFrame = if (contentView != null) msgSend0(contentView, "superview") else null;
+    if (themeFrame != null) {
+        // A copy: removing a view mutates the array being walked.
+        const subviews = msgSend0(msgSend0(themeFrame, "subviews"), "copy");
+        defer _ = msgSend0(subviews, "release");
+        const count = msgSend0Ulong(subviews, "count");
+        var index: c_ulong = 0;
+        while (index < count) : (index += 1) {
+            const view = msgSend1(subviews, "objectAtIndex:", index);
+            if (msgSendBool1Sel(view, "respondsToSelector:", sel("tag")) and msgSendNSInteger(view, "tag") == web_chrome_button_tag)
+                _ = msgSend0(view, "removeFromSuperview");
+        }
+    }
+    if (webMaterialSlot(window, false)) |slot| slot.toggle_button = null;
+    setWebChromeRow(window, null);
+}
+
 fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
     if (window == null or webview == null) return;
 
@@ -3448,6 +3476,7 @@ fn addWebSidebarChromeControls(window: objc.id, webview: objc.id) void {
         _ = msgSend1(btn, "setTarget:", responder);
         _ = msgSend1(btn, "setAction:", sel(button.action));
         _ = msgSend1(btn, "setToolTip:", createNSString(button.tooltip));
+        _ = msgSend1(btn, "setTag:", web_chrome_button_tag);
         msgSendVoid1(btn, "setAutoresizingMask:", titlebar_control_autoresizing_mask);
         _ = msgSend1(themeFrame, "addSubview:", btn);
         if (std.mem.eql(u8, button.symbol, "sidebar.left")) {

@@ -98,6 +98,17 @@ pub const OutlineViewDelegate = struct {
                 "c@:@@",
             );
 
+            const shouldShowOutlineCell = @as(
+                *const fn (macos.objc.id, macos.objc.SEL, macos.objc.id, macos.objc.id) callconv(.c) c_int,
+                @ptrCast(@constCast(&outlineViewShouldShowOutlineCellForItem)),
+            );
+            _ = macos.objc.class_addMethod(
+                objc_class,
+                macos.sel("outlineView:shouldShowOutlineCellForItem:"),
+                @ptrCast(@constCast(shouldShowOutlineCell)),
+                "c@:@@",
+            );
+
             macos.objc.objc_registerClassPair(objc_class);
         }
 
@@ -165,210 +176,151 @@ fn itemForRow(outlineView: macos.objc.id, item: macos.objc.id) ?*datasource.Outl
     return store.itemAt(location);
 }
 
-/// Tag of the right-aligned count in an item row, like Mail's unread counts.
+/// Tag of the badge label inside an item's cell, so a reused cell's badge
+/// can be found and rewritten.
 const badge_tag: c_long = 7701;
+
+/// Whether this row is a section (heading) rather than an item. By the data
+/// store, not by `isExpandable:` - a section with no items is not expandable
+/// and was drawn, and selectable, as if it were an item.
+fn isSectionRow(outlineView: macos.objc.id, item: macos.objc.id) bool {
+    const store = datasource.storeOf(macos.msgSend0(outlineView, "dataSource")) orelse return false;
+    const location = store.locate(item) orelse return false;
+    return location.item == null;
+}
+
+/// A section that has no heading: its row is only a little space above it.
+fn isHeadlessSection(outlineView: macos.objc.id, item: macos.objc.id) bool {
+    const store = datasource.storeOf(macos.msgSend0(outlineView, "dataSource")) orelse return false;
+    const location = store.locate(item) orelse return false;
+    if (location.item != null) return false;
+    return store.sections.items[location.section].header == null;
+}
+
+fn anchor(view: macos.objc.id, name: [*:0]const u8) macos.objc.id {
+    return macos.msgSend0(view, name);
+}
+
+fn activate(constraint: macos.objc.id) void {
+    _ = macos.msgSend1(constraint, "setActive:", @as(c_int, 1));
+}
+
+fn pinEqual(a: macos.objc.id, a_anchor: [*:0]const u8, b: macos.objc.id, b_anchor: [*:0]const u8, constant: f64) void {
+    activate(macos.msgSend2(anchor(a, a_anchor), "constraintEqualToAnchor:constant:", anchor(b, b_anchor), constant));
+}
+
+fn label(text_color: ?[*:0]const u8) macos.objc.id {
+    const field = macos.msgSend1(macos.getClass("NSTextField"), "labelWithString:", macos.createNSString(""));
+    _ = macos.msgSend1(field, "setTranslatesAutoresizingMaskIntoConstraints:", @as(c_int, 0));
+    _ = macos.msgSend1(field, "setLineBreakMode:", @as(c_ulong, 4)); // NSLineBreakByTruncatingTail
+    if (text_color) |color|
+        _ = macos.msgSend1(field, "setTextColor:", macos.msgSend0(macos.getClass("NSColor"), color));
+    return field;
+}
+
+/// A sidebar cell laid out the way Xcode's source-list template lays one out:
+/// symbol, label, and a right-aligned count, held by constraints so they
+/// follow the row as the sidebar is resized. Fixed frames computed from the
+/// column's width at creation went stale the moment it changed, which is how
+/// the counts ended up drawn outside the row.
+fn makeCell(identifier: macos.objc.id, is_header: bool) macos.objc.id {
+    const cell = macos.msgSend0(macos.msgSend0(macos.getClass("NSTableCellView"), "alloc"), "init");
+    _ = macos.msgSend1(cell, "setIdentifier:", identifier);
+
+    const text = label(if (is_header) "secondaryLabelColor" else null);
+    _ = macos.msgSend1(cell, "addSubview:", text);
+    _ = macos.msgSend1(cell, "setTextField:", text);
+    pinEqual(text, "centerYAnchor", cell, "centerYAnchor", 0);
+
+    if (is_header) {
+        const font = macos.msgSend2(macos.getClass("NSFont"), "systemFontOfSize:weight:", @as(f64, 11.0), @as(f64, 0.4)); // semibold
+        _ = macos.msgSend1(text, "setFont:", font);
+        pinEqual(text, "leadingAnchor", cell, "leadingAnchor", 2);
+        activate(macos.msgSend2(anchor(text, "trailingAnchor"), "constraintLessThanOrEqualToAnchor:constant:", anchor(cell, "trailingAnchor"), @as(f64, -4)));
+        return cell;
+    }
+
+    const image = macos.msgSend0(macos.msgSend0(macos.getClass("NSImageView"), "alloc"), "init");
+    _ = macos.msgSend1(image, "setTranslatesAutoresizingMaskIntoConstraints:", @as(c_int, 0));
+    _ = macos.msgSend1(image, "setImageScaling:", @as(c_long, 0)); // NSImageScaleProportionallyDown: symbols at their own size
+    _ = macos.msgSend1(cell, "addSubview:", image);
+    _ = macos.msgSend1(cell, "setImageView:", image);
+    _ = macos.msgSend0(image, "release");
+    pinEqual(image, "leadingAnchor", cell, "leadingAnchor", 3);
+    pinEqual(image, "centerYAnchor", cell, "centerYAnchor", 0);
+    activate(macos.msgSend1(anchor(image, "widthAnchor"), "constraintEqualToConstant:", @as(f64, 18)));
+
+    const badge = label("secondaryLabelColor");
+    _ = macos.msgSend1(badge, "setTag:", badge_tag);
+    _ = macos.msgSend1(badge, "setAlignment:", @as(c_long, 2)); // NSTextAlignmentRight
+    _ = macos.msgSend1(badge, "setFont:", macos.msgSend2(macos.getClass("NSFont"), "monospacedDigitSystemFontOfSize:weight:", @as(f64, 12.0), @as(f64, 0.0)));
+    // The count keeps its full width; the label is what truncates.
+    _ = macos.msgSend2(badge, "setContentCompressionResistancePriority:forOrientation:", @as(f32, 751), @as(c_long, 0));
+    _ = macos.msgSend2(badge, "setContentHuggingPriority:forOrientation:", @as(f32, 751), @as(c_long, 0));
+    _ = macos.msgSend2(text, "setContentCompressionResistancePriority:forOrientation:", @as(f32, 250), @as(c_long, 0));
+    _ = macos.msgSend1(cell, "addSubview:", badge);
+    pinEqual(badge, "trailingAnchor", cell, "trailingAnchor", -6);
+    pinEqual(badge, "centerYAnchor", cell, "centerYAnchor", 0);
+
+    pinEqual(text, "leadingAnchor", image, "trailingAnchor", 6);
+    activate(macos.msgSend2(anchor(text, "trailingAnchor"), "constraintLessThanOrEqualToAnchor:constant:", anchor(badge, "leadingAnchor"), @as(f64, -6)));
+    return cell;
+}
 
 /// NSOutlineViewDelegate method: viewForTableColumn:item
 export fn outlineViewViewForTableColumnItem(
-    self: macos.objc.id,
+    _: macos.objc.id, // self
     _: macos.objc.SEL,
     outlineView: macos.objc.id,
-    tableColumn: macos.objc.id, // CRITICAL: This is NULL for group rows!
+    _: macos.objc.id, // tableColumn: NULL for group rows
     item: macos.objc.id,
 ) callconv(.c) macos.objc.id {
     if (item == @as(macos.objc.id, null)) return null;
 
-    // CRITICAL CHECK: Group rows have NO tableColumn (it's null)
-    // We must check this first to determine if this is a header
-    const is_group_item = outlineViewIsGroupItem(self, macos.sel("outlineView:isGroupItem:"), outlineView, item);
-    const is_header = (tableColumn == @as(macos.objc.id, null)) or (is_group_item != 0);
+    const is_header = isSectionRow(outlineView, item);
+    const identifier = macos.createNSString(if (is_header) "HeaderCell" else "DataCell");
 
-    // Get cell identifier based on whether this is a header or data row
-    const identifier = if (is_header) "HeaderCell" else "DataCell";
-    const identifierStr = macos.createNSString(identifier);
-
-    // Get the text value from the data source
     const dataSource = macos.msgSend0(outlineView, "dataSource");
     if (dataSource == @as(macos.objc.id, null)) return null;
-
-    const objectValue = macos.msgSend3(
-        dataSource,
-        "outlineView:objectValueForTableColumn:byItem:",
-        outlineView,
-        @as(macos.objc.id, null),
-        item,
-    );
-
+    const objectValue = macos.msgSend3(dataSource, "outlineView:objectValueForTableColumn:byItem:", outlineView, @as(macos.objc.id, null), item);
     if (objectValue == @as(macos.objc.id, null)) return null;
 
-    // Convert NSString to C string
-    const cstr = macos.msgSend0(objectValue, "UTF8String");
-    if (@intFromPtr(cstr) == 0) return null;
+    var cell = macos.msgSend2(outlineView, "makeViewWithIdentifier:owner:", identifier, @as(?*anyopaque, null));
+    if (cell == @as(macos.objc.id, null)) cell = makeCell(identifier, is_header);
 
-    const text: [*:0]const u8 = @ptrCast(cstr);
-    const text_slice = std.mem.span(text);
+    const textField = macos.msgSend0(cell, "textField");
+    if (textField != @as(macos.objc.id, null))
+        _ = macos.msgSend1(textField, "setStringValue:", objectValue);
+    if (is_header) return cell;
 
-    // Icon and badge for this item (headers have neither)
-    const data_item = if (!is_header) itemForRow(outlineView, item) else null;
-    const icon_name = if (data_item) |entry| entry.icon else null;
-    const badge_text = if (data_item) |entry| entry.badge else null;
+    const entry = itemForRow(outlineView, item);
+    const badge = macos.msgSend1(cell, "viewWithTag:", badge_tag);
+    if (badge != @as(macos.objc.id, null))
+        _ = macos.msgSend1(badge, "setStringValue:", macos.createNSString(if (entry) |e| e.badge orelse "" else ""));
 
-    // Try to reuse an existing cell
-    var cellView = macos.msgSend2(outlineView, "makeViewWithIdentifier:owner:", identifierStr, @as(?*anyopaque, null));
-
-    const NSRect = extern struct {
-        origin: extern struct { x: f64, y: f64 },
-        size: extern struct { width: f64, height: f64 },
-    };
-
-    // If no reusable cell, create new one
-    if (cellView == @as(macos.objc.id, null)) {
-        const NSTableCellView = macos.getClass("NSTableCellView");
-        cellView = macos.msgSend0(macos.msgSend0(NSTableCellView, "alloc"), "init");
-        _ = macos.msgSend1(cellView, "setIdentifier:", identifierStr);
-
-        const row_height: f64 = if (is_header) 20.0 else 24.0;
-        const icon_size: f64 = 16.0;
-        const icon_padding: f64 = 4.0;
-        const text_x: f64 = if (!is_header and icon_name != null) icon_size + icon_padding + 4.0 else 2.0;
-
-        // Create image view for icon (non-header items only)
-        if (!is_header) {
-            const NSImageView = macos.getClass("NSImageView");
-            const imageView = macos.msgSend0(macos.msgSend0(NSImageView, "alloc"), "init");
-
-            const icon_frame = NSRect{
-                .origin = .{ .x = 4, .y = (row_height - icon_size) / 2.0 },
-                .size = .{ .width = icon_size, .height = icon_size },
-            };
-            _ = macos.msgSend1(imageView, "setFrame:", icon_frame);
-            _ = macos.msgSend1(imageView, "setImageScaling:", @as(c_long, 2)); // NSImageScaleProportionallyUpOrDown
-
-            _ = macos.msgSend1(cellView, "setImageView:", imageView);
-            _ = macos.msgSend1(cellView, "addSubview:", imageView);
-        }
-
-        // Create text field with MINIMAL styling - let macOS handle the rest
-        const NSTextField = macos.getClass("NSTextField");
-        const textField = macos.msgSend0(macos.msgSend0(NSTextField, "alloc"), "init");
-        _ = macos.msgSend1(textField, "setBordered:", @as(c_int, 0));
-        _ = macos.msgSend1(textField, "setDrawsBackground:", @as(c_int, 0));
-        _ = macos.msgSend1(textField, "setEditable:", @as(c_int, 0));
-        _ = macos.msgSend1(textField, "setSelectable:", @as(c_int, 0));
-
-        // Add to cell view
-        _ = macos.msgSend1(cellView, "setTextField:", textField);
-        _ = macos.msgSend1(cellView, "addSubview:", textField);
-
-        // Frame-based layout with space for icon (and, on item rows, the
-        // count). The cell spans the column; the text resizes with it rather
-        // than stopping at a fixed 180pt.
-        const column_width: f64 = if (tableColumn != @as(macos.objc.id, null)) macos.msgSend0Double(tableColumn, "width") else 240.0;
-        const badge_width: f64 = if (is_header) 0 else 34.0;
-        _ = macos.msgSend1(cellView, "setFrame:", NSRect{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = column_width, .height = row_height } });
-        const frame = NSRect{
-            .origin = .{ .x = text_x, .y = 0 },
-            .size = .{ .width = @max(40.0, column_width - text_x - badge_width - 6.0), .height = row_height },
-        };
-        _ = macos.msgSend1(textField, "setFrame:", frame);
-        _ = macos.msgSend1(textField, "setAutoresizingMask:", @as(c_ulong, 2)); // NSViewWidthSizable
-        _ = macos.msgSend1(textField, "setLineBreakMode:", @as(c_ulong, 4)); // NSLineBreakByTruncatingTail
-
-        if (!is_header) {
-            const badge = macos.msgSend0(macos.msgSend0(NSTextField, "alloc"), "init");
-            _ = macos.msgSend1(badge, "setBordered:", @as(c_int, 0));
-            _ = macos.msgSend1(badge, "setDrawsBackground:", @as(c_int, 0));
-            _ = macos.msgSend1(badge, "setEditable:", @as(c_int, 0));
-            _ = macos.msgSend1(badge, "setSelectable:", @as(c_int, 0));
-            _ = macos.msgSend1(badge, "setAlignment:", @as(c_long, 1)); // NSTextAlignmentRight
-            _ = macos.msgSend1(badge, "setTag:", badge_tag);
-            const NSFontClass = macos.getClass("NSFont");
-            _ = macos.msgSend1(badge, "setFont:", macos.msgSend2(NSFontClass, "monospacedDigitSystemFontOfSize:weight:", @as(f64, 11.0), @as(f64, 0.0)));
-            _ = macos.msgSend1(badge, "setTextColor:", macos.msgSend0(macos.getClass("NSColor"), "secondaryLabelColor"));
-            _ = macos.msgSend1(badge, "setFrame:", NSRect{
-                .origin = .{ .x = column_width - badge_width - 8.0, .y = (row_height - 15.0) / 2.0 },
-                .size = .{ .width = badge_width, .height = 15.0 },
-            });
-            _ = macos.msgSend1(badge, "setAutoresizingMask:", @as(c_ulong, 1)); // NSViewMinXMargin: stays at the right edge
-            _ = macos.msgSend1(cellView, "addSubview:", badge);
-            _ = macos.msgSend0(badge, "release");
-        }
-
-        // Set header font style
-        if (is_header) {
-            const NSFont = macos.getClass("NSFont");
-            const font = macos.msgSend2(NSFont, "systemFontOfSize:weight:", @as(f64, 11.0), @as(f64, 0.4)); // semibold
-            _ = macos.msgSend1(textField, "setFont:", font);
-
-            const NSColor = macos.getClass("NSColor");
-            const headerColor = macos.msgSend0(NSColor, "secondaryLabelColor");
-            _ = macos.msgSend1(textField, "setTextColor:", headerColor);
+    const imageView = macos.msgSend0(cell, "imageView");
+    if (imageView != @as(macos.objc.id, null)) {
+        var icon_buf: [64]u8 = undefined;
+        const name = if (entry) |e| e.icon orelse "folder" else "folder";
+        const icon_z = @import("../memory.zig").bufPrintZ(&icon_buf, "{s}", .{name}) catch "folder";
+        const config = sf_symbols.SymbolConfiguration{ .point_size = 14.0, .weight = .regular, .scale = .medium };
+        // A template symbol, so the sidebar tints it as Finder's are.
+        if (sf_symbols.createSFSymbol(icon_z, config) orelse sf_symbols.createSFSymbol("folder", config)) |image| {
+            _ = macos.msgSend1(image, "setTemplate:", @as(c_int, 1));
+            _ = macos.msgSend1(imageView, "setImage:", image);
         }
     }
-
-    // Update the text
-    const textField = macos.msgSend0(cellView, "textField");
-    if (textField != @as(macos.objc.id, null)) {
-        const nsString = macos.createNSString(text_slice);
-        _ = macos.msgSend1(textField, "setStringValue:", nsString);
-    }
-
-    // Update the count: reused cells must not keep another row's number.
-    if (!is_header) {
-        const badge = macos.msgSend1(cellView, "viewWithTag:", badge_tag);
-        if (badge != @as(macos.objc.id, null))
-            _ = macos.msgSend1(badge, "setStringValue:", macos.createNSString(badge_text orelse ""));
-    }
-
-    // Update the icon (for non-header items)
-    if (!is_header) {
-        const imageView = macos.msgSend0(cellView, "imageView");
-        if (imageView != @as(macos.objc.id, null)) {
-            if (icon_name) |icon| {
-                // Create SF Symbol image
-                var icon_buf: [64]u8 = undefined;
-                const icon_z = @import("../memory.zig").bufPrintZ(&icon_buf, "{s}", .{icon}) catch "folder";
-                const symbol_config = sf_symbols.SymbolConfiguration{
-                    .point_size = 14.0,
-                    .weight = .regular,
-                    .scale = .medium,
-                };
-                if (sf_symbols.createSFSymbol(icon_z, symbol_config)) |image| {
-                    _ = macos.msgSend1(imageView, "setImage:", image);
-
-                    // Set template rendering for proper theme support
-                    _ = macos.msgSend1(image, "setTemplate:", @as(c_int, 1));
-                }
-            } else {
-                // Default folder icon
-                const symbol_config = sf_symbols.SymbolConfiguration{
-                    .point_size = 14.0,
-                    .weight = .regular,
-                };
-                if (sf_symbols.createSFSymbol("folder", symbol_config)) |image| {
-                    _ = macos.msgSend1(imageView, "setImage:", image);
-                    _ = macos.msgSend1(image, "setTemplate:", @as(c_int, 1));
-                }
-            }
-        }
-    }
-
-    return cellView;
+    return cell;
 }
 
-/// NSOutlineViewDelegate method: shouldSelectItem
+/// NSOutlineViewDelegate method: shouldSelectItem - items, never headings.
 export fn outlineViewShouldSelectItem(
     _: macos.objc.id, // self
     _: macos.objc.SEL,
     outlineView: macos.objc.id,
     item: macos.objc.id,
 ) callconv(.c) c_int {
-    // Don't allow section headers to be selected, only regular items
-    const isExpandable = macos.msgSend1(outlineView, "isExpandable:", item);
-    const expandable: c_int = @intCast(@intFromPtr(isExpandable));
-
-    // Return 0 (false) for headers, 1 (true) for items
-    return if (expandable != 0) 0 else 1;
+    return if (isSectionRow(outlineView, item)) 0 else 1;
 }
 
 /// NSOutlineViewDelegate method: selectionDidChange
@@ -403,8 +355,7 @@ export fn outlineViewSelectionDidChange(
     }
 }
 
-/// NSOutlineViewDelegate method: isGroupItem
-/// Returns YES for section headers (expandable items with children)
+/// NSOutlineViewDelegate method: isGroupItem - every section is a group row.
 export fn outlineViewIsGroupItem(
     _: macos.objc.id, // self
     _: macos.objc.SEL,
@@ -412,25 +363,29 @@ export fn outlineViewIsGroupItem(
     item: macos.objc.id,
 ) callconv(.c) c_int {
     if (item == @as(macos.objc.id, null)) return 0;
-
-    // Check if this item is expandable (has children) - those are group headers
-    const isExpandable = macos.msgSend1(outlineView, "isExpandable:", item);
-    const expandable: c_int = @intCast(@intFromPtr(isExpandable));
-
-    return expandable; // Return 1 for group headers, 0 for regular items
+    return if (isSectionRow(outlineView, item)) 1 else 0;
 }
 
-/// NSOutlineViewDelegate method: heightOfRowByItem
+/// NSOutlineViewDelegate method: shouldShowOutlineCellForItem. A heading
+/// offers the sidebar's Show/Hide on hover; a section without one cannot be
+/// collapsed, since nothing would be left to expand it again.
+export fn outlineViewShouldShowOutlineCellForItem(
+    _: macos.objc.id, // self
+    _: macos.objc.SEL,
+    outlineView: macos.objc.id,
+    item: macos.objc.id,
+) callconv(.c) c_int {
+    return if (isHeadlessSection(outlineView, item)) 0 else 1;
+}
+
+/// NSOutlineViewDelegate method: heightOfRowByItem - the system sidebar's
+/// row and heading heights, and a sliver for a section without a heading.
 export fn outlineViewHeightOfRowByItem(
     _: macos.objc.id, // self
     _: macos.objc.SEL,
     outlineView: macos.objc.id,
     item: macos.objc.id,
 ) callconv(.c) f64 {
-    // Check if item is a group/header (parent) or regular item (child)
-    const isExpandable = macos.msgSend1(outlineView, "isExpandable:", item);
-    const expandable: c_int = @intCast(@intFromPtr(isExpandable));
-
-    // Headers are shorter (20px), items are taller (24px)
-    return if (expandable != 0) 20.0 else 24.0;
+    if (!isSectionRow(outlineView, item)) return 28.0;
+    return if (isHeadlessSection(outlineView, item)) 4.0 else 26.0;
 }

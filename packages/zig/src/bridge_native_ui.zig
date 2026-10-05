@@ -546,8 +546,12 @@ pub const NativeUIBridge = struct {
             for (try arrayValue(sections_value)) |section_value| {
                 const section_obj = try objectValue(section_value);
                 const section_id = try optionalString(section_obj, "id") orelse "section";
-                const section_label = try optionalString(section_obj, "label") orelse
-                    try optionalString(section_obj, "title") orelse section_id;
+                // The heading, under any of the names the API has used. A
+                // section without one has no heading, not its id as one: an
+                // id is code, and showed in the sidebar as "mailboxes".
+                const section_label = try optionalString(section_obj, "header") orelse
+                    try optionalString(section_obj, "label") orelse
+                    try optionalString(section_obj, "title");
                 const items_value = section_obj.get("items") orelse continue;
 
                 var items: std.ArrayList(NativeSidebar.SidebarItem) = .empty;
@@ -595,8 +599,14 @@ pub const NativeUIBridge = struct {
             if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
                 std.debug.print("[LiquidGlass] Content extends under floating sidebar\n", .{});
 
+            // The native sidebar replaces a web sidebar's title-bar row.
+            macos.removeWebSidebarChromeControls(window);
+
             // Set split view controller as window's content view controller
             _ = macos.msgSend1(window, "setContentViewController:", split_vc.getSplitViewController());
+            // The page now sits right of the sidebar with no buttons over it;
+            // tell it, so it stops leaving room for them.
+            macos.publishWindowChrome(window, .always);
             state.original_webview = original_webview;
             state.split_view_controller = split_vc;
             state.sidebars.putAssumeCapacityNoClobber(id_copy, sidebar);

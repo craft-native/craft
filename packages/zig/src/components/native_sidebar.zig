@@ -93,13 +93,25 @@ pub const NativeSidebar = struct {
 
         const identifier = macos.createNSString("MainColumn");
         _ = macos.msgSend1(column, "setIdentifier:", identifier);
-        _ = macos.msgSend1(column, "setWidth:", @as(f64, 240.0));
+        // Narrower than any sidebar to begin with, and grown to fill it: a
+        // column that starts wider than the list is never shrunk, and the
+        // right edge of every row - where the counts are - was cut off.
+        _ = macos.msgSend1(column, "setWidth:", @as(f64, 120.0));
+        _ = macos.msgSend1(column, "setMinWidth:", @as(f64, 60.0));
+        // The one column follows the sidebar's width as it is dragged, so a
+        // row's badge stays at the visible right edge.
+        _ = macos.msgSend1(column, "setResizingMask:", @as(c_ulong, 1)); // NSTableColumnAutoresizingMask
         _ = macos.msgSend1(outline_view, "addTableColumn:", column);
         _ = macos.msgSend1(outline_view, "setOutlineTableColumn:", column);
         _ = macos.msgSend0(column, "release");
 
-        // CRITICAL: Enable native source list style
+        // The sidebar look Mail, Finder and Notes use: rounded, inset
+        // selection, accent-tinted symbols, and the system's row metrics.
+        // `style` (macOS 11) is what draws that; the highlight style alone
+        // gives the old full-width bar.
         _ = macos.msgSend1(outline_view, "setSelectionHighlightStyle:", @as(c_long, 1)); // NSTableViewSelectionHighlightStyleSourceList
+        if (macos.msgSendBool1Sel(outline_view, "respondsToSelector:", macos.sel("setStyle:")))
+            _ = macos.msgSend1(outline_view, "setStyle:", @as(c_long, 3)); // NSTableViewStyleSourceList
 
         // CRITICAL: Make outline view transparent for Liquid Glass effect
         const NSColor = macos.getClass("NSColor");
@@ -109,16 +121,16 @@ pub const NativeSidebar = struct {
         // Remove header
         _ = macos.msgSend1(outline_view, "setHeaderView:", @as(?*anyopaque, null));
 
-        // Enable group rows for section headers
-        _ = macos.msgSend1(outline_view, "setFloatsGroupRows:", @as(c_int, 1)); // YES - float group rows
+        // Section headings scroll with their rows, as they do in a sidebar.
+        _ = macos.msgSend1(outline_view, "setFloatsGroupRows:", @as(c_int, 0));
+        _ = macos.msgSend1(outline_view, "setColumnAutoresizingStyle:", @as(c_ulong, 1)); // NSTableViewUniformColumnAutoresizingStyle
 
         // Use default row sizing
         _ = macos.msgSend1(outline_view, "setRowSizeStyle:", @as(c_long, 2)); // NSTableViewRowSizeStyleMedium
 
-        // Enable autosave to remember expanded state
-        const autosaveName = macos.createNSString("CraftSidebarOutlineView");
-        _ = macos.msgSend1(outline_view, "setAutosaveName:", autosaveName);
-        _ = macos.msgSend1(outline_view, "setAutosaveExpandedItems:", @as(c_int, 1));
+        // No expanded-item autosave: it needs persistent objects for rows,
+        // which are rebuilt from the page's data on every launch anyway, and
+        // without them AppKit logs a warning on each reload.
 
         // Create NSScrollView to wrap the outline view
         const NSScrollView = macos.getClass("NSScrollView");
@@ -149,6 +161,11 @@ pub const NativeSidebar = struct {
         _ = macos.msgSend1(scroll_view, "setHasVerticalScroller:", @as(c_int, 1));
         _ = macos.msgSend1(scroll_view, "setHasHorizontalScroller:", @as(c_int, 0));
         _ = macos.msgSend1(scroll_view, "setBorderType:", @as(c_long, 0)); // NSNoBorder
+        // Overlay scrollers that appear while scrolling, as every sidebar has.
+        // A legacy scroller (a mouse attached) otherwise draws a permanent
+        // track over the counts.
+        _ = macos.msgSend1(scroll_view, "setScrollerStyle:", @as(c_long, 1)); // NSScrollerStyleOverlay
+        _ = macos.msgSend1(scroll_view, "setAutohidesScrollers:", @as(c_int, 1));
 
         // CRITICAL: Make scroll view transparent so NSVisualEffectView glass shows through
         _ = macos.msgSend1(scroll_view, "setDrawsBackground:", @as(c_int, 0)); // NO - don't draw background
@@ -158,7 +175,6 @@ pub const NativeSidebar = struct {
         const clearColorObj = macos.msgSend0(NSColorClass, "clearColor");
         _ = macos.msgSend1(scroll_view, "setBackgroundColor:", clearColorObj);
 
-        std.debug.print("[NativeSidebar] ✓ Scroll view created with initial frame (240x100)\\n", .{});
 
         self.* = .{
             .outline_view = outline_view,
@@ -207,25 +223,11 @@ pub const NativeSidebar = struct {
         const section_index = self.data_source.data.sections.items.len;
         try self.data_source.data.sections.append(self.allocator, new_section);
 
-        std.debug.print("[NativeSidebar-DEBUG] Section added to data. Total sections: {d}\n", .{self.data_source.data.sections.items.len});
-        std.debug.print("[NativeSidebar-DEBUG] Section '{s}' has {d} items\n", .{ section.id, new_section.items.items.len });
-
-        // Reload data to show the new section
         _ = macos.msgSend0(self.outline_view, "reloadData");
-        std.debug.print("[NativeSidebar-DEBUG] Called reloadData on outline view\n", .{});
-
-        // Get the number of rows to verify data loaded
-        const row_count = macos.msgSend0(self.outline_view, "numberOfRows");
-        std.debug.print("[NativeSidebar-DEBUG] Outline view now has {*} rows\n", .{row_count});
-
-        // Auto-expand the newly added section
-        // Get the item at row index (which corresponds to the section we just added)
-        const section_row_idx: c_long = @intCast(section_index);
-        const section_item = macos.msgSend1(self.outline_view, "itemAtRow:", section_row_idx);
-        if (section_item != @as(macos.objc.id, null)) {
-            _ = macos.msgSend1(self.outline_view, "expandItem:", section_item);
-            std.debug.print("[NativeSidebar-DEBUG] Expanded section at row {d}\n", .{section_row_idx});
-        }
+        _ = macos.msgSend0(self.outline_view, "sizeLastColumnToFit");
+        // By its row object: the section's row number is not its index once
+        // the sections above it are expanded.
+        _ = macos.msgSend1(self.outline_view, "expandItem:", self.data_source.data.sections.items[section_index].handle);
     }
 
     /// Select an item by id, without reporting it as a selection the
@@ -287,6 +289,7 @@ pub const NativeSidebar = struct {
         self.data_source.data.sections = fresh;
         fresh = .empty;
         _ = macos.msgSend0(self.outline_view, "reloadData");
+        _ = macos.msgSend0(self.outline_view, "sizeLastColumnToFit");
         for (self.data_source.data.sections.items) |*section|
             _ = macos.msgSend1(self.outline_view, "expandItem:", section.handle);
         if (keep) |id| self.setSelectedItem(id);

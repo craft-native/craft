@@ -74,23 +74,6 @@ pub const NativeSplitViewController = struct {
     /// Add a sidebar using NSSplitViewItem.sidebarWithViewController:
     /// Wraps content in NSVisualEffectView for Liquid Glass material
     pub fn setSidebar(self: *NativeSplitViewController, sidebar_view: macos.objc.id) !void {
-        // CRITICAL: Wrap sidebar in NSVisualEffectView for translucent glass effect
-        const NSVisualEffectView = macos.getClass("NSVisualEffectView");
-        const glass_view = macos.msgSend0(macos.msgSend0(NSVisualEffectView, "alloc"), "init");
-
-        // CRITICAL: Enable layer backing for vibrancy to work
-        _ = macos.msgSend1(glass_view, "setWantsLayer:", @as(c_int, 1)); // YES
-
-        // Set material to .sidebar (NSVisualEffectMaterialSidebar = 5)
-        _ = macos.msgSend1(glass_view, "setMaterial:", @as(c_long, 5));
-
-        // Set blending mode to .behindWindow (0) for proper transparency
-        _ = macos.msgSend1(glass_view, "setBlendingMode:", @as(c_long, 0));
-
-        // Set state to .active (1) to always show the effect
-        _ = macos.msgSend1(glass_view, "setState:", @as(c_long, 1));
-
-        // CRITICAL: Set initial frame for the glass view
         const NSRect = extern struct {
             origin: extern struct { x: f64, y: f64 },
             size: extern struct { width: f64, height: f64 },
@@ -99,9 +82,29 @@ pub const NativeSplitViewController = struct {
             .origin = .{ .x = 0, .y = 0 },
             .size = .{ .width = 240.0, .height = 600.0 },
         };
+
+        // macOS 26 draws a split view's sidebar item as floating Liquid Glass
+        // by itself; a material view inside it paints a flat panel over that.
+        // Before 26 the sidebar material has to be supplied, as it always was.
+        // NSGlassEffectView exists from 26 on, so it marks the difference.
+        const draws_own_glass = macos.objc.objc_getClass("NSGlassEffectView") != null;
+        const glass_view = if (draws_own_glass)
+            macos.msgSend0(macos.msgSend0(macos.getClass("NSView"), "alloc"), "init")
+        else blk: {
+            const view = macos.msgSend0(macos.msgSend0(macos.getClass("NSVisualEffectView"), "alloc"), "init");
+            _ = macos.msgSend1(view, "setWantsLayer:", @as(c_int, 1));
+            _ = macos.msgSend1(view, "setMaterial:", @as(c_long, 7)); // NSVisualEffectMaterialSidebar
+            _ = macos.msgSend1(view, "setBlendingMode:", @as(c_long, 0)); // behind window
+            _ = macos.msgSend1(view, "setState:", @as(c_long, 0)); // follows the window's active state
+            break :blk view;
+        };
         _ = macos.msgSend1(glass_view, "setFrame:", initial_frame);
 
-        // Add sidebar content as subview of the glass view
+        // The list fills its container from the start. Its autoresizing keeps
+        // the margins it begins with, so a list added smaller than the
+        // container kept that gap above it for good: a 100pt list in a 600pt
+        // container sat 500pt down the sidebar at every window size.
+        _ = macos.msgSend1(sidebar_view, "setFrame:", initial_frame);
         _ = macos.msgSend1(glass_view, "addSubview:", sidebar_view);
         errdefer {
             _ = macos.msgSend0(sidebar_view, "removeFromSuperview");
@@ -146,7 +149,6 @@ pub const NativeSplitViewController = struct {
 
         self.sidebar_item = sidebar_item;
 
-        std.debug.print("[LiquidGlass] ✓ Created sidebar with NSVisualEffectView for glass material\n", .{});
     }
 
     /// Set the content view (typically a WKWebView)
@@ -171,7 +173,6 @@ pub const NativeSplitViewController = struct {
 
         self.content_item = content_item;
 
-        std.debug.print("[LiquidGlass] ✓ Content extends under floating sidebar with safe area insets\n", .{});
     }
 
     /// Get the root view of the split view controller (for setting as window content view)

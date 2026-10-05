@@ -318,7 +318,7 @@ export fn outlineViewObjectValueForTableColumnByItem(
     const location = data.locate(item) orelse return null;
     const section = &data.sections.items[location.section];
     if (location.item == null)
-        return macos.createNSString(section.header orelse section.id);
+        return macos.createNSString(section.header orelse "");
     const child = data.itemAt(location) orelse return null;
     return macos.createNSString(child.label);
 }
