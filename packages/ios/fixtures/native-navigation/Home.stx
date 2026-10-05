@@ -23,6 +23,13 @@ function openDetails() {
 <template>
   <View class="p-4">
     <Text testID="home-title">Home</Text>
+    <View
+      testID="styled-row"
+      style={{"flexDirection":"row-reverse","alignItems":"center","justifyContent":"center","gap":6,"paddingHorizontal":10,"paddingVertical":5,"width":240,"height":64,"backgroundColor":"#123456","opacity":0.75,"borderWidth":2,"borderColor":"#abcdef","borderRadius":7,"overflow":"hidden"}}
+    >
+      <Text testID="styled-first" style={{"width":70,"color":"#fedcba","fontSize":21,"fontWeight":"700","fontStyle":"italic","textAlign":"right","letterSpacing":1,"lineHeight":26,"textTransform":"uppercase","textDecorationLine":"underline"}}>first</Text>
+      <Text testID="styled-second" style={{"width":70}}>second</Text>
+    </View>
     <ScrollView testID="native-scroll" style={{"height":72,"gap":4}}>
       <Image
         testID="native-image"

@@ -2,6 +2,8 @@ package dev.craft.navigationtest
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
@@ -115,6 +117,22 @@ class NativeNavigationTest {
             val title = awaitView(activity, "home-title")
             assertTrue(title is TextView)
             assertEquals(Color.WHITE, (title as TextView).currentTextColor)
+            val styled = awaitView(activity, "styled-row") as LinearLayout
+            val styledFirst = awaitView(activity, "styled-first") as TextView
+            val styledSecond = awaitView(activity, "styled-second") as TextView
+            val density = activity.resources.displayMetrics.density
+            assertEquals(LinearLayout.HORIZONTAL, styled.orientation)
+            assertTrue(styled.indexOfChild(styledSecond) < styled.indexOfChild(styledFirst))
+            assertEquals((10 * density).toInt(), styled.paddingLeft)
+            assertEquals((5 * density).toInt(), styled.paddingTop)
+            assertEquals(0.75f, styled.alpha)
+            assertEquals("FIRST", styledFirst.text.toString())
+            assertEquals(Color.rgb(0xfe, 0xdc, 0xba), styledFirst.currentTextColor)
+            assertEquals(21f, styledFirst.textSize / density)
+            assertTrue(styledFirst.typeface.style and Typeface.BOLD != 0)
+            assertTrue(styledFirst.typeface.style and Typeface.ITALIC != 0)
+            assertTrue(styledFirst.paintFlags and Paint.UNDERLINE_TEXT_FLAG != 0)
+            assertEquals((70 * density).toInt(), styledFirst.layoutParams.width)
             val scroll = awaitView(activity, "native-scroll")
             val image = awaitView(activity, "native-image")
             assertTrue("ScrollView did not render an Android ScrollView", containsType<ScrollView>(scroll))
