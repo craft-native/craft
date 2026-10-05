@@ -106,7 +106,7 @@ In Xcode:
 
 ### Experimental WebView-free screen
 
-The opt-in `native` renderer hosts compiled `.stx` screens in JavaScriptCore and renders their `View`, `SafeAreaView`, `Text`, `Button`, `TextInput`, `Image`, and `ScrollView` nodes as UIKit controls. The default remains `web`; existing iOS apps are unchanged. This is not yet a replacement for the WebView renderer: virtualized lists and most Craft device APIs still need native adapters. Enable `enableHaptics` and `enableClipboard` in `craft.config.json` before using those two capabilities; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code. The portable component, style, image-source, event, accessibility, and reconciliation behavior is specified in the [Native STX guide](../../docs/guides/native-stx.md).
+The opt-in `native` renderer hosts compiled `.stx` screens in JavaScriptCore and renders their `View`, `SafeAreaView`, `Text`, `Button`, `TextInput`, `Image`, `ScrollView`, and recycling `FlatList` nodes as UIKit controls. `FlatList` uses `UICollectionView` with stable keyed rows, incremental diffs, grids, horizontal and inverted layouts, list chrome, and end-reached pagination. The default remains `web`; existing iOS apps are unchanged. Most Craft device APIs still need native adapters. Enable `enableHaptics` and `enableClipboard` in `craft.config.json` before using those two capabilities; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code. The portable component, list, style, image-source, event, accessibility, and reconciliation behavior is specified in the [Native STX guide](../../docs/guides/native-stx.md).
 
 ```bash
 craft ios init NativeDemo --renderer native --output ./ios-native

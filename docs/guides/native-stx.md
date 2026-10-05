@@ -37,6 +37,7 @@ bundle must be local at build time.
 | `TextInput` | `UITextField` | `EditText` |
 | `Image` | `UIImageView` | `ImageView` |
 | `ScrollView` | `UIScrollView` | `ScrollView` or `HorizontalScrollView` |
+| `FlatList` | `UICollectionView` | `RecyclerView` |
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an
@@ -151,14 +152,71 @@ error value. Route teardown and node removal cancel outstanding downloads.
 
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
 renders its children as native views. Scroll indicators, paging, refresh
-controls, scroll callbacks, and virtualized lists are not implemented. Use
-`ScrollView` only for bounded content until a recycling list primitive lands.
+controls, and scroll callbacks are not implemented. Use `ScrollView` for
+bounded content and `FlatList` for data sets that need recycling.
+
+## Recycling lists
+
+`FlatList` compiles a keyed item template into retained native rows. iOS uses a
+diffable `UICollectionView` data source; Android uses `RecyclerView`, stable
+IDs, and `DiffUtil`. Inserts, updates, moves, and removals reuse unaffected rows
+instead of rebuilding the list. Visible text inputs retain their draft, focus,
+accessibility metadata, and event handlers, and keyed updates retain the
+viewport anchor. The simulator and emulator suites exercise this contract with
+10,000 rows without materializing the full data set.
+
+```stx
+<script>
+let people = [{ id: 'ada', name: 'Ada' }, { id: 'grace', name: 'Grace' }]
+
+function loadMore() {
+  // Guard duplicate requests while an asynchronous load is in flight.
+}
+</script>
+
+<FlatList
+  data={people}
+  keyExtractor={item.id}
+  numColumns={2}
+  onEndReached={loadMore}
+  onEndReachedThreshold={0.2}
+>
+  <Text listRole="header">People</Text>
+  <View listRole="item" accessibilityLabel={item.name}>
+    <Text>{index}: {item.name}</Text>
+  </View>
+  <View listRole="separator" style="height: 1" />
+  <Text listRole="empty">Nobody here</Text>
+  <Text listRole="footer">End of people</Text>
+</FlatList>
+```
+
+The item template can reference `item` and its zero-based `index`.
+`keyExtractor` must produce a stable, unique value; moving an item with the
+same key keeps its native row state. `horizontal`, `inverted`, and
+`numColumns` select the native layout. `numColumns` applies to vertical lists;
+header, separator, empty, and footer content span every column. Empty content
+is shown only when the data set has no items. Separator content is inserted
+between item rows, never before the first or after the last.
+
+`onEndReachedThreshold` is the fraction of data rows allowed to remain when
+`onEndReached` fires. Header, separator, empty, and footer nodes do not count
+toward the threshold and a chrome-only list does not fire it. A given content
+signature fires at most once, but appending data creates a new signature and
+may fire again if the viewport is still within the threshold; handlers should
+therefore guard concurrent pagination requests.
+
+For backward compatibility, a `FlatList` without a `listRole="item"` template
+keeps its existing static children. Older compiled bundles also continue to
+use whole-document `RENDER`; the native host accepts both that path and the
+incremental mutation protocol.
 
 ## Events, accessibility, and navigation
 
 `onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
 pressable native views. `TextInput` accepts `onChange` or `onChangeText` and
-delivers `nativeEvent.text`. Image-load and scroll events are not implemented.
+delivers `nativeEvent.text`. `FlatList` supports `onEndReached`. Image-load and
+general scroll events are not implemented.
 
 `accessibilityLabel`, `accessibilityHint`, and `accessibilityRole` map to native
 accessibility metadata. The portable roles are `button`, `image`, `header`,

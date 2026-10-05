@@ -97,12 +97,15 @@ craft android build --native-bundle ../native-screen.js
 ```
 
 Native mode maps STX `View`, `SafeAreaView`, `Text`, `Button`, `TextInput`,
-`Image`, and `ScrollView` to Android views. Push, replace, and back preserve the
+`Image`, `ScrollView`, and `FlatList` to Android views. `FlatList` uses
+`RecyclerView`, stable IDs, and `DiffUtil` for keyed recycling, grids,
+horizontal and inverted layouts, list chrome, and end-reached pagination.
+Push, replace, and back preserve the
 previous screen's views and JavaScript state; Android's system back button pops
 the route. Native mode accepts neither `--html-path` nor `--dev-server`. Its
 initial bridge supports device info, clipboard read/write, and haptic impact
 (when `enableHaptics` is set); the broader browser bridge remains specific to
-WebView mode. The shared component, style, image-source, event, accessibility,
+WebView mode. The shared component, list, style, image-source, event, accessibility,
 and reconciliation contract is documented in the
 [Native STX guide](../../docs/guides/native-stx.md).
 

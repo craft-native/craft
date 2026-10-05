@@ -54,7 +54,7 @@ A guide to migrating your React Native application to Craft.
 | `<Text>` | `<p>`, `<span>` | `<Text>` |
 | `<Image>` | `<img>` | `<Image>` |
 | `<ScrollView>` | CSS overflow | `<ScrollView>` |
-| `<FlatList>` | Virtual list lib | - |
+| `<FlatList>` | Virtual list lib | `<FlatList>` in native STX mode |
 | `<TouchableOpacity>` | `<button>` | - |
 | `<TextInput>` | `<input>` | - |
 
