@@ -44,6 +44,79 @@ existing native control when its identity and type are unchanged, preserving
 input focus, selection, draft text, and scroll objects. Duplicate sibling keys
 fall back to positional identity rather than attaching state to the wrong view.
 
+## Incremental update protocol
+
+Generated native hosts advertise `mutationProtocolVersion: 1` on
+`globalThis.__stxNativeBridge`. A current `stx-native` bundle uses `MUTATE`
+batches when that value is present and continues to send the original
+whole-document `RENDER` message to older hosts. If a host rejects a mutation
+batch, the bundle resynchronizes with `RENDER`, so a bundle can run against
+both generations of Craft.
+
+Every batch has one protocol version, a non-empty identifier, consecutive
+revisions, and at least one operation:
+
+```json
+{
+  "type": "MUTATE",
+  "payload": {
+    "version": 1,
+    "batchId": "screen-4",
+    "baseRevision": 3,
+    "revision": 4,
+    "operations": [
+      {
+        "op": "updateNode",
+        "id": "root/key:counter",
+        "patch": { "children": ["Count: 4"] }
+      }
+    ]
+  }
+}
+```
+
+Version 1 supports these operations:
+
+| Operation | Required fields | Effect |
+| --- | --- | --- |
+| `createNode` | `id`, `node`; optional `root` | Creates a detached node, or the document root when `root` is `true` |
+| `updateNode` | `id`, `patch` | Replaces supplied `props`, `style`, `events`, or text `children` fields |
+| `insertChild` | `parentId`, `childId`, `index` | Attaches a detached node to a container |
+| `moveChild` | `parentId`, `childId`, `index` | Reorders a child within its current parent |
+| `removeNode` | `id` | Removes the node and its descendants |
+
+`View`, `SafeAreaView`, and `ScrollView` are the container node types. Node
+children in `createNode` and `updateNode` may contain text only; node
+relationships use `insertChild`. Indexes are zero-based and may equal the
+current child count when inserting or moving to the end.
+
+The host validates the complete batch against a copy of its retained tree. It
+commits and advances the revision only if every operation succeeds, then sends:
+
+```json
+{
+  "type": "MUTATION_ACK",
+  "payload": { "version": 1, "batchId": "screen-4", "revision": 4 }
+}
+```
+
+Malformed or stale batches leave both the native view tree and revision
+unchanged. The reply is `MUTATION_ERROR` with `version`, `batchId`, `code`,
+`message`, and, when an operation failed, its zero-based `operationIndex`.
+Error codes are deterministic across iOS and Android: `INVALID_BATCH`,
+`UNSUPPORTED_VERSION`, `REVISION_MISMATCH`, `INVALID_REVISION`,
+`INVALID_OPERATION`, `UNKNOWN_OPERATION`, `INVALID_NODE`, `DUPLICATE_NODE`,
+`ROOT_EXISTS`, `INVALID_PATCH`, `UNKNOWN_PARENT`, `UNKNOWN_NODE`,
+`INVALID_PARENT`, `NODE_ATTACHED`, `CYCLE`, `INVALID_INDEX`, `NOT_A_CHILD`, and
+`MISSING_ROOT`.
+
+Stable node IDs are derived from sibling-scoped `key` values, with `testID`
+accepted for existing screens and position used as the fallback. Updating a
+node keeps its native object, event bindings, accessibility metadata, input
+focus and selection. Structural operations reconcile the affected parent
+subtree and preserve unrelated controls and scroll views. Root replacement is
+the only mutation path that intentionally performs a full native render.
+
 The shared style subset is deliberately smaller than the public `ViewStyle`
 type:
 

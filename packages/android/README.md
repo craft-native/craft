@@ -106,6 +106,11 @@ WebView mode. The shared component, style, image-source, event, accessibility,
 and reconciliation contract is documented in the
 [Native STX guide](../../docs/guides/native-stx.md).
 
+Current bundles negotiate the versioned native mutation protocol and update
+only the changed Android views. Older bundles remain compatible through the
+whole-document `RENDER` path. Batches are atomic and revision-checked; the
+guide documents their wire format and deterministic cross-platform errors.
+
 The native runtime requires Android's JavaScriptSandbox. It prefers message
 ports with promise-return support and uses the sandbox's console callback
 when those features are unavailable. If neither bridge is supported, the app

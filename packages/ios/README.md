@@ -117,7 +117,15 @@ craft ios run --output ./ios-native --simulator
 
 `stx-native` is currently a private package in the sibling [stx repository](https://github.com/stacksjs/stx). Run its source CLI with Bun until it is published or linked locally. A runnable screen is in [`fixtures/native-screen/Screen.stx`](./fixtures/native-screen/Screen.stx). In native mode, the app never instantiates `WKWebView`; a missing `dist/native-screen.js` fails the build rather than silently opening the web placeholder.
 
-Native screen updates reconcile the UIKit tree by sibling-scoped `key` (or `testID` for existing screens); unkeyed children reuse their position. `TextInput` objects therefore keep focus and selection while unrelated labels and buttons change. On macOS, `bun packages/ios/scripts/test-native-render.ts` runs the renderer's unit and simulator UI tests.
+Native screen updates use the versioned mutation protocol when the bundle
+supports it and fall back to whole-document rendering for older bundles.
+Updates reconcile the UIKit tree by sibling-scoped `key` (or `testID` for
+existing screens); unkeyed children reuse their position. `TextInput` objects
+therefore keep focus and selection while unrelated labels and buttons change.
+The protocol wire format, atomic validation, revisions, and error codes are in
+the [Native STX guide](../../docs/guides/native-stx.md). On macOS,
+`bun packages/ios/scripts/test-native-render.ts` runs the renderer's unit and
+simulator UI tests.
 
 For multiple native screens, configure named `.stx` routes and an initial screen in `stx-native.config.json` (see [`fixtures/native-navigation`](./fixtures/native-navigation)). Compile without a positional file: `stx-native compile --format bundle --output ./screen.js`. A screen can call `craft.navigation.push('details', { id: 7 })`, `.replace('home')`, or `.back()`; the destination reads `craft.route.params`. Craft uses a native navigation stack, so the back button and edge-swipe reveal the existing controller and retain its JavaScript and input state. `bun packages/ios/scripts/test-native-navigation.ts` compiles the fixture and runs its simulator test; the default WebView renderer is unchanged.
 
