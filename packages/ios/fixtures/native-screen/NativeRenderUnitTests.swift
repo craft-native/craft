@@ -191,19 +191,19 @@ final class NativeRenderUnitTests: XCTestCase {
         controller.loadViewIfNeeded()
         controller.render(["id": "root-node", "type": "View", "children": []])
         try controller.applyMutation(batch(1, [
-            ["op": "createNode", "id": "field", "node": [
+            ["op": "createNode", "id": "field-node", "node": [
                 "type": "TextInput", "props": ["testID": "field"], "events": ["onChange": "changed"]
             ]],
-            ["op": "createNode", "id": "scroll", "node": [
+            ["op": "createNode", "id": "scroll-node", "node": [
                 "type": "ScrollView", "props": ["testID": "scroll"], "style": ["height": 40]
             ]],
-            ["op": "createNode", "id": "label", "node": [
+            ["op": "createNode", "id": "label-node", "node": [
                 "type": "Text", "props": ["testID": "label", "accessibilityLabel": "Before"],
                 "children": ["Before"]
             ]],
-            ["op": "insertChild", "parentId": "scroll", "childId": "label", "index": 0],
-            ["op": "insertChild", "parentId": "root-node", "childId": "field", "index": 0],
-            ["op": "insertChild", "parentId": "root-node", "childId": "scroll", "index": 1],
+            ["op": "insertChild", "parentId": "scroll-node", "childId": "label-node", "index": 0],
+            ["op": "insertChild", "parentId": "root-node", "childId": "field-node", "index": 0],
+            ["op": "insertChild", "parentId": "root-node", "childId": "scroll-node", "index": 1],
         ]))
 
         let field = try XCTUnwrap(find(UITextField.self, key: "field", below: controller.view))
@@ -215,12 +215,12 @@ final class NativeRenderUnitTests: XCTestCase {
         scroll.contentOffset = CGPoint(x: 0, y: 17)
 
         try controller.applyMutation(batch(2, [
-            ["op": "updateNode", "id": "label", "patch": [
+            ["op": "updateNode", "id": "label-node", "patch": [
                 "children": ["After"],
                 "props": ["testID": "label", "accessibilityLabel": "After"],
                 "events": ["onPress": "pressed"],
             ]],
-            ["op": "moveChild", "parentId": "root-node", "childId": "scroll", "index": 0],
+            ["op": "moveChild", "parentId": "root-node", "childId": "scroll-node", "index": 0],
         ]))
 
         XCTAssertTrue(field === find(UITextField.self, key: "field", below: controller.view))

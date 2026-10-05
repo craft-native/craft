@@ -309,11 +309,12 @@ class MainActivity : AppCompatActivity() {
         val style = node.optJSONObject("style") ?: JSONObject()
         val events = node.optJSONObject("events") ?: JSONObject()
         val children = node.optJSONArray("children") ?: JSONArray()
-        val explicitKey = listOf(
-            node.optString("id"), node.optString("key"), props.optString("key"), props.optString("testID")
-        )
+        val protocolId = node.optString("id").takeIf { it.isNotBlank() }
+        val explicitKey = listOf(node.optString("key"), props.optString("key"), props.optString("testID"))
             .firstOrNull { it.isNotBlank() }
-        val identity = explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" } ?: path
+        val identity = protocolId?.let { "id:$it" }
+            ?: explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" }
+            ?: path
         val previous = screen.controls[identity]
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
@@ -383,7 +384,7 @@ class MainActivity : AppCompatActivity() {
                 control.setOnClickListener(null)
             }
         }
-        applyAccessibility(control, props, type, explicitKey ?: path)
+        applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
         if (control is ImageView) imageErrors[control]?.let { control.contentDescription = "${control.contentDescription}, $it" }
         next[identity] = control
         applyViewStyle(control, style)

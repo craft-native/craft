@@ -288,7 +288,7 @@ final class CraftNativeScreenController: UIViewController {
         }
 
         let result = current.view
-        result.accessibilityIdentifier = explicitKey(node, props: props) ?? path
+        result.accessibilityIdentifier = accessibilityIdentifier(node, props: props) ?? path
         if type != "View" && type != "SafeAreaView" && type != "ScrollView" {
             result.setContentHuggingPriority(.required, for: .vertical)
         }
@@ -371,6 +371,12 @@ final class CraftNativeScreenController: UIViewController {
         // The current stx-native compiler emits key in props; accept the IR
         // field too so keyed children keep working when the compiler adopts it.
         [node["id"], node["key"], props["key"], props["testID"]]
+            .compactMap { $0 as? String }
+            .first { !$0.isEmpty }
+    }
+
+    private func accessibilityIdentifier(_ node: [String: Any], props: [String: Any]) -> String? {
+        [props["testID"], props["key"], node["key"], node["id"]]
             .compactMap { $0 as? String }
             .first { !$0.isEmpty }
     }
