@@ -9,6 +9,7 @@
     "bench:startup": "bun run startup.bench.ts",
     "bench:size": "bun run size.bench.ts",
     "bench:ipc": "bun run ipc.bench.ts",
+    "bench:native-mutations": "bun run native-mutations.bench.ts",
     "bench:memory": "bun run memory.bench.ts",
     "bench:load": "bun run binary-load-ab.ts"
   },

@@ -10,6 +10,7 @@
  *   bun run bench:startup      # Startup time only
  *   bun run bench:size         # Bundle size only
  *   bun run bench:ipc          # IPC overhead only
+ *   bun run bench:native-mutations # Native STX update protocol only
  *   bun run bench:memory       # Memory (RSS) only
  */
 import { checkFrameworks, header } from './utils'
@@ -32,6 +33,7 @@ console.log()
 const benchmarks = [
   { name: 'Bundle Size', file: 'size.bench.ts' },
   { name: 'IPC Protocol Overhead', file: 'ipc.bench.ts' },
+  { name: 'Native STX Updates', file: 'native-mutations.bench.ts' },
   { name: 'Process Memory (RSS)', file: 'memory.bench.ts' },
   { name: 'Startup Time', file: 'startup.bench.ts' },
 ]

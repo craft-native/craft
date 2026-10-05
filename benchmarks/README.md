@@ -78,6 +78,7 @@ Craft's minimal envelope is **1.4x** faster than Electrobun, **1.5x** faster tha
 |-----------|------|-----------------|--------|
 | **Bundle Size** | `size.bench.ts` | Real binary/distributable sizes on disk | `fs.statSync` + recursive `dirSize` |
 | **IPC Overhead** | `ipc.bench.ts` | JSON serialization with each framework's message format | mitata micro-benchmark |
+| **Native mutations** | `native-mutations.bench.ts` | Full-tree `RENDER` vs one-node `MUTATE` bridge work | JSON parsing + retained-tree reconciliation |
 | **Memory** | `memory.bench.ts` | RSS of entire process tree after 3s stabilization | `ps -o rss=` across all child PIDs |
 | **Startup** | `startup.bench.ts` | Cold-start time (spawn -> ready -> exit) | `performance.now()` across 10 iterations |
 | **Binary load** | `binary-load-ab.ts` | Process spawn, dynamic linking and argument parsing — **not** window startup | p50 of interleaved A/B runs of two binaries on one machine |
@@ -87,10 +88,17 @@ Craft's minimal envelope is **1.4x** faster than Electrobun, **1.5x** faster tha
 ```bash
 bun run bench:size      # Bundle/binary size comparison
 bun run bench:ipc       # IPC protocol micro-benchmarks
+bun run bench:native-mutations # Native STX full-tree vs mutation updates
 bun run bench:memory    # Process memory (RSS)
 bun run bench:startup   # Startup time
 bun run bench:load --base <binary> --head <binary>   # A/B binary load time
 ```
+
+The native-mutation benchmark compares the shared bridge work for a full
+`RENDER` message against a versioned `MUTATE` batch that changes one retained
+node. It reports wire bytes and measures JSON parsing plus retained-tree
+reconciliation at 100 and 1,000 nodes. Platform widget drawing is intentionally
+excluded because UIKit and Android timings are not comparable on one machine.
 
 ## What CI gates on
 
