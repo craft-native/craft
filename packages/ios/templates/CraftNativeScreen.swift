@@ -58,6 +58,7 @@ final class CraftNativeScreenController: UIViewController {
         let identity: String
         let type: String
         let view: UIView
+        var protocolId: String?
         var children: [RenderedNode] = []
         var widthConstraint: NSLayoutConstraint?
         var heightConstraint: NSLayoutConstraint?
@@ -254,9 +255,26 @@ final class CraftNativeScreenController: UIViewController {
     @discardableResult
     func applyMutation(_ payload: [String: Any]) throws -> CraftNativeMutationResult {
         let result = try mutationDocument.apply(payload)
-        if let document = result.document { renderCommitted(document) }
-        else { clearRenderedTree() }
+        if !result.requiresFullRender, applyTargetedUpdates(result.updatedNodeIds) { return result }
+        if let document = result.document { renderCommitted(document) } else { clearRenderedTree() }
         return result
+    }
+
+    private func applyTargetedUpdates(_ ids: [String]) -> Bool {
+        for id in ids {
+            guard let document = mutationDocument.node(id), let previous = renderedNode(id) else { return false }
+            _ = reconcile(document, identity: previous.identity, path: id, previous: previous)
+        }
+        return true
+    }
+
+    private func renderedNode(_ id: String, below node: RenderedNode? = nil) -> RenderedNode? {
+        guard let node = node ?? renderedRoot else { return nil }
+        if node.protocolId == id { return node }
+        for child in node.children {
+            if let match = renderedNode(id, below: child) { return match }
+        }
+        return nil
     }
 
     private func renderCommitted(_ document: [String: Any]) {
@@ -288,6 +306,7 @@ final class CraftNativeScreenController: UIViewController {
         }
 
         let result = current.view
+        current.protocolId = node["id"] as? String
         result.accessibilityIdentifier = accessibilityIdentifier(node, props: props) ?? path
         if type != "View" && type != "SafeAreaView" && type != "ScrollView" {
             result.setContentHuggingPriority(.required, for: .vertical)

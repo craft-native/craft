@@ -214,14 +214,15 @@ final class NativeRenderUnitTests: XCTestCase {
         field.selectedTextRange = field.textRange(from: caret, to: caret)
         scroll.contentOffset = CGPoint(x: 0, y: 17)
 
-        try controller.applyMutation(batch(2, [
+        let update = try controller.applyMutation(batch(2, [
             ["op": "updateNode", "id": "label-node", "patch": [
                 "children": ["After"],
                 "props": ["testID": "label", "accessibilityLabel": "After"],
                 "events": ["onPress": "pressed"],
             ]],
-            ["op": "moveChild", "parentId": "root-node", "childId": "scroll-node", "index": 0],
         ]))
+        XCTAssertFalse(update.requiresFullRender)
+        XCTAssertEqual(update.updatedNodeIds, ["label-node"])
 
         XCTAssertTrue(field === find(UITextField.self, key: "field", below: controller.view))
         XCTAssertTrue(scroll === find(UIScrollView.self, key: "scroll", below: controller.view))
@@ -232,6 +233,13 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset.y, 17)
         XCTAssertEqual(label.text, "After")
         XCTAssertEqual(label.accessibilityLabel, "After")
+
+        let move = try controller.applyMutation(batch(3, [
+            ["op": "moveChild", "parentId": "root-node", "childId": "scroll-node", "index": 0],
+        ]))
+        XCTAssertTrue(move.requiresFullRender)
+        XCTAssertTrue(field === find(UITextField.self, key: "field", below: controller.view))
+        XCTAssertTrue(scroll === find(UIScrollView.self, key: "scroll", below: controller.view))
     }
 
     func testMutationValidationIsAtomicAndDeterministic() throws {

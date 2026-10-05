@@ -277,8 +277,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyMutation(screen: Screen, payload: JSONObject): CraftNativeMutationResult {
         val result = screen.mutations.apply(payload)
+        if (!result.requiresFullRender && applyTargetedUpdates(screen, result.updatedNodeIds)) return result
         result.document?.let { renderCommitted(screen, it) } ?: clearRenderedTree(screen)
         return result
+    }
+
+    private fun applyTargetedUpdates(screen: Screen, ids: List<String>): Boolean {
+        for (id in ids) {
+            val document = screen.mutations.node(id) ?: return false
+            if (!screen.controls.containsKey("id:$id")) return false
+            makeView(screen, document, id, screen.controls)
+        }
+        return true
     }
 
     private fun renderCommitted(screen: Screen, document: JSONObject) {

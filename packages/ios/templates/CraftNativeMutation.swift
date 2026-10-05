@@ -19,6 +19,8 @@ struct CraftNativeMutationResult {
     let batchId: String
     let revision: Int
     let document: [String: Any]?
+    let updatedNodeIds: [String]
+    let requiresFullRender: Bool
 }
 
 /// Validates and applies versioned native-tree mutations without touching UIKit.
@@ -76,6 +78,8 @@ final class CraftNativeMutationDocument {
 
         var candidateNodes = nodes
         var candidateRoot = rootId
+        var updatedNodeIds: [String] = []
+        var requiresFullRender = false
         for (index, value) in operations.enumerated() {
             guard let operation = value as? [String: Any], let name = operation["op"] as? String else {
                 throw CraftNativeMutationFailure(
@@ -87,14 +91,19 @@ final class CraftNativeMutationDocument {
             do {
                 switch name {
                 case "createNode":
+                    requiresFullRender = true
                     try createNode(operation, nodes: &candidateNodes, rootId: &candidateRoot)
                 case "updateNode":
                     try updateNode(operation, nodes: &candidateNodes)
+                    if let id = operation["id"] as? String, !updatedNodeIds.contains(id) { updatedNodeIds.append(id) }
                 case "insertChild":
+                    requiresFullRender = true
                     try insertChild(operation, nodes: &candidateNodes)
                 case "moveChild":
+                    requiresFullRender = true
                     try moveChild(operation, nodes: &candidateNodes)
                 case "removeNode":
+                    requiresFullRender = true
                     try removeNode(operation, nodes: &candidateNodes, rootId: &candidateRoot)
                 default:
                     throw CraftNativeMutationFailure("UNKNOWN_OPERATION", "unsupported operation \(name)")
@@ -113,8 +122,14 @@ final class CraftNativeMutationDocument {
         return CraftNativeMutationResult(
             batchId: batchId,
             revision: nextRevision,
-            document: candidateRoot.flatMap { materialize($0, nodes: candidateNodes) }
+            document: candidateRoot.flatMap { materialize($0, nodes: candidateNodes) },
+            updatedNodeIds: updatedNodeIds,
+            requiresFullRender: requiresFullRender
         )
+    }
+
+    func node(_ id: String) -> [String: Any]? {
+        materialize(id, nodes: nodes)
     }
 
     private func createNode(
