@@ -16,6 +16,7 @@ data class CraftNativeMutationResult(
     val revision: Int,
     val document: JSONObject?,
     val updatedNodeIds: List<String>,
+    val affectedNodeIds: List<String>,
     val requiresFullRender: Boolean
 )
 
@@ -79,6 +80,7 @@ class CraftNativeMutationDocument {
         }
         var candidateRoot = rootId
         val updatedNodeIds = mutableListOf<String>()
+        val affectedNodeIds = mutableListOf<String>()
         var requiresFullRender = false
         for (index in 0 until operations.length()) {
             val operation = operations.opt(index) as? JSONObject
@@ -90,23 +92,28 @@ class CraftNativeMutationDocument {
             try {
                 when (name) {
                     "createNode" -> {
-                        requiresFullRender = true
+                        if (operation.opt("root") == true) requiresFullRender = true
                         candidateRoot = createNode(operation, candidateNodes, candidateRoot)
                     }
                     "updateNode" -> {
                         updateNode(operation, candidateNodes)
-                        operation.optString("id").takeIf { it !in updatedNodeIds }?.let { updatedNodeIds.add(it) }
+                        operation.optString("id").let {
+                            if (it !in updatedNodeIds) updatedNodeIds.add(it)
+                            if (it !in affectedNodeIds) affectedNodeIds.add(it)
+                        }
                     }
                     "insertChild" -> {
-                        requiresFullRender = true
                         insertChild(operation, candidateNodes)
+                        operation.optString("parentId").takeIf { it !in affectedNodeIds }?.let { affectedNodeIds.add(it) }
                     }
                     "moveChild" -> {
-                        requiresFullRender = true
                         moveChild(operation, candidateNodes)
+                        operation.optString("parentId").takeIf { it !in affectedNodeIds }?.let { affectedNodeIds.add(it) }
                     }
                     "removeNode" -> {
-                        requiresFullRender = true
+                        val parent = candidateNodes[operation.optString("id")]?.parent
+                        if (parent == null) requiresFullRender = true
+                        else if (parent !in affectedNodeIds) affectedNodeIds.add(parent)
                         candidateRoot = removeNode(operation, candidateNodes, candidateRoot)
                     }
                     else -> fail("UNKNOWN_OPERATION", "unsupported operation $name")
@@ -128,6 +135,7 @@ class CraftNativeMutationDocument {
             revision,
             candidateRoot?.let { materialize(it, candidateNodes) },
             updatedNodeIds,
+            affectedNodeIds,
             requiresFullRender
         )
     }

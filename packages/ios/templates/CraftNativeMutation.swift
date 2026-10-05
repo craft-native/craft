@@ -20,6 +20,7 @@ struct CraftNativeMutationResult {
     let revision: Int
     let document: [String: Any]?
     let updatedNodeIds: [String]
+    let affectedNodeIds: [String]
     let requiresFullRender: Bool
 }
 
@@ -79,6 +80,7 @@ final class CraftNativeMutationDocument {
         var candidateNodes = nodes
         var candidateRoot = rootId
         var updatedNodeIds: [String] = []
+        var affectedNodeIds: [String] = []
         var requiresFullRender = false
         for (index, value) in operations.enumerated() {
             guard let operation = value as? [String: Any], let name = operation["op"] as? String else {
@@ -91,19 +93,26 @@ final class CraftNativeMutationDocument {
             do {
                 switch name {
                 case "createNode":
-                    requiresFullRender = true
+                    if operation["root"] as? Bool == true { requiresFullRender = true }
                     try createNode(operation, nodes: &candidateNodes, rootId: &candidateRoot)
                 case "updateNode":
                     try updateNode(operation, nodes: &candidateNodes)
-                    if let id = operation["id"] as? String, !updatedNodeIds.contains(id) { updatedNodeIds.append(id) }
+                    if let id = operation["id"] as? String {
+                        appendUnique(id, to: &updatedNodeIds)
+                        appendUnique(id, to: &affectedNodeIds)
+                    }
                 case "insertChild":
-                    requiresFullRender = true
                     try insertChild(operation, nodes: &candidateNodes)
+                    if let id = operation["parentId"] as? String { appendUnique(id, to: &affectedNodeIds) }
                 case "moveChild":
-                    requiresFullRender = true
                     try moveChild(operation, nodes: &candidateNodes)
+                    if let id = operation["parentId"] as? String { appendUnique(id, to: &affectedNodeIds) }
                 case "removeNode":
-                    requiresFullRender = true
+                    if let id = operation["id"] as? String, let parent = candidateNodes[id]?.parent {
+                        appendUnique(parent, to: &affectedNodeIds)
+                    } else {
+                        requiresFullRender = true
+                    }
                     try removeNode(operation, nodes: &candidateNodes, rootId: &candidateRoot)
                 default:
                     throw CraftNativeMutationFailure("UNKNOWN_OPERATION", "unsupported operation \(name)")
@@ -124,6 +133,7 @@ final class CraftNativeMutationDocument {
             revision: nextRevision,
             document: candidateRoot.flatMap { materialize($0, nodes: candidateNodes) },
             updatedNodeIds: updatedNodeIds,
+            affectedNodeIds: affectedNodeIds,
             requiresFullRender: requiresFullRender
         )
     }
@@ -339,5 +349,9 @@ final class CraftNativeMutationDocument {
         guard CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
         let candidate = number.intValue
         return number.doubleValue == Double(candidate) ? candidate : nil
+    }
+
+    private func appendUnique(_ id: String, to values: inout [String]) {
+        if !values.contains(id) { values.append(id) }
     }
 }

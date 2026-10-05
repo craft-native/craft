@@ -255,7 +255,7 @@ final class CraftNativeScreenController: UIViewController {
     @discardableResult
     func applyMutation(_ payload: [String: Any]) throws -> CraftNativeMutationResult {
         let result = try mutationDocument.apply(payload)
-        if !result.requiresFullRender, applyTargetedUpdates(result.updatedNodeIds) { return result }
+        if !result.requiresFullRender, applyTargetedUpdates(result.affectedNodeIds) { return result }
         if let document = result.document { renderCommitted(document) } else { clearRenderedTree() }
         return result
     }
