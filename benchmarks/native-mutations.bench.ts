@@ -90,7 +90,7 @@ function reconcileMutation(wire: string, controls: Map<string, NativeNode>): num
 
 header('Native STX Full-Tree vs Incremental Updates')
 
-for (const count of [100, 1000]) {
+for (const count of [100, 1000, 10_000]) {
   const render = fullRenderWire(count)
   const mutation = mutationWire(count)
   const controls = new Map<string, NativeNode>()

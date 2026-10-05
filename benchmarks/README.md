@@ -97,8 +97,11 @@ bun run bench:load --base <binary> --head <binary>   # A/B binary load time
 The native-mutation benchmark compares the shared bridge work for a full
 `RENDER` message against a versioned `MUTATE` batch that changes one retained
 node. It reports wire bytes and measures JSON parsing plus retained-tree
-reconciliation at 100 and 1,000 nodes. Platform widget drawing is intentionally
-excluded because UIKit and Android timings are not comparable on one machine.
+reconciliation at 100, 1,000, and 10,000 nodes. The 10,000-node case complements
+the platform tests that assert `UICollectionView` and `RecyclerView` recycle
+rows rather than materializing the full list. Platform widget drawing is
+intentionally excluded because UIKit and Android timings are not comparable on
+one machine.
 
 ## What CI gates on
 

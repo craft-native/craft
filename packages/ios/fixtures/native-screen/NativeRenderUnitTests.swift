@@ -471,4 +471,49 @@ final class NativeRenderUnitTests: XCTestCase {
         list.layoutIfNeeded()
         wait(for: [chromeOnlyEndReached], timeout: 0.2)
     }
+
+    func testFlatListRetainsAHorizontalViewportAcrossInvertedMoves() throws {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        let header: [String: Any] = [
+            "id": "header", "type": "Text", "props": ["listRole": "header"],
+        ]
+        let footer: [String: Any] = [
+            "id": "footer", "type": "Text", "props": ["listRole": "footer"],
+        ]
+        let rows: [[String: Any]] = (0..<8).map { index in
+            ["id": "row-\(index)", "type": "Text", "children": ["Row \(index)"]]
+        }
+        let render: CraftNativeFlatList.RenderItem = { _, _, previous in previous ?? UILabel() }
+        func apply(_ data: [[String: Any]]) {
+            list.apply(
+                nodes: [header] + data + [footer],
+                horizontal: true,
+                columns: 1,
+                inverted: true,
+                endReachedThreshold: 0.1,
+                renderItem: render,
+                recycleItem: { _ in },
+                endReached: nil
+            )
+            let settled = expectation(description: "horizontal snapshot settled")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settled.fulfill() }
+            wait(for: [settled], timeout: 1)
+            list.layoutIfNeeded()
+        }
+
+        apply(rows)
+        let layout = try XCTUnwrap(list.collectionViewLayout as? UICollectionViewFlowLayout)
+        XCTAssertEqual(layout.scrollDirection, .horizontal)
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 10)
+        XCTAssertEqual(list.visibleItemIdentities.first, "footer")
+
+        list.scrollToItem(at: IndexPath(item: 4, section: 0), at: .left, animated: false)
+        list.layoutIfNeeded()
+        let retainedAnchor = try XCTUnwrap(list.visibleItemIdentities.first)
+        let moved = [rows[1], rows[0]] + Array(rows.dropFirst(2))
+        apply(moved)
+
+        XCTAssertTrue(list.visibleItemIdentities.contains(retainedAnchor))
+    }
 }
