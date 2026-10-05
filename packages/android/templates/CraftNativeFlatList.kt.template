@@ -118,7 +118,8 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         val oldIds = listAdapter.currentList.mapTo(mutableSetOf()) { it.identity }
         val nextIds = next.mapTo(mutableSetOf()) { it.identity }
         (oldIds - nextIds).forEach(recycleItem)
-        val contentSignature = "${next.size}:${next.lastOrNull()?.identity.orEmpty()}"
+        val dataItems = next.filterNot { it.chrome }
+        val contentSignature = "${dataItems.size}:${dataItems.lastOrNull()?.identity.orEmpty()}"
         if (contentSignature != endReachedSignature) endReachedSignature = null
         listAdapter.submitList(next) {
             retainedState?.let { layoutManager?.onRestoreInstanceState(it) }
@@ -149,12 +150,15 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
 
     private fun evaluateEndReached() {
         val manager = layoutManager as? LinearLayoutManager ?: return
-        val count = listAdapter.itemCount
-        if (count == 0 || endReached == null) return
-        val remaining = count - manager.findLastVisibleItemPosition() - 1
-        val thresholdItems = maxOf(1, ceil(count * threshold).toInt())
+        val lastVisible = manager.findLastVisibleItemPosition()
+        val dataPositions = listAdapter.currentList.indices.filter { !listAdapter.currentList[it].chrome }
+        val lastDataOrdinal = dataPositions.indexOfLast { it <= lastVisible }
+        if (dataPositions.isEmpty() || lastDataOrdinal < 0 || endReached == null) return
+        val remaining = dataPositions.size - lastDataOrdinal - 1
+        val thresholdItems = maxOf(1, ceil(dataPositions.size * threshold).toInt())
         if (remaining > thresholdItems) return
-        val signature = "$count:${listAdapter.currentList.lastOrNull()?.identity.orEmpty()}"
+        val lastIdentity = listAdapter.currentList[dataPositions.last()].identity
+        val signature = "${dataPositions.size}:$lastIdentity"
         if (endReachedSignature == signature) return
         endReachedSignature = signature
         endReached?.invoke()

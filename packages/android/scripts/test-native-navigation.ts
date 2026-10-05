@@ -32,6 +32,7 @@ try {
   mkdirSync(testDirectory, { recursive: true })
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), join(testDirectory, 'NativeNavigationTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMutationTest.kt'), join(testDirectory, 'NativeMutationTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeFlatListTest.kt'), join(testDirectory, 'NativeFlatListTest.kt'))
 
   if (!process.argv.includes('--prepare-only')) {
     try {
