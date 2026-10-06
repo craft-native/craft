@@ -124,6 +124,8 @@ The native runtime requires Android's JavaScriptSandbox. It prefers message
 ports with promise-return support and uses the sandbox's console callback
 when those features are unavailable. If neither bridge is supported, the app
 displays a clear unsupported-device error; it never silently opens a WebView.
+The native-navigation emulator fixture also relaunches the generated app and
+reads back storage and SQLite data through the compiled STX bundle.
 Support depends on the installed WebView provider, so validate on each device
 class you plan to ship. The [Android JavaScriptEngine guide](https://developer.android.com/develop/ui/views/layout/webapps/jsengine)
 documents the sandbox and device-support check.
