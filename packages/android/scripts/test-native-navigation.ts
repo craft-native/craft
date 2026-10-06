@@ -39,7 +39,7 @@ try {
       run(['gradle', '--no-daemon', ':app:connectedDebugAndroidTest'], output)
     }
     catch (error) {
-      run(['adb', 'logcat', '-d', '-s', 'CraftNativeAndroid:E'], output)
+      run(['adb', 'logcat', '-d', '-s', 'CraftNativeAndroid:V', 'AndroidRuntime:E'], output)
       throw error
     }
   }

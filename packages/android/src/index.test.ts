@@ -34,6 +34,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('JS_FEATURE_PROMISE_RETURN')
       expect(nativeActivity).toContain('JS_FEATURE_CONSOLE_MESSAGING')
       expect(nativeActivity).toContain('Native STX bridge:')
+      expect(nativeActivity).toContain('receiveSafely(current, message.string)')
+      expect(nativeActivity).toContain('Native STX message failed for $route')
       expect(nativeActivity).toContain('mutationProtocolVersion: 1')
       expect(nativeActivity).toContain('"MUTATE" -> try')
       expect(nativeActivity).toContain('screen.mutations.apply(payload)')

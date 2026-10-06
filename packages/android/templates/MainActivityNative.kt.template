@@ -170,13 +170,13 @@ class MainActivity : AppCompatActivity() {
         val port = if (useMessagePorts) {
             isolate.createMessageChannel("craft", executor, MessagePortClient { message ->
                 val current = screen ?: return@MessagePortClient
-                if (current.active && message.type == Message.TYPE_STRING) receive(current, message.string)
+                if (current.active && message.type == Message.TYPE_STRING) receiveSafely(current, message.string)
             })
         } else {
             isolate.setConsoleCallback(executor, JavaScriptConsoleCallback { entry ->
                 val current = screen ?: return@JavaScriptConsoleCallback
                 if (current.active && entry.message.startsWith(prefix)) {
-                    receive(current, entry.message.removePrefix(prefix))
+                    receiveSafely(current, entry.message.removePrefix(prefix))
                 }
             })
             null
@@ -235,6 +235,7 @@ class MainActivity : AppCompatActivity() {
     private fun receive(screen: Screen, raw: String) {
         val message = runCatching { JSONObject(raw) }.getOrNull() ?: return
         val payload = message.optJSONObject("payload") ?: JSONObject()
+        Log.d(TAG, "Native STX ${message.optString("type")} (${raw.length} chars) for ${screen.route ?: "home"}")
         when (message.optString("type")) {
             "RENDER" -> payload.optJSONObject("document")?.let { render(screen, it) }
             "MUTATE" -> try {
@@ -270,6 +271,17 @@ class MainActivity : AppCompatActivity() {
             }
             "NAVIGATE_BACK" -> if (screens.lastOrNull() === screen) back()
             "API_REQUEST" -> answerAPI(screen, message, payload)
+        }
+    }
+
+    private fun receiveSafely(screen: Screen, raw: String) {
+        try {
+            receive(screen, raw)
+        }
+        catch (error: Exception) {
+            val route = screen.route ?: "home"
+            Log.e(TAG, "Native STX message failed for $route", error)
+            if (screen.active) showError("Native STX message failed for $route: ${error.message}")
         }
     }
 
