@@ -74,10 +74,14 @@ final class NativeNavigationUITests: XCTestCase {
 
         app.buttons["open-details"].tap()
         XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 10))
-        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.01, dy: 0.5))
-        let center = app.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5))
-        edge.press(forDuration: 0.1, thenDragTo: center)
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "edge-swipe did not navigate back")
+        XCTAssertTrue(app.navigationBars.buttons.firstMatch.waitForExistence(timeout: 5))
+        for y in [0.2, 0.5, 0.8] where !field.exists {
+            let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.005, dy: y))
+            let farEdge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: y))
+            edge.press(forDuration: 0.1, thenDragTo: farEdge)
+            if field.waitForExistence(timeout: 3) { break }
+        }
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "edge-swipe did not navigate back")
         XCTAssertEqual(field.value as? String, "Ada")
 
         app.buttons["open-details"].tap()
