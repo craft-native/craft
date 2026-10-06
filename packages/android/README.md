@@ -103,10 +103,16 @@ horizontal and inverted layouts, list chrome, and end-reached pagination.
 Push, replace, and back preserve the
 previous screen's views and JavaScript state; Android's system back button pops
 the route. Native mode accepts neither `--html-path` nor `--dev-server`. Its
-initial bridge supports device info, clipboard read/write, and haptic impact
-(when `enableHaptics` is set); the broader browser bridge remains specific to
-WebView mode. The shared component, list, style, image-source, event, accessibility,
-and reconciliation contract is documented in the
+native bridge supports device info, clipboard read/write, haptic impact,
+persistent JSON storage, SQLite queries and transactions, lifecycle and deep-link
+events, and local notifications. Storage and SQLite survive process relaunch;
+notifications use `AlarmManager`, so delivery does not require a running
+JavaScriptSandbox process. Enable `enableLocalDatabase`,
+`enableLocalNotifications`, and `enableDeepLinks` explicitly. Disabled or
+malformed calls reject with stable capability/error codes, and in-flight calls
+have a deadline and cancellation path. The broader browser bridge remains
+specific to WebView mode. The shared component, capability, list, style,
+image-source, event, accessibility, and reconciliation contract is documented in the
 [Native STX guide](../../docs/guides/native-stx.md).
 
 Current bundles negotiate the versioned native mutation protocol and update

@@ -224,10 +224,62 @@ accessibility metadata. The portable roles are `button`, `image`, `header`,
 
 `craft.navigation.push`, `replace`, and `back` use the platform navigation
 stack. A pushed route receives `craft.route.params`; returning to an earlier
-route reveals its existing native tree and JavaScript state. The initial native
-API bridge currently supports device info, clipboard read/write, and haptic
-impact. Other Craft device APIs remain browser-renderer only until they receive
-native adapters.
+route reveals its existing native tree and JavaScript state. Native events are
+delivered only to the top route, and route teardown removes its subscriptions
+and cancels its in-flight requests.
+
+## Capability bridge
+
+The generated iOS and Android hosts advertise a versioned capability bridge on
+`globalThis.__stxNativeBridge`:
+
+```ts
+globalThis.craft.platform // 'ios' or 'android'
+globalThis.craft.capabilityProtocolVersion // 1
+globalThis.craft.capabilities.storage // true when enabled
+```
+
+The shared asynchronous surface is:
+
+```ts
+await craft.storage.set('profile', { name: 'Ada' })
+const profile = await craft.storage.get('profile')
+await craft.db.execute('CREATE TABLE IF NOT EXISTS notes (text TEXT)')
+const notes = await craft.db.query('SELECT text FROM notes')
+await craft.db.beginTransaction()
+await craft.db.commit() // or await craft.db.rollback()
+
+const stopState = craft.lifecycle.onStateChange((state) => console.log(state))
+const state = craft.lifecycle.getState() // synchronous current state
+const initial = await craft.deepLinks.getInitialURL()
+const stopLinks = craft.deepLinks.onLink((link) => console.log(link.url))
+const id = await craft.notifications.schedule({ title: 'Reminder', delay: 60_000 })
+await craft.notifications.cancel(id)
+```
+
+Storage is JSON-serializable and survives process termination. SQLite is stored
+in the app's persistent data directory and supports typed string, number,
+boolean, and null parameters. `execute` resolves to `{ rowsAffected,
+lastInsertId }`; transaction methods resolve to `true` on success. Local
+notification schedules are persisted by the OS on iOS and through
+`AlarmManager` on Android, so they do not depend on a running JavaScript
+process. The Android receiver is registered only for native-renderer projects.
+
+`enableLocalDatabase`, `enableLocalNotifications`, and `enableDeepLinks` are
+explicit configuration gates. A disabled or unavailable capability rejects with
+`CAPABILITY_DISABLED` or `NOT_SUPPORTED`; malformed keys, SQL, or notification
+arguments reject with `INVALID_ARGUMENT`. Every request has a 30-second native
+deadline. A timeout rejects with `TIMEOUT`, sends `API_CANCEL`, and native route
+teardown cancels any remaining work. Unsupported protocol versions reject with
+`UNSUPPORTED_VERSION`.
+
+The old flat notification methods (`scheduleNotification`,
+`cancelNotification`, `cancelAllNotifications`, and `getPendingNotifications`)
+remain available as aliases. Existing device info, clipboard, haptics,
+mutation, and legacy web-renderer behavior are unchanged. To migrate a web
+screen, keep the existing `craft-native/mobile` calls and use the nested
+capability methods only where persistence or native lifecycle behavior is
+needed; browser-rendered apps continue using their existing web fallbacks.
 
 ## Verification
 
@@ -245,4 +297,5 @@ The iOS commands require macOS and a bootable simulator. The Android command
 requires `ANDROID_HOME`, `adb`, Gradle, and a running emulator. CI is the source
 of truth when those platform prerequisites are unavailable locally. The
 host-neutral benchmark includes 100, 1,000, and 10,000-node full renders and
-single-node mutations; the platform suites separately verify native recycling.
+single-node mutations; the platform suites separately verify native recycling,
+capability persistence across relaunch, and notification cancellation.
