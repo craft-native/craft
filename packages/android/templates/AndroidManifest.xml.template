@@ -45,6 +45,7 @@
         </activity>
 
 {{BACKGROUND_SERVICE}}
+{{NATIVE_NOTIFICATION_RECEIVER}}
 
     </application>
 

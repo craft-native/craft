@@ -536,6 +536,7 @@ export async function init(options: InitOptions): Promise<void> {
     const mutationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeMutation.kt.template'), 'utf-8')
     const flatListTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.kt.template'), 'utf-8')
     const capabilityTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeCapabilities.kt.template'), 'utf-8')
+    const notificationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeNotificationReceiver.kt.template'), 'utf-8')
     writeFileSync(
       join(output, 'app/src/main/java', packagePath, 'CraftNativeMutation.kt'),
       mutationTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
@@ -547,6 +548,10 @@ export async function init(options: InitOptions): Promise<void> {
     writeFileSync(
       join(output, 'app/src/main/java', packagePath, 'CraftNativeCapabilities.kt'),
       capabilityTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+    )
+    writeFileSync(
+      join(output, 'app/src/main/java', packagePath, 'CraftNativeNotificationReceiver.kt'),
+      notificationTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
     )
   }
 
@@ -625,6 +630,9 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{DEEP_LINK_INTENT_FILTERS\}\}/g, renderAndroidDeepLinks(config))
     .replace(/\{\{BACKGROUND_SERVICE\}\}/g, config.enableBackgroundLocation
       ? '        <service android:name="com.craft.runtime.LocationRecordingService" android:exported="false" android:foregroundServiceType="location" android:stopWithTask="false" />'
+      : '')
+    .replace(/\{\{NATIVE_NOTIFICATION_RECEIVER\}\}/g, config.renderer === 'native'
+      ? '        <receiver android:name=".CraftNativeNotificationReceiver" android:exported="false" />'
       : '')
     .replace(/\{\{HEALTH_CONNECT_QUERIES\}\}/g, config.enableHealthConnect
       ? '    <queries>\n        <package android:name="com.google.android.apps.healthdata" />\n    </queries>'

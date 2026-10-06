@@ -1,9 +1,11 @@
 package {{PACKAGE_NAME}}
 
 import android.Manifest
-import android.app.NotificationChannel
+import android.app.AlarmManager
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.database.sqlite.SQLiteCursor
@@ -11,10 +13,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteQuery
 import android.database.sqlite.SQLiteStatement
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
+import android.net.Uri
 import android.util.Base64
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,8 +40,6 @@ internal class CraftNativeCapabilities(
     private val notificationStorage = activity.getSharedPreferences("craft-native-notifications", Context.MODE_PRIVATE)
     private val databaseExecutor = Executors.newSingleThreadExecutor()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
-    private val notificationHandler = Handler(Looper.getMainLooper())
-    private val notificationTasks = mutableMapOf<String, Runnable>()
     private var database: SQLiteDatabase? = null
 
     init { restoreNotifications() }
@@ -87,8 +85,6 @@ internal class CraftNativeCapabilities(
     fun cancel(requestToken: String) { cancelled.add(requestToken) }
 
     fun close() {
-        notificationTasks.values.forEach(notificationHandler::removeCallbacks)
-        notificationTasks.clear()
         databaseExecutor.shutdownNow()
         database?.close()
         database = null
@@ -119,7 +115,8 @@ internal class CraftNativeCapabilities(
             }
             "set" -> {
                 if (args.length() != 2) return failure("INVALID_ARGUMENT", "Storage.set needs a key and value")
-                val value = JSONObject.valueToString(args.opt(1))
+                val value = runCatching { JSONObject.valueToString(args.opt(1)) }
+                    .getOrElse { return failure("INVALID_ARGUMENT", "Storage values must be JSON serializable") }
                 if (storage.edit().putString(key, value).commit()) success(true)
                 else failure("STORAGE_ERROR", "Storage could not persist the value")
             }
@@ -300,39 +297,31 @@ internal class CraftNativeCapabilities(
     private fun scheduleStored(value: JSONObject) {
         val id = value.optString("id")
         if (id.isEmpty()) return
-        notificationTasks.remove(id)?.let(notificationHandler::removeCallbacks)
-        val task = Runnable {
-            notificationTasks.remove(id)
-            notificationStorage.edit().remove(id).apply()
-            createNotificationChannel()
-            val notification = NotificationCompat.Builder(activity, "craft_notifications")
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle(value.optString("title"))
-                .setContentText(value.optString("body"))
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .build()
-            (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id.hashCode(), notification)
-        }
-        notificationTasks[id] = task
-        notificationHandler.postDelayed(task, (value.optLong("fireAt") - System.currentTimeMillis()).coerceAtLeast(0))
+        val alarm = activity.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarm.setAndAllowWhileIdle(
+            AlarmManager.RTC_WAKEUP,
+            value.optLong("fireAt").coerceAtLeast(System.currentTimeMillis()),
+            notificationIntent(id),
+        )
     }
 
     private fun cancelNotification(id: String) {
-        notificationTasks.remove(id)?.let(notificationHandler::removeCallbacks)
+        val alarm = activity.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = notificationIntent(id)
+        alarm.cancel(intent)
+        intent.cancel()
         notificationStorage.edit().remove(id).commit()
-        (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id.hashCode())
+        (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id, 0)
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.createNotificationChannel(NotificationChannel(
-            "craft_notifications",
-            "Craft Notifications",
-            NotificationManager.IMPORTANCE_DEFAULT,
-        ))
-    }
+    private fun notificationIntent(id: String): PendingIntent = PendingIntent.getBroadcast(
+        activity,
+        0,
+        Intent(activity, CraftNativeNotificationReceiver::class.java)
+            .setData(Uri.Builder().scheme("craft-native").authority("notification").appendPath(id).build())
+            .putExtra("id", id),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
 
     private fun validKey(value: Any?): String? = (value as? String)?.takeIf {
         it.isNotEmpty() && it.length <= 512 && !it.contains('\u0000')
