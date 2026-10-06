@@ -14,7 +14,7 @@ bun packages/android/scripts/test-native-navigation.ts
 The instrumentation test checks native control classes, rendered route
 parameters, push/replace/back (including Android's Back key), retained input
 identity and value, and the absence of any `WebView` in the activity view tree.
-CI uses the pinned stx-native compiler at `6383325bd1`, which installs an
+CI uses the pinned stx-native compiler at `797a53d00b`, which installs an
 initial tree atomically before sending incremental keyed mutations.
 
 `--prepare-only` compiles the `.stx` bundle and generates the Android fixture
