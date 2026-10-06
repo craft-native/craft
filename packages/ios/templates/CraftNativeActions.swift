@@ -183,10 +183,17 @@ enum CraftNativeActions {
                 return failure("INVALID_ARGUMENT", "Database.query needs a SQL statement")
             }
             return query(sql: sql, params: args.count > 1 ? args[1] as? [Any] ?? [] : [])
-        case "beginTransaction": return execute(sql: "BEGIN TRANSACTION", params: [])
-        case "commit": return execute(sql: "COMMIT", params: [])
-        case "rollback": return execute(sql: "ROLLBACK", params: [])
+        case "beginTransaction": return transaction(sql: "BEGIN TRANSACTION")
+        case "commit": return transaction(sql: "COMMIT")
+        case "rollback": return transaction(sql: "ROLLBACK")
         default: return failure("UNKNOWN_ACTION", "Unsupported Database method")
+        }
+    }
+
+    private static func transaction(sql: String) -> Result<Any, CraftNativeActionError> {
+        switch execute(sql: sql, params: []) {
+        case .success: return .success(true)
+        case .failure(let error): return .failure(error)
         }
     }
 

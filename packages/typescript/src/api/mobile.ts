@@ -1182,6 +1182,13 @@ export interface NotificationOptions {
 /** A notification as the bridges read it: `delay` in place of `scheduleAt`. */
 export type BridgeNotification = Omit<NotificationOptions, 'scheduleAt'> & { delay?: number }
 
+/** A local notification waiting for delivery. */
+export interface PendingLocalNotification {
+  id: string
+  title: string
+  body: string
+}
+
 /**
  * The bridges' spelling of a notification: `scheduleAt` becomes `delay`.
  *
@@ -1250,6 +1257,28 @@ export const notifications = {
       return craft.notifications.schedule(bridgeNotification(options))
     }
     throw new Error('Scheduled notifications not available in web')
+  },
+
+  /**
+   * Cancel one scheduled notification.
+   */
+  async cancel(id: string): Promise<void> {
+    const craft = getCraftMobile()
+    if (typeof window !== 'undefined' && craft?.notifications) {
+      return craft.notifications.cancel(id)
+    }
+    throw new Error('Scheduled notifications not available in web')
+  },
+
+  /**
+   * Read notifications that have not fired yet.
+   */
+  async pending(): Promise<PendingLocalNotification[]> {
+    const craft = getCraftMobile()
+    if (typeof window !== 'undefined' && craft?.notifications) {
+      return craft.notifications.pending()
+    }
+    return []
   },
 
   /**
@@ -1832,7 +1861,9 @@ interface CraftMobileBridge {
   notifications?: {
     show(options: NotificationOptions): Promise<void>
     schedule(options: BridgeNotification): Promise<void>
+    cancel(id: string): Promise<void>
     cancelAll(): Promise<void>
+    pending(): Promise<PendingLocalNotification[]>
     setBadge(count: number): Promise<void>
   }
   health?: {

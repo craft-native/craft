@@ -13,6 +13,9 @@ export interface CraftBridge {
   /** Platform identifier: 'ios' | 'android' */
   platform: 'ios' | 'android';
 
+  /** Native capability protocol spoken by WebView-free STX hosts. */
+  capabilityProtocolVersion?: 1;
+
   /** Available capabilities on the current device */
   capabilities: CraftCapabilities;
 
@@ -318,6 +321,15 @@ export interface CraftBridge {
 
   // ==================== Local Notifications ====================
 
+  /** Versioned local-notification API used by WebView-free STX screens. */
+  notifications: {
+    show(notification: NotificationData): Promise<string>;
+    schedule(notification: NotificationData): Promise<string>;
+    cancel(id: string): Promise<boolean>;
+    cancelAll(): Promise<boolean>;
+    pending(): Promise<PendingNotification[]>;
+  };
+
   /**
    * Schedule a local notification
    * @param notification - Notification data
@@ -412,6 +424,15 @@ export interface CraftBridge {
     remove(key: string): Promise<void>;
   };
 
+  // ==================== Persistent Storage ====================
+  storage: {
+    get<T extends CraftStorageValue = CraftStorageValue>(key: string): Promise<T | null>;
+    set(key: string, value: CraftStorageValue): Promise<boolean>;
+    remove(key: string): Promise<boolean>;
+    clear(): Promise<boolean>;
+    keys(): Promise<string[]>;
+  };
+
   // ==================== Clipboard ====================
   clipboard: {
     /**
@@ -434,7 +455,7 @@ export interface CraftBridge {
      * @param sql - SQL statement
      * @param params - Optional parameters
      */
-    execute(sql: string, params?: any[]): Promise<void>;
+    execute(sql: string, params?: DatabaseValue[]): Promise<DatabaseExecuteResult>;
 
     /**
      * Query database
@@ -442,7 +463,14 @@ export interface CraftBridge {
      * @param params - Optional parameters
      * @returns Query results
      */
-    query(sql: string, params?: any[]): Promise<any[]>;
+    query<T extends Record<string, DatabaseValue> = Record<string, DatabaseValue>>(
+      sql: string,
+      params?: DatabaseValue[],
+    ): Promise<T[]>;
+
+    beginTransaction(): Promise<boolean>;
+    commit(): Promise<boolean>;
+    rollback(): Promise<boolean>;
   };
 
   // ==================== Network & Connectivity ====================
@@ -512,6 +540,14 @@ export interface CraftBridge {
    * @returns 'active', 'inactive', or 'background'
    */
   getAppState(): 'active' | 'inactive' | 'background';
+
+  /** Structured lifecycle API shared with `craft-native/mobile`. */
+  lifecycle: {
+    getState(): 'active' | 'inactive' | 'background';
+    onStateChange(callback: (state: 'active' | 'inactive' | 'background') => void): () => void;
+    /** Compatibility alias retained for early native-renderer bundles. */
+    onChange(callback: (state: 'active' | 'inactive' | 'background') => void): () => void;
+  };
 
   /**
    * Listen for app state changes
@@ -1059,6 +1095,12 @@ export interface CraftCapabilities {
   biometric: boolean;
   pushNotifications: boolean;
   secureStorage: boolean;
+  /** JSON key-value persistence in WebView-free STX screens. */
+  storage?: boolean;
+  /** SQLite persistence in WebView-free STX screens. */
+  localDatabase?: boolean;
+  /** Synchronous app state plus change events. */
+  lifecycle?: boolean;
   geolocation: boolean;
   clipboard: boolean;
   contacts: boolean;
@@ -1075,6 +1117,17 @@ export interface CraftCapabilities {
   deviceInfo: boolean;
   badge: boolean;
   appReview: boolean;
+}
+
+export type CraftStorageValue = null | boolean | number | string | CraftStorageValue[] | {
+  [key: string]: CraftStorageValue;
+};
+
+export type DatabaseValue = null | boolean | number | string;
+
+export interface DatabaseExecuteResult {
+  rowsAffected: number;
+  lastInsertId: number;
 }
 
 export interface DeepLinkData {

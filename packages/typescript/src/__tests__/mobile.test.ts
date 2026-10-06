@@ -115,6 +115,29 @@ describe('Mobile scheduled notifications', () => {
       else (globalThis as any).window = previousWindow
     }
   })
+
+  it('cancels one notification and reads the pending list through the bridge', async () => {
+    const previousWindow = (globalThis as any).window
+    const cancelled: string[] = []
+    const pending = [{ id: 'wake', title: 'Wake up', body: 'Morning' }]
+    ;(globalThis as any).window = {
+      craft: {
+        notifications: {
+          cancel: async (id: string) => { cancelled.push(id) },
+          pending: async () => pending,
+        },
+      },
+    }
+    try {
+      await notifications.cancel('wake')
+      expect(cancelled).toEqual(['wake'])
+      expect(await notifications.pending()).toEqual(pending)
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
+  })
 })
 
 describe('Mobile notification arrivals', () => {
