@@ -218,7 +218,6 @@ enum CraftNativeActions {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
         switch method {
         case "set":
@@ -227,12 +226,13 @@ enum CraftNativeActions {
             }
             var query = base
             query[kSecValueData as String] = Data(value.utf8)
-            let status = SecItemAdd(query as CFDictionary, nil)
-            if status == errSecDuplicateItem {
-                let update = SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
-                return update == errSecSuccess ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be updated")
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            let removed = SecItemDelete(base as CFDictionary)
+            guard removed == errSecSuccess || removed == errSecItemNotFound else {
+                return failure("SECURE_STORAGE_ERROR", "Secure storage could not be replaced (\(removed))")
             }
-            return status == errSecSuccess ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
+            let status = SecItemAdd(query as CFDictionary, nil)
+            return status == errSecSuccess ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be written (\(status))")
         case "get":
             var query = base
             query[kSecReturnData as String] = true
