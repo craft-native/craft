@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.117...v0.0.118)
+
+## 🐛 Bug Fixes
+
+- **deps**: source-map-js 1.2.2, and no package overrides ([5456d4d](https://github.com/craft-native/craft/commit/5456d4d)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.116...v0.0.117)
 
 ## 🐛 Bug Fixes
