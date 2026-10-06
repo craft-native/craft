@@ -355,7 +355,7 @@ internal class CraftNativeCapabilities(
     private fun deepLinks(method: String): CraftNativeCapabilityResult {
         if (!config.optBoolean("enableDeepLinks")) return failure("CAPABILITY_DISABLED", "Deep links are disabled")
         if (method != "getInitialURL") return failure("UNKNOWN_ACTION", "Unsupported DeepLinks method")
-        return success(activity.intent?.data?.let(activity::deepLinkData) ?: JSONObject.NULL)
+        return success(activity.consumeInitialDeepLink()?.let(activity::deepLinkData) ?: JSONObject.NULL)
     }
 
     private fun notifications(

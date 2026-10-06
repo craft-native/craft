@@ -66,6 +66,8 @@ describe('Craft iOS builder', () => {
     expect(actionsSwift).toContain('case ("Database", _)')
     expect(actionsSwift).toContain('case ("Notifications", _)')
     expect(actionsSwift).toContain('case ("DeepLinks", "getInitialURL")')
+    expect(actionsSwift).toContain('private static func claimInitialDeepLink() -> URL?')
+    expect(actionsSwift).toContain('guard !initialDeepLinkClaimed else { return nil }')
     expect(actionsSwift).toContain('case ("SecureStorage", _)')
     expect(actionsSwift).toContain('case ("Biometrics", "authenticate")')
     expect(actionsSwift).toContain('import LocalAuthentication')

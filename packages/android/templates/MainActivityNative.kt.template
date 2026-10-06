@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -116,6 +117,8 @@ class MainActivity : AppCompatActivity() {
     internal var nativeAppState = "inactive"
         private set
     private var deliveredInitialDeepLink = false
+    private var initialDeepLink: Uri? = null
+    private var initialDeepLinkClaimed = false
     private var defaultTextColor = Color.WHITE
     private var useMessagePorts = false
     private val imageExecutor = Executors.newFixedThreadPool(2)
@@ -125,6 +128,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initialDeepLink = savedInstanceState?.getString("craft.initialDeepLink")?.let(Uri::parse) ?: intent?.data
+        initialDeepLinkClaimed = savedInstanceState?.getBoolean("craft.initialDeepLinkClaimed", false) ?: false
+        deliveredInitialDeepLink = savedInstanceState?.getBoolean("craft.deliveredInitialDeepLink", false) ?: false
         setContentView(R.layout.activity_main)
         root = findViewById(R.id.native_root)
         config = runCatching {
@@ -243,7 +249,7 @@ class MainActivity : AppCompatActivity() {
                 load.addListener({
                     try {
                         load.get()
-                        val launchLink = intent.data
+                        val launchLink = initialDeepLink
                         if (!deliveredInitialDeepLink
                             && config.optBoolean("enableDeepLinks")
                             && launchLink != null
@@ -268,6 +274,13 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         (screen.view.parent as? ViewGroup)?.removeView(screen.view)
         root.addView(screen.view)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString("craft.initialDeepLink", initialDeepLink?.toString())
+        outState.putBoolean("craft.initialDeepLinkClaimed", initialDeepLinkClaimed)
+        outState.putBoolean("craft.deliveredInitialDeepLink", deliveredInitialDeepLink)
+        super.onSaveInstanceState(outState)
     }
 
     private fun receive(screen: Screen, raw: String) {
@@ -893,6 +906,12 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.data?.let { publish("DEEP_LINK", deepLinkData(it).put("initial", false)) }
+    }
+
+    internal fun consumeInitialDeepLink(): Uri? {
+        if (initialDeepLinkClaimed) return null
+        initialDeepLinkClaimed = true
+        return initialDeepLink
     }
 
     private fun send(screen: Screen, type: String, payload: JSONObject, correlationId: String? = null) {

@@ -21,6 +21,7 @@ enum CraftNativeActions {
     private static let cancellationLock = NSLock()
     private static var cancelledRequests = Set<String>()
     private static var biometricContexts = [String: LAContext]()
+    private static var initialDeepLinkClaimed = false
     private static var database: OpaquePointer?
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -108,7 +109,7 @@ enum CraftNativeActions {
             sync = .success(currentAppState())
         case ("DeepLinks", "getInitialURL"):
             if config.enableDeepLinks {
-                sync = .success(DeepLinkManager.shared.getInitialURL().map(deepLinkData) ?? NSNull())
+                sync = .success(claimInitialDeepLink().map(deepLinkData) ?? NSNull())
             } else {
                 sync = failure("CAPABILITY_DISABLED", "Deep links are disabled")
             }
@@ -138,6 +139,14 @@ enum CraftNativeActions {
         let context = biometricContexts.removeValue(forKey: requestToken)
         cancellationLock.unlock()
         context?.invalidate()
+    }
+
+    private static func claimInitialDeepLink() -> URL? {
+        cancellationLock.lock()
+        defer { cancellationLock.unlock() }
+        guard !initialDeepLinkClaimed else { return nil }
+        initialDeepLinkClaimed = true
+        return DeepLinkManager.shared.getInitialURL()
     }
 
     private static func complete(
