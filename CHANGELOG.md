@@ -1,5 +1,65 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.113...v0.0.114)
+
+## 🚀 Features
+
+- **macos**: craft.fs.watch hears the filesystem, through FSEvents ([4751f1b](https://github.com/craft-native/craft/commit/4751f1b)) _(by Chris)_
+- **macos**: haptic feedback on the Force Touch trackpad ([e1d9d94](https://github.com/craft-native/craft/commit/e1d9d94)) _(by Chris)_
+- **android**: recycle native flat list rows ([49e79f9](https://github.com/craft-native/craft/commit/49e79f9)) _(by glennmichael123)_
+- **ios**: render flat lists with collection views ([ca164c5](https://github.com/craft-native/craft/commit/ca164c5)) _(by glennmichael123)_
+- **native**: advertise mutation protocol support ([34bcc31](https://github.com/craft-native/craft/commit/34bcc31)) _(by glennmichael123)_
+- **android**: apply native mutation batches ([73bf2b6](https://github.com/craft-native/craft/commit/73bf2b6)) _(by glennmichael123)_
+- **android**: define native mutation batches ([13fa955](https://github.com/craft-native/craft/commit/13fa955)) _(by glennmichael123)_
+- **ios**: apply native mutation batches ([2bac964](https://github.com/craft-native/craft/commit/2bac964)) _(by glennmichael123)_
+- **ios**: define native mutation batches ([a11e82e](https://github.com/craft-native/craft/commit/a11e82e)) _(by glennmichael123)_
+- **android**: style native STX view trees ([9dd7f9c](https://github.com/craft-native/craft/commit/9dd7f9c)) _(by glennmichael123)_
+- **ios**: style native STX view trees ([ff83669](https://github.com/craft-native/craft/commit/ff83669)) _(by glennmichael123)_
+- **native**: deliver accessible STX press events ([68ecafd](https://github.com/craft-native/craft/commit/68ecafd)) _(by glennmichael123)_
+- **android**: render native STX images and scroll views ([c1ce829](https://github.com/craft-native/craft/commit/c1ce829)) _(by glennmichael123)_
+- **ios**: render native STX images and scroll views ([d8ecca4](https://github.com/craft-native/craft/commit/d8ecca4)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- Mac haptics play the right pattern, and craft.fs keeps what it is sent ([1a7cefc](https://github.com/craft-native/craft/commit/1a7cefc)) _(by Chris)_
+- **ios**: serialize flat list snapshots ([a0f5e05](https://github.com/craft-native/craft/commit/a0f5e05)) _(by glennmichael123)_
+- **ios**: avoid reentrant flat list layout ([1731357](https://github.com/craft-native/craft/commit/1731357)) _(by glennmichael123)_
+- **native**: reject disconnected mutation trees ([ce3e864](https://github.com/craft-native/craft/commit/ce3e864)) _(by glennmichael123)_
+- **native**: preserve test identifiers across mutations ([49b0243](https://github.com/craft-native/craft/commit/49b0243)) _(by glennmichael123)_
+- **native**: release image work with view trees ([c967757](https://github.com/craft-native/craft/commit/c967757)) _(by glennmichael123)_
+
+## ⚡ Performance Improvements
+
+- **benchmarks**: compare native mutation updates ([59561cb](https://github.com/craft-native/craft/commit/59561cb)) _(by glennmichael123)_
+- **native**: reconcile structural mutation parents ([ec3ab78](https://github.com/craft-native/craft/commit/ec3ab78)) _(by glennmichael123)_
+- **native**: target node-only mutation updates ([5089f12](https://github.com/craft-native/craft/commit/5089f12)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **native**: document recycling flat lists ([5b4d5a7](https://github.com/craft-native/craft/commit/5b4d5a7)) _(by glennmichael123)_
+- **native**: specify mutation protocol v1 ([6d1b34e](https://github.com/craft-native/craft/commit/6d1b34e)) _(by glennmichael123)_
+- define the native STX mobile contract ([df8df34](https://github.com/craft-native/craft/commit/df8df34)) _(by glennmichael123)_
+
+## 💅 Styles
+
+- **zig**: format native macOS components ([f856c53](https://github.com/craft-native/craft/commit/f856c53)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **native**: benchmark large list updates ([12f4505](https://github.com/craft-native/craft/commit/12f4505)) _(by glennmichael123)_
+- **android**: cover flat list recycling ([365cbce](https://github.com/craft-native/craft/commit/365cbce)) _(by glennmichael123)_
+- **native**: exercise flat lists on mobile devices ([d2f9815](https://github.com/craft-native/craft/commit/d2f9815)) _(by glennmichael123)_
+- **native**: exercise mutations in mobile e2e ([abec3af](https://github.com/craft-native/craft/commit/abec3af)) _(by glennmichael123)_
+- **native**: cover targeted mutation reconciliation ([c1fb50d](https://github.com/craft-native/craft/commit/c1fb50d)) _(by glennmichael123)_
+- **native**: stabilize cross-platform image and scroll checks ([d164f6f](https://github.com/craft-native/craft/commit/d164f6f)) _(by glennmichael123)_
+- **android**: use recursive class-based view lookup ([d70d2b8](https://github.com/craft-native/craft/commit/d70d2b8)) _(by glennmichael123)_
+- **native**: verify native scrolling behavior ([3daf5c8](https://github.com/craft-native/craft/commit/3daf5c8)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.112...v0.0.113)
 
 ## 🐛 Bug Fixes
