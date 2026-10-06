@@ -330,6 +330,22 @@ export interface CraftBridge {
     pending(): Promise<PendingNotification[]>;
   };
 
+  /** Typed biometric API used by WebView-free STX screens. */
+  biometrics: {
+    isAvailable(): Promise<boolean>;
+    getBiometricType(): Promise<'faceId' | 'touchId' | 'fingerprint' | 'none'>;
+    authenticate(reason: string): Promise<boolean>;
+  };
+
+  /** Typed secure storage API used by WebView-free STX screens. */
+  secureStorage: {
+    set(key: string, value: string): Promise<boolean>;
+    get(key: string): Promise<string | null>;
+    remove(key: string): Promise<boolean>;
+    delete(key: string): Promise<boolean>;
+    clear(): Promise<boolean>;
+  };
+
   /**
    * Schedule a local notification
    * @param notification - Notification data
