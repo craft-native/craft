@@ -43,6 +43,7 @@ import androidx.javascriptengine.JavaScriptSandbox
 import androidx.javascriptengine.Message
 import androidx.javascriptengine.MessagePort
 import androidx.javascriptengine.MessagePortClient
+import com.google.common.util.concurrent.ListenableFuture
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
@@ -154,29 +155,46 @@ class MainActivity : AppCompatActivity() {
             showError("Native STX requires Android JavaScriptSandbox, which is unavailable on this device.")
             return
         }
-        val connection = JavaScriptSandbox.createConnectedInstanceAsync(this)
-        connection.addListener({
-            try {
-                val engine = connection.get()
-                if (isDestroyed) {
-                    engine.close()
-                    return@addListener
-                }
-                useMessagePorts = engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)
-                    && engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN)
-                if (!useMessagePorts && !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_CONSOLE_MESSAGING)) {
-                    engine.close()
-                    showError("Native STX requires JavaScript message ports or console messaging, unavailable on this device.")
-                    return@addListener
-                }
-                Log.i(TAG, "Native STX bridge: ${if (useMessagePorts) "message ports" else "console callback"}")
-                sandbox = engine
-                openScreen(null)
-            } catch (error: Exception) {
-                Log.e(TAG, "JavaScriptSandbox connection failed", error)
-                showError("Native STX JavaScript engine could not start: ${error.message}")
+        val connection = synchronized(SANDBOX_LOCK) {
+            sharedSandbox?.let { existing ->
+                sandbox = existing
+                null
+            } ?: sharedSandboxConnection ?: JavaScriptSandbox.createConnectedInstanceAsync(applicationContext).also {
+                sharedSandboxConnection = it
             }
-        }, ContextCompat.getMainExecutor(this))
+        }
+        if (connection == null) {
+            sandbox?.let(::attachSandbox)
+        } else {
+            connection.addListener({
+                try {
+                    val engine = connection.get()
+                    synchronized(SANDBOX_LOCK) {
+                        sharedSandbox = engine
+                        sharedSandboxConnection = null
+                    }
+                    if (!isDestroyed) {
+                        sandbox = engine
+                        attachSandbox(engine)
+                    }
+                } catch (error: Exception) {
+                    synchronized(SANDBOX_LOCK) { sharedSandboxConnection = null }
+                    Log.e(TAG, "JavaScriptSandbox connection failed", error)
+                    if (!isDestroyed) showError("Native STX JavaScript engine could not start: ${error.message}")
+                }
+            }, ContextCompat.getMainExecutor(this))
+        }
+    }
+
+    private fun attachSandbox(engine: JavaScriptSandbox) {
+        useMessagePorts = engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_MESSAGE_PORTS)
+            && engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_PROMISE_RETURN)
+        if (!useMessagePorts && !engine.isFeatureSupported(JavaScriptSandbox.JS_FEATURE_CONSOLE_MESSAGING)) {
+            showError("Native STX requires JavaScript message ports or console messaging, unavailable on this device.")
+            return
+        }
+        Log.i(TAG, "Native STX bridge: ${if (useMessagePorts) "message ports" else "console callback"}")
+        openScreen(null)
     }
 
     private fun openScreen(route: String?, params: JSONObject = JSONObject()) {
@@ -994,9 +1012,13 @@ class MainActivity : AppCompatActivity() {
         imageJobs.clear()
         imageExecutor.shutdownNow()
         capabilities.close()
-        sandbox?.close()
         super.onDestroy()
     }
 
-    companion object { private const val TAG = "CraftNativeAndroid" }
+    companion object {
+        private const val TAG = "CraftNativeAndroid"
+        private val SANDBOX_LOCK = Any()
+        private var sharedSandbox: JavaScriptSandbox? = null
+        private var sharedSandboxConnection: ListenableFuture<JavaScriptSandbox>? = null
+    }
 }
