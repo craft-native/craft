@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.114...v0.0.115)
+
+## 🤖 Continuous Integration
+
+- jobs that only run Bun install Bun, not the pinned Zig ([6c2a1da](https://github.com/craft-native/craft/commit/6c2a1da)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.113...v0.0.114)
 
 ## 🚀 Features
