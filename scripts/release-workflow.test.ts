@@ -14,7 +14,7 @@ type Job = {
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
 const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
-const stxNativeCompilerCommit = 'b50aafe462cb3cb0fe3b0de6780c43e8c9de7322'
+const stxNativeCompilerCommit = '523f25fe2c637c0a9d0b5078ef68d9009fef13b5'
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
 
