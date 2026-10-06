@@ -1837,6 +1837,8 @@ interface CraftMobileBridge {
   secureStorage?: {
     set(key: string, value: string): Promise<void>
     get(key: string): Promise<string | null>
+    /** Compatibility alias for callers using the legacy native contract. */
+    remove(key: string): Promise<void>
     delete(key: string): Promise<void>
     clear(): Promise<void>
   }

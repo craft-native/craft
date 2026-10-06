@@ -308,6 +308,15 @@ describe('the injected iOS page script', () => {
     expect(typeof page.craft.notifications.show).toBe('function')
   })
 
+  it('keeps the legacy secureStorage.remove alias beside delete', async () => {
+    const page = loadPage()
+    const removed = page.craft.secureStorage.remove('session-token')
+
+    expect(page.last('secureRemove')).toMatchObject({ key: 'session-token' })
+    page.answer('secureRemove', true)
+    await expect(removed).resolves.toBeUndefined()
+  })
+
   it('delivers a tap once, live, to a page already subscribed', async () => {
     const page = loadPage()
     const seen: unknown[] = []

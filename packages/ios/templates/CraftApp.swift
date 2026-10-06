@@ -3485,6 +3485,10 @@ struct CraftWebView: UIViewRepresentable {
                 craft.secureStorage = {
                     set: function(key, value) { return legacySecureStore.set(key, value).then(function() {}); },
                     get: function(key) { return legacySecureStore.get(key); },
+                    // `remove` is the legacy name retained by the public Craft
+                    // type declaration; keep it as an alias of `delete` so
+                    // native STX callers can migrate without a feature check.
+                    remove: function(key) { return legacySecureStore.remove(key).then(function() {}); },
                     delete: function(key) { return legacySecureStore.remove(key).then(function() {}); },
                     clear: function() { return craft._invoke('secureClear').then(function() {}); }
                 };

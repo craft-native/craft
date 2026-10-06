@@ -1620,6 +1620,9 @@ class CraftBridge(
                 craft.secureStorage = {
                     set: function(key, value) { return Promise.resolve().then(function() { legacySecureStore.set(key, value); }); },
                     get: function(key) { return Promise.resolve().then(function() { return legacySecureStore.get(key); }); },
+                    // Keep the legacy public name alongside `delete` for
+                    // native STX callers compiled against the older contract.
+                    remove: function(key) { return Promise.resolve().then(function() { legacySecureStore.remove(key); }); },
                     delete: function(key) { return Promise.resolve().then(function() { legacySecureStore.remove(key); }); },
                     clear: function() { return Promise.resolve().then(function() { CraftAndroid.secureClear(); }); }
                 };

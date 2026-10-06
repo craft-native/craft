@@ -416,6 +416,7 @@ describe('Craft Android builder', () => {
     const bridge = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/CraftBridge.kt'), 'utf8')
     const manifest = readFileSync(join(output, 'app/src/main/AndroidManifest.xml'), 'utf8')
     expect(bridge).toContain("craft.contractVersion = '1.0.0'")
+    expect(bridge).toContain('remove: function(key) { return Promise.resolve().then(function() { legacySecureStore.remove(key); }); }')
     expect(bridge).toContain('haptics: true')
     expect(bridge).toContain('camera: false')
     expect(manifest).toContain('android:allowBackup="false"')
