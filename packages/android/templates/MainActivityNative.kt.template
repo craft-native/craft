@@ -156,10 +156,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val connection = synchronized(SANDBOX_LOCK) {
-            sharedSandbox?.let { existing ->
+            sharedSandboxConnection ?: sharedSandbox?.let { existing ->
                 sandbox = existing
                 null
-            } ?: sharedSandboxConnection ?: JavaScriptSandbox.createConnectedInstanceAsync(applicationContext).also {
+            } ?: JavaScriptSandbox.createConnectedInstanceAsync(applicationContext).also {
                 sharedSandboxConnection = it
             }
         }
@@ -171,7 +171,6 @@ class MainActivity : AppCompatActivity() {
                     val engine = connection.get()
                     synchronized(SANDBOX_LOCK) {
                         sharedSandbox = engine
-                        sharedSandboxConnection = null
                     }
                     if (!isDestroyed) {
                         sandbox = engine
