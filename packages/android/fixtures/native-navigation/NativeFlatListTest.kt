@@ -1,6 +1,6 @@
 package dev.craft.navigationtest
 
-import android.content.Intent
+import android.content.Context
 import android.os.SystemClock
 import android.view.View
 import android.widget.FrameLayout
@@ -40,18 +40,18 @@ class NativeFlatListTest {
         throw AssertionError("Timed out waiting for $expected FlatList cells; found ${list.adapter?.itemCount}")
     }
 
-    private fun attach(activity: MainActivity, list: CraftNativeFlatList) {
-        activity.addContentView(list, FrameLayout.LayoutParams(320, 480))
+    private fun attach(list: CraftNativeFlatList) {
+        list.layoutParams = FrameLayout.LayoutParams(320, 480)
         val width = View.MeasureSpec.makeMeasureSpec(320, View.MeasureSpec.EXACTLY)
         val height = View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY)
         list.measure(width, height)
         list.layout(0, 0, 320, 480)
     }
 
-    private fun renderer(activity: MainActivity, renders: AtomicInteger): CraftNativeRenderItem =
+    private fun renderer(context: Context, renders: AtomicInteger): CraftNativeRenderItem =
         { node, _, previous ->
             renders.incrementAndGet()
-            (previous as? TextView ?: TextView(activity)).apply {
+            (previous as? TextView ?: TextView(context)).apply {
                 text = node.optJSONArray("children")?.optString(0).orEmpty()
                 minHeight = 44
             }
@@ -59,88 +59,77 @@ class NativeFlatListTest {
 
     @Test
     fun recyclesTenThousandRowsAndRetainsTheViewport() {
-        val activity = instrumentation.startActivitySync(
-            Intent(instrumentation.targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        ) as MainActivity
-        try {
-            val list = CraftNativeFlatList(activity)
-            val renders = AtomicInteger()
-            val rows = (0 until 10_000).map(::row)
-            instrumentation.runOnMainSync {
-                attach(activity, list)
-                list.apply(rows, false, 1, false, 0.1, renderer(activity, renders), { _ -> }, null)
-            }
-            awaitCount(list, 10_000)
-            instrumentation.runOnMainSync { list.scrollToPosition(5_000) }
-            SystemClock.sleep(300)
-
-            val before = (list.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
-            assertTrue("RecyclerView materialized too many of 10,000 rows", renders.get() < 200)
-            assertTrue("RecyclerView did not reach the requested viewport", before >= 4_900)
-
-            val moved = listOf(rows[1], rows[0]) + rows.drop(2)
-            instrumentation.runOnMainSync {
-                list.apply(moved, false, 1, false, 0.1, renderer(activity, renders), { _ -> }, null)
-            }
-            awaitCount(list, 10_000)
-            SystemClock.sleep(500)
-            val after = (list.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
-            assertTrue("keyed update reset the viewport", after >= 4_900)
-            assertTrue("keyed update rendered the full data set", renders.get() < 400)
+        val context = instrumentation.targetContext
+        lateinit var list: CraftNativeFlatList
+        val renders = AtomicInteger()
+        val rows = (0 until 10_000).map(::row)
+        instrumentation.runOnMainSync {
+            list = CraftNativeFlatList(context)
+            attach(list)
+            list.apply(rows, false, 1, false, 0.1, renderer(context, renders), { _ -> }, null)
         }
-        finally {
-            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
-            instrumentation.waitForIdleSync()
+        awaitCount(list, 10_000)
+        instrumentation.runOnMainSync {
+            attach(list)
+            list.scrollToPosition(5_000)
+            attach(list)
         }
+        SystemClock.sleep(300)
+
+        val before = (list.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
+        assertTrue("RecyclerView materialized too many of 10,000 rows", renders.get() < 200)
+        assertTrue("RecyclerView did not reach the requested viewport", before >= 4_900)
+
+        val moved = listOf(rows[1], rows[0]) + rows.drop(2)
+        instrumentation.runOnMainSync {
+            list.apply(moved, false, 1, false, 0.1, renderer(context, renders), { _ -> }, null)
+        }
+        awaitCount(list, 10_000)
+        instrumentation.runOnMainSync { attach(list) }
+        SystemClock.sleep(500)
+        val after = (list.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
+        assertTrue("keyed update reset the viewport", after >= 4_900)
+        assertTrue("keyed update rendered the full data set", renders.get() < 400)
     }
 
     @Test
     fun configuresHorizontalGridInvertedAndChromeOnlyLists() {
-        val activity = instrumentation.startActivitySync(
-            Intent(instrumentation.targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        ) as MainActivity
-        try {
-            val list = CraftNativeFlatList(activity)
-            val renders = AtomicInteger()
-            val nodes = listOf(chrome("header", "header")) + (0 until 8).map(::row)
-            instrumentation.runOnMainSync {
-                attach(activity, list)
-                list.apply(nodes, true, 1, true, 0.1, renderer(activity, renders), { _ -> }, null)
-            }
-            awaitCount(list, 9)
-            val horizontal = list.layoutManager as LinearLayoutManager
-            assertEquals(LinearLayoutManager.HORIZONTAL, horizontal.orientation)
-
-            instrumentation.runOnMainSync {
-                list.apply(nodes, false, 3, false, 0.1, renderer(activity, renders), { _ -> }, null)
-            }
-            awaitCount(list, 9)
-            SystemClock.sleep(200)
-            val grid = list.layoutManager as GridLayoutManager
-            assertEquals(3, grid.spanCount)
-            assertEquals(3, grid.spanSizeLookup.getSpanSize(0))
-            assertEquals(1, grid.spanSizeLookup.getSpanSize(1))
-
-            val chromeEndReached = AtomicInteger()
-            val chromeOnly = listOf(
-                chrome("header", "header"),
-                chrome("empty", "empty"),
-                chrome("footer", "footer"),
-            )
-            instrumentation.runOnMainSync {
-                list.apply(chromeOnly, false, 1, false, 0.1, renderer(activity, renders), { _ -> }, {
-                    chromeEndReached.incrementAndGet()
-                })
-            }
-            awaitCount(list, 3)
-            SystemClock.sleep(300)
-            assertEquals("chrome-only lists must not reach the data end", 0, chromeEndReached.get())
+        val context = instrumentation.targetContext
+        lateinit var list: CraftNativeFlatList
+        val renders = AtomicInteger()
+        val nodes = listOf(chrome("header", "header")) + (0 until 8).map(::row)
+        instrumentation.runOnMainSync {
+            list = CraftNativeFlatList(context)
+            attach(list)
+            list.apply(nodes, true, 1, true, 0.1, renderer(context, renders), { _ -> }, null)
         }
-        finally {
-            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
-            instrumentation.waitForIdleSync()
+        awaitCount(list, 9)
+        val horizontal = list.layoutManager as LinearLayoutManager
+        assertEquals(LinearLayoutManager.HORIZONTAL, horizontal.orientation)
+
+        instrumentation.runOnMainSync {
+            list.apply(nodes, false, 3, false, 0.1, renderer(context, renders), { _ -> }, null)
         }
+        awaitCount(list, 9)
+        SystemClock.sleep(200)
+        val grid = list.layoutManager as GridLayoutManager
+        assertEquals(3, grid.spanCount)
+        assertEquals(3, grid.spanSizeLookup.getSpanSize(0))
+        assertEquals(1, grid.spanSizeLookup.getSpanSize(1))
+
+        val chromeEndReached = AtomicInteger()
+        val chromeOnly = listOf(
+            chrome("header", "header"),
+            chrome("empty", "empty"),
+            chrome("footer", "footer"),
+        )
+        instrumentation.runOnMainSync {
+            list.apply(chromeOnly, false, 1, false, 0.1, renderer(context, renders), { _ -> }, {
+                chromeEndReached.incrementAndGet()
+            })
+        }
+        awaitCount(list, 3)
+        SystemClock.sleep(300)
+        assertEquals("chrome-only lists must not reach the data end", 0, chromeEndReached.get())
     }
 }
