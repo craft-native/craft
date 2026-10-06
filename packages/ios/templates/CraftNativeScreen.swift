@@ -83,6 +83,8 @@ final class CraftNativeScreenController: UIViewController {
     private var flatListRows: [ObjectIdentifier: [String: RenderedNode]] = [:]
     private var flatListOwners: [String: String] = [:]
     private let mutationDocument = CraftNativeMutationDocument()
+    private let capabilityScope = UUID().uuidString
+    private var pendingCapabilityRequests = Set<String>()
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -97,6 +99,7 @@ final class CraftNativeScreenController: UIViewController {
 
     deinit {
         imageTasks.values.forEach { $0.cancel() }
+        pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
     }
 
     override func viewDidLoad() {
@@ -130,10 +133,15 @@ final class CraftNativeScreenController: UIViewController {
             self?.receive(json)
         }
         jsContext.setObject(postMessage, forKeyedSubscript: "craftNativePostMessage" as NSString)
+        let capabilities = CraftNativeActions.capabilities(config: config)
+        let capabilityData = try? JSONSerialization.data(withJSONObject: capabilities)
+        let capabilityJSON = capabilityData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         jsContext.evaluateScript("""
             globalThis.__stxNativeCallback = null;
             globalThis.__stxNativeBridge = {
                 mutationProtocolVersion: 1,
+                capabilityProtocolVersion: \(craftNativeCapabilityProtocolVersion),
+                capabilities: \(capabilityJSON),
                 postMessage: function(message) { craftNativePostMessage(message); },
                 onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
@@ -219,30 +227,38 @@ final class CraftNativeScreenController: UIViewController {
         case "API_REQUEST":
             guard let id = message["id"] as? String else { return }
             let args = payload["args"] as? [Any] ?? []
-            let route: (action: String, body: [String: Any])?
-            switch (payload["module"] as? String, payload["method"] as? String) {
-            case ("Device", "getInfo"):
-                route = ("getDeviceInfo", [:])
-            case ("Haptics", "impact"):
-                route = ("haptic", ["style": args.first ?? NSNull()])
-            case ("Clipboard", "write"):
-                route = ("clipboardWrite", ["text": args.first ?? NSNull()])
-            case ("Clipboard", "read"):
-                route = ("clipboardRead", [:])
-            default:
-                route = nil
+            let requestToken = "\(capabilityScope)/\(id)"
+            pendingCapabilityRequests.insert(requestToken)
+            CraftNativeActions.perform(
+                requestToken: requestToken,
+                version: payload["version"] as? Int ?? craftNativeCapabilityProtocolVersion,
+                module: payload["module"] as? String ?? "",
+                method: payload["method"] as? String ?? "",
+                args: args,
+                config: config
+            ) { [weak self] answer in
+                guard let self = self, self.pendingCapabilityRequests.remove(requestToken) != nil else { return }
+                switch answer {
+                case .success(let data):
+                    self.send(type: "API_RESPONSE", payload: [
+                        "version": craftNativeCapabilityProtocolVersion,
+                        "requestId": id,
+                        "data": data,
+                    ], correlationId: id)
+                case .failure(let error):
+                    self.send(type: "API_ERROR", payload: [
+                        "version": craftNativeCapabilityProtocolVersion,
+                        "requestId": id,
+                        "code": error.code,
+                        "message": error.message,
+                    ], correlationId: id)
+                }
             }
-            guard let route = route,
-                  let answer = CraftNativeActions.perform(action: route.action, body: route.body, config: config) else {
-                send(type: "API_ERROR", payload: ["requestId": id, "code": "UNKNOWN_ACTION", "message": "Unsupported native API"], correlationId: id)
-                return
-            }
-            switch answer {
-            case .success(let data):
-                send(type: "API_RESPONSE", payload: ["requestId": id, "data": data], correlationId: id)
-            case .failure(let error):
-                send(type: "API_ERROR", payload: ["requestId": id, "code": error.code, "message": error.message], correlationId: id)
-            }
+        case "API_CANCEL":
+            guard let id = payload["requestId"] as? String else { return }
+            let requestToken = "\(capabilityScope)/\(id)"
+            pendingCapabilityRequests.remove(requestToken)
+            CraftNativeActions.cancel(requestToken: requestToken)
         default:
             break
         }

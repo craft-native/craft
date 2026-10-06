@@ -4,6 +4,24 @@ import XCTest
 
 @MainActor
 final class NativeRenderUnitTests: XCTestCase {
+    private func capability(
+        _ module: String,
+        _ method: String,
+        _ args: [Any] = [],
+        config: CraftConfig = CraftConfig()
+    ) async -> Result<Any, CraftNativeActionError> {
+        await withCheckedContinuation { continuation in
+            CraftNativeActions.perform(
+                requestToken: UUID().uuidString,
+                version: craftNativeCapabilityProtocolVersion,
+                module: module,
+                method: method,
+                args: args,
+                config: config
+            ) { continuation.resume(returning: $0) }
+        }
+    }
+
     private func batch(
         _ revision: Int,
         _ operations: [[String: Any]],
@@ -83,6 +101,34 @@ final class NativeRenderUnitTests: XCTestCase {
         controller.render(document([node("Text", key: "name-input", text: "Replaced")]))
         XCTAssertNil(field.superview)
         XCTAssertNotNil(find(UILabel.self, key: "name-input", below: controller.view))
+    }
+
+    func testPersistentStorageAndDatabaseCapabilitiesRoundTripJSONValues() async throws {
+        _ = await capability("Storage", "clear")
+        let stored = await capability("Storage", "set", ["profile", ["name": "Ada", "visits": 2]])
+        guard case .success = stored else { return XCTFail("storage set failed") }
+        guard case .success(let value) = await capability("Storage", "get", ["profile"]),
+              let profile = value as? [String: Any] else { return XCTFail("storage get failed") }
+        XCTAssertEqual(profile["name"] as? String, "Ada")
+        XCTAssertEqual(profile["visits"] as? Int, 2)
+
+        var config = CraftConfig()
+        config.enableLocalDatabase = true
+        let table = "capability_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        guard case .success = await capability("Database", "execute", [
+            "CREATE TABLE \(table) (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", [],
+        ], config: config) else { return XCTFail("database create failed") }
+        guard case .success = await capability("Database", "beginTransaction", [], config: config) else {
+            return XCTFail("database transaction failed")
+        }
+        _ = await capability("Database", "execute", ["INSERT INTO \(table) (name) VALUES (?)", ["Grace"]], config: config)
+        _ = await capability("Database", "commit", [], config: config)
+        guard case .success(let rows) = await capability("Database", "query", [
+            "SELECT name FROM \(table)", [],
+        ], config: config), let first = (rows as? [[String: Any]])?.first else {
+            return XCTFail("database query failed")
+        }
+        XCTAssertEqual(first["name"] as? String, "Grace")
     }
 
     func testUnkeyedChildrenReusePositionAndRemovedChildrenDetach() throws {
