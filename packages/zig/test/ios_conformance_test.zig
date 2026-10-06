@@ -143,9 +143,13 @@ fn dispatcherRegion() []const u8 {
 }
 
 fn sharedActionRegion() []const u8 {
-    const begin = std.mem.indexOf(u8, swift_shared_actions, "static func perform(") orelse return "";
+    // The first overload is the legacy action shim called by CraftApp's
+    // WebKit/Zig hand-off. The second overload is the WebView-free typed
+    // capability bridge; its module/method cases are a different protocol and
+    // are intentionally not part of the legacy Zig migration ratchet below.
+    const begin = std.mem.indexOf(u8, swift_shared_actions, "static func perform(action:") orelse return "";
     const rest = swift_shared_actions[begin..];
-    const end = std.mem.indexOf(u8, rest, "static func triggerHaptic(") orelse return "";
+    const end = std.mem.indexOf(u8, rest, "static func perform(\n        requestToken:") orelse rest.len;
     return rest[0..end];
 }
 
@@ -921,7 +925,7 @@ test "Zig validates exactly the stored keys Swift decodes" {
 test "getDeviceInfo answers every field the spec answers" {
     // The regression that made this test necessary. Zig's `getDeviceInfo` is
     // `.live`, so the Swift-hosted seam prefers it over the spec's arm — and
-    // it answered four of the spec's fourteen fields. A page reading
+    // it answered four of the spec's twenty fields. A page reading
     // `screenWidth` or `locale` got `undefined` from an action that reported
     // success, which is the exact failure `.unavailable` exists to prevent and
     // could not catch, because the action does work; it just works less.
@@ -955,7 +959,7 @@ test "getDeviceInfo answers every field the spec answers" {
     }
 
     // A shape change that silently matched nothing would otherwise pass.
-    try testing.expectEqual(@as(usize, 14), checked);
+    try testing.expectEqual(@as(usize, 20), checked);
 }
 
 fn sharedDeviceInfoBlock() ![]const u8 {
@@ -1161,7 +1165,7 @@ test "every event the page subscribes to is one something dispatches" {
 // Reply shape
 //
 // `getDeviceInfo answers every field the spec answers` exists because Zig's
-// `getDeviceInfo` once answered four of the spec's fourteen fields. The action
+// `getDeviceInfo` once answered four of the spec's twenty fields. The action
 // was `.live`, so the seam preferred it; it reported success; a page reading
 // `screenWidth` or `locale` got `undefined`. Nothing else in the repo could
 // catch that, because from every other angle the action works — it just works
@@ -1394,7 +1398,7 @@ fn forEachReplyKey(
     }
 
     // The shared router builds this reply outside CraftApp.swift. Keep its
-    // fourteen fields in the same per-action comparison as the other replies.
+    // twenty fields in the same per-action comparison as the other replies.
     const device_info = try sharedDeviceInfoBlock();
     var at_key: usize = 0;
     while (nextDictKey(device_info, at_key)) |k| : (at_key = k.next) {

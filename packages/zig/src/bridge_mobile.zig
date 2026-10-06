@@ -117,13 +117,16 @@ fn describeDevice(buf: []u8) ![]const u8 {
 
     const bounds = try msgSendRect(screen, "bounds");
     const scale = try msgSendCGFloat(screen, "scale");
+    const user_interface_idiom = try msgSendInteger(device, "userInterfaceIdiom");
 
     // `batteryLevel` is -1 unless battery monitoring is enabled, and neither
     // the spec nor this enables it. Reporting the same -1 is the parity that
     // matters: a page that special-cases it keeps working, and turning
     // monitoring on here would be a behaviour change the spec never made.
     const battery_level = try msgSendFloat(device, "batteryLevel");
-    const battery_state = batteryStateName(try msgSendInteger(device, "batteryState"));
+    const battery_state_raw = try msgSendInteger(device, "batteryState");
+    const battery_state = batteryStateName(battery_state_raw);
+    const battery_charging = battery_state_raw == 2 or battery_state_raw == 3;
 
     const NSLocale = objc.objc_getClass("NSLocale") orelse return error.ClassNotFound;
     const sel_curloc = objc.sel_registerName("currentLocale") orelse return error.SelectorNotFound;
@@ -141,7 +144,13 @@ fn describeDevice(buf: []u8) ![]const u8 {
         buf,
         "{{" ++
             "\"platform\":\"ios\"," ++
+            "\"osVersion\":\"{s}\"," ++
             "\"model\":\"{s}\"," ++
+            "\"manufacturer\":\"Apple\"," ++
+            "\"deviceId\":\"{s}\"," ++
+            "\"isTablet\":{}," ++
+            "\"screen\":{{\"width\":{d},\"height\":{d},\"scale\":{d}}}," ++
+            "\"battery\":{{\"level\":{d},\"isCharging\":{}}}," ++
             "\"name\":\"{s}\"," ++
             "\"systemName\":\"{s}\"," ++
             "\"systemVersion\":\"{s}\"," ++
@@ -156,19 +165,27 @@ fn describeDevice(buf: []u8) ![]const u8 {
             "\"timezone\":\"{s}\"" ++
             "}}",
         .{
+            system_version,
             try bridge_error.escapeJsonString(&esc[0], model),
+            try bridge_error.escapeJsonString(&esc[2], vendor_id),
+            user_interface_idiom == 1,
+            bounds.size.width,
+            bounds.size.height,
+            scale,
+            battery_level,
+            battery_charging,
             try bridge_error.escapeJsonString(&esc[1], device_name),
             system_name,
             system_version,
-            vendor_id,
+            try bridge_error.escapeJsonString(&esc[2], vendor_id),
             isSimulator(),
             bounds.size.width,
             bounds.size.height,
             scale,
             battery_level,
             battery_state,
-            try bridge_error.escapeJsonString(&esc[2], locale),
-            try bridge_error.escapeJsonString(&esc[3], timezone),
+            try bridge_error.escapeJsonString(&esc[3], locale),
+            try bridge_error.escapeJsonString(&esc[4], timezone),
         },
     );
 }
