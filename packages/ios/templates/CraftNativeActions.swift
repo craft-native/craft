@@ -83,7 +83,7 @@ enum CraftNativeActions {
         case ("Storage", _):
             sync = storage(method: method, args: args)
         case ("Lifecycle", "getState"):
-            sync = .success(appState())
+            sync = .success(currentAppState())
         case ("DeepLinks", "getInitialURL"):
             if config.enableDeepLinks {
                 sync = .success(DeepLinkManager.shared.getInitialURL().map(deepLinkData) ?? NSNull())
@@ -347,7 +347,7 @@ enum CraftNativeActions {
         }
     }
 
-    private static func appState() -> String {
+    static func currentAppState() -> String {
         switch UIApplication.shared.applicationState {
         case .active: return "active"
         case .inactive: return "inactive"

@@ -259,6 +259,7 @@ class DeepLinkManager {
     // the one the app was opened with; a link that arrives later is not, and
     // is no answer to getInitialURL.
     private var hasBeenReady = false
+    private var nativeListeners: [UUID: (URL, Bool) -> Void] = [:]
 
     private init() {}
 
@@ -289,7 +290,9 @@ class DeepLinkManager {
             initialURL = url
         }
 
-        if isReady && webView != nil {
+        if !nativeListeners.isEmpty {
+            dispatchNative(url, initial: false)
+        } else if isReady && webView != nil {
             dispatchDeepLink(url, initial: false)
         } else {
             pendingURLs.append(url)
@@ -298,6 +301,28 @@ class DeepLinkManager {
 
     func getInitialURL() -> URL? {
         return initialURL
+    }
+
+    @discardableResult
+    func addNativeListener(_ listener: @escaping (URL, Bool) -> Void) -> UUID {
+        let token = UUID()
+        nativeListeners[token] = listener
+        let firstNativeScreen = !hasBeenReady
+        hasBeenReady = true
+        let urls = pendingURLs
+        pendingURLs.removeAll()
+        for url in urls {
+            listener(url, firstNativeScreen && url == initialURL)
+        }
+        return token
+    }
+
+    func removeNativeListener(_ token: UUID) {
+        nativeListeners.removeValue(forKey: token)
+    }
+
+    private func dispatchNative(_ url: URL, initial: Bool) {
+        for listener in nativeListeners.values { listener(url, initial) }
     }
 
     private func dispatchDeepLink(_ url: URL, initial: Bool) {

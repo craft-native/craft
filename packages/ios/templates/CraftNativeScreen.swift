@@ -85,6 +85,8 @@ final class CraftNativeScreenController: UIViewController {
     private let mutationDocument = CraftNativeMutationDocument()
     private let capabilityScope = UUID().uuidString
     private var pendingCapabilityRequests = Set<String>()
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var deepLinkListener: UUID?
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -100,6 +102,8 @@ final class CraftNativeScreenController: UIViewController {
     deinit {
         imageTasks.values.forEach { $0.cancel() }
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        if let deepLinkListener = deepLinkListener { DeepLinkManager.shared.removeNativeListener(deepLinkListener) }
     }
 
     override func viewDidLoad() {
@@ -119,6 +123,7 @@ final class CraftNativeScreenController: UIViewController {
         ])
         setupJavaScript()
         loadBundle()
+        observeNativeEvents()
     }
 
     private func setupJavaScript() {
@@ -162,6 +167,31 @@ final class CraftNativeScreenController: UIViewController {
         if routeName == nil, let selected = jsContext.objectForKeyedSubscript("__stxNativeRoute")?.toString() {
             navigationItem.title = selected
         }
+    }
+
+    private func observeNativeEvents() {
+        func observe(_ name: Notification.Name, state: String) {
+            lifecycleObservers.append(NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in self?.sendAppState(state) })
+        }
+        observe(UIApplication.didBecomeActiveNotification, state: "active")
+        observe(UIApplication.willResignActiveNotification, state: "inactive")
+        observe(UIApplication.didEnterBackgroundNotification, state: "background")
+        sendAppState(CraftNativeActions.currentAppState())
+        deepLinkListener = DeepLinkManager.shared.addNativeListener { [weak self] url, initial in
+            guard let self = self, self.navigationController?.topViewController === self else { return }
+            var payload = CraftNativeActions.deepLinkData(url)
+            payload["initial"] = initial
+            self.send(type: "DEEP_LINK", payload: payload)
+        }
+    }
+
+    private func sendAppState(_ state: String) {
+        guard navigationController?.topViewController === self else { return }
+        send(type: "APP_STATE", payload: ["state": state])
     }
 
     private func showError(_ message: String) {
