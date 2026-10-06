@@ -66,6 +66,10 @@ describe('Craft iOS builder', () => {
     expect(actionsSwift).toContain('case ("Database", _)')
     expect(actionsSwift).toContain('case ("Notifications", _)')
     expect(actionsSwift).toContain('case ("DeepLinks", "getInitialURL")')
+    expect(actionsSwift).toContain('case ("SecureStorage", _)')
+    expect(actionsSwift).toContain('case ("Biometrics", "authenticate")')
+    expect(actionsSwift).toContain('import LocalAuthentication')
+    expect(actionsSwift).toContain('import Security')
 
     await expect(build({ output, generateProject: false, runtimeDir: null })).rejects.toThrow('native-screen.js')
     const bundle = join(output, 'compiled.js')

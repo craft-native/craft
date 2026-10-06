@@ -16,6 +16,11 @@ import android.os.Build
 import android.net.Uri
 import android.util.Base64
 import androidx.core.content.ContextCompat
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.fragment.app.FragmentActivity
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -37,15 +42,30 @@ internal class CraftNativeCapabilities(
     private val config: JSONObject,
 ) {
     private val storage = activity.getSharedPreferences("craft-native-storage", Context.MODE_PRIVATE)
+    private val securePrefs by lazy {
+        val masterKey = MasterKey.Builder(activity)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            activity,
+            "craft_secure_prefs",
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
     private val notificationStorage = activity.getSharedPreferences("craft-native-notifications", Context.MODE_PRIVATE)
     private val databaseExecutor = Executors.newSingleThreadExecutor()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private var database: SQLiteDatabase? = null
+    private val biometricPrompts = ConcurrentHashMap<String, BiometricPrompt>()
 
     init { restoreNotifications() }
 
     fun names(): JSONArray = JSONArray().apply {
         listOf("device", "clipboard", "haptics", "storage", "lifecycle").forEach(::put)
+        if (config.optBoolean("enableBiometric")) put("biometric")
+        if (config.optBoolean("enableSecureStorage")) put("secureStorage")
         if (config.optBoolean("enableLocalDatabase")) put("database")
         if (config.optBoolean("enableDeepLinks")) put("deepLinks")
         if (config.optBoolean("enableLocalNotifications")) put("notifications")
@@ -66,6 +86,11 @@ internal class CraftNativeCapabilities(
         }
         when (module) {
             "Storage" -> complete(requestToken, storage(method, args), completion)
+            "SecureStorage" -> {
+                if (!config.optBoolean("enableSecureStorage")) complete(requestToken, failure("CAPABILITY_DISABLED", "Secure storage is disabled"), completion)
+                else complete(requestToken, secureStorage(method, args), completion)
+            }
+            "Biometrics" -> biometrics(requestToken, method, args, completion)
             "Database" -> {
                 if (!config.optBoolean("enableLocalDatabase")) {
                     complete(requestToken, failure("CAPABILITY_DISABLED", "Local database is disabled"), completion)
@@ -82,12 +107,17 @@ internal class CraftNativeCapabilities(
         }
     }
 
-    fun cancel(requestToken: String) { cancelled.add(requestToken) }
+    fun cancel(requestToken: String) {
+        cancelled.add(requestToken)
+        biometricPrompts.remove(requestToken)?.cancelAuthentication()
+    }
 
     fun close() {
         databaseExecutor.shutdownNow()
         database?.close()
         database = null
+        biometricPrompts.values.forEach { it.cancelAuthentication() }
+        biometricPrompts.clear()
     }
 
     private fun complete(
@@ -122,6 +152,90 @@ internal class CraftNativeCapabilities(
             }
             "remove" -> success(storage.edit().remove(key).commit())
             else -> failure("UNKNOWN_ACTION", "Unsupported Storage method")
+        }
+    }
+
+    private fun secureStorage(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        val key = validKey(args.opt(0))
+        if (method != "clear" && key == null) return failure("INVALID_ARGUMENT", "Secure storage needs a non-empty key")
+        return try {
+            when (method) {
+                "set" -> {
+                    if (args.length() != 2 || args.opt(1) !is String) return failure("INVALID_ARGUMENT", "SecureStorage.set needs a key and string value")
+                    if (CraftNative.secureSet(securePrefs, key!!, args.getString(1))) success(true)
+                    else if (securePrefs.edit().putString(key, args.getString(1)).commit()) success(true)
+                    else failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
+                }
+                "get" -> when (val read = CraftNative.secureGet(securePrefs, key!!)) {
+                    is CraftNative.SecureRead.Found -> success(read.value)
+                    CraftNative.SecureRead.NotFound -> success(JSONObject.NULL)
+                    CraftNative.SecureRead.Declined -> success(securePrefs.getString(key, null) ?: JSONObject.NULL)
+                }
+                "remove" -> if (CraftNative.secureRemove(securePrefs, key!!)) success(true)
+                else success(securePrefs.edit().remove(key).commit())
+                "clear" -> if (CraftNative.secureClear(securePrefs)) success(true)
+                else success(securePrefs.edit().clear().commit())
+                else failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
+            }
+        } catch (error: Exception) {
+            failure("SECURE_STORAGE_ERROR", error.message ?: "Secure storage operation failed")
+        }
+    }
+
+    private fun biometrics(
+        requestToken: String,
+        method: String,
+        args: JSONArray,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+    ) {
+        if (!config.optBoolean("enableBiometric")) {
+            complete(requestToken, failure("CAPABILITY_DISABLED", "Biometric authentication is disabled"), completion)
+            return
+        }
+        val manager = BiometricManager.from(activity)
+        when (method) {
+            "isAvailable" -> complete(requestToken, success(manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS), completion)
+            "getBiometricType" -> {
+                val available = manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+                val type = when {
+                    !available -> "none"
+                    activity.packageManager.hasSystemFeature("android.hardware.biometrics.face") -> "faceId"
+                    else -> "fingerprint"
+                }
+                complete(requestToken, success(type), completion)
+            }
+            "authenticate" -> {
+                if (activity !is FragmentActivity) {
+                    complete(requestToken, failure("AUTHENTICATION_FAILED", "Activity does not support biometric prompts"), completion)
+                    return
+                }
+                val reason = args.optString(0).ifBlank { "Authenticate to continue" }
+                activity.runOnUiThread {
+                    if (cancelled.contains(requestToken)) return@runOnUiThread
+                    try {
+                        val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), object : BiometricPrompt.AuthenticationCallback() {
+                            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                                biometricPrompts.remove(requestToken)
+                                complete(requestToken, success(true), completion)
+                            }
+                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                biometricPrompts.remove(requestToken)
+                                complete(requestToken, failure("AUTHENTICATION_FAILED", errString.toString()), completion)
+                            }
+                        })
+                        biometricPrompts[requestToken] = prompt
+                        prompt.authenticate(BiometricPrompt.PromptInfo.Builder()
+                            .setTitle("Authenticate")
+                            .setSubtitle(reason)
+                            .setNegativeButtonText("Cancel")
+                            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                            .build())
+                    } catch (error: Exception) {
+                        complete(requestToken, failure("AUTHENTICATION_FAILED", error.message ?: "Biometric authentication failed"), completion)
+                    }
+                }
+            }
+            else -> complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Biometrics method"), completion)
         }
     }
 

@@ -1,5 +1,7 @@
 import Foundation
+import LocalAuthentication
 import SQLite3
+import Security
 import UIKit
 import UserNotifications
 
@@ -18,11 +20,14 @@ enum CraftNativeActions {
     private static let databaseQueue = DispatchQueue(label: "dev.craft.native.database")
     private static let cancellationLock = NSLock()
     private static var cancelledRequests = Set<String>()
+    private static var biometricContexts = [String: LAContext]()
     private static var database: OpaquePointer?
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func capabilities(config: CraftConfig) -> [String] {
         var values = ["device", "clipboard", "haptics", "storage", "lifecycle"]
+        if config.enableBiometric { values.append("biometric") }
+        if config.enableSecureStorage { values.append("secureStorage") }
         if config.enableLocalDatabase { values.append("database") }
         if config.enableDeepLinks { values.append("deepLinks") }
         if config.enableLocalNotifications { values.append("notifications") }
@@ -82,6 +87,23 @@ enum CraftNativeActions {
             sync = perform(action: "clipboardRead", body: [:], config: config)
         case ("Storage", _):
             sync = storage(method: method, args: args)
+        case ("SecureStorage", _):
+            guard config.enableSecureStorage else {
+                complete(requestToken, failure("CAPABILITY_DISABLED", "Secure storage is disabled"), completion)
+                return
+            }
+            sync = secureStorage(method: method, args: args)
+        case ("Biometrics", "isAvailable"):
+            sync = config.enableBiometric ? .success(biometricContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)) : failure("CAPABILITY_DISABLED", "Biometric authentication is disabled")
+        case ("Biometrics", "getBiometricType"):
+            sync = config.enableBiometric ? .success(biometricType()) : failure("CAPABILITY_DISABLED", "Biometric authentication is disabled")
+        case ("Biometrics", "authenticate"):
+            guard config.enableBiometric else {
+                complete(requestToken, failure("CAPABILITY_DISABLED", "Biometric authentication is disabled"), completion)
+                return
+            }
+            authenticate(requestToken: requestToken, args: args, completion: completion)
+            return
         case ("Lifecycle", "getState"):
             sync = .success(currentAppState())
         case ("DeepLinks", "getInitialURL"):
@@ -113,7 +135,9 @@ enum CraftNativeActions {
     static func cancel(requestToken: String) {
         cancellationLock.lock()
         cancelledRequests.insert(requestToken)
+        let context = biometricContexts.removeValue(forKey: requestToken)
         cancellationLock.unlock()
+        context?.invalidate()
     }
 
     private static func complete(
@@ -167,6 +191,89 @@ enum CraftNativeActions {
             return .success(true)
         default:
             return failure("UNKNOWN_ACTION", "Unsupported Storage method")
+        }
+    }
+
+    private static func secureStorage(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
+        let service = "dev.craft.native.secure"
+        if method == "clear" {
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else {
+                return failure("SECURE_STORAGE_ERROR", "Secure storage could not be cleared")
+            }
+            return .success(true)
+        }
+        guard let key = validKey(args.first) else { return failure("INVALID_ARGUMENT", "Secure storage needs a non-empty key") }
+        let base: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: key,
+        ]
+        switch method {
+        case "set":
+            guard args.count == 2, let value = args[1] as? String else {
+                return failure("INVALID_ARGUMENT", "SecureStorage.set needs a key and string value")
+            }
+            var query = base
+            query[kSecValueData as String] = Data(value.utf8)
+            let status = SecItemAdd(query as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                let update = SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(value.utf8)] as CFDictionary)
+                return update == errSecSuccess ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be updated")
+            }
+            return status == errSecSuccess ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
+        case "get":
+            var query = base
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var result: AnyObject?
+            let status = SecItemCopyMatching(query as CFDictionary, &result)
+            if status == errSecItemNotFound { return .success(NSNull()) }
+            guard status == errSecSuccess, let data = result as? Data else {
+                return failure("SECURE_STORAGE_ERROR", "Secure storage could not be read")
+            }
+            return .success(String(decoding: data, as: UTF8.self))
+        case "remove":
+            let status = SecItemDelete(base as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound ? .success(true) : failure("SECURE_STORAGE_ERROR", "Secure storage could not be removed")
+        default:
+            return failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
+        }
+    }
+
+    private static func biometricContext() -> LAContext {
+        let context = LAContext()
+        context.localizedCancelTitle = "Cancel"
+        return context
+    }
+
+    private static func biometricType() -> String {
+        let context = biometricContext()
+        _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        switch context.biometryType {
+        case .faceID: return "faceId"
+        case .touchID: return "touchId"
+        default: return "none"
+        }
+    }
+
+    private static func authenticate(
+        requestToken: String,
+        args: [Any],
+        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+    ) {
+        let reason = (args.first as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Authenticate to continue"
+        let context = biometricContext()
+        cancellationLock.lock()
+        biometricContexts[requestToken] = context
+        cancellationLock.unlock()
+        context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason) { result, error in
+            cancellationLock.lock()
+            biometricContexts.removeValue(forKey: requestToken)
+            cancellationLock.unlock()
+            if result { complete(requestToken, .success(true), completion) }
+            else { complete(requestToken, failure("AUTHENTICATION_FAILED", error?.localizedDescription ?? "Biometric authentication failed"), completion) }
         }
     }
 
