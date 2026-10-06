@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.115...v0.0.116)
+
+## 🚀 Features
+
+- **mobile**: craft.speech speaks cues over the music, natively ([07786da](https://github.com/craft-native/craft/commit/07786da)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.114...v0.0.115)
 
 ## 🤖 Continuous Integration
