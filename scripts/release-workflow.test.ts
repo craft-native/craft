@@ -14,8 +14,20 @@ type Job = {
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
 const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
+const stxNativeCompilerCommit = '6383325bd1238c8c67d9f60ace6b924205c9717c'
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
+
+test('mobile device jobs use the same pinned stx-native compiler', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const compilerCheckouts = Object.values(workflow.jobs).flatMap(job => job.steps ?? []).filter((step) => {
+    const options = step.with as Record<string, string> | undefined
+    return options?.repository === 'stacksjs/stx'
+  })
+  expect(compilerCheckouts).toHaveLength(2)
+  for (const step of compilerCheckouts)
+    expect((step.with as Record<string, string>).ref).toBe(stxNativeCompilerCommit)
+})
 
 test('workflow setup uses a known Pantry CLI instead of resolving latest', () => {
   for (const file of ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'benchmarks.yml', 'binary-size.yml', 'native-lifecycle.yml']) {
