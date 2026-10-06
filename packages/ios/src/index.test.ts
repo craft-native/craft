@@ -36,6 +36,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
+    expect(nativeSwift).toContain('platform: "ios"')
     expect(nativeSwift).toContain('mutationProtocolVersion: 1')
     expect(nativeSwift).toContain('capabilityProtocolVersion: \\(craftNativeCapabilityProtocolVersion)')
     expect(nativeSwift).toContain('initialAppState: "\\(CraftNativeActions.currentAppState())"')

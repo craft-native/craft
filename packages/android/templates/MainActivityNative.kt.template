@@ -205,6 +205,7 @@ class MainActivity : AppCompatActivity() {
               const port = await android.getNamedPort('craft');
               $routePrelude
               globalThis.__stxNativeBridge = {
+                platform: 'android',
                 mutationProtocolVersion: 1,
                 capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
                 capabilities: ${capabilities.names()},
@@ -216,6 +217,7 @@ class MainActivity : AppCompatActivity() {
         """.trimIndent() else """
             $routePrelude
             globalThis.__stxNativeBridge = {
+              platform: 'android',
               mutationProtocolVersion: 1,
               capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
               capabilities: ${capabilities.names()},

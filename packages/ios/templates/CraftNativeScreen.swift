@@ -144,6 +144,7 @@ final class CraftNativeScreenController: UIViewController {
         jsContext.evaluateScript("""
             globalThis.__stxNativeCallback = null;
             globalThis.__stxNativeBridge = {
+                platform: "ios",
                 mutationProtocolVersion: 1,
                 capabilityProtocolVersion: \(craftNativeCapabilityProtocolVersion),
                 capabilities: \(capabilityJSON),
