@@ -789,6 +789,25 @@ export const secureStorage = {
   },
 
   /**
+   * Remove a securely stored value using the legacy native contract.
+   *
+   * New code may use {@link delete}; this alias keeps older native screens
+   * and the public `craft.d.ts` contract working across bridge versions.
+   *
+   * @param key - Storage key
+   */
+  async remove(key: string): Promise<void> {
+    const craft = getCraftMobile()
+    if (typeof window !== 'undefined' && craft?.secureStorage) {
+      if (typeof craft.secureStorage.remove === 'function') return craft.secureStorage.remove(key)
+      return craft.secureStorage.delete(key)
+    }
+    if (typeof window !== 'undefined' && (window as any).craft)
+      throw new Error('Craft secure storage bridge is unavailable')
+    localStorage.removeItem(`secure_${key}`)
+  },
+
+  /**
    * Clear all securely stored values.
    */
   async clear(): Promise<void> {

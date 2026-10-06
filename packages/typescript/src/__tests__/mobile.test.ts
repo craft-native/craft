@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import mobile, { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, speech, watchConnectivity } from '../api/mobile'
+import mobile, { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, secureStorage, speech, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -193,6 +193,23 @@ describe('Mobile Android bridge promises', () => {
       if (previousWindow === undefined) delete (globalThis as any).window
       else (globalThis as any).window = previousWindow
     }
+  })
+})
+
+describe('Mobile secure storage aliases', () => {
+  it('removes through the legacy bridge method when available', async () => {
+    const removed: string[] = []
+    await withWindow({
+      craft: {
+        secureStorage: {
+          remove: async (key: string) => { removed.push(key) },
+          delete: async () => { throw new Error('delete should not be used') },
+        },
+      },
+    }, async () => {
+      await secureStorage.remove('session-token')
+    })
+    expect(removed).toEqual(['session-token'])
   })
 })
 

@@ -86,6 +86,9 @@ Remove a value from secure storage.
 await secureStorage.remove('auth_token')
 ```
 
+`secureStorage.delete(key)` is the equivalent modern spelling. Both methods
+are supported so screens can share code with older native bridge versions.
+
 **Parameters:**
 
 | Name | Type | Description |
