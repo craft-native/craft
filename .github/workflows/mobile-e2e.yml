@@ -130,7 +130,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 523f25fe2c637c0a9d0b5078ef68d9009fef13b5
+          ref: 1b4294210c7d29e9c8f54eb349ea0787863caaae
           path: .stx-native-compiler
 
       - name: Install stx-native compiler dependencies
@@ -235,7 +235,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 523f25fe2c637c0a9d0b5078ef68d9009fef13b5
+          ref: 1b4294210c7d29e9c8f54eb349ea0787863caaae
           path: .stx-native-compiler
 
       - name: Install Android stx-native compiler dependencies
