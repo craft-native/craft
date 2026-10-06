@@ -11,6 +11,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.Editable
@@ -46,6 +48,8 @@ import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.UUID
+
+private const val CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS = 30_000L
 
 private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     val content = LinearLayout(context)
@@ -90,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         val mutations = CraftNativeMutationDocument()
         val capabilityScope = UUID.randomUUID().toString()
         val pendingCapabilities = mutableSetOf<String>()
+        val capabilityTimeouts = mutableMapOf<String, Runnable>()
         var active = true
 
         fun close() {
@@ -105,6 +110,7 @@ class MainActivity : AppCompatActivity() {
     private var bundle = ""
     private lateinit var config: JSONObject
     private lateinit var capabilities: CraftNativeCapabilities
+    private val capabilityHandler = Handler(Looper.getMainLooper())
     private var hapticsEnabled = false
     private var clipboardEnabled = false
     internal var nativeAppState = "inactive"
@@ -208,6 +214,7 @@ class MainActivity : AppCompatActivity() {
                 platform: 'android',
                 mutationProtocolVersion: 1,
                 capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
+                capabilityTimeoutMs: $CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS,
                 capabilities: ${capabilities.names()},
                 initialAppState: ${JSONObject.quote(nativeAppState)},
                 postMessage: function(value) { port.postMessage(value); },
@@ -220,6 +227,7 @@ class MainActivity : AppCompatActivity() {
               platform: 'android',
               mutationProtocolVersion: 1,
               capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
+              capabilityTimeoutMs: $CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS,
               capabilities: ${capabilities.names()},
               initialAppState: ${JSONObject.quote(nativeAppState)},
               postMessage: function(value) { console.log(${JSONObject.quote(prefix)} + value); },
@@ -306,6 +314,7 @@ class MainActivity : AppCompatActivity() {
                 if (id.isNotBlank()) {
                     val token = "${screen.capabilityScope}/$id"
                     screen.pendingCapabilities.remove(token)
+                    screen.capabilityTimeouts.remove(token)?.let(capabilityHandler::removeCallbacks)
                     capabilities.cancel(token)
                 }
             }
@@ -780,6 +789,18 @@ class MainActivity : AppCompatActivity() {
         val args = payload.optJSONArray("args") ?: JSONArray()
         val token = "${screen.capabilityScope}/$id"
         screen.pendingCapabilities.add(token)
+        val timeout = Runnable {
+            if (!screen.active || !screen.pendingCapabilities.remove(token)) return@Runnable
+            screen.capabilityTimeouts.remove(token)
+            capabilities.cancel(token)
+            send(screen, "API_ERROR", JSONObject()
+                .put("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION)
+                .put("requestId", id)
+                .put("code", "TIMEOUT")
+                .put("message", "Native API request timed out"), id)
+        }
+        screen.capabilityTimeouts[token] = timeout
+        capabilityHandler.postDelayed(timeout, CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS)
         capabilities.perform(
             token,
             payload.optInt("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION),
@@ -788,6 +809,7 @@ class MainActivity : AppCompatActivity() {
             args,
         ) { result ->
             if (!screen.active || !screen.pendingCapabilities.remove(token)) return@perform
+            screen.capabilityTimeouts.remove(token)?.let(capabilityHandler::removeCallbacks)
             val response = JSONObject()
                 .put("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION)
                 .put("requestId", id)
@@ -919,6 +941,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeScreen(screen: Screen) {
+        screen.capabilityTimeouts.values.forEach(capabilityHandler::removeCallbacks)
+        screen.capabilityTimeouts.clear()
         screen.pendingCapabilities.forEach(capabilities::cancel)
         screen.pendingCapabilities.clear()
         releaseViewState(screen, retainedViews(screen).toList())

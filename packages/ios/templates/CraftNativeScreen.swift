@@ -3,6 +3,8 @@ import JavaScriptCore
 import SwiftUI
 import UIKit
 
+private let craftNativeCapabilityTimeoutMilliseconds = 30_000
+
 /// A WebView-free host for the first stx-native vertical slice. The bundled
 /// JavaScript sends whole, compiled view trees to UIKit and receives control
 /// events and Craft API replies through JavaScriptCore.
@@ -85,6 +87,7 @@ final class CraftNativeScreenController: UIViewController {
     private let mutationDocument = CraftNativeMutationDocument()
     private let capabilityScope = UUID().uuidString
     private var pendingCapabilityRequests = Set<String>()
+    private var pendingCapabilityDeadlines: [String: DispatchWorkItem] = [:]
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var deepLinkListener: UUID?
 
@@ -101,6 +104,7 @@ final class CraftNativeScreenController: UIViewController {
 
     deinit {
         imageTasks.values.forEach { $0.cancel() }
+        pendingCapabilityDeadlines.values.forEach { $0.cancel() }
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         if let deepLinkListener = deepLinkListener { DeepLinkManager.shared.removeNativeListener(deepLinkListener) }
@@ -147,6 +151,7 @@ final class CraftNativeScreenController: UIViewController {
                 platform: "ios",
                 mutationProtocolVersion: 1,
                 capabilityProtocolVersion: \(craftNativeCapabilityProtocolVersion),
+                capabilityTimeoutMs: \(craftNativeCapabilityTimeoutMilliseconds),
                 capabilities: \(capabilityJSON),
                 initialAppState: "\(CraftNativeActions.currentAppState())",
                 postMessage: function(message) { craftNativePostMessage(message); },
@@ -261,6 +266,22 @@ final class CraftNativeScreenController: UIViewController {
             let args = payload["args"] as? [Any] ?? []
             let requestToken = "\(capabilityScope)/\(id)"
             pendingCapabilityRequests.insert(requestToken)
+            let deadline = DispatchWorkItem { [weak self] in
+                guard let self = self, self.pendingCapabilityRequests.remove(requestToken) != nil else { return }
+                self.pendingCapabilityDeadlines.removeValue(forKey: requestToken)
+                CraftNativeActions.cancel(requestToken: requestToken)
+                self.send(type: "API_ERROR", payload: [
+                    "version": craftNativeCapabilityProtocolVersion,
+                    "requestId": id,
+                    "code": "TIMEOUT",
+                    "message": "Native API request timed out",
+                ], correlationId: id)
+            }
+            pendingCapabilityDeadlines[requestToken] = deadline
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + .milliseconds(craftNativeCapabilityTimeoutMilliseconds),
+                execute: deadline
+            )
             CraftNativeActions.perform(
                 requestToken: requestToken,
                 version: payload["version"] as? Int ?? craftNativeCapabilityProtocolVersion,
@@ -270,6 +291,7 @@ final class CraftNativeScreenController: UIViewController {
                 config: config
             ) { [weak self] answer in
                 guard let self = self, self.pendingCapabilityRequests.remove(requestToken) != nil else { return }
+                self.pendingCapabilityDeadlines.removeValue(forKey: requestToken)?.cancel()
                 switch answer {
                 case .success(let data):
                     self.send(type: "API_RESPONSE", payload: [
@@ -290,6 +312,7 @@ final class CraftNativeScreenController: UIViewController {
             guard let id = payload["requestId"] as? String else { return }
             let requestToken = "\(capabilityScope)/\(id)"
             pendingCapabilityRequests.remove(requestToken)
+            pendingCapabilityDeadlines.removeValue(forKey: requestToken)?.cancel()
             CraftNativeActions.cancel(requestToken: requestToken)
         default:
             break
