@@ -734,6 +734,11 @@ struct CraftWebView: UIViewRepresentable {
         /// What the session was before speech claimed it; nil while speech
         /// does not hold it.
         private var speechAudioSessionToRestore: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+        /// Activating and deactivating the audio session blocks until the
+        /// audio hardware answers, which iOS flags as a hang risk on the main
+        /// thread. They run here instead, in order, and the session state
+        /// above is only touched here.
+        private let speechAudioQueue = DispatchQueue(label: "craft.speech.audio")
 
         // Orientation lock
         private var lockedOrientation: UIInterfaceOrientationMask?
@@ -4840,9 +4845,12 @@ struct CraftWebView: UIViewRepresentable {
                     utterance.voice = voice
                 }
 
-                self.claimAudioSessionForSpeech()
                 self.pendingUtterances.append((utterance, callbackId))
-                self.speechSynthesizer.speak(utterance)
+                self.claimAudioSessionForSpeech {
+                    // Stopped while the session was being set up: say nothing.
+                    guard self.pendingUtterances.contains(where: { $0.utterance === utterance }) else { return }
+                    self.speechSynthesizer.speak(utterance)
+                }
             }
         }
 
@@ -4898,44 +4906,59 @@ struct CraftWebView: UIViewRepresentable {
         /// podcast rather than talking over it. Left alone while recognition
         /// or a recording holds the session: switching it to playback would
         /// cut their microphone off mid-take.
-        private func claimAudioSessionForSpeech() {
-            if speechAudioSessionToRestore != nil || audioEngine.isRunning || (audioRecorder?.isRecording ?? false) { return }
-            let session = AVAudioSession.sharedInstance()
-            let previous = (session.category, session.mode, session.categoryOptions)
-            do {
-                try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
-                try session.setActive(true)
-                speechAudioSessionToRestore = previous
-            } catch {
-                // Still speak, through whatever session the app has: a cue
-                // that does not duck beats one that never plays.
-                print("[Craft] Speech audio session failed: \(error.localizedDescription)")
+        ///
+        /// Set up on the speech queue, then `start` runs on the main thread.
+        private func claimAudioSessionForSpeech(then start: @escaping () -> Void) {
+            let microphoneBusy = audioEngine.isRunning || (audioRecorder?.isRecording ?? false)
+            speechAudioQueue.async {
+                if self.speechAudioSessionToRestore == nil && !microphoneBusy {
+                    let session = AVAudioSession.sharedInstance()
+                    let previous = (session.category, session.mode, session.categoryOptions)
+                    do {
+                        try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+                        try session.setActive(true)
+                        self.speechAudioSessionToRestore = previous
+                    } catch {
+                        // Still speak, through whatever session the app has: a
+                        // cue that does not duck beats one that never plays.
+                        print("[Craft] Speech audio session failed: \(error.localizedDescription)")
+                    }
+                }
+                DispatchQueue.main.async(execute: start)
             }
         }
 
         /// Hand the audio back once nothing is left to say, so the music
         /// returns to full volume instead of staying ducked, and put back the
         /// category the app had, so the page's own media plays as before.
+        ///
+        /// Checked on the main thread, where the queue of utterances lives, and
+        /// done on the speech queue after any setup already asked for, so a
+        /// cue that arrives meanwhile reclaims the session after this.
         private func releaseAudioSessionIfSilent(retry: Bool = true) {
-            guard let previous = speechAudioSessionToRestore, pendingUtterances.isEmpty else { return }
-            let session = AVAudioSession.sharedInstance()
-            do {
-                try session.setActive(false, options: .notifyOthersOnDeactivation)
-            } catch {
-                // Busy: the synthesizer's audio has not quite drained, or the
-                // page has its own media playing. Once more shortly covers the
-                // first; for the second, staying active is right, and the
-                // ducking still ends when the music app hears nothing more.
-                if retry {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self.releaseAudioSessionIfSilent(retry: false)
+            guard pendingUtterances.isEmpty else { return }
+            speechAudioQueue.async {
+                guard let previous = self.speechAudioSessionToRestore else { return }
+                let session = AVAudioSession.sharedInstance()
+                do {
+                    try session.setActive(false, options: .notifyOthersOnDeactivation)
+                } catch {
+                    // Busy: the synthesizer's audio has not quite drained, or
+                    // the page has its own media playing. Once more shortly
+                    // covers the first; for the second, staying active is
+                    // right, and the ducking still ends when the music app
+                    // hears nothing more.
+                    if retry {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self.releaseAudioSessionIfSilent(retry: false)
+                        }
+                        return
                     }
-                    return
+                    print("[Craft] Speech audio session release failed: \(error.localizedDescription)")
                 }
-                print("[Craft] Speech audio session release failed: \(error.localizedDescription)")
+                self.speechAudioSessionToRestore = nil
+                try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
             }
-            speechAudioSessionToRestore = nil
-            try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
         }
 
         fileprivate func speechDidEnd(_ utterance: AVSpeechUtterance, spoken: Bool) {
