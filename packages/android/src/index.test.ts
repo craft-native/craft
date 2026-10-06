@@ -57,6 +57,7 @@ describe('Craft Android builder', () => {
       expect(nativeCapabilities).toContain('"Biometrics" -> biometrics(requestToken, method, args, completion)')
       expect(nativeCapabilities).toContain('EncryptedSharedPreferences.create(')
       expect(nativeCapabilities).toContain('BiometricPrompt.AuthenticationCallback()')
+      expect(nativeCapabilities).toContain('val key = validKey(args.opt(0)) ?: return failure')
       expect(nativeCapabilities).toContain('alarm.setAndAllowWhileIdle(')
       expect(nativeCapabilities).toContain('private fun jsonString(value: Any?): String?')
       expect(nativeCapabilities).toContain('emptyArray<String>(), "")')

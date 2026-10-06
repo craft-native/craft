@@ -156,25 +156,30 @@ internal class CraftNativeCapabilities(
     }
 
     private fun secureStorage(method: String, args: JSONArray): CraftNativeCapabilityResult {
-        val key = validKey(args.opt(0))
-        if (method != "clear" && key == null) return failure("INVALID_ARGUMENT", "Secure storage needs a non-empty key")
+        if (method == "clear") {
+            return try {
+                if (CraftNative.secureClear(securePrefs)) success(true)
+                else success(securePrefs.edit().clear().commit())
+            } catch (error: Exception) {
+                failure("SECURE_STORAGE_ERROR", error.message ?: "Secure storage could not be cleared")
+            }
+        }
+        val key = validKey(args.opt(0)) ?: return failure("INVALID_ARGUMENT", "Secure storage needs a non-empty key")
         return try {
             when (method) {
                 "set" -> {
                     if (args.length() != 2 || args.opt(1) !is String) return failure("INVALID_ARGUMENT", "SecureStorage.set needs a key and string value")
-                    if (CraftNative.secureSet(securePrefs, key!!, args.getString(1))) success(true)
+                    if (CraftNative.secureSet(securePrefs, key, args.getString(1))) success(true)
                     else if (securePrefs.edit().putString(key, args.getString(1)).commit()) success(true)
                     else failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
                 }
-                "get" -> when (val read = CraftNative.secureGet(securePrefs, key!!)) {
+                "get" -> when (val read = CraftNative.secureGet(securePrefs, key)) {
                     is CraftNative.SecureRead.Found -> success(read.value)
                     CraftNative.SecureRead.NotFound -> success(JSONObject.NULL)
                     CraftNative.SecureRead.Declined -> success(securePrefs.getString(key, null) ?: JSONObject.NULL)
                 }
-                "remove" -> if (CraftNative.secureRemove(securePrefs, key!!)) success(true)
+                "remove" -> if (CraftNative.secureRemove(securePrefs, key)) success(true)
                 else success(securePrefs.edit().remove(key).commit())
-                "clear" -> if (CraftNative.secureClear(securePrefs)) success(true)
-                else success(securePrefs.edit().clear().commit())
                 else failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
             }
         } catch (error: Exception) {
