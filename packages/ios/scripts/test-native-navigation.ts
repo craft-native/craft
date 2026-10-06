@@ -44,7 +44,13 @@ try {
     name: 'NativeNavigation',
     bundleId: 'dev.craft.native-navigation',
     output,
-    config: { renderer: 'native' },
+    config: {
+      renderer: 'native',
+      enableDeepLinks: true,
+      enableLocalDatabase: true,
+      enableLocalNotifications: true,
+      urlSchemes: ['craft-native-test'],
+    },
     runtimeDir: null,
   })
   await build({ output, nativeBundlePath: bundle, generateProject: false, runtimeDir: null })
@@ -67,11 +73,16 @@ try {
   if (!device) throw new Error('No iOS simulator is available for native navigation tests')
   await bootSimulator(device)
   const resultBundle = join(workspace, 'NativeNavigation.xcresult')
+  const selectedTest = process.env.CRAFT_NATIVE_NAVIGATION_TEST
+  const selection = selectedTest
+    ? [`-only-testing:NativeNavigationUITests/NativeNavigationUITests/${selectedTest}`]
+    : []
   runXcodeTests([
     'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,
     '-derivedDataPath', join(workspace, 'DerivedData'),
     '-resultBundlePath', resultBundle,
+    ...selection,
     '-parallel-testing-enabled', 'NO', 'CODE_SIGNING_ALLOWED=NO', 'test',
   ], output, resultBundle)
   console.log('Native navigation simulator tests passed')

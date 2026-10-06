@@ -11,6 +11,41 @@ final class NativeNavigationUITests: XCTestCase {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    private func openCapabilities(_ app: XCUIApplication) {
+        XCTAssertTrue(app.buttons["open-capabilities"].waitForExistence(timeout: 15))
+        app.buttons["open-capabilities"].tap()
+        XCTAssertTrue(app.staticTexts["capabilities-title"].waitForExistence(timeout: 10))
+    }
+
+    func testCapabilityPersistenceAndNotificationsAcrossRelaunch() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertFalse(app.webViews.firstMatch.exists, "capability screen created a WebView")
+        openCapabilities(app)
+        XCTAssertEqual(app.staticTexts["capabilities-platform"].label, "Platform: ios")
+        XCTAssertEqual(app.staticTexts["capabilities-state"].label, "App state: active")
+
+        app.buttons["save-capabilities"].tap()
+        let status = app.staticTexts["capabilities-status"]
+        XCTAssertTrue(waitForLabel(status, "Saved Ada and Grace"), "found \(status.label)")
+        app.terminate()
+        app.launch()
+        openCapabilities(app)
+        app.buttons["load-capabilities"].tap()
+        XCTAssertTrue(waitForLabel(status, "Loaded Ada and Grace"), "found \(status.label)")
+
+        addUIInterruptionMonitor(withDescription: "Notification permission") { alert in
+            if alert.buttons["Allow"].exists { alert.buttons["Allow"].tap(); return true }
+            return false
+        }
+        app.buttons["test-notifications"].tap()
+        app.tap()
+        XCTAssertTrue(waitForLabel(
+            status,
+            "Notifications scheduled and cancelled"
+        ), "found \(status.label)")
+    }
+
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
         app.launch()

@@ -18,11 +18,16 @@ function tapImage() {
 function openDetails() {
   globalThis.craft.navigation.push('details', { name, count })
 }
+
+function openCapabilities() {
+  globalThis.craft.navigation.push('capabilities')
+}
 </script>
 
 <template>
   <View class="p-4">
     <Text testID="home-title">Home</Text>
+    <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <View
       testID="styled-row"
       style={{"flexDirection":"row-reverse","alignItems":"center","justifyContent":"center","gap":6,"paddingHorizontal":10,"paddingVertical":5,"width":240,"height":64,"backgroundColor":"#123456","opacity":0.75,"borderWidth":2,"borderColor":"#abcdef","borderRadius":7,"overflow":"hidden"}}

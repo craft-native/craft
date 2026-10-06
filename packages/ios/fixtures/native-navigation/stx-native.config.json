@@ -2,6 +2,7 @@
   "initialScreen": "home",
   "screens": {
     "home": "Home.stx",
+    "capabilities": "Capabilities.stx",
     "details": "Details.stx",
     "summary": "Summary.stx"
   }

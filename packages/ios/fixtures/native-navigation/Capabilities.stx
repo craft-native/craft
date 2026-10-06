@@ -1,0 +1,64 @@
+<script>
+let status = 'Ready'
+let appState = globalThis.craft.lifecycle.getState()
+
+globalThis.craft.lifecycle.onStateChange(function(state) {
+  appState = state
+})
+
+async function saveData() {
+  try {
+    await globalThis.craft.storage.set('native-e2e-profile', { name: 'Ada', visits: 2 })
+    await globalThis.craft.db.execute('CREATE TABLE IF NOT EXISTS native_e2e_people (name TEXT NOT NULL)')
+    await globalThis.craft.db.execute('DELETE FROM native_e2e_people')
+    await globalThis.craft.db.execute('INSERT INTO native_e2e_people (name) VALUES (?)', ['Grace'])
+    status = 'Saved Ada and Grace'
+  }
+  catch (error) {
+    status = `Save error ${error.code || 'UNKNOWN'}: ${error.message}`
+  }
+}
+
+async function loadData() {
+  try {
+    const profile = await globalThis.craft.storage.get('native-e2e-profile')
+    const rows = await globalThis.craft.db.query('SELECT name FROM native_e2e_people')
+    status = `Loaded ${profile.name} and ${rows[0].name}`
+  }
+  catch (error) {
+    status = `Load error ${error.code || 'UNKNOWN'}: ${error.message}`
+  }
+}
+
+async function testNotifications() {
+  try {
+    await globalThis.craft.notifications.schedule({
+      id: 'native-e2e-reminder',
+      title: 'Native reminder',
+      body: 'Capability bridge',
+      delay: 60000,
+    })
+    const scheduled = await globalThis.craft.notifications.pending()
+    await globalThis.craft.notifications.cancel('native-e2e-reminder')
+    const remaining = await globalThis.craft.notifications.pending()
+    const found = scheduled.some(function(item) { return item.id === 'native-e2e-reminder' })
+    const removed = !remaining.some(function(item) { return item.id === 'native-e2e-reminder' })
+    status = `Notifications ${found && removed ? 'scheduled and cancelled' : 'failed'}`
+  }
+  catch (error) {
+    status = `Notification error ${error.code || 'UNKNOWN'}: ${error.message}`
+  }
+}
+</script>
+
+<template>
+  <View class="p-4">
+    <Text testID="capabilities-title">Native capabilities</Text>
+    <Text testID="capabilities-platform">Platform: {globalThis.craft.platform}</Text>
+    <Text testID="capabilities-state">App state: {appState}</Text>
+    <Text testID="capabilities-status">{status}</Text>
+    <Button testID="save-capabilities" onPress={saveData}>Save persistent data</Button>
+    <Button testID="load-capabilities" onPress={loadData}>Load persistent data</Button>
+    <Button testID="test-notifications" onPress={testNotifications}>Test notifications</Button>
+  </View>
+</template>
