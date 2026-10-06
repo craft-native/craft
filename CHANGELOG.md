@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.116...v0.0.117)
+
+## 🐛 Bug Fixes
+
+- **ios**: set up the speech audio session off the main thread ([3d42b81](https://github.com/craft-native/craft/commit/3d42b81)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.115...v0.0.116)
 
 ## 🚀 Features
