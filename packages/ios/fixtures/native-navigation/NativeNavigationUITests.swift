@@ -44,6 +44,9 @@ final class NativeNavigationUITests: XCTestCase {
             status,
             "Notifications scheduled and cancelled"
         ), "found \(status.label)")
+
+        app.buttons["test-secure-storage"].tap()
+        XCTAssertTrue(waitForLabel(status, "Secure storage roundtrip"), "found \(status.label)")
     }
 
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {

@@ -51,6 +51,8 @@ class NativeCapabilitiesTest {
             .put("enableLocalDatabase", true)
             .put("enableDeepLinks", true)
             .put("enableLocalNotifications", true)
+            .put("enableSecureStorage", true)
+            .put("enableBiometric", true)
         var capabilities = CraftNativeCapabilities(activity, config)
         try {
             call(capabilities, "Storage", "clear")
@@ -63,6 +65,14 @@ class NativeCapabilitiesTest {
             val profile = call(capabilities, "Storage", "get", JSONArray().put("profile")).data as JSONObject
             assertEquals("Ada", profile.getString("name"))
             assertEquals(2, profile.getInt("visits"))
+
+            assertNull(call(capabilities, "SecureStorage", "clear").code)
+            assertNull(call(capabilities, "SecureStorage", "set", JSONArray().put("secret").put("keychain-value")).code)
+            assertEquals("keychain-value", call(capabilities, "SecureStorage", "get", JSONArray().put("secret")).data)
+            assertNull(call(capabilities, "SecureStorage", "remove", JSONArray().put("secret")).code)
+            assertEquals(JSONObject.NULL, call(capabilities, "SecureStorage", "get", JSONArray().put("secret")).data)
+            assertNull(call(capabilities, "Biometrics", "isAvailable").code)
+            assertNull(call(capabilities, "Biometrics", "getBiometricType").code)
 
             val table = "capability_${UUID.randomUUID().toString().replace("-", "")}"
             assertNull(call(capabilities, "Database", "execute", JSONArray()

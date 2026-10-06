@@ -49,6 +49,8 @@ try {
       enableDeepLinks: true,
       enableLocalDatabase: true,
       enableLocalNotifications: true,
+      enableSecureStorage: true,
+      enableBiometric: true,
       urlSchemes: ['craft-native-test'],
     },
     runtimeDir: null,
