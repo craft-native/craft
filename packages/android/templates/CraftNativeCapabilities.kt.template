@@ -42,7 +42,9 @@ internal class CraftNativeCapabilities(
     private val config: JSONObject,
 ) {
     private val storage = activity.getSharedPreferences("craft-native-storage", Context.MODE_PRIVATE)
-    private val securePrefs by lazy {
+    // The typed native renderer has no CraftNative Zig holder. Keep its
+    // values encrypted at rest with AndroidX's AES-256 GCM/SIV preferences.
+    private val encryptedSecureStorage by lazy {
         val masterKey = MasterKey.Builder(activity)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
@@ -158,8 +160,7 @@ internal class CraftNativeCapabilities(
     private fun secureStorage(method: String, args: JSONArray): CraftNativeCapabilityResult {
         if (method == "clear") {
             return try {
-                if (CraftNative.secureClear(securePrefs)) success(true)
-                else success(securePrefs.edit().clear().commit())
+                success(encryptedSecureStorage.edit().clear().commit())
             } catch (error: Exception) {
                 failure("SECURE_STORAGE_ERROR", error.message ?: "Secure storage could not be cleared")
             }
@@ -169,17 +170,11 @@ internal class CraftNativeCapabilities(
             when (method) {
                 "set" -> {
                     if (args.length() != 2 || args.opt(1) !is String) return failure("INVALID_ARGUMENT", "SecureStorage.set needs a key and string value")
-                    if (CraftNative.secureSet(securePrefs, key, args.getString(1))) success(true)
-                    else if (securePrefs.edit().putString(key, args.getString(1)).commit()) success(true)
+                    if (encryptedSecureStorage.edit().putString(key, args.getString(1)).commit()) success(true)
                     else failure("SECURE_STORAGE_ERROR", "Secure storage could not be written")
                 }
-                "get" -> when (val read = CraftNative.secureGet(securePrefs, key)) {
-                    is CraftNative.SecureRead.Found -> success(read.value)
-                    CraftNative.SecureRead.NotFound -> success(JSONObject.NULL)
-                    CraftNative.SecureRead.Declined -> success(securePrefs.getString(key, null) ?: JSONObject.NULL)
-                }
-                "remove" -> if (CraftNative.secureRemove(securePrefs, key)) success(true)
-                else success(securePrefs.edit().remove(key).commit())
+                "get" -> success(encryptedSecureStorage.getString(key, null) ?: JSONObject.NULL)
+                "remove" -> success(encryptedSecureStorage.edit().remove(key).commit())
                 else failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
             }
         } catch (error: Exception) {
