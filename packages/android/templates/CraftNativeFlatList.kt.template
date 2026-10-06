@@ -74,6 +74,8 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private var endReachedSignature: String? = null
     private var horizontal = false
     private var columns = 1
+    private var submissionGeneration = 0
+    private var isSubmittingList = false
 
     init {
         adapter = listAdapter
@@ -121,15 +123,23 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         val dataItems = next.filterNot { it.chrome }
         val contentSignature = "${dataItems.size}:${dataItems.lastOrNull()?.identity.orEmpty()}"
         if (contentSignature != endReachedSignature) endReachedSignature = null
+        val generation = ++submissionGeneration
+        isSubmittingList = true
         listAdapter.submitList(next) {
+            if (generation != submissionGeneration) return@submitList
             retainedState?.let { layoutManager?.onRestoreInstanceState(it) }
+            isSubmittingList = false
             evaluateEndReached()
         }
     }
 
     fun discardAll() {
         listAdapter.currentList.forEach { recycleItem?.invoke(it.identity) }
-        listAdapter.submitList(emptyList())
+        val generation = ++submissionGeneration
+        isSubmittingList = true
+        listAdapter.submitList(emptyList()) {
+            if (generation == submissionGeneration) isSubmittingList = false
+        }
         renderItem = null
         recycleItem = null
         endReached = null
@@ -149,6 +159,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     }
 
     private fun evaluateEndReached() {
+        if (isSubmittingList) return
         val manager = layoutManager as? LinearLayoutManager ?: return
         val lastVisible = manager.findLastVisibleItemPosition()
         val dataPositions = listAdapter.currentList.indices.filter { !listAdapter.currentList[it].chrome }

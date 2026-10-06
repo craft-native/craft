@@ -142,7 +142,8 @@ class NativeNavigationTest {
     fun compiledBundleRendersNavigatesAndRetainsNativeControls() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
-            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         ) as MainActivity
         try {
             val name = awaitView(activity, "name-input")
@@ -242,7 +243,8 @@ class NativeNavigationTest {
             assertSame("Replace kept details on the stack", name, awaitView(activity, "name-input"))
         }
         finally {
-            instrumentation.runOnMainSync { activity.finish() }
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
         }
     }
 }

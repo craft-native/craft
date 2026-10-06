@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
@@ -14,6 +14,21 @@ function run(args: string[], cwd: string): void {
   const result = Bun.spawnSync(args, { cwd, stdout: 'inherit', stderr: 'inherit' })
   if (result.exitCode !== 0)
     throw new Error(`${args[0]} exited with ${result.exitCode}`)
+}
+
+function runXcodeTests(args: string[], cwd: string, resultBundle: string): void {
+  console.log(args.join(' '))
+  const result = Bun.spawnSync(args, { cwd, stdout: 'inherit', stderr: 'inherit' })
+  if (result.exitCode === 0) return
+
+  if (existsSync(resultBundle)) {
+    console.log('xcodebuild failed; extracting test failure details from the result bundle')
+    Bun.spawnSync(
+      ['xcrun', 'xcresulttool', 'get', 'test-results', 'tests', '--path', resultBundle],
+      { cwd, stdout: 'inherit', stderr: 'inherit' },
+    )
+  }
+  throw new Error(`${args[0]} exited with ${result.exitCode}`)
 }
 
 function assertMutationBundle(path: string): void {
@@ -51,12 +66,14 @@ try {
   const device = await pickSimulator()
   if (!device) throw new Error('No iOS simulator is available for native navigation tests')
   await bootSimulator(device)
-  run([
+  const resultBundle = join(workspace, 'NativeNavigation.xcresult')
+  runXcodeTests([
     'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,
     '-derivedDataPath', join(workspace, 'DerivedData'),
+    '-resultBundlePath', resultBundle,
     '-parallel-testing-enabled', 'NO', 'CODE_SIGNING_ALLOWED=NO', 'test',
-  ], output)
+  ], output, resultBundle)
   console.log('Native navigation simulator tests passed')
 }
 finally {

@@ -61,7 +61,7 @@ class NativeFlatListTest {
     fun recyclesTenThousandRowsAndRetainsTheViewport() {
         val activity = instrumentation.startActivitySync(
             Intent(instrumentation.targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         ) as MainActivity
         try {
             val list = CraftNativeFlatList(activity)
@@ -90,7 +90,8 @@ class NativeFlatListTest {
             assertTrue("keyed update rendered the full data set", renders.get() < 400)
         }
         finally {
-            instrumentation.runOnMainSync { activity.finish() }
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
         }
     }
 
@@ -98,7 +99,7 @@ class NativeFlatListTest {
     fun configuresHorizontalGridInvertedAndChromeOnlyLists() {
         val activity = instrumentation.startActivitySync(
             Intent(instrumentation.targetContext, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         ) as MainActivity
         try {
             val list = CraftNativeFlatList(activity)
@@ -138,7 +139,8 @@ class NativeFlatListTest {
             assertEquals("chrome-only lists must not reach the data end", 0, chromeEndReached.get())
         }
         finally {
-            instrumentation.runOnMainSync { activity.finish() }
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
         }
     }
 }

@@ -1,6 +1,16 @@
 import XCTest
 
 final class NativeNavigationUITests: XCTestCase {
+    private func waitForLabel(
+        _ element: XCUIElement,
+        _ label: String,
+        timeout: TimeInterval = 10
+    ) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", label)
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
         app.launch()
@@ -36,15 +46,20 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["people-header"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["person-input-person-0"].waitForExistence(timeout: 5))
         app.buttons["shuffle-people"].tap()
-        XCTAssertEqual(app.staticTexts["person-label-person-0"].label, "1: Person zero updated")
-        for _ in 0..<12 where app.staticTexts["people-count"].label == "People: 40; events: 1" {
+        let firstPerson = app.staticTexts["person-label-person-0"]
+        XCTAssertTrue(waitForLabel(firstPerson, "1: Person zero updated"))
+        let peopleCount = app.staticTexts["people-count"]
+        for _ in 0..<30 where peopleCount.label == "People: 40; events: 1" {
             people.swipeUp()
         }
-        XCTAssertEqual(app.staticTexts["people-count"].label, "People: 41; events: 2")
+        XCTAssertTrue(
+            waitForLabel(peopleCount, "People: 41; events: 2"),
+            "FlatList did not report its data end; found \(peopleCount.label)"
+        )
         app.buttons["clear-people"].tap()
         XCTAssertTrue(app.staticTexts["people-empty"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["people-footer"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["people-count"].label, "People: 0; events: 3")
+        XCTAssertTrue(waitForLabel(peopleCount, "People: 0; events: 3"))
         XCTAssertTrue(app.navigationBars.buttons.firstMatch.exists, "UIKit did not provide a back button")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(field.waitForExistence(timeout: 10))
