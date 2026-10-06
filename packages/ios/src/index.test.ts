@@ -38,6 +38,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
     expect(nativeSwift).toContain('mutationProtocolVersion: 1')
     expect(nativeSwift).toContain('capabilityProtocolVersion: \\(craftNativeCapabilityProtocolVersion)')
+    expect(nativeSwift).toContain('initialAppState: "\\(CraftNativeActions.currentAppState())"')
     expect(nativeSwift).toContain('case "API_CANCEL":')
     expect(nativeSwift).toContain('UIApplication.didBecomeActiveNotification')
     expect(nativeSwift).toContain('DeepLinkManager.shared.addNativeListener')

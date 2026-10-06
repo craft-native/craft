@@ -147,6 +147,7 @@ final class CraftNativeScreenController: UIViewController {
                 mutationProtocolVersion: 1,
                 capabilityProtocolVersion: \(craftNativeCapabilityProtocolVersion),
                 capabilities: \(capabilityJSON),
+                initialAppState: "\(CraftNativeActions.currentAppState())",
                 postMessage: function(message) { craftNativePostMessage(message); },
                 onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
