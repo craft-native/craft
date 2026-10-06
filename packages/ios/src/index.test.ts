@@ -130,6 +130,7 @@ describe('Craft iOS builder', () => {
       associatedDomains: ['applinks:wildloop.org'],
       enableHealthKit: true,
       enablePushNotifications: true,
+      enableSecureStorage: true,
       privacy: {
         collectedDataTypes: [{
           type: 'NSPrivacyCollectedDataTypePreciseLocation',
@@ -147,6 +148,8 @@ describe('Craft iOS builder', () => {
     expect(entitlements).toContain('applinks:wildloop.org')
     expect(entitlements).toContain('com.apple.developer.healthkit')
     expect(entitlements).toContain('<string>$(CRAFT_APNS_ENVIRONMENT)</string>')
+    expect(entitlements).toContain('keychain-access-groups')
+    expect(entitlements).toContain('$(AppIdentifierPrefix)$(CFBundleIdentifier)')
     expect(entitlements).not.toContain('<string>development</string>')
     expect(renderWatchEntitlements({ ...config, appGroups: ['group.org.wildloop.app'] })).toContain('group.org.wildloop.app')
     expect(renderPrivacyManifest(config)).toContain('NSPrivacyCollectedDataTypePreciseLocation')

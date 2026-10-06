@@ -313,6 +313,9 @@ export function renderEntitlements(config: CraftConfig): string {
   if (config.enablePushNotifications) {
     entries.push('    <key>aps-environment</key>\n    <string>$(CRAFT_APNS_ENVIRONMENT)</string>')
   }
+  if (config.enableSecureStorage) {
+    entries.push('    <key>keychain-access-groups</key>\n    <array>\n        <string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>\n    </array>')
+  }
 
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${entries.join('\n')}\n</dict>\n</plist>\n`
 }
