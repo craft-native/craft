@@ -212,6 +212,23 @@ describe('Craft iOS builder', () => {
     expect(generatedConfig.enableScreenCapture).toBe(false)
   })
 
+  it('attaches keychain entitlements to secure-storage targets', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-secure-storage-'))
+    await init({
+      runtimeDir: null,
+      name: 'SecureStorage',
+      bundleId: 'dev.craft.secure-storage',
+      output,
+      config: { enableSecureStorage: true },
+    })
+
+    const project = readFileSync(join(output, 'project.yml'), 'utf8')
+    const entitlements = readFileSync(join(output, 'Craft.entitlements'), 'utf8')
+    expect(project).toContain('CODE_SIGN_ENTITLEMENTS: Craft.entitlements')
+    expect(entitlements).toContain('keychain-access-groups')
+    expect(entitlements).toContain('$(AppIdentifierPrefix)$(CFBundleIdentifier)')
+  })
+
   it('names the Swift types and target after an identifier, and shows the display name as given', async () => {
     expect(productName('HQ.training')).toBe('HQTraining')
     expect(productName('my app')).toBe('MyApp')

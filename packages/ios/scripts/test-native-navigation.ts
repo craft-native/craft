@@ -85,7 +85,7 @@ try {
     '-derivedDataPath', join(workspace, 'DerivedData'),
     '-resultBundlePath', resultBundle,
     ...selection,
-    '-parallel-testing-enabled', 'NO', 'CODE_SIGNING_ALLOWED=NO', 'test',
+    '-parallel-testing-enabled', 'NO', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'test',
   ], output, resultBundle)
   console.log('Native navigation simulator tests passed')
 }
