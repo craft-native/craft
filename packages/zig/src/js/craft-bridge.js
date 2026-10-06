@@ -678,6 +678,55 @@
   // -------------------------------------------------------------------------
   // fs — read/write/etc; values come back keyed by action.
   // -------------------------------------------------------------------------
+
+  // `fs.watch` names each watch here, page-side. Native registers it under the
+  // id it is sent, a `craft:fs:change` event carries that id back as
+  // `detail.id`, and `unwatch` sends it again. Before, `watch` sent no id at
+  // all, so native rejected every call with MISSING_DATA, and a fire-and-forget
+  // `_send` meant nobody heard.
+  //
+  // Unique across windows, not just this page: every window shares one native
+  // fs bridge, and a repeated id replaces the watch already under it.
+  var _fsWatchSeq = 0
+  const _fsWatches = {}
+  function _fsWatchId() {
+    _fsWatchSeq += 1
+    return `fsw-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${_fsWatchSeq}`
+  }
+
+  function _fsUnwatch(id) {
+    const key = String(id)
+    const h = _fsWatches[key]
+    // Once per watch: a handle stopped twice, or stopped and then passed to
+    // `craft.fs.unwatch`, posts nothing the second time.
+    if (!h) return Promise.resolve()
+    delete _fsWatches[key]
+    if (typeof h === 'function') window.removeEventListener('craft:fs:change', h)
+    return _send('fs', 'unwatch', _stringify({ id: key }))
+  }
+
+  // Resolves with `{ id, unwatch }` once native has registered the watch, and
+  // rejects when it refuses (PLATFORM_NOT_SUPPORTED on Linux and Windows).
+  // `callback` gets each `craft:fs:change` detail — `{ id, type, path }` —
+  // whose id is this watch's; `craft.fs.onChange` still hears all of them.
+  function _fsWatch(path, callback, opts) {
+    const id = _fsWatchId()
+    // Listening before the post, so an event racing the reply is not lost.
+    const h = (typeof callback === 'function')
+      ? function (e) { const d = (e && e.detail) || {}; if (d.id === id) callback(d) }
+      : true
+    if (typeof h === 'function') window.addEventListener('craft:fs:change', h)
+    _fsWatches[id] = h
+    return _req('fs', 'watch', _stringify({ id: id, path: String(path), recursive: !!(opts && opts.recursive) })).then(
+      function () { return { id: id, unwatch: function () { return _fsUnwatch(id) } } },
+      function (err) {
+        delete _fsWatches[id]
+        if (typeof h === 'function') window.removeEventListener('craft:fs:change', h)
+        throw err
+      }
+    )
+  }
+
   window.craft.fs = {
     readFile:   function (path)             { return _req('fs', 'readFile', _stringify({ path: String(path) })) },
     writeFile:  function (path, data)       { return _send('fs', 'writeFile', _stringify({ path: String(path), data: String(data) })) },
@@ -690,8 +739,8 @@
     rmdir:      function (path, opts)       { return _send('fs', 'rmdir', _stringify(Object.assign({ path: String(path) }, opts || {}))) },
     copy:       function (from, to)         { return _send('fs', 'copy', _stringify({ from: String(from), to: String(to) })) },
     move:       function (from, to)         { return _send('fs', 'move', _stringify({ from: String(from), to: String(to) })) },
-    watch:      function (path, callbackId) { return _send('fs', 'watch', _stringify({ path: String(path), callbackId: String(callbackId || '') })) },
-    unwatch:    function (id)               { return _send('fs', 'unwatch', _stringify({ id: String(id) })) },
+    watch:      function (path, cb, opts)   { return _fsWatch(path, cb, opts) },
+    unwatch:    function (id)               { return _fsUnwatch(id) },
     onChange:   _evt('craft:fs:change'),
     homeDir:    function ()                 { return _req('fs', 'getHomeDir').then(function (r) { return (r && r.path) || '' }) },
     tempDir:    function ()                 { return _req('fs', 'getTempDir').then(function (r) { return (r && r.path) || '' }) },

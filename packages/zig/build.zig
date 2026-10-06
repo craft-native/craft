@@ -1371,6 +1371,33 @@ pub fn build(b: *std.Build) void {
     });
     linkPlatformLibraries(b, bridge_haptics_tests.root_module, target_os, macos_sdk);
 
+    // `audio.zig`'s haptic engine, which plays through `bridge_haptics.zig`'s
+    // pattern table. Nothing else compiles the file — `craft.zig` re-exports it
+    // but is not a module root — which is how its own table went on numbering
+    // AppKit's patterns from 1 with no test to notice.
+    const audio_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/audio.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    linkPlatformLibraries(b, audio_tests.root_module, target_os, macos_sdk);
+
+    // The desktop fs bridge, end to end against a scratch directory: payloads
+    // decoded by `std.json`, files written, read back. A root of its own — see
+    // the file for why the tests cannot live in `bridge_fs.zig` — and linked
+    // like the binary because each handler replies through `bridge.evalJS`,
+    // which reaches the platform's webview code and finds no webview.
+    const bridge_fs_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_fs_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    linkPlatformLibraries(b, bridge_fs_tests.root_module, target_os, macos_sdk);
+
     // The host logger's own internals. `test/log_test.zig` already exercises it
     // through the module boundary, which cannot reach the config storage or the
     // formatter — the three places it was wrong. Rooted at the source file so
@@ -1812,6 +1839,8 @@ pub fn build(b: *std.Build) void {
     const run_log_unit_tests = b.addRunArtifact(log_unit_tests);
     const run_bridge_shell_tests = b.addRunArtifact(bridge_shell_tests);
     const run_bridge_haptics_tests = b.addRunArtifact(bridge_haptics_tests);
+    const run_audio_tests = b.addRunArtifact(audio_tests);
+    const run_bridge_fs_tests = b.addRunArtifact(bridge_fs_tests);
     const run_window_lifecycle_tests = b.addRunArtifact(window_lifecycle_tests);
     const run_window_registry_tests = b.addRunArtifact(window_registry_tests);
     const run_window_context_tests = b.addRunArtifact(window_context_tests);
@@ -1972,6 +2001,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_log_unit_tests.step);
     test_step.dependOn(&run_bridge_shell_tests.step);
     test_step.dependOn(&run_bridge_haptics_tests.step);
+    test_step.dependOn(&run_audio_tests.step);
+    test_step.dependOn(&run_bridge_fs_tests.step);
     test_step.dependOn(&run_window_lifecycle_tests.step);
     test_step.dependOn(&run_window_registry_tests.step);
     test_step.dependOn(&run_window_context_tests.step);

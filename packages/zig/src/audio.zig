@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const bridge_haptics = @import("bridge_haptics.zig");
 
 /// Audio Module
 /// Provides cross-platform audio playback, system sounds, and haptic feedback.
@@ -201,6 +202,34 @@ pub const HapticType = enum {
             .notification_warning => 0.7,
             .notification_error => 0.9,
         };
+    }
+
+    /// The style `craft.haptic()` posts for this type — the vocabulary the
+    /// mobile shims and `bridge_haptics.zig` read.
+    pub fn styleName(self: HapticType) []const u8 {
+        return switch (self) {
+            .impact_light => "light",
+            .impact_medium => "medium",
+            .impact_heavy => "heavy",
+            .impact_rigid => "rigid",
+            .impact_soft => "soft",
+            .notification_success => "success",
+            .notification_warning => "warning",
+            .notification_error => "error",
+            .selection_changed => "selection",
+        };
+    }
+
+    /// The `NSHapticFeedbackPattern` a Mac plays for this type.
+    ///
+    /// Not a table of its own: the trackpad has three patterns, and which
+    /// style lands on which is `bridge_haptics.patternForStyle`'s call, so a
+    /// native `HapticEngine` and a page's `craft.haptic()` feel the same. This
+    /// file used to keep its own table, numbered from 1 where AppKit counts
+    /// from 0, and so played Alignment for Generic and LevelChange for
+    /// Alignment.
+    pub fn macPattern(self: HapticType) bridge_haptics.Pattern {
+        return bridge_haptics.patternForStyle(self.styleName());
     }
 };
 
@@ -764,29 +793,14 @@ pub const HapticEngine = struct {
         self.intensity_multiplier = multiplier;
     }
 
+    /// Played through `bridge_haptics.perform`, which asks AppKit for the
+    /// feedback now rather than after the next draw and passes both arguments
+    /// as the integers they are.
     fn triggerMacOS(self: *Self, haptic_type: HapticType, intensity: f32) AudioError!void {
         _ = self;
         _ = intensity;
 
-        const macos = @import("macos.zig");
-
-        // NSHapticFeedbackManager
-        const NSHapticFeedbackManager = macos.getClass("NSHapticFeedbackManager");
-        if (NSHapticFeedbackManager == null) return AudioError.HapticNotSupported;
-
-        const manager = macos.msgSend0(NSHapticFeedbackManager, "defaultPerformer");
-        if (manager == null) return AudioError.HapticNotSupported;
-
-        // Map haptic type to NSHapticFeedbackPattern
-        const pattern: c_long = switch (haptic_type) {
-            .impact_light, .impact_soft, .selection_changed => 1, // NSHapticFeedbackPatternGeneric
-            .impact_medium => 2, // NSHapticFeedbackPatternAlignment
-            .impact_heavy, .impact_rigid => 3, // NSHapticFeedbackPatternLevelChange
-            .notification_success, .notification_warning, .notification_error => 1,
-        };
-
-        // performFeedbackPattern:performanceTime:
-        _ = macos.msgSend2(manager, "performFeedbackPattern:performanceTime:", pattern, @as(c_long, 0));
+        bridge_haptics.perform(haptic_type.macPattern()) catch return AudioError.HapticNotSupported;
     }
 
     fn triggerIOS(self: *Self, haptic_type: HapticType, intensity: f32) AudioError!void {
@@ -1071,6 +1085,27 @@ test "HapticType intensity" {
     try std.testing.expectApproxEqAbs(@as(f32, 0.3), HapticType.impact_light.getIntensity(), 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), HapticType.impact_medium.getIntensity(), 0.001);
     try std.testing.expectApproxEqAbs(@as(f32, 0.8), HapticType.impact_heavy.getIntensity(), 0.001);
+}
+
+test "HapticType plays AppKit's pattern for its style" {
+    // Pinned against `NSHapticFeedbackPattern` (Generic = 0, Alignment = 1,
+    // LevelChange = 2), not against the enum's names: the old table here was
+    // numbered from 1, so every type played the pattern above the one meant.
+    const cases = [_]struct { haptic: HapticType, raw: c_long }{
+        .{ .haptic = .impact_light, .raw = 0 },
+        .{ .haptic = .impact_medium, .raw = 0 },
+        .{ .haptic = .impact_soft, .raw = 0 },
+        .{ .haptic = .impact_rigid, .raw = 0 },
+        .{ .haptic = .impact_heavy, .raw = 2 },
+        .{ .haptic = .notification_success, .raw = 0 },
+        .{ .haptic = .notification_warning, .raw = 0 },
+        .{ .haptic = .notification_error, .raw = 2 },
+        .{ .haptic = .selection_changed, .raw = 1 },
+    };
+    try std.testing.expectEqual(std.enums.values(HapticType).len, cases.len);
+    for (cases) |case| {
+        try std.testing.expectEqual(case.raw, @backingInt(case.haptic.macPattern()));
+    }
 }
 
 test "AudioPlayer initialization" {

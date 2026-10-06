@@ -2,9 +2,32 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
 const io_context = @import("io_context.zig");
-const json_utils = @import("json_utils.zig");
 
 const BridgeError = bridge_error.BridgeError;
+
+/// Parse one action's payload into `T`, the fields that handler reads.
+///
+/// Through `std.json`, so string values arrive decoded. They were read with
+/// `json_utils.getString`, which hands back the raw bytes between the quotes:
+/// `craft.fs.writeFile(p, 'a\nb')` wrote a backslash and an `n`, a quote in
+/// the data landed as `\"`, and a path holding `\` or a `\u` escape named a
+/// file that was never asked for.
+///
+/// Each handler declares its own `T`, so the fields it reads sit in its body —
+/// where `test/capabilities_test.zig` looks for them — and reading a field the
+/// handler did not declare does not compile. Unknown fields are ignored, since
+/// `mkdir` and `rmdir` forward the caller's options object whole.
+///
+/// No payload at all is `MissingData`, which is what every handler reported for
+/// it before: no `d` means no `path`. Anything else that is not an object with
+/// the declared types is `InvalidJSON`.
+fn parsePayload(comptime T: type, allocator: std.mem.Allocator, data: []const u8) BridgeError!std.json.Parsed(T) {
+    if (std.mem.trim(u8, data, " \t\r\n").len == 0) return BridgeError.MissingData;
+    return std.json.parseFromSlice(T, allocator, data, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch BridgeError.InvalidJSON;
+}
 
 /// File watcher entry
 const WatchEntry = struct {
@@ -105,11 +128,13 @@ pub const FSBridge = struct {
     /// Read file contents
     /// JSON: {"path": "/path/to/file", "encoding": "utf8", "callbackId": "cb1"}
     fn readFile(self: *Self, data: []const u8) !void {
-        // Use the shared JSON helper — it handles `\"` inside string values.
-        // Previously each bridge field was parsed by `indexOfPos(..., "\"")`
-        // which truncated at the first backslash-escaped quote.
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -151,15 +176,20 @@ pub const FSBridge = struct {
     /// Write file contents
     /// JSON: {"path": "/path/to/file", "content": "data", "callbackId": "cb1"}
     fn writeFile(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        // `craft.fs.writeFile(path, data)` sends the bytes under `data`; this
-        // read `content`, which the page has never sent, so `orelse ""` fired
-        // on every call and the file was created empty. `content` stays
-        // accepted for anything posting raw bridge messages against the old
-        // spelling.
-        const content = json_utils.getString(data, "data") orelse
-            json_utils.getString(data, "content") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            // `craft.fs.writeFile(path, data)` sends the bytes under `data`;
+            // this read `content`, which the page has never sent, so the file
+            // was created empty. `content` stays accepted for anything posting
+            // raw bridge messages against the old spelling.
+            data: ?[]const u8 = null,
+            content: ?[]const u8 = null,
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const content = parsed.value.data orelse parsed.value.content orelse "";
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -184,12 +214,18 @@ pub const FSBridge = struct {
     /// Append to file
     /// JSON: {"path": "/path/to/file", "content": "data", "callbackId": "cb1"}
     fn appendFile(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        // Same mismatch as `writeFile`: the page sends `data`, this read
-        // `content`, and the append wrote nothing while reporting success.
-        const content = json_utils.getString(data, "data") orelse
-            json_utils.getString(data, "content") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            // Same mismatch as `writeFile`: the page sends `data`, this read
+            // `content`, and the append wrote nothing while reporting success.
+            data: ?[]const u8 = null,
+            content: ?[]const u8 = null,
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const content = parsed.value.data orelse parsed.value.content orelse "";
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -220,8 +256,13 @@ pub const FSBridge = struct {
     /// Delete file
     /// JSON: {"path": "/path/to/file", "callbackId": "cb1"}
     fn deleteFile(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -239,8 +280,13 @@ pub const FSBridge = struct {
     /// Check if path exists
     /// JSON: {"path": "/path/to/check", "callbackId": "cb1"}
     fn exists(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -263,8 +309,13 @@ pub const FSBridge = struct {
     /// Get file stats
     /// JSON: {"path": "/path/to/file", "callbackId": "cb1"}
     fn stat(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -303,8 +354,13 @@ pub const FSBridge = struct {
     /// Read directory contents
     /// JSON: {"path": "/path/to/dir", "callbackId": "cb1"}
     fn readDir(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -414,9 +470,15 @@ pub const FSBridge = struct {
     /// Create directory
     /// JSON: {"path": "/path/to/dir", "recursive": true, "callbackId": "cb1"}
     fn mkdir(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
-        const recursive = json_utils.getBool(data, "recursive") orelse false;
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+            recursive: bool = false,
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
+        const recursive = parsed.value.recursive;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -441,8 +503,13 @@ pub const FSBridge = struct {
     /// Remove directory
     /// JSON: {"path": "/path/to/dir", "callbackId": "cb1"}
     fn rmdir(self: *Self, data: []const u8) !void {
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
 
         if (path.len == 0) return BridgeError.MissingData;
 
@@ -460,14 +527,20 @@ pub const FSBridge = struct {
     /// Copy file
     /// JSON: {"src": "/path/from", "dest": "/path/to", "callbackId": "cb1"}
     fn copy(self: *Self, data: []const u8) !void {
-        // `craft.fs.copy(from, to)` sends `from`/`to`; this read `src`/`dest`,
-        // so both were empty and the call failed its own path check while the
-        // caller's promise resolved.
-        const src = json_utils.getString(data, "from") orelse
-            json_utils.getString(data, "src") orelse "";
-        const dest = json_utils.getString(data, "to") orelse
-            json_utils.getString(data, "dest") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            // `craft.fs.copy(from, to)` sends `from`/`to`; this read
+            // `src`/`dest`, so both were empty and the call failed its own path
+            // check while the caller's promise resolved.
+            from: ?[]const u8 = null,
+            src: ?[]const u8 = null,
+            to: ?[]const u8 = null,
+            dest: ?[]const u8 = null,
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const src = parsed.value.from orelse parsed.value.src orelse "";
+        const dest = parsed.value.to orelse parsed.value.dest orelse "";
+        const callback_id = parsed.value.callbackId;
 
         if (src.len == 0 or dest.len == 0) return BridgeError.MissingData;
 
@@ -487,14 +560,20 @@ pub const FSBridge = struct {
     /// Move/rename file
     /// JSON: {"src": "/path/from", "dest": "/path/to", "callbackId": "cb1"}
     fn move(self: *Self, data: []const u8) !void {
-        // `craft.fs.move(from, to)` sends `from`/`to`; this read `src`/`dest`,
-        // so both were empty and the call failed its own path check while the
-        // caller's promise resolved.
-        const src = json_utils.getString(data, "from") orelse
-            json_utils.getString(data, "src") orelse "";
-        const dest = json_utils.getString(data, "to") orelse
-            json_utils.getString(data, "dest") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
+        const parsed = try parsePayload(struct {
+            // `craft.fs.move(from, to)` sends `from`/`to`; this read
+            // `src`/`dest`, so both were empty and the call failed its own path
+            // check while the caller's promise resolved.
+            from: ?[]const u8 = null,
+            src: ?[]const u8 = null,
+            to: ?[]const u8 = null,
+            dest: ?[]const u8 = null,
+            callbackId: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const src = parsed.value.from orelse parsed.value.src orelse "";
+        const dest = parsed.value.to orelse parsed.value.dest orelse "";
+        const callback_id = parsed.value.callbackId;
 
         if (src.len == 0 or dest.len == 0) return BridgeError.MissingData;
 
@@ -511,17 +590,38 @@ pub const FSBridge = struct {
     }
 
     /// Watch a file or directory for changes
-    /// JSON: {"id": "watch1", "path": "/path/to/watch", "recursive": false, "callbackId": "cb1"}
+    /// JSON: {"id": "fsw1", "path": "/path/to/watch", "recursive": false}
+    ///
+    /// The page names the watch: `craft.fs.watch` generates `id`, routes
+    /// `craft:fs:change` events whose `detail.id` matches it to the caller's
+    /// callback, and sends the same `id` to `unwatch`. The reply is
+    /// `{"id": …}`, stamped with the call's request id so it settles that call
+    /// and no other — `screenSharing` answers a `watch` too, and the old
+    /// unstamped `__craftFSCallback` reply could have settled its call instead.
+    ///
+    /// Registration only. Nothing here watches the filesystem yet (that would
+    /// be FSEvents on macOS), so no `craft:fs:change` is emitted, and the
+    /// capability manifest says as much by reporting the channel `unknown`.
     fn watch(self: *Self, data: []const u8) !void {
-        const id = json_utils.getString(data, "id") orelse "";
-        const path = json_utils.getString(data, "path") orelse "";
-        const callback_id = json_utils.getString(data, "callbackId") orelse "";
-        const recursive = json_utils.getBool(data, "recursive") orelse false;
+        const parsed = try parsePayload(struct {
+            id: []const u8 = "",
+            path: []const u8 = "",
+            callbackId: []const u8 = "",
+            recursive: bool = false,
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const id = parsed.value.id;
+        const path = parsed.value.path;
+        const callback_id = parsed.value.callbackId;
+        const recursive = parsed.value.recursive;
 
         if (id.len == 0 or path.len == 0) return BridgeError.MissingData;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[FSBridge] watch: {s} -> {s} (recursive={})\n", .{ id, path, recursive });
+
+        const reply = try std.json.Stringify.valueAlloc(self.allocator, .{ .id = id }, .{});
+        defer self.allocator.free(reply);
 
         // Store watcher entry. Each dupe has its own errdefer so an OOM
         // partway through doesn't leak the earlier allocations. Previously
@@ -534,6 +634,9 @@ pub const FSBridge = struct {
         const callback_owned = try self.allocator.dupe(u8, callback_id);
         errdefer self.allocator.free(callback_owned);
 
+        // A second watch under a live id replaces the first. `put` alone kept
+        // the new strings and orphaned the old entry's, a leak per repeat.
+        self.removeWatcher(id);
         try self.watchers.put(id_owned, WatchEntry{
             .id = id_owned,
             .path = path_owned,
@@ -541,26 +644,33 @@ pub const FSBridge = struct {
             .recursive = recursive,
         });
 
-        // Note: Actual file system watching would require FSEvents on macOS
-        // For now, this just registers the intent to watch
-        self.sendFSSuccess(callback_id, "watch");
+        bridge_error.sendResultToJS(self.allocator, "watch", reply);
+    }
+
+    /// Drop a watcher and the strings it owns. Nothing when `id` is not one.
+    fn removeWatcher(self: *Self, id: []const u8) void {
+        if (self.watchers.fetchRemove(id)) |kv| {
+            self.allocator.free(kv.value.id);
+            self.allocator.free(kv.value.path);
+            self.allocator.free(kv.value.callback_id);
+        }
     }
 
     /// Stop watching
     /// JSON: {"id": "watch1"}
     fn unwatch(self: *Self, data: []const u8) !void {
-        const id = json_utils.getString(data, "id") orelse "";
+        const parsed = try parsePayload(struct {
+            id: []const u8 = "",
+        }, self.allocator, data);
+        defer parsed.deinit();
+        const id = parsed.value.id;
 
         if (id.len == 0) return BridgeError.MissingData;
 
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
             std.debug.print("[FSBridge] unwatch: {s}\n", .{id});
 
-        if (self.watchers.fetchRemove(id)) |kv| {
-            self.allocator.free(kv.value.id);
-            self.allocator.free(kv.value.path);
-            self.allocator.free(kv.value.callback_id);
-        }
+        self.removeWatcher(id);
     }
 
     /// An environment variable as a slice, or null when it is unset.
@@ -935,4 +1045,30 @@ pub fn getGlobalFSBridge() ?*FSBridge {
 
 pub fn setGlobalFSBridge(bridge: *FSBridge) void {
     global_state.instance.setFsBridge(bridge);
+}
+
+const testing = std.testing;
+
+test "parsePayload decodes every JSON escape the page's JSON.stringify can emit" {
+    const parsed = try parsePayload(struct { data: []const u8 = "" }, testing.allocator,
+        \\{"data":"a\nb\r\tc \"q\" back\\slash \/ caf\u00e9 \ud83d\ude00 \u0001"}
+    );
+    defer parsed.deinit();
+    try testing.expectEqualStrings("a\nb\r\tc \"q\" back\\slash / caf\u{e9} \u{1F600} \x01", parsed.value.data);
+}
+
+test "parsePayload tells a missing payload from a malformed one" {
+    const T = struct { path: []const u8 = "" };
+    // No `d` at all: the handler's path check would have said MissingData.
+    try testing.expectError(BridgeError.MissingData, parsePayload(T, testing.allocator, ""));
+    try testing.expectError(BridgeError.MissingData, parsePayload(T, testing.allocator, " \n"));
+    try testing.expectError(BridgeError.InvalidJSON, parsePayload(T, testing.allocator, "{\"path\":"));
+    try testing.expectError(BridgeError.InvalidJSON, parsePayload(T, testing.allocator, "[\"/tmp\"]"));
+    try testing.expectError(BridgeError.InvalidJSON, parsePayload(T, testing.allocator, "{\"path\":42}"));
+
+    // Fields a handler does not read are ignored, not rejected: `mkdir` and
+    // `rmdir` forward the caller's options object as given.
+    const parsed = try parsePayload(T, testing.allocator, "{\"path\":\"/x\",\"encoding\":\"utf8\"}");
+    defer parsed.deinit();
+    try testing.expectEqualStrings("/x", parsed.value.path);
 }

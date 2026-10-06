@@ -17,6 +17,12 @@ Linux and Windows there is nothing to play, so the helpers resolve without doing
 anything and the raw `window.craft.haptic()` rejects with
 `PLATFORM_NOT_SUPPORTED`.
 
+There is no `isSupported()`, because the hosts cannot answer it alike: Android
+can report whether the device has a vibrator, but AppKit cannot tell whether a
+Force Touch trackpad is attached, let alone under the user's finger. Call the
+helpers unconditionally. Code that must know whether the host serves haptics at
+all can call the raw `window.craft.haptic()` and read its rejection.
+
 ## Import
 
 ```typescript
@@ -116,22 +122,6 @@ await haptics.vibrate([0, 500])
 | pattern | `number[]` | Vibration pattern in milliseconds |
 
 **Returns:** `Promise<void>`
-
----
-
-### haptics.isSupported()
-
-Check if haptics are supported on the current device.
-
-```typescript
-const supported = await haptics.isSupported()
-
-if (supported) {
-  await haptics.impact('medium')
-}
-```
-
-**Returns:** `Promise<boolean>`
 
 ## Example Usage
 

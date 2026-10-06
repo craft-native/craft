@@ -1881,6 +1881,46 @@ export interface CraftFileSystemAPI {
    * @param path - Path to check
    */
   exists(path: string): Promise<boolean>
+
+  /**
+   * Watch a file or directory (desktop bridge). Resolves once native has
+   * registered the watch; `callback` hears the `craft:fs:change` events for
+   * this watch only. Rejects with `PLATFORM_NOT_SUPPORTED` on Linux and
+   * Windows. On macOS the watch is registered but no change events are
+   * emitted yet, so the capability manifest reports `craft:fs:change` as
+   * `unknown`.
+   * @param path - Path to watch
+   * @param callback - Called with each change to this watch
+   * @param options - `recursive` defaults to false
+   */
+  watch?: (path: string, callback?: (event: CraftFsWatchEvent) => void, options?: { recursive?: boolean }) => Promise<CraftFsWatchHandle>
+
+  /**
+   * Stop a watch by its id. The same as the handle's `unwatch()`.
+   * @param id - The `id` of the handle `watch` resolved with
+   */
+  unwatch?: (id: string) => Promise<void>
+}
+
+/**
+ * One change to a watched path, as the `craft:fs:change` event's detail.
+ */
+export interface CraftFsWatchEvent {
+  /** The id of the watch it belongs to */
+  id: string
+  /** What happened, e.g. 'create', 'modify', 'delete', 'rename' */
+  type: string
+  /** The path that changed */
+  path: string
+}
+
+/**
+ * A registered watch. `unwatch()` stops it; calling it again does nothing.
+ */
+export interface CraftFsWatchHandle {
+  /** The id the page generated and native registered the watch under */
+  id: string
+  unwatch(): Promise<void>
 }
 
 /**

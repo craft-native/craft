@@ -72,8 +72,9 @@ const success_reply = "true";
 
 /// `NSHapticFeedbackPattern`, from AppKit's `NSHapticFeedback.h`.
 ///
-/// Spelled out rather than borrowed from `audio.zig`, whose table numbers the
-/// patterns from 1 and so plays Alignment where it means Generic.
+/// The one copy of these values: `audio.zig`'s `HapticEngine` plays through
+/// this enum and `perform` too. It used to keep its own table, numbered from 1,
+/// and so played Alignment where it meant Generic.
 pub const Pattern = enum(c_long) {
     generic = 0,
     alignment = 1,
@@ -244,9 +245,11 @@ pub const HapticsBridge = struct {
 /// "the most appropriate feedback performer for the current input device", and
 /// the user can plug in or unplug a trackpad while the app runs.
 ///
-/// No dispatch hop. The only path here starts in the `WKScriptMessageHandler`
-/// callback, which WebKit delivers on the main thread.
-fn perform(pattern: Pattern) !void {
+/// No dispatch hop. The bridge's path here starts in the
+/// `WKScriptMessageHandler` callback, which WebKit delivers on the main thread;
+/// `audio.zig`'s `HapticEngine` calls in from wherever its caller runs, as it
+/// did before it shared this.
+pub fn perform(pattern: Pattern) !void {
     if (builtin.os.tag != .macos) return error.UnsupportedPlatform;
     const macos = @import("macos.zig");
 
@@ -263,7 +266,7 @@ fn perform(pattern: Pattern) !void {
     perform_feedback(
         performer,
         macos.sel("performFeedbackPattern:performanceTime:"),
-        @intFromEnum(pattern),
+        @backingInt(pattern),
         performance_time_now,
     );
 }
@@ -290,12 +293,12 @@ test "the action names match the mobile namespace's" {
 }
 
 test "the patterns carry AppKit's values" {
-    // `audio.zig` numbers these from 1, which plays Alignment for Generic and
-    // LevelChange for Alignment. Pinned against the header so this file cannot
-    // make the same slip.
-    try testing.expectEqual(@as(c_long, 0), @intFromEnum(Pattern.generic));
-    try testing.expectEqual(@as(c_long, 1), @intFromEnum(Pattern.alignment));
-    try testing.expectEqual(@as(c_long, 2), @intFromEnum(Pattern.level_change));
+    // `audio.zig` once numbered these from 1, which played Alignment for
+    // Generic and LevelChange for Alignment. Pinned against the header so the
+    // one table both now share cannot make the same slip.
+    try testing.expectEqual(@as(c_long, 0), @backingInt(Pattern.generic));
+    try testing.expectEqual(@as(c_long, 1), @backingInt(Pattern.alignment));
+    try testing.expectEqual(@as(c_long, 2), @backingInt(Pattern.level_change));
     try testing.expectEqual(@as(c_ulong, 1), performance_time_now);
 }
 

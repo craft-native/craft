@@ -5648,6 +5648,31 @@ pub fn evaluateJavaScriptWithReply(
     );
 }
 
+/// `text` as a quoted JSON string.
+///
+/// Every control byte is escaped, not just `\n`, `\r` and `\t`: the bridges
+/// that receive this parse it with `std.json`, which rejects a raw control
+/// character inside a string, so a `\b` or `\u0001` the page sent would turn
+/// the whole payload into `InvalidJSON`.
+fn appendJsonString(allocator: std.mem.Allocator, buf: *std.ArrayListUnmanaged(u8), text: []const u8) !void {
+    try buf.append(allocator, '"');
+    for (text) |char| {
+        switch (char) {
+            '"' => try buf.appendSlice(allocator, "\\\""),
+            '\\' => try buf.appendSlice(allocator, "\\\\"),
+            '\n' => try buf.appendSlice(allocator, "\\n"),
+            '\r' => try buf.appendSlice(allocator, "\\r"),
+            '\t' => try buf.appendSlice(allocator, "\\t"),
+            0...0x08, 0x0B, 0x0C, 0x0E...0x1F => {
+                var esc_buf: [6]u8 = undefined;
+                try buf.appendSlice(allocator, std.fmt.bufPrint(&esc_buf, "\\u{x:0>4}", .{char}) catch unreachable);
+            },
+            else => try buf.append(allocator, char),
+        }
+    }
+    try buf.append(allocator, '"');
+}
+
 /// Handle incoming messages from JavaScript bridge
 /// Convert a JSON Value to string
 fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]const u8 {
@@ -5668,20 +5693,7 @@ fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]con
             try buf.appendSlice(allocator, num_str);
         },
         .number_string => |s| try buf.appendSlice(allocator, s),
-        .string => |s| {
-            try buf.append(allocator, '"');
-            for (s) |char| {
-                switch (char) {
-                    '"' => try buf.appendSlice(allocator, "\\\""),
-                    '\\' => try buf.appendSlice(allocator, "\\\\"),
-                    '\n' => try buf.appendSlice(allocator, "\\n"),
-                    '\r' => try buf.appendSlice(allocator, "\\r"),
-                    '\t' => try buf.appendSlice(allocator, "\\t"),
-                    else => try buf.append(allocator, char),
-                }
-            }
-            try buf.append(allocator, '"');
-        },
+        .string => |s| try appendJsonString(allocator, &buf, s),
         .array => |arr| {
             try buf.append(allocator, '[');
             for (arr.items, 0..) |item, i| {
@@ -5699,9 +5711,8 @@ fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]con
             while (it.next()) |entry| {
                 if (!first) try buf.append(allocator, ',');
                 first = false;
-                try buf.append(allocator, '"');
-                try buf.appendSlice(allocator, entry.key_ptr.*);
-                try buf.appendSlice(allocator, "\":");
+                try appendJsonString(allocator, &buf, entry.key_ptr.*);
+                try buf.append(allocator, ':');
                 const val_str = try jsonValueToString(allocator, entry.value_ptr.*);
                 defer allocator.free(val_str);
                 try buf.appendSlice(allocator, val_str);
@@ -5710,7 +5721,30 @@ fn jsonValueToString(allocator: std.mem.Allocator, value: std.json.Value) ![]con
         },
     }
 
-    return allocator.dupe(u8, buf.items);
+    // Handed over, not duplicated: a `dupe` here left `buf` itself allocated
+    // on every structured payload.
+    return buf.toOwnedSlice(allocator);
+}
+
+test "a structured payload re-renders as JSON std.json reads back unchanged" {
+    // The fs bridge parses what this produces with `std.json`, so anything it
+    // renders that `std.json` rejects — a raw control byte, an unescaped quote
+    // in a key — fails the call as `InvalidJSON` instead of reaching the file.
+    const source =
+        \\{"path":"/tmp/a\"b","data":"line\nnext\ttab \\ \b\f\u0001 caf\u00e9","k\"ey":[1,true,null]}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, source, .{});
+    defer parsed.deinit();
+
+    const rendered = try jsonValueToString(std.testing.allocator, parsed.value);
+    defer std.testing.allocator.free(rendered);
+    const reparsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, rendered, .{});
+    defer reparsed.deinit();
+
+    const obj = reparsed.value.object;
+    try std.testing.expectEqualStrings("/tmp/a\"b", obj.get("path").?.string);
+    try std.testing.expectEqualStrings("line\nnext\ttab \\ \x08\x0c\x01 caf\u{e9}", obj.get("data").?.string);
+    try std.testing.expectEqual(@as(usize, 3), obj.get("k\"ey").?.array.items.len);
 }
 
 /// Handle properly formatted JSON messages

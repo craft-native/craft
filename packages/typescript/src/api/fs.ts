@@ -386,6 +386,16 @@ export async function watch(
   validatePath(path)
   const recursive = options.recursive ?? true
 
+  // The desktop bridge's own watch: it names the watch, routes this watch's
+  // `craft:fs:change` events to the callback, and unwatches by the same id.
+  const native = getCraftFs()
+  if (native?.watch) {
+    const handle = await native.watch(path, event => callback(event.type, event.path), { recursive })
+    return () => {
+      void handle.unwatch()
+    }
+  }
+
   if (typeof window !== 'undefined' && (window as any).craft) {
     const watchId = typeof globalThis.crypto !== 'undefined' && 'randomUUID' in globalThis.crypto
       ? (globalThis.crypto as Crypto).randomUUID()

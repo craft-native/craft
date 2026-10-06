@@ -645,6 +645,8 @@ export type {
   PhotoPickerOptions,
   CraftMobileAPI,
   CraftFileSystemAPI,
+  CraftFsWatchEvent,
+  CraftFsWatchHandle,
   CraftDatabaseAPI,
   CraftHttpAPI,
   CraftCryptoAPI,

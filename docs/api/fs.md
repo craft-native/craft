@@ -203,14 +203,16 @@ await fs.move('/path/to/old.txt', '/path/to/new.txt')
 
 ---
 
-### fs.watch(path, callback)
+### watch(path, callback, options?)
 
-Watch a file or directory for changes.
+Watch a file or directory for changes. `watch` is its own export, not a method
+on `fs`.
 
 ```typescript
-const unwatch = fs.watch('/path/to/file.txt', (event) => {
-  console.log(event.type) // 'create' | 'modify' | 'delete' | 'rename'
-  console.log(event.path)
+import { watch } from 'craft-native'
+
+const unwatch = await watch('/path/to/dir', (event, filename) => {
+  console.log(event, filename) // e.g. 'modify', '/path/to/dir/file.txt'
 })
 
 // Stop watching
@@ -222,9 +224,23 @@ unwatch()
 | Name | Type | Description |
 |------|------|-------------|
 | path | `string` | Path to watch |
-| callback | `(event: WatchEvent) => void` | Callback for changes |
+| callback | `(event: string, filename: string) => void` | Called for each change |
+| options.recursive | `boolean` | Watch subdirectories too (default: `true`) |
 
-**Returns:** `() => void` - Unwatch function
+**Returns:** `Promise<() => void>` - resolves once the watch is registered, with
+the function that stops it
+
+In a desktop window this goes through `window.craft.fs.watch(path, callback,
+options)`, which resolves with a handle, `{ id, unwatch() }`. The page generates
+the `id`, native registers the watch under it, and each `craft:fs:change` event
+carries it as `detail.id` (with `type` and `path`), so a callback hears only its
+own watch. `window.craft.fs.unwatch(id)` and `handle.unwatch()` both stop it, and
+a second stop does nothing.
+
+On macOS the watch is registered, but native does not emit change events yet:
+`(await window.craft.capabilities()).channels['craft:fs:change']` reports
+`unknown`. On Linux and Windows `window.craft.fs.watch` rejects with
+`PLATFORM_NOT_SUPPORTED`. Outside a Craft window, `watch` uses `node:fs.watch`.
 
 ## Types
 
@@ -244,9 +260,16 @@ interface FileStat {
   accessed: Date
 }
 
-interface WatchEvent {
-  type: 'create' | 'modify' | 'delete' | 'rename'
+// The detail of a `craft:fs:change` event
+interface CraftFsWatchEvent {
+  id: string // the watch it belongs to
+  type: string // e.g. 'create', 'modify', 'delete', 'rename'
   path: string
+}
+
+interface CraftFsWatchHandle {
+  id: string
+  unwatch(): Promise<void>
 }
 
 interface ReadOptions {
