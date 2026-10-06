@@ -175,7 +175,7 @@ internal class CraftNativeCapabilities(
                 }
                 "get" -> success(encryptedSecureStorage.getString(key, null) ?: JSONObject.NULL)
                 "remove" -> success(encryptedSecureStorage.edit().remove(key).commit())
-                else failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
+                else -> failure("UNKNOWN_ACTION", "Unsupported SecureStorage method")
             }
         } catch (error: Exception) {
             failure("SECURE_STORAGE_ERROR", error.message ?: "Secure storage operation failed")
