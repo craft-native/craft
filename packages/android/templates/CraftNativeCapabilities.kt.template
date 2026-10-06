@@ -115,8 +115,8 @@ internal class CraftNativeCapabilities(
             }
             "set" -> {
                 if (args.length() != 2) return failure("INVALID_ARGUMENT", "Storage.set needs a key and value")
-                val value = runCatching { JSONObject.valueToString(args.opt(1)) }
-                    .getOrElse { return failure("INVALID_ARGUMENT", "Storage values must be JSON serializable") }
+                val value = jsonString(args.opt(1))
+                    ?: return failure("INVALID_ARGUMENT", "Storage values must be JSON serializable")
                 if (storage.edit().putString(key, value).commit()) success(true)
                 else failure("STORAGE_ERROR", "Storage could not persist the value")
             }
@@ -179,7 +179,7 @@ internal class CraftNativeCapabilities(
         val cursor = db.rawQueryWithFactory({ _, driver, editTable, query ->
             if (!bind(query, params)) throw IllegalArgumentException("Unsupported database parameter")
             SQLiteCursor(driver, editTable, query)
-        }, sql, emptyArray(), null)
+        }, sql, emptyArray<String>(), "")
         cursor.use {
             val rows = JSONArray()
             while (it.moveToNext()) {
@@ -325,6 +325,15 @@ internal class CraftNativeCapabilities(
 
     private fun validKey(value: Any?): String? = (value as? String)?.takeIf {
         it.isNotEmpty() && it.length <= 512 && !it.contains('\u0000')
+    }
+
+    private fun jsonString(value: Any?): String? = when (value) {
+        null, JSONObject.NULL -> "null"
+        is JSONObject, is JSONArray -> value.toString()
+        is String -> JSONObject.quote(value)
+        is Boolean -> value.toString()
+        is Number -> value.toString().takeUnless { it == "NaN" || it == "Infinity" || it == "-Infinity" }
+        else -> null
     }
 
     private fun success(data: Any?) = CraftNativeCapabilityResult(data = data)

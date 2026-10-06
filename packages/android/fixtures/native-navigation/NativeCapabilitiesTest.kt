@@ -56,6 +56,8 @@ class NativeCapabilitiesTest {
             call(capabilities, "Storage", "clear")
             assertNull(call(capabilities, "Storage", "set", JSONArray()
                 .put("profile").put(JSONObject().put("name", "Ada").put("visits", 2))).code)
+            assertEquals("INVALID_ARGUMENT", call(capabilities, "Storage", "set", JSONArray()
+                .put("invalid").put(Any())).code)
             capabilities.close()
             capabilities = CraftNativeCapabilities(activity, config)
             val profile = call(capabilities, "Storage", "get", JSONArray().put("profile")).data as JSONObject

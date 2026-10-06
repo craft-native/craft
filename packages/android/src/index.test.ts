@@ -51,6 +51,8 @@ describe('Craft Android builder', () => {
       expect(nativeCapabilities).toContain('"Database" -> {')
       expect(nativeCapabilities).toContain('"Notifications" -> notifications(requestToken, method, args, completion)')
       expect(nativeCapabilities).toContain('alarm.setAndAllowWhileIdle(')
+      expect(nativeCapabilities).toContain('private fun jsonString(value: Any?): String?')
+      expect(nativeCapabilities).toContain('emptyArray<String>(), "")')
       expect(notificationReceiver).toContain('internal class CraftNativeNotificationReceiver : BroadcastReceiver()')
       expect(notificationReceiver).toContain('manager.notify(id, 0, notification)')
       expect(readFileSync(join(native, 'app/src/main/AndroidManifest.xml'), 'utf8'))
