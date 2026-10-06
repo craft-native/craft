@@ -8,6 +8,12 @@ Authenticate users using Face ID, Touch ID, or fingerprint.
 import { biometrics } from 'craft-native'
 ```
 
+Native STX screens use the same capability through the global bridge:
+`await craft.biometrics.isAvailable()`, `getBiometricType()`, and
+`authenticate(reason)`. Enable it in the generated app with
+`enableBiometric: true`; availability can still be false on a simulator or
+emulator without enrolled hardware.
+
 ## Methods
 
 ### biometrics.isAvailable()

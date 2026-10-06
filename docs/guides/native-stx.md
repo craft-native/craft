@@ -237,6 +237,8 @@ The generated iOS and Android hosts advertise a versioned capability bridge on
 globalThis.craft.platform // 'ios' or 'android'
 globalThis.craft.capabilityProtocolVersion // 1
 globalThis.craft.capabilities.storage // true when enabled
+globalThis.craft.capabilities.secureStorage // true when enabled
+globalThis.craft.capabilities.biometric // true when enabled
 ```
 
 The shared asynchronous surface is:
@@ -255,6 +257,13 @@ const initial = await craft.deepLinks.getInitialURL()
 const stopLinks = craft.deepLinks.onLink((link) => console.log(link.url))
 const id = await craft.notifications.schedule({ title: 'Reminder', delay: 60_000 })
 await craft.notifications.cancel(id)
+
+await craft.secureStorage.set('session-token', 'secret')
+const token = await craft.secureStorage.get('session-token')
+await craft.secureStorage.delete('session-token')
+const available = await craft.biometrics.isAvailable()
+const biometricType = await craft.biometrics.getBiometricType()
+if (available) await craft.biometrics.authenticate('Unlock WildLoop')
 ```
 
 Storage is JSON-serializable and survives process termination. SQLite is stored
@@ -266,12 +275,25 @@ notification schedules are persisted by the OS on iOS and through
 process. The Android receiver is registered only for native-renderer projects.
 
 `enableLocalDatabase`, `enableLocalNotifications`, and `enableDeepLinks` are
-explicit configuration gates. A disabled or unavailable capability rejects with
+explicit configuration gates. `enableSecureStorage` and `enableBiometric` gate
+the corresponding secure-storage and biometric methods. Secure storage accepts
+string values and persists them in the iOS Keychain or Android encrypted
+preferences; a missing key resolves to `null`. Biometric availability is a
+device check, so an enabled simulator or emulator may still report `false`.
+A disabled or unavailable capability rejects with
 `CAPABILITY_DISABLED` or `NOT_SUPPORTED`; malformed keys, SQL, or notification
 arguments reject with `INVALID_ARGUMENT`. Every request has a 30-second native
 deadline. A timeout rejects with `TIMEOUT`, sends `API_CANCEL`, and native route
 teardown cancels any remaining work. Unsupported protocol versions reject with
 `UNSUPPORTED_VERSION`.
+
+`deepLinks.getInitialURL()` claims the launch URL once for the native app
+process. It can be called from any route, but later routes receive `null`; a
+URL delivered through `deepLinks.onLink` is marked `initial: true`. URLs received
+through a resumed activity or scene are marked `initial: false` and remain
+available to subscribers even after the launch URL has been claimed. Android
+persists the launch claim across activity recreation, so rotation and process
+handoff do not replay a stale intent.
 
 The old flat notification methods (`scheduleNotification`,
 `cancelNotification`, `cancelAllNotifications`, and `getPendingNotifications`)

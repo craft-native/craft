@@ -8,6 +8,12 @@ Store sensitive data in the device's secure enclave (iOS Keychain / Android Keys
 import { secureStorage } from 'craft-native'
 ```
 
+Native STX screens can call `craft.secureStorage.set/get/delete/clear` directly
+over the typed JavaScriptCore or JavaScriptSandbox bridge. Set
+`enableSecureStorage: true` in the generated app. Native STX values are strings
+and are persisted in the iOS Keychain or Android encrypted preferences; a
+missing key resolves to `null`.
+
 ## Methods
 
 ### secureStorage.set(key, value, options?)
