@@ -434,3 +434,62 @@ describe('native SQLite binding', () => {
     expect(template).not.toMatch(/sqlite3_column_int\(statement/)
   })
 })
+
+describe('craft.speech', () => {
+  // Spoken workout cues. Native rather than the page's speechSynthesis, which
+  // in a WKWebView stops the person's music and obeys the silent switch.
+  it('is always offered, whatever the app was built with', () => {
+    const { craft } = loadPage()
+    expect(craft.capabilities.speech).toBe(true)
+  })
+
+  it('posts the text and its options and settles with what native answers when it ends', async () => {
+    const { craft, last, answer } = loadPage()
+    const spoken = craft.speech.speak('Rest, 15 seconds. Up next: Dead Bug', { rate: 1.2, language: 'en-GB', interrupt: false })
+
+    expect(last('speak')).toMatchObject({
+      text: 'Rest, 15 seconds. Up next: Dead Bug',
+      rate: 1.2,
+      language: 'en-GB',
+      interrupt: false,
+    })
+    expect(last('speak').callbackId).toMatch(/^cb_\d+$/)
+    answer('speak', true)
+    expect(await spoken).toBe(true)
+  })
+
+  it('interrupts by default and leaves rate and language to native when not given', async () => {
+    const { craft, last, answer } = loadPage()
+    const spoken = craft.speech.speak('Go')
+
+    expect(last('speak')).toMatchObject({ text: 'Go', rate: null, language: null, interrupt: true })
+    // The cue that was cut off, which native settles false.
+    answer('speak', false)
+    expect(await spoken).toBe(false)
+  })
+
+  it('hands an empty text the refusal native sends', async () => {
+    const { craft, refuse } = loadPage()
+    const spoken = craft.speech.speak('')
+    refuse('speak', 'speak needs some text to say', 'INVALID_ARGUMENT')
+    await expect(spoken).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+  })
+
+  it('stops through stopSpeaking and waits for native to confirm', async () => {
+    const { craft, last, answer } = loadPage()
+    const stopped = craft.speech.stop()
+    expect(last('stopSpeaking').callbackId).toMatch(/^cb_\d+$/)
+    answer('stopSpeaking', true)
+    expect(await stopped).toBe(true)
+  })
+
+  it('settles every call from the synthesizer delegate, not when the call is taken', () => {
+    // A cue's promise is what a player awaits before moving on, so it has to
+    // mean "finished speaking".
+    expect(template).toContain('extension CraftWebView.Coordinator: AVSpeechSynthesizerDelegate')
+    expect(template).toContain('didFinish utterance: AVSpeechUtterance')
+    expect(template).toContain('didCancel utterance: AVSpeechUtterance')
+    expect(template).toContain('try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])')
+    expect(template).toContain('setActive(false, options: .notifyOthersOnDeactivation)')
+  })
+})

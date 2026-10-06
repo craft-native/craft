@@ -722,6 +722,19 @@ struct CraftWebView: UIViewRepresentable {
         // Keep awake
         private var isKeepingAwake = false
 
+        // Speech synthesis. One synthesizer for the life of the web view, so a
+        // cue can interrupt the one before it; each utterance it has not
+        // finished yet is held beside the call waiting on it.
+        private lazy var speechSynthesizer: AVSpeechSynthesizer = {
+            let synthesizer = AVSpeechSynthesizer()
+            synthesizer.delegate = self
+            return synthesizer
+        }()
+        private var pendingUtterances: [(utterance: AVSpeechUtterance, callbackId: String?)] = []
+        /// What the session was before speech claimed it; nil while speech
+        /// does not hold it.
+        private var speechAudioSessionToRestore: (AVAudioSession.Category, AVAudioSession.Mode, AVAudioSession.CategoryOptions)?
+
         // Orientation lock
         private var lockedOrientation: UIInterfaceOrientationMask?
 
@@ -1058,6 +1071,16 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     rejectCallback(callbackId, error: "setFlashlight needs true or false", code: "INVALID_ARGUMENT")
                 }
+            // Speech synthesis. Ungated, like the flashlight: speaking needs no
+            // permission and no entitlement.
+            case "speak":
+                if let text = body["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    speak(text, body: body, callbackId: callbackId)
+                } else {
+                    rejectCallback(callbackId, error: "speak needs some text to say", code: "INVALID_ARGUMENT")
+                }
+            case "stopSpeaking":
+                stopSpeaking(callbackId: callbackId)
             // Vibrate pattern
             case "vibrate":
                 if let pattern = body["pattern"] as? [Int] {
@@ -1850,6 +1873,7 @@ struct CraftWebView: UIViewRepresentable {
                     orientationLock: \(config.enableOrientationLock),
                     deepLinks: \(config.enableDeepLinks),
                     flashlight: true,
+                    speech: true,
                     network: true,
                     deviceInfo: true,
                     badge: true,
@@ -2786,6 +2810,37 @@ struct CraftWebView: UIViewRepresentable {
                     return new Promise(function(resolve, reject) {
                         self._callbacks[id] = {resolve: resolve, reject: reject};
                     });
+                },
+
+                // Speech synthesis. speak() settles when the utterance ends:
+                // true when it was spoken, false when something stopped it.
+                // No timeout, because a long sentence at a slow rate can
+                // outlast any deadline that would be fair to a short one.
+                speech: {
+                    speak: function(text, options) {
+                        var self = window.craft;
+                        var id = 'cb_' + (++self._callbackId);
+                        options = options || {};
+                        window.webkit.messageHandlers.craft.postMessage({
+                            action: 'speak',
+                            text: text == null ? '' : String(text),
+                            rate: typeof options.rate === 'number' ? options.rate : null,
+                            language: typeof options.language === 'string' ? options.language : null,
+                            interrupt: options.interrupt !== false,
+                            callbackId: id
+                        });
+                        return new Promise(function(resolve, reject) {
+                            self._callbacks[id] = {resolve: resolve, reject: reject};
+                        });
+                    },
+                    stop: function() {
+                        var self = window.craft;
+                        var id = 'cb_' + (++self._callbackId);
+                        window.webkit.messageHandlers.craft.postMessage({action: 'stopSpeaking', callbackId: id});
+                        return new Promise(function(resolve, reject) {
+                            self._callbacks[id] = {resolve: resolve, reject: reject};
+                        });
+                    }
                 },
 
                 // Orientation Lock
@@ -4762,6 +4817,135 @@ struct CraftWebView: UIViewRepresentable {
             }
         }
 
+        // MARK: - Speech Synthesis
+        //
+        // Native rather than the page's own `speechSynthesis`, which in a
+        // WKWebView plays through the default soloAmbient session: it stops
+        // the person's music and the silent switch mutes it. A workout cue has
+        // to do neither, so the session is set up here for as long as there is
+        // something to say, and handed back when there is not.
+
+        private func speak(_ text: String, body: [String: Any], callbackId: String?) {
+            DispatchQueue.main.async {
+                if body["interrupt"] as? Bool ?? true {
+                    self.cancelPendingSpeech()
+                }
+
+                let utterance = AVSpeechUtterance(string: text)
+                utterance.rate = Self.utteranceRate(body["rate"] as? Double ?? 1)
+                // An unknown language finds no voice, and a nil voice is the
+                // device's own, which is the default anyway.
+                if let language = body["language"] as? String, !language.isEmpty,
+                   let voice = AVSpeechSynthesisVoice(language: language) {
+                    utterance.voice = voice
+                }
+
+                self.claimAudioSessionForSpeech()
+                self.pendingUtterances.append((utterance, callbackId))
+                self.speechSynthesizer.speak(utterance)
+            }
+        }
+
+        private func stopSpeaking(callbackId: String?) {
+            DispatchQueue.main.async {
+                // When something was playing, its didCancel releases the
+                // session once the audio has actually stopped; deactivating
+                // before that fails as busy and leaves the music ducked.
+                if !self.cancelPendingSpeech() { self.releaseAudioSessionIfSilent() }
+                self.resolveCallback(callbackId, result: true)
+            }
+        }
+
+        /// Stop what is being said and settle every call waiting on it, false.
+        /// Returns whether the synthesizer was making a sound.
+        ///
+        /// Settled here rather than in `didCancel`, because the delegate hears
+        /// about the utterance that was playing and nothing about the ones
+        /// queued behind it, whose calls would otherwise never settle.
+        @discardableResult
+        private func cancelPendingSpeech() -> Bool {
+            let waiting = pendingUtterances
+            pendingUtterances.removeAll()
+            let synthesizer = speechSynthesizer
+            let wasSounding = synthesizer.isSpeaking || synthesizer.isPaused
+            if wasSounding { synthesizer.stopSpeaking(at: .immediate) }
+            for entry in waiting {
+                resolveCallback(entry.callbackId, result: false)
+            }
+            return wasSounding
+        }
+
+        /// The page's rate, where 1 is normal, on AVSpeechUtterance's scale.
+        ///
+        /// Apple's scale is not linear in speed: the default sits at 0.5 and
+        /// the maximum is far faster than twice that. So a slower rate scales
+        /// the default down in proportion, and a faster one climbs toward the
+        /// maximum at half the slope, which keeps 2 brisk but intelligible.
+        private static func utteranceRate(_ rate: Double) -> Float {
+            let requested = Float(min(max(rate.isFinite ? rate : 1, 0.5), 2))
+            let normal = AVSpeechUtteranceDefaultSpeechRate
+            let mapped = requested <= 1
+                ? normal * requested
+                : normal + (AVSpeechUtteranceMaximumSpeechRate - normal) * (requested - 1) / 2
+            return min(max(mapped, AVSpeechUtteranceMinimumSpeechRate), AVSpeechUtteranceMaximumSpeechRate)
+        }
+
+        /// Duck the music rather than stop it, and play through the silent
+        /// switch.
+        ///
+        /// `.playback` is what the switch does not mute, `.duckOthers` lowers
+        /// the music under the cue, and the spoken-audio option pauses a
+        /// podcast rather than talking over it. Left alone while recognition
+        /// or a recording holds the session: switching it to playback would
+        /// cut their microphone off mid-take.
+        private func claimAudioSessionForSpeech() {
+            if speechAudioSessionToRestore != nil || audioEngine.isRunning || (audioRecorder?.isRecording ?? false) { return }
+            let session = AVAudioSession.sharedInstance()
+            let previous = (session.category, session.mode, session.categoryOptions)
+            do {
+                try session.setCategory(.playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers])
+                try session.setActive(true)
+                speechAudioSessionToRestore = previous
+            } catch {
+                // Still speak, through whatever session the app has: a cue
+                // that does not duck beats one that never plays.
+                print("[Craft] Speech audio session failed: \(error.localizedDescription)")
+            }
+        }
+
+        /// Hand the audio back once nothing is left to say, so the music
+        /// returns to full volume instead of staying ducked, and put back the
+        /// category the app had, so the page's own media plays as before.
+        private func releaseAudioSessionIfSilent(retry: Bool = true) {
+            guard let previous = speechAudioSessionToRestore, pendingUtterances.isEmpty else { return }
+            let session = AVAudioSession.sharedInstance()
+            do {
+                try session.setActive(false, options: .notifyOthersOnDeactivation)
+            } catch {
+                // Busy: the synthesizer's audio has not quite drained, or the
+                // page has its own media playing. Once more shortly covers the
+                // first; for the second, staying active is right, and the
+                // ducking still ends when the music app hears nothing more.
+                if retry {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.releaseAudioSessionIfSilent(retry: false)
+                    }
+                    return
+                }
+                print("[Craft] Speech audio session release failed: \(error.localizedDescription)")
+            }
+            speechAudioSessionToRestore = nil
+            try? session.setCategory(previous.0, mode: previous.1, options: previous.2)
+        }
+
+        fileprivate func speechDidEnd(_ utterance: AVSpeechUtterance, spoken: Bool) {
+            if let index = pendingUtterances.firstIndex(where: { $0.utterance === utterance }) {
+                let entry = pendingUtterances.remove(at: index)
+                resolveCallback(entry.callbackId, result: spoken)
+            }
+            releaseAudioSessionIfSilent()
+        }
+
         // MARK: - Orientation Lock
         private func lockOrientation(_ orientation: String, callbackId: String?) {
             var mask: UIInterfaceOrientationMask = .all
@@ -6698,6 +6882,20 @@ extension URL {
 }
 
 // MARK: - Contact Picker Delegate
+// MARK: - AVSpeechSynthesizerDelegate
+//
+// The end of an utterance is what `craft.speech.speak()` waits for. Hopped to
+// main because every piece of speech state is touched there and nowhere else.
+extension CraftWebView.Coordinator: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.speechDidEnd(utterance, spoken: true) }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { self.speechDidEnd(utterance, spoken: false) }
+    }
+}
+
 extension CraftWebView.Coordinator: CNContactPickerDelegate {
     func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
         let contactData = formatContact(contact)

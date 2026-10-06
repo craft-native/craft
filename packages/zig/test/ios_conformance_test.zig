@@ -127,7 +127,13 @@ const dispatch_end = "func webView(";
 /// Both went into Swift first, as every action before them did, and nobody
 /// has reached them in Zig yet; they fall through to the shim, which serves
 /// them. Not a regression: no action left Zig.
-const max_not_yet_migrated: usize = 15;
+/// 17 when the spec gained speak and stopSpeaking, the same way. Serving them
+/// from Zig needs an AVSpeechSynthesizerDelegate from the delegate factory,
+/// a parked reply per utterance that settles when it finishes rather than when
+/// it is taken, and the audio-session claim and release around both; nothing
+/// in that list is new, it is simply not done yet. They fall through to the
+/// shim, which serves them.
+const max_not_yet_migrated: usize = 17;
 
 fn dispatcherRegion() []const u8 {
     const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";

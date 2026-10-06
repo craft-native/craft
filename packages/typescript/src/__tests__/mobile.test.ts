@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, watchConnectivity } from '../api/mobile'
+import mobile, { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, speech, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -170,6 +170,120 @@ describe('Mobile Android bridge promises', () => {
       if (previousWindow === undefined) delete (globalThis as any).window
       else (globalThis as any).window = previousWindow
     }
+  })
+})
+
+/** Run `body` with `window` set to `value`, restoring whatever was there. */
+async function withWindow(value: Record<string, unknown> | undefined, body: () => Promise<void> | void): Promise<void> {
+  const previousWindow = (globalThis as any).window
+  if (value === undefined) delete (globalThis as any).window
+  else (globalThis as any).window = value
+  try {
+    await body()
+  }
+  finally {
+    if (previousWindow === undefined) delete (globalThis as any).window
+    else (globalThis as any).window = previousWindow
+  }
+}
+
+/** A stand-in for the Web Speech API that records what it was asked. */
+function fakeWebSpeech() {
+  const spoken: any[] = []
+  let cancels = 0
+  class Utterance {
+    rate = 1
+    lang = ''
+    onend: (() => void) | null = null
+    onerror: (() => void) | null = null
+    constructor(public text: string) {}
+  }
+  const speechSynthesis = {
+    speak: (utterance: any) => { spoken.push(utterance) },
+    // What a browser does: the utterance in progress ends with an error.
+    cancel: () => {
+      cancels += 1
+      for (const utterance of spoken.splice(0)) utterance.onerror?.()
+    },
+  }
+  return { window: { speechSynthesis, SpeechSynthesisUtterance: Utterance }, spoken, cancels: () => cancels }
+}
+
+describe('Mobile speech', () => {
+  it('speaks through the native bridge when the app has one', async () => {
+    const calls: unknown[][] = []
+    await withWindow({
+      craft: {
+        speech: {
+          speak: async (...args: unknown[]) => { calls.push(['speak', ...args]); return true },
+          stop: async () => { calls.push(['stop']) },
+        },
+      },
+      ...fakeWebSpeech().window,
+    }, async () => {
+      expect(speech.isAvailable()).toBe(true)
+      expect(await speech.speak('Rest, 15 seconds', { rate: 1.2, interrupt: false })).toBe(true)
+      await speech.stop()
+      expect(calls).toEqual([['speak', 'Rest, 15 seconds', { rate: 1.2, interrupt: false }], ['stop']])
+    })
+  })
+
+  it('answers false, not true, for a cue native cut short', async () => {
+    await withWindow({ craft: { speech: { speak: async () => false, stop: async () => {} } } }, async () => {
+      expect(await speech.speak('Go')).toBe(false)
+    })
+  })
+
+  it('falls back to the Web Speech API and settles when the utterance ends', async () => {
+    const web = fakeWebSpeech()
+    await withWindow({ craft: {}, ...web.window }, async () => {
+      expect(speech.isAvailable()).toBe(true)
+      const spoken = speech.speak('Up next: Dead Bug', { rate: 5, language: 'en-GB' })
+      const utterance = web.spoken[0]
+      expect(utterance.text).toBe('Up next: Dead Bug')
+      expect(utterance.rate).toBe(2)
+      expect(utterance.lang).toBe('en-GB')
+      utterance.onend()
+      expect(await spoken).toBe(true)
+    })
+  })
+
+  it('interrupts on the web by default, and the cue cut off settles false', async () => {
+    const web = fakeWebSpeech()
+    await withWindow(web.window, async () => {
+      const first = speech.speak('Work')
+      const second = speech.speak('Rest')
+      expect(await first).toBe(false)
+      web.spoken[0].onend()
+      expect(await second).toBe(true)
+
+      const queued = speech.speak('Then', { interrupt: false })
+      expect(web.cancels()).toBe(2)
+      void speech.stop()
+      expect(await queued).toBe(false)
+    })
+  })
+
+  it('answers false without throwing where there is no speech at all', async () => {
+    await withWindow({}, async () => {
+      expect(speech.isAvailable()).toBe(false)
+      expect(await speech.speak('Go')).toBe(false)
+      await speech.stop()
+    })
+    await withWindow(undefined, async () => {
+      expect(speech.isAvailable()).toBe(false)
+      expect(await speech.speak('Go')).toBe(false)
+    })
+  })
+
+  it('refuses empty text where it could speak, the way native does', async () => {
+    await withWindow(fakeWebSpeech().window, async () => {
+      await expect(speech.speak('  ')).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+    })
+  })
+
+  it('is on the default mobile export beside keepAwake', () => {
+    expect(mobile.speech).toBe(speech)
   })
 })
 

@@ -134,8 +134,9 @@ const zig_sources = [_][]const u8{
 /// its success object and rejection; 30 after removing the two unreachable
 /// dynamic voice-action methods tracked in #169; 28 after removing the two
 /// app-badge no-ops tracked in #148; 31 when #190 added the three runtime
-/// permission methods whose Activity callback state belongs to CraftBridge.
-const max_not_yet_migrated: usize = 31;
+/// permission methods whose Activity callback state belongs to CraftBridge;
+/// 33 when speak and stopSpeaking arrived in the Kotlin first, as iOS's did.
+const max_not_yet_migrated: usize = 33;
 
 /// Every `@JavascriptInterface fun <name>(` in the Kotlin bridge.
 ///
@@ -325,6 +326,18 @@ const deliberate_deferrals = [_]Deferral{
     // never reads its argument. Tracked in #179.
     .{ .action = "watchPosition", .reason = "stores its callback in a CraftBridge field the natives cannot reach" },
     .{ .action = "clearWatch", .reason = "reads the same field; migrating one half leaves the other stale" },
+
+    // ---- Speech synthesis, which arrived in the Kotlin first ---------
+    //
+    // `speak` binds a TextToSpeech engine on first use and parks each call
+    // until its utterance ends, which the engine reports through an
+    // UtteranceProgressListener: an abstract class, not an interface, so it
+    // needs a Java subclass in the holder the way the recognition listener
+    // has one. The engine, the requests queued while it binds and the audio
+    // focus request are CraftBridge fields that `stopSpeaking` and `close`
+    // also touch, so the pair moves together or not at all.
+    .{ .action = "speak", .reason = "parks each call on a TextToSpeech engine and UtteranceProgressListener held in CraftBridge fields" },
+    .{ .action = "stopSpeaking", .reason = "cancels the same engine, queue and audio focus that speak holds; the pair moves together" },
 
     // The auth-persistence trio shares one timestamp in Kotlin-configured
     // EncryptedSharedPreferences. It now survives process death, but migrating

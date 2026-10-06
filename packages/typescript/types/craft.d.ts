@@ -549,6 +549,14 @@ export interface CraftBridge {
   setKeepAwake(enabled: boolean): void;
 
   /**
+   * Native text-to-speech for short spoken cues.
+   *
+   * Unlike the WebView's own `speechSynthesis`, it ducks the person's music
+   * instead of stopping it and plays with the iOS silent switch on.
+   */
+  speech: CraftSpeech;
+
+  /**
    * Lock screen orientation
    * @param orientation - 'portrait' or 'landscape'
    */
@@ -1022,6 +1030,27 @@ export type CraftErrorCode = NativeBridgeErrorCode
   | 'NOT_FOUND'             // Resource not found
   | 'STORAGE_FULL';         // Storage is full
 
+export interface CraftSpeechOptions {
+  /** Speaking rate, 0.5 to 2. 1 is the voice's normal pace. */
+  rate?: number;
+  /** BCP-47 language tag, such as 'en-US'. Defaults to the device's language. */
+  language?: string;
+  /** Stop whatever is being said first. Defaults to true; false queues behind it. */
+  interrupt?: boolean;
+}
+
+export interface CraftSpeech {
+  /**
+   * Speak `text`. Settles when the utterance ends: `true` when it was spoken,
+   * `false` when it was stopped or interrupted. Rejects with
+   * `INVALID_ARGUMENT` when `text` is empty.
+   */
+  speak(text: string, options?: CraftSpeechOptions): Promise<boolean>;
+
+  /** Stop speaking at once. Every pending `speak()` settles `false`. */
+  stop(): Promise<void>;
+}
+
 export interface CraftCapabilities {
   haptics: boolean;
   speechRecognition: boolean;
@@ -1040,6 +1069,8 @@ export interface CraftCapabilities {
   orientationLock: boolean;
   deepLinks: boolean;
   flashlight: boolean;
+  /** Native text-to-speech through `craft.speech`. */
+  speech: boolean;
   network: boolean;
   deviceInfo: boolean;
   badge: boolean;

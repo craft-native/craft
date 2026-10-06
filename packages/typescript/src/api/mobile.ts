@@ -1303,6 +1303,106 @@ export const keepAwake = {
   }
 }
 
+export interface SpeechOptions {
+  /** Speaking rate, 0.5 to 2. 1 is the voice's normal pace. */
+  rate?: number
+  /** BCP-47 language tag, such as 'en-US'. Defaults to the device's language. */
+  language?: string
+  /** Stop whatever is being said first. Defaults to true; false queues behind it. */
+  interrupt?: boolean
+}
+
+interface WebSpeech {
+  synthesis: {
+    speak: (utterance: any) => void
+    cancel: () => void
+  }
+  Utterance: new (text: string) => any
+}
+
+/** The page's own Web Speech API, when it has one. */
+function getWebSpeech(): WebSpeech | undefined {
+  if (typeof window === 'undefined') return undefined
+  const scope = window as any
+  if (!scope.speechSynthesis || typeof scope.SpeechSynthesisUtterance !== 'function') return undefined
+  return { synthesis: scope.speechSynthesis, Utterance: scope.SpeechSynthesisUtterance }
+}
+
+/**
+ * Utterances the web fallback is still speaking. Held because some engines
+ * drop an utterance nothing references before it ends, and then never fire
+ * `end`, which would leave its promise open for good.
+ */
+const speakingOnTheWeb = new Set<unknown>()
+
+function speechRate(rate: number | undefined): number {
+  return typeof rate === 'number' && Number.isFinite(rate) ? Math.min(Math.max(rate, 0.5), 2) : 1
+}
+
+/**
+ * Short spoken cues: "Rest, 15 seconds. Up next: Dead Bug".
+ *
+ * Inside a Craft app this is native text-to-speech, which ducks the person's
+ * music rather than stopping it and, on iOS, plays with the silent switch on.
+ * In a browser it falls back to the Web Speech API, which does neither, and
+ * where there is no speech at all it answers `false` rather than throwing, so
+ * a cue never breaks the flow around it.
+ */
+export const speech = {
+  isAvailable(): boolean {
+    return Boolean(getCraftRoot()?.speech?.speak) || getWebSpeech() !== undefined
+  },
+
+  /**
+   * Speak `text`. Resolves when the utterance ends: `true` when it was
+   * spoken, `false` when it was stopped, interrupted or could not be spoken.
+   * Rejects with code `INVALID_ARGUMENT` when `text` is empty.
+   */
+  async speak(text: string, options: SpeechOptions = {}): Promise<boolean> {
+    const native = getCraftRoot()?.speech
+    const web = native?.speak ? undefined : getWebSpeech()
+    if (!native?.speak && !web) return false
+
+    if (typeof text !== 'string' || !text.trim()) {
+      throw Object.assign(new Error('speech.speak needs some text to say'), { code: 'INVALID_ARGUMENT' })
+    }
+    if (native?.speak) return (await native.speak(text, options)) === true
+
+    const { synthesis, Utterance } = web!
+    // Cancelling ends the utterance in progress with an error, which settles
+    // its promise false, the same answer native gives an interrupted cue.
+    if (options.interrupt !== false) synthesis.cancel()
+    return new Promise<boolean>((resolve) => {
+      const utterance = new Utterance(text)
+      utterance.rate = speechRate(options.rate)
+      if (options.language) utterance.lang = options.language
+      const settle = (spoken: boolean) => {
+        speakingOnTheWeb.delete(utterance)
+        resolve(spoken)
+      }
+      utterance.onend = () => settle(true)
+      utterance.onerror = () => settle(false)
+      speakingOnTheWeb.add(utterance)
+      try {
+        synthesis.speak(utterance)
+      }
+      catch {
+        settle(false)
+      }
+    })
+  },
+
+  /** Stop speaking at once. Every pending `speak()` resolves `false`. */
+  async stop(): Promise<void> {
+    const native = getCraftRoot()?.speech
+    if (native?.stop) {
+      await native.stop()
+      return
+    }
+    getWebSpeech()?.synthesis.cancel()
+  },
+}
+
 export const deepLinks = {
   async getInitialURL(): Promise<string | null> {
     return normalizeDeepLinkURL(await getCraftRoot()?.deepLinks?.getInitialURL?.())
@@ -1779,6 +1879,7 @@ const mobile: {
   lifecycle: typeof lifecycle
   notifications: typeof notifications
   keepAwake: typeof keepAwake
+  speech: typeof speech
   deepLinks: typeof deepLinks
   network: typeof network
   appReview: typeof appReview
@@ -1798,6 +1899,7 @@ const mobile: {
   lifecycle: lifecycle,
   notifications: notifications,
   keepAwake: keepAwake,
+  speech: speech,
   deepLinks: deepLinks,
   network: network,
   appReview: appReview,

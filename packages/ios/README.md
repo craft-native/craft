@@ -439,6 +439,20 @@ await window.craft.restorePurchases();
 window.craft.setKeepAwake(true);  // Prevent screen dimming
 window.craft.setKeepAwake(false); // Allow screen dimming
 
+// Speech: short spoken cues that duck the person's music instead of stopping
+// it, and play with the silent switch on. Always available (no config flag).
+// Resolves when the utterance ends: true if spoken, false if stopped or
+// interrupted. Rejects with INVALID_ARGUMENT for empty text.
+const spoken = await window.craft.speech.speak('Rest, 15 seconds. Up next: Dead Bug', {
+  rate: 1,          // 0.5 to 2, 1 = normal
+  language: 'en-US', // BCP-47; defaults to the device's language
+  interrupt: true   // default: stop what is being said first; false queues
+});
+await window.craft.speech.stop(); // pending speak() calls resolve false
+// Or `import { speech } from 'craft-native/mobile'`: the same calls, falling
+// back to the Web Speech API in a browser and resolving false where neither
+// exists. speech.isAvailable() says which.
+
 // Orientation Lock
 window.craft.lockOrientation('portrait');   // Lock to portrait
 window.craft.lockOrientation('landscape');  // Lock to landscape

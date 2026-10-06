@@ -36,6 +36,11 @@ import android.provider.Settings
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.util.DisplayMetrics
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -199,6 +204,17 @@ internal object CraftPermissionPolicy {
             isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)
 }
 
+private data class SpeechRequest(
+    val text: String,
+    val rate: Float,
+    val language: String?,
+    val callbackId: Int,
+    val generation: Int
+)
+
+/** The navigation it belongs to, so a page that has gone hears nothing. */
+private data class PendingUtterance(val callbackId: Int, val generation: Int)
+
 private data class PendingPermissionRequest(
     val callbackId: Int,
     val permission: String,
@@ -278,6 +294,19 @@ class CraftBridge(
 
     // Keep awake
     private var isKeepingAwake = false
+
+    // Speech synthesis, all of it touched on the main thread only. The engine
+    // is bound on the first speak rather than here, so an app that never
+    // speaks never starts a TTS service. Requests made while it binds wait in
+    // queuedSpeech; each utterance handed to it waits in pendingUtterances,
+    // under the id the engine reports back, for the page call it answers.
+    private var textToSpeech: TextToSpeech? = null
+    private var textToSpeechReady = false
+    private val queuedSpeech = mutableListOf<SpeechRequest>()
+    private val pendingUtterances = linkedMapOf<String, PendingUtterance>()
+    private var nextUtteranceId = 0L
+    private var speechFocusRequest: AudioFocusRequest? = null
+    private val speechHandler = Handler(Looper.getMainLooper())
 
     // Billing clients for in-app purchases
     private var productBillingClient: BillingClient? = null
@@ -388,6 +417,7 @@ class CraftBridge(
                     networkStatus: true,
                     appReview: true,
                     flashlight: {{ENABLE_CAMERA}} && ${hasFlashlight()},
+                    speech: true,
                     openURL: true,
                     vibrationPattern: true,
                     appState: true,
@@ -1640,6 +1670,66 @@ class CraftBridge(
                     },
                     openSettings: function() {
                         return Promise.resolve().then(function() { CraftAndroid.openPermissionSettings(); });
+                    }
+                };
+                // Speech synthesis. speak() settles when the utterance ends:
+                // true when it was spoken, false when something stopped it
+                // or the device has no engine to speak with. No timeout, as
+                // on iOS: a long sentence at a slow rate outlasts any
+                // deadline that would be fair to a short cue.
+                var speechRequestSequence = 0;
+                var speechRequests = Object.create(null);
+                var speechRuntimeClosed = false;
+                window.__craftSpeechResult = function(id, spoken) {
+                    if (speechRuntimeClosed) return;
+                    var pending = speechRequests[id];
+                    if (!pending) return;
+                    delete speechRequests[id];
+                    pending.resolve(spoken === true);
+                };
+                window.__craftSpeechError = function(id, message, code) {
+                    if (speechRuntimeClosed) return;
+                    var pending = speechRequests[id];
+                    if (!pending) return;
+                    delete speechRequests[id];
+                    var error = new Error(message);
+                    error.code = code || 'CRAFT_ERROR';
+                    error.bridge = true;
+                    pending.reject(error);
+                };
+                window.__craftRejectSpeechRequests = function(message) {
+                    speechRuntimeClosed = true;
+                    Object.keys(speechRequests).forEach(function(id) {
+                        var pending = speechRequests[id];
+                        delete speechRequests[id];
+                        pending.reject(new Error(message || 'Android bridge closed'));
+                    });
+                };
+                craft.speech = {
+                    speak: function(text, options) {
+                        if (speechRuntimeClosed) {
+                            return Promise.reject(new Error('Android bridge is closed'));
+                        }
+                        options = options || {};
+                        var settings = JSON.stringify({
+                            rate: typeof options.rate === 'number' ? options.rate : null,
+                            language: typeof options.language === 'string' ? options.language : null,
+                            interrupt: options.interrupt !== false
+                        });
+                        return new Promise(function(resolve, reject) {
+                            speechRequestSequence += 1;
+                            var id = speechRequestSequence;
+                            speechRequests[id] = {resolve: resolve, reject: reject};
+                            try {
+                                CraftAndroid.speak(text == null ? '' : String(text), settings, id);
+                            } catch (error) {
+                                delete speechRequests[id];
+                                reject(error);
+                            }
+                        });
+                    },
+                    stop: function() {
+                        return Promise.resolve().then(function() { CraftAndroid.stopSpeaking(); });
                     }
                 };
                 craft.location = {
@@ -3556,6 +3646,189 @@ class CraftBridge(
         return true
     }
 
+    // ==================== Speech Synthesis ====================
+
+    /**
+     * Say [text], and answer the page's call [callbackId] once it has been
+     * said (`true`) or stopped (`false`).
+     *
+     * The audio is marked as navigation guidance and asks for transient,
+     * may-duck focus, which is what makes the music dip under the cue rather
+     * than stop, and come back once [abandonSpeechFocus] runs. The WebView's
+     * own `speechSynthesis` has no say in either.
+     */
+    @JavascriptInterface
+    fun speak(text: String?, optionsJson: String?, callbackId: Int) {
+        activity.runOnUiThread {
+            if (closed) return@runOnUiThread
+            if (text.isNullOrBlank()) {
+                rejectSpeech(callbackId, "speak needs some text to say", "INVALID_ARGUMENT")
+                return@runOnUiThread
+            }
+            val options = runCatching { JSONObject(optionsJson ?: "{}") }.getOrElse { JSONObject() }
+            val rate = if (options.isNull("rate")) 1.0 else options.optDouble("rate", 1.0)
+            val request = SpeechRequest(
+                text = text,
+                // 1 is normal on both scales, so this only bounds it.
+                rate = (if (rate.isFinite()) rate else 1.0).coerceIn(0.5, 2.0).toFloat(),
+                language = if (options.isNull("language")) null else options.optString("language").ifBlank { null },
+                callbackId = callbackId,
+                generation = navigationGeneration
+            )
+            if (options.optBoolean("interrupt", true)) cancelPendingSpeech()
+
+            val engine = textToSpeech
+            if (engine != null && textToSpeechReady) {
+                startUtterance(engine, request)
+            } else {
+                queuedSpeech.add(request)
+                bindTextToSpeech()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun stopSpeaking(): Boolean {
+        activity.runOnUiThread {
+            if (closed) return@runOnUiThread
+            cancelPendingSpeech()
+            abandonSpeechFocus()
+        }
+        return true
+    }
+
+    private val speechAudioAttributes: AudioAttributes by lazy {
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+    }
+
+    /** Main thread. Binding takes a moment, and finishes in the listener. */
+    private fun bindTextToSpeech() {
+        if (textToSpeech != null) return
+        var engine: TextToSpeech? = null
+        // Posted, never run inline: an engine that cannot bind reports so
+        // from inside its own constructor, before `engine` has been assigned,
+        // and runOnUiThread on the main thread would run it right there.
+        engine = TextToSpeech(activity.applicationContext) { status ->
+            speechHandler.post { onTextToSpeechBound(engine, status == TextToSpeech.SUCCESS) }
+        }
+        textToSpeech = engine
+    }
+
+    private fun onTextToSpeechBound(engine: TextToSpeech?, succeeded: Boolean) {
+        // An engine that close() or a failed earlier bind has since replaced.
+        if (closed || engine == null || engine !== textToSpeech) return
+        val waiting = queuedSpeech.toList()
+        queuedSpeech.clear()
+        if (!succeeded) {
+            // No engine, or none that would start. Each call settles as
+            // "nothing was said", and the next speak tries binding again.
+            runCatching { engine.shutdown() }
+            textToSpeech = null
+            waiting.forEach { settleSpeech(it.callbackId, it.generation, false) }
+            return
+        }
+        engine.setAudioAttributes(speechAudioAttributes)
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {}
+            override fun onDone(utteranceId: String?) {
+                activity.runOnUiThread { utteranceEnded(utteranceId, true) }
+            }
+            @Deprecated("Deprecated in Java")
+            override fun onError(utteranceId: String?) {
+                activity.runOnUiThread { utteranceEnded(utteranceId, false) }
+            }
+            override fun onError(utteranceId: String?, errorCode: Int) {
+                activity.runOnUiThread { utteranceEnded(utteranceId, false) }
+            }
+            override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                activity.runOnUiThread { utteranceEnded(utteranceId, false) }
+            }
+        })
+        textToSpeechReady = true
+        waiting.forEach { startUtterance(engine, it) }
+    }
+
+    private fun startUtterance(engine: TextToSpeech, request: SpeechRequest) {
+        if (!requestSpeechFocus()) {
+            // A call, or something else that may not be talked over.
+            settleSpeech(request.callbackId, request.generation, false)
+            return
+        }
+        // Both apply to the speak calls after them, so each utterance sets
+        // its own rather than inheriting the last one's.
+        engine.setSpeechRate(request.rate)
+        val locale = request.language?.let { Locale.forLanguageTag(it) }
+        if (locale == null || engine.setLanguage(locale) < TextToSpeech.LANG_AVAILABLE) {
+            engine.setLanguage(Locale.getDefault())
+        }
+
+        nextUtteranceId += 1
+        val utteranceId = "craft-speech-$nextUtteranceId"
+        pendingUtterances[utteranceId] = PendingUtterance(request.callbackId, request.generation)
+        if (engine.speak(request.text, TextToSpeech.QUEUE_ADD, null, utteranceId) != TextToSpeech.SUCCESS) {
+            pendingUtterances.remove(utteranceId)
+            settleSpeech(request.callbackId, request.generation, false)
+            if (pendingUtterances.isEmpty()) abandonSpeechFocus()
+        }
+    }
+
+    private fun utteranceEnded(utteranceId: String?, spoken: Boolean) {
+        val pending = utteranceId?.let { pendingUtterances.remove(it) }
+        if (pending != null) settleSpeech(pending.callbackId, pending.generation, spoken)
+        if (pendingUtterances.isEmpty() && queuedSpeech.isEmpty()) abandonSpeechFocus()
+    }
+
+    /**
+     * Stop the engine and settle every call waiting on it, false.
+     *
+     * Settled here rather than in `onStop`, so that a request still waiting
+     * for the engine to bind, which the engine has never heard of, settles
+     * too.
+     */
+    private fun cancelPendingSpeech() {
+        val waiting = pendingUtterances.values.toList() +
+            queuedSpeech.map { PendingUtterance(it.callbackId, it.generation) }
+        pendingUtterances.clear()
+        queuedSpeech.clear()
+        if (textToSpeechReady) runCatching { textToSpeech?.stop() }
+        waiting.forEach { settleSpeech(it.callbackId, it.generation, false) }
+    }
+
+    private fun requestSpeechFocus(): Boolean {
+        if (speechFocusRequest != null) return true
+        val manager = activity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return true
+        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+            .setAudioAttributes(speechAudioAttributes)
+            .build()
+        if (manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_FAILED) return false
+        speechFocusRequest = request
+        return true
+    }
+
+    private fun abandonSpeechFocus() {
+        val request = speechFocusRequest ?: return
+        speechFocusRequest = null
+        val manager = activity.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching { manager.abandonAudioFocusRequest(request) }
+    }
+
+    /** An answer for a page that has since navigated away is dropped. */
+    private fun settleSpeech(callbackId: Int, generation: Int, spoken: Boolean) {
+        if (generation != navigationGeneration) return
+        evaluateJavascriptUnlessClosed(
+            "window.__craftSpeechResult && window.__craftSpeechResult($callbackId, $spoken)"
+        )
+    }
+
+    private fun rejectSpeech(callbackId: Int, message: String, code: String) {
+        evaluateJavascriptUnlessClosed(
+            "window.__craftSpeechError && window.__craftSpeechError($callbackId, ${jsQuote(message)}, ${jsQuote(code)})"
+        )
+    }
+
     // ==================== Orientation Lock ====================
 
     @JavascriptInterface
@@ -4077,7 +4350,8 @@ class CraftBridge(
             runCatching {
                 webView.evaluateJavascript(
                     "window.__craftRejectPendingPromises && window.__craftRejectPendingPromises('Android bridge closed');" +
-                        "window.__craftRejectPermissionRequests && window.__craftRejectPermissionRequests('Android bridge closed')",
+                        "window.__craftRejectPermissionRequests && window.__craftRejectPermissionRequests('Android bridge closed');" +
+                        "window.__craftRejectSpeechRequests && window.__craftRejectSpeechRequests('Android bridge closed')",
                     null
                 )
             }
@@ -4143,6 +4417,16 @@ class CraftBridge(
         restoreBillingClient = null
         runCatching { database?.close() }
         database = null
+
+        // The page's calls were rejected above; this only silences the
+        // engine and gives the music back its volume.
+        queuedSpeech.clear()
+        pendingUtterances.clear()
+        runCatching { textToSpeech?.stop() }
+        runCatching { textToSpeech?.shutdown() }
+        textToSpeech = null
+        textToSpeechReady = false
+        abandonSpeechFocus()
 
         if (isFlashlightOn) setFlashlight(false)
         activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

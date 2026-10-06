@@ -382,6 +382,10 @@ describe('Craft Android builder', () => {
     expect(manifest).toContain('android:allowBackup="false"')
     expect(manifest).toContain('android:usesCleartextTraffic="false"')
     expect(manifest).toContain('android:scheme="wildloop"')
+    // craft.speech binds a TTS engine, which Android 11+ hides from an app
+    // that has not declared it will look for one.
+    expect(manifest).toContain('<action android:name="android.intent.action.TTS_SERVICE" />')
+    expect(bridge).toContain('speech: true')
     expect(bridge).toContain('fun setInitialURL')
     const activity = readFileSync(join(output, 'app/src/main/java/org/wildloop/app/MainActivity.kt'), 'utf8')
     expect(activity).toContain('WebViewAssetLoader')

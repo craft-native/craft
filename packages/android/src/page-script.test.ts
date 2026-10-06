@@ -420,3 +420,74 @@ describe('the injected Android page script', () => {
     expect(page.page.__craftBridgeInstalled).toBe(true)
   })
 })
+
+describe('craft.speech on Android', () => {
+  // The answer arrives later, from the engine's UtteranceProgressListener,
+  // through window.__craftSpeechResult with the id the page handed over.
+  it('is always offered, whatever the app was built with', () => {
+    expect(loadPage(undefined, false).craft.capabilities.speech).toBe(true)
+  })
+
+  it('hands Kotlin the text, its options as JSON and an id, and settles when the utterance ends', async () => {
+    const page = loadPage()
+    const spoken = page.craft.speech.speak('Rest, 15 seconds. Up next: Dead Bug', { rate: 0.8, language: 'de-DE', interrupt: false })
+
+    const [text, settings, id] = page.argsOf('speak')!
+    expect(text).toBe('Rest, 15 seconds. Up next: Dead Bug')
+    expect(JSON.parse(settings as string)).toEqual({ rate: 0.8, language: 'de-DE', interrupt: false })
+    expect(typeof id).toBe('number')
+
+    page.page.__craftSpeechResult(id, true)
+    expect(await spoken).toBe(true)
+  })
+
+  it('interrupts by default, and settles an interrupted cue false', async () => {
+    const page = loadPage()
+    const first = page.craft.speech.speak('Work')
+    const firstId = page.argsOf('speak')![2]
+    const second = page.craft.speech.speak('Rest')
+    const [, settings, secondId] = page.argsOf('speak')!
+
+    expect(JSON.parse(settings as string)).toEqual({ rate: null, language: null, interrupt: true })
+    expect(secondId).not.toBe(firstId)
+    page.page.__craftSpeechResult(firstId, false)
+    page.page.__craftSpeechResult(secondId, true)
+    expect(await first).toBe(false)
+    expect(await second).toBe(true)
+  })
+
+  it('rejects with the code Kotlin sends', async () => {
+    const page = loadPage()
+    const spoken = page.craft.speech.speak('')
+    page.page.__craftSpeechError(page.argsOf('speak')![2], 'speak needs some text to say', 'INVALID_ARGUMENT')
+    await expect(spoken).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', message: 'speak needs some text to say' })
+  })
+
+  it('rejects, rather than throwing at the caller, when native fails', async () => {
+    const page = loadPage(undefined, true, { speak: new Error('No engine') })
+    let returned: Promise<unknown> | undefined
+    expect(() => { returned = page.craft.speech.speak('Go') }).not.toThrow()
+    await expect(returned).rejects.toThrow('No engine')
+  })
+
+  it('stops through stopSpeaking', async () => {
+    const page = loadPage(undefined, true, { stopSpeaking: true })
+    await page.craft.speech.stop()
+    expect(page.calls).toEqual(['stopSpeaking'])
+  })
+
+  it('rejects what is still speaking when the bridge closes', async () => {
+    const page = loadPage()
+    const spoken = page.craft.speech.speak('Go')
+    page.page.__craftRejectSpeechRequests('Android bridge closed')
+    await expect(spoken).rejects.toThrow('Android bridge closed')
+    await expect(page.craft.speech.speak('Again')).rejects.toThrow('Android bridge is closed')
+    expect(template).toContain("window.__craftRejectSpeechRequests && window.__craftRejectSpeechRequests('Android bridge closed')")
+  })
+
+  it('ducks other audio for the cue and gives focus back afterwards', () => {
+    expect(template).toContain('AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)')
+    expect(template).toContain('.setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)')
+    expect(template).toContain('manager.abandonAudioFocusRequest(request)')
+  })
+})

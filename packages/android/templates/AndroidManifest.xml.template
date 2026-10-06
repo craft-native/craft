@@ -5,6 +5,14 @@
 {{PERMISSIONS}}
 {{HEALTH_CONNECT_QUERIES}}
 
+    <!-- craft.speech: from Android 11 an app cannot see, and so cannot bind,
+         a text-to-speech engine it has not declared it will look for. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <!-- Camera feature (optional) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
