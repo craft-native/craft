@@ -1885,10 +1885,10 @@ export interface CraftFileSystemAPI {
   /**
    * Watch a file or directory (desktop bridge). Resolves once native has
    * registered the watch; `callback` hears the `craft:fs:change` events for
-   * this watch only. Rejects with `PLATFORM_NOT_SUPPORTED` on Linux and
-   * Windows. On macOS the watch is registered but no change events are
-   * emitted yet, so the capability manifest reports `craft:fs:change` as
-   * `unknown`.
+   * this watch only. On macOS each watch is an FSEvents stream; it lasts
+   * until `unwatch`, until the page navigates, or until its window is
+   * destroyed, and the path must exist (`NOT_FOUND` otherwise). Rejects with
+   * `PLATFORM_NOT_SUPPORTED` on Linux and Windows.
    * @param path - Path to watch
    * @param callback - Called with each change to this watch
    * @param options - `recursive` defaults to false
@@ -1908,8 +1908,11 @@ export interface CraftFileSystemAPI {
 export interface CraftFsWatchEvent {
   /** The id of the watch it belongs to */
   id: string
-  /** What happened, e.g. 'create', 'modify', 'delete', 'rename' */
-  type: string
+  /**
+   * What happened. Both ends of a rename report `rename`; the old name is the
+   * one that no longer exists.
+   */
+  type: 'create' | 'modify' | 'delete' | 'rename'
   /** The path that changed */
   path: string
 }

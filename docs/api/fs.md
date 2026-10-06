@@ -237,9 +237,19 @@ carries it as `detail.id` (with `type` and `path`), so a callback hears only its
 own watch. `window.craft.fs.unwatch(id)` and `handle.unwatch()` both stop it, and
 a second stop does nothing.
 
-On macOS the watch is registered, but native does not emit change events yet:
-`(await window.craft.capabilities()).channels['craft:fs:change']` reports
-`unknown`. On Linux and Windows `window.craft.fs.watch` rejects with
+On macOS each watch is an FSEvents stream, and `type` is one of `create`,
+`modify`, `delete` or `rename` (both ends of a rename report it; the old name no
+longer exists). A recursive watch hears everything under the directory, a
+non-recursive one only its direct children, and a watch on a file only that
+file. The directory itself is reported only if it is deleted or renamed. Paths
+come back spelled the way you passed them, even through a symlink such as
+`/tmp`. The path must exist, or the watch rejects with `NOT_FOUND`.
+
+A watch lasts until you stop it, until the page navigates or reloads, or until
+its window is destroyed. FSEvents batches changes for up to 50ms, so a burst of
+writes can arrive as fewer events.
+
+On Linux and Windows `window.craft.fs.watch` rejects with
 `PLATFORM_NOT_SUPPORTED`. Outside a Craft window, `watch` uses `node:fs.watch`.
 
 ## Types
@@ -263,7 +273,7 @@ interface FileStat {
 // The detail of a `craft:fs:change` event
 interface CraftFsWatchEvent {
   id: string // the watch it belongs to
-  type: string // e.g. 'create', 'modify', 'delete', 'rename'
+  type: 'create' | 'modify' | 'delete' | 'rename'
   path: string
 }
 

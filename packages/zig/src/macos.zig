@@ -4107,6 +4107,7 @@ pub fn destroyWindow(window_handle: anytype) void {
     forgetWindowChrome(window);
     forgetWebMaterial(window);
     if (webview) |view| {
+        if (global_fs_bridge) |bridge| bridge.forgetWebView(@intFromPtr(view));
         forgetContent(view);
         @import("webview_recovery.zig").forget(@intFromPtr(view));
         window_registry.forgetOwner(@intFromPtr(view));
@@ -5194,6 +5195,8 @@ pub fn setupBridgeHandlers(allocator: std.mem.Allocator, tray_handle: ?*anyopaqu
         const FSBridge = @import("bridge_fs.zig").FSBridge;
         global_fs_bridge = try allocator.create(FSBridge);
         global_fs_bridge.?.* = FSBridge.init(allocator);
+        // `craft.fs.watch` streams changes through FSEvents (`fs_watch.zig`).
+        _ = @import("capabilities.zig").registerEmitter(.fs_change);
     }
 
     if (global_shell_bridge == null) {
@@ -6834,8 +6837,13 @@ fn restoreContent(webview: objc.id) void {
 /// Commit is the moment the new document exists and before it has painted, so
 /// telling it again here costs one evaluation per navigation and closes the
 /// only window in which the page could hold a stale answer.
+///
+/// It is also the moment the previous document's `craft.fs.watch` streams lost
+/// their callbacks, so they stop here rather than stream into a page that
+/// cannot hear them — one more per reload, for as long as the window lived.
 fn handleDidCommitNavigation(_: objc.id, _: objc.SEL, webview: objc.id, _: objc.id) callconv(.c) void {
     if (webview == null) return;
+    if (global_fs_bridge) |bridge| bridge.forgetWebView(@intFromPtr(webview));
     publishWindowChrome(msgSend0(webview, "window"), .always);
 }
 
@@ -7923,6 +7931,12 @@ fn isCraftWindow(window: objc.id) bool {
 
 var app_delegate_installed = false;
 
+/// `applicationWillTerminate:` — stop every `craft.fs.watch` stream before the
+/// process goes, rather than leave FSEvents to notice.
+fn appWillTerminate(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
+    if (global_fs_bridge) |bridge| bridge.stopAllWatches();
+}
+
 /// Install craft's `NSApplicationDelegate`.
 ///
 /// Called from both startup paths, and before `finishLaunching` on the tray
@@ -7950,6 +7964,12 @@ pub fn installAppDelegate() void {
             sel("applicationShouldHandleReopen:hasVisibleWindows:"),
             @as(objc.IMP, @ptrCast(@constCast(&appShouldHandleReopen))),
             "B@:@B",
+        );
+        _ = objc.class_addMethod(
+            cls,
+            sel("applicationWillTerminate:"),
+            @as(objc.IMP, @ptrCast(@constCast(&appWillTerminate))),
+            "v@:@",
         );
 
         objc.objc_registerClassPair(cls);

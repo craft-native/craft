@@ -1031,7 +1031,7 @@ test "the manifest native builds is the shape the facade reads" {
     // Not "false" — craft cannot prove a channel has no emitter, and saying it
     // could is what made the shipped manifest tell pages to disable working
     // features. The only two answers are "live" and "unknown".
-    try testing.expectEqualStrings("unknown", try fx.text("caps.channels['craft:fs:change']"));
+    try testing.expectEqualStrings("unknown", try fx.text("caps.channels['craft:midi:message']"));
 }
 
 test "craft.supports answers from the manifest, and fails open without one" {

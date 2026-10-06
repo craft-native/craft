@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
 const io_context = @import("io_context.zig");
+const fs_watch = @import("fs_watch.zig");
 
 const BridgeError = bridge_error.BridgeError;
 
@@ -35,6 +36,18 @@ const WatchEntry = struct {
     path: []const u8,
     callback_id: []const u8,
     recursive: bool,
+    /// The FSEvents stream, on macOS. `null` where nothing watches the disk —
+    /// Linux and Windows do not route this namespace at all, and the bridge's
+    /// own tests register watches on every platform.
+    native: ?*fs_watch.Watch = null,
+    /// The page that asked, so the watch can go when that page does.
+    webview: usize = 0,
+};
+
+/// A started stream and the page its changes are delivered to.
+const NativeWatch = struct {
+    watch: *fs_watch.Watch,
+    webview: usize,
 };
 
 /// File system bridge for file operations
@@ -55,18 +68,34 @@ pub const FSBridge = struct {
     /// the bridge is being torn down — without it, every restart leaks the
     /// per-watcher allocations.
     pub fn deinit(self: *Self) void {
-        var it = self.watchers.iterator();
-        while (it.next()) |entry| {
-            const watcher = entry.value_ptr.*;
-            self.allocator.free(watcher.id);
-            self.allocator.free(watcher.path);
-            self.allocator.free(watcher.callback_id);
-            // The hashmap key was duped from `watcher.id` at insert time;
-            // freeing `watcher.id` above already covers it. (If a future
-            // change ever duplicates the key separately, also free
-            // `entry.key_ptr.*` here.)
-        }
+        self.stopAllWatches();
         self.watchers.deinit();
+    }
+
+    /// Stop every watch: its stream, and every owned slice it holds. The app
+    /// delegate calls this as the app quits, and `deinit` on teardown.
+    pub fn stopAllWatches(self: *Self) void {
+        var it = self.watchers.iterator();
+        while (it.next()) |entry| self.freeWatcher(entry.value_ptr.*);
+        // The hashmap key was duped from `watcher.id` at insert time; freeing
+        // `watcher.id` covers it. (If a future change ever duplicates the key
+        // separately, also free `entry.key_ptr.*` here.)
+        self.watchers.clearRetainingCapacity();
+    }
+
+    /// Stop the watches one page started. Called when that page's window is
+    /// destroyed and when it navigates away: the document whose callbacks
+    /// they fed is gone, and a page that reloads and watches again would
+    /// otherwise add a stream per reload.
+    pub fn forgetWebView(self: *Self, webview: usize) void {
+        if (webview == 0) return;
+        while (true) {
+            var it = self.watchers.iterator();
+            const id = while (it.next()) |entry| {
+                if (entry.value_ptr.webview == webview) break entry.key_ptr.*;
+            } else return;
+            self.removeWatcher(id);
+        }
     }
 
     /// Handle file system-related messages from JavaScript
@@ -599,9 +628,10 @@ pub const FSBridge = struct {
     /// and no other — `screenSharing` answers a `watch` too, and the old
     /// unstamped `__craftFSCallback` reply could have settled its call instead.
     ///
-    /// Registration only. Nothing here watches the filesystem yet (that would
-    /// be FSEvents on macOS), so no `craft:fs:change` is emitted, and the
-    /// capability manifest says as much by reporting the channel `unknown`.
+    /// On macOS the watch is an FSEvents stream (`fs_watch.zig`) whose changes
+    /// reach the sending page as `craft:fs:change` `{id, type, path}`. It lives
+    /// until `unwatch`, until that page navigates away or its window is
+    /// destroyed, or until the app quits. The path must exist.
     fn watch(self: *Self, data: []const u8) !void {
         const parsed = try parsePayload(struct {
             id: []const u8 = "",
@@ -623,6 +653,9 @@ pub const FSBridge = struct {
         const reply = try std.json.Stringify.valueAlloc(self.allocator, .{ .id = id }, .{});
         defer self.allocator.free(reply);
 
+        const native = try self.startNative(id, path, recursive);
+        errdefer if (native) |n| fs_watch.stop(n.watch);
+
         // Store watcher entry. Each dupe has its own errdefer so an OOM
         // partway through doesn't leak the earlier allocations. Previously
         // a failing `path_owned`/`callback_owned`/`put` would leak every
@@ -642,18 +675,68 @@ pub const FSBridge = struct {
             .path = path_owned,
             .callback_id = callback_owned,
             .recursive = recursive,
+            .native = if (native) |n| n.watch else null,
+            .webview = if (native) |n| n.webview else 0,
         });
 
         bridge_error.sendResultToJS(self.allocator, "watch", reply);
     }
 
-    /// Drop a watcher and the strings it owns. Nothing when `id` is not one.
+    /// Start the FSEvents stream behind a watch, delivering into the page that
+    /// sent it. `null` off macOS, where there is no stream to start.
+    ///
+    /// A path that does not exist is `NotFound`, as `node:fs.watch` makes it
+    /// ENOENT: FSEvents would watch it happily and never say a word.
+    fn startNative(self: *Self, id: []const u8, path: []const u8, recursive: bool) !?NativeWatch {
+        if (comptime builtin.os.tag != .macos) return null;
+        const macos = @import("macos.zig");
+
+        // Retained for the life of the watch, released by the sink: a window
+        // destroyed without its watches being stopped first must not leave the
+        // stream evaluating into freed memory.
+        const webview = macos.getMessageWebView();
+        if (webview != null) _ = macos.msgSend0(webview, "retain");
+
+        const stream = fs_watch.start(self.allocator, id, path, recursive, .{
+            .context = webview,
+            .deliver = deliverToPage,
+            .release = releasePage,
+        }) catch |err| return switch (err) {
+            error.FileNotFound => BridgeError.NotFound,
+            error.AccessDenied => BridgeError.PermissionDenied,
+            else => err,
+        };
+        return .{ .watch = stream, .webview = @intFromPtr(webview) };
+    }
+
+    /// The sink: one change, as a `craft:fs:change` event in the page. On the
+    /// main thread, where FSEvents' main-queue callback already is.
+    fn deliverToPage(context: ?*anyopaque, id: []const u8, change: fs_watch.ChangeType, path: []const u8) void {
+        if (context == null) return;
+        const allocator = std.heap.c_allocator;
+        const script = fs_watch.eventScript(allocator, id, change, path) catch return;
+        defer allocator.free(script);
+        @import("macos.zig").tryEvalJSInWebView(context, script) catch |err| {
+            std.log.debug("fs watch: could not deliver a change to the page: {}", .{err});
+        };
+    }
+
+    fn releasePage(context: ?*anyopaque) void {
+        if (context == null) return;
+        @import("macos.zig").msgSendVoid0(context, "release");
+    }
+
+    /// Drop a watcher, stopping its stream, and the strings it owns. Nothing
+    /// when `id` is not one.
     fn removeWatcher(self: *Self, id: []const u8) void {
-        if (self.watchers.fetchRemove(id)) |kv| {
-            self.allocator.free(kv.value.id);
-            self.allocator.free(kv.value.path);
-            self.allocator.free(kv.value.callback_id);
-        }
+        if (self.watchers.fetchRemove(id)) |kv| self.freeWatcher(kv.value);
+    }
+
+    fn freeWatcher(self: *Self, watcher: WatchEntry) void {
+        if (watcher.native) |native| fs_watch.stop(native);
+        self.allocator.free(watcher.id);
+        self.allocator.free(watcher.path);
+        self.allocator.free(watcher.callback_id);
     }
 
     /// Stop watching

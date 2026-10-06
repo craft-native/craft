@@ -584,7 +584,7 @@ const caps = await window.craft.capabilities()
 
 caps.namespaces.updater.status   // 'unavailable'
 caps.namespaces.updater.reason   // 'the Sparkle framework is not linked into this build'
-caps.channels['craft:fs:change'] // false — you could subscribe, it would never fire
+caps.channels['craft:midi:message'] // 'unknown' — subscribe and see
 ```
 
 Or, for one surface:
