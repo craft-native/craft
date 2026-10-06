@@ -47,6 +47,7 @@ describe('Craft Android builder', () => {
       expect(flatList).toContain('ListAdapter<Item, Holder>')
       expect(flatList).toContain('GridLayoutManager(context, columns)')
       expect(flatList).toContain('dataPositions.indexOfLast')
+      expect(flatList).toContain('else view.layoutParams = hostedLayout')
       expect(nativeActivity).toContain('Color.luminance(background)')
       expect(nativeActivity).toContain('"Image" -> (previous as? ImageView')
       expect(nativeActivity).toContain('"ScrollView" -> (previous as? CraftNativeScrollView')

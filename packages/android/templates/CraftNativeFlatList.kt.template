@@ -44,15 +44,26 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
             val item = getItem(position)
             if (holder.identity != null && holder.identity != item.identity) release(holder)
             val view = renderItem?.invoke(item.node, item.identity, holder.hostedView) ?: View(holder.host.context)
+            val renderedLayout = view.layoutParams
+            val hostedLayout = FrameLayout.LayoutParams(
+                renderedLayout?.width ?: LayoutParams.MATCH_PARENT,
+                renderedLayout?.height ?: LayoutParams.WRAP_CONTENT,
+            )
+            if (renderedLayout is ViewGroup.MarginLayoutParams) {
+                hostedLayout.setMargins(
+                    renderedLayout.leftMargin,
+                    renderedLayout.topMargin,
+                    renderedLayout.rightMargin,
+                    renderedLayout.bottomMargin,
+                )
+            }
             holder.identity = item.identity
             if (holder.hostedView !== view) {
                 (view.parent as? ViewGroup)?.removeView(view)
                 holder.host.removeAllViews()
-                holder.host.addView(view, FrameLayout.LayoutParams(
-                    LayoutParams.MATCH_PARENT,
-                    LayoutParams.WRAP_CONTENT,
-                ))
+                holder.host.addView(view, hostedLayout)
             }
+            else view.layoutParams = hostedLayout
         }
 
         override fun onViewRecycled(holder: Holder) {

@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.SystemClock
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -54,6 +55,10 @@ class NativeFlatListTest {
             (previous as? TextView ?: TextView(context)).apply {
                 text = node.optJSONArray("children")?.optString(0).orEmpty()
                 minHeight = 44
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
             }
         }
 
@@ -116,6 +121,14 @@ class NativeFlatListTest {
         assertEquals(3, grid.spanCount)
         assertEquals(3, grid.spanSizeLookup.getSpanSize(0))
         assertEquals(1, grid.spanSizeLookup.getSpanSize(1))
+
+        val updated = listOf(chrome("header", "header"), row(0).put("children", JSONArray().put("Updated"))) +
+            (1 until 8).map(::row)
+        instrumentation.runOnMainSync {
+            list.apply(updated, false, 3, false, 0.1, renderer(context, renders), { _ -> }, null)
+        }
+        SystemClock.sleep(300)
+        instrumentation.runOnMainSync { attach(list) }
 
         val chromeEndReached = AtomicInteger()
         val chromeOnly = listOf(
