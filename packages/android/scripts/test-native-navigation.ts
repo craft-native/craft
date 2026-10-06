@@ -25,7 +25,17 @@ function assertMutationBundle(path: string): void {
 try {
   run([process.execPath, stxCli, 'compile', '--format', 'bundle', '--output', bundle], fixture)
   assertMutationBundle(bundle)
-  await init({ name: 'NativeNavigation', packageName, output, config: { renderer: 'native' }, runtimeDir: null })
+  await init({
+    name: 'NativeNavigation', packageName, output,
+    config: {
+      renderer: 'native',
+      enableDeepLinks: true,
+      enableLocalDatabase: true,
+      enableLocalNotifications: true,
+      urlSchemes: ['craft-native-test'],
+    },
+    runtimeDir: null,
+  })
   await build({ output, nativeBundlePath: bundle, compile: false, runtimeDir: null })
 
   const testDirectory = join(output, 'app/src/androidTest/java', ...packageName.split('.'))
@@ -33,6 +43,7 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), join(testDirectory, 'NativeNavigationTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMutationTest.kt'), join(testDirectory, 'NativeMutationTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeFlatListTest.kt'), join(testDirectory, 'NativeFlatListTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilitiesTest.kt'), join(testDirectory, 'NativeCapabilitiesTest.kt'))
 
   if (!process.argv.includes('--prepare-only')) {
     try {

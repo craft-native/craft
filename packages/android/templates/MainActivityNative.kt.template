@@ -3,6 +3,7 @@ package {{PACKAGE_NAME}}
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
@@ -87,6 +88,8 @@ class MainActivity : AppCompatActivity() {
         val flatListOwners = mutableMapOf<String, String>()
         val flatListOwnerByView = mutableMapOf<CraftNativeFlatList, String>()
         val mutations = CraftNativeMutationDocument()
+        val capabilityScope = UUID.randomUUID().toString()
+        val pendingCapabilities = mutableSetOf<String>()
         var active = true
 
         fun close() {
@@ -100,7 +103,12 @@ class MainActivity : AppCompatActivity() {
     private var sandbox: JavaScriptSandbox? = null
     private val screens = mutableListOf<Screen>()
     private var bundle = ""
+    private lateinit var config: JSONObject
+    private lateinit var capabilities: CraftNativeCapabilities
     private var hapticsEnabled = false
+    private var clipboardEnabled = false
+    internal var nativeAppState = "inactive"
+        private set
     private var defaultTextColor = Color.WHITE
     private var useMessagePorts = false
     private val imageExecutor = Executors.newFixedThreadPool(2)
@@ -112,12 +120,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         root = findViewById(R.id.native_root)
-        val config = runCatching {
+        config = runCatching {
             assets.open("craft.config.json").bufferedReader().use {
                 JSONObject(it.readText())
             }
         }.getOrDefault(JSONObject())
         hapticsEnabled = config.optBoolean("enableHaptics", false)
+        clipboardEnabled = config.optBoolean("enableClipboard", false)
+        capabilities = CraftNativeCapabilities(this, config)
         val background = color(config.optString("backgroundColor", "#1a1a2e"), Color.BLACK)
         root.setBackgroundColor(background)
         defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
@@ -195,6 +205,8 @@ class MainActivity : AppCompatActivity() {
               $routePrelude
               globalThis.__stxNativeBridge = {
                 mutationProtocolVersion: 1,
+                capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
+                capabilities: ${capabilities.names()},
                 postMessage: function(value) { port.postMessage(value); },
                 onMessage: function(callback) { port.onmessage = function(event) { callback(event.data); }; }
               };
@@ -203,6 +215,8 @@ class MainActivity : AppCompatActivity() {
             $routePrelude
             globalThis.__stxNativeBridge = {
               mutationProtocolVersion: 1,
+              capabilityProtocolVersion: $CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION,
+              capabilities: ${capabilities.names()},
               postMessage: function(value) { console.log(${JSONObject.quote(prefix)} + value); },
               onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
@@ -271,6 +285,14 @@ class MainActivity : AppCompatActivity() {
             }
             "NAVIGATE_BACK" -> if (screens.lastOrNull() === screen) back()
             "API_REQUEST" -> answerAPI(screen, message, payload)
+            "API_CANCEL" -> {
+                val id = payload.optString("requestId")
+                if (id.isNotBlank()) {
+                    val token = "${screen.capabilityScope}/$id"
+                    screen.pendingCapabilities.remove(token)
+                    capabilities.cancel(token)
+                }
+            }
         }
     }
 
@@ -740,34 +762,99 @@ class MainActivity : AppCompatActivity() {
         val id = message.optString("id")
         if (id.isBlank()) return
         val args = payload.optJSONArray("args") ?: JSONArray()
-        val response = JSONObject().put("requestId", id)
-        val result = when (payload.optString("module") to payload.optString("method")) {
-            "Device" to "getInfo" -> response.put("data", JSONObject()
+        val token = "${screen.capabilityScope}/$id"
+        screen.pendingCapabilities.add(token)
+        capabilities.perform(
+            token,
+            payload.optInt("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION),
+            payload.optString("module"),
+            payload.optString("method"),
+            args,
+        ) { result ->
+            if (!screen.active || !screen.pendingCapabilities.remove(token)) return@perform
+            val response = JSONObject()
+                .put("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION)
+                .put("requestId", id)
+            if (result.code == null) response.put("data", result.data ?: JSONObject.NULL)
+            else response.put("code", result.code).put("message", result.message ?: "Native API failed")
+            send(screen, if (result.code == null) "API_RESPONSE" else "API_ERROR", response, id)
+        }
+    }
+
+    internal fun performImmediateCapability(module: String, method: String, args: JSONArray): CraftNativeCapabilityResult =
+        when (module to method) {
+            "Device" to "getInfo" -> CraftNativeCapabilityResult(data = JSONObject()
                 .put("platform", "android")
                 .put("osVersion", Build.VERSION.RELEASE)
                 .put("model", Build.MODEL)
-                .put("manufacturer", Build.MANUFACTURER))
-            "Clipboard" to "write" -> {
+                .put("manufacturer", Build.MANUFACTURER)
+                .put("deviceId", android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.ANDROID_ID))
+                .put("isTablet", resources.configuration.smallestScreenWidthDp >= 600)
+                .put("screen", JSONObject()
+                    .put("width", resources.displayMetrics.widthPixels / resources.displayMetrics.density)
+                    .put("height", resources.displayMetrics.heightPixels / resources.displayMetrics.density)
+                    .put("scale", resources.displayMetrics.density)))
+            "Clipboard" to "write" -> if (!clipboardEnabled) {
+                CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Clipboard is disabled")
+            } else if (args.opt(0) !is String) {
+                CraftNativeCapabilityResult(code = "INVALID_ARGUMENT", message = "Clipboard.write needs text")
+            } else {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("", args.optString(0)))
-                response.put("data", JSONObject().put("ok", true))
+                clipboard.setPrimaryClip(ClipData.newPlainText("", args.getString(0)))
+                CraftNativeCapabilityResult(data = true)
             }
-            "Clipboard" to "read" -> {
+            "Clipboard" to "read" -> if (!clipboardEnabled) {
+                CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Clipboard is disabled")
+            } else {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                response.put("data", clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
+                CraftNativeCapabilityResult(data = clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() ?: "")
             }
-            "Haptics" to "impact" -> {
-                if (!hapticsEnabled) response.put("code", "CAPABILITY_DISABLED")
-                    .put("message", "Haptics are disabled")
-                else {
-                    val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                    vibrator.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
-                    response.put("data", JSONObject().put("ok", true))
-                }
+            "Haptics" to "impact" -> if (!hapticsEnabled) {
+                CraftNativeCapabilityResult(code = "CAPABILITY_DISABLED", message = "Haptics are disabled")
+            } else {
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
+                CraftNativeCapabilityResult(data = true)
             }
-            else -> response.put("code", "UNKNOWN_ACTION").put("message", "Unsupported native API")
+            else -> CraftNativeCapabilityResult(code = "UNKNOWN_ACTION", message = "Unsupported native API")
         }
-        send(screen, if (result.has("code")) "API_ERROR" else "API_RESPONSE", result, id)
+
+    internal fun deepLinkData(uri: android.net.Uri): JSONObject = JSONObject()
+        .put("url", uri.toString())
+        .put("scheme", uri.scheme ?: "")
+        .put("host", uri.host ?: "")
+        .put("path", uri.path ?: "")
+        .put("query", uri.query ?: "")
+        .put("queryParams", JSONObject().apply {
+            uri.queryParameterNames.forEach { name -> put(name, uri.getQueryParameter(name) ?: "") }
+        })
+
+    private fun publish(type: String, payload: JSONObject) {
+        screens.lastOrNull()?.takeIf { it.active }?.let { send(it, type, payload) }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        nativeAppState = "active"
+        publish("APP_STATE", JSONObject().put("state", nativeAppState))
+    }
+
+    override fun onPause() {
+        nativeAppState = "inactive"
+        publish("APP_STATE", JSONObject().put("state", nativeAppState))
+        super.onPause()
+    }
+
+    override fun onStop() {
+        nativeAppState = "background"
+        publish("APP_STATE", JSONObject().put("state", nativeAppState))
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.data?.let { publish("DEEP_LINK", deepLinkData(it).put("initial", false)) }
     }
 
     private fun send(screen: Screen, type: String, payload: JSONObject, correlationId: String? = null) {
@@ -816,6 +903,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeScreen(screen: Screen) {
+        screen.pendingCapabilities.forEach(capabilities::cancel)
+        screen.pendingCapabilities.clear()
         releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
@@ -845,6 +934,7 @@ class MainActivity : AppCompatActivity() {
         imageJobs.values.forEach { it.cancel(true) }
         imageJobs.clear()
         imageExecutor.shutdownNow()
+        capabilities.close()
         sandbox?.close()
         super.onDestroy()
     }

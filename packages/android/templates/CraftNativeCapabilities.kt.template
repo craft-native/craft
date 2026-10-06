@@ -1,0 +1,343 @@
+package {{PACKAGE_NAME}}
+
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.database.Cursor
+import android.database.sqlite.SQLiteCursor
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteQuery
+import android.database.sqlite.SQLiteStatement
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.util.Base64
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
+
+internal const val CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION = 1
+
+internal data class CraftNativeCapabilityResult(
+    val data: Any? = null,
+    val code: String? = null,
+    val message: String? = null,
+)
+
+/** Process-wide persistence and OS services shared by every native route. */
+internal class CraftNativeCapabilities(
+    private val activity: MainActivity,
+    private val config: JSONObject,
+) {
+    private val storage = activity.getSharedPreferences("craft-native-storage", Context.MODE_PRIVATE)
+    private val notificationStorage = activity.getSharedPreferences("craft-native-notifications", Context.MODE_PRIVATE)
+    private val databaseExecutor = Executors.newSingleThreadExecutor()
+    private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    private val notificationHandler = Handler(Looper.getMainLooper())
+    private val notificationTasks = mutableMapOf<String, Runnable>()
+    private var database: SQLiteDatabase? = null
+
+    init { restoreNotifications() }
+
+    fun names(): JSONArray = JSONArray().apply {
+        listOf("device", "clipboard", "haptics", "storage", "lifecycle").forEach(::put)
+        if (config.optBoolean("enableLocalDatabase")) put("database")
+        if (config.optBoolean("enableDeepLinks")) put("deepLinks")
+        if (config.optBoolean("enableLocalNotifications")) put("notifications")
+    }
+
+    fun perform(
+        requestToken: String,
+        version: Int,
+        module: String,
+        method: String,
+        args: JSONArray,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+    ) {
+        cancelled.remove(requestToken)
+        if (version != CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION) {
+            complete(requestToken, failure("UNSUPPORTED_VERSION", "Unsupported native capability protocol version"), completion)
+            return
+        }
+        when (module) {
+            "Storage" -> complete(requestToken, storage(method, args), completion)
+            "Database" -> {
+                if (!config.optBoolean("enableLocalDatabase")) {
+                    complete(requestToken, failure("CAPABILITY_DISABLED", "Local database is disabled"), completion)
+                }
+                else databaseExecutor.execute {
+                    complete(requestToken, database(method, args), completion)
+                }
+            }
+            "Lifecycle" -> complete(requestToken, if (method == "getState") success(activity.nativeAppState)
+                else failure("UNKNOWN_ACTION", "Unsupported Lifecycle method"), completion)
+            "DeepLinks" -> complete(requestToken, deepLinks(method), completion)
+            "Notifications" -> notifications(requestToken, method, args, completion)
+            else -> complete(requestToken, activity.performImmediateCapability(module, method, args), completion)
+        }
+    }
+
+    fun cancel(requestToken: String) { cancelled.add(requestToken) }
+
+    fun close() {
+        notificationTasks.values.forEach(notificationHandler::removeCallbacks)
+        notificationTasks.clear()
+        databaseExecutor.shutdownNow()
+        database?.close()
+        database = null
+    }
+
+    private fun complete(
+        requestToken: String,
+        result: CraftNativeCapabilityResult,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+    ) {
+        activity.runOnUiThread {
+            if (!cancelled.remove(requestToken)) completion(result)
+        }
+    }
+
+    private fun storage(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        if (method == "clear") {
+            storage.edit().clear().commit()
+            return success(true)
+        }
+        if (method == "keys") return success(JSONArray(storage.all.keys.sorted()))
+        val key = validKey(args.opt(0)) ?: return failure("INVALID_ARGUMENT", "Storage needs a non-empty key")
+        return when (method) {
+            "get" -> {
+                val raw = storage.getString(key, null) ?: return success(JSONObject.NULL)
+                runCatching { success(JSONTokener(raw).nextValue()) }
+                    .getOrElse { failure("STORAGE_CORRUPT", "Stored value is not valid JSON") }
+            }
+            "set" -> {
+                if (args.length() != 2) return failure("INVALID_ARGUMENT", "Storage.set needs a key and value")
+                val value = JSONObject.valueToString(args.opt(1))
+                if (storage.edit().putString(key, value).commit()) success(true)
+                else failure("STORAGE_ERROR", "Storage could not persist the value")
+            }
+            "remove" -> success(storage.edit().remove(key).commit())
+            else -> failure("UNKNOWN_ACTION", "Unsupported Storage method")
+        }
+    }
+
+    private fun database(method: String, args: JSONArray): CraftNativeCapabilityResult {
+        val db = database ?: runCatching {
+            activity.openOrCreateDatabase("craft-native.sqlite", Context.MODE_PRIVATE, null)
+        }.getOrElse { return failure("DATABASE_ERROR", it.message ?: "Could not open the local database") }
+            .also { database = it }
+        return try {
+            when (method) {
+                "execute" -> {
+                    val sql = args.optString(0).trim()
+                    if (sql.isEmpty()) return failure("INVALID_ARGUMENT", "Database.execute needs a SQL statement")
+                    execute(db, sql, args.optJSONArray(1) ?: JSONArray())
+                }
+                "query" -> {
+                    val sql = args.optString(0).trim()
+                    if (sql.isEmpty()) return failure("INVALID_ARGUMENT", "Database.query needs a SQL statement")
+                    query(db, sql, args.optJSONArray(1) ?: JSONArray())
+                }
+                "beginTransaction" -> { db.beginTransaction(); success(true) }
+                "commit" -> {
+                    if (!db.inTransaction()) failure("DATABASE_ERROR", "No transaction is active")
+                    else { db.setTransactionSuccessful(); db.endTransaction(); success(true) }
+                }
+                "rollback" -> {
+                    if (!db.inTransaction()) failure("DATABASE_ERROR", "No transaction is active")
+                    else { db.endTransaction(); success(true) }
+                }
+                else -> failure("UNKNOWN_ACTION", "Unsupported Database method")
+            }
+        }
+        catch (error: Exception) {
+            failure("DATABASE_ERROR", error.message ?: "Database operation failed")
+        }
+    }
+
+    private fun execute(db: SQLiteDatabase, sql: String, params: JSONArray): CraftNativeCapabilityResult {
+        val statement = db.compileStatement(sql)
+        statement.use {
+            if (!bind(it, params)) return failure("INVALID_ARGUMENT", "Database parameters must be strings, numbers, booleans, or null")
+            val verb = sql.trimStart().substringBefore(' ').uppercase()
+            val insertId: Long
+            val rows: Int
+            when (verb) {
+                "INSERT", "REPLACE" -> { insertId = it.executeInsert(); rows = if (insertId < 0) 0 else 1 }
+                "UPDATE", "DELETE" -> { rows = it.executeUpdateDelete(); insertId = 0 }
+                else -> { it.execute(); rows = changes(db); insertId = lastInsertId(db) }
+            }
+            return success(JSONObject().put("rowsAffected", rows).put("lastInsertId", insertId))
+        }
+    }
+
+    private fun query(db: SQLiteDatabase, sql: String, params: JSONArray): CraftNativeCapabilityResult {
+        val cursor = db.rawQueryWithFactory({ _, driver, editTable, query ->
+            if (!bind(query, params)) throw IllegalArgumentException("Unsupported database parameter")
+            SQLiteCursor(driver, editTable, query)
+        }, sql, emptyArray(), null)
+        cursor.use {
+            val rows = JSONArray()
+            while (it.moveToNext()) {
+                val row = JSONObject()
+                for (column in 0 until it.columnCount) {
+                    row.put(it.getColumnName(column), when (it.getType(column)) {
+                        Cursor.FIELD_TYPE_NULL -> JSONObject.NULL
+                        Cursor.FIELD_TYPE_INTEGER -> it.getLong(column)
+                        Cursor.FIELD_TYPE_FLOAT -> it.getDouble(column)
+                        Cursor.FIELD_TYPE_BLOB -> Base64.encodeToString(it.getBlob(column), Base64.NO_WRAP)
+                        else -> it.getString(column)
+                    })
+                }
+                rows.put(row)
+            }
+            return success(rows)
+        }
+    }
+
+    private fun bind(statement: SQLiteStatement, params: JSONArray): Boolean {
+        for (offset in 0 until params.length()) {
+            val index = offset + 1
+            when (val value = params.opt(offset)) {
+                null, JSONObject.NULL -> statement.bindNull(index)
+                is String -> statement.bindString(index, value)
+                is Boolean -> statement.bindLong(index, if (value) 1 else 0)
+                is ByteArray -> statement.bindBlob(index, value)
+                is Float, is Double -> statement.bindDouble(index, (value as Number).toDouble())
+                is Number -> statement.bindLong(index, value.toLong())
+                else -> return false
+            }
+        }
+        return true
+    }
+
+    private fun bind(query: SQLiteQuery, params: JSONArray): Boolean {
+        for (offset in 0 until params.length()) {
+            val index = offset + 1
+            when (val value = params.opt(offset)) {
+                null, JSONObject.NULL -> query.bindNull(index)
+                is String -> query.bindString(index, value)
+                is Boolean -> query.bindLong(index, if (value) 1 else 0)
+                is Float, is Double -> query.bindDouble(index, (value as Number).toDouble())
+                is Number -> query.bindLong(index, value.toLong())
+                else -> return false
+            }
+        }
+        return true
+    }
+
+    private fun changes(db: SQLiteDatabase): Int = db.rawQuery("SELECT changes()", null).use {
+        if (it.moveToFirst()) it.getInt(0) else 0
+    }
+
+    private fun lastInsertId(db: SQLiteDatabase): Long = db.rawQuery("SELECT last_insert_rowid()", null).use {
+        if (it.moveToFirst()) it.getLong(0) else 0
+    }
+
+    private fun deepLinks(method: String): CraftNativeCapabilityResult {
+        if (!config.optBoolean("enableDeepLinks")) return failure("CAPABILITY_DISABLED", "Deep links are disabled")
+        if (method != "getInitialURL") return failure("UNKNOWN_ACTION", "Unsupported DeepLinks method")
+        return success(activity.intent?.data?.let(activity::deepLinkData) ?: JSONObject.NULL)
+    }
+
+    private fun notifications(
+        requestToken: String,
+        method: String,
+        args: JSONArray,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+    ) {
+        if (!config.optBoolean("enableLocalNotifications")) {
+            complete(requestToken, failure("CAPABILITY_DISABLED", "Local notifications are disabled"), completion)
+            return
+        }
+        when (method) {
+            "schedule" -> complete(requestToken, schedule(args.optJSONObject(0)), completion)
+            "cancel" -> {
+                val id = validKey(args.opt(0))
+                complete(requestToken, if (id == null) failure("INVALID_ARGUMENT", "Notifications.cancel needs an id")
+                    else { cancelNotification(id); success(true) }, completion)
+            }
+            "cancelAll" -> {
+                notificationStorage.all.keys.forEach(::cancelNotification)
+                (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancelAll()
+                complete(requestToken, success(true), completion)
+            }
+            "pending" -> complete(requestToken, success(JSONArray(notificationStorage.all.values.mapNotNull {
+                runCatching { JSONObject(it as String) }.getOrNull()
+            })), completion)
+            else -> complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Notifications method"), completion)
+        }
+    }
+
+    private fun schedule(value: JSONObject?): CraftNativeCapabilityResult {
+        val title = value?.optString("title").orEmpty()
+        if (title.isEmpty()) return failure("INVALID_ARGUMENT", "Notifications.schedule needs a title")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return failure("PERMISSION_DENIED", "Notification permission denied")
+        }
+        val id = validKey(value?.opt("id")) ?: UUID.randomUUID().toString()
+        val fireAt = System.currentTimeMillis() + value!!.optLong("delay", 0).coerceAtLeast(0)
+        val stored = JSONObject(value.toString()).put("id", id).put("fireAt", fireAt)
+        notificationStorage.edit().putString(id, stored.toString()).commit()
+        scheduleStored(stored)
+        return success(id)
+    }
+
+    private fun restoreNotifications() {
+        notificationStorage.all.values.forEach { raw ->
+            runCatching { JSONObject(raw as String) }.getOrNull()?.let(::scheduleStored)
+        }
+    }
+
+    private fun scheduleStored(value: JSONObject) {
+        val id = value.optString("id")
+        if (id.isEmpty()) return
+        notificationTasks.remove(id)?.let(notificationHandler::removeCallbacks)
+        val task = Runnable {
+            notificationTasks.remove(id)
+            notificationStorage.edit().remove(id).apply()
+            createNotificationChannel()
+            val notification = NotificationCompat.Builder(activity, "craft_notifications")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(value.optString("title"))
+                .setContentText(value.optString("body"))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .build()
+            (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(id.hashCode(), notification)
+        }
+        notificationTasks[id] = task
+        notificationHandler.postDelayed(task, (value.optLong("fireAt") - System.currentTimeMillis()).coerceAtLeast(0))
+    }
+
+    private fun cancelNotification(id: String) {
+        notificationTasks.remove(id)?.let(notificationHandler::removeCallbacks)
+        notificationStorage.edit().remove(id).commit()
+        (activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(id.hashCode())
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(NotificationChannel(
+            "craft_notifications",
+            "Craft Notifications",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        ))
+    }
+
+    private fun validKey(value: Any?): String? = (value as? String)?.takeIf {
+        it.isNotEmpty() && it.length <= 512 && !it.contains('\u0000')
+    }
+
+    private fun success(data: Any?) = CraftNativeCapabilityResult(data = data)
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+}
