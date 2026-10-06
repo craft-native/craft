@@ -653,7 +653,7 @@ catch {
 /**
  * Biometric type.
  */
-export type BiometricType = 'faceId' | 'touchId' | 'fingerprint' | 'face' | 'iris'
+export type BiometricType = 'faceId' | 'touchId' | 'fingerprint' | 'face' | 'iris' | 'none'
 
 /**
  * Biometric authentication API.

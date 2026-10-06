@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import mobile, { bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, secureStorage, speech, watchConnectivity } from '../api/mobile'
+import mobile, { biometrics, bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, secureStorage, speech, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -210,6 +210,26 @@ describe('Mobile secure storage aliases', () => {
       await secureStorage.remove('session-token')
     })
     expect(removed).toEqual(['session-token'])
+  })
+})
+
+describe('Mobile biometrics contract', () => {
+  it('forwards the reason and preserves the native unavailable type', async () => {
+    const reasons: string[] = []
+    await withWindow({
+      craft: {
+        biometrics: {
+          isAvailable: async () => false,
+          getBiometricType: async () => 'none',
+          authenticate: async (reason: string) => { reasons.push(reason); return true },
+        },
+      },
+    }, async () => {
+      expect(await biometrics.isAvailable()).toBe(false)
+      expect(await biometrics.getBiometricType()).toBe('none')
+      expect(await biometrics.authenticate('Unlock the vault')).toBe(true)
+    })
+    expect(reasons).toEqual(['Unlock the vault'])
   })
 })
 
