@@ -9,7 +9,7 @@ type Job = {
   if?: string
   uses?: string
   with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string, version?: string }
-  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string>, with?: { version?: string, publish?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
+  steps?: { name?: string, run?: string, uses?: string, env?: Record<string, string>, with?: { 'version'?: string, 'bun-version'?: string, 'publish'?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
   strategy?: { 'fail-fast'?: boolean, matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
@@ -26,6 +26,19 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
           expect(step.with?.version, `${file} ${name} must pin Pantry CLI`).toBe('0.11.64')
       }
     }
+  }
+})
+
+test('jobs that only run Bun get Bun alone, not the pinned Zig they cannot always download', () => {
+  // Setup Pantry installs every pinned system package. The pinned Zig dev build
+  // has no Intel-Mac download once ziglang.org prunes it, which failed v0.0.114
+  // in two jobs that compile nothing.
+  const bunVersion = String((Bun.YAML.parse(readFileSync(join(import.meta.dir, '../deps.yaml'), 'utf8')) as { dependencies: Record<string, string> }).dependencies['bun.sh'])
+  const lifecycle = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/native-lifecycle.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  for (const [file, job] of [['release.yml verify-macos-downloads', release.jobs['verify-macos-downloads']], ['native-lifecycle.yml lifecycle', lifecycle.jobs.lifecycle]] as const) {
+    const uses = (job.steps ?? []).map(step => step.uses ?? '')
+    expect(uses.some(u => u.startsWith('pantry-pm/pantry/packages/action@')), `${file} must not install Zig`).toBe(false)
+    expect((job.steps ?? []).find(step => step.uses === 'oven-sh/setup-bun@v2')?.with?.['bun-version'], `${file} must pin Bun`).toBe(bunVersion)
   }
 })
 

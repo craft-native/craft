@@ -532,10 +532,13 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6
-      - name: Setup Pantry
-        uses: pantry-pm/pantry/packages/action@e0e7377f6f94f1348b8efcfd3e631967261c6dce # v0.11.66
+      # Bun only, not Setup Pantry: this job runs one script against a
+      # downloaded binary and compiles nothing, and Pantry installs every
+      # pinned system package - Zig included, whose pinned dev build has no
+      # Intel-Mac download left once ziglang.org prunes it (v0.0.114).
+      - uses: oven-sh/setup-bun@v2
         with:
-          version: '0.11.64'
+          bun-version: 1.3.14
       - name: Verify the final downloadable executable
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
