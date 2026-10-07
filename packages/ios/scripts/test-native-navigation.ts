@@ -66,6 +66,8 @@ try {
     platform: iOS
     sources:
       - UITests
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: NativeNavigation
 `)
