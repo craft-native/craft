@@ -14,10 +14,29 @@ import type {
   ViewStyle,
   TextStyle,
   ImageStyle,
-  FlexStyle
+  FlexStyle,
+  TextInputProps,
+  ScrollViewProps,
 } from '../components'
 
 describe('Component System', () => {
+  it('types native interaction and accessibility props', () => {
+    const input: TextInputProps = {
+      accessibilityValue: 'Ada',
+      accessibilityState: { selected: true },
+      keyboardType: 'email-address',
+      returnKeyType: 'done',
+      onSubmitEditing: () => {},
+    }
+    const scroll: ScrollViewProps = {
+      onScroll: event => expect(event.nativeEvent.contentOffset.x).toBe(0),
+      onScrollBeginDrag: () => {},
+      onScrollEndDrag: () => {},
+    }
+    expect(input.accessibilityState?.selected).toBe(true)
+    expect(scroll.onScroll).toBeDefined()
+  })
+
   describe('Platform', () => {
     it('should detect platform OS', () => {
       expect(['ios', 'android', 'macos', 'windows', 'linux', 'web']).toContain(Platform.OS)

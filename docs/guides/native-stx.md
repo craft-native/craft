@@ -245,6 +245,10 @@ metadata and traits. The portable roles are `button`, `image`, `header`,
 native class. `accessibilityState` supports `disabled`, `selected`, and
 `checked`.
 
+These fields are part of the exported `BaseProps`/`TextInputProps` types, so a
+shared screen can keep its accessibility and keyboard contract type-safe before
+it is compiled for either native host.
+
 `craft.navigation.push`, `replace`, and `back` use the platform navigation
 stack. A pushed route receives `craft.route.params`; returning to an earlier
 route reveals its existing native tree and JavaScript state. Native events are
