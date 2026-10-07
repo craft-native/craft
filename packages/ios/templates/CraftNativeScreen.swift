@@ -599,7 +599,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
 
     private func restoreFocus(_ focused: UIView?) {
         guard let focused, focused.window != nil, !focused.isFirstResponder else { return }
-        DispatchQueue.main.async { [weak focused] in _ = focused?.becomeFirstResponder() }
+        _ = focused.becomeFirstResponder()
     }
 
     private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?) -> RenderedNode {
