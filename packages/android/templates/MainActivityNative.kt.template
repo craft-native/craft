@@ -22,6 +22,9 @@ import android.util.Log
 import android.util.Base64
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -289,6 +292,9 @@ class MainActivity : AppCompatActivity() {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val focusHandlers = mutableMapOf<View, String>()
+        val blurHandlers = mutableMapOf<View, String>()
+        val submitHandlers = mutableMapOf<View, String>()
         val flatListRows = mutableMapOf<CraftNativeFlatList, MutableMap<String, MutableMap<String, View>>>()
         val flatListOwners = mutableMapOf<String, String>()
         val flatListOwnerByView = mutableMapOf<CraftNativeFlatList, String>()
@@ -645,10 +651,37 @@ class MainActivity : AppCompatActivity() {
             }
             "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
                 hint = props.optString("placeholder")
+                inputType = inputTypeFor(props)
+                imeOptions = imeOptionsFor(props)
+                isSingleLine = !props.optBoolean("multiline", false)
+                isEnabled = props.optBoolean("editable", true)
                 if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                val onFocus = events.optString("onFocus")
+                if (onFocus.isNotBlank()) screen.focusHandlers[this] = onFocus else screen.focusHandlers.remove(this)
+                val onBlur = events.optString("onBlur").ifBlank { events.optString("onEndEditing") }
+                if (onBlur.isNotBlank()) screen.blurHandlers[this] = onBlur else screen.blurHandlers.remove(this)
+                val onSubmit = events.optString("onSubmitEditing")
+                if (onSubmit.isNotBlank()) screen.submitHandlers[this] = onSubmit else screen.submitHandlers.remove(this)
+                setOnFocusChangeListener { view, focused ->
+                    val current = if (focused) screen.focusHandlers[view] else screen.blurHandlers[view]
+                    if (current == null) return@setOnFocusChangeListener
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("text", text.toString())))
+                }
+                setOnEditorActionListener { view, actionId, event ->
+                    val submitted = actionId != EditorInfo.IME_ACTION_NONE || event?.keyCode == KeyEvent.KEYCODE_ENTER
+                    if (!submitted) return@setOnEditorActionListener false
+                    val current = screen.submitHandlers[view] ?: return@setOnEditorActionListener false
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("text", text.toString())))
+                    true
+                }
+                if (props.optBoolean("autoFocus", false)) post {
+                    requestFocus()
+                    (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                        ?.showSoftInput(this, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                }
                 if (this !== previous) addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -974,6 +1007,37 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Double) = (value * resources.displayMetrics.density).toInt()
     private fun color(raw: String, fallback: Int) = runCatching { Color.parseColor(raw) }.getOrDefault(fallback)
 
+    private fun inputTypeFor(props: JSONObject): Int {
+        val base = if (props.optBoolean("multiline", false)) InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        else InputType.TYPE_CLASS_TEXT
+        val keyboard = when (props.optString("keyboardType")) {
+            "email-address" -> InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            "url" -> InputType.TYPE_TEXT_VARIATION_URI
+            "numeric" -> InputType.TYPE_CLASS_NUMBER
+            "decimal-pad" -> InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            "phone-pad" -> InputType.TYPE_CLASS_PHONE
+            else -> 0
+        }
+        val capitalization = when (props.optString("autoCapitalize")) {
+            "characters" -> InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            "words" -> InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            "sentences" -> InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            else -> 0
+        }
+        val correction = if (props.optBoolean("autoCorrect", true)) InputType.TYPE_TEXT_FLAG_AUTO_CORRECT else 0
+        val secure = if (props.optBoolean("secureTextEntry", false)) InputType.TYPE_TEXT_VARIATION_PASSWORD else 0
+        return (if (keyboard == 0) base else keyboard) or capitalization or correction or secure
+    }
+
+    private fun imeOptionsFor(props: JSONObject): Int = when (props.optString("returnKeyType")) {
+        "done" -> EditorInfo.IME_ACTION_DONE
+        "go" -> EditorInfo.IME_ACTION_GO
+        "next" -> EditorInfo.IME_ACTION_NEXT
+        "search" -> EditorInfo.IME_ACTION_SEARCH
+        "send" -> EditorInfo.IME_ACTION_SEND
+        else -> EditorInfo.IME_ACTION_NONE
+    }
+
     private fun answerAPI(screen: Screen, message: JSONObject, payload: JSONObject) {
         val id = message.optString("id")
         if (id.isBlank()) return
@@ -1135,6 +1199,9 @@ class MainActivity : AppCompatActivity() {
         }
         releaseImages(released)
         screen.handlers.keys.removeAll(released)
+        screen.focusHandlers.keys.removeAll(released)
+        screen.blurHandlers.keys.removeAll(released)
+        screen.submitHandlers.keys.removeAll(released)
     }
 
     private fun closeScreen(screen: Screen) {
@@ -1145,6 +1212,9 @@ class MainActivity : AppCompatActivity() {
         releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
+        screen.focusHandlers.clear()
+        screen.blurHandlers.clear()
+        screen.submitHandlers.clear()
         screen.flatListRows.clear()
         screen.flatListOwners.clear()
         screen.flatListOwnerByView.clear()

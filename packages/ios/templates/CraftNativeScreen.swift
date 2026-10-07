@@ -288,6 +288,9 @@ final class CraftNativeScreenController: UIViewController {
     private let jsContext = JSContext()!
     private let rootStack = CraftNativeFlowView()
     private var handlers: [ObjectIdentifier: String] = [:]
+    private var focusHandlers: [ObjectIdentifier: String] = [:]
+    private var blurHandlers: [ObjectIdentifier: String] = [:]
+    private var submitHandlers: [ObjectIdentifier: String] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
@@ -620,8 +623,20 @@ final class CraftNativeScreenController: UIViewController {
             field.textColor = color(style["color"]) ?? .label
             field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
             field.textAlignment = textAlignment(style["textAlign"])
+            field.keyboardType = keyboardType(props["keyboardType"])
+            field.returnKeyType = returnKeyType(props["returnKeyType"])
+            field.autocorrectionType = props["autoCorrect"] as? Bool == false ? .no : .default
+            field.autocapitalizationType = capitalizationType(props["autoCapitalize"])
+            field.isSecureTextEntry = props["secureTextEntry"] as? Bool == true
+            field.isEnabled = props["editable"] as? Bool != false
             updateField(field, value: props["value"] as? String)
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
+            updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)
+            updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: field)
+            updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: field)
+            if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
+                DispatchQueue.main.async { _ = field.becomeFirstResponder() }
+            }
         case "Image":
             let image = result as! UIImageView
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
@@ -670,6 +685,9 @@ final class CraftNativeScreenController: UIViewController {
             let field = UITextField()
             field.borderStyle = .roundedRect
             field.addTarget(self, action: #selector(textChanged(_:)), for: .editingChanged)
+            field.addTarget(self, action: #selector(textFocused(_:)), for: .editingDidBegin)
+            field.addTarget(self, action: #selector(textBlurred(_:)), for: .editingDidEnd)
+            field.addTarget(self, action: #selector(textSubmitted(_:)), for: .editingDidEndOnExit)
             return field
         case "Image":
             return UIImageView()
@@ -810,6 +828,9 @@ final class CraftNativeScreenController: UIViewController {
         }
         let id = ObjectIdentifier(node.view)
         handlers.removeValue(forKey: id)
+        focusHandlers.removeValue(forKey: id)
+        blurHandlers.removeValue(forKey: id)
+        submitHandlers.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
@@ -821,6 +842,16 @@ final class CraftNativeScreenController: UIViewController {
     private func updateHandler(_ handler: String?, for view: UIView) {
         let id = ObjectIdentifier(view)
         if let handler = handler { handlers[id] = handler }
+        else { handlers.removeValue(forKey: id) }
+    }
+
+    private func updateAuxiliaryHandler(
+        _ handler: String?,
+        in handlers: inout [ObjectIdentifier: String],
+        for view: UIView
+    ) {
+        let id = ObjectIdentifier(view)
+        if let handler, !handler.isEmpty { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
     }
 
@@ -1057,6 +1088,21 @@ final class CraftNativeScreenController: UIViewController {
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
     }
 
+    @objc private func textFocused(_ sender: UITextField) {
+        guard let handler = focusHandlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+    }
+
+    @objc private func textBlurred(_ sender: UITextField) {
+        guard let handler = blurHandlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
+    }
+
+    @objc private func textSubmitted(_ sender: UITextField) {
+        guard let handler = submitHandlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
+    }
+
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
@@ -1072,6 +1118,37 @@ final class CraftNativeScreenController: UIViewController {
 
     private func number(_ value: Any?) -> CGFloat? {
         (value as? NSNumber).map { CGFloat(truncating: $0) }
+    }
+
+    private func keyboardType(_ value: Any?) -> UIKeyboardType {
+        switch value as? String {
+        case "email-address": return .emailAddress
+        case "numeric": return .numberPad
+        case "phone-pad": return .phonePad
+        case "decimal-pad": return .decimalPad
+        case "url": return .URL
+        default: return .default
+        }
+    }
+
+    private func returnKeyType(_ value: Any?) -> UIReturnKeyType {
+        switch value as? String {
+        case "done": return .done
+        case "go": return .go
+        case "next": return .next
+        case "search": return .search
+        case "send": return .send
+        default: return .default
+        }
+    }
+
+    private func capitalizationType(_ value: Any?) -> UITextAutocapitalizationType {
+        switch value as? String {
+        case "none": return .none
+        case "words": return .words
+        case "characters": return .allCharacters
+        default: return .sentences
+        }
     }
 
     private func color(_ value: Any?) -> UIColor? {
