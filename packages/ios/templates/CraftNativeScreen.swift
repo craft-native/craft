@@ -73,7 +73,7 @@ private final class CraftNativeFlowView: UIStackView {
         isLayoutMarginsRelativeArrangement = true
     }
 
-    required init(coder: NSCoder) { nil }
+    required init?(coder: NSCoder) { super.init(coder: coder) }
 
     private var alignmentValue: UIStackView.Alignment {
         switch alignItems {
