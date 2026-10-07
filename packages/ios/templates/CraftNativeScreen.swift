@@ -1068,16 +1068,29 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
         view.accessibilityLabel = props["accessibilityLabel"] as? String
         view.accessibilityHint = props["accessibilityHint"] as? String
-        let role = props["accessibilityRole"] as? String
-        view.isAccessibilityElement = view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Image", "TextInput"].contains(type)
-        switch role ?? type.lowercased() {
-        case "button": view.accessibilityTraits = .button
-        case "image": view.accessibilityTraits = .image
-        case "header": view.accessibilityTraits = .header
-        case "link": view.accessibilityTraits = .link
-        case "search": view.accessibilityTraits = .searchField
-        default: view.accessibilityTraits = []
+        if let value = props["accessibilityValue"] {
+            view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
+        } else if type == "TextInput", let field = view as? UITextField {
+            view.accessibilityValue = field.text
         }
+        let role = props["accessibilityRole"] as? String
+        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Image", "TextInput"].contains(type))
+        var traits: UIAccessibilityTraits = []
+        switch role ?? type.lowercased() {
+        case "button": traits.insert(.button)
+        case "image": traits.insert(.image)
+        case "header": traits.insert(.header)
+        case "link": traits.insert(.link)
+        case "search": traits.insert(.searchField)
+        default: break
+        }
+        if let state = props["accessibilityState"] as? [String: Any] {
+            if state["disabled"] as? Bool == true { traits.insert(.notEnabled) }
+            if state["selected"] as? Bool == true { traits.insert(.selected) }
+            if state["checked"] as? Bool == true { traits.insert(.selected) }
+        }
+        if !view.isEnabled { traits.insert(.notEnabled) }
+        view.accessibilityTraits = traits
     }
 
     private func updateDimension(_ value: CGFloat?, constraint: inout NSLayoutConstraint?, anchor: NSLayoutDimension) {

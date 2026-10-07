@@ -1023,8 +1023,12 @@ class MainActivity : AppCompatActivity() {
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
         view.tag = fallbackLabel
         view.contentDescription = props.optString("accessibilityLabel").ifBlank { fallbackLabel }
+        props.opt("accessibilityValue")?.takeUnless { it == JSONObject.NULL }?.let { view.contentDescription = "${view.contentDescription}, $it" }
         props.optString("accessibilityHint").takeIf { it.isNotBlank() }?.let { view.tooltipText = it }
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
+        val state = props.optJSONObject("accessibilityState")
+        val disabled = state?.optBoolean("disabled", false) == true
+        if (state != null && state.has("disabled")) view.isEnabled = !disabled
         ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
                 super.onInitializeAccessibilityNodeInfo(host, info)
@@ -1037,9 +1041,15 @@ class MainActivity : AppCompatActivity() {
                 }
                 info.isHeading = role == "header"
                 info.roleDescription = role.takeIf { it !in setOf("view", "text", "textinput", "scrollview") }
+                info.isEnabled = !disabled
+                info.isSelected = state?.optBoolean("selected", false) == true
+                info.isChecked = state?.optBoolean("checked", false) == true
             }
         })
-        ViewCompat.setImportantForAccessibility(view, ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES)
+        ViewCompat.setImportantForAccessibility(
+            view,
+            if (role == "none") ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_NO else ViewCompat.IMPORTANT_FOR_ACCESSIBILITY_YES,
+        )
     }
 
     private fun dp(value: Double) = (value * resources.displayMetrics.density).toInt()
