@@ -1,5 +1,77 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.118...v0.0.119)
+
+## 🚀 Features
+
+- **ios**: app-bound domains, so the app's own site can work offline ([b7521e1](https://github.com/craft-native/craft/commit/b7521e1)) _(by Chris)_
+- **native**: add typed secure storage and biometrics ([0751045](https://github.com/craft-native/craft/commit/0751045)) _(by glennmichael123)_
+- **android**: persist native notifications ([8450009](https://github.com/craft-native/craft/commit/8450009)) _(by glennmichael123)_
+- **native**: identify capability hosts ([3685c48](https://github.com/craft-native/craft/commit/3685c48)) _(by glennmichael123)_
+- **sdk**: type native runtime capabilities ([8be30c1](https://github.com/craft-native/craft/commit/8be30c1)) _(by glennmichael123)_
+- **ios**: deliver native runtime events ([5349eb8](https://github.com/craft-native/craft/commit/5349eb8)) _(by glennmichael123)_
+- **android**: bridge native runtime capabilities ([7904954](https://github.com/craft-native/craft/commit/7904954)) _(by glennmichael123)_
+- **ios**: bridge native runtime capabilities ([6d5eb55](https://github.com/craft-native/craft/commit/6d5eb55)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: sign native keychain simulator tests ([dd60bdd](https://github.com/craft-native/craft/commit/dd60bdd)) _(by glennmichael123)_
+- **sdk**: preserve secure storage remove alias ([d7dbbdd](https://github.com/craft-native/craft/commit/d7dbbdd)) _(by glennmichael123)_
+- **native**: preserve secure storage remove alias ([59b53c6](https://github.com/craft-native/craft/commit/59b53c6)) _(by glennmichael123)_
+- **ios**: declare secure storage keychain access ([a47e73b](https://github.com/craft-native/craft/commit/a47e73b)) _(by glennmichael123)_
+- **android**: retain sandbox connection future ([6ee6625](https://github.com/craft-native/craft/commit/6ee6625)) _(by glennmichael123)_
+- **ios**: replace typed keychain entries safely ([1728fb8](https://github.com/craft-native/craft/commit/1728fb8)) _(by glennmichael123)_
+- **android**: reuse native sandbox across relaunch ([651e664](https://github.com/craft-native/craft/commit/651e664)) _(by glennmichael123)_
+- **ios**: set secure storage accessibility ([e182d17](https://github.com/craft-native/craft/commit/e182d17)) _(by glennmichael123)_
+- **android**: complete secure storage dispatch ([7719bf6](https://github.com/craft-native/craft/commit/7719bf6)) _(by glennmichael123)_
+- **android**: keep typed storage in native renderer ([b41c4a2](https://github.com/craft-native/craft/commit/b41c4a2)) _(by glennmichael123)_
+- **android**: narrow secure storage keys ([4308544](https://github.com/craft-native/craft/commit/4308544)) _(by glennmichael123)_
+- **native**: claim cold-start links once ([55a9241](https://github.com/craft-native/craft/commit/55a9241)) _(by glennmichael123)_
+- **ios**: align native device reply contract ([a06616e](https://github.com/craft-native/craft/commit/a06616e)) _(by glennmichael123)_
+- **android**: compile capability storage safely ([391b465](https://github.com/craft-native/craft/commit/391b465)) _(by glennmichael123)_
+- **native**: enforce capability deadlines ([0d20708](https://github.com/craft-native/craft/commit/0d20708)) _(by glennmichael123)_
+- **native**: align lifecycle and deep links ([0483080](https://github.com/craft-native/craft/commit/0483080)) _(by glennmichael123)_
+- **android**: normalize recycled row layout params ([3ff2767](https://github.com/craft-native/craft/commit/3ff2767)) _(by glennmichael123)_
+- **android**: surface native render failures ([967c52d](https://github.com/craft-native/craft/commit/967c52d)) _(by glennmichael123)_
+- **native**: stabilize flat list device tests ([a2184c1](https://github.com/craft-native/craft/commit/a2184c1)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **native**: align biometric bridge contract ([7b922b9](https://github.com/craft-native/craft/commit/7b922b9)) _(by glennmichael123)_
+- **native**: describe typed security capabilities ([3f77bc7](https://github.com/craft-native/craft/commit/3f77bc7)) _(by glennmichael123)_
+- **native**: document capability bridge ([1ac3a2e](https://github.com/craft-native/craft/commit/1ac3a2e)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **native**: cover secure storage on mobile hosts ([f42af0c](https://github.com/craft-native/craft/commit/f42af0c)) _(by glennmichael123)_
+- **android**: exercise capability relaunch ([0c78291](https://github.com/craft-native/craft/commit/0c78291)) _(by glennmichael123)_
+- **ios**: verify native capability persistence ([cb5877b](https://github.com/craft-native/craft/commit/cb5877b)) _(by glennmichael123)_
+- **ios**: stabilize interactive back swipe ([6ef171b](https://github.com/craft-native/craft/commit/6ef171b)) _(by glennmichael123)_
+- **android**: import flat list layout params ([90607ea](https://github.com/craft-native/craft/commit/90607ea)) _(by glennmichael123)_
+- **android**: isolate flat list instrumentation ([e4932d1](https://github.com/craft-native/craft/commit/e4932d1)) _(by glennmichael123)_
+
+## 🤖 Continuous Integration
+
+- **native**: pin bare runtime compiler ([c81f1e7](https://github.com/craft-native/craft/commit/c81f1e7)) _(by glennmichael123)_
+- **native**: pin typed capability runtime ([0920844](https://github.com/craft-native/craft/commit/0920844)) _(by glennmichael123)_
+- **native**: pin capability bridge compiler ([8e80197](https://github.com/craft-native/craft/commit/8e80197)) _(by glennmichael123)_
+- **native**: pin compact stx payloads ([38a13cf](https://github.com/craft-native/craft/commit/38a13cf)) _(by glennmichael123)_
+- **native**: pin installable stx renderer ([6ceabb5](https://github.com/craft-native/craft/commit/6ceabb5)) _(by glennmichael123)_
+- **native**: pin atomic stx renderer ([235f54e](https://github.com/craft-native/craft/commit/235f54e)) _(by glennmichael123)_
+
+## 🧹 Chores
+
+- **native**: pin typed bridge compiler ([d8c8e06](https://github.com/craft-native/craft/commit/d8c8e06)) _(by glennmichael123)_
+
+## types
+
+- **native**: declare typed security capabilities ([74b811b](https://github.com/craft-native/craft/commit/74b811b)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.117...v0.0.118)
 
 ## 🐛 Bug Fixes
