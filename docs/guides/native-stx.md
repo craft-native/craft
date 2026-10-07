@@ -31,7 +31,7 @@ bundle must be local at build time.
 
 | STX primitive | iOS | Android |
 | --- | --- | --- |
-| `View`, `SafeAreaView` | `UIStackView` | `LinearLayout` |
+| `View`, `SafeAreaView` | `CraftNativeFlowView` | `CraftNativeFlexLayout` (a `LinearLayout`) |
 | `Text` | `UILabel` | `TextView` |
 | `Button` | `UIButton` | `Button` |
 | `TextInput` | `UITextField` | `EditText` |
@@ -122,9 +122,12 @@ the only mutation path that intentionally performs a full native render.
 The shared style subset is deliberately smaller than the public `ViewStyle`
 type:
 
-- numeric `width` and `height`;
+- numeric `width`, `height`, `minWidth`, `maxWidth`, `minHeight`, and `maxHeight`;
 - `flexDirection` (`row`, `column`, and their reverse forms), `alignItems`,
-  `justifyContent`, `gap`, `rowGap`, and `columnGap`;
+  `alignSelf`, `justifyContent`, `flexWrap: 'wrap'`, `gap`, `rowGap`, and
+  `columnGap`;
+- `position: 'relative'` (the default) and `position: 'absolute'` with numeric
+  `top`, `right`, `bottom`, and `left` insets;
 - `padding`, its four side properties, `paddingHorizontal`, and
   `paddingVertical`;
 - `backgroundColor`, `opacity`, `borderWidth`, `borderColor`, `borderRadius`,
@@ -136,9 +139,11 @@ type:
 
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
-Android. Percentage dimensions, flex wrapping, absolute positioning, min/max
-constraints, transforms, and shadows are not in the native renderer contract
-yet. Unsupported values are ignored rather than interpreted as CSS.
+Android. Both hosts use the same line-breaking, gap, min/max clamping, absolute
+inset, and stretch/center/flex-end rules; text and image intrinsic sizes are
+measured by the host-native control. Percentage dimensions, transforms, and
+shadows remain outside the native renderer contract. Unsupported values are
+ignored rather than interpreted as CSS.
 
 ## Images and scrolling
 

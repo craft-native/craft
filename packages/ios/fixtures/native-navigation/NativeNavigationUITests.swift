@@ -66,6 +66,16 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(scrollEnd.waitForExistence(timeout: 5))
         XCTAssertTrue(scrollEnd.isHittable, "native ScrollView did not reveal overflow content")
 
+        let wrapped = app.otherElements["layout-wrap"]
+        XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
+        let bounded = app.staticTexts["layout-min"]
+        XCTAssertTrue(bounded.exists)
+        XCTAssertEqual(bounded.frame.width, 140, accuracy: 2, "maxWidth was not applied")
+        let absolute = app.otherElements["layout-absolute"]
+        XCTAssertTrue(absolute.exists)
+        XCTAssertGreaterThanOrEqual(absolute.frame.minX, wrapped.frame.minX)
+        XCTAssertGreaterThanOrEqual(absolute.frame.minY, wrapped.frame.minY)
+
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))
         field.tap()
