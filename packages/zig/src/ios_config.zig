@@ -167,7 +167,7 @@ const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroun
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{"trustedOrigins"};
 const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "devServerURL" };
-const optional_bool_keys = [_][]const u8{"swipeNavigation"};
+const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains" };
 
 /// Decode `json` the way Swift decodes it.
 ///
