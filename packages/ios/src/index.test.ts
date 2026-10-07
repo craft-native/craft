@@ -63,6 +63,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')
     expect(nativeSwift).toContain('private weak var lastFocusedInput: UITextField?')
     expect(nativeSwift).toContain('firstResponder(in: rootStack) ?? lastFocusedInput')
+    expect(nativeSwift).toContain('restoreFocus(focused)\n        guard let handler')
     expect(nativeSwift).toContain('restoreFocus(focused)')
     expect(nativeSwift).toContain('textSubmitted(_:))')
     expect(nativeSwift).toContain('focusHandlers')
