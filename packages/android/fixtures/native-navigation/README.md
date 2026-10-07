@@ -14,7 +14,9 @@ bun packages/android/scripts/test-native-navigation.ts
 The instrumentation test checks native control classes, rendered route
 parameters, push/replace/back (including Android's Back key), retained input
 identity and value, text-input submission, and the absence of any `WebView` in
-the activity view tree.
+the activity view tree. Scroll callbacks are attached to the underlying Android
+scroller rather than the native wrapper, so nested scroll offsets come from the
+platform control that actually moves.
 CI uses the pinned stx-native compiler at `6c1603f742`, which installs an
 initial tree atomically before sending incremental keyed mutations.
 
