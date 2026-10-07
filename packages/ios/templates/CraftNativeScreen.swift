@@ -264,7 +264,7 @@ private final class CraftNativeScrollView: UIScrollView {
 
 private final class CraftNativeFlexSpacer: UIView {}
 
-final class CraftNativeScreenController: UIViewController {
+final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate {
     private final class RenderedNode {
         let identity: String
         let type: String
@@ -291,6 +291,9 @@ final class CraftNativeScreenController: UIViewController {
     private var focusHandlers: [ObjectIdentifier: String] = [:]
     private var blurHandlers: [ObjectIdentifier: String] = [:]
     private var submitHandlers: [ObjectIdentifier: String] = [:]
+    private var scrollHandlers: [ObjectIdentifier: String] = [:]
+    private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
+    private var scrollEndHandlers: [ObjectIdentifier: String] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
@@ -647,6 +650,15 @@ final class CraftNativeScreenController: UIViewController {
             let direction = (props["horizontal"] as? Bool) == true || style["flexDirection"] as? String == "row"
                 ? NSLayoutConstraint.Axis.horizontal : .vertical
             scroll.setAxis(direction)
+            scroll.delegate = self
+            scroll.isScrollEnabled = props["scrollEnabled"] as? Bool != false
+            scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
+            scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false
+            scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? direction == .vertical
+            scroll.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? direction == .horizontal
+            updateAuxiliaryHandler(events["onScroll"], in: &scrollHandlers, for: scroll)
+            updateAuxiliaryHandler(events["onScrollBeginDrag"], in: &scrollBeginHandlers, for: scroll)
+            updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
             configureStack(scroll.contentStack, style: style)
             reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: style)
         case "FlatList":
@@ -831,6 +843,9 @@ final class CraftNativeScreenController: UIViewController {
         focusHandlers.removeValue(forKey: id)
         blurHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
+        scrollHandlers.removeValue(forKey: id)
+        scrollBeginHandlers.removeValue(forKey: id)
+        scrollEndHandlers.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
@@ -1106,6 +1121,29 @@ final class CraftNativeScreenController: UIViewController {
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard let handler = scrollHandlers[ObjectIdentifier(scrollView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard let handler = scrollBeginHandlers[ObjectIdentifier(scrollView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard let handler = scrollEndHandlers[ObjectIdentifier(scrollView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    private func scrollEvent(_ scrollView: UIScrollView) -> [String: Any] {
+        [
+            "contentOffset": ["x": scrollView.contentOffset.x, "y": scrollView.contentOffset.y],
+            "contentSize": ["width": scrollView.contentSize.width, "height": scrollView.contentSize.height],
+            "layoutMeasurement": ["width": scrollView.bounds.width, "height": scrollView.bounds.height],
+        ]
     }
 
     private func send(type: String, payload: [String: Any], correlationId: String? = nil) {

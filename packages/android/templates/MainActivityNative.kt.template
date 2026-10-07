@@ -261,7 +261,13 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     private val horizontal = HorizontalScrollView(context)
     private var horizontalMode: Boolean? = null
 
-    init { setHorizontal(false) }
+    init {
+        vertical.isNestedScrollingEnabled = true
+        horizontal.isNestedScrollingEnabled = true
+        vertical.isFillViewport = true
+        horizontal.isFillViewport = true
+        setHorizontal(false)
+    }
 
     fun setHorizontal(value: Boolean) {
         if (horizontalMode == value) return
@@ -275,6 +281,21 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
         else ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    fun setNestedScrollingEnabled(value: Boolean) {
+        vertical.isNestedScrollingEnabled = value
+        horizontal.isNestedScrollingEnabled = value
+    }
+
+    fun setScrollEnabled(value: Boolean) {
+        vertical.isEnabled = value
+        horizontal.isEnabled = value
+    }
+
+    fun setScrollIndicators(verticalVisible: Boolean, horizontalVisible: Boolean) {
+        vertical.isVerticalScrollBarEnabled = verticalVisible
+        horizontal.isHorizontalScrollBarEnabled = horizontalVisible
     }
 }
 
@@ -292,6 +313,7 @@ class MainActivity : AppCompatActivity() {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val scrollHandlers = mutableMapOf<View, String>()
         val focusHandlers = mutableMapOf<View, String>()
         val blurHandlers = mutableMapOf<View, String>()
         val submitHandlers = mutableMapOf<View, String>()
@@ -708,6 +730,22 @@ class MainActivity : AppCompatActivity() {
             "ScrollView" -> (previous as? CraftNativeScrollView ?: CraftNativeScrollView(this)).apply {
                 val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
                 setHorizontal(horizontal)
+                setNestedScrollingEnabled(true)
+                setScrollIndicators(
+                    props.optBoolean("showsVerticalScrollIndicator", true),
+                    props.optBoolean("showsHorizontalScrollIndicator", true),
+                )
+                setScrollEnabled(props.optBoolean("scrollEnabled", true))
+                val onScroll = events.optString("onScroll")
+                if (onScroll.isNotBlank()) screen.scrollHandlers[this] = onScroll else screen.scrollHandlers.remove(this)
+                setOnScrollChangeListener { view, scrollX, scrollY, _, _ ->
+                    val current = screen.scrollHandlers[view] ?: return@setOnScrollChangeListener
+                    val content = (view as CraftNativeScrollView).content
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()
+                        .put("contentOffset", JSONObject().put("x", scrollX).put("y", scrollY))
+                        .put("contentSize", JSONObject().put("width", content.width).put("height", content.height))
+                        .put("layoutMeasurement", JSONObject().put("width", view.width).put("height", view.height))))
+                }
                 configureContainer(content, style)
                 reconcileChildren(screen, content, children, path, next, style, previousControls)
             }
@@ -1199,6 +1237,7 @@ class MainActivity : AppCompatActivity() {
         }
         releaseImages(released)
         screen.handlers.keys.removeAll(released)
+        screen.scrollHandlers.keys.removeAll(released)
         screen.focusHandlers.keys.removeAll(released)
         screen.blurHandlers.keys.removeAll(released)
         screen.submitHandlers.keys.removeAll(released)
@@ -1212,6 +1251,7 @@ class MainActivity : AppCompatActivity() {
         releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
+        screen.scrollHandlers.clear()
         screen.focusHandlers.clear()
         screen.blurHandlers.clear()
         screen.submitHandlers.clear()
