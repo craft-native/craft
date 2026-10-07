@@ -74,6 +74,22 @@ export interface CraftConfig {
   teamId?: string
   urlSchemes?: string[]
   trustedOrigins?: string[]
+  /**
+   * The domains the app's web view treats as its own (WKAppBoundDomains, at
+   * most 10). Service workers only run in an iOS web view on these, so a site
+   * that works offline in Safari works offline in the app. Unset, they are the
+   * hosts of `trustedOrigins` and the dev server: the origins the bridge is
+   * already injected into, and once any are declared iOS keeps script
+   * injection to them. `[]` declares none.
+   */
+  appBoundDomains?: string[]
+  /**
+   * Also refuse to load anything but the app-bound domains in the web view
+   * (WKWebViewConfiguration.limitsNavigationsToAppBoundDomains). Off by
+   * default: links elsewhere already open in Safari, and embedded players and
+   * maps in iframes keep loading.
+   */
+  limitNavigationsToAppBoundDomains?: boolean
   associatedDomains?: string[]
   appGroups?: string[]
   appIconPath?: string
@@ -275,6 +291,27 @@ export function renderOrientations(config: CraftConfig): string {
   // on its own, which then cannot index `names`.
   const values: NonNullable<CraftConfig['orientations']> = config.orientations?.length ? config.orientations : ['portrait']
   return values.map(value => `        <string>${names[value]}</string>`).join('\n')
+}
+
+/** WKAppBoundDomains: the configured domains plus the dev server's host, at most 10. */
+export function renderAppBoundDomains(config: CraftConfig): string {
+  const hostOf = (value: string): string | null => {
+    try {
+      const url = new URL(value)
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.hostname.toLowerCase() : null
+    }
+    catch {
+      return null
+    }
+  }
+  const domains = config.appBoundDomains !== undefined
+    ? config.appBoundDomains.map(value => value.trim().toLowerCase()).filter(Boolean)
+    : (config.trustedOrigins ?? []).map(hostOf).filter((host): host is string => !!host)
+  if (!domains.length) return ''
+  const devHost = config.devServerURL ? hostOf(config.devServerURL) : null
+  if (devHost) domains.push(devHost)
+  const unique = [...new Set(domains)].slice(0, 10)
+  return `    <key>WKAppBoundDomains</key>\n    <array>\n${plistArray(unique)}\n    </array>`
 }
 
 export function renderUrlTypes(config: CraftConfig): string {
@@ -649,6 +686,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{ORIENTATIONS\}\}/g, renderOrientations(config))
     .replace(/\{\{USAGE_DESCRIPTIONS\}\}/g, renderUsageDescriptions(config))
     .replace(/\{\{URL_TYPES\}\}/g, renderUrlTypes(config))
+    .replace(/\{\{APP_BOUND_DOMAINS\}\}/g, renderAppBoundDomains(config))
     .replace(/\{\{BACKGROUND_MODES\}\}/g, renderBackgroundModes(config))
     .replace(/\{\{LIVE_ACTIVITY_SUPPORT\}\}/g, config.enableLiveActivities
       ? '    <key>NSSupportsLiveActivities</key>\n    <true/>\n    <key>NSSupportsLiveActivitiesFrequentUpdates</key>\n    <true/>'

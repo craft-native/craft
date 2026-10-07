@@ -16,6 +16,7 @@ import {
   renderOrientations,
   renderPrivacyManifest,
   renderUsageDescriptions,
+  renderAppBoundDomains,
   renderUrlTypes,
   renderWatchEntitlements,
   syncWebAssets,
@@ -121,6 +122,24 @@ describe('Craft iOS builder', () => {
     expect(renderOrientations(config)).toContain('UIInterfaceOrientationPortrait')
     expect(renderUrlTypes(config)).toContain('<string>wildloop</string>')
     expect(renderBackgroundModes(config)).toContain('<string>location</string>')
+  })
+
+  it('declares the app-bound domains a service worker needs, with the dev server among them', () => {
+    expect(renderAppBoundDomains({ appName: 'HQ', bundleId: 'training.hq.app' })).toBe('')
+    // Unset: the origins the bridge already trusts.
+    const derived = renderAppBoundDomains({ appName: 'HQ', bundleId: 'training.hq.app', trustedOrigins: ['https://hq.training', 'craft://app'], devServerURL: 'https://hq.training' })
+    expect(derived.match(/<string>[^<]+<\/string>/g)).toEqual(['<string>hq.training</string>'])
+    // An explicit empty list declares none.
+    expect(renderAppBoundDomains({ appName: 'HQ', bundleId: 'x', appBoundDomains: [], trustedOrigins: ['https://hq.training'] })).toBe('')
+    const plist = renderAppBoundDomains({ appName: 'HQ', bundleId: 'training.hq.app', appBoundDomains: ['hq.training', ' HQ.training ', 'www.hq.training'], devServerURL: 'http://localhost:3100' })
+    expect(plist).toContain('<key>WKAppBoundDomains</key>')
+    expect(plist).toContain('<string>hq.training</string>')
+    expect(plist).toContain('<string>www.hq.training</string>')
+    // Script injection is limited to app-bound domains once any are declared.
+    expect(plist).toContain('<string>localhost</string>')
+    expect(plist.match(/<string>hq\.training<\/string>/g)).toHaveLength(1)
+    const many = renderAppBoundDomains({ appName: 'HQ', bundleId: 'x', appBoundDomains: Array.from({ length: 14 }, (_, i) => `d${i}.example`) })
+    expect(many.match(/<string>/g)).toHaveLength(10)
   })
 
   it('generates entitlements and privacy declarations from explicit configuration', () => {

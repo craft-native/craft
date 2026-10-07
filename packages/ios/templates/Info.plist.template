@@ -43,6 +43,7 @@
     <false/>
 {{USAGE_DESCRIPTIONS}}
 {{URL_TYPES}}
+{{APP_BOUND_DOMAINS}}
 {{BACKGROUND_MODES}}
 {{LIVE_ACTIVITY_SUPPORT}}
     <key>NSAppTransportSecurity</key>

@@ -417,6 +417,8 @@ struct CraftConfig: Codable {
     var backgroundColorDark: String? = nil
     /// Edge-swipe back and forward through the page's history.
     var swipeNavigation: Bool? = nil
+    /// Refuse to load anything but the Info.plist's WKAppBoundDomains.
+    var limitNavigationsToAppBoundDomains: Bool? = nil
     var enableSpeechRecognition: Bool = false
     var enableHaptics: Bool = false
     var enableShare: Bool = false
@@ -621,6 +623,13 @@ struct CraftWebView: UIViewRepresentable {
         webConfig.allowsInlineMediaPlayback = true
         webConfig.mediaTypesRequiringUserActionForPlayback = []
         webConfig.setURLSchemeHandler(BundledAssetSchemeHandler(), forURLScheme: "craft")
+        // The app's own domains (WKAppBoundDomains in Info.plist) get what an
+        // iOS web view reserves for them, service workers among them, so a
+        // site that works offline in Safari works offline here. This only
+        // narrows loading further when the app asks for it.
+        if config.limitNavigationsToAppBoundDomains == true {
+            webConfig.limitsNavigationsToAppBoundDomains = true
+        }
 
         // Add native bridge
         let contentController = WKUserContentController()
