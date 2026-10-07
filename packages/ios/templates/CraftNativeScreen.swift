@@ -550,6 +550,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     private func applyTargetedUpdates(_ ids: [String]) -> Bool {
+        let focused = firstResponder(in: rootStack)
         var applied = Set<String>()
         for id in ids {
             let target = flatListOwners[id] ?? id
@@ -557,6 +558,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             guard let document = mutationDocument.node(target), let previous = renderedNode(target) else { return false }
             _ = reconcile(document, identity: previous.identity, path: target, previous: previous)
         }
+        restoreFocus(focused)
         return true
     }
 
@@ -570,6 +572,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     private func renderCommitted(_ document: [String: Any]) {
+        let focused = firstResponder(in: rootStack)
         let previous = renderedRoot
         let next = reconcile(document, identity: "root", path: "root", previous: previous)
         if previous?.view !== next.view {
@@ -578,11 +581,25 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         }
         rootStack.setLayoutStyle(next.style, for: next.view)
         renderedRoot = next
+        restoreFocus(focused)
     }
 
     private func clearRenderedTree() {
         if let root = renderedRoot { detach(root, from: rootStack) }
         renderedRoot = nil
+    }
+
+    private func firstResponder(in view: UIView) -> UIView? {
+        if view.isFirstResponder { return view }
+        for child in view.subviews {
+            if let responder = firstResponder(in: child) { return responder }
+        }
+        return nil
+    }
+
+    private func restoreFocus(_ focused: UIView?) {
+        guard let focused, focused.window != nil, !focused.isFirstResponder else { return }
+        DispatchQueue.main.async { [weak focused] in _ = focused?.becomeFirstResponder() }
     }
 
     private func reconcile(_ node: [String: Any], identity: String, path: String, previous: RenderedNode?) -> RenderedNode {

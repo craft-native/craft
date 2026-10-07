@@ -58,6 +58,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('if field.keyboardType != desiredKeyboardType')
     expect(nativeSwift).toContain('if field.isSecureTextEntry != desiredSecureEntry')
     expect(nativeSwift).toContain('let desiredReturnKeyType = returnKeyType(props["returnKeyType"])')
+    expect(nativeSwift).toContain('private func restoreFocus(_ focused: UIView?)')
     expect(nativeSwift).toContain('textSubmitted(_:))')
     expect(nativeSwift).toContain('focusHandlers')
     expect(nativeSwift).toContain('becomeFirstResponder()')
