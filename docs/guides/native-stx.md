@@ -351,8 +351,10 @@ bun packages/android/scripts/test-native-navigation.ts
 cd benchmarks && bun run bench:native-mutations
 ```
 
-The iOS commands require macOS and a bootable simulator. The Android command
-requires `ANDROID_HOME`, `adb`, Gradle, and a running emulator. CI is the source
+The iOS commands require macOS and a bootable simulator. The native-render
+runner keeps XCTest output visible so interaction failures include their
+assertion messages and source lines in CI. The Android command requires
+`ANDROID_HOME`, `adb`, Gradle, and a running emulator. CI is the source
 of truth when those platform prerequisites are unavailable locally. The
 host-neutral benchmark includes 100, 1,000, and 10,000-node full renders and
 single-node mutations; the platform suites separately verify native recycling,

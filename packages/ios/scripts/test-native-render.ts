@@ -59,7 +59,7 @@ try {
   if (!device) throw new Error('No iOS simulator is available for native renderer tests')
   await bootSimulator(device)
   run([
-    'xcodebuild', '-quiet', '-project', 'NativeRender.xcodeproj', '-scheme', 'NativeRender',
+    'xcodebuild', '-project', 'NativeRender.xcodeproj', '-scheme', 'NativeRender',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,
     '-derivedDataPath', join(workspace, 'DerivedData'),
     '-parallel-testing-enabled', 'NO', 'CODE_SIGNING_ALLOWED=NO', 'test',
