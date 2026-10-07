@@ -93,6 +93,13 @@ export interface CraftConfig {
   associatedDomains?: string[]
   appGroups?: string[]
   appIconPath?: string
+  /**
+   * Whether the app uses encryption beyond the exempt kinds (HTTPS, the
+   * system's own). Written as `ITSAppUsesNonExemptEncryption`, so App Store
+   * Connect does not ask the export-compliance question on every build.
+   * Default false: a WebView app that talks HTTPS is exempt.
+   */
+  usesNonExemptEncryption?: boolean
   privacy?: CraftPrivacyManifest
   orientations?: Array<'portrait' | 'landscape-left' | 'landscape-right' | 'portrait-upside-down'>
   deviceFamilies?: Array<'iphone' | 'ipad'>
@@ -404,6 +411,49 @@ export function renderPrivacyManifest(config: CraftConfig): string {
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n    <key>NSPrivacyTracking</key>\n    <${privacy.tracking ? 'true' : 'false'}/>\n    <key>NSPrivacyTrackingDomains</key>\n    <array>\n${plistArray(privacy.trackingDomains ?? [])}\n    </array>\n    <key>NSPrivacyCollectedDataTypes</key>\n    <array>\n${collectedXml}\n    </array>\n    <key>NSPrivacyAccessedAPITypes</key>\n    <array>\n${accessedXml}\n    </array>\n</dict>\n</plist>\n`
 }
 
+/**
+ * Whether a PNG carries an alpha channel, from its header: colour type 4
+ * (grey + alpha) or 6 (RGB + alpha), or a tRNS chunk before the image data.
+ */
+export function pngHasAlpha(bytes: Uint8Array): boolean {
+  const signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+  if (bytes.length < 33 || signature.some((byte, index) => bytes[index] !== byte)) return false
+  const colourType = bytes[25]
+  if (colourType === 4 || colourType === 6) return true
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (let offset = 8; offset + 8 <= bytes.length;) {
+    const length = view.getUint32(offset)
+    const type = String.fromCharCode(bytes[offset + 4]!, bytes[offset + 5]!, bytes[offset + 6]!, bytes[offset + 7]!)
+    if (type === 'tRNS') return true
+    if (type === 'IDAT' || type === 'IEND') return false
+    offset += 12 + length
+  }
+  return false
+}
+
+/**
+ * The App Store icon, without an alpha channel: App Store Connect refuses a
+ * build whose 1024 icon has one ("can't be transparent nor contain an alpha
+ * channel"), even a fully opaque one. On macOS, sips drops it through a
+ * full-quality JPEG; elsewhere (no sips) the icon is copied as it is.
+ */
+function writeOpaqueIcon(source: string, target: string): void {
+  const bytes = new Uint8Array(readFileSync(source))
+  if (!pngHasAlpha(bytes) || process.platform !== 'darwin') {
+    cpSync(source, target)
+    return
+  }
+  const flattened = `${target}.flatten.jpg`
+  const run = (args: string[]) => Bun.spawnSync(['sips', ...args], { stdout: 'ignore', stderr: 'pipe' })
+  const toJpeg = run(['-s', 'format', 'jpeg', '-s', 'formatOptions', '100', source, '--out', flattened])
+  const toPng = toJpeg.exitCode === 0 ? run(['-s', 'format', 'png', flattened, '--out', target]) : toJpeg
+  rmSync(flattened, { force: true })
+  if (toPng.exitCode !== 0) {
+    cpSync(source, target)
+    console.warn(`[craft] Could not remove the app icon's alpha channel; App Store Connect will refuse it: ${toPng.stderr.toString().trim()}`)
+  }
+}
+
 function renderAssetCatalog(output: string, config: CraftConfig): void {
   const catalog = join(output, 'Assets.xcassets')
   const appIcon = join(catalog, 'AppIcon.appiconset')
@@ -415,7 +465,7 @@ function renderAssetCatalog(output: string, config: CraftConfig): void {
   const iconFilename = config.appIconPath ? 'AppIcon-1024.png' : undefined
   if (config.appIconPath) {
     if (!existsSync(config.appIconPath)) throw new Error(`App icon not found: ${config.appIconPath}`)
-    cpSync(config.appIconPath, join(appIcon, iconFilename!))
+    writeOpaqueIcon(config.appIconPath, join(appIcon, iconFilename!))
   }
   writeFileSync(join(appIcon, 'Contents.json'), `${JSON.stringify({
     images: iconFilename ? [{
@@ -688,6 +738,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{URL_TYPES\}\}/g, renderUrlTypes(config))
     .replace(/\{\{APP_BOUND_DOMAINS\}\}/g, renderAppBoundDomains(config))
     .replace(/\{\{BACKGROUND_MODES\}\}/g, renderBackgroundModes(config))
+    .replace(/\{\{NON_EXEMPT_ENCRYPTION\}\}/g, config.usesNonExemptEncryption ? 'true' : 'false')
     .replace(/\{\{LIVE_ACTIVITY_SUPPORT\}\}/g, config.enableLiveActivities
       ? '    <key>NSSupportsLiveActivities</key>\n    <true/>\n    <key>NSSupportsLiveActivitiesFrequentUpdates</key>\n    <true/>'
       : '')

@@ -9,6 +9,7 @@ import {
   renderRuntimeSettings,
   resolveRuntimeDir,
   orderSimulators,
+  pngHasAlpha,
   productName,
   renderAppearance,
   renderBackgroundModes,
@@ -203,6 +204,26 @@ describe('Craft iOS builder', () => {
     expect(renderWatchEntitlements({ ...config, appGroups: ['group.org.wildloop.app'] })).toContain('group.org.wildloop.app')
     expect(renderPrivacyManifest(config)).toContain('NSPrivacyCollectedDataTypePreciseLocation')
     expect(renderPrivacyManifest(config)).toContain('CA92.1')
+  })
+
+  it('ships an App Store icon without an alpha channel, and declares exempt encryption', async () => {
+    // A 1x1 RGBA PNG: App Store Connect refuses an icon with an alpha channel.
+    const rgba = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64')
+    expect(pngHasAlpha(new Uint8Array(rgba))).toBe(true)
+    expect(pngHasAlpha(new Uint8Array([1, 2, 3]))).toBe(false)
+    const dir = mkdtempSync(join(tmpdir(), 'craft-ios-icon-'))
+    const icon = join(dir, 'icon.png')
+    writeFileSync(icon, rgba)
+    const output = join(dir, 'app')
+    await init({ runtimeDir: null, name: 'IconApp', bundleId: 'org.example.icon', output, config: { appIconPath: icon } })
+    const written = new Uint8Array(readFileSync(join(output, 'Assets.xcassets', 'AppIcon.appiconset', 'AppIcon-1024.png')))
+    if (process.platform === 'darwin') expect(pngHasAlpha(written)).toBe(false)
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    expect(plist).toContain('<key>ITSAppUsesNonExemptEncryption</key>\n    <false/>')
+
+    const custom = join(dir, 'custom')
+    await init({ runtimeDir: null, name: 'CryptoApp', bundleId: 'org.example.crypto', output: custom, config: { usesNonExemptEncryption: true } })
+    expect(readFileSync(join(custom, 'Info.plist'), 'utf8')).toContain('<key>ITSAppUsesNonExemptEncryption</key>\n    <true/>')
   })
 
   it('generates a production project whose bundled index lives under dist', async () => {
