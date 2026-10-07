@@ -160,20 +160,20 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     private fun measureChildWidth(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
-        val explicit = style.width ?: (child.layoutParams?.width ?: LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
+        val explicit = style.width ?: (child.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
         val target = explicit ?: max(0, available - margins)
-        val spec = if (explicit != null) MeasureSpec.makeMeasureSpec(target, MeasureSpec.EXACTLY)
-        else MeasureSpec.makeMeasureSpec(max(0, available - margins), MeasureSpec.AT_MOST)
-        child.measure(spec, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        val spec = if (explicit != null) View.MeasureSpec.makeMeasureSpec(target, View.MeasureSpec.EXACTLY)
+        else View.MeasureSpec.makeMeasureSpec(max(0, available - margins), View.MeasureSpec.AT_MOST)
+        child.measure(spec, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
         return clamp(if (explicit != null) target else child.measuredWidth, style.minWidth, style.maxWidth)
     }
 
     private fun measureChildHeight(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
-        val explicit = style.height ?: (child.layoutParams?.height ?: LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
+        val explicit = style.height ?: (child.layoutParams?.height ?: ViewGroup.LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
         val target = explicit ?: max(0, available - margins)
-        val spec = if (explicit != null) MeasureSpec.makeMeasureSpec(target, MeasureSpec.EXACTLY)
-        else MeasureSpec.makeMeasureSpec(max(0, available - margins), MeasureSpec.AT_MOST)
-        child.measure(child.measuredWidth.let { MeasureSpec.makeMeasureSpec(max(0, it), MeasureSpec.EXACTLY) }, spec)
+        val spec = if (explicit != null) View.MeasureSpec.makeMeasureSpec(target, View.MeasureSpec.EXACTLY)
+        else View.MeasureSpec.makeMeasureSpec(max(0, available - margins), View.MeasureSpec.AT_MOST)
+        child.measure(child.measuredWidth.let { View.MeasureSpec.makeMeasureSpec(max(0, it), View.MeasureSpec.EXACTLY) }, spec)
         return clamp(if (explicit != null) target else child.measuredHeight, style.minHeight, style.maxHeight)
     }
 
@@ -185,8 +185,8 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val width = MeasureSpec.getSize(widthMeasureSpec).takeUnless { MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED } ?: 1_000_000
-        val height = MeasureSpec.getSize(heightMeasureSpec).takeUnless { MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        val width = View.MeasureSpec.getSize(widthMeasureSpec).takeUnless { View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        val height = View.MeasureSpec.getSize(heightMeasureSpec).takeUnless { View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
         val (lines, absolute) = entries(width, height)
         val main = lines.maxOfOrNull { it.main } ?: 0
         val cross = lines.sumOf { it.cross } + max(0, lines.size - 1) * (if (orientation == HORIZONTAL) rowGap else columnGap)

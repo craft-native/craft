@@ -145,6 +145,10 @@ measured by the host-native control. Percentage dimensions, transforms, and
 shadows remain outside the native renderer contract. Unsupported values are
 ignored rather than interpreted as CSS.
 
+Scroll content is measured with an unbounded scroll-axis constraint, so intrinsic
+text and image sizes contribute to the content extent instead of collapsing to
+zero when the viewport supplies an unspecified size.
+
 ## Images and scrolling
 
 Use `{ uri: value }` for an image source. Data-image URIs and HTTPS URLs work on

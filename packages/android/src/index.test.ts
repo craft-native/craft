@@ -90,6 +90,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('style.position == "absolute"')
       expect(nativeActivity).toContain('style.minWidth')
       expect(nativeActivity).toContain('entry.style.alignSelf ?: alignItems')
+      expect(nativeActivity).toContain('View.MeasureSpec.UNSPECIFIED')
       expect(nativeActivity).toContain('"Image" -> (previous as? ImageView')
       expect(nativeActivity).toContain('"ScrollView" -> (previous as? CraftNativeScrollView')
       expect(nativeActivity).toContain('"FlatList" -> (previous as? CraftNativeFlatList')
