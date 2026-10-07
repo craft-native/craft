@@ -298,6 +298,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
+    private weak var lastFocusedInput: UITextField?
     private var flatListRows: [ObjectIdentifier: [String: RenderedNode]] = [:]
     private var flatListOwners: [String: String] = [:]
     private let mutationDocument = CraftNativeMutationDocument()
@@ -550,7 +551,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     private func applyTargetedUpdates(_ ids: [String]) -> Bool {
-        let focused = firstResponder(in: rootStack)
+        let focused = firstResponder(in: rootStack) ?? lastFocusedInput
         var applied = Set<String>()
         for id in ids {
             let target = flatListOwners[id] ?? id
@@ -572,7 +573,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     private func renderCommitted(_ document: [String: Any]) {
-        let focused = firstResponder(in: rootStack)
+        let focused = firstResponder(in: rootStack) ?? lastFocusedInput
         let previous = renderedRoot
         let next = reconcile(document, identity: "root", path: "root", previous: previous)
         if previous?.view !== next.view {
@@ -1130,13 +1131,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     @objc private func buttonPressed(_ sender: UIButton) {
-        let focused = firstResponder(in: rootStack)
+        let focused = firstResponder(in: rootStack) ?? lastFocusedInput
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
         restoreFocus(focused)
     }
 
     @objc private func textChanged(_ sender: UITextField) {
+        lastFocusedInput = sender
         let focused = sender.isFirstResponder ? sender : firstResponder(in: rootStack)
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
@@ -1144,6 +1146,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     @objc private func textFocused(_ sender: UITextField) {
+        lastFocusedInput = sender
         guard let handler = focusHandlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
