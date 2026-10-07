@@ -242,9 +242,9 @@ their values change, so state reconciliation preserves the focused field and
 its keyboard; the host also restores the first responder around synchronous
 native event callbacks and after a native tree reconciliation on the main UI
 thread. The host keeps a weak anchor to the last focused field so a control
-callback restores focus after dispatch and schedules a final main-queue handoff,
-even if UIKit temporarily clears first responder status while dispatching the
-event. `FlatList` supports `onEndReached`.
+callback restores focus after dispatch and schedules a short delayed main-queue
+handoff after UIKit finishes the touch, even if UIKit temporarily clears first
+responder status while dispatching the event. `FlatList` supports `onEndReached`.
 `ScrollView` emits the scroll callbacks described above.
 
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,

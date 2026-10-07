@@ -63,7 +63,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')
     expect(nativeSwift).toContain('private weak var lastFocusedInput: UITextField?')
     expect(nativeSwift).toContain('firstResponder(in: rootStack) ?? lastFocusedInput')
-    expect(nativeSwift).toContain('DispatchQueue.main.async { [weak self, weak focused] in self?.restoreFocus(focused) }')
+    expect(nativeSwift).toContain('DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)')
     expect(nativeSwift).toContain('restoreFocus(focused)')
     expect(nativeSwift).toContain('textSubmitted(_:))')
     expect(nativeSwift).toContain('focusHandlers')
