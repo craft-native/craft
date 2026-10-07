@@ -283,7 +283,7 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         addView(scroller, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
     }
 
-    fun setNestedScrollingEnabled(value: Boolean) {
+    fun setNativeNestedScrollingEnabled(value: Boolean) {
         vertical.isNestedScrollingEnabled = value
         horizontal.isNestedScrollingEnabled = value
     }
@@ -751,7 +751,7 @@ class MainActivity : AppCompatActivity() {
             "ScrollView" -> (previous as? CraftNativeScrollView ?: CraftNativeScrollView(this)).apply {
                 val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
                 setHorizontal(horizontal)
-                setNestedScrollingEnabled(true)
+                setNativeNestedScrollingEnabled(true)
                 setScrollIndicators(
                     props.optBoolean("showsVerticalScrollIndicator", true),
                     props.optBoolean("showsHorizontalScrollIndicator", true),

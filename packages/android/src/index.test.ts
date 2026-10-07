@@ -101,6 +101,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('screen.submitHandlers')
       expect(nativeActivity).toContain('showSoftInput')
       expect(nativeActivity).toContain('isNestedScrollingEnabled = true')
+      expect(nativeActivity).toContain('setNativeNestedScrollingEnabled(true)')
       expect(nativeActivity).toContain('setOnScrollChangeListener')
       expect(nativeActivity).toContain('setScrollListeners')
       expect(nativeActivity).toContain('scrollBeginHandlers')
