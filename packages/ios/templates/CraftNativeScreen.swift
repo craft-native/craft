@@ -873,6 +873,10 @@ final class CraftNativeScreenController: UIViewController {
     private func addJustificationSpacers(to stack: CraftNativeFlowView, value: String?) { }
 
     private func applyViewStyle(_ style: [String: Any], to view: UIView, node: RenderedNode) {
+        let width = style["minWidth"] == nil && style["maxWidth"] == nil ? number(style["width"]) : nil
+        let height = style["minHeight"] == nil && style["maxHeight"] == nil ? number(style["height"]) : nil
+        updateDimension(width, constraint: &node.widthConstraint, anchor: view.widthAnchor)
+        updateDimension(height, constraint: &node.heightConstraint, anchor: view.heightAnchor)
         view.backgroundColor = color(style["backgroundColor"]) ?? .clear
         view.alpha = number(style["opacity"]) ?? 1
         view.isHidden = style["display"] as? String == "none"
