@@ -164,9 +164,13 @@ schemes clear stale pixels, log a diagnostic, and expose a short accessibility
 error value. Route teardown and node removal cancel outstanding downloads.
 
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
-renders its children as native views. Scroll indicators, paging, refresh
-controls, and scroll callbacks are not implemented. Use `ScrollView` for
-bounded content and `FlatList` for data sets that need recycling.
+renders its children as native views. `scrollEnabled`, the platform scroll
+indicators, and nested scrolling are native. `onScroll` reports
+`contentOffset`, `contentSize`, and `layoutMeasurement`; `onScrollBeginDrag`
+and `onScrollEndDrag` report the corresponding gesture boundaries. Paging,
+refresh controls, and momentum callbacks remain outside this versioned
+contract. Use `ScrollView` for bounded content and `FlatList` for data sets that
+need recycling.
 
 ## Recycling lists
 
@@ -228,12 +232,18 @@ incremental mutation protocol.
 
 `onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
 pressable native views. `TextInput` accepts `onChange` or `onChangeText` and
-delivers `nativeEvent.text`. `FlatList` supports `onEndReached`. Image-load and
-general scroll events are not implemented.
+delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
+`onSubmitEditing` are also native events. `keyboardType`, `returnKeyType`,
+`autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
+map to the platform input control. `FlatList` supports `onEndReached`.
+`ScrollView` emits the scroll callbacks described above.
 
-`accessibilityLabel`, `accessibilityHint`, and `accessibilityRole` map to native
-accessibility metadata. The portable roles are `button`, `image`, `header`,
-`link`, and `search`; unknown roles retain the platform control's native class.
+`accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
+`accessibilityState`, and `accessibilityRole` map to native accessibility
+metadata and traits. The portable roles are `button`, `image`, `header`,
+`link`, `search`, and `none`; unknown roles retain the platform control's
+native class. `accessibilityState` supports `disabled`, `selected`, and
+`checked`.
 
 `craft.navigation.push`, `replace`, and `back` use the platform navigation
 stack. A pushed route receives `craft.route.params`; returning to an earlier
