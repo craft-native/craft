@@ -226,6 +226,14 @@ describe('Craft iOS builder', () => {
     expect(readFileSync(join(custom, 'Info.plist'), 'utf8')).toContain('<key>ITSAppUsesNonExemptEncryption</key>\n    <true/>')
   })
 
+  it('shares a scheme that builds and archives the app, for CI such as Xcode Cloud', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-scheme-'))
+    await init({ runtimeDir: null, name: 'SchemeApp', bundleId: 'org.example.scheme', output })
+    const project = readFileSync(join(output, 'project.yml'), 'utf8')
+    expect(project).toContain('schemes:\n  SchemeApp:\n    build:\n      targets:\n        SchemeApp: all')
+    expect(project).toContain('    archive:\n      config: Release')
+  })
+
   it('generates a production project whose bundled index lives under dist', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-project-'))
     await init({

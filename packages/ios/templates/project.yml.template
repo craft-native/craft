@@ -41,3 +41,20 @@ targets:
 {{CRAFT_RUNTIME_SETTINGS}}
 {{NATIVE_DEPENDENCIES}}
 {{NATIVE_TARGETS}}
+# A shared scheme, so CI (Xcode Cloud, a fresh checkout's xcodebuild) can
+# build and archive the app without Xcode first creating a per-user one.
+schemes:
+  {{APP_NAME}}:
+    build:
+      targets:
+        {{APP_NAME}}: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
