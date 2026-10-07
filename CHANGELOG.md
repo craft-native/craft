@@ -1,5 +1,52 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.120...v0.0.121)
+
+## 🚀 Features
+
+- **native**: type accessibility interaction props ([344f58b](https://github.com/craft-native/craft/commit/344f58b)) _(by glennmichael123)_
+- **native**: expose accessibility state parity ([31e9692](https://github.com/craft-native/craft/commit/31e9692)) _(by glennmichael123)_
+- **native**: add scroll event parity ([6f3505b](https://github.com/craft-native/craft/commit/6f3505b)) _(by glennmichael123)_
+- **native**: wire text input interaction parity ([c8217ec](https://github.com/craft-native/craft/commit/c8217ec)) _(by glennmichael123)_
+- **android**: add native flex layout parity ([e7383fe](https://github.com/craft-native/craft/commit/e7383fe)) _(by glennmichael123)_
+- **ios**: add native flex layout parity ([ffeb9fd](https://github.com/craft-native/craft/commit/ffeb9fd)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: share the app's scheme, so CI such as Xcode Cloud can archive it ([592bfdb](https://github.com/craft-native/craft/commit/592bfdb)) _(by Chris)_
+- **ios**: an App Store icon with no alpha, and exempt encryption declared ([a0d150d](https://github.com/craft-native/craft/commit/a0d150d)) _(by Chris)_
+- **ios**: preserve dynamic input accessibility values ([2722009](https://github.com/craft-native/craft/commit/2722009)) _(by glennmichael123)_
+- **ios**: delay keyboard focus handoff ([081a4b6](https://github.com/craft-native/craft/commit/081a4b6)) _(by glennmichael123)_
+- **ios**: restore focus before native events ([71aa521](https://github.com/craft-native/craft/commit/71aa521)) _(by glennmichael123)_
+- **ios**: anchor focused native inputs ([86419a1](https://github.com/craft-native/craft/commit/86419a1)) _(by glennmichael123)_
+- **ios**: retain focus across native events ([acb2873](https://github.com/craft-native/craft/commit/acb2873)) _(by glennmichael123)_
+- **ios**: restore input focus synchronously ([13fcc1a](https://github.com/craft-native/craft/commit/13fcc1a)) _(by glennmichael123)_
+- **ios**: retain focus across native mutations ([8da760d](https://github.com/craft-native/craft/commit/8da760d)) _(by glennmichael123)_
+- **ios**: preserve focused native text inputs ([055674c](https://github.com/craft-native/craft/commit/055674c)) _(by glennmichael123)_
+- **android**: avoid nested scroll view API collision ([445a5ea](https://github.com/craft-native/craft/commit/445a5ea)) _(by glennmichael123)_
+- **android**: close native scroll event payload ([c86837c](https://github.com/craft-native/craft/commit/c86837c)) _(by glennmichael123)_
+- **native**: repair interaction template compilation ([14af6a8](https://github.com/craft-native/craft/commit/14af6a8)) _(by glennmichael123)_
+- **native**: align android scroll callbacks ([28a5baf](https://github.com/craft-native/craft/commit/28a5baf)) _(by glennmichael123)_
+- **ios**: retain native dimension constraints ([aad887b](https://github.com/craft-native/craft/commit/aad887b)) _(by glennmichael123)_
+- **ios**: match stack coder initializer contract ([e264d9c](https://github.com/craft-native/craft/commit/e264d9c)) _(by glennmichael123)_
+- **ios**: use a failable stack initializer ([787cffd](https://github.com/craft-native/craft/commit/787cffd)) _(by glennmichael123)_
+- **ios**: preserve stack compatibility in flow host ([80791fa](https://github.com/craft-native/craft/commit/80791fa)) _(by glennmichael123)_
+- **android**: normalize layout spacing units ([977c1ea](https://github.com/craft-native/craft/commit/977c1ea)) _(by glennmichael123)_
+- **android**: qualify native layout measurement APIs ([4839713](https://github.com/craft-native/craft/commit/4839713)) _(by glennmichael123)_
+- **ios**: generate navigation test metadata ([f72f8ea](https://github.com/craft-native/craft/commit/f72f8ea)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ios**: expose simulator assertion diagnostics ([8cff5c1](https://github.com/craft-native/craft/commit/8cff5c1)) _(by glennmichael123)_
+- **ios**: await native keyboard restoration ([e5004ff](https://github.com/craft-native/craft/commit/e5004ff)) _(by glennmichael123)_
+- **native**: cover text input submission ([567e683](https://github.com/craft-native/craft/commit/567e683)) _(by glennmichael123)_
+- **android**: assert absolute layout in local coordinates ([2980410](https://github.com/craft-native/craft/commit/2980410)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.119...v0.0.120)
 
 ## 🐛 Bug Fixes
