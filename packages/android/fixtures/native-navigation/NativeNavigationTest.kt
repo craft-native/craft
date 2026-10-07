@@ -6,6 +6,7 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.inputmethod.EditorInfo
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
@@ -201,6 +202,8 @@ class NativeNavigationTest {
                 (name as EditText).setText("Ada")
             }
             awaitText(activity, "greeting", "Hello Ada")
+            instrumentation.runOnMainSync { (name as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE) }
+            awaitText(activity, "name-submits", "Submits: 1")
             assertSame("View container was replaced after typing", root, awaitView(activity, "root"))
             assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
             assertTrue("TextInput lost focus after typing", name.isFocused)

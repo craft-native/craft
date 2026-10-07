@@ -81,6 +81,8 @@ final class NativeNavigationUITests: XCTestCase {
         field.tap()
         field.typeText("Ada")
         XCTAssertEqual(app.staticTexts["greeting"].label, "Hello Ada")
+        field.typeText("\n")
+        XCTAssertEqual(app.staticTexts["name-submits"].label, "Submits: 1")
         app.buttons["increment"].tap()
         app.buttons["increment"].tap()
         XCTAssertEqual(app.staticTexts["count"].label, "Count: 2")

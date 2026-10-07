@@ -2,6 +2,7 @@
 let name = ''
 let count = 0
 let imageTaps = 0
+let submits = 0
 
 function changeName(event) {
   name = event.text
@@ -13,6 +14,10 @@ function increment() {
 
 function tapImage() {
   imageTaps += 1
+}
+
+function submitName() {
+  submits += 1
 }
 
 function openDetails() {
@@ -59,8 +64,9 @@ function openCapabilities() {
       <View style={{"height":120}} />
       <Text testID="scroll-end">End of native scroll content</Text>
     </ScrollView>
-    <TextInput testID="name-input" placeholder="Your name" onChange={changeName} />
+    <TextInput testID="name-input" placeholder="Your name" keyboardType="email-address" returnKeyType="done" onChange={changeName} onSubmitEditing={submitName} />
     <Text testID="greeting">Hello {name}</Text>
+    <Text testID="name-submits">Submits: {submits}</Text>
     <Button testID="increment" onPress={increment}>Increment</Button>
     <Text testID="count">Count: {count}</Text>
     <Button testID="open-details" onPress={openDetails}>Open details</Button>
