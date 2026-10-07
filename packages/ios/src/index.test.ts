@@ -75,6 +75,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('?? (direction == .vertical)')
     expect(nativeSwift).toContain('if let control = view as? UIControl')
     expect(nativeSwift).toContain('accessibilityValue')
+    expect(nativeSwift).not.toContain('else if type == "TextInput", let field = view as? UITextField')
     expect(nativeSwift).toContain('traits.insert(.notEnabled)')
     expect(nativeSwift).toContain('traits.insert(.selected)')
     expect(flatListSwift).toContain('UICollectionViewDiffableDataSource<Int, String>')

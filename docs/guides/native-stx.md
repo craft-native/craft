@@ -239,7 +239,8 @@ delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. Configuration changes are applied only when
 their values change, so state reconciliation preserves the focused field and
-its keyboard; the host also restores the first responder around synchronous
+its keyboard; UIKit text inputs retain their dynamic accessibility value unless
+an explicit `accessibilityValue` prop overrides it. The host also restores the first responder around synchronous
 native event callbacks and after a native tree reconciliation on the main UI
 thread. The host keeps a weak anchor to the last focused field so a control
 callback restores focus after dispatch and schedules a short delayed main-queue
