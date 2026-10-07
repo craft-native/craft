@@ -626,12 +626,18 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             field.textColor = color(style["color"]) ?? .label
             field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
             field.textAlignment = textAlignment(style["textAlign"])
-            field.keyboardType = keyboardType(props["keyboardType"])
-            field.returnKeyType = returnKeyType(props["returnKeyType"])
-            field.autocorrectionType = props["autoCorrect"] as? Bool == false ? .no : .default
-            field.autocapitalizationType = capitalizationType(props["autoCapitalize"])
-            field.isSecureTextEntry = props["secureTextEntry"] as? Bool == true
-            field.isEnabled = props["editable"] as? Bool != false
+            let desiredKeyboardType = keyboardType(props["keyboardType"])
+            if field.keyboardType != desiredKeyboardType { field.keyboardType = desiredKeyboardType }
+            let desiredReturnKeyType = returnKeyType(props["returnKeyType"])
+            if field.returnKeyType != desiredReturnKeyType { field.returnKeyType = desiredReturnKeyType }
+            let desiredAutocorrection: UITextAutocorrectionType = props["autoCorrect"] as? Bool == false ? .no : .default
+            if field.autocorrectionType != desiredAutocorrection { field.autocorrectionType = desiredAutocorrection }
+            let desiredCapitalization = capitalizationType(props["autoCapitalize"])
+            if field.autocapitalizationType != desiredCapitalization { field.autocapitalizationType = desiredCapitalization }
+            let desiredSecureEntry = props["secureTextEntry"] as? Bool == true
+            if field.isSecureTextEntry != desiredSecureEntry { field.isSecureTextEntry = desiredSecureEntry }
+            let desiredEnabled = props["editable"] as? Bool != false
+            if field.isEnabled != desiredEnabled { field.isEnabled = desiredEnabled }
             updateField(field, value: props["value"] as? String)
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
             updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)

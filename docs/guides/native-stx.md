@@ -237,7 +237,9 @@ pressable native views. `TextInput` accepts `onChange` or `onChangeText` and
 delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `onSubmitEditing` are also native events. `keyboardType`, `returnKeyType`,
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
-map to the platform input control. `FlatList` supports `onEndReached`.
+map to the platform input control. Configuration changes are applied only when
+their values change, so state reconciliation preserves the focused field and
+its keyboard. `FlatList` supports `onEndReached`.
 `ScrollView` emits the scroll callbacks described above.
 
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
