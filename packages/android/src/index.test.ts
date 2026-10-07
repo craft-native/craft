@@ -106,6 +106,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('scrollBeginHandlers')
       expect(nativeActivity).toContain('ACTION_DOWN')
       expect(nativeActivity).toContain('scrollEndHandlers')
+      expect(nativeActivity).toContain('layoutMeasurement')
       expect(nativeActivity).toContain('screen.scrollHandlers')
       expect(nativeActivity).toContain('contentOffset')
       expect(nativeActivity).toContain('info.isChecked')

@@ -771,7 +771,7 @@ class MainActivity : AppCompatActivity() {
                             send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()
                                 .put("contentOffset", JSONObject().put("x", scrollX).put("y", scrollY))
                                 .put("contentSize", JSONObject().put("width", contentView.width).put("height", contentView.height))
-                                .put("layoutMeasurement", JSONObject().put("width", nativeScroll.width).put("height", nativeScroll.height)))
+                                .put("layoutMeasurement", JSONObject().put("width", nativeScroll.width).put("height", nativeScroll.height))
                         }
                     },
                     onBeginDrag = {

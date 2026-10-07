@@ -654,8 +654,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             scroll.isScrollEnabled = props["scrollEnabled"] as? Bool != false
             scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
             scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false
-            scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? direction == .vertical
-            scroll.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? direction == .horizontal
+            scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? (direction == .vertical)
+            scroll.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? (direction == .horizontal)
             updateAuxiliaryHandler(events["onScroll"], in: &scrollHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollBeginDrag"], in: &scrollBeginHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
@@ -1089,7 +1089,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             if state["selected"] as? Bool == true { traits.insert(.selected) }
             if state["checked"] as? Bool == true { traits.insert(.selected) }
         }
-        if !view.isEnabled { traits.insert(.notEnabled) }
+        if let control = view as? UIControl, !control.isEnabled { traits.insert(.notEnabled) }
         view.accessibilityTraits = traits
     }
 

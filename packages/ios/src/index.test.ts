@@ -63,6 +63,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('scrollViewDidScroll')
     expect(nativeSwift).toContain('contentOffset')
     expect(nativeSwift).toContain('scroll.alwaysBounceVertical')
+    expect(nativeSwift).toContain('?? (direction == .vertical)')
+    expect(nativeSwift).toContain('if let control = view as? UIControl')
     expect(nativeSwift).toContain('accessibilityValue')
     expect(nativeSwift).toContain('traits.insert(.notEnabled)')
     expect(nativeSwift).toContain('traits.insert(.selected)')
