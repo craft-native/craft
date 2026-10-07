@@ -49,7 +49,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('DeepLinkManager.shared.addNativeListener')
     expect(nativeSwift).toContain('navigationController?.topViewController === self')
     expect(nativeSwift).toContain('private final class CraftNativeFlowView: UIStackView')
-    expect(nativeSwift).toContain('required init?(coder: NSCoder)')
+    expect(nativeSwift).toContain('required init(coder: NSCoder)')
     expect(nativeSwift).toContain('stack.wrap = style["flexWrap"] as? String == "wrap"')
     expect(nativeSwift).toContain('style.position == "absolute"')
     expect(nativeSwift).toContain('style.minWidth')
