@@ -1130,13 +1130,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     @objc private func buttonPressed(_ sender: UIButton) {
+        let focused = firstResponder(in: rootStack)
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+        restoreFocus(focused)
     }
 
     @objc private func textChanged(_ sender: UITextField) {
+        let focused = sender.isFirstResponder ? sender : firstResponder(in: rootStack)
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
+        restoreFocus(focused)
     }
 
     @objc private func textFocused(_ sender: UITextField) {

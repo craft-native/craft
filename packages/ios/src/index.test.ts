@@ -60,6 +60,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('let desiredReturnKeyType = returnKeyType(props["returnKeyType"])')
     expect(nativeSwift).toContain('private func restoreFocus(_ focused: UIView?)')
     expect(nativeSwift).toContain('_ = focused.becomeFirstResponder()')
+    expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')
+    expect(nativeSwift).toContain('restoreFocus(focused)')
     expect(nativeSwift).toContain('textSubmitted(_:))')
     expect(nativeSwift).toContain('focusHandlers')
     expect(nativeSwift).toContain('becomeFirstResponder()')

@@ -239,8 +239,9 @@ delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. Configuration changes are applied only when
 their values change, so state reconciliation preserves the focused field and
-its keyboard; the host also restores the first responder after a native tree
-reconciliation on the main UI thread. `FlatList` supports `onEndReached`.
+its keyboard; the host also restores the first responder around synchronous
+native event callbacks and after a native tree reconciliation on the main UI
+thread. `FlatList` supports `onEndReached`.
 `ScrollView` emits the scroll callbacks described above.
 
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
