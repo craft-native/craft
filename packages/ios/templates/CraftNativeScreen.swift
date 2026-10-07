@@ -49,16 +49,49 @@ private struct CraftNativeLayoutStyle {
     }
 }
 
-private final class CraftNativeFlowView: UIView {
-    var axis: NSLayoutConstraint.Axis = .vertical { didSet { setNeedsLayout() } }
+private final class CraftNativeFlowView: UIStackView {
     var wrap = false { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var alignItems = "stretch" { didSet { setNeedsLayout() } }
-    var justifyContent = "flex-start" { didSet { setNeedsLayout() } }
-    var gap: CGFloat = 0 { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var alignItems = "stretch" { didSet { alignment = alignmentValue; setNeedsLayout() } }
+    var justifyContent = "flex-start" { didSet { distribution = distributionValue; setNeedsLayout() } }
+    var gap: CGFloat = 0 { didSet { spacing = gap; invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var rowGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var columnGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var padding = UIEdgeInsets.zero { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var padding = UIEdgeInsets.zero {
+        didSet {
+            layoutMargins = padding
+            isLayoutMarginsRelativeArrangement = true
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
     private var childStyles: [ObjectIdentifier: CraftNativeLayoutStyle] = [:]
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        alignment = .fill
+        distribution = .fill
+        isLayoutMarginsRelativeArrangement = true
+    }
+
+    required init(coder: NSCoder) { nil }
+
+    private var alignmentValue: UIStackView.Alignment {
+        switch alignItems {
+        case "flex-start": return .leading
+        case "center": return .center
+        case "flex-end": return .trailing
+        case "baseline": return .firstBaseline
+        default: return .fill
+        }
+    }
+
+    private var distributionValue: UIStackView.Distribution {
+        switch justifyContent {
+        case "center": return .equalCentering
+        case "space-between", "space-around", "space-evenly": return .equalSpacing
+        default: return .fill
+        }
+    }
 
     func setLayoutStyle(_ raw: [String: Any], for view: UIView) {
         childStyles[ObjectIdentifier(view)] = CraftNativeLayoutStyle(raw)
@@ -383,7 +416,7 @@ final class CraftNativeScreenController: UIViewController {
         label.textColor = .systemRed
         label.textAlignment = .center
         label.text = message
-        rootStack.addSubview(label)
+        rootStack.addArrangedSubview(label)
         rootStack.setLayoutStyle(["alignSelf": "stretch"], for: label)
         NSLog("[craft native] %@", message)
     }
@@ -535,7 +568,7 @@ final class CraftNativeScreenController: UIViewController {
         let next = reconcile(document, identity: "root", path: "root", previous: previous)
         if previous?.view !== next.view {
             if let old = previous { detach(old, from: rootStack) }
-            rootStack.addSubview(next.view)
+            rootStack.addArrangedSubview(next.view)
         }
         rootStack.setLayoutStyle(next.style, for: next.view)
         renderedRoot = next
@@ -670,7 +703,10 @@ final class CraftNativeScreenController: UIViewController {
         path: String,
         style: [String: Any]
     ) {
-        for spacer in stack.subviews.compactMap({ $0 as? CraftNativeFlexSpacer }) { spacer.removeFromSuperview() }
+        for spacer in stack.arrangedSubviews.compactMap({ $0 as? CraftNativeFlexSpacer }) {
+            stack.removeArrangedSubview(spacer)
+            spacer.removeFromSuperview()
+        }
         let nodes = children.compactMap { $0 as? [String: Any] }
         let keys = nodes.compactMap { explicitKey($0, props: $0["props"] as? [String: Any] ?? [:]) }
         let counts = Dictionary(keys.map { ($0, 1) }, uniquingKeysWith: +)
@@ -691,12 +727,12 @@ final class CraftNativeScreenController: UIViewController {
             detach(child, from: stack)
         }
         for (index, child) in next.enumerated() {
-            if index < stack.subviews.count, stack.subviews[index] === child.view {
+            if index < stack.arrangedSubviews.count, stack.arrangedSubviews[index] === child.view {
                 stack.setLayoutStyle(child.style, for: child.view)
                 continue
             }
-            if child.view.superview === stack { child.view.removeFromSuperview() }
-            stack.insertSubview(child.view, at: min(index, stack.subviews.count))
+            if child.view.superview === stack { stack.removeArrangedSubview(child.view) }
+            stack.insertArrangedSubview(child.view, at: min(index, stack.arrangedSubviews.count))
             stack.setLayoutStyle(child.style, for: child.view)
         }
         parent.children = next
@@ -761,6 +797,7 @@ final class CraftNativeScreenController: UIViewController {
     private func detach(_ node: RenderedNode, from stack: CraftNativeFlowView) {
         forgetHandlers(node)
         stack.removeLayoutStyle(for: node.view)
+        stack.removeArrangedSubview(node.view)
         node.view.removeFromSuperview()
     }
 
