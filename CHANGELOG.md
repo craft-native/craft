@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.119...v0.0.120)
+
+## 🐛 Bug Fixes
+
+- **ios**: Zig validates limitNavigationsToAppBoundDomains like Swift does ([8c0279b](https://github.com/craft-native/craft/commit/8c0279b)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.118...v0.0.119)
 
 ## 🚀 Features
