@@ -169,6 +169,12 @@ class NativeNavigationTest {
             assertTrue(styledFirst.typeface.style and Typeface.ITALIC != 0)
             assertTrue(styledFirst.paintFlags and Paint.UNDERLINE_TEXT_FLAG != 0)
             assertEquals((70 * density).toInt(), styledFirst.layoutParams.width)
+            val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
+            val bounded = awaitView(activity, "layout-min")
+            val absolute = awaitView(activity, "layout-absolute")
+            assertEquals((140 * density).toInt(), bounded.width)
+            assertTrue("absolute child escaped its container", absolute.left >= wrapped.left && absolute.top >= wrapped.top)
+            assertTrue("wrapped child did not wrap", bounded.top < awaitView(activity, "layout-stretch").top)
             val scroll = awaitView(activity, "native-scroll")
             val image = awaitView(activity, "native-image")
             assertTrue("ScrollView did not render an Android ScrollView", containsType(scroll, ScrollView::class.java))

@@ -50,11 +50,210 @@ import java.net.URL
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.UUID
+import kotlin.math.max
+import kotlin.math.min
 
 private const val CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS = 30_000L
 
+private data class CraftNativeLayoutStyle(
+    val width: Int? = null,
+    val height: Int? = null,
+    val minWidth: Int? = null,
+    val maxWidth: Int? = null,
+    val minHeight: Int? = null,
+    val maxHeight: Int? = null,
+    val position: String = "relative",
+    val top: Int? = null,
+    val right: Int? = null,
+    val bottom: Int? = null,
+    val left: Int? = null,
+    val alignSelf: String? = null,
+) {
+    companion object {
+        fun from(raw: JSONObject, density: Float): CraftNativeLayoutStyle {
+            fun number(name: String): Int? = if (raw.has(name)) (raw.optDouble(name) * density).toInt() else null
+            return CraftNativeLayoutStyle(
+                width = number("width"), height = number("height"),
+                minWidth = number("minWidth"), maxWidth = number("maxWidth"),
+                minHeight = number("minHeight"), maxHeight = number("maxHeight"),
+                position = raw.optString("position", "relative"),
+                top = number("top"), right = number("right"), bottom = number("bottom"), left = number("left"),
+                alignSelf = raw.optString("alignSelf").takeIf { it.isNotBlank() },
+            )
+        }
+    }
+}
+
+/** A deterministic flex-shaped container shared by normal views and scroll content. */
+private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
+    private val styles = mutableMapOf<View, CraftNativeLayoutStyle>()
+    private var wrap = false
+    private var alignItems = "stretch"
+    private var justifyContent = "flex-start"
+    private var rowGap = 0
+    private var columnGap = 0
+
+    fun configure(style: JSONObject, density: Float) {
+        orientation = if (style.optString("flexDirection") in setOf("row", "row-reverse")) HORIZONTAL else VERTICAL
+        wrap = style.optString("flexWrap") == "wrap" || style.optBoolean("flexWrap", false)
+        alignItems = style.optString("alignItems", "stretch")
+        justifyContent = style.optString("justifyContent", "flex-start")
+        val gap = (style.optDouble("gap", 0.0) * density).toInt()
+        rowGap = (style.optDouble("rowGap", gap / density) * density).toInt()
+        columnGap = (style.optDouble("columnGap", gap / density) * density).toInt()
+        val padding = (style.optDouble("padding", 0.0) * density).toInt()
+        val horizontal = (style.optDouble("paddingHorizontal", padding / density) * density).toInt()
+        val vertical = (style.optDouble("paddingVertical", padding / density) * density).toInt()
+        setPadding(
+            (style.optDouble("paddingLeft", horizontal / density) * density).toInt(),
+            (style.optDouble("paddingTop", vertical / density) * density).toInt(),
+            (style.optDouble("paddingRight", horizontal / density) * density).toInt(),
+            (style.optDouble("paddingBottom", vertical / density) * density).toInt(),
+        )
+        requestLayout()
+    }
+
+    fun setChildStyle(view: View, style: JSONObject, density: Float) {
+        styles[view] = CraftNativeLayoutStyle.from(style, density)
+        requestLayout()
+    }
+
+    override fun onViewRemoved(child: View) {
+        styles.remove(child)
+        super.onViewRemoved(child)
+    }
+
+    private data class Entry(val view: View, val style: CraftNativeLayoutStyle, val width: Int, val height: Int)
+    private data class Line(val entries: MutableList<Entry> = mutableListOf(), var main: Int = 0, var cross: Int = 0)
+
+    private fun entries(width: Int, height: Int): Pair<List<Line>, List<Entry>> {
+        val availableMain = if (orientation == HORIZONTAL) max(0, width - paddingLeft - paddingRight)
+        else max(0, height - paddingTop - paddingBottom)
+        val gap = if (orientation == HORIZONTAL) columnGap else rowGap
+        val lines = mutableListOf<Line>()
+        val absolute = mutableListOf<Entry>()
+        var line = Line()
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == GONE) continue
+            val style = styles[child] ?: CraftNativeLayoutStyle()
+            val lp = child.layoutParams as? MarginLayoutParams
+            val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
+            val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            val childWidth = measureChildWidth(child, style, width - paddingLeft - paddingRight, horizontalMargins)
+            val childHeight = measureChildHeight(child, style, height - paddingTop - paddingBottom, verticalMargins)
+            val entry = Entry(child, style, childWidth, childHeight)
+            if (style.position == "absolute") { absolute += entry; continue }
+            val childMain = (if (orientation == HORIZONTAL) childWidth + horizontalMargins else childHeight + verticalMargins)
+            val childCross = (if (orientation == HORIZONTAL) childHeight + verticalMargins else childWidth + horizontalMargins)
+            val next = if (line.entries.isEmpty()) childMain else line.main + gap + childMain
+            if (wrap && line.entries.isNotEmpty() && next > availableMain) {
+                lines += line
+                line = Line()
+            }
+            line.entries += entry
+            line.main = if (line.entries.size == 1) childMain else line.main + gap + childMain
+            line.cross = max(line.cross, childCross)
+        }
+        if (line.entries.isNotEmpty()) lines += line
+        return lines to absolute
+    }
+
+    private fun measureChildWidth(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
+        val explicit = style.width ?: (child.layoutParams?.width ?: LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
+        val target = explicit ?: max(0, available - margins)
+        val spec = if (explicit != null) MeasureSpec.makeMeasureSpec(target, MeasureSpec.EXACTLY)
+        else MeasureSpec.makeMeasureSpec(max(0, available - margins), MeasureSpec.AT_MOST)
+        child.measure(spec, MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+        return clamp(if (explicit != null) target else child.measuredWidth, style.minWidth, style.maxWidth)
+    }
+
+    private fun measureChildHeight(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
+        val explicit = style.height ?: (child.layoutParams?.height ?: LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
+        val target = explicit ?: max(0, available - margins)
+        val spec = if (explicit != null) MeasureSpec.makeMeasureSpec(target, MeasureSpec.EXACTLY)
+        else MeasureSpec.makeMeasureSpec(max(0, available - margins), MeasureSpec.AT_MOST)
+        child.measure(child.measuredWidth.let { MeasureSpec.makeMeasureSpec(max(0, it), MeasureSpec.EXACTLY) }, spec)
+        return clamp(if (explicit != null) target else child.measuredHeight, style.minHeight, style.maxHeight)
+    }
+
+    private fun clamp(value: Int, lower: Int?, upper: Int?): Int {
+        var result = value
+        if (lower != null) result = max(result, lower)
+        if (upper != null) result = min(result, upper)
+        return result
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec).takeUnless { MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        val height = MeasureSpec.getSize(heightMeasureSpec).takeUnless { MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        val (lines, absolute) = entries(width, height)
+        val main = lines.maxOfOrNull { it.main } ?: 0
+        val cross = lines.sumOf { it.cross } + max(0, lines.size - 1) * (if (orientation == HORIZONTAL) rowGap else columnGap)
+        val desiredWidth = if (orientation == HORIZONTAL) main else cross
+        val desiredHeight = if (orientation == HORIZONTAL) cross else main
+        val absWidth = absolute.maxOfOrNull { it.width } ?: 0
+        val absHeight = absolute.maxOfOrNull { it.height } ?: 0
+        setMeasuredDimension(
+            resolveSize(max(desiredWidth + paddingLeft + paddingRight, absWidth + paddingLeft + paddingRight), widthMeasureSpec),
+            resolveSize(max(desiredHeight + paddingTop + paddingBottom, absHeight + paddingTop + paddingBottom), heightMeasureSpec),
+        )
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val contentWidth = width - paddingLeft - paddingRight
+        val contentHeight = height - paddingTop - paddingBottom
+        val (lines, absolute) = entries(width, height)
+        val gap = if (orientation == HORIZONTAL) columnGap else rowGap
+        var crossOffset = if (orientation == HORIZONTAL) paddingTop else paddingLeft
+        for (line in lines) {
+            val free = max(0, (if (orientation == HORIZONTAL) contentWidth else contentHeight) - line.main)
+            val (leading, between) = distribution(free, line.entries.size)
+            var mainOffset = if (orientation == HORIZONTAL) paddingLeft else paddingTop
+            mainOffset += leading
+            for (entry in line.entries) {
+                val lp = entry.view.layoutParams as? MarginLayoutParams
+                val marginStart = if (orientation == HORIZONTAL) lp?.leftMargin ?: 0 else lp?.topMargin ?: 0
+                val marginEnd = if (orientation == HORIZONTAL) lp?.rightMargin ?: 0 else lp?.bottomMargin ?: 0
+                val crossSize = if ((entry.style.alignSelf ?: alignItems) == "stretch" && (if (orientation == HORIZONTAL) entry.style.height else entry.style.width) == null)
+                    max(0, line.cross - (if (orientation == HORIZONTAL) (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0) else (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)))
+                else if (orientation == HORIZONTAL) entry.height else entry.width
+                val align = entry.style.alignSelf ?: alignItems
+                val crossPosition = when (align) {
+                    "center" -> (line.cross - crossSize) / 2
+                    "flex-end" -> line.cross - crossSize
+                    else -> 0
+                }
+                val x = if (orientation == HORIZONTAL) mainOffset + marginStart else crossOffset + crossPosition + (lp?.leftMargin ?: 0)
+                val y = if (orientation == HORIZONTAL) crossOffset + crossPosition + (lp?.topMargin ?: 0) else mainOffset + marginStart
+                val w = if (orientation == HORIZONTAL) entry.width else crossSize
+                val h = if (orientation == HORIZONTAL) crossSize else entry.height
+                entry.view.layout(x, y, x + w, y + h)
+                mainOffset += (if (orientation == HORIZONTAL) entry.width else entry.height) + marginStart + marginEnd + gap + between
+            }
+            crossOffset += line.cross + gap
+        }
+        for (entry in absolute) {
+            val widthValue = if (entry.style.left != null && entry.style.right != null) contentWidth - entry.style.left!! - entry.style.right!! else entry.width
+            val heightValue = if (entry.style.top != null && entry.style.bottom != null) contentHeight - entry.style.top!! - entry.style.bottom!! else entry.height
+            val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - widthValue } ?: 0))
+            val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - heightValue } ?: 0))
+            entry.view.layout(x, y, x + max(0, widthValue), y + max(0, heightValue))
+        }
+    }
+
+    private fun distribution(free: Int, count: Int): Pair<Int, Int> = when (justifyContent) {
+        "center" -> free / 2 to 0
+        "flex-end" -> free to 0
+        "space-between" -> 0 to if (count > 1) free / (count - 1) else 0
+        "space-around" -> free / (count * 2) to free / count
+        "space-evenly" -> free / (count + 1) to free / (count + 1)
+        else -> 0 to 0
+    }
+}
+
 private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
-    val content = LinearLayout(context)
+    val content = CraftNativeFlexLayout(context)
     private val vertical = ScrollView(context)
     private val horizontal = HorizontalScrollView(context)
     private var horizontalMode: Boolean? = null
@@ -83,7 +282,7 @@ class MainActivity : AppCompatActivity() {
     private class Screen(
         val route: String?,
         val params: JSONObject,
-        val view: LinearLayout,
+        val view: CraftNativeFlexLayout,
         val isolate: JavaScriptIsolate,
         val port: MessagePort?
     ) {
@@ -199,7 +398,7 @@ class MainActivity : AppCompatActivity() {
     private fun openScreen(route: String?, params: JSONObject = JSONObject()) {
         val engine = sandbox ?: return
         val isolate = engine.createIsolate()
-        val view = LinearLayout(this).apply {
+        val view = CraftNativeFlexLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = FrameLayout.LayoutParams(-1, -1)
         }
@@ -399,6 +598,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.clear()
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(retainedViews(screen))
+        screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)
     }
 
     private fun clearRenderedTree(screen: Screen) {
@@ -481,7 +681,7 @@ class MainActivity : AppCompatActivity() {
             "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
                 reconcileFlatList(screen, this, children, path, protocolId ?: path, props, events)
             }
-            else -> (previous as? LinearLayout ?: LinearLayout(this)).apply {
+            else -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
@@ -506,7 +706,7 @@ class MainActivity : AppCompatActivity() {
         next[identity] = control
         applyViewStyle(control, style)
         control.layoutParams = LinearLayout.LayoutParams(
-            if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.MATCH_PARENT,
+            if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.WRAP_CONTENT,
             if (style.has("height")) dp(style.optDouble("height")) else ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             val margin = style.optDouble("margin", 0.0)
@@ -529,30 +729,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun configureContainer(layout: LinearLayout, style: JSONObject) {
-        val direction = style.optString("flexDirection")
-        layout.orientation = if (direction == "row" || direction == "row-reverse")
-            LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-        val cross = when (style.optString("alignItems")) {
-            "center" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
-            "flex-end" -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.BOTTOM else Gravity.END
-            else -> if (layout.orientation == LinearLayout.HORIZONTAL) Gravity.TOP else Gravity.START
-        }
-        layout.gravity = cross
-        val padding = style.optDouble("padding", 0.0)
-        val horizontal = style.optDouble("paddingHorizontal", padding)
-        val vertical = style.optDouble("paddingVertical", padding)
-        layout.setPadding(
-            dp(style.optDouble("paddingLeft", horizontal)),
-            dp(style.optDouble("paddingTop", vertical)),
-            dp(style.optDouble("paddingRight", horizontal)),
-            dp(style.optDouble("paddingBottom", vertical))
-        )
+    private fun configureContainer(layout: CraftNativeFlexLayout, style: JSONObject) {
+        layout.configure(style, resources.displayMetrics.density)
     }
 
     private fun reconcileChildren(
         screen: Screen,
-        layout: LinearLayout,
+        layout: CraftNativeFlexLayout,
         children: JSONArray,
         path: String,
         next: MutableMap<String, View>,
@@ -571,6 +754,9 @@ class MainActivity : AppCompatActivity() {
                 else -> null
             }
             if (childView != null) desired.add(childView)
+            if (childView != null && child is JSONObject) {
+                layout.setChildStyle(childView, child.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)
+            }
         }
         if (style.optString("flexDirection").endsWith("-reverse")) desired.reverse()
         val desiredSet = desired.toSet()
@@ -580,16 +766,12 @@ class MainActivity : AppCompatActivity() {
                 (childView.parent as? ViewGroup)?.removeView(childView)
                 layout.addView(childView, index)
             }
-            val gapName = if (layout.orientation == LinearLayout.HORIZONTAL) "columnGap" else "rowGap"
-            val gap = dp(style.optDouble(gapName, style.optDouble("gap", 0.0)))
             val params = childView.layoutParams as? LinearLayout.LayoutParams
                 ?: LinearLayout.LayoutParams(childView.layoutParams?.width ?: -1, childView.layoutParams?.height ?: -2)
-            params.leftMargin = if (layout.orientation == LinearLayout.HORIZONTAL && index > 0) gap else 0
-            params.topMargin = if (layout.orientation == LinearLayout.VERTICAL && index > 0) gap else 0
             childView.layoutParams = params
         }
         while (layout.childCount > desired.size) layout.removeViewAt(layout.childCount - 1)
-        addJustificationSpacers(layout, style.optString("justifyContent"))
+        layout.requestLayout()
     }
 
     private fun reconcileFlatList(
@@ -644,28 +826,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun addJustificationSpacers(layout: LinearLayout, value: String) {
-        if (layout.childCount == 0 || value == "flex-start" || value.isBlank()) return
-        fun spacer(weight: Float): CraftNativeFlexSpacer = CraftNativeFlexSpacer(this).apply {
-            layoutParams = if (layout.orientation == LinearLayout.HORIZONTAL)
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, weight)
-            else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, weight)
-        }
-        when (value) {
-            "flex-end" -> layout.addView(spacer(1f), 0)
-            "center" -> {
-                layout.addView(spacer(1f), 0)
-                layout.addView(spacer(1f))
-            }
-            "space-between" -> for (index in layout.childCount - 1 downTo 1) layout.addView(spacer(1f), index)
-            "space-around", "space-evenly" -> {
-                val edgeWeight = if (value == "space-around") 0.5f else 1f
-                for (index in layout.childCount - 1 downTo 1) layout.addView(spacer(1f), index)
-                layout.addView(spacer(edgeWeight), 0)
-                layout.addView(spacer(edgeWeight))
-            }
-        }
-    }
+    private fun addJustificationSpacers(layout: CraftNativeFlexLayout, value: String) { }
 
     private fun applyViewStyle(view: View, style: JSONObject) {
         view.alpha = style.optDouble("opacity", 1.0).toFloat()
