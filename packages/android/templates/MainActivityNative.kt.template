@@ -99,16 +99,16 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         alignItems = style.optString("alignItems", "stretch")
         justifyContent = style.optString("justifyContent", "flex-start")
         val gap = (style.optDouble("gap", 0.0) * density).toInt()
-        rowGap = (style.optDouble("rowGap", gap / density) * density).toInt()
-        columnGap = (style.optDouble("columnGap", gap / density) * density).toInt()
+        rowGap = (style.optDouble("rowGap", gap.toDouble() / density.toDouble()) * density).toInt()
+        columnGap = (style.optDouble("columnGap", gap.toDouble() / density.toDouble()) * density).toInt()
         val padding = (style.optDouble("padding", 0.0) * density).toInt()
-        val horizontal = (style.optDouble("paddingHorizontal", padding / density) * density).toInt()
-        val vertical = (style.optDouble("paddingVertical", padding / density) * density).toInt()
+        val horizontal = (style.optDouble("paddingHorizontal", padding.toDouble() / density.toDouble()) * density).toInt()
+        val vertical = (style.optDouble("paddingVertical", padding.toDouble() / density.toDouble()) * density).toInt()
         setPadding(
-            (style.optDouble("paddingLeft", horizontal / density) * density).toInt(),
-            (style.optDouble("paddingTop", vertical / density) * density).toInt(),
-            (style.optDouble("paddingRight", horizontal / density) * density).toInt(),
-            (style.optDouble("paddingBottom", vertical / density) * density).toInt(),
+            (style.optDouble("paddingLeft", horizontal.toDouble() / density.toDouble()) * density).toInt(),
+            (style.optDouble("paddingTop", vertical.toDouble() / density.toDouble()) * density).toInt(),
+            (style.optDouble("paddingRight", horizontal.toDouble() / density.toDouble()) * density).toInt(),
+            (style.optDouble("paddingBottom", vertical.toDouble() / density.toDouble()) * density).toInt(),
         )
         requestLayout()
     }
