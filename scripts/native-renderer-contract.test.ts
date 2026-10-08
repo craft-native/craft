@@ -189,6 +189,8 @@ describe('native renderer component contract', () => {
     expect(iosFlatList).toContain('attributes.size.width = max(1, measured.width)')
     expect(iosFlatList).not.toContain('bounds.width * 0.8')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
+    expect(androidFlatList).toContain('updateVisibleHolderLayoutParams()')
+    expect(androidFlatList).toContain('holder.host.layoutParams = holderLayoutParams()')
   })
 
   it('keeps vertical list rows intrinsically sized across hosts', () => {

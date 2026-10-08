@@ -87,6 +87,8 @@ describe('Craft Android builder', () => {
       expect(flatList).toContain('ListAdapter<Item, Holder>')
       expect(flatList).toContain('GridLayoutManager(context, columns)')
       expect(flatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
+      expect(flatList).toContain('updateVisibleHolderLayoutParams()')
+      expect(flatList).toContain('holder.host.layoutParams = holderLayoutParams()')
       expect(flatList).toContain('dataPositions.indexOfLast')
       expect(flatList).toContain('else view.layoutParams = hostedLayout')
       expect(nativeActivity).toContain('Color.luminance(background)')

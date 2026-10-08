@@ -46,6 +46,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         override fun onBindViewHolder(holder: Holder, position: Int) {
             val item = getItem(position)
             if (holder.identity != null && holder.identity != item.identity) release(holder)
+            holder.host.layoutParams = holderLayoutParams()
             val view = renderItem?.invoke(item.node, item.identity, holder.hostedView) ?: View(holder.host.context)
             val renderedLayout = view.layoutParams
             val hostedLayout = FrameLayout.LayoutParams(
@@ -98,6 +99,17 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     var onMomentumScrollBegin: (() -> Unit)? = null
     var onMomentumScrollEnd: (() -> Unit)? = null
     var onLayoutChanged: (() -> Unit)? = null
+
+    private fun holderLayoutParams() = LayoutParams(
+        if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT,
+        LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun updateVisibleHolderLayoutParams() {
+        for (index in 0 until childCount) {
+            (getChildViewHolder(getChildAt(index)) as? Holder)?.host?.layoutParams = holderLayoutParams()
+        }
+    }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
@@ -186,7 +198,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         val retainedState = if (layoutChanged) null else layoutManager?.onSaveInstanceState()
         this.horizontal = horizontal
         this.columns = nextColumns
-        if (layoutChanged || layoutManager == null) configureLayoutManager()
+        if (layoutChanged || layoutManager == null) {
+            configureLayoutManager()
+            updateVisibleHolderLayoutParams()
+        }
 
         val seen = mutableMapOf<String, Int>()
         val next = nodes.mapIndexed { index, node ->
