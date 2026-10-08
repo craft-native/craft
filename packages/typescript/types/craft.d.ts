@@ -1663,6 +1663,13 @@ export interface CraftDeepLinkEvent extends CustomEvent {
   detail: DeepLinkData;
 }
 
+/** The native tab bar's current height in CSS pixels. iOS. */
+export interface CraftTabBarLayoutEvent extends CustomEvent {
+  detail: {
+    height: number;
+  };
+}
+
 // Augment WindowEventMap for better event listener typing
 declare global {
   interface WindowEventMap {
@@ -1692,6 +1699,7 @@ declare global {
     craftDeepLink: CraftDeepLinkEvent;
     craftShortcut: CraftShortcutEvent;
     craftSiriShortcut: CraftSiriShortcutEvent;
+    craftTabBarLayout: CraftTabBarLayoutEvent;
   }
 }
 

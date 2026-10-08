@@ -470,6 +470,9 @@ should use the canonical spellings. A capability disabled by app configuration
 is distinct from a user denying permission, and `BUSY` is distinct from a failed
 native call.
 
+On iOS, `window.addEventListener('craftTabBarLayout', ...)` reports the native
+tab bar's current height as `{ detail: { height } }` in CSS pixels.
+
 ## Requirements
 
 - Bun >= 1.0.0 (for development)
