@@ -137,7 +137,8 @@ type:
   `columnGap`;
 - `display: 'grid'` with equal tracks from numeric `gridTemplateColumns` (or
   CSS-shaped `repeat(N, 1fr)` text), plus numeric `gridAutoRows`; grid children
-  fill their track by default and honor `alignSelf`, `columnGap`, and `rowGap`;
+  fill their track by default, pack in source order, and honor `alignSelf`,
+  `columnGap`, and `rowGap`;
 - `position: 'relative'` (the default) and `position: 'absolute'` with numeric
   `top`, `right`, `bottom`, and `left` insets;
 - `padding`, its four side properties, `paddingHorizontal`, and

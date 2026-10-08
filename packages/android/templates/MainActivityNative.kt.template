@@ -201,7 +201,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val entry = Entry(child, style, childWidth, childHeight)
             if (style.position == "absolute") absolute += entry
             else {
-                if (rows.isEmpty() || rows.last().size == gridColumns) rows += mutableListOf()
+                if (rows.isEmpty() || rows.last().size == gridColumns) rows.add(mutableListOf())
                 rows.last() += entry
             }
         }

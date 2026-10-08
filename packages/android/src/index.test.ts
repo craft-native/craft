@@ -88,6 +88,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('WindowInsetsCompat.Type.systemBars()')
       expect(nativeActivity).toContain('WindowInsetsCompat.Type.displayCutout()')
       expect(nativeActivity).toContain('ViewCompat.requestApplyInsets(root)')
+      expect(nativeActivity).toContain('rows.add(mutableListOf())')
       expect(nativeActivity).toContain('private class CraftNativeFlexLayout(context: Context) : LinearLayout(context)')
       expect(nativeActivity).toContain('wrap = style.optString("flexWrap") == "wrap"')
       expect(nativeActivity).toContain('style.position == "absolute"')
