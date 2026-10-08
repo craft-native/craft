@@ -437,6 +437,7 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     private val vertical = ScrollView(context)
     private val horizontal = HorizontalScrollView(context)
     private var horizontalMode: Boolean? = null
+    private var pagingEnabled = false
 
     init {
         vertical.isNestedScrollingEnabled = true
@@ -476,6 +477,23 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         horizontal.overScrollMode = mode
     }
 
+    fun setPagingEnabled(value: Boolean) {
+        pagingEnabled = value
+    }
+
+    private fun snapToPage(scroller: View) {
+        val horizontal = horizontalMode == true
+        val pageSize = if (horizontal) scroller.width else scroller.height
+        if (pageSize <= 0) return
+        val offset = if (horizontal) scroller.scrollX else scroller.scrollY
+        val target = (offset.toFloat() / pageSize).roundToInt() * pageSize
+        if (horizontal) {
+            (scroller as HorizontalScrollView).smoothScrollTo(target, 0)
+        } else {
+            (scroller as ScrollView).smoothScrollTo(0, target)
+        }
+    }
+
     fun setScrollIndicators(verticalVisible: Boolean, horizontalVisible: Boolean) {
         vertical.isVerticalScrollBarEnabled = verticalVisible
         horizontal.isHorizontalScrollBarEnabled = horizontalVisible
@@ -501,7 +519,10 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
                         dismissed = true
                         dismissKeyboard?.invoke()
                     }
-                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> onEndDrag?.invoke()
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        onEndDrag?.invoke()
+                        if (pagingEnabled) snapToPage(scroller)
+                    }
                 }
                 false
             }
@@ -1131,6 +1152,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 setScrollEnabled(props.optBoolean("scrollEnabled", true))
                 setBounces(props.optBoolean("bounces", true))
+                setPagingEnabled(props.optBoolean("pagingEnabled", false))
                 val onScroll = events.optString("onScroll")
                 if (onScroll.isNotBlank()) screen.scrollHandlers[this] = onScroll else screen.scrollHandlers.remove(this)
                 val onBegin = events.optString("onScrollBeginDrag")

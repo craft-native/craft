@@ -215,12 +215,13 @@ node removal cancel outstanding downloads.
 renders its children as native views. `scrollEnabled`, the platform scroll
 indicators, and nested scrolling are native; Android forwards the nested-scroll
 setting to its underlying platform scroller rather than shadowing the wrapper's
-view API. `onScroll` reports
+view API. `pagingEnabled` snaps `ScrollView` content to viewport-sized pages on
+both hosts. `onScroll` reports
 `contentOffset`, `contentSize`, and `layoutMeasurement`; `onScrollBeginDrag`
-and `onScrollEndDrag` report the corresponding gesture boundaries. Paging,
-refresh controls, and momentum callbacks remain outside this versioned
-contract. Use `ScrollView` for bounded content and `FlatList` for data sets that
-need recycling.
+and `onScrollEndDrag` report the corresponding gesture boundaries. Refresh
+controls and momentum callbacks remain outside this versioned contract. Use
+`ScrollView` for bounded content and `FlatList` for data sets that need
+recycling.
 
 ## Recycling lists
 

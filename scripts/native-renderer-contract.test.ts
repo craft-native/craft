@@ -254,4 +254,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS')
     expect(guide).toContain('`bounces` to control the platform overscroll effect')
   })
+
+  it('keeps ScrollView paging behavior aligned across hosts', () => {
+    expect(ios).toContain('scroll.isPagingEnabled = props["pagingEnabled"] as? Bool ?? false')
+    expect(android).toContain('fun setPagingEnabled(value: Boolean)')
+    expect(android).toContain('if (pagingEnabled) snapToPage(scroller)')
+    expect(android).toContain('setPagingEnabled(props.optBoolean("pagingEnabled", false))')
+    expect(guide).toContain('`pagingEnabled` snaps `ScrollView` content')
+  })
 })
