@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.text.InputFilter
 import android.view.KeyEvent
@@ -215,6 +216,14 @@ class NativeNavigationTest {
             assertEquals("button style accented", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val accentedButton = awaitView(activity, "toggle-button-style") as Button
             assertEquals(Color.rgb(0xef, 0x44, 0x44), accentedButton.currentTextColor)
+            val dynamicStyleBox = awaitView(activity, "dynamic-style-box")
+            assertTrue("custom panel style should use a GradientDrawable", dynamicStyleBox.background is GradientDrawable)
+            click(activity, "toggle-panel-style")
+            awaitText(activity, "panel-style-status", "panel style off")
+            assertTrue("removing panel style should restore the default background", dynamicStyleBox.background == null)
+            click(activity, "toggle-panel-style")
+            awaitText(activity, "panel-style-status", "panel style on")
+            assertTrue("restoring panel style should recreate its drawable", dynamicStyleBox.background is GradientDrawable)
             val toggle = awaitView(activity, "native-switch")
             assertTrue("native switch should be an Android Switch", toggle is Switch)
             val nativeSwitch = toggle as Switch

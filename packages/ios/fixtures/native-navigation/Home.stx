@@ -14,6 +14,8 @@ let imageTinted = true
 let buttonAccent = false
 let inputColors = true
 let inputStyleStatus = ''
+let panelStyled = true
+let panelStyleStatus = ''
 
 function changeName(event) {
   name = event.text
@@ -48,6 +50,11 @@ function toggleButtonAccent() {
 function toggleInputColors() {
   inputColors = !inputColors
   inputStyleStatus = inputColors ? 'input colors on' : 'input colors off'
+}
+
+function togglePanelStyle() {
+  panelStyled = !panelStyled
+  panelStyleStatus = panelStyled ? 'panel style on' : 'panel style off'
 }
 
 function submitName() {
@@ -114,6 +121,9 @@ function openCapabilities() {
     <Text testID="native-link-status">{status}</Text>
     <Button testID="toggle-button-style" onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
+    <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
+    <Text testID="panel-style-status">{panelStyleStatus}</Text>
+    <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : undefined,"borderWidth":panelStyled ? 2 : undefined,"borderColor":panelStyled ? "#abcdef" : undefined}} />
     <Switch testID="native-switch" value={switchValue} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>

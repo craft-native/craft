@@ -67,6 +67,11 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["image tint off"].waitForExistence(timeout: 5))
         app.buttons["toggle-button-style"].tap()
         XCTAssertTrue(app.staticTexts["button style accented"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["toggle-panel-style"].waitForExistence(timeout: 5))
+        app.buttons["toggle-panel-style"].tap()
+        XCTAssertTrue(app.staticTexts["panel style off"].waitForExistence(timeout: 5))
+        app.buttons["toggle-panel-style"].tap()
+        XCTAssertTrue(app.staticTexts["panel style on"].waitForExistence(timeout: 5))
         let scrollEnd = app.staticTexts["scroll-end"]
         XCTAssertFalse(scrollEnd.isHittable)
         scroll.swipeUp()
