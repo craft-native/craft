@@ -38,6 +38,7 @@ bundle must be local at build time.
 | `TextInput` | `UITextField` | `EditText` |
 | `Switch` | `UISwitch` | `Switch` |
 | `Slider` | `UISlider` | `SeekBar` |
+| `ActivityIndicator` | `UIActivityIndicatorView` | `ProgressBar` |
 | `Image` | `UIImageView` | `ImageView` |
 | `ScrollView` | `UIScrollView` | `ScrollView` or `HorizontalScrollView` |
 | `FlatList` | `UICollectionView` | `RecyclerView` |
