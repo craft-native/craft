@@ -194,6 +194,7 @@ class NativeNavigationTest {
             instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
             assertEquals("slider moved", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
+            assertEquals("layout measured", (awaitView(activity, "layout-status") as TextView).text.toString())
             val bounded = awaitView(activity, "layout-min")
             val absolute = awaitView(activity, "layout-absolute")
             assertEquals((140 * density).toInt(), bounded.width)

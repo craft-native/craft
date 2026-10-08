@@ -95,6 +95,7 @@ final class NativeNavigationUITests: XCTestCase {
 
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["layout measured"].waitForExistence(timeout: 5), "native onLayout did not report a frame")
         let bounded = app.staticTexts["layout-min"]
         XCTAssertTrue(bounded.exists)
         XCTAssertEqual(bounded.frame.width, 140, accuracy: 2, "maxWidth was not applied")
