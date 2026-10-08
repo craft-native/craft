@@ -105,6 +105,7 @@ function openCapabilities() {
       <Text testID="scroll-end">End of native scroll content</Text>
     </ScrollView>
     <TextInput testID="name-input" placeholder="Your name" placeholderTextColor="#94a3b8" selectionColor="#22c55e" maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onSubmitEditing={submitName} />
+    <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} placeholder="Notes" />
     <Text testID="greeting">Hello {name}</Text>
     <Text testID="name-submits">Submits: {submits}</Text>
     <Button testID="increment" onPress={increment}>Increment</Button>
