@@ -828,6 +828,7 @@ class MainActivity : AppCompatActivity() {
         root.removeAllViews()
         (screen.view.parent as? ViewGroup)?.removeView(screen.view)
         root.addView(screen.view)
+        refreshScreenTheme(screen)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -844,9 +845,13 @@ class MainActivity : AppCompatActivity() {
         ViewCompat.requestApplyInsets(root)
         refreshInputDefaultsForTraitChange()
         screens.lastOrNull()?.let { screen ->
-            screen.mutations.node("root")?.let { renderCommitted(screen, it) }
-            screen.controls.values.filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }
+            refreshScreenTheme(screen)
         }
+    }
+
+    private fun refreshScreenTheme(screen: Screen) {
+        screen.mutations.node("root")?.let { renderCommitted(screen, it) }
+        screen.controls.values.filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }
     }
 
     private fun refreshThemeDefaults() {

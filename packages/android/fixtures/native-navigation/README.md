@@ -21,6 +21,9 @@ layout events to increase after recycled rows are materialized, rather than
 assuming a fixed callback count.
 The native form coverage also keeps a keyed input's draft while changing its
 single-line/multiline mode, recreating the incompatible platform control.
+Returning to a retained route reapplies native theme defaults before it becomes
+visible, so a dark-mode change while another route is open cannot leave stale
+colors behind.
 CI uses the pinned stx-native compiler at `6c1603f742`, which installs an
 initial tree atomically before sending incremental keyed mutations.
 
