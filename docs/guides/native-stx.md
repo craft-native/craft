@@ -278,7 +278,9 @@ incremental mutation protocol.
 
 ## Events, accessibility, and navigation
 
-`onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
+`defaultValue` initializes an uncontrolled `TextInput` once; controlled
+`value` continues to win on later renders without replacing the user's draft
+when it is omitted. `onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
 pressable native views. `onLongPress` fires once after the native long-press
 gesture begins and also delivers an empty `nativeEvent`; removing the handler
 releases the platform gesture recognizer. `TextInput` accepts `onChange` or `onChangeText` and

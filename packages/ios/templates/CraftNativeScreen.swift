@@ -895,7 +895,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
             if let textView = result as? UITextView {
-                configureTextView(textView, props: props, style: style, events: events)
+                configureTextView(
+                    textView,
+                    props: props,
+                    style: style,
+                    events: events,
+                    defaultValue: previous?.view === textView ? nil : props["defaultValue"] as? String
+                )
                 break
             }
             let field = result as! UITextField
@@ -933,7 +939,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if field.isSecureTextEntry != desiredSecureEntry { field.isSecureTextEntry = desiredSecureEntry }
             let desiredEnabled = props["editable"] as? Bool != false
             if field.isEnabled != desiredEnabled { field.isEnabled = desiredEnabled }
-            updateField(field, value: props["value"] as? String)
+            if let value = props["value"] as? String {
+                updateField(field, value: value)
+            } else if previous?.view !== field, let defaultValue = props["defaultValue"] as? String {
+                updateField(field, value: defaultValue)
+            }
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
             updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)
             updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: field)
@@ -1373,7 +1383,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         _ textView: UITextView,
         props: [String: Any],
         style: [String: Any],
-        events: [String: String]
+        events: [String: String],
+        defaultValue: String?
     ) {
         let id = ObjectIdentifier(textView)
         textView.delegate = self
@@ -1403,7 +1414,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             craftTextView.placeholderColor = color(props["placeholderTextColor"])
             craftTextView.placeholderFont = textView.font
         }
-        updateTextView(textView, value: props["value"] as? String)
+        updateTextView(textView, value: (props["value"] as? String) ?? defaultValue)
         let selectedRange = textView.selectedRange
         let attributes = inputTextAttributes(style, font: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: textView.textAlignment)
         textView.typingAttributes = attributes

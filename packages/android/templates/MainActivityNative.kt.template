@@ -978,6 +978,7 @@ class MainActivity : AppCompatActivity() {
                 configureTextStyle(this, style)
                 if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
+                else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 val onFocus = events.optString("onFocus")

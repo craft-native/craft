@@ -65,6 +65,14 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
   })
 
+  it('initializes uncontrolled text inputs from defaultValue only once', () => {
+    expect(ios).toContain('defaultValue: previous?.view === textView ? nil : props["defaultValue"] as? String')
+    expect(ios).toContain('updateTextView(textView, value: (props["value"] as? String) ?? defaultValue)')
+    expect(ios).toContain('else if previous?.view !== field, let defaultValue = props["defaultValue"] as? String')
+    expect(android).toContain('else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))')
+    expect(guide).toContain('`defaultValue` initializes an uncontrolled')
+  })
+
   it('keeps native capability and WebView fallback gates intact', () => {
     expect(ios).toContain('mutationProtocolVersion: 1')
     expect(android).toContain('mutationProtocolVersion: 1')
