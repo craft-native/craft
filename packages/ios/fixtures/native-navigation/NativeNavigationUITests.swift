@@ -112,6 +112,7 @@ final class NativeNavigationUITests: XCTestCase {
 
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))
+        XCTAssertTrue(field.isEnabled)
         field.tap()
         field.typeText("Ada")
         XCTAssertEqual(app.staticTexts["greeting"].label, "Hello Ada")
