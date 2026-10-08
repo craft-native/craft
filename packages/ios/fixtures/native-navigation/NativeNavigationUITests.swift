@@ -126,6 +126,12 @@ final class NativeNavigationUITests: XCTestCase {
         let notes = app.textViews["notes-input"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5), "multiline TextInput did not render as UITextView")
         XCTAssertTrue(notes.isEnabled)
+        app.buttons["toggle-input-colors"].tap()
+        XCTAssertTrue(app.staticTexts["input colors off"].waitForExistence(timeout: 5))
+        XCTAssertTrue(field.exists, "removing input colors replaced the native field")
+        app.buttons["toggle-input-colors"].tap()
+        XCTAssertTrue(app.staticTexts["input colors on"].waitForExistence(timeout: 5))
+        XCTAssertTrue(field.exists, "restoring input colors replaced the native field")
         field.tap()
         field.typeText("Ada")
         XCTAssertEqual(app.staticTexts["greeting"].label, "Hello Ada")
