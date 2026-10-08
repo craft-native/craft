@@ -160,6 +160,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["input colors on"].waitForExistence(timeout: 5))
         XCTAssertTrue(field.exists, "restoring input colors replaced the native field")
         field.tap()
+        XCTAssertTrue(app.staticTexts["Focuses: 1"].waitForExistence(timeout: 5))
         field.typeText("Ada")
         XCTAssertEqual(app.staticTexts["greeting"].label, "Hello Ada")
         field.typeText("\n")

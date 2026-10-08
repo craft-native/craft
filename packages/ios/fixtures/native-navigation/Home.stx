@@ -3,6 +3,7 @@ let name = ''
 let count = 0
 let imageTaps = 0
 let submits = 0
+let nameFocuses = 0
 let nameBlurs = 0
 let nameEndEditings = 0
 let notesBlurs = 0
@@ -25,6 +26,10 @@ let panelStyleStatus = ''
 
 function changeName(event) {
   name = event.text
+}
+
+function focusName() {
+  nameFocuses += 1
 }
 
 function increment() {
@@ -196,10 +201,11 @@ function openCapabilities() {
     </ScrollView>
     <Button testID="toggle-input-colors" onPress={toggleInputColors}>Toggle input colors</Button>
     <Text testID="input-style-status">{inputStyleStatus}</Text>
-    <TextInput testID="name-input" placeholder="Your name" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onSubmitEditing={submitName} onBlur={blurName} onEndEditing={endNameEditing} />
+    <TextInput testID="name-input" placeholder="Your name" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onFocus={focusName} onSubmitEditing={submitName} onBlur={blurName} onEndEditing={endNameEditing} />
     <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} defaultValue="Draft" placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} onSubmitEditing={submitName} onBlur={blurNotes} onEndEditing={endNotesEditing} />
     <Text testID="greeting">Hello {name}</Text>
     <Text testID="name-submits">Submits: {submits}</Text>
+    <Text testID="name-focuses">Focuses: {nameFocuses}</Text>
     <Text testID="name-blurs">Blurs: {nameBlurs}</Text>
     <Text testID="name-end-editings">End edits: {nameEndEditings}</Text>
     <Text testID="notes-blurs">Notes blurs: {notesBlurs}</Text>

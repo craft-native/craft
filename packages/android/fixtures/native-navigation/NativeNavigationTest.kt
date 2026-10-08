@@ -318,6 +318,7 @@ class NativeNavigationTest {
                 name.requestFocus()
                 (name as EditText).setText("Ada")
             }
+            awaitText(activity, "name-focuses", "Focuses: 1")
             awaitText(activity, "greeting", "Hello Ada")
             instrumentation.runOnMainSync { (name as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE) }
             awaitText(activity, "name-submits", "Submits: 1")
