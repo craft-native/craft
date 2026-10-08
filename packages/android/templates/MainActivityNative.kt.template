@@ -1062,7 +1062,9 @@ class MainActivity : AppCompatActivity() {
                 maxLines = if (multiline) props.optInt("numberOfLines", Int.MAX_VALUE).coerceAtLeast(1) else 1
                 isEnabled = props.optBoolean("editable", true)
                 configureTextStyle(this, style)
-                if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
+                if (props.has("value") && text.toString() != props.optString("value")) {
+                    setTextPreservingSelection(this, props.optString("value"))
+                }
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
                 else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
@@ -1636,6 +1638,19 @@ class MainActivity : AppCompatActivity() {
     private fun emitImageEvent(screen: Screen, view: ImageView, handler: String?, nativeEvent: JSONObject = JSONObject()) {
         if (handler.isNullOrBlank()) return
         send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", nativeEvent))
+    }
+
+    private fun setTextPreservingSelection(field: EditText, value: String) {
+        val start = field.selectionStart
+        val end = field.selectionEnd
+        field.setText(value)
+        if (start < 0 || end < 0) {
+            field.setSelection(value.length)
+            return
+        }
+        val boundedStart = start.coerceIn(0, value.length)
+        val boundedEnd = end.coerceIn(0, value.length)
+        field.setSelection(minOf(boundedStart, boundedEnd), maxOf(boundedStart, boundedEnd))
     }
 
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
