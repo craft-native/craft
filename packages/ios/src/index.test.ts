@@ -70,6 +70,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('style.minWidth')
     expect(nativeSwift).toContain('marginTop: CGFloat')
     expect(nativeSwift).toContain('mainMargins(styles[index])')
+    expect(nativeSwift).toContain('let elevation = max(0, number(style["elevation"]) ?? 0)')
+    expect(nativeSwift).toContain('view.layer.shadowOpacity = elevation > 0')
     expect(nativeSwift).toContain('flexGrow')
     expect(nativeSwift).toContain('distributeMainAxisSizes')
     expect(nativeSwift).toContain('style.alignSelf ?? alignItems')

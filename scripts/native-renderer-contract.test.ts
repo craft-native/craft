@@ -88,6 +88,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('val crossLeading = if (orientation == HORIZONTAL)')
   })
 
+  it('keeps elevation visible on both native hosts', () => {
+    expect(ios).toContain('let elevation = max(0, number(style["elevation"]) ?? 0)')
+    expect(ios).toContain('view.layer.shadowOpacity = elevation > 0')
+    expect(android).toContain('view.elevation = dp(style.optDouble("elevation", 0.0)).toFloat()')
+  })
+
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
     expect(iosFlatList).toContain('withHorizontalFittingPriority: .fittingSizeLevel')
