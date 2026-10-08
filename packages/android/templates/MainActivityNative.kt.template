@@ -1355,9 +1355,11 @@ class MainActivity : AppCompatActivity() {
         }
         next[identity] = control
         applyViewStyle(control, style)
+        val width = style.optDouble("width", Double.NaN).takeUnless { it.isNaN() }?.let(::dp)
+        val height = style.optDouble("height", Double.NaN).takeUnless { it.isNaN() }?.let(::dp)
         control.layoutParams = LinearLayout.LayoutParams(
-            if (style.has("width")) dp(style.optDouble("width")) else ViewGroup.LayoutParams.WRAP_CONTENT,
-            if (style.has("height")) dp(style.optDouble("height")) else ViewGroup.LayoutParams.WRAP_CONTENT
+            width ?: ViewGroup.LayoutParams.WRAP_CONTENT,
+            height ?: ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             val margin = style.optDouble("margin", 0.0)
             val horizontal = style.optDouble("marginHorizontal", margin)
