@@ -4,6 +4,8 @@ The three `.stx` screens and `stx-native.config.json` exercise a native push wit
 
 Keyed row replacement releases the previous native root before the new row type
 is hosted, so old event and image handlers cannot leak across reuse.
+Returning to a retained route also reapplies native theme defaults before the
+controller appears, keeping dark-mode colors current after navigation.
 
 From the Craft repository, with the sibling stx checkout at or after
 `6c1603f742`:

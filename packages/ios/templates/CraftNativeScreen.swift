@@ -586,6 +586,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         refreshTraitDefaults()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshTraitDefaults()
+    }
+
     private func refreshTraitDefaults() {
         view.backgroundColor = config.resolvedBackgroundColor
         if let document = mutationDocument.node("root") {
