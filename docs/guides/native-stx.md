@@ -171,10 +171,11 @@ Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
 Android. Both hosts use the same line-breaking, gap, min/max clamping, absolute
 inset, grid-track, and stretch/center/flex-end rules; text and image intrinsic
-sizes are measured by the host-native control. Generated hosts pin the native
-screen root to the platform safe-area insets. Percentage dimensions, transforms,
-and shadows remain outside the native renderer contract. Unsupported values are
-ignored rather than interpreted as CSS.
+sizes are measured by the host-native control, and `Button`/`Link` text uses the
+same font, color, alignment, and decoration styles as `Text`. Generated hosts
+pin the native screen root to the platform safe-area insets. Percentage
+dimensions, transforms, and shadows remain outside the native renderer
+contract. Unsupported values are ignored rather than interpreted as CSS.
 
 Scroll content is measured with an unbounded scroll-axis constraint, so intrinsic
 text and image sizes contribute to the content extent instead of collapsing to

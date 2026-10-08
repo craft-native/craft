@@ -147,6 +147,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('private fun applyViewStyle(view: View, style: JSONObject)')
       expect(nativeActivity).toContain('private fun gridIntrinsicSize(height: Int): Pair<Int, Int>')
       expect(nativeActivity).toContain('private fun configureText(view: TextView, value: String, style: JSONObject)')
+      expect(nativeActivity).toContain('val title = props.optString("title").ifBlank { childText(children) }')
+      expect(nativeActivity).toContain('configureText(this, title, style)')
       expect(nativeActivity).toContain('style.optString("flexDirection").endsWith("-reverse")')
       expect(nativeActivity).toContain('style.optString("flexDirection") in setOf("row", "row-reverse")')
       expect(nativeActivity).toContain('Unsupported image source')

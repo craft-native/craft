@@ -879,7 +879,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "Button" -> (previous as? Button ?: Button(this)).apply {
-                text = props.optString("title").ifBlank { childText(children) }
+                val title = props.optString("title").ifBlank { childText(children) }
+                configureText(this, title, style)
                 isEnabled = !props.optBoolean("disabled", false)
                 val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
