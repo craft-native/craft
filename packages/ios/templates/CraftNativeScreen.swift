@@ -505,6 +505,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var handlers: [ObjectIdentifier: String] = [:]
     private var focusHandlers: [ObjectIdentifier: String] = [:]
     private var blurHandlers: [ObjectIdentifier: String] = [:]
+    private var endEditingHandlers: [ObjectIdentifier: String] = [:]
     private var submitHandlers: [ObjectIdentifier: String] = [:]
     private var longPressHandlers: [ObjectIdentifier: String] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
@@ -948,7 +949,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
             updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)
-            updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: field)
+            updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)
+            updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)
             updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: field)
             if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
                 DispatchQueue.main.async { _ = field.becomeFirstResponder() }
@@ -1262,6 +1264,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         lastLayoutFrames.removeValue(forKey: id)
         focusHandlers.removeValue(forKey: id)
         blurHandlers.removeValue(forKey: id)
+        endEditingHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
         longPressHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
@@ -1449,7 +1452,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         (textView as? CraftNativeTextView)?.refreshPlaceholder()
         updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
         updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
-        updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: textView)
+        updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: textView)
+        updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: textView)
         updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)
         if props["autoFocus"] as? Bool == true, !textView.isFirstResponder {
             DispatchQueue.main.async { _ = textView.becomeFirstResponder() }
@@ -1835,8 +1839,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
-        guard let handler = blurHandlers[ObjectIdentifier(textView)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
+        let id = ObjectIdentifier(textView)
+        let nativeEvent: [String: Any] = ["text": textView.text ?? ""]
+        if let handler = blurHandlers[id] {
+            send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
+        }
+        if let handler = endEditingHandlers[id] {
+            send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
+        }
     }
 
     @objc private func textChanged(_ sender: UITextField) {
@@ -1874,8 +1884,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     @objc private func textBlurred(_ sender: UITextField) {
-        guard let handler = blurHandlers[ObjectIdentifier(sender)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
+        let id = ObjectIdentifier(sender)
+        let nativeEvent: [String: Any] = ["text": sender.text ?? ""]
+        if let handler = blurHandlers[id] {
+            send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
+        }
+        if let handler = endEditingHandlers[id] {
+            send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
+        }
     }
 
     @objc private func textSubmitted(_ sender: UITextField) {

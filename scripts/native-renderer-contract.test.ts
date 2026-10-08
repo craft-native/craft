@@ -71,6 +71,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
   })
 
+  it('keeps blur and end-editing callbacks independent across hosts', () => {
+    expect(ios).toContain('updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)')
+    expect(ios).toContain('updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)')
+    expect(ios).toContain('if let handler = endEditingHandlers[id]')
+    expect(android).toContain('val onBlur = events.optString("onBlur")')
+    expect(android).toContain('val onEndEditing = events.optString("onEndEditing")')
+    expect(android).toContain('screen.endEditingHandlers[view]?.let')
+  })
+
   it('initializes uncontrolled text inputs from defaultValue only once', () => {
     expect(ios).toContain('defaultValue: previous?.view === textView ? nil : props["defaultValue"] as? String')
     expect(ios).toContain('updateTextView(textView, value: (props["value"] as? String) ?? defaultValue)')

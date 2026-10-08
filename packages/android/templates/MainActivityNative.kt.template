@@ -599,6 +599,7 @@ class MainActivity : AppCompatActivity() {
         val sliderSteps = mutableMapOf<View, Double>()
         val focusHandlers = mutableMapOf<View, String>()
         val blurHandlers = mutableMapOf<View, String>()
+        val endEditingHandlers = mutableMapOf<View, String>()
         val submitHandlers = mutableMapOf<View, String>()
         val imageLoadStartHandlers = mutableMapOf<ImageView, String>()
         val imageLoadHandlers = mutableMapOf<ImageView, String>()
@@ -1048,14 +1049,26 @@ class MainActivity : AppCompatActivity() {
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 val onFocus = events.optString("onFocus")
                 if (onFocus.isNotBlank()) screen.focusHandlers[this] = onFocus else screen.focusHandlers.remove(this)
-                val onBlur = events.optString("onBlur").ifBlank { events.optString("onEndEditing") }
+                val onBlur = events.optString("onBlur")
                 if (onBlur.isNotBlank()) screen.blurHandlers[this] = onBlur else screen.blurHandlers.remove(this)
+                val onEndEditing = events.optString("onEndEditing")
+                if (onEndEditing.isNotBlank()) screen.endEditingHandlers[this] = onEndEditing else screen.endEditingHandlers.remove(this)
                 val onSubmit = events.optString("onSubmitEditing")
                 if (onSubmit.isNotBlank()) screen.submitHandlers[this] = onSubmit else screen.submitHandlers.remove(this)
                 setOnFocusChangeListener { view, focused ->
-                    val current = if (focused) screen.focusHandlers[view] else screen.blurHandlers[view]
-                    if (current == null) return@setOnFocusChangeListener
-                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("text", text.toString())))
+                    val nativeEvent = JSONObject().put("text", text.toString())
+                    if (focused) {
+                        screen.focusHandlers[view]?.let { current ->
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", nativeEvent))
+                        }
+                    } else {
+                        screen.blurHandlers[view]?.let { current ->
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", nativeEvent))
+                        }
+                        screen.endEditingHandlers[view]?.let { current ->
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", nativeEvent))
+                        }
+                    }
                 }
                 setOnEditorActionListener { view, actionId, event ->
                     val submitted = actionId != EditorInfo.IME_ACTION_NONE || event?.keyCode == KeyEvent.KEYCODE_ENTER
@@ -1874,6 +1887,7 @@ class MainActivity : AppCompatActivity() {
         screen.sliderSteps.keys.removeAll(released)
         screen.focusHandlers.keys.removeAll(released)
         screen.blurHandlers.keys.removeAll(released)
+        screen.endEditingHandlers.keys.removeAll(released)
         screen.submitHandlers.keys.removeAll(released)
         screen.imageLoadStartHandlers.keys.removeAll(released)
         screen.imageLoadHandlers.keys.removeAll(released)
@@ -1900,6 +1914,7 @@ class MainActivity : AppCompatActivity() {
         screen.sliderSteps.clear()
         screen.focusHandlers.clear()
         screen.blurHandlers.clear()
+        screen.endEditingHandlers.clear()
         screen.submitHandlers.clear()
         screen.imageLoadStartHandlers.clear()
         screen.imageLoadHandlers.clear()
