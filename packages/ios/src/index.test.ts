@@ -146,7 +146,15 @@ describe('Craft iOS builder', () => {
     expect(renderUsageDescriptions(config)).toContain('NSLocationWhenInUseUsageDescription')
     expect(renderUsageDescriptions(config)).toContain('NSLocationAlwaysAndWhenInUseUsageDescription')
     expect(renderUsageDescriptions(config)).toContain('NSFaceIDUsageDescription')
-    expect(renderUsageDescriptions(config)).not.toContain('NSCameraUsageDescription')
+    // The shell links the camera whether or not this app uses it, and App Store
+    // Connect refuses a binary without the key (ITMS-90683), so it is always
+    // there, saying it is only asked for when a feature needs it.
+    expect(renderUsageDescriptions(config)).toContain('<key>NSCameraUsageDescription</key>\n    <string>WildLoop asks for the camera only in a feature that needs it.</string>')
+    for (const key of ['NSSpeechRecognitionUsageDescription', 'NSMicrophoneUsageDescription', 'NSCalendarsUsageDescription', 'NSMotionUsageDescription', 'NSContactsUsageDescription'])
+      expect(renderUsageDescriptions(config)).toContain(`<key>${key}</key>`)
+    // An entitlement gates these, so a key without the feature would only invite questions.
+    expect(renderUsageDescriptions(config)).not.toContain('NSHealthShareUsageDescription')
+    expect(renderUsageDescriptions(config)).not.toContain('NFCReaderUsageDescription')
     // Only an app that asks for it explains reaching the local network.
     expect(renderUsageDescriptions(config)).not.toContain('NSLocalNetworkUsageDescription')
     expect(renderUsageDescriptions({ ...config, enableLocalNetwork: true })).toContain('<key>NSLocalNetworkUsageDescription</key>')

@@ -262,6 +262,27 @@ export function renderAppearance(config: Pick<CraftConfig, 'appearance' | 'darkM
   return { interfaceStyle: 'Dark', statusBarStyle: 'UIStatusBarStyleLightContent' }
 }
 
+/**
+ * Purpose strings the shell needs whatever the app turns on. CraftApp.swift is
+ * one binary that links Speech, AVFoundation, Photos, CoreLocation, Contacts,
+ * EventKit, CoreMotion, CoreBluetooth and LocalAuthentication, and App Store
+ * Connect checks the binary, not the config: a build without these keys is
+ * refused with ITMS-90683 ("Missing purpose string in Info.plist"). A feature
+ * that is off never asks, so the string is never shown; it only has to exist.
+ */
+const LINKED_PURPOSES: Record<string, string> = {
+  NSSpeechRecognitionUsageDescription: 'speech recognition',
+  NSMicrophoneUsageDescription: 'the microphone',
+  NSCameraUsageDescription: 'the camera',
+  NSPhotoLibraryUsageDescription: 'your photo library',
+  NSLocationWhenInUseUsageDescription: 'your location',
+  NSContactsUsageDescription: 'your contacts',
+  NSCalendarsUsageDescription: 'your calendar',
+  NSBluetoothAlwaysUsageDescription: 'Bluetooth',
+  NSMotionUsageDescription: 'motion data',
+  NSFaceIDUsageDescription: 'Face ID',
+}
+
 export function renderUsageDescriptions(config: CraftConfig): string {
   const entries: Array<[boolean | undefined, string, string]> = [
     [config.enableSpeechRecognition, 'NSSpeechRecognitionUsageDescription', `${config.appName} uses speech recognition for voice input.`],
@@ -282,8 +303,13 @@ export function renderUsageDescriptions(config: CraftConfig): string {
   ]
 
   return entries
-    .filter(([enabled]) => enabled)
-    .map(([, key, value]) => plistString(key, value))
+    .map(([enabled, key, value]): [string, string] | null => {
+      if (enabled) return [key, value]
+      const linked = LINKED_PURPOSES[key]
+      return linked ? [key, `${config.appName} asks for ${linked} only in a feature that needs it.`] : null
+    })
+    .filter((entry): entry is [string, string] => entry !== null)
+    .map(([key, value]) => plistString(key, value))
     .join('\n')
 }
 
