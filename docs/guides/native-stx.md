@@ -207,7 +207,8 @@ or Android app assets, so the asset must be packaged separately under the same
 name for a shared bundle. Plain HTTP, file URLs, and other schemes are rejected.
 Invalid data, missing bundled images, failed HTTPS downloads, and unsupported
 schemes clear stale pixels, log a diagnostic, and expose a short accessibility
-error value. `onLoadStart`, `onLoad`, and `onLoadEnd` report the image lifecycle;
+error value. That value remains stable when the native node is reconciled again;
+it is not appended repeatedly. `onLoadStart`, `onLoad`, and `onLoadEnd` report the image lifecycle;
 `onError` receives `nativeEvent.error.message` for failures. Route teardown and
 node removal cancel outstanding downloads.
 
