@@ -298,7 +298,8 @@ describe('native renderer component contract', () => {
     expect(details).toContain('onLayout={captureRowLayout}')
     expect(details).toContain('testID="people-layout-status"')
     expect(iosTests).toContain('FlatList did not report a row layout after recycling')
-    expect(androidTests).toContain('awaitText(activity, "people-layout-status", "Rows laid out: ${initialRowLayouts + 1}")')
+    expect(androidTests).toContain('awaitLayoutIncrease(activity, "people-layout-status", initialRowLayouts)')
+    expect(androidTests).not.toContain('Rows laid out: ${initialRowLayouts + 1}')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

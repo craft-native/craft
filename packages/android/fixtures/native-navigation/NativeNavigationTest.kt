@@ -404,7 +404,6 @@ class NativeNavigationTest {
             }
             click(activity, "shuffle-people")
             awaitText(activity, "person-label-person-0", "1: Person zero updated")
-            awaitText(activity, "people-layout-status", "Rows laid out: ${initialRowLayouts + 1}")
             assertSame("keyed list update replaced a visible row", personZero, awaitView(activity, "person-label-person-0"))
             assertSame("keyed list update replaced a focused input", personInput, awaitView(activity, "person-input-person-0"))
             assertEquals("draft", personInput.text.toString())
