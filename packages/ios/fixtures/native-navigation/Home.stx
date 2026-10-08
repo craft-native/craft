@@ -82,6 +82,10 @@ function openCapabilities() {
       <Text testID="grid-second">grid two</Text>
       <Text testID="grid-third">grid three</Text>
     </View>
+    <View testID="flex-grow-wrap" style={{"flexDirection":"row","width":240,"height":32,"gap":4,"backgroundColor":"#445566"}}>
+      <Text testID="flex-grow-first" style={{"width":40,"flexGrow":1}}>grow</Text>
+      <Text testID="flex-grow-second" style={{"width":40}}>fixed</Text>
+    </View>
     <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Switch testID="native-switch" value={switchValue} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
