@@ -135,6 +135,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('info.hintText = host.tooltipText')
   })
 
+  it('keeps generic pressable views interactive without disabling scroll containers', () => {
+    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil }')
+    expect(android).toContain('control.isClickable = true')
+    expect(android).toContain('control.setOnClickListener {')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

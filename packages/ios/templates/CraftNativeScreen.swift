@@ -1301,7 +1301,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else if handler == nil, let recognizer = tapRecognizers.removeValue(forKey: id) {
             view.removeGestureRecognizer(recognizer)
         }
-        if view is UIImageView { view.isUserInteractionEnabled = handler != nil }
+        if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil }
     }
 
     private func updateField(_ field: UITextField, value: String?) {
