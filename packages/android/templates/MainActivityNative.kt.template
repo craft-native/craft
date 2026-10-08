@@ -244,7 +244,8 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             rowHeights[row] = max(rowHeights[row], childHeight + verticalMargins)
             flowIndex += 1
         }
-        val width = paddingLeft + paddingRight + columnWidths.sum() + max(0, columns - 1) * columnGap
+        val cellWidth = columnWidths.maxOrNull() ?: 0
+        val width = paddingLeft + paddingRight + cellWidth * columns + max(0, columns - 1) * columnGap
         val rowGapTotal = max(0, rowHeights.size - 1) * rowGap
         val measuredHeight = paddingTop + paddingBottom + rowHeights.sum() + rowGapTotal
         return width to measuredHeight

@@ -126,6 +126,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('inputHighlightDefaults.getOrPut(this)')
       expect(nativeActivity).toContain('setHintTextColor(')
       expect(nativeActivity).toContain('inputHintDefaults.remove(it)')
+      expect(nativeActivity).toContain('val cellWidth = columnWidths.maxOrNull() ?: 0')
+      expect(nativeActivity).toContain('cellWidth * columns')
       expect(nativeActivity).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
       expect(nativeActivity).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
       expect(readFileSync(join(native, 'app/src/main/AndroidManifest.xml'), 'utf8'))

@@ -65,6 +65,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('crossOffset += line.cross + crossGap')
   })
 
+  it('keeps intrinsic grid tracks equal across hosts', () => {
+    expect(ios).toContain('CGFloat(columns) * columnWidth')
+    expect(android).toContain('val cellWidth = columnWidths.maxOrNull() ?: 0')
+    expect(android).toContain('cellWidth * columns')
+  })
+
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
