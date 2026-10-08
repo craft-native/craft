@@ -1036,6 +1036,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return CraftNativeScrollView()
         case "FlatList":
             return CraftNativeFlatList()
+        case "View", "SafeAreaView":
+            return CraftNativeFlowView()
         default:
             return CraftNativeFlowView()
         }

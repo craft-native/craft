@@ -85,7 +85,7 @@ function openCapabilities() {
 </script>
 
 <template>
-  <View class="p-4">
+  <SafeAreaView class="p-4">
     <Text testID="home-title">Home</Text>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
@@ -151,5 +151,5 @@ function openCapabilities() {
     <Button testID="increment" onPress={increment}>Increment</Button>
     <Text testID="count">Count: {count}</Text>
     <Button testID="open-details" onPress={openDetails}>Open details</Button>
-  </View>
+  </SafeAreaView>
 </template>

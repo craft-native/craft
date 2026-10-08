@@ -10,6 +10,7 @@ const androidFlatList = readFileSync(join(root, 'packages/android/templates/Craf
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
+  ['SafeAreaView', 'case "View", "SafeAreaView":', '"View", "SafeAreaView" ->'],
   ['Text', 'case "Text":', '"Text" ->'],
   ['Button', 'case "Button", "Link":', '"Button" ->'],
   ['Link', 'case "Button", "Link":', '"Link" ->'],
@@ -43,6 +44,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('lastLayoutBounds[view] != bounds')
     expect(ios).toContain('"nativeEvent": ["layout": [')
     expect(android).toContain('.put("layout", JSONObject()')
+  })
+
+  it('keeps the native root inside each host safe area', () => {
+    expect(ios).toContain('view.safeAreaLayoutGuide.topAnchor')
+    expect(ios).toContain('view.safeAreaLayoutGuide.bottomAnchor')
+    expect(android).toContain('setOnApplyWindowInsetsListener(root)')
+    expect(android).toContain('WindowInsetsCompat.Type.systemBars()')
   })
 
   it('keeps reverse row scroll containers horizontal on both hosts', () => {
