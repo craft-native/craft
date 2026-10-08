@@ -216,6 +216,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('if type == "Image", let message = imageErrors[ObjectIdentifier(view)]')
     expect(android).toContain('if (control is ImageView) imageErrors[control]?.let')
     expect(android).toContain('if (!current.contains(message))')
+    expect(android).toContain('current.ifBlank { view.tag?.toString() ?: "Image" }')
     expect(android).toContain('joinToString(", ")')
   })
 

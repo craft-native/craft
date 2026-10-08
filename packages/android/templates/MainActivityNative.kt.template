@@ -1640,7 +1640,13 @@ class MainActivity : AppCompatActivity() {
     private fun imageFailure(screen: Screen, view: ImageView, uri: String, message: String) {
         imageErrors[view] = message
         view.setImageDrawable(null)
-        view.contentDescription = "${view.tag ?: "Image"}, $message"
+        val current = view.contentDescription?.toString().orEmpty()
+        if (!current.contains(message)) {
+            view.contentDescription = listOf(
+                current.ifBlank { view.tag?.toString() ?: "Image" },
+                message,
+            ).joinToString(", ")
+        }
         emitImageEvent(screen, view, screen.imageErrorHandlers[view], JSONObject().put("error", JSONObject().put("message", message)))
         emitImageEvent(screen, view, screen.imageLoadEndHandlers[view])
         Log.e(TAG, "$message: $uri")

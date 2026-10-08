@@ -362,6 +362,7 @@ class NativeNavigationTest {
             awaitText(activity, "native-caption", "Image taps: 1")
             val unsupported = awaitView(activity, "unsupported-image") as ImageView
             assertTrue(unsupported.drawable == null)
+            assertTrue("image accessibility label was lost on failure", unsupported.contentDescription.toString().contains("Unsupported image"))
             assertTrue(unsupported.contentDescription.toString().contains("Unsupported image source"))
             awaitText(activity, "image-error-status", "image failed")
             assertNoWebView(activity)
