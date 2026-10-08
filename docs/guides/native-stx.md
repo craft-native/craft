@@ -130,6 +130,9 @@ type:
 - `flexDirection` (`row`, `column`, and their reverse forms), `alignItems`,
   `alignSelf`, `justifyContent`, `flexWrap: 'wrap'`, `gap`, `rowGap`, and
   `columnGap`;
+- `display: 'grid'` with equal tracks from numeric `gridTemplateColumns` (or
+  CSS-shaped `repeat(N, 1fr)` text), plus numeric `gridAutoRows`; grid children
+  fill their track by default and honor `alignSelf`, `columnGap`, and `rowGap`;
 - `position: 'relative'` (the default) and `position: 'absolute'` with numeric
   `top`, `right`, `bottom`, and `left` insets;
 - `padding`, its four side properties, `paddingHorizontal`, and
@@ -144,9 +147,10 @@ type:
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
 Android. Both hosts use the same line-breaking, gap, min/max clamping, absolute
-inset, and stretch/center/flex-end rules; text and image intrinsic sizes are
-measured by the host-native control. Percentage dimensions, transforms, and
-shadows remain outside the native renderer contract. Unsupported values are
+inset, grid-track, and stretch/center/flex-end rules; text and image intrinsic
+sizes are measured by the host-native control. Generated hosts pin the native
+screen root to the platform safe-area insets. Percentage dimensions, transforms,
+and shadows remain outside the native renderer contract. Unsupported values are
 ignored rather than interpreted as CSS.
 
 Scroll content is measured with an unbounded scroll-axis constraint, so intrinsic

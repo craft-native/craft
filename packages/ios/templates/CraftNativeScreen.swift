@@ -5,6 +5,18 @@ import UIKit
 
 private let craftNativeCapabilityTimeoutMilliseconds = 30_000
 
+private func craftNativeGridColumnCount(_ value: Any?) -> Int {
+    if let number = value as? NSNumber { return max(1, number.intValue) }
+    guard let text = value as? String else { return 1 }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("repeat(") {
+        let digits = trimmed.dropFirst("repeat(".count).prefix { $0.isNumber }
+        if let count = Int(digits) { return max(1, count) }
+    }
+    let tracks = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" })
+    return max(1, tracks.count)
+}
+
 /// A WebView-free host for the first stx-native vertical slice. The bundled
 /// JavaScript sends whole, compiled view trees to UIKit and receives control
 /// events and Craft API replies through JavaScriptCore.
@@ -31,6 +43,9 @@ private struct CraftNativeLayoutStyle {
     let bottom: CGFloat?
     let left: CGFloat?
     let alignSelf: String?
+    let display: String
+    let gridColumns: Int
+    let gridAutoRows: CGFloat?
 
     init(_ raw: [String: Any]) {
         func number(_ value: Any?) -> CGFloat? { (value as? NSNumber).map { CGFloat(truncating: $0) } }
@@ -46,6 +61,9 @@ private struct CraftNativeLayoutStyle {
         bottom = number(raw["bottom"])
         left = number(raw["left"])
         alignSelf = raw["alignSelf"] as? String
+        display = raw["display"] as? String ?? "flex"
+        gridColumns = craftNativeGridColumnCount(raw["gridTemplateColumns"] ?? raw["gridColumns"])
+        gridAutoRows = number(raw["gridAutoRows"])
     }
 }
 
@@ -56,6 +74,9 @@ private final class CraftNativeFlowView: UIStackView {
     var gap: CGFloat = 0 { didSet { spacing = gap; invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var rowGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var columnGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var grid = false { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var gridColumns = 1 { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var gridAutoRows: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var padding = UIEdgeInsets.zero {
         didSet {
             layoutMargins = padding
@@ -114,6 +135,7 @@ private final class CraftNativeFlowView: UIStackView {
     override var intrinsicContentSize: CGSize {
         let children = subviews.filter { !$0.isHidden && !($0 is CraftNativeFlexSpacer) }
         guard !children.isEmpty else { return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric) }
+        if grid { return gridIntrinsicContentSize(children) }
         let sizes = children.map { measuredSize(for: $0, available: CGSize(width: 10_000, height: 10_000)) }
         let main = sizes.map { axis == .horizontal ? $0.width : $0.height }.reduce(0, +)
         let cross = sizes.map { axis == .horizontal ? $0.height : $0.width }.max() ?? 0
@@ -127,6 +149,10 @@ private final class CraftNativeFlowView: UIStackView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let content = bounds.inset(by: padding)
+        if grid {
+            layoutGrid(content: content)
+            return
+        }
         let availableMain = axis == .horizontal ? content.width : content.height
         var lines: [([UIView], [CGSize], CGFloat, CGFloat)] = []
         var items: [UIView] = []
@@ -184,6 +210,71 @@ private final class CraftNativeFlowView: UIStackView {
         }
 
         for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) {
+            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
+            guard style.position == "absolute" else { continue }
+            let size = measuredSize(for: child, available: content.size, style: style)
+            let width = style.left != nil && style.right != nil ? max(0, content.width - (style.left ?? 0) - (style.right ?? 0)) : size.width
+            let height = style.top != nil && style.bottom != nil ? max(0, content.height - (style.top ?? 0) - (style.bottom ?? 0)) : size.height
+            let x = style.left ?? (style.right.map { content.width - $0 - width } ?? 0)
+            let y = style.top ?? (style.bottom.map { content.height - $0 - height } ?? 0)
+            child.frame = CGRect(x: content.minX + x, y: content.minY + y, width: width, height: height).integral
+        }
+    }
+
+    private func gridIntrinsicContentSize(_ children: [UIView]) -> CGSize {
+        let columns = max(1, gridColumns)
+        let horizontalGap = columnGap ?? gap
+        let verticalGap = rowGap ?? gap
+        var columnWidth: CGFloat = 0
+        var rowHeights: [CGFloat] = []
+        for (index, child) in children.enumerated() {
+            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
+            let size = measuredSize(for: child, available: CGSize(width: 10_000, height: 10_000), style: style)
+            columnWidth = max(columnWidth, size.width)
+            let row = index / columns
+            while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
+            rowHeights[row] = max(rowHeights[row], size.height)
+        }
+        let width = padding.left + padding.right + CGFloat(columns) * columnWidth + CGFloat(max(0, columns - 1)) * horizontalGap
+        let height = padding.top + padding.bottom + rowHeights.reduce(0, +) + CGFloat(max(0, rowHeights.count - 1)) * verticalGap
+        return CGSize(width: width, height: height)
+    }
+
+    private func layoutGrid(content: CGRect) {
+        let children = subviews.filter { !$0.isHidden && !($0 is CraftNativeFlexSpacer) }
+        let flowChildren = children.filter {
+            (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
+        }
+        let columns = max(1, gridColumns)
+        let horizontalGap = columnGap ?? gap
+        let verticalGap = rowGap ?? gap
+        let cellWidth = max(0, (content.width - CGFloat(max(0, columns - 1)) * horizontalGap) / CGFloat(columns))
+        var rowHeights: [CGFloat] = []
+        var sizes: [CGSize] = []
+        for (index, child) in flowChildren.enumerated() {
+            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
+            let size = measuredSize(for: child, available: CGSize(width: cellWidth, height: content.height), style: style)
+            sizes.append(size)
+            let row = index / columns
+            while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
+            rowHeights[row] = max(rowHeights[row], size.height)
+        }
+        var rowTop = content.minY
+        for (index, child) in flowChildren.enumerated() {
+            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
+            let row = index / columns
+            let column = index % columns
+            let rowHeight = rowHeights[row]
+            let size = sizes[index]
+            let align = style.alignSelf ?? alignItems
+            let width = align == "stretch" && style.width == nil ? cellWidth : min(cellWidth, size.width)
+            let height = align == "stretch" && style.height == nil ? rowHeight : min(rowHeight, size.height)
+            let x = content.minX + CGFloat(column) * (cellWidth + horizontalGap) + (align == "center" ? (cellWidth - width) / 2 : align == "flex-end" ? cellWidth - width : 0)
+            let y = rowTop + (align == "center" ? (rowHeight - height) / 2 : align == "flex-end" ? rowHeight - height : 0)
+            child.frame = CGRect(x: x, y: y, width: width, height: height).integral
+            if column == columns - 1 || index == flowChildren.count - 1 { rowTop += rowHeight + verticalGap }
+        }
+        for child in children {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             guard style.position == "absolute" else { continue }
             let size = measuredSize(for: child, available: content.size, style: style)
@@ -929,6 +1020,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         stack.gap = number(style["gap"]) ?? 0
         stack.rowGap = number(style["rowGap"])
         stack.columnGap = number(style["columnGap"])
+        stack.grid = style["display"] as? String == "grid"
+        stack.gridColumns = craftNativeGridColumnCount(style["gridTemplateColumns"] ?? style["gridColumns"])
+        stack.gridAutoRows = number(style["gridAutoRows"])
         let padding = number(style["padding"]) ?? 0
         let horizontal = number(style["paddingHorizontal"]) ?? padding
         let vertical = number(style["paddingVertical"]) ?? padding

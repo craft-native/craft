@@ -87,6 +87,17 @@ private data class CraftNativeLayoutStyle(
     }
 }
 
+private fun craftNativeGridColumnCount(value: Any?): Int {
+    if (value is Number) return max(1, value.toInt())
+    val text = value as? String ?: return 1
+    val trimmed = text.trim()
+    if (trimmed.startsWith("repeat(")) {
+        val count = trimmed.removePrefix("repeat(").takeWhile { it.isDigit() }.toIntOrNull()
+        if (count != null) return max(1, count)
+    }
+    return max(1, trimmed.split(Regex("\\s+")).count { it.isNotBlank() })
+}
+
 /** A deterministic flex-shaped container shared by normal views and scroll content. */
 private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private val styles = mutableMapOf<View, CraftNativeLayoutStyle>()
@@ -95,6 +106,9 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private var justifyContent = "flex-start"
     private var rowGap = 0
     private var columnGap = 0
+    private var grid = false
+    private var gridColumns = 1
+    private var gridAutoRows: Int? = null
 
     fun configure(style: JSONObject, density: Float) {
         orientation = if (style.optString("flexDirection") in setOf("row", "row-reverse")) HORIZONTAL else VERTICAL
@@ -104,6 +118,11 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         val gap = (style.optDouble("gap", 0.0) * density).toInt()
         rowGap = (style.optDouble("rowGap", gap.toDouble() / density.toDouble()) * density).toInt()
         columnGap = (style.optDouble("columnGap", gap.toDouble() / density.toDouble()) * density).toInt()
+        grid = style.optString("display") == "grid"
+        gridColumns = craftNativeGridColumnCount(
+            if (style.has("gridTemplateColumns")) style.opt("gridTemplateColumns") else style.opt("gridColumns")
+        )
+        gridAutoRows = if (style.has("gridAutoRows")) (style.optDouble("gridAutoRows") * density).toInt() else null
         val padding = (style.optDouble("padding", 0.0) * density).toInt()
         val horizontal = (style.optDouble("paddingHorizontal", padding.toDouble() / density.toDouble()) * density).toInt()
         val vertical = (style.optDouble("paddingVertical", padding.toDouble() / density.toDouble()) * density).toInt()
@@ -128,6 +147,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
     private data class Entry(val view: View, val style: CraftNativeLayoutStyle, val width: Int, val height: Int)
     private data class Line(val entries: MutableList<Entry> = mutableListOf(), var main: Int = 0, var cross: Int = 0)
+    private data class GridLayout(val rows: List<List<Entry>>, val absolute: List<Entry>, val cellWidth: Int, val rowHeights: List<Int>)
 
     private fun entries(width: Int, height: Int): Pair<List<Line>, List<Entry>> {
         val availableMain = if (orientation == HORIZONTAL) max(0, width - paddingLeft - paddingRight)
@@ -162,6 +182,32 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         return lines to absolute
     }
 
+    private fun gridLayout(width: Int, height: Int): GridLayout {
+        val availableWidth = max(0, width - paddingLeft - paddingRight)
+        val gap = columnGap
+        val cellWidth = max(0, (availableWidth - max(0, gridColumns - 1) * gap) / max(1, gridColumns))
+        val rows = mutableListOf<MutableList<Entry>>()
+        val absolute = mutableListOf<Entry>()
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == GONE) continue
+            val style = styles[child] ?: CraftNativeLayoutStyle()
+            val lp = child.layoutParams as? MarginLayoutParams
+            val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
+            val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            val childWidth = measureChildWidth(child, style, cellWidth, horizontalMargins)
+            val childHeight = measureChildHeight(child, style, height - paddingTop - paddingBottom, verticalMargins)
+            val entry = Entry(child, style, childWidth, childHeight)
+            if (style.position == "absolute") absolute += entry
+            else {
+                if (rows.isEmpty() || rows.last().size == gridColumns) rows += mutableListOf()
+                rows.last() += entry
+            }
+        }
+        val rowHeights = rows.map { row -> max(gridAutoRows ?: 0, row.maxOfOrNull { it.height } ?: 0) }
+        return GridLayout(rows, absolute, cellWidth, rowHeights)
+    }
+
     private fun measureChildWidth(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
         val explicit = style.width ?: (child.layoutParams?.width ?: ViewGroup.LayoutParams.WRAP_CONTENT).takeIf { it >= 0 }
         val target = explicit ?: max(0, available - margins)
@@ -190,6 +236,13 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = View.MeasureSpec.getSize(widthMeasureSpec).takeUnless { View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
         val height = View.MeasureSpec.getSize(heightMeasureSpec).takeUnless { View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        if (grid) {
+            val layout = gridLayout(width, height)
+            val desiredWidth = paddingLeft + paddingRight + layout.cellWidth * gridColumns + max(0, gridColumns - 1) * columnGap
+            val desiredHeight = paddingTop + paddingBottom + layout.rowHeights.sum() + max(0, layout.rowHeights.size - 1) * rowGap
+            setMeasuredDimension(resolveSize(desiredWidth, widthMeasureSpec), resolveSize(desiredHeight, heightMeasureSpec))
+            return
+        }
         val (lines, absolute) = entries(width, height)
         val main = lines.maxOfOrNull { it.main } ?: 0
         val cross = lines.sumOf { it.cross } + max(0, lines.size - 1) * (if (orientation == HORIZONTAL) rowGap else columnGap)
@@ -204,6 +257,40 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        if (grid) {
+            val layout = gridLayout(width, height)
+            var rowTop = paddingTop
+            for ((rowIndex, row) in layout.rows.withIndex()) {
+                val rowHeight = layout.rowHeights[rowIndex]
+                for ((column, entry) in row.withIndex()) {
+                    val align = entry.style.alignSelf ?: alignItems
+                    val childWidth = if (align == "stretch" && entry.style.width == null) layout.cellWidth else min(layout.cellWidth, entry.width)
+                    val childHeight = if (align == "stretch" && entry.style.height == null) rowHeight else min(rowHeight, entry.height)
+                    val x = paddingLeft + column * (layout.cellWidth + columnGap) + when (align) {
+                        "center" -> (layout.cellWidth - childWidth) / 2
+                        "flex-end" -> layout.cellWidth - childWidth
+                        else -> 0
+                    }
+                    val y = rowTop + when (align) {
+                        "center" -> (rowHeight - childHeight) / 2
+                        "flex-end" -> rowHeight - childHeight
+                        else -> 0
+                    }
+                    entry.view.layout(x, y, x + childWidth, y + childHeight)
+                }
+                rowTop += rowHeight + rowGap
+            }
+            val contentWidth = width - paddingLeft - paddingRight
+            val contentHeight = height - paddingTop - paddingBottom
+            for (entry in layout.absolute) {
+                val childWidth = if (entry.style.left != null && entry.style.right != null) contentWidth - entry.style.left!! - entry.style.right!! else entry.width
+                val childHeight = if (entry.style.top != null && entry.style.bottom != null) contentHeight - entry.style.top!! - entry.style.bottom!! else entry.height
+                val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - childWidth } ?: 0))
+                val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - childHeight } ?: 0))
+                entry.view.layout(x, y, x + max(0, childWidth), y + max(0, childHeight))
+            }
+            return
+        }
         val contentWidth = width - paddingLeft - paddingRight
         val contentHeight = height - paddingTop - paddingBottom
         val (lines, absolute) = entries(width, height)
