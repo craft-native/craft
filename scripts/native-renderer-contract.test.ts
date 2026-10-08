@@ -142,7 +142,8 @@ describe('native renderer component contract', () => {
   })
 
   it('lets accessibility disabled state disable controls without re-enabling them', () => {
-    expect(ios).toContain('(view as? UIControl)?.isEnabled = false')
+    expect(ios).toContain('if let control = view as? UIControl {')
+    expect(ios).toContain('else if handlers[ObjectIdentifier(view)] != nil {')
     expect(android).toContain('if (disabled) view.isEnabled = false')
     expect(android).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
   })
