@@ -201,6 +201,14 @@ class NativeNavigationTest {
             assertEquals("Open native link", (link as TextView).text.toString())
             instrumentation.runOnMainSync { link.performClick() }
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            click(activity, "toggle-image-tint")
+            assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
+            val image = awaitView(activity, "native-image") as ImageView
+            assertTrue("image tint did not clear on style update", image.colorFilter == null)
+            click(activity, "toggle-button-style")
+            assertEquals("button style accented", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val accentedButton = awaitView(activity, "toggle-button-style") as Button
+            assertEquals(Color.rgb(0xef, 0x44, 0x44), accentedButton.currentTextColor)
             val toggle = awaitView(activity, "native-switch")
             assertTrue("native switch should be an Android Switch", toggle is Switch)
             val nativeSwitch = toggle as Switch

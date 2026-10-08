@@ -9,6 +9,8 @@ let sliderValue = 0.5
 let sliderCompletions = 0
 let layoutWidth = 0
 let imageStatus = ''
+let imageTinted = true
+let buttonAccent = false
 
 function changeName(event) {
   name = event.text
@@ -28,6 +30,16 @@ function imageLoadStart() {
 
 function imageLoaded() {
   imageStatus = 'image loaded'
+}
+
+function toggleImageTint() {
+  imageTinted = !imageTinted
+  imageStatus = imageTinted ? 'image tint on' : 'image tint off'
+}
+
+function toggleButtonAccent() {
+  buttonAccent = !buttonAccent
+  status = buttonAccent ? 'button style accented' : 'button style default'
 }
 
 function submitName() {
@@ -88,6 +100,8 @@ function openCapabilities() {
     </View>
     <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
+    <Button testID="toggle-button-style" onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
+    <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
     <Switch testID="native-switch" value={switchValue} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
@@ -108,7 +122,7 @@ function openCapabilities() {
         onLoadStart={imageLoadStart}
         onLoad={imageLoaded}
         onLoadEnd={imageLoaded}
-        style={{"width":24,"height":24,"resizeMode":"cover"}}
+        style={{"width":24,"height":24,"resizeMode":"cover","tintColor":imageTinted ? "#2563eb" : undefined}}
       />
       <Text testID="native-caption">Image taps: {imageTaps}</Text>
       <Text testID="image-status">{imageStatus}</Text>
