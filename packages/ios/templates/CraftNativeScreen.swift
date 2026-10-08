@@ -355,7 +355,7 @@ private final class CraftNativeScrollView: UIScrollView {
 
 private final class CraftNativeFlexSpacer: UIView {}
 
-final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate {
+final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate {
     private final class RenderedNode {
         let identity: String
         let type: String
@@ -394,7 +394,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var renderedRoot: RenderedNode?
-    private weak var lastFocusedInput: UITextField?
+    private weak var lastFocusedInput: UIView?
     private var flatListRows: [ObjectIdentifier: [String: RenderedNode]] = [:]
     private var flatListOwners: [String: String] = [:]
     private let mutationDocument = CraftNativeMutationDocument()
@@ -718,10 +718,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let events = node["events"] as? [String: String] ?? [:]
         let children = node["children"] as? [Any] ?? []
         let current: RenderedNode
-        if let previous = previous, previous.identity == identity, previous.type == type {
+        let wantsMultilineTextView = type == "TextInput" && props["multiline"] as? Bool == true
+        let canReuseInput = type != "TextInput" || ((previous?.view is UITextView) == wantsMultilineTextView)
+        if let previous = previous, previous.identity == identity, previous.type == type, canReuseInput {
             current = previous
         } else {
-            current = RenderedNode(identity: identity, type: type, view: makeView(type))
+            current = RenderedNode(identity: identity, type: type, view: makeView(type, props: props))
         }
 
         let result = current.view
@@ -760,6 +762,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             button.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
+            if let textView = result as? UITextView {
+                configureTextView(textView, props: props, style: style, events: events)
+                break
+            }
             let field = result as! UITextField
             field.placeholder = props["placeholder"] as? String
             if let placeholder = field.placeholder,
@@ -879,7 +885,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         return current
     }
 
-    private func makeView(_ type: String) -> UIView {
+    private func makeView(_ type: String, props: [String: Any]) -> UIView {
         switch type {
         case "Text":
             let label = UILabel()
@@ -890,6 +896,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             button.addTarget(self, action: #selector(buttonPressed(_:)), for: .touchUpInside)
             return button
         case "TextInput":
+            if props["multiline"] as? Bool == true {
+                let textView = UITextView()
+                textView.delegate = self
+                return textView
+            }
             let field = UITextField()
             field.borderStyle = .roundedRect
             field.addTarget(self, action: #selector(textChanged(_:)), for: .editingChanged)
@@ -1151,6 +1162,51 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
     }
 
+    private func updateTextView(_ textView: UITextView, value: String?) {
+        guard let value = value, textView.text != value, textView.markedTextRange == nil else { return }
+        let selection = textView.selectedTextRange
+        let start = selection.map { textView.offset(from: textView.beginningOfDocument, to: $0.start) }
+        let end = selection.map { textView.offset(from: textView.beginningOfDocument, to: $0.end) }
+        textView.text = value
+        if let start = start, let end = end,
+           let from = textView.position(from: textView.beginningOfDocument, offset: min(start, value.utf16.count)),
+           let to = textView.position(from: textView.beginningOfDocument, offset: min(end, value.utf16.count)) {
+            textView.selectedTextRange = textView.textRange(from: from, to: to)
+        }
+    }
+
+    private func configureTextView(
+        _ textView: UITextView,
+        props: [String: Any],
+        style: [String: Any],
+        events: [String: String]
+    ) {
+        let id = ObjectIdentifier(textView)
+        textView.delegate = self
+        textView.textColor = color(style["color"]) ?? .label
+        textView.font = textFont(style, default: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize))
+        textView.textAlignment = textAlignment(style["textAlign"])
+        textView.isEditable = props["editable"] as? Bool != false
+        textView.isScrollEnabled = false
+        if let numberOfLines = (props["numberOfLines"] as? NSNumber)?.intValue, numberOfLines > 0 {
+            textView.textContainer.maximumNumberOfLines = numberOfLines
+        } else {
+            textView.textContainer.maximumNumberOfLines = 0
+        }
+        if let maxLength = (props["maxLength"] as? NSNumber)?.intValue, maxLength > 0 {
+            textMaxLengths[id] = maxLength
+        } else {
+            textMaxLengths.removeValue(forKey: id)
+        }
+        updateTextView(textView, value: props["value"] as? String)
+        updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
+        updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
+        updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: textView)
+        if props["autoFocus"] as? Bool == true, !textView.isFirstResponder {
+            DispatchQueue.main.async { _ = textView.becomeFirstResponder() }
+        }
+    }
+
     private func configureStack(_ stack: CraftNativeFlowView, style: [String: Any]) {
         let direction = style["flexDirection"] as? String
         stack.axis = direction == "row" || direction == "row-reverse" ? .horizontal : .vertical
@@ -1377,6 +1433,30 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
               let current = textField.text,
               let stringRange = Range(range, in: current) else { return true }
         return current.replacingCharacters(in: stringRange, with: string).utf16.count <= maxLength
+    }
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        guard let maxLength = textMaxLengths[ObjectIdentifier(textView)],
+              let current = textView.text,
+              let stringRange = Range(range, in: current) else { return true }
+        return current.replacingCharacters(in: stringRange, with: text).utf16.count <= maxLength
+    }
+
+    func textViewDidChange(_ textView: UITextView) {
+        lastFocusedInput = textView
+        guard let handler = handlers[ObjectIdentifier(textView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        lastFocusedInput = textView
+        guard let handler = focusHandlers[ObjectIdentifier(textView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+    }
+
+    func textViewDidEndEditing(_ textView: UITextView) {
+        guard let handler = blurHandlers[ObjectIdentifier(textView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
     }
 
     @objc private func textChanged(_ sender: UITextField) {

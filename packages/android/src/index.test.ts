@@ -102,6 +102,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('"FlatList" -> (previous as? CraftNativeFlatList')
       expect(nativeActivity).toContain('inputType = inputTypeFor(props)')
       expect(nativeActivity).toContain('imeOptions = imeOptionsFor(props)')
+      expect(nativeActivity).toContain('maxLines = if (multiline)')
       expect(nativeActivity).toContain('InputFilter.LengthFilter(maxLength)')
       expect(nativeActivity).toContain('placeholderTextColor')
       expect(nativeActivity).toContain('selectionColor')
