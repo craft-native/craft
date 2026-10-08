@@ -3,6 +3,7 @@ import type { LegOutcome, RunnerOptions } from './types'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
+import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../../packages/ios/scripts/insert-project-targets'
 import { deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, LOCAL_NOTIFICATION_DELAY_MS, localNotificationProblems, NOTIFICATION_TEST_TIMEOUT_MS, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
@@ -133,8 +134,7 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   mkdirSync(join(project, 'UITests'), { recursive: true })
   for (const testClass of UI_TEST_CLASSES)
     copyFileSync(join(import.meta.dir, 'ios-uitests', `${testClass}.swift`), join(project, 'UITests', `${testClass}.swift`))
-  writeFileSync(join(project, 'project.yml'), `${projectYml.trimEnd()}
-  ${UI_TESTS}:
+  const uiTarget = `  ${UI_TESTS}:
     type: bundle.ui-testing
     platform: iOS
     sources:
@@ -145,17 +145,11 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
       GENERATE_INFOPLIST_FILE: YES
       SWIFT_VERSION: "5.0"
     dependencies:
-      - target: ${APP_NAME}
-schemes:
-  ${APP_NAME}:
-    build:
-      targets:
-        ${APP_NAME}: all
-        ${UI_TESTS}: [test]
-    test:
-      targets:
-        - ${UI_TESTS}
-`)
+      - target: ${APP_NAME}`
+  const projectWithTarget = insertProjectTargetsBeforeSchemes(projectYml, uiTarget)
+  const projectWithBuildTarget = addSchemeBuildTargets(projectWithTarget, APP_NAME, [UI_TESTS])
+  const projectWithTests = addSchemeTestTargets(projectWithBuildTarget, APP_NAME, [UI_TESTS])
+  writeFileSync(join(project, 'project.yml'), projectWithTests)
 
   const nonce = `craft-e2e-${label}-${options.runId}`
   writeFileSync(join(project, 'dist', 'index.html'), driverPage(nonce, 'ios'))

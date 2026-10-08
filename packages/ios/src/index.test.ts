@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
+import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
 import {
   build,
   init,
@@ -31,6 +31,8 @@ describe('Craft iOS builder', () => {
     expect(result.indexOf('  AppTests:')).toBeLessThan(result.indexOf('schemes:'))
     const withTests = addSchemeTestTargets(result, 'App', ['AppTests'])
     expect(withTests).toContain('    test:\n      config: Debug\n      targets:\n        - AppTests')
+    const withBuild = addSchemeBuildTargets(withTests, 'App', ['AppTests'])
+    expect(withBuild).toContain('        App: all\n        AppTests: [test]')
   })
 
   it('keeps WebView as the default and opt-in native screens load a compiled bundle', async () => {
