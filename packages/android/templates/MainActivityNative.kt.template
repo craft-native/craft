@@ -18,6 +18,7 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.Editable
+import android.text.InputFilter
 import android.text.TextWatcher
 import android.util.Log
 import android.util.Base64
@@ -824,6 +825,14 @@ class MainActivity : AppCompatActivity() {
             }
             "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
                 hint = props.optString("placeholder")
+                props.optString("placeholderTextColor").takeIf { it.isNotBlank() }?.let {
+                    setHintTextColor(color(it, Color.GRAY))
+                }
+                props.optString("selectionColor").takeIf { it.isNotBlank() }?.let {
+                    highlightColor = color(it, highlightColor)
+                }
+                val maxLength = props.optInt("maxLength", 0)
+                filters = if (maxLength > 0) arrayOf(InputFilter.LengthFilter(maxLength)) else emptyArray()
                 inputType = inputTypeFor(props)
                 imeOptions = imeOptionsFor(props)
                 isSingleLine = !props.optBoolean("multiline", false)

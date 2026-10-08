@@ -355,7 +355,7 @@ private final class CraftNativeScrollView: UIScrollView {
 
 private final class CraftNativeFlexSpacer: UIView {}
 
-final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate {
+final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate {
     private final class RenderedNode {
         let identity: String
         let type: String
@@ -382,6 +382,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     private var focusHandlers: [ObjectIdentifier: String] = [:]
     private var blurHandlers: [ObjectIdentifier: String] = [:]
     private var submitHandlers: [ObjectIdentifier: String] = [:]
+    private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
     private var scrollEndHandlers: [ObjectIdentifier: String] = [:]
@@ -761,6 +762,23 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         case "TextInput":
             let field = result as! UITextField
             field.placeholder = props["placeholder"] as? String
+            if let placeholder = field.placeholder,
+               let placeholderColor = color(props["placeholderTextColor"]) {
+                field.attributedPlaceholder = NSAttributedString(
+                    string: placeholder,
+                    attributes: [.foregroundColor: placeholderColor]
+                )
+            } else {
+                field.attributedPlaceholder = nil
+            }
+            field.tintColor = color(props["selectionColor"])
+            let fieldId = ObjectIdentifier(field)
+            if let maxLength = (props["maxLength"] as? NSNumber)?.intValue, maxLength > 0 {
+                textMaxLengths[fieldId] = maxLength
+            } else {
+                textMaxLengths.removeValue(forKey: fieldId)
+            }
+            field.delegate = self
             field.textColor = color(style["color"]) ?? .label
             field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
             field.textAlignment = textAlignment(style["textAlign"])
@@ -1034,6 +1052,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         focusHandlers.removeValue(forKey: id)
         blurHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
+        textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
         scrollEndHandlers.removeValue(forKey: id)
@@ -1351,6 +1370,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak focused] in
             self?.restoreFocus(focused)
         }
+    }
+
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        guard let maxLength = textMaxLengths[ObjectIdentifier(textField)],
+              let current = textField.text,
+              let stringRange = Range(range, in: current) else { return true }
+        return current.replacingCharacters(in: stringRange, with: string).utf16.count <= maxLength
     }
 
     @objc private func textChanged(_ sender: UITextField) {
