@@ -1032,7 +1032,8 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                 }
             }
-            "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
+            "TextInput" -> ((previous as? EditText).takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }
+                ?: EditText(this)).apply {
                 val defaultHintColors = inputHintDefaults.getOrPut(this) {
                     hintTextColors ?: ColorStateList.valueOf(Color.GRAY)
                 }
