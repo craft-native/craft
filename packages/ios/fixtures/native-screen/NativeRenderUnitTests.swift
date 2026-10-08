@@ -593,6 +593,24 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(endReachedCount, 1)
         XCTAssertEqual(list.numberOfItems(inSection: 0), 3)
 
+        let changedMiddle = expectation(description: "end reached after a middle row changes")
+        list.apply(
+            nodes: [
+                first[0],
+                ["id": "row-1", "type": "Text", "children": ["Updated row 1"]],
+                appended[2],
+            ],
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: { changedMiddle.fulfill() }
+        )
+        list.layoutIfNeeded()
+        wait(for: [changedMiddle], timeout: 2)
+
         let chromeOnlyEndReached = expectation(description: "chrome-only list does not reach data end")
         chromeOnlyEndReached.isInverted = true
         let chromeOnly: [[String: Any]] = [

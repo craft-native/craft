@@ -86,6 +86,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private var endReached: (() -> Unit)? = null
     private var threshold = 0.1
     private var endReachedSignature: String? = null
+    private var dataContentSignature = ""
     private var horizontal = false
     private var columns = 1
     private var submissionGeneration = 0
@@ -193,7 +194,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         val nextIds = next.mapTo(mutableSetOf()) { it.identity }
         (oldIds - nextIds).forEach(recycleItem)
         val dataItems = next.filterNot { it.chrome }
-        val contentSignature = "${dataItems.size}:${dataItems.lastOrNull()?.identity.orEmpty()}"
+        val contentSignature = dataItems.joinToString("") {
+            "${it.identity.length}:${it.identity}${it.signature.length}:${it.signature}"
+        }
+        dataContentSignature = contentSignature
         if (contentSignature != endReachedSignature) endReachedSignature = null
         val generation = ++submissionGeneration
         isSubmittingList = true
@@ -215,6 +219,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         renderItem = null
         recycleItem = null
         endReached = null
+        dataContentSignature = ""
         onScrollEvent = null
         onScrollBeginDrag = null
         onScrollEndDrag = null
@@ -245,8 +250,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         val remaining = dataPositions.size - lastDataOrdinal - 1
         val thresholdItems = maxOf(1, ceil(dataPositions.size * threshold).toInt())
         if (remaining > thresholdItems) return
-        val lastIdentity = listAdapter.currentList[dataPositions.last()].identity
-        val signature = "${dataPositions.size}:$lastIdentity"
+        val signature = dataContentSignature
         if (endReachedSignature == signature) return
         endReachedSignature = signature
         endReached?.invoke()

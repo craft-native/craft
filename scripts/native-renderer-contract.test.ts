@@ -261,6 +261,17 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('RecyclerView.SCROLL_STATE_SETTLING')
   })
 
+  it('resets FlatList end-reached state when any data row changes', () => {
+    expect(iosFlatList).toContain('private var dataContentSignature = ""')
+    expect(iosFlatList).toContain('dataContentSignature = contentSignature')
+    expect(iosFlatList).toContain('let signature = dataContentSignature')
+    expect(iosFlatList).not.toContain('let signature = "\\(dataIndices.count):\\(lastIdentity)"')
+    expect(androidFlatList).toContain('private var dataContentSignature = ""')
+    expect(androidFlatList).toContain('dataContentSignature = contentSignature')
+    expect(androidFlatList).toContain('val signature = dataContentSignature')
+    expect(androidFlatList).not.toContain('val signature = "${dataPositions.size}:$lastIdentity"')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

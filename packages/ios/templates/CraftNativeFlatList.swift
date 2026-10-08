@@ -108,6 +108,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     var onMomentumScrollEnd: ((UIScrollView) -> Void)?
     private var endReachedThreshold = 0.1
     private var endReachedSignature: String?
+    private var dataContentSignature = ""
     private var columns = 1
     private var isApplyingSnapshot = false
     private var pendingApply: (() -> Void)?
@@ -240,7 +241,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         }
 
         let dataItems = next.filter { !$0.isChrome }
-        let contentSignature = "\(dataItems.count):\(dataItems.last?.identity ?? "empty")"
+        let contentSignature = dataItems.map {
+            let encoded = $0.signature.base64EncodedString()
+            return "\($0.identity.utf8.count):\($0.identity)\(encoded.utf8.count):\(encoded)"
+        }.joined()
+        dataContentSignature = contentSignature
         if contentSignature != endReachedSignature { endReachedSignature = nil }
     }
 
@@ -252,6 +257,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         renderItem = nil
         recycleItem = nil
         endReached = nil
+        dataContentSignature = ""
         onScrollEvent = nil
         onScrollBeginDrag = nil
         onScrollEndDrag = nil
@@ -305,8 +311,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         let remaining = dataIndices.count - lastDataOrdinal - 1
         let thresholdItems = max(1, Int(ceil(Double(dataIndices.count) * endReachedThreshold)))
         guard remaining <= thresholdItems else { return }
-        let lastIdentity = items[dataIndices[dataIndices.count - 1]].identity
-        let signature = "\(dataIndices.count):\(lastIdentity)"
+        let signature = dataContentSignature
         guard endReachedSignature != signature else { return }
         endReachedSignature = signature
         endReached()
