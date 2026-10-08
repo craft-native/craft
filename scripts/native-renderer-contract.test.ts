@@ -286,7 +286,19 @@ describe('native renderer component contract', () => {
     expect(android).toContain('private fun emitLayoutEvents(screen: Screen, view: View)')
     expect(androidFlatList).toContain('var onLayoutChanged: (() -> Unit)? = null')
     expect(androidFlatList).toContain('onLayoutChanged?.invoke()')
+    expect(androidFlatList).toContain('override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int)')
     expect(android).toContain('list.onLayoutChanged = {')
+    expect(iosFlatList).toContain('onLayoutChanged?()')
+  })
+
+  it('keeps the native navigation fixture honest about recycled row layouts', () => {
+    const details = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
+    const iosTests = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/NativeNavigationUITests.swift'), 'utf8')
+    const androidTests = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeNavigationTest.kt'), 'utf8')
+    expect(details).toContain('onLayout={captureRowLayout}')
+    expect(details).toContain('testID="people-layout-status"')
+    expect(iosTests).toContain('FlatList did not report a row layout after recycling')
+    expect(androidTests).toContain('awaitText(activity, "people-layout-status", "Rows laid out: ${initialRowLayouts + 1}")')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

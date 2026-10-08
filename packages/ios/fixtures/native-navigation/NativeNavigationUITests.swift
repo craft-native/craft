@@ -11,6 +11,19 @@ final class NativeNavigationUITests: XCTestCase {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    private func waitForLayoutIncrease(
+        _ element: XCUIElement,
+        from baseline: Int,
+        timeout: TimeInterval = 10
+    ) -> Bool {
+        let predicate = NSPredicate { object, _ in
+            guard let candidate = object as? XCUIElement else { return false }
+            return Int(candidate.label.split(separator: ":").last ?? "0") ?? 0 > baseline
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     private func openCapabilities(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["open-capabilities"].waitForExistence(timeout: 15))
         app.buttons["open-capabilities"].tap()
@@ -213,7 +226,8 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["people-header"].waitForExistence(timeout: 5))
         let peopleLayouts = app.staticTexts["people-layout-status"]
         XCTAssertTrue(peopleLayouts.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(Int(peopleLayouts.label.split(separator: ":").last ?? "0") ?? 0, 0)
+        let initialRowLayouts = Int(peopleLayouts.label.split(separator: ":").last ?? "0") ?? 0
+        XCTAssertGreaterThan(initialRowLayouts, 0)
         XCTAssertTrue(app.textFields["person-input-person-0"].waitForExistence(timeout: 5))
         app.buttons["shuffle-people"].tap()
         let firstPerson = app.staticTexts["person-label-person-0"]
@@ -225,6 +239,10 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(
             waitForLabel(peopleCount, "People: 41; events: 2"),
             "FlatList did not report its data end; found \(peopleCount.label)"
+        )
+        XCTAssertTrue(
+            waitForLayoutIncrease(peopleLayouts, from: initialRowLayouts),
+            "FlatList did not report a row layout after recycling; found \(peopleLayouts.label)"
         )
         app.buttons["clear-people"].tap()
         XCTAssertTrue(app.staticTexts["people-empty"].waitForExistence(timeout: 5))

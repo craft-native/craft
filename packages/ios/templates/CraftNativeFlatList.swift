@@ -276,6 +276,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         onScrollEvent?(scrollView)
+        onLayoutChanged?()
         evaluateEndReached()
     }
 

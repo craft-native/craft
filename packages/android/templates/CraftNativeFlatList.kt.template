@@ -112,6 +112,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
 
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 onScrollEvent?.invoke()
+                onLayoutChanged?.invoke()
                 evaluateEndReached()
             }
 
