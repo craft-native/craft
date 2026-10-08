@@ -71,6 +71,9 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (props.optBoolean("autoFocus", false) && !isFocused) post')
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
     expect(android).toContain('reusableInput?.takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }')
+    expect(ios).toContain('private var inputDrafts: [String: String] = [:]')
+    expect(ios).toContain('inputDrafts[current.identity] ?? props["defaultValue"] as? String')
+    expect(ios).toContain('inputIdentities[id].map { inputDrafts[$0] = textView.text ?? "" }')
   })
 
   it('keeps TextInput keyboard traits aligned across hosts', () => {
@@ -94,9 +97,9 @@ describe('native renderer component contract', () => {
   })
 
   it('initializes uncontrolled text inputs from defaultValue only once', () => {
-    expect(ios).toContain('defaultValue: previous?.view === textView ? nil : props["defaultValue"] as? String')
+    expect(ios).toContain('defaultValue: previous?.view === textView')
     expect(ios).toContain('updateTextView(textView, value: (props["value"] as? String) ?? defaultValue)')
-    expect(ios).toContain('else if previous?.view !== field, let defaultValue = props["defaultValue"] as? String')
+    expect(ios).toContain('else if previous?.view !== field {\n                updateField(field, value: inputDrafts[current.identity] ?? props["defaultValue"] as? String)')
     expect(android).toContain('else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))')
     expect(guide).toContain('`defaultValue` initializes an uncontrolled')
   })

@@ -510,6 +510,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var blurHandlers: [ObjectIdentifier: String] = [:]
     private var endEditingHandlers: [ObjectIdentifier: String] = [:]
     private var submitHandlers: [ObjectIdentifier: String] = [:]
+    private var inputIdentities: [ObjectIdentifier: String] = [:]
+    private var inputDrafts: [String: String] = [:]
     private var longPressHandlers: [ObjectIdentifier: String] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
@@ -918,12 +920,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
             if let textView = result as? UITextView {
+                inputIdentities[ObjectIdentifier(textView)] = current.identity
                 configureTextView(
                     textView,
                     props: props,
                     style: style,
                     events: events,
-                    defaultValue: previous?.view === textView ? nil : props["defaultValue"] as? String
+                    defaultValue: previous?.view === textView
+                        ? nil
+                        : inputDrafts[current.identity] ?? props["defaultValue"] as? String
                 )
                 break
             }
@@ -940,6 +945,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             field.tintColor = color(props["selectionColor"])
             let fieldId = ObjectIdentifier(field)
+            inputIdentities[fieldId] = current.identity
             if let maxLength = (props["maxLength"] as? NSNumber)?.intValue, maxLength > 0 {
                 textMaxLengths[fieldId] = maxLength
             } else {
@@ -964,8 +970,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if field.isEnabled != desiredEnabled { field.isEnabled = desiredEnabled }
             if let value = props["value"] as? String {
                 updateField(field, value: value)
-            } else if previous?.view !== field, let defaultValue = props["defaultValue"] as? String {
-                updateField(field, value: defaultValue)
+            } else if previous?.view !== field {
+                updateField(field, value: inputDrafts[current.identity] ?? props["defaultValue"] as? String)
             }
             updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
             updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)
@@ -1289,6 +1295,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         blurHandlers.removeValue(forKey: id)
         endEditingHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
+        inputIdentities.removeValue(forKey: id)
+        if node.type == "TextInput" { inputDrafts.removeValue(forKey: node.identity) }
         longPressHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
@@ -1862,8 +1870,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     func textViewDidChange(_ textView: UITextView) {
         lastFocusedInput = textView
+        let id = ObjectIdentifier(textView)
+        inputIdentities[id].map { inputDrafts[$0] = textView.text ?? "" }
         (textView as? CraftNativeTextView)?.refreshPlaceholder()
-        guard let handler = handlers[ObjectIdentifier(textView)] else { return }
+        guard let handler = handlers[id] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
     }
 
@@ -1886,8 +1896,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func textChanged(_ sender: UITextField) {
         lastFocusedInput = sender
+        let id = ObjectIdentifier(sender)
+        inputIdentities[id].map { inputDrafts[$0] = sender.text ?? "" }
         let focused = sender.isFirstResponder ? sender : firstResponder(in: rootStack)
-        guard let handler = handlers[ObjectIdentifier(sender)] else { return }
+        guard let handler = handlers[id] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
         restoreFocus(focused)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak focused] in
