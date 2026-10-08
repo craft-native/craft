@@ -110,6 +110,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('imageJobs.remove(view)?.cancel(true)')
       expect(nativeActivity).toContain('if (imageSources[view] != uri) return@runOnUiThread')
       expect(nativeActivity).toContain('current.ifBlank { view.tag?.toString() ?: "Image" }')
+      expect(nativeActivity).toContain('val inputIdentities = mutableMapOf<EditText, String>()')
+      expect(nativeActivity).toContain('preservingInputDrafts: Boolean = false')
       expect(nativeActivity).toContain('"cover" -> ImageView.ScaleType.CENTER_CROP')
       expect(nativeActivity).toContain('view.clearColorFilter()')
       expect(nativeActivity).toContain('"ScrollView" -> (previous as? CraftNativeScrollView')

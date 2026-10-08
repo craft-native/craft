@@ -597,6 +597,7 @@ class MainActivity : AppCompatActivity() {
         val port: MessagePort?
     ) {
         val drafts = mutableMapOf<String, String>()
+        val inputIdentities = mutableMapOf<EditText, String>()
         val suppressedTextChanges = mutableSetOf<EditText>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
@@ -1069,6 +1070,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
                 else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))
+                screen.inputIdentities[this] = identity
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 val onFocus = events.optString("onFocus")
@@ -1479,7 +1481,7 @@ class MainActivity : AppCompatActivity() {
             },
             recycleItem = { itemIdentity ->
                 val controls = screen.flatListRows[list]?.remove(itemIdentity).orEmpty()
-                releaseViewState(screen, controls.values.toList())
+                releaseViewState(screen, controls.values.toList(), preservingInputDrafts = true)
             },
             endReached = events.optString("onEndReached").takeIf { it.isNotBlank() }?.let { handler ->
                 { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject())) }
@@ -1931,12 +1933,18 @@ class MainActivity : AppCompatActivity() {
         screen.flatListRows.values.forEach { rows -> rows.values.forEach { addAll(it.values) } }
     }
 
-    private fun releaseViewState(screen: Screen, views: Collection<View>) {
+    private fun releaseViewState(
+        screen: Screen,
+        views: Collection<View>,
+        preservingInputDrafts: Boolean = false,
+    ) {
         val released = views.toSet()
         released.filterIsInstance<CraftNativeFlatList>().forEach { list ->
             val owner = screen.flatListOwnerByView.remove(list)
             list.discardAll()
-            screen.flatListRows.remove(list)?.values?.forEach { releaseViewState(screen, it.values) }
+            screen.flatListRows.remove(list)?.values?.forEach {
+                releaseViewState(screen, it.values, preservingInputDrafts)
+            }
             if (owner != null) screen.flatListOwners.entries.removeAll { it.value == owner }
         }
         releaseImages(released)
@@ -1944,6 +1952,8 @@ class MainActivity : AppCompatActivity() {
             inputHintDefaults.remove(it)
             inputHighlightDefaults.remove(it)
             screen.suppressedTextChanges.remove(it)
+            val identity = screen.inputIdentities.remove(it)
+            if (!preservingInputDrafts) identity?.let(screen.drafts::remove)
         }
         released.forEach(defaultBackgrounds::remove)
         screen.handlers.keys.removeAll(released)

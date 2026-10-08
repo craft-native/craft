@@ -340,6 +340,9 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('self.forgetHandlers(row, preservingInputDrafts: true)')
     expect(ios).toContain('private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false)')
     expect(android).toContain('screen.drafts[identity] = updated')
+    expect(android).toContain('val inputIdentities = mutableMapOf<EditText, String>()')
+    expect(android).toContain('if (!preservingInputDrafts) identity?.let(screen.drafts::remove)')
+    expect(android).toContain('releaseViewState(screen, controls.values.toList(), preservingInputDrafts = true)')
   })
 
   it('releases replaced iOS row roots when a keyed identity changes type', () => {
