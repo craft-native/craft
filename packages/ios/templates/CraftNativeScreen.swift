@@ -1027,6 +1027,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.setAxis(direction)
             scroll.delegate = self
             scroll.isScrollEnabled = props["scrollEnabled"] as? Bool != false
+            scroll.bounces = props["bounces"] as? Bool ?? true
             scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
             scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
             scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false

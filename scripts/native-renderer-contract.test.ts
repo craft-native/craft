@@ -213,7 +213,7 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('android.view.MotionEvent.ACTION_MOVE')
     expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
     expect(guide).toContain('both hosts, including keyboard and return-key traits on multiline inputs')
-    expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above and accept')
+    expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above, accept')
   })
 
   it('resets removed text-input colors to each host theme', () => {
@@ -238,5 +238,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
     expect(android).toContain('refreshInputDefaultsForTraitChange()')
     expect(android).toContain('val probe = EditText(this)')
+  })
+
+  it('keeps scroll bounce behavior aligned across hosts', () => {
+    expect(ios).toContain('scroll.bounces = props["bounces"] as? Bool ?? true')
+    expect(android).toContain('fun setBounces(value: Boolean)')
+    expect(android).toContain('setBounces(props.optBoolean("bounces", true))')
+    expect(guide).toContain('`bounces` to control the platform overscroll effect')
   })
 })

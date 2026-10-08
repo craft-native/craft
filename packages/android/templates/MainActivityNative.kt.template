@@ -470,6 +470,12 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         horizontal.isEnabled = value
     }
 
+    fun setBounces(value: Boolean) {
+        val mode = if (value) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
+        vertical.overScrollMode = mode
+        horizontal.overScrollMode = mode
+    }
+
     fun setScrollIndicators(verticalVisible: Boolean, horizontalVisible: Boolean) {
         vertical.isVerticalScrollBarEnabled = verticalVisible
         horizontal.isHorizontalScrollBarEnabled = horizontalVisible
@@ -1124,6 +1130,7 @@ class MainActivity : AppCompatActivity() {
                     props.optBoolean("showsHorizontalScrollIndicator", true),
                 )
                 setScrollEnabled(props.optBoolean("scrollEnabled", true))
+                setBounces(props.optBoolean("bounces", true))
                 val onScroll = events.optString("onScroll")
                 if (onScroll.isNotBlank()) screen.scrollHandlers[this] = onScroll else screen.scrollHandlers.remove(this)
                 val onBegin = events.optString("onScrollBeginDrag")
