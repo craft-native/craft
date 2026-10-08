@@ -141,6 +141,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
     expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
     expect(android).toContain('info.hintText = host.tooltipText')
+    expect(android).toContain('info.isEnabled = host.isEnabled && !disabled')
   })
 
   it('keeps generic pressable views interactive without disabling scroll containers', () => {

@@ -174,6 +174,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('view.left.toDouble() / density.toDouble()')
       expect(nativeActivity).toContain('info.isChecked')
       expect(nativeActivity).toContain('info.isSelected')
+      expect(nativeActivity).toContain('info.isEnabled = host.isEnabled && !disabled')
       expect(nativeActivity).toContain('info.roleDescription')
       expect(nativeActivity).toContain('info.hintText = host.tooltipText')
       expect(nativeActivity).toContain('IMPORTANT_FOR_ACCESSIBILITY_NO')
