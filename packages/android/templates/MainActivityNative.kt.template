@@ -1439,7 +1439,7 @@ class MainActivity : AppCompatActivity() {
         view.tag = fallbackLabel
         view.contentDescription = props.optString("accessibilityLabel").ifBlank { fallbackLabel }
         props.opt("accessibilityValue")?.takeUnless { it == JSONObject.NULL }?.let { view.contentDescription = "${view.contentDescription}, $it" }
-        props.optString("accessibilityHint").takeIf { it.isNotBlank() }?.let { view.tooltipText = it }
+        view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")
         val disabled = state?.optBoolean("disabled", false) == true

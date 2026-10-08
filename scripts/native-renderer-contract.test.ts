@@ -129,6 +129,11 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.clearColorFilter()')
   })
 
+  it('resets removed accessibility metadata on both hosts', () => {
+    expect(ios).toContain('view.accessibilityValue = nil')
+    expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')
