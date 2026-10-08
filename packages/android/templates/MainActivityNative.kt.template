@@ -34,6 +34,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -860,6 +861,26 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", checked)))
                 }
             }
+            "Slider" -> (previous as? SeekBar ?: SeekBar(this)).apply {
+                val minimum = props.optDouble("minimumValue", 0.0)
+                val maximumCandidate = props.optDouble("maximumValue", 1.0)
+                val maximum = if (maximumCandidate > minimum) maximumCandidate else minimum + Double.MIN_VALUE
+                max = 1000
+                setOnSeekBarChangeListener(null)
+                progress = (((props.optDouble("value", minimum) - minimum) / (maximum - minimum)) * max).toInt().coerceIn(0, max)
+                isEnabled = !props.optBoolean("disabled", false)
+                val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
+                if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                        val current = screen.handlers[seekBar] ?: return
+                        val value = minimum + (maximum - minimum) * progress.toDouble() / max.toDouble()
+                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", value)))
+                    }
+                    override fun onStartTrackingTouch(seekBar: SeekBar) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar) {}
+                })
+            }
             "Image" -> (previous as? ImageView ?: ImageView(this)).apply {
                 scaleType = when (style.optString("resizeMode").ifBlank { props.optString("resizeMode") }) {
                     "cover" -> ImageView.ScaleType.CENTER_CROP
@@ -918,7 +939,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
-        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Switch") {
+        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
             if (handler.isNotBlank()) {
                 screen.handlers[control] = handler

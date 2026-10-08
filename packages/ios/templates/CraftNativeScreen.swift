@@ -778,6 +778,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
             toggle.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onValueChange"] ?? events["onChange"], for: toggle)
+        case "Slider":
+            let slider = result as! UISlider
+            slider.minimumValue = (props["minimumValue"] as? NSNumber)?.floatValue ?? 0
+            slider.maximumValue = max(slider.minimumValue + .leastNonzeroMagnitude, (props["maximumValue"] as? NSNumber)?.floatValue ?? 1)
+            let value = (props["value"] as? NSNumber)?.floatValue ?? slider.minimumValue
+            slider.value = min(slider.maximumValue, max(slider.minimumValue, value))
+            slider.isEnabled = props["disabled"] as? Bool != true
+            updateHandler(events["onValueChange"] ?? events["onChange"], for: slider)
         case "Image":
             let image = result as! UIImageView
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
@@ -814,7 +822,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" {
+        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -843,6 +851,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             let toggle = UISwitch()
             toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
             return toggle
+        case "Slider":
+            let slider = UISlider()
+            slider.addTarget(self, action: #selector(sliderChanged(_:)), for: .valueChanged)
+            return slider
         case "Image":
             return UIImageView()
         case "ScrollView":
@@ -1217,7 +1229,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
         }
         let role = props["accessibilityRole"] as? String
-        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput", "Switch"].contains(type))
+        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput", "Switch", "Slider"].contains(type))
         var traits: UIAccessibilityTraits = []
         switch role ?? type.lowercased() {
         case "button": traits.insert(.button)
@@ -1273,6 +1285,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     @objc private func switchChanged(_ sender: UISwitch) {
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isOn]])
+    }
+
+    @objc private func sliderChanged(_ sender: UISlider) {
+        guard let handler = handlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.value]])
     }
 
     @objc private func textFocused(_ sender: UITextField) {
