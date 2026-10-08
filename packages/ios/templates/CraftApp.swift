@@ -408,6 +408,7 @@ struct CraftTabBarView: View {
     }
 
     @ViewBuilder private var bar: some View {
+#if compiler(>=6.2)
         if #available(iOS 26.0, *) {
             GlassEffectContainer {
                 items
@@ -421,6 +422,13 @@ struct CraftTabBarView: View {
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.12), radius: 18, y: 6)
         }
+#else
+        items
+            .padding(4)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.12), radius: 18, y: 6)
+#endif
     }
 
     private var items: some View {

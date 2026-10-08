@@ -45,6 +45,8 @@ describe('Craft iOS builder', () => {
     expect(config.renderer).toBe('native')
     expect(swift).toContain('if appState.config.renderer == "native"')
     expect(swift).toContain('// CRAFT_IOS_PAGE_BRIDGE_DISPATCHER')
+    expect(swift).toContain('#if compiler(>=6.2)')
+    expect(swift).toContain('GlassEffectContainer')
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
