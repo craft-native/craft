@@ -278,6 +278,13 @@ signature fires at most once, but appending data creates a new signature and
 may fire again if the viewport is still within the threshold; handlers should
 therefore guard concurrent pagination requests.
 
+Item rows participate in the same layout contract as ordinary views. Put an
+`onLayout` handler on the `listRole="item"` root to receive measurements for
+each materialized row; the callback runs when a row is laid out or its frame
+changes after recycling, safe-area, orientation, or responsive-size updates.
+Rows that are not materialized do not produce layout events until they become
+visible, and recycled rows keep their keyed handler association.
+
 For backward compatibility, a `FlatList` without a `listRole="item"` template
 keeps its existing static children. Older compiled bundles also continue to
 use whole-document `RENDER`; the native host accepts both that path and the

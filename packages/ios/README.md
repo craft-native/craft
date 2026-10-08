@@ -64,6 +64,9 @@ Build native iOS apps with web technologies using Craft.
 
 The iOS support is built into the main `craft` CLI:
 
+`FlatList` item roots receive the same `onLayout` callback as ordinary native
+views when rows are materialized or recycled.
+
 ```bash
 bun add craft-native
 ```

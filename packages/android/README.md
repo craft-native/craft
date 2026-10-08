@@ -125,6 +125,9 @@ after inset or orientation changes. The shared component, capability, list, styl
 image-source, event, accessibility, and reconciliation contract is documented in the
 [Native STX guide](../../docs/guides/native-stx.md).
 
+`FlatList` item roots receive the same `onLayout` callback as ordinary native
+views when rows are materialized or recycled.
+
 Current bundles negotiate the versioned native mutation protocol and update
 only the changed Android views. Older bundles remain compatible through the
 whole-document `RENDER` path. Batches are atomic and revision-checked; the
