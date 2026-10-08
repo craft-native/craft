@@ -1655,10 +1655,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
         view.tag = fallbackLabel
-        view.contentDescription = props.optString("accessibilityLabel").ifBlank {
-            props.optString("alt").ifBlank { fallbackLabel }
+        val label = props.optString("accessibilityLabel").takeIf { it.isNotBlank() }
+            ?: props.optString("alt").takeIf { type == "Image" && it.isNotBlank() }
+        val value = props.opt("accessibilityValue")?.takeUnless { it == JSONObject.NULL }?.toString()
+        view.contentDescription = when {
+            label != null && value != null -> "$label, $value"
+            label != null -> label
+            value != null -> value
+            else -> null
         }
-        props.opt("accessibilityValue")?.takeUnless { it == JSONObject.NULL }?.let { view.contentDescription = "${view.contentDescription}, $it" }
         view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")

@@ -34,7 +34,7 @@ describe('native renderer component contract', () => {
 
   it('uses image alt text as the native accessibility fallback', () => {
     expect(ios).toContain('(type == "Image" ? props["alt"] as? String : nil)')
-    expect(android).toContain('props.optString("alt").ifBlank { fallbackLabel }')
+    expect(android).toContain('props.optString("alt").takeIf { type == "Image" && it.isNotBlank() }')
     expect(guide).toContain('`Image.alt` supplies the native accessibility label')
   })
 
@@ -220,6 +220,8 @@ describe('native renderer component contract', () => {
 
   it('resets removed accessibility metadata on both hosts', () => {
     expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
+    expect(android).toContain('view.contentDescription = when {')
+    expect(android).toContain('else -> null')
     expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
     expect(android).toContain('info.hintText = host.tooltipText')
     expect(android).toContain('info.isEnabled = host.isEnabled && !disabled')

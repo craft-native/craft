@@ -24,6 +24,8 @@ single-line/multiline mode, recreating the incompatible platform control, and
 the iOS fixture runs the same mode-transition and recycled-row assertions.
 The shared name field is controlled, so its value and caret remain stable
 while the native renderer applies each change on both hosts.
+Test identities stay in Android view tags, leaving visible text available to
+accessibility services unless a label or value is explicitly supplied.
 Returning to a retained route reapplies native theme defaults before it becomes
 visible, so a dark-mode change while another route is open cannot leave stale
 colors behind.
