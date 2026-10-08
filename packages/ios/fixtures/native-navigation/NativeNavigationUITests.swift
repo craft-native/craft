@@ -179,6 +179,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "0")
         XCTAssertTrue(toggle.isEnabled)
+        XCTAssertEqual(app.switches["nullable-switch"].value as? String, "1")
         toggle.tap()
         XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "1")

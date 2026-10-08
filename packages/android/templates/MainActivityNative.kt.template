@@ -1068,12 +1068,13 @@ class MainActivity : AppCompatActivity() {
                 maxLines = if (multiline) props.optInt("numberOfLines", Int.MAX_VALUE).coerceAtLeast(1) else 1
                 isEnabled = props.optBoolean("editable", true)
                 configureTextStyle(this, style)
-                if (props.has("value") && text.toString() != props.optString("value")) {
+                val controlledValue = props.opt("value")?.takeUnless { it == JSONObject.NULL }?.toString()
+                if (controlledValue != null && text.toString() != controlledValue) {
                     screen.suppressedTextChanges.add(this)
-                    setTextPreservingSelection(this, props.optString("value"))
+                    setTextPreservingSelection(this, controlledValue)
                 }
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
-                else if (this !== previous && props.has("defaultValue")) setText(props.optString("defaultValue"))
+                else if (this !== previous && props.has("defaultValue") && !props.isNull("defaultValue")) setText(props.optString("defaultValue"))
                 screen.inputIdentities[this] = identity
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
@@ -1130,9 +1131,11 @@ class MainActivity : AppCompatActivity() {
             }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
                 setOnCheckedChangeListener(null)
-                isChecked = when {
-                    props.has("value") -> props.optBoolean("value")
-                    else -> props.optBoolean("checked", false)
+                val requestedValue = props.opt("value")
+                isChecked = if (requestedValue != null && requestedValue != JSONObject.NULL) {
+                    props.optBoolean("value")
+                } else {
+                    props.optBoolean("checked", false)
                 }
                 isEnabled = !props.optBoolean("disabled", false)
                 props.optJSONObject("trackColor")?.let { track ->
@@ -1532,8 +1535,8 @@ class MainActivity : AppCompatActivity() {
         view.clipToOutline = style.optString("overflow") == "hidden"
         if (view is ViewGroup) view.clipChildren = style.optString("overflow") == "hidden"
         if (view is ImageView) {
-            if (style.has("tintColor")) view.setColorFilter(color(style.optString("tintColor"), Color.TRANSPARENT))
-            else view.clearColorFilter()
+            style.optString("tintColor").takeIf { it.isNotBlank() }?.let { view.setColorFilter(color(it, Color.TRANSPARENT)) }
+                ?: view.clearColorFilter()
         }
     }
 
@@ -1568,10 +1571,12 @@ class MainActivity : AppCompatActivity() {
             "justify" -> View.TEXT_ALIGNMENT_VIEW_START
             else -> View.TEXT_ALIGNMENT_INHERIT
         }
-        view.letterSpacing = if (style.has("letterSpacing") && view.textSize > 0)
-            dp(style.optDouble("letterSpacing")).toFloat() / view.textSize else 0f
+        view.letterSpacing = style.optDouble("letterSpacing", Double.NaN)
+            .takeUnless { it.isNaN() }
+            ?.let { if (view.textSize > 0) dp(it).toFloat() / view.textSize else 0f }
+            ?: 0f
         view.setLineSpacing(
-            if (style.has("lineHeight")) dp(style.optDouble("lineHeight")) - view.textSize else 0f,
+            style.optDouble("lineHeight", Double.NaN).takeUnless { it.isNaN() }?.let { dp(it) - view.textSize } ?: 0f,
             1f
         )
         view.paintFlags = view.paintFlags and Paint.UNDERLINE_TEXT_FLAG.inv() and Paint.STRIKE_THRU_TEXT_FLAG.inv()

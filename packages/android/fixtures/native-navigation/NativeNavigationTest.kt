@@ -308,6 +308,7 @@ class NativeNavigationTest {
             assertTrue("native switch should start off", !nativeSwitch.isChecked)
             assertTrue("native switch should apply track tint", nativeSwitch.trackTintList != null)
             assertTrue("native switch should apply thumb tint", nativeSwitch.thumbTintList != null)
+            assertTrue("null switch value should fall back to checked", (awaitView(activity, "nullable-switch") as Switch).isChecked)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
             assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
             var switchInfo: AccessibilityNodeInfo? = null
