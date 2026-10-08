@@ -115,6 +115,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(field.isEnabled)
         let notes = app.textViews["notes-input"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5), "multiline TextInput did not render as UITextView")
+        XCTAssertTrue(notes.isEnabled)
         field.tap()
         field.typeText("Ada")
         XCTAssertEqual(app.staticTexts["greeting"].label, "Hello Ada")
