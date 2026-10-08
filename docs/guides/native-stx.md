@@ -290,6 +290,11 @@ keeps its existing static children. Older compiled bundles also continue to
 use whole-document `RENDER`; the native host accepts both that path and the
 incremental mutation protocol.
 
+When a keyed node changes its native type during reconciliation, the host
+creates a control of the new type instead of reusing an incompatible view. This
+keeps a `Button` changed to a `Link` (or another component class) from retaining
+the old control's traits, listeners, or accessibility behavior.
+
 ## Events, accessibility, and navigation
 
 `defaultValue` initializes an uncontrolled `TextInput` once; controlled

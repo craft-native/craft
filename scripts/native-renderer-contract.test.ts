@@ -46,6 +46,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
     expect(android).toContain('configureText(this, title, style)')
     expect(android).toContain('props.optString("color").takeIf { it.isNotBlank() }?.let { setTextColor(color(it, defaultTextColor)) }')
+    expect(android).toContain('(previous as? TextView)?.takeUnless { it is Button } ?: TextView(this)')
   })
 
   it('keeps native text truncation props aligned across hosts', () => {
