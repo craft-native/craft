@@ -375,6 +375,8 @@ class NativeNavigationTest {
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
             val people = awaitView(activity, "people-list") as RecyclerView
             val peopleHeader = awaitView(activity, "people-header") as TextView
+            val peopleLayouts = awaitView(activity, "people-layout-status") as TextView
+            assertTrue("FlatList rows did not report layout", peopleLayouts.text.toString().substringAfterLast(": ").toInt() > 0)
             var peopleHeaderInfo: AccessibilityNodeInfo? = null
             instrumentation.runOnMainSync { peopleHeaderInfo = peopleHeader.createAccessibilityNodeInfo() }
             assertTrue("FlatList header did not expose heading semantics", peopleHeaderInfo?.isHeading == true)

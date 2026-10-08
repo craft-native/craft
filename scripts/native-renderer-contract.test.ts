@@ -281,6 +281,11 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('RecyclerView.SCROLL_STATE_SETTLING')
   })
 
+  it('emits onLayout for virtualized rows on both hosts', () => {
+    expect(ios).toContain('flatListRows[ObjectIdentifier(list)]?.values.forEach { emitLayoutEvents(for: $0) }')
+    expect(android).toContain('private fun emitLayoutEvents(screen: Screen, view: View)')
+  })
+
   it('resets FlatList end-reached state when any data row changes', () => {
     expect(iosFlatList).toContain('private var dataContentSignature = ""')
     expect(iosFlatList).toContain('dataContentSignature = contentSignature')

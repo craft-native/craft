@@ -3,6 +3,11 @@ let name = globalThis.craft.route.params.name
 let count = globalThis.craft.route.params.count
 let people = Array.from({ length: 40 }, (_, index) => ({ id: `person-${index}`, name: `Person ${index}` }))
 let listEvents = 0
+let rowLayouts = 0
+
+function captureRowLayout() {
+  rowLayouts += 1
+}
 
 function shufflePeople() {
   people = [people[1], { ...people[0], name: 'Person zero updated' }, ...people.slice(2)]
@@ -47,7 +52,7 @@ function replaceWithSummary() {
       style={{"height":160}}
     >
       <Text listRole="header" accessibilityRole="header" testID="people-header">People directory</Text>
-      <View listRole="item" accessibilityLabel={item.name}>
+      <View listRole="item" accessibilityLabel={item.name} onLayout={captureRowLayout}>
         <Text testID={'person-label-' + item.id}>{index}: {item.name}</Text>
         <TextInput testID={'person-input-' + item.id} placeholder="Note" />
       </View>
@@ -55,6 +60,7 @@ function replaceWithSummary() {
       <Text listRole="empty" testID="people-empty">Nobody here</Text>
       <Text listRole="footer" testID="people-footer">End of people</Text>
     </FlatList>
+    <Text testID="people-layout-status">Rows laid out: {rowLayouts}</Text>
     <Button testID="shuffle-people" onPress={shufflePeople}>Shuffle people</Button>
     <Button testID="clear-people" onPress={clearPeople}>Clear people</Button>
     <Button testID="details-back" onPress={goBack}>Back in app</Button>

@@ -1354,6 +1354,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         }
         for child in node.children { emitLayoutEvents(for: child) }
+        if let list = node.view as? CraftNativeFlatList {
+            flatListRows[ObjectIdentifier(list)]?.values.forEach { emitLayoutEvents(for: $0) }
+        }
     }
 
     private func updateAuxiliaryHandler(

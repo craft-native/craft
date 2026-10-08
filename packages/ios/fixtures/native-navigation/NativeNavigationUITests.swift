@@ -211,6 +211,9 @@ final class NativeNavigationUITests: XCTestCase {
         let people = app.collectionViews["people-list"]
         XCTAssertTrue(people.waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["people-header"].waitForExistence(timeout: 5))
+        let peopleLayouts = app.staticTexts["people-layout-status"]
+        XCTAssertTrue(peopleLayouts.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(Int(peopleLayouts.label.split(separator: ":").last ?? "0") ?? 0, 0)
         XCTAssertTrue(app.textFields["person-input-person-0"].waitForExistence(timeout: 5))
         app.buttons["shuffle-people"].tap()
         let firstPerson = app.staticTexts["person-label-person-0"]
