@@ -118,6 +118,17 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('holder.host.addView(view, hostedLayout)')
   })
 
+  it('keeps image source lifecycles and resize modes aligned', () => {
+    expect(ios).toContain('imageTasks.removeValue(forKey: id)?.cancel()')
+    expect(ios).toContain('guard self.imageSources[ObjectIdentifier(view)] == uri else { return }')
+    expect(ios).toContain('image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)')
+    expect(ios).toContain('case "cover": return .scaleAspectFill')
+    expect(android).toContain('imageJobs.remove(view)?.cancel(true)')
+    expect(android).toContain('if (imageSources[view] != uri) return@runOnUiThread')
+    expect(android).toContain('"cover" -> ImageView.ScaleType.CENTER_CROP')
+    expect(android).toContain('view.clearColorFilter()')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')
