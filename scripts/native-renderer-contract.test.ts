@@ -73,6 +73,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
     expect(android).toContain('reusableInput?.takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }')
     expect(android).toContain('setTextPreservingSelection(this, props.optString("value"))')
+    expect(android).toContain('screen.suppressedTextChanges.add(this)')
+    expect(android).toContain('if (screen.suppressedTextChanges.remove(this@apply)) return')
     expect(android).toContain('field.setSelection(minOf(boundedStart, boundedEnd), maxOf(boundedStart, boundedEnd))')
     expect(ios).toContain('private var inputDrafts: [String: String] = [:]')
     expect(ios).toContain('inputDrafts[current.identity] ?? props["defaultValue"] as? String')

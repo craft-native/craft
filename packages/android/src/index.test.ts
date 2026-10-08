@@ -115,6 +115,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('"FlatList" -> (previous as? CraftNativeFlatList')
       expect(nativeActivity).toContain('inputType = inputTypeFor(props)')
       expect(nativeActivity).toContain('imeOptions = imeOptionsFor(props)')
+      expect(nativeActivity).toContain('screen.suppressedTextChanges.add(this)')
+      expect(nativeActivity).toContain('if (screen.suppressedTextChanges.remove(this@apply)) return')
       expect(nativeActivity).toContain('maxLines = if (multiline)')
       expect(nativeActivity).toContain('numberOfLines')
       expect(nativeActivity).toContain('InputFilter.LengthFilter(maxLength)')

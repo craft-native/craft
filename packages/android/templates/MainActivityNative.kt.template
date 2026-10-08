@@ -597,6 +597,7 @@ class MainActivity : AppCompatActivity() {
         val port: MessagePort?
     ) {
         val drafts = mutableMapOf<String, String>()
+        val suppressedTextChanges = mutableSetOf<EditText>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
         val longPressHandlers = mutableMapOf<View, String>()
@@ -1063,6 +1064,7 @@ class MainActivity : AppCompatActivity() {
                 isEnabled = props.optBoolean("editable", true)
                 configureTextStyle(this, style)
                 if (props.has("value") && text.toString() != props.optString("value")) {
+                    screen.suppressedTextChanges.add(this)
                     setTextPreservingSelection(this, props.optString("value"))
                 }
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
@@ -1111,6 +1113,7 @@ class MainActivity : AppCompatActivity() {
                     override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                         val updated = s?.toString().orEmpty()
                         screen.drafts[identity] = updated
+                        if (screen.suppressedTextChanges.remove(this@apply)) return
                         val current = screen.handlers[this@apply] ?: return
                         send(screen, "EVENT", JSONObject()
                             .put("handlerName", current)
