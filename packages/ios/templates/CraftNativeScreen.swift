@@ -1002,6 +1002,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.setAxis(direction)
             scroll.delegate = self
             scroll.isScrollEnabled = props["scrollEnabled"] as? Bool != false
+            scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
             scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
             scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false
             scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? (direction == .vertical)
@@ -1562,6 +1563,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "stretch": return .scaleToFill
         case "center": return .center
         default: return .scaleAspectFit
+        }
+    }
+
+    private func keyboardDismissMode(_ value: Any?) -> UIScrollView.KeyboardDismissMode {
+        switch value as? String {
+        case "on-drag": return .onDrag
+        case "interactive": return .interactive
+        default: return .none
         }
     }
 

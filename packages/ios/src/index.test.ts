@@ -123,6 +123,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('scrollViewDidScroll')
     expect(nativeSwift).toContain('contentOffset')
     expect(nativeSwift).toContain('scroll.alwaysBounceVertical')
+    expect(nativeSwift).toContain('scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])')
+    expect(nativeSwift).toContain('case "on-drag": return .onDrag')
     expect(nativeSwift).toContain('?? (direction == .vertical)')
     expect(nativeSwift).toContain('|| flexDirection == "row-reverse"')
     expect(nativeSwift).toContain('if let control = view as? UIControl')

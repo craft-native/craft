@@ -147,6 +147,14 @@ describe('native renderer component contract', () => {
     expect(android).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
   })
 
+  it('dismisses the keyboard from native scroll containers on drag', () => {
+    expect(ios).toContain('scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])')
+    expect(ios).toContain('case "interactive": return .interactive')
+    expect(android).toContain('keyboardDismissMode: String')
+    expect(android).toContain('keyboardDismissMode in setOf("on-drag", "interactive")')
+    expect(android).toContain('hideSoftInputFromWindow(nativeScroll.windowToken, 0)')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

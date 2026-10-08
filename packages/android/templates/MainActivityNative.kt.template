@@ -478,12 +478,22 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         onScroll: ((Int, Int) -> Unit)?,
         onBeginDrag: (() -> Unit)?,
         onEndDrag: (() -> Unit)?,
+        keyboardDismissMode: String,
+        dismissKeyboard: (() -> Unit)?,
     ) {
         fun attach(scroller: View) {
+            var dismissed = false
             scroller.setOnScrollChangeListener { _, x, y, _, _ -> onScroll?.invoke(x, y) }
             scroller.setOnTouchListener { _, event ->
                 when (event.actionMasked) {
-                    android.view.MotionEvent.ACTION_DOWN -> onBeginDrag?.invoke()
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        dismissed = false
+                        onBeginDrag?.invoke()
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> if (!dismissed && keyboardDismissMode in setOf("on-drag", "interactive")) {
+                        dismissed = true
+                        dismissKeyboard?.invoke()
+                    }
                     android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> onEndDrag?.invoke()
                 }
                 false
@@ -1117,6 +1127,11 @@ class MainActivity : AppCompatActivity() {
                         screen.scrollEndHandlers[nativeScroll]?.let { current ->
                             send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                         }
+                    },
+                    keyboardDismissMode = props.optString("keyboardDismissMode"),
+                    dismissKeyboard = {
+                        (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                            ?.hideSoftInputFromWindow(nativeScroll.windowToken, 0)
                     },
                 )
                 configureContainer(content, style)
