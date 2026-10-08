@@ -230,8 +230,12 @@ describe('native renderer component contract', () => {
   it('lets accessibility disabled state disable controls without re-enabling them', () => {
     expect(ios).toContain('if let control = view as? UIControl {')
     expect(ios).toContain('else if handlers[ObjectIdentifier(view)] != nil {')
-    expect(android).toContain('if (disabled) view.isEnabled = false')
+    expect(android).toContain('} else if (disabled) {\n            view.isEnabled = false')
     expect(android).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
+  })
+
+  it('restores generic Android pressables when accessibility disabled clears', () => {
+    expect(android).toContain('if (type !in setOf("Button", "Link", "TextInput", "Switch", "Slider", "ActivityIndicator")) {\n            view.isEnabled = !disabled')
   })
 
   it('dismisses the keyboard from native scroll containers on drag', () => {
