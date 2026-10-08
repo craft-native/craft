@@ -268,7 +268,8 @@ delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `onSubmitEditing` are also native events. `keyboardType`, `returnKeyType`,
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. `placeholderTextColor`, `selectionColor`,
-and positive `maxLength` values are applied on both hosts. Configuration changes are applied only when
+positive `maxLength`, `multiline`, and `numberOfLines` values are applied on
+both hosts. Configuration changes are applied only when
 their values change, so state reconciliation preserves the focused field and
 its keyboard; UIKit text inputs retain their dynamic accessibility value unless
 an explicit `accessibilityValue` prop overrides it. The host also restores the first responder around synchronous

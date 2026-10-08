@@ -114,7 +114,8 @@ JavaScriptSandbox process. Enable `enableLocalDatabase`,
 malformed calls reject with stable capability/error codes, and in-flight calls
 have a deadline and cancellation path. The broader browser bridge remains
 specific to WebView mode. Native `TextInput` applies `placeholderTextColor`,
-`selectionColor`, and positive `maxLength` values. Native views include
+`selectionColor`, positive `maxLength`, `multiline`, and `numberOfLines` values.
+Native views include
 `ActivityIndicator` and expose
 `onLayout` callbacks with density-independent frame measurements that refresh
 after inset or orientation changes. The shared component, capability, list, style,
