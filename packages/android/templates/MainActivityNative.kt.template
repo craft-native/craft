@@ -21,6 +21,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.text.Editable
 import android.text.InputFilter
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.util.Log
 import android.util.Base64
@@ -917,6 +918,13 @@ class MainActivity : AppCompatActivity() {
         val previous = previousControls[identity]
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
+                maxLines = props.optInt("numberOfLines", 0).takeIf { it > 0 } ?: Int.MAX_VALUE
+                ellipsize = when (props.optString("ellipsizeMode")) {
+                    "head" -> TextUtils.TruncateAt.START
+                    "middle" -> TextUtils.TruncateAt.MIDDLE
+                    "tail" -> TextUtils.TruncateAt.END
+                    else -> null
+                }
                 configureText(this, childText(children), style)
             }
             "Link" -> (previous as? TextView ?: TextView(this)).apply {

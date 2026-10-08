@@ -96,6 +96,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('ViewCompat.requestApplyInsets(root)')
       expect(nativeActivity).toContain('rows.add(mutableListOf())')
       expect(nativeActivity).toContain('private class CraftNativeFlexLayout(context: Context) : LinearLayout(context)')
+      expect(nativeActivity).toContain('maxLines = props.optInt("numberOfLines", 0).takeIf { it > 0 } ?: Int.MAX_VALUE')
+      expect(nativeActivity).toContain('"middle" -> TextUtils.TruncateAt.MIDDLE')
       expect(nativeActivity).toContain('wrap = style.optString("flexWrap") == "wrap"')
       expect(nativeActivity).toContain('style.position == "absolute"')
       expect(nativeActivity).toContain('style.minWidth')

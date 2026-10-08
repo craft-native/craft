@@ -60,6 +60,9 @@ generated renderers, so a platform can’t silently lose a native primitive.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.
+`Text` supports positive `numberOfLines` values and `ellipsizeMode` (`head`,
+`middle`, `tail`, or `clip`) on both hosts; omitting the line count keeps the
+label intrinsically multiline.
 `ActivityIndicator` accepts `color`, `animating`, `hidesWhenStopped`, and
 `size` (`small`, `large`, or a numeric point/unit value). The native host keeps
 the indicator visible when animation is stopped only when `hidesWhenStopped` is

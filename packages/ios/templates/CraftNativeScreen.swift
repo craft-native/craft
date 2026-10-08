@@ -874,6 +874,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         switch type {
         case "Text":
             let label = result as! UILabel
+            label.numberOfLines = max(0, (props["numberOfLines"] as? NSNumber)?.intValue ?? 0)
+            label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])
             configureText(label, text: children.compactMap { $0 as? String }.joined(), style: style)
         case "Button", "Link":
             let button = result as! UIButton
@@ -1489,6 +1491,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         label.attributedText = attributes.isEmpty ? nil : NSAttributedString(string: transformed, attributes: attributes)
         if attributes.isEmpty { label.text = transformed }
+    }
+
+    private func textLineBreakMode(_ value: Any?) -> NSLineBreakMode {
+        switch value as? String {
+        case "head": return .byTruncatingHead
+        case "middle": return .byTruncatingMiddle
+        case "tail": return .byTruncatingTail
+        case "clip": return .byClipping
+        default: return .byTruncatingTail
+        }
     }
 
     private func buttonTitleAttributes(

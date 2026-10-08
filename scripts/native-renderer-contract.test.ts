@@ -40,6 +40,16 @@ describe('native renderer component contract', () => {
     expect(android).toContain('configureText(this, title, style)')
   })
 
+  it('keeps native text truncation props aligned across hosts', () => {
+    expect(ios).toContain('label.numberOfLines = max(0, (props["numberOfLines"] as? NSNumber)?.intValue ?? 0)')
+    expect(ios).toContain('label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])')
+    expect(ios).toContain('case "middle": return .byTruncatingMiddle')
+    expect(android).toContain('maxLines = props.optInt("numberOfLines", 0).takeIf { it > 0 } ?: Int.MAX_VALUE')
+    expect(android).toContain('"middle" -> TextUtils.TruncateAt.MIDDLE')
+    expect(android).toContain('"tail" -> TextUtils.TruncateAt.END')
+    expect(guide).toContain('`Text` supports positive `numberOfLines` values')
+  })
+
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')
