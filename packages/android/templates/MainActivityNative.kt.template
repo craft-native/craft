@@ -443,6 +443,10 @@ class MainActivity : AppCompatActivity() {
         val focusHandlers = mutableMapOf<View, String>()
         val blurHandlers = mutableMapOf<View, String>()
         val submitHandlers = mutableMapOf<View, String>()
+        val imageLoadStartHandlers = mutableMapOf<ImageView, String>()
+        val imageLoadHandlers = mutableMapOf<ImageView, String>()
+        val imageLoadEndHandlers = mutableMapOf<ImageView, String>()
+        val imageErrorHandlers = mutableMapOf<ImageView, String>()
         val layoutHandlers = mutableMapOf<View, String>()
         val lastLayoutBounds = mutableMapOf<View, LayoutBounds>()
         val flatListRows = mutableMapOf<CraftNativeFlatList, MutableMap<String, MutableMap<String, View>>>()
@@ -960,7 +964,15 @@ class MainActivity : AppCompatActivity() {
                     else -> ImageView.ScaleType.CENTER_INSIDE
                 }
                 adjustViewBounds = false
-                updateImage(this, props.opt("source"))
+                val onLoadStart = events.optString("onLoadStart")
+                if (onLoadStart.isNotBlank()) screen.imageLoadStartHandlers[this] = onLoadStart else screen.imageLoadStartHandlers.remove(this)
+                val onLoad = events.optString("onLoad")
+                if (onLoad.isNotBlank()) screen.imageLoadHandlers[this] = onLoad else screen.imageLoadHandlers.remove(this)
+                val onLoadEnd = events.optString("onLoadEnd")
+                if (onLoadEnd.isNotBlank()) screen.imageLoadEndHandlers[this] = onLoadEnd else screen.imageLoadEndHandlers.remove(this)
+                val onError = events.optString("onError")
+                if (onError.isNotBlank()) screen.imageErrorHandlers[this] = onError else screen.imageErrorHandlers.remove(this)
+                updateImage(screen, this, props.opt("source"))
             }
             "ScrollView" -> (previous as? CraftNativeScrollView ?: CraftNativeScrollView(this)).apply {
                 val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
@@ -1224,7 +1236,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateImage(view: ImageView, source: Any?) {
+    private fun updateImage(screen: Screen, view: ImageView, source: Any?) {
         val uri = when (source) {
             is String -> source
             is JSONObject -> source.optString("uri")
@@ -1235,6 +1247,7 @@ class MainActivity : AppCompatActivity() {
             imageSources.remove(view)
             imageErrors[view] = "Image source is missing"
             view.setImageDrawable(null)
+            imageFailure(screen, view, uri, "Image source is missing")
             return
         }
         if (imageSources[view] == uri) return
@@ -1242,20 +1255,29 @@ class MainActivity : AppCompatActivity() {
         imageSources[view] = uri
         imageErrors.remove(view)
         view.setImageDrawable(null)
+        emitImageEvent(screen, view, screen.imageLoadStartHandlers[view])
 
         if (uri.startsWith("data:image/") && uri.contains(',')) {
             val bytes = runCatching { Base64.decode(uri.substringAfter(','), Base64.DEFAULT) }.getOrNull()
             val bitmap = bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-            if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Image data is invalid")
+            if (bitmap != null) {
+                view.setImageBitmap(bitmap)
+                emitImageEvent(screen, view, screen.imageLoadHandlers[view])
+                emitImageEvent(screen, view, screen.imageLoadEndHandlers[view])
+            } else imageFailure(screen, view, uri, "Image data is invalid")
             return
         }
         if (!uri.contains(':')) {
             val bitmap = runCatching { assets.open(uri).use { BitmapFactory.decodeStream(it) } }.getOrNull()
-            if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Bundled image was not found")
+            if (bitmap != null) {
+                view.setImageBitmap(bitmap)
+                emitImageEvent(screen, view, screen.imageLoadHandlers[view])
+                emitImageEvent(screen, view, screen.imageLoadEndHandlers[view])
+            } else imageFailure(screen, view, uri, "Bundled image was not found")
             return
         }
         if (!uri.startsWith("https://")) {
-            imageFailure(view, uri, "Unsupported image source")
+            imageFailure(screen, view, uri, "Unsupported image source")
             return
         }
         imageJobs[view] = imageExecutor.submit {
@@ -1269,16 +1291,27 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (imageSources[view] != uri) return@runOnUiThread
                 imageJobs.remove(view)
-                if (bitmap != null) view.setImageBitmap(bitmap) else imageFailure(view, uri, "Image download failed")
+                if (bitmap != null) {
+                    view.setImageBitmap(bitmap)
+                    emitImageEvent(screen, view, screen.imageLoadHandlers[view])
+                    emitImageEvent(screen, view, screen.imageLoadEndHandlers[view])
+                } else imageFailure(screen, view, uri, "Image download failed")
             }
         }
     }
 
-    private fun imageFailure(view: ImageView, uri: String, message: String) {
+    private fun imageFailure(screen: Screen, view: ImageView, uri: String, message: String) {
         imageErrors[view] = message
         view.setImageDrawable(null)
         view.contentDescription = "${view.tag ?: "Image"}, $message"
+        emitImageEvent(screen, view, screen.imageErrorHandlers[view], JSONObject().put("error", JSONObject().put("message", message)))
+        emitImageEvent(screen, view, screen.imageLoadEndHandlers[view])
         Log.e(TAG, "$message: $uri")
+    }
+
+    private fun emitImageEvent(screen: Screen, view: ImageView, handler: String?, nativeEvent: JSONObject = JSONObject()) {
+        if (handler.isNullOrBlank()) return
+        send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", nativeEvent))
     }
 
     private fun applyAccessibility(view: View, props: JSONObject, type: String, fallbackLabel: String) {
@@ -1548,6 +1581,10 @@ class MainActivity : AppCompatActivity() {
         screen.focusHandlers.keys.removeAll(released)
         screen.blurHandlers.keys.removeAll(released)
         screen.submitHandlers.keys.removeAll(released)
+        screen.imageLoadStartHandlers.keys.removeAll(released)
+        screen.imageLoadHandlers.keys.removeAll(released)
+        screen.imageLoadEndHandlers.keys.removeAll(released)
+        screen.imageErrorHandlers.keys.removeAll(released)
     }
 
     private fun closeScreen(screen: Screen) {
@@ -1568,6 +1605,10 @@ class MainActivity : AppCompatActivity() {
         screen.focusHandlers.clear()
         screen.blurHandlers.clear()
         screen.submitHandlers.clear()
+        screen.imageLoadStartHandlers.clear()
+        screen.imageLoadHandlers.clear()
+        screen.imageLoadEndHandlers.clear()
+        screen.imageErrorHandlers.clear()
         screen.flatListRows.clear()
         screen.flatListOwners.clear()
         screen.flatListOwnerByView.clear()

@@ -446,6 +446,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
+    private var imageLoadStartHandlers: [ObjectIdentifier: String] = [:]
+    private var imageLoadHandlers: [ObjectIdentifier: String] = [:]
+    private var imageLoadEndHandlers: [ObjectIdentifier: String] = [:]
+    private var imageErrorHandlers: [ObjectIdentifier: String] = [:]
     private var renderedRoot: RenderedNode?
     private weak var lastFocusedInput: UIView?
     private var flatListRows: [ObjectIdentifier: [String: RenderedNode]] = [:]
@@ -899,6 +903,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let image = result as! UIImageView
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
             image.clipsToBounds = image.contentMode == .scaleAspectFill
+            updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: image)
+            updateAuxiliaryHandler(events["onLoad"], in: &imageLoadHandlers, for: image)
+            updateAuxiliaryHandler(events["onLoadEnd"], in: &imageLoadEndHandlers, for: image)
+            updateAuxiliaryHandler(events["onError"], in: &imageErrorHandlers, for: image)
             updateImage(image, source: props["source"])
         case "ScrollView":
             let scroll = result as! CraftNativeScrollView
@@ -1127,6 +1135,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
+        imageLoadStartHandlers.removeValue(forKey: id)
+        imageLoadHandlers.removeValue(forKey: id)
+        imageLoadEndHandlers.removeValue(forKey: id)
+        imageErrorHandlers.removeValue(forKey: id)
         for child in node.children { forgetHandlers(child) }
     }
 
@@ -1394,6 +1406,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         imageSources[id] = uri
         view.image = nil
         view.accessibilityValue = nil
+        emitImageEvent(view, handler: imageLoadStartHandlers[id])
 
         if uri.hasPrefix("data:image/") {
             guard let comma = uri.firstIndex(of: ","),
@@ -1403,6 +1416,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 return
             }
             view.image = image
+            emitImageEvent(view, handler: imageLoadHandlers[id])
+            emitImageEvent(view, handler: imageLoadEndHandlers[id])
             return
         }
         if let url = URL(string: uri), url.scheme == "https" {
@@ -1416,6 +1431,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                         return
                     }
                     view.image = image
+                    self.emitImageEvent(view, handler: self.imageLoadHandlers[ObjectIdentifier(view)])
+                    self.emitImageEvent(view, handler: self.imageLoadEndHandlers[ObjectIdentifier(view)])
                 }
             }
             imageTasks[id] = task
@@ -1428,6 +1445,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 return
             }
             view.image = image
+            emitImageEvent(view, handler: imageLoadHandlers[id])
+            emitImageEvent(view, handler: imageLoadEndHandlers[id])
             return
         }
         imageFailure(view, uri: uri, message: "Unsupported image source")
@@ -1436,7 +1455,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func imageFailure(_ view: UIImageView, uri: String?, message: String) {
         view.image = nil
         view.accessibilityValue = message
+        let id = ObjectIdentifier(view)
+        emitImageEvent(view, handler: imageErrorHandlers[id], nativeEvent: ["error": ["message": message]])
+        emitImageEvent(view, handler: imageLoadEndHandlers[id])
         NSLog("[craft native] %@: %@", message, uri ?? "<missing>")
+    }
+
+    private func emitImageEvent(
+        _ view: UIImageView,
+        handler: String?,
+        nativeEvent: [String: Any] = [:]
+    ) {
+        guard let handler, !handler.isEmpty else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": nativeEvent])
     }
 
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
