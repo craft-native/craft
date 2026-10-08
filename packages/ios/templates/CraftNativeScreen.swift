@@ -2014,10 +2014,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func keyboardType(_ value: Any?) -> UIKeyboardType {
         switch value as? String {
         case "email-address": return .emailAddress
-        case "numeric": return .numberPad
+        case "numeric", "number-pad": return .numberPad
         case "phone-pad": return .phonePad
         case "decimal-pad": return .decimalPad
         case "url": return .URL
+        case "web-search": return .webSearch
+        case "visible-password": return .asciiCapable
         default: return .default
         }
     }

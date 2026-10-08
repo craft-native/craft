@@ -1709,9 +1709,11 @@ class MainActivity : AppCompatActivity() {
         val keyboard = when (props.optString("keyboardType")) {
             "email-address" -> InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
             "url" -> InputType.TYPE_TEXT_VARIATION_URI
-            "numeric" -> InputType.TYPE_CLASS_NUMBER
+            "numeric", "number-pad" -> InputType.TYPE_CLASS_NUMBER
             "decimal-pad" -> InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             "phone-pad" -> InputType.TYPE_CLASS_PHONE
+            "web-search" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_WEB_EDIT_TEXT
+            "visible-password" -> InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             else -> 0
         }
         val capitalization = when (props.optString("autoCapitalize")) {
