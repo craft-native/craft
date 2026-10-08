@@ -36,6 +36,7 @@ bundle must be local at build time.
 | `Button` | `UIButton` | `Button` |
 | `Link` | underlined `UIButton` | underlined clickable `TextView` |
 | `TextInput` | `UITextField` | `EditText` |
+| `Switch` | `UISwitch` | `Switch` |
 | `Image` | `UIImageView` | `ImageView` |
 | `ScrollView` | `UIScrollView` | `ScrollView` or `HorizontalScrollView` |
 | `FlatList` | `UICollectionView` | `RecyclerView` |

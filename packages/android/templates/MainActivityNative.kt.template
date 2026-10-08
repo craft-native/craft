@@ -34,6 +34,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -845,6 +846,20 @@ class MainActivity : AppCompatActivity() {
                     override fun afterTextChanged(s: Editable?) {}
                 })
             }
+            "Switch" -> (previous as? Switch ?: Switch(this)).apply {
+                setOnCheckedChangeListener(null)
+                isChecked = when {
+                    props.has("value") -> props.optBoolean("value")
+                    else -> props.optBoolean("checked", false)
+                }
+                isEnabled = !props.optBoolean("disabled", false)
+                val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
+                if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                setOnCheckedChangeListener { _, checked ->
+                    val current = screen.handlers[this] ?: return@setOnCheckedChangeListener
+                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", checked)))
+                }
+            }
             "Image" -> (previous as? ImageView ?: ImageView(this)).apply {
                 scaleType = when (style.optString("resizeMode").ifBlank { props.optString("resizeMode") }) {
                     "cover" -> ImageView.ScaleType.CENTER_CROP
@@ -903,7 +918,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
-        if (type != "Button" && type != "Link" && type != "TextInput") {
+        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Switch") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
             if (handler.isNotBlank()) {
                 screen.handlers[control] = handler

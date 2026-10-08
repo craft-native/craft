@@ -773,6 +773,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
                 DispatchQueue.main.async { _ = field.becomeFirstResponder() }
             }
+        case "Switch":
+            let toggle = result as! UISwitch
+            toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
+            toggle.isEnabled = props["disabled"] as? Bool != true
+            updateHandler(events["onValueChange"] ?? events["onChange"], for: toggle)
         case "Image":
             let image = result as! UIImageView
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
@@ -809,7 +814,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        if type != "Button" && type != "Link" && type != "TextInput" {
+        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -834,6 +839,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             field.addTarget(self, action: #selector(textBlurred(_:)), for: .editingDidEnd)
             field.addTarget(self, action: #selector(textSubmitted(_:)), for: .editingDidEndOnExit)
             return field
+        case "Switch":
+            let toggle = UISwitch()
+            toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
+            return toggle
         case "Image":
             return UIImageView()
         case "ScrollView":
@@ -1208,7 +1217,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
         }
         let role = props["accessibilityRole"] as? String
-        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput"].contains(type))
+        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput", "Switch"].contains(type))
         var traits: UIAccessibilityTraits = []
         switch role ?? type.lowercased() {
         case "button": traits.insert(.button)
@@ -1259,6 +1268,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak focused] in
             self?.restoreFocus(focused)
         }
+    }
+
+    @objc private func switchChanged(_ sender: UISwitch) {
+        guard let handler = handlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isOn]])
     }
 
     @objc private func textFocused(_ sender: UITextField) {
