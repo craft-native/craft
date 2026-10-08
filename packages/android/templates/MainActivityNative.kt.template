@@ -59,6 +59,7 @@ import java.util.concurrent.Future
 import java.util.UUID
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 private const val CRAFT_NATIVE_CAPABILITY_TIMEOUT_MS = 30_000L
 
@@ -436,6 +437,8 @@ class MainActivity : AppCompatActivity() {
         val scrollHandlers = mutableMapOf<View, String>()
         val scrollBeginHandlers = mutableMapOf<View, String>()
         val scrollEndHandlers = mutableMapOf<View, String>()
+        val sliderCompleteHandlers = mutableMapOf<View, String>()
+        val sliderSteps = mutableMapOf<View, Double>()
         val focusHandlers = mutableMapOf<View, String>()
         val blurHandlers = mutableMapOf<View, String>()
         val submitHandlers = mutableMapOf<View, String>()
@@ -886,17 +889,38 @@ class MainActivity : AppCompatActivity() {
                 max = 1000
                 setOnSeekBarChangeListener(null)
                 progress = (((props.optDouble("value", minimum) - minimum) / (maximum - minimum)) * max).toInt().coerceIn(0, max)
+                val step = props.optDouble("step", 0.0).takeIf { it > 0 }
+                if (step != null) screen.sliderSteps[this] = step else screen.sliderSteps.remove(this)
+                props.optString("minimumTrackTintColor").takeIf { it.isNotBlank() }?.let {
+                    progressTintList = ColorStateList.valueOf(color(it, Color.WHITE))
+                }
+                props.optString("maximumTrackTintColor").takeIf { it.isNotBlank() }?.let {
+                    progressBackgroundTintList = ColorStateList.valueOf(color(it, Color.GRAY))
+                }
+                props.optString("thumbTintColor").takeIf { it.isNotBlank() }?.let {
+                    thumbTintList = ColorStateList.valueOf(color(it, Color.WHITE))
+                }
                 isEnabled = !props.optBoolean("disabled", false)
                 val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                val complete = events.optString("onSlidingComplete")
+                if (complete.isNotBlank()) screen.sliderCompleteHandlers[this] = complete else screen.sliderCompleteHandlers.remove(this)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                         val current = screen.handlers[seekBar] ?: return
-                        val value = minimum + (maximum - minimum) * progress.toDouble() / max.toDouble()
+                        val raw = minimum + (maximum - minimum) * progress.toDouble() / max.toDouble()
+                        val step = screen.sliderSteps[seekBar]
+                        val value = if (step != null) minimum + ((raw - minimum) / step).roundToInt() * step else raw
                         send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", value)))
                     }
                     override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                    override fun onStopTrackingTouch(seekBar: SeekBar) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar) {
+                        val current = screen.sliderCompleteHandlers[seekBar] ?: return
+                        val raw = minimum + (maximum - minimum) * seekBar.progress.toDouble() / max.toDouble()
+                        val step = screen.sliderSteps[seekBar]
+                        val value = if (step != null) minimum + ((raw - minimum) / step).roundToInt() * step else raw
+                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", value)))
+                    }
                 })
             }
             "ActivityIndicator" -> (previous as? android.widget.ProgressBar ?: android.widget.ProgressBar(this)).apply {
@@ -1497,6 +1521,8 @@ class MainActivity : AppCompatActivity() {
         screen.scrollHandlers.keys.removeAll(released)
         screen.scrollBeginHandlers.keys.removeAll(released)
         screen.scrollEndHandlers.keys.removeAll(released)
+        screen.sliderCompleteHandlers.keys.removeAll(released)
+        screen.sliderSteps.keys.removeAll(released)
         screen.focusHandlers.keys.removeAll(released)
         screen.blurHandlers.keys.removeAll(released)
         screen.submitHandlers.keys.removeAll(released)
@@ -1515,6 +1541,8 @@ class MainActivity : AppCompatActivity() {
         screen.scrollHandlers.clear()
         screen.scrollBeginHandlers.clear()
         screen.scrollEndHandlers.clear()
+        screen.sliderCompleteHandlers.clear()
+        screen.sliderSteps.clear()
         screen.focusHandlers.clear()
         screen.blurHandlers.clear()
         screen.submitHandlers.clear()

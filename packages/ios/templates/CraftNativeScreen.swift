@@ -385,6 +385,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
     private var scrollEndHandlers: [ObjectIdentifier: String] = [:]
+    private var sliderCompleteHandlers: [ObjectIdentifier: String] = [:]
+    private var sliderSteps: [ObjectIdentifier: Float] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
@@ -792,9 +794,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             slider.minimumValue = (props["minimumValue"] as? NSNumber)?.floatValue ?? 0
             slider.maximumValue = max(slider.minimumValue + .leastNonzeroMagnitude, (props["maximumValue"] as? NSNumber)?.floatValue ?? 1)
             let value = (props["value"] as? NSNumber)?.floatValue ?? slider.minimumValue
-            slider.value = min(slider.maximumValue, max(slider.minimumValue, value))
+            if let step = (props["step"] as? NSNumber)?.floatValue, step > 0 { sliderSteps[ObjectIdentifier(slider)] = step }
+            else { sliderSteps.removeValue(forKey: ObjectIdentifier(slider)) }
+            slider.value = snappedSliderValue(value, for: slider)
+            slider.minimumTrackTintColor = color(props["minimumTrackTintColor"])
+            slider.maximumTrackTintColor = color(props["maximumTrackTintColor"])
+            slider.thumbTintColor = color(props["thumbTintColor"])
             slider.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onValueChange"] ?? events["onChange"], for: slider)
+            updateAuxiliaryHandler(events["onSlidingComplete"], in: &sliderCompleteHandlers, for: slider)
         case "ActivityIndicator":
             let indicator = result as! UIActivityIndicatorView
             indicator.style = (props["size"] as? String) == "large" ? .large : .medium
@@ -872,6 +880,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         case "Slider":
             let slider = UISlider()
             slider.addTarget(self, action: #selector(sliderChanged(_:)), for: .valueChanged)
+            slider.addTarget(self, action: #selector(sliderFinished(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
             return slider
         case "ActivityIndicator":
             return UIActivityIndicatorView(style: .medium)
@@ -1022,6 +1031,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
         scrollEndHandlers.removeValue(forKey: id)
+        sliderCompleteHandlers.removeValue(forKey: id)
+        sliderSteps.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
@@ -1034,6 +1045,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         let id = ObjectIdentifier(view)
         if let handler = handler { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
+    }
+
+    private func snappedSliderValue(_ value: Float, for slider: UISlider) -> Float {
+        let bounded = min(slider.maximumValue, max(slider.minimumValue, value))
+        guard let step = sliderSteps[ObjectIdentifier(slider)], step > 0 else { return bounded }
+        let steps = ((bounded - slider.minimumValue) / step).rounded()
+        return min(slider.maximumValue, max(slider.minimumValue, slider.minimumValue + steps * step))
     }
 
     private func updateLayoutHandler(_ handler: String?, for view: UIView) {
@@ -1346,8 +1364,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     }
 
     @objc private func sliderChanged(_ sender: UISlider) {
+        let value = snappedSliderValue(sender.value, for: sender)
+        if sender.value != value { sender.value = value }
         guard let handler = handlers[ObjectIdentifier(sender)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.value]])
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": value]])
+    }
+
+    @objc private func sliderFinished(_ sender: UISlider) {
+        guard let handler = sliderCompleteHandlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": snappedSliderValue(sender.value, for: sender)]])
     }
 
     @objc private func textFocused(_ sender: UITextField) {
