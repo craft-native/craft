@@ -82,6 +82,12 @@ final class NativeNavigationUITests: XCTestCase {
         link.tap()
         XCTAssertTrue(app.staticTexts["link pressed"].waitForExistence(timeout: 5))
 
+        let toggle = app.switches["native-switch"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap()
+        XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
+
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
         let bounded = app.staticTexts["layout-min"]

@@ -16,6 +16,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -182,6 +183,11 @@ class NativeNavigationTest {
             assertEquals("Open native link", (link as TextView).text.toString())
             instrumentation.runOnMainSync { link.performClick() }
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val toggle = awaitView(activity, "native-switch")
+            assertTrue("native switch should be an Android Switch", toggle is Switch)
+            assertTrue("native switch should start off", !(toggle as Switch).isChecked)
+            instrumentation.runOnMainSync { toggle.performClick() }
+            assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             val bounded = awaitView(activity, "layout-min")
             val absolute = awaitView(activity, "layout-absolute")
