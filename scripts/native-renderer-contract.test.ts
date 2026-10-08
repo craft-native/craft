@@ -44,6 +44,9 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('textView.typingAttributes = attributes')
     expect(ios).toContain('updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)')
     expect(ios).toContain('if text == "\\n", let handler = submitHandlers[ObjectIdentifier(textView)]')
+    expect(ios).toContain('textView.keyboardType = keyboardType(props["keyboardType"])')
+    expect(ios).toContain('textView.returnKeyType = returnKeyType(props["returnKeyType"])')
+    expect(ios).toContain('textView.isSecureTextEntry = props["secureTextEntry"] as? Bool == true')
     expect(android).toContain('configureTextStyle(this, style)')
   })
 

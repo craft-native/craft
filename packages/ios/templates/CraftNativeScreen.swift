@@ -1344,6 +1344,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         textView.font = textFont(style, default: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize))
         textView.textAlignment = textAlignment(style["textAlign"])
         textView.tintColor = color(props["selectionColor"])
+        textView.keyboardType = keyboardType(props["keyboardType"])
+        textView.returnKeyType = returnKeyType(props["returnKeyType"])
+        textView.autocorrectionType = props["autoCorrect"] as? Bool == false ? .no : .default
+        textView.autocapitalizationType = capitalizationType(props["autoCapitalize"])
+        textView.isSecureTextEntry = props["secureTextEntry"] as? Bool == true
         textView.isEditable = props["editable"] as? Bool != false
         textView.isScrollEnabled = false
         if let numberOfLines = (props["numberOfLines"] as? NSNumber)?.intValue, numberOfLines > 0 {
