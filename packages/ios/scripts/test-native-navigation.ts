@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
-import { insertProjectTargetsBeforeSchemes } from './insert-project-targets'
+import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-navigation')
 const stxCli = process.env.STX_NATIVE_CLI || resolve(import.meta.dir, '../../../../stx/packages/stx-native/src/cli/index.ts')
@@ -61,7 +61,7 @@ try {
   mkdirSync(join(output, 'UITests'))
   copyFileSync(join(fixture, 'NativeNavigationUITests.swift'), join(output, 'UITests', 'NativeNavigationUITests.swift'))
   const project = join(output, 'project.yml')
-  writeFileSync(project, insertProjectTargetsBeforeSchemes(readFileSync(project, 'utf8'), `
+  const projectWithTargets = insertProjectTargetsBeforeSchemes(readFileSync(project, 'utf8'), `
   NativeNavigationUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -71,7 +71,8 @@ try {
       GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: NativeNavigation
-`))
+`)
+  writeFileSync(project, addSchemeTestTargets(projectWithTargets, 'NativeNavigation', ['NativeNavigationUITests']))
   run(['xcodegen', 'generate'], output)
 
   const device = await pickSimulator()

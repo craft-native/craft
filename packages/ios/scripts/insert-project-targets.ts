@@ -6,3 +6,14 @@ export function insertProjectTargetsBeforeSchemes(project: string, targets: stri
   const normalizedTargets = targets.replace(/^\n/, '').trimEnd()
   return `${project.slice(0, schemes)}\n${normalizedTargets}\n${project.slice(schemes + 1)}`
 }
+
+/** Add generated test bundles to the explicit scheme's test action. */
+export function addSchemeTestTargets(project: string, appName: string, testTargets: string[]): string {
+  const schemes = project.indexOf('\nschemes:\n')
+  const scheme = project.indexOf(`  ${appName}:\n`, schemes)
+  const test = project.indexOf('    test:\n      config: Debug\n', scheme)
+  if (schemes < 0 || scheme < 0 || test < 0) throw new Error(`Generated iOS project is missing the ${appName} scheme test action`)
+  const targets = testTargets.map(target => `        - ${target}`).join('\n')
+  const replacement = `    test:\n      config: Debug\n      targets:\n${targets}\n`
+  return `${project.slice(0, test)}${replacement}${project.slice(test + '    test:\n      config: Debug\n'.length)}`
+}
