@@ -905,6 +905,7 @@ class MainActivity : AppCompatActivity() {
                 isSingleLine = !multiline
                 maxLines = if (multiline) props.optInt("numberOfLines", Int.MAX_VALUE).coerceAtLeast(1) else 1
                 isEnabled = props.optBoolean("editable", true)
+                configureTextStyle(this, style)
                 if (props.has("value") && text.toString() != props.optString("value")) setText(props.optString("value"))
                 else if (this !== previous && screen.drafts.containsKey(identity)) setText(screen.drafts[identity])
                 val handler = events.optString("onChange").ifBlank { events.optString("onChangeText") }
@@ -1263,6 +1264,10 @@ class MainActivity : AppCompatActivity() {
             "capitalize" -> value.split(' ').joinToString(" ") { word -> word.replaceFirstChar(Char::uppercase) }
             else -> value
         }
+        configureTextStyle(view, style)
+    }
+
+    private fun configureTextStyle(view: TextView, style: JSONObject) {
         view.setTextColor(color(style.optString("color"), defaultTextColor))
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, style.optDouble("fontSize", 14.0).toFloat())
         val weight = when (style.optString("fontWeight")) {
