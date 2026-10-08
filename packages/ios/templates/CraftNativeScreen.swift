@@ -1724,7 +1724,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func applyAccessibility(_ props: [String: Any], type: String, to view: UIView) {
-        view.accessibilityLabel = props["accessibilityLabel"] as? String
+        view.accessibilityLabel = (props["accessibilityLabel"] as? String)
+            ?? (type == "Image" ? props["alt"] as? String : nil)
         view.accessibilityHint = props["accessibilityHint"] as? String
         if let value = props["accessibilityValue"] {
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue

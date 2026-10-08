@@ -69,6 +69,8 @@ label intrinsically multiline.
 `size` (`small`, `large`, or a numeric point/unit value). The native host keeps
 the indicator visible when animation is stopped only when `hidesWhenStopped` is
 false.
+`Image.alt` supplies the native accessibility label when an explicit
+`accessibilityLabel` is not provided.
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an

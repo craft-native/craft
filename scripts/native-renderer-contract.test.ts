@@ -32,6 +32,12 @@ describe('native renderer component contract', () => {
     }
   })
 
+  it('uses image alt text as the native accessibility fallback', () => {
+    expect(ios).toContain('(type == "Image" ? props["alt"] as? String : nil)')
+    expect(android).toContain('props.optString("alt").ifBlank { fallbackLabel }')
+    expect(guide).toContain('`Image.alt` supplies the native accessibility label')
+  })
+
   it('applies text transforms to native action labels on both hosts', () => {
     expect(ios).toContain('let transformedTitle = transformedText(title, style: style)')
     expect(ios).toContain('private func transformedText(_ text: String, style: [String: Any])')
