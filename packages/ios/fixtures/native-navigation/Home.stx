@@ -142,7 +142,7 @@ function openCapabilities() {
     </View>
     <Text testID="layout-status">{layoutWidth > 0 ? `Layout width: ${layoutWidth}` : 'layout pending'}</Text>
     <Button testID="toggle-layout-width" onPress={toggleLayoutWidth}>Toggle layout width</Button>
-    <ScrollView testID="native-scroll" style={{"height":72,"gap":4}}>
+    <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" style={{"height":72,"gap":4}}>
       <Image
         testID="native-image"
         source={{"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}}

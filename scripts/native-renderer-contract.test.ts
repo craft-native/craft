@@ -7,6 +7,7 @@ const ios = readFileSync(join(root, 'packages/ios/templates/CraftNativeScreen.sw
 const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeFlatList.swift'), 'utf8')
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
+const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
@@ -154,6 +155,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('keyboardDismissMode: String')
     expect(android).toContain('keyboardDismissMode in setOf("on-drag", "interactive")')
     expect(android).toContain('hideSoftInputFromWindow(nativeScroll.windowToken, 0)')
+    expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
   })
 
   it('resets removed text-input colors to each host theme', () => {

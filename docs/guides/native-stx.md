@@ -287,7 +287,9 @@ thread. The host keeps a weak anchor to the last focused field so a control
 callback restores focus after dispatch and schedules a short delayed main-queue
 handoff after UIKit finishes the touch, even if UIKit temporarily clears first
 responder status while dispatching the event. `FlatList` supports `onEndReached`.
-`ScrollView` emits the scroll callbacks described above.
+`ScrollView` emits the scroll callbacks described above and accepts
+`keyboardDismissMode="on-drag"` or `"interactive"`; omitting it keeps the
+keyboard open while scrolling.
 
 Removing `placeholderTextColor` or `selectionColor` from a reused `TextInput`
 restores the platform theme default on both hosts instead of retaining the
