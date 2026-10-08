@@ -45,6 +45,8 @@ accessibility compatibility while supplying the shared wrapping and positioning
 rules; Android keeps the corresponding `LinearLayout` compatibility surface.
 The native host follows the configured appearance, and iOS reapplies its
 resolved background when the system trait changes without recreating the screen.
+Both generated hosts keep native content inside platform safe-area insets,
+including Android system bars and display cutouts.
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an
