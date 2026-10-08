@@ -124,8 +124,8 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertEqual(bounded.frame.width, 140, accuracy: 2, "maxWidth was not applied")
         let absolute = app.otherElements["layout-absolute"]
         XCTAssertTrue(absolute.exists)
-        XCTAssertGreaterThanOrEqual(absolute.frame.minX, wrapped.frame.minX)
-        XCTAssertGreaterThanOrEqual(absolute.frame.minY, wrapped.frame.minY)
+        XCTAssertLessThanOrEqual(absolute.frame.maxX, wrapped.frame.maxX - 8)
+        XCTAssertLessThanOrEqual(absolute.frame.maxY, wrapped.frame.maxY - 8)
 
         let field = app.textFields["name-input"]
         XCTAssertTrue(field.waitForExistence(timeout: 15))

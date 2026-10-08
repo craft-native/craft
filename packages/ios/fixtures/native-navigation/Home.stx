@@ -131,7 +131,7 @@ function openCapabilities() {
     <View testID="layout-wrap" onLayout={captureLayout} style={{"width":layoutWide ? 240 : 180,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>
       <Text testID="layout-stretch" style={{"width":100,"height":24,"alignSelf":"stretch"}}>wrapped</Text>
-      <View testID="layout-absolute" style={{"position":"absolute","left":8,"top":8,"width":12,"height":12,"backgroundColor":"#abcdef"}} />
+      <View testID="layout-absolute" style={{"position":"absolute","right":8,"bottom":8,"width":12,"height":12,"backgroundColor":"#abcdef"}} />
     </View>
     <Text testID="layout-status">{layoutWidth > 0 ? `Layout width: ${layoutWidth}` : 'layout pending'}</Text>
     <Button testID="toggle-layout-width" onPress={toggleLayoutWidth}>Toggle layout width</Button>

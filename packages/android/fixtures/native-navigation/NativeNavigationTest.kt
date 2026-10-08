@@ -246,8 +246,8 @@ class NativeNavigationTest {
             val absolute = awaitView(activity, "layout-absolute")
             assertEquals((140 * density).toInt(), bounded.width)
             assertTrue(
-                "absolute child ignored its local insets",
-                absolute.left >= (8 * density).toInt() && absolute.top >= (8 * density).toInt()
+                "absolute child ignored its trailing insets",
+                absolute.right <= wrapped.width - (8 * density).toInt() && absolute.bottom <= wrapped.height - (8 * density).toInt()
             )
             assertTrue("wrapped child did not wrap", bounded.top < awaitView(activity, "layout-stretch").top)
             val scroll = awaitView(activity, "native-scroll")
