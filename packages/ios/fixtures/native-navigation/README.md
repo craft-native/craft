@@ -7,7 +7,8 @@ is hosted, so old event and image handlers cannot leak across reuse.
 Returning to a retained route also reapplies native theme defaults before the
 controller appears, keeping dark-mode colors current after navigation.
 The form path carries a keyed draft across a single-line/multiline input mode
-change even though UIKit must replace the underlying control class.
+change even though UIKit must replace the underlying control class. Keyed
+FlatList inputs retain their drafts when rows recycle off-screen and return.
 
 From the Craft repository, with the sibling stx checkout at or after
 `6c1603f742`:

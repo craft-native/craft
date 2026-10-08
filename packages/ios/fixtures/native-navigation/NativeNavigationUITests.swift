@@ -229,9 +229,13 @@ final class NativeNavigationUITests: XCTestCase {
         let initialRowLayouts = Int(peopleLayouts.label.split(separator: ":").last ?? "0") ?? 0
         XCTAssertGreaterThan(initialRowLayouts, 0)
         XCTAssertTrue(app.textFields["person-input-person-0"].waitForExistence(timeout: 5))
+        let personInput = app.textFields["person-input-person-0"]
+        personInput.tap()
+        personInput.typeText("draft")
         app.buttons["shuffle-people"].tap()
         let firstPerson = app.staticTexts["person-label-person-0"]
         XCTAssertTrue(waitForLabel(firstPerson, "1: Person zero updated"))
+        XCTAssertEqual(personInput.value as? String, "draft")
         let peopleCount = app.staticTexts["people-count"]
         for _ in 0..<30 where peopleCount.label == "People: 40; events: 1" {
             people.swipeUp()
@@ -244,6 +248,10 @@ final class NativeNavigationUITests: XCTestCase {
             waitForLayoutIncrease(peopleLayouts, from: initialRowLayouts),
             "FlatList did not report a row layout after recycling; found \(peopleLayouts.label)"
         )
+        people.swipeDown()
+        let recycledPersonInput = app.textFields["person-input-person-0"]
+        XCTAssertTrue(recycledPersonInput.waitForExistence(timeout: 5))
+        XCTAssertEqual(recycledPersonInput.value as? String, "draft")
         app.buttons["clear-people"].tap()
         XCTAssertTrue(app.staticTexts["people-empty"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["people-footer"].waitForExistence(timeout: 5))

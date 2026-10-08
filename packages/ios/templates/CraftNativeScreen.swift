@@ -1254,7 +1254,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             recycleItem: { [weak self] identity in
                 guard let self = self,
                       let row = self.flatListRows[listKey]?.removeValue(forKey: identity) else { return }
-                self.forgetHandlers(row)
+                self.forgetHandlers(row, preservingInputDrafts: true)
             },
             endReached: events["onEndReached"].map { [weak self] handler in
                 { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
@@ -1280,7 +1280,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         node.view.removeFromSuperview()
     }
 
-    private func forgetHandlers(_ node: RenderedNode) {
+    private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false) {
         if let list = node.view as? CraftNativeFlatList {
             let listKey = ObjectIdentifier(list)
             list.discardAll()
@@ -1296,7 +1296,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         endEditingHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
         inputIdentities.removeValue(forKey: id)
-        if node.type == "TextInput" { inputDrafts.removeValue(forKey: node.identity) }
+        if node.type == "TextInput" && !preservingInputDrafts { inputDrafts.removeValue(forKey: node.identity) }
         longPressHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
@@ -1320,7 +1320,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         imageLoadHandlers.removeValue(forKey: id)
         imageLoadEndHandlers.removeValue(forKey: id)
         imageErrorHandlers.removeValue(forKey: id)
-        for child in node.children { forgetHandlers(child) }
+        for child in node.children { forgetHandlers(child, preservingInputDrafts: preservingInputDrafts) }
     }
 
     private func updateHandler(_ handler: String?, for view: UIView) {

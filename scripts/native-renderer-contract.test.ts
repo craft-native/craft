@@ -307,6 +307,12 @@ describe('native renderer component contract', () => {
     expect(androidTests).not.toContain('Rows laid out: ${initialRowLayouts + 1}')
   })
 
+  it('retains keyed iOS input drafts while FlatList rows recycle', () => {
+    expect(ios).toContain('self.forgetHandlers(row, preservingInputDrafts: true)')
+    expect(ios).toContain('private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false)')
+    expect(android).toContain('screen.drafts[identity] = updated')
+  })
+
   it('releases replaced iOS row roots when a keyed identity changes type', () => {
     expect(ios).toContain('if let previous, previous.view !== next.view {')
     expect(ios).toContain('self.forgetHandlers(previous)')
