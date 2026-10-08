@@ -917,7 +917,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             ), for: .normal)
             button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])
             button.isEnabled = props["disabled"] as? Bool != true
-            updateHandler(events["onPress"] ?? events["onClick"], for: button)
+            updateHandler(nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: button)
         case "TextInput":
             if let textView = result as? UITextView {
                 inputIdentities[ObjectIdentifier(textView)] = current.identity
@@ -973,7 +973,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             } else if previous?.view !== field {
                 updateField(field, value: inputDrafts[current.identity] ?? props["defaultValue"] as? String)
             }
-            updateHandler(events["onChange"] ?? events["onChangeText"], for: field)
+            updateHandler(nonEmptyHandler(events["onChange"]) ?? nonEmptyHandler(events["onChangeText"]), for: field)
             updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: field)
             updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)
             updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)
@@ -994,7 +994,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             toggle.thumbTintColor = color(props["thumbColor"])
             if let background = color(props["ios_backgroundColor"]) { toggle.tintColor = background }
-            updateHandler(events["onValueChange"] ?? events["onChange"], for: toggle)
+            updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: toggle)
         case "Slider":
             let slider = result as! UISlider
             slider.minimumValue = (props["minimumValue"] as? NSNumber)?.floatValue ?? 0
@@ -1007,7 +1007,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             slider.maximumTrackTintColor = color(props["maximumTrackTintColor"])
             slider.thumbTintColor = color(props["thumbTintColor"])
             slider.isEnabled = props["disabled"] as? Bool != true
-            updateHandler(events["onValueChange"] ?? events["onChange"], for: slider)
+            updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: slider)
             updateAuxiliaryHandler(events["onSlidingComplete"], in: &sliderCompleteHandlers, for: slider)
         case "ActivityIndicator":
             let indicator = result as! UIActivityIndicatorView
@@ -1088,7 +1088,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         updateLongPressHandler(events["onLongPress"], for: result)
         if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
-            updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
+            updatePressHandler(nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
         }
         applyAccessibility(props, type: type, to: result)
         return current
@@ -1493,7 +1493,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             textView.selectedRange = selectedRange
         }
         (textView as? CraftNativeTextView)?.refreshPlaceholder()
-        updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
+        updateHandler(nonEmptyHandler(events["onChange"]) ?? nonEmptyHandler(events["onChangeText"]), for: textView)
         updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
         updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: textView)
         updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: textView)
