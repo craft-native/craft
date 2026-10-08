@@ -65,8 +65,11 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["native-caption"].label, "Image taps: 1")
         app.buttons["toggle-image-tint"].tap()
         XCTAssertTrue(app.staticTexts["image tint off"].waitForExistence(timeout: 5))
-        app.buttons["toggle-button-style"].tap()
+        let styleToggle = app.buttons["toggle-button-style"]
+        XCTAssertFalse(styleToggle.isSelected)
+        styleToggle.tap()
         XCTAssertTrue(app.staticTexts["button style accented"].waitForExistence(timeout: 5))
+        XCTAssertTrue(styleToggle.isSelected)
         XCTAssertTrue(app.buttons["toggle-panel-style"].waitForExistence(timeout: 5))
         app.buttons["toggle-panel-style"].tap()
         XCTAssertTrue(app.staticTexts["panel style off"].waitForExistence(timeout: 5))

@@ -223,10 +223,16 @@ class NativeNavigationTest {
             assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
             val image = awaitView(activity, "native-image") as ImageView
             assertTrue("image tint did not clear on style update", image.colorFilter == null)
+            val styleToggle = awaitView(activity, "toggle-button-style") as Button
+            var styleInfo: AccessibilityNodeInfo? = null
+            instrumentation.runOnMainSync { styleInfo = styleToggle.createAccessibilityNodeInfo() }
+            assertTrue("selected accessibility state should start clear", styleInfo?.isSelected == false)
             click(activity, "toggle-button-style")
             assertEquals("button style accented", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val accentedButton = awaitView(activity, "toggle-button-style") as Button
             assertEquals(Color.rgb(0xef, 0x44, 0x44), accentedButton.currentTextColor)
+            instrumentation.runOnMainSync { styleInfo = accentedButton.createAccessibilityNodeInfo() }
+            assertTrue("selected accessibility state was not exposed", styleInfo?.isSelected == true)
             val dynamicStyleBox = awaitView(activity, "dynamic-style-box")
             assertTrue("custom panel style should use a GradientDrawable", dynamicStyleBox.background is GradientDrawable)
             click(activity, "toggle-panel-style")
