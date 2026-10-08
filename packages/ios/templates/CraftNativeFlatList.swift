@@ -56,13 +56,28 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         ) -> UICollectionViewLayoutAttributes {
             guard let hostedView = hostedView else { return layoutAttributes }
             let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
-            let target = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)
-            let measured = hostedView.systemLayoutSizeFitting(
-                target,
-                withHorizontalFittingPriority: .required,
-                verticalFittingPriority: .fittingSizeLevel
-            )
-            attributes.size.height = max(1, measured.height)
+            if let collectionView,
+               let flowLayout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout,
+               flowLayout.scrollDirection == .horizontal {
+                let target = CGSize(
+                    width: UIView.layoutFittingCompressedSize.width,
+                    height: layoutAttributes.size.height
+                )
+                let measured = hostedView.systemLayoutSizeFitting(
+                    target,
+                    withHorizontalFittingPriority: .fittingSizeLevel,
+                    verticalFittingPriority: .required
+                )
+                attributes.size.width = max(1, measured.width)
+            } else {
+                let target = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)
+                let measured = hostedView.systemLayoutSizeFitting(
+                    target,
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                )
+                attributes.size.height = max(1, measured.height)
+            }
             return attributes
         }
     }
@@ -244,7 +259,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         guard items.indices.contains(indexPath.item) else { return CGSize(width: bounds.width, height: 44) }
         let item = items[indexPath.item]
         if flowLayout.scrollDirection == .horizontal {
-            return CGSize(width: max(1, bounds.width * 0.8), height: max(1, bounds.height))
+            return CGSize(width: 44, height: max(1, bounds.height))
         }
         let count = item.isChrome ? 1 : columns
         let spacing = flowLayout.minimumInteritemSpacing * CGFloat(count - 1)

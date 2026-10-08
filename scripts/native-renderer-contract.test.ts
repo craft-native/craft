@@ -73,6 +73,9 @@ describe('native renderer component contract', () => {
 
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
+    expect(iosFlatList).toContain('withHorizontalFittingPriority: .fittingSizeLevel')
+    expect(iosFlatList).toContain('attributes.size.width = max(1, measured.width)')
+    expect(iosFlatList).not.toContain('bounds.width * 0.8')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
   })
 
