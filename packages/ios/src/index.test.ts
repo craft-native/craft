@@ -68,6 +68,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('stack.wrap = style["flexWrap"] as? String == "wrap"')
     expect(nativeSwift).toContain('style.position == "absolute"')
     expect(nativeSwift).toContain('style.minWidth')
+    expect(nativeSwift).toContain('flexGrow')
+    expect(nativeSwift).toContain('distributeMainAxisSizes')
     expect(nativeSwift).toContain('style.alignSelf ?? alignItems')
     expect(nativeSwift).toContain('let desiredKeyboardType = keyboardType(props["keyboardType"])')
     expect(nativeSwift).toContain('if field.keyboardType != desiredKeyboardType')

@@ -43,6 +43,9 @@ private struct CraftNativeLayoutStyle {
     let bottom: CGFloat?
     let left: CGFloat?
     let alignSelf: String?
+    let flexGrow: CGFloat
+    let flexShrink: CGFloat
+    let flexBasis: CGFloat?
     let display: String
     let gridColumns: Int
     let gridAutoRows: CGFloat?
@@ -61,6 +64,9 @@ private struct CraftNativeLayoutStyle {
         bottom = number(raw["bottom"])
         left = number(raw["left"])
         alignSelf = raw["alignSelf"] as? String
+        flexGrow = number(raw["flexGrow"] ?? raw["flex"]) ?? 0
+        flexShrink = number(raw["flexShrink"]) ?? 0
+        flexBasis = number(raw["flexBasis"])
         display = raw["display"] as? String ?? "flex"
         gridColumns = craftNativeGridColumnCount(raw["gridTemplateColumns"] ?? raw["gridColumns"])
         gridAutoRows = number(raw["gridAutoRows"])
@@ -182,12 +188,16 @@ private final class CraftNativeFlowView: UIStackView {
 
         var crossOffset: CGFloat = 0
         for (lineItems, lineSizes, lineMain, lineCross) in lines {
-            let free = max(0, availableMain - lineMain)
+            let styles = lineItems.map { childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:]) }
+            let distributed = distributeMainAxisSizes(lineSizes, styles: styles, available: availableMain, lineMain: lineMain)
+            let distributedMain = distributed.reduce(0) { $0 + (axis == .horizontal ? $1.width : $1.height) }
+                + CGFloat(max(0, lineItems.count - 1)) * mainGapValue
+            let free = max(0, availableMain - distributedMain)
             let (leading, between) = distribution(free: free, count: lineItems.count)
             var mainOffset = leading
             for (index, child) in lineItems.enumerated() {
                 let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-                let size = lineSizes[index]
+                let size = distributed[index]
                 let childCross = axis == .horizontal ? size.height : size.width
                 let alignment = style.alignSelf ?? alignItems
                 let crossSize: CGFloat = alignment == "stretch" && styleCrossDimension(style) == nil ? lineCross : childCross
@@ -297,9 +307,26 @@ private final class CraftNativeFlowView: UIStackView {
         let style = style ?? childStyles[ObjectIdentifier(view)] ?? CraftNativeLayoutStyle([:])
         let intrinsic = view.intrinsicContentSize
         let fitted = view.sizeThatFits(available)
-        let width = style.width ?? (intrinsic.width > 0 && intrinsic.width != UIView.noIntrinsicMetric ? intrinsic.width : max(0, fitted.width))
-        let height = style.height ?? (intrinsic.height > 0 && intrinsic.height != UIView.noIntrinsicMetric ? intrinsic.height : max(0, fitted.height))
+        let width = (axis == .horizontal ? style.flexBasis : nil) ?? style.width ?? (intrinsic.width > 0 && intrinsic.width != UIView.noIntrinsicMetric ? intrinsic.width : max(0, fitted.width))
+        let height = (axis == .vertical ? style.flexBasis : nil) ?? style.height ?? (intrinsic.height > 0 && intrinsic.height != UIView.noIntrinsicMetric ? intrinsic.height : max(0, fitted.height))
         return CGSize(width: clamp(width, min: style.minWidth, max: style.maxWidth), height: clamp(height, min: style.minHeight, max: style.maxHeight))
+    }
+
+    private func distributeMainAxisSizes(
+        _ sizes: [CGSize],
+        styles: [CraftNativeLayoutStyle],
+        available: CGFloat,
+        lineMain: CGFloat
+    ) -> [CGSize] {
+        let free = available - lineMain
+        let factors = free >= 0 ? styles.map(\.flexGrow) : styles.map(\.flexShrink)
+        let total = factors.reduce(0, +)
+        guard total > 0, free != 0 else { return sizes }
+        return sizes.enumerated().map { index, size in
+            let delta = free * factors[index] / total
+            if axis == .horizontal { return CGSize(width: max(0, size.width + delta), height: size.height) }
+            return CGSize(width: size.width, height: max(0, size.height + delta))
+        }
     }
 
     private func clamp(_ value: CGFloat, min lower: CGFloat?, max upper: CGFloat?) -> CGFloat {

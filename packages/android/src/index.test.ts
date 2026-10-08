@@ -94,6 +94,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('wrap = style.optString("flexWrap") == "wrap"')
       expect(nativeActivity).toContain('style.position == "absolute"')
       expect(nativeActivity).toContain('style.minWidth')
+      expect(nativeActivity).toContain('flexGrow')
+      expect(nativeActivity).toContain('totalFactor')
       expect(nativeActivity).toContain('entry.style.alignSelf ?: alignItems')
       expect(nativeActivity).toContain('View.MeasureSpec.UNSPECIFIED')
       expect(nativeActivity).toContain('gap.toDouble() / density.toDouble()')
