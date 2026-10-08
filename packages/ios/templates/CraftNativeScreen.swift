@@ -522,6 +522,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
+    private var imageErrors: [ObjectIdentifier: String] = [:]
     private var tintedImages = Set<ObjectIdentifier>()
     private var imageLoadStartHandlers: [ObjectIdentifier: String] = [:]
     private var imageLoadHandlers: [ObjectIdentifier: String] = [:]
@@ -1287,6 +1288,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
+        imageErrors.removeValue(forKey: id)
         tintedImages.remove(id)
         imageLoadStartHandlers.removeValue(forKey: id)
         imageLoadHandlers.removeValue(forKey: id)
@@ -1683,6 +1685,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         guard imageSources[id] != uri else { return }
         imageTasks.removeValue(forKey: id)?.cancel()
         imageSources[id] = uri
+        imageErrors.removeValue(forKey: id)
         view.image = nil
         view.accessibilityValue = nil
         emitImageEvent(view, handler: imageLoadStartHandlers[id])
@@ -1732,6 +1735,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func imageFailure(_ view: UIImageView, uri: String?, message: String) {
+        imageErrors[ObjectIdentifier(view)] = message
         view.image = nil
         view.accessibilityValue = message
         let id = ObjectIdentifier(view)
@@ -1759,7 +1763,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.accessibilityHint = props["accessibilityHint"] as? String
         if let value = props["accessibilityValue"] {
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
-        } else if type != "TextInput" && type != "Image" {
+        } else if type != "TextInput" {
             view.accessibilityValue = nil
         }
         let role = props["accessibilityRole"] as? String
@@ -1786,6 +1790,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if state["checked"] as? Bool == true { traits.insert(.selected) }
         }
         if let control = view as? UIControl, !control.isEnabled { traits.insert(.notEnabled) }
+        if type == "Image", let message = imageErrors[ObjectIdentifier(view)] {
+            let current = view.accessibilityValue
+            if current?.contains(message) != true {
+                view.accessibilityValue = [current, message].compactMap { $0 }.joined(separator: ", ")
+            }
+        }
         view.accessibilityTraits = traits
     }
 

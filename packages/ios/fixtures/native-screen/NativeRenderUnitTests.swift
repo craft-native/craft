@@ -291,6 +291,16 @@ final class NativeRenderUnitTests: XCTestCase {
             "type": "Image", "props": ["key": "broken", "source": ["uri": "http://example.com/image.png"]]
         ]]))
         XCTAssertEqual(image.accessibilityValue, "Unsupported image source")
+
+        controller.render(document([[
+            "type": "Image",
+            "props": [
+                "key": "broken",
+                "source": ["uri": "http://example.com/image.png"],
+                "accessibilityValue": "ready",
+            ],
+        ]]))
+        XCTAssertEqual(image.accessibilityValue, "ready, Unsupported image source")
     }
 
     func testMutationBatchesPreserveControlsFocusScrollAndHandlers() throws {
