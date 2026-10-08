@@ -1154,8 +1154,10 @@ class MainActivity : AppCompatActivity() {
                 val maximum = if (maximumCandidate > minimum) maximumCandidate else minimum + Double.MIN_VALUE
                 max = 1000
                 setOnSeekBarChangeListener(null)
-                progress = (((props.optDouble("value", minimum) - minimum) / (maximum - minimum)) * max).toInt().coerceIn(0, max)
                 val step = props.optDouble("step", 0.0).takeIf { it > 0 }
+                val requested = props.optDouble("value", minimum)
+                val value = if (step != null) minimum + ((requested - minimum) / step).roundToInt() * step else requested
+                progress = (((value - minimum) / (maximum - minimum)) * max).roundToInt().coerceIn(0, max)
                 if (step != null) screen.sliderSteps[this] = step else screen.sliderSteps.remove(this)
                 progressTintList = props.optString("minimumTrackTintColor").takeIf { it.isNotBlank() }
                     ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }

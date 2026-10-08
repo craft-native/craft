@@ -233,6 +233,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('props.optBoolean("hidesWhenStopped", true)')
   })
 
+  it('snaps controlled slider values on initial render across hosts', () => {
+    expect(ios).toContain('slider.value = snappedSliderValue(value, for: slider)')
+    expect(android).toContain('val requested = props.optDouble("value", minimum)')
+    expect(android).toContain('val value = if (step != null) minimum + ((requested - minimum) / step).roundToInt() * step else requested')
+    expect(android).toContain('progress = (((value - minimum) / (maximum - minimum)) * max).roundToInt()')
+  })
+
   it('resets removed accessibility metadata on both hosts', () => {
     expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
     expect(android).toContain('view.contentDescription = when {')
