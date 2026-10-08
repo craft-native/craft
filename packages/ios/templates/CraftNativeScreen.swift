@@ -46,6 +46,10 @@ private struct CraftNativeLayoutStyle {
     let flexGrow: CGFloat
     let flexShrink: CGFloat
     let flexBasis: CGFloat?
+    let marginTop: CGFloat
+    let marginRight: CGFloat
+    let marginBottom: CGFloat
+    let marginLeft: CGFloat
     let display: String
     let gridColumns: Int
     let gridAutoRows: CGFloat?
@@ -67,6 +71,13 @@ private struct CraftNativeLayoutStyle {
         flexGrow = number(raw["flexGrow"] ?? raw["flex"]) ?? 0
         flexShrink = number(raw["flexShrink"]) ?? 0
         flexBasis = number(raw["flexBasis"])
+        let margin = number(raw["margin"]) ?? 0
+        let horizontalMargin = number(raw["marginHorizontal"]) ?? margin
+        let verticalMargin = number(raw["marginVertical"]) ?? margin
+        marginTop = number(raw["marginTop"]) ?? verticalMargin
+        marginRight = number(raw["marginRight"]) ?? horizontalMargin
+        marginBottom = number(raw["marginBottom"]) ?? verticalMargin
+        marginLeft = number(raw["marginLeft"]) ?? horizontalMargin
         display = raw["display"] as? String ?? "flex"
         gridColumns = craftNativeGridColumnCount(raw["gridTemplateColumns"] ?? raw["gridColumns"])
         gridAutoRows = number(raw["gridAutoRows"])
@@ -146,8 +157,13 @@ private final class CraftNativeFlowView: UIStackView {
         guard !children.isEmpty else { return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric) }
         if grid { return gridIntrinsicContentSize(children) }
         let sizes = children.map { measuredSize(for: $0, available: CGSize(width: 10_000, height: 10_000)) }
-        let main = sizes.map { axis == .horizontal ? $0.width : $0.height }.reduce(0, +)
-        let cross = sizes.map { axis == .horizontal ? $0.height : $0.width }.max() ?? 0
+        let styles = children.map { childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:]) }
+        let main = sizes.enumerated().map { index, size in
+            (axis == .horizontal ? size.width : size.height) + mainMargins(styles[index])
+        }.reduce(0, +)
+        let cross = sizes.enumerated().map { index, size in
+            (axis == .horizontal ? size.height : size.width) + crossMargins(styles[index])
+        }.max() ?? 0
         let mainGap = max(0, CGFloat(max(0, children.count - 1))) * mainGapValue
         if axis == .horizontal {
             return CGSize(width: padding.left + padding.right + main + mainGap, height: padding.top + padding.bottom + cross)
@@ -179,8 +195,8 @@ private final class CraftNativeFlowView: UIStackView {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             if style.position == "absolute" { continue }
             let size = measuredSize(for: child, available: content.size, style: style)
-            let childMain = axis == .horizontal ? size.width : size.height
-            let childCross = axis == .horizontal ? size.height : size.width
+            let childMain = (axis == .horizontal ? size.width : size.height) + mainMargins(style)
+            let childCross = (axis == .horizontal ? size.height : size.width) + crossMargins(style)
             let next = items.isEmpty ? childMain : main + mainGapValue + childMain
             if wrap && !items.isEmpty && next > availableMain { flush() }
             items.append(child); sizes.append(size)
@@ -193,8 +209,9 @@ private final class CraftNativeFlowView: UIStackView {
         for (lineItems, lineSizes, lineMain, lineCross) in lines {
             let styles = lineItems.map { childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:]) }
             let distributed = distributeMainAxisSizes(lineSizes, styles: styles, available: availableMain, lineMain: lineMain)
-            let distributedMain = distributed.reduce(0) { $0 + (axis == .horizontal ? $1.width : $1.height) }
-                + CGFloat(max(0, lineItems.count - 1)) * mainGapValue
+            let distributedMain = distributed.enumerated().reduce(0) { total, entry in
+                total + (axis == .horizontal ? entry.element.width : entry.element.height) + mainMargins(styles[entry.offset])
+            } + CGFloat(max(0, lineItems.count - 1)) * mainGapValue
             let free = max(0, availableMain - distributedMain)
             let (leading, between) = distribution(free: free, count: lineItems.count)
             var mainOffset = leading
@@ -202,22 +219,27 @@ private final class CraftNativeFlowView: UIStackView {
                 let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
                 let size = distributed[index]
                 let childCross = axis == .horizontal ? size.height : size.width
+                let mainLeading = axis == .horizontal ? style.marginLeft : style.marginTop
+                let mainTrailing = axis == .horizontal ? style.marginRight : style.marginBottom
+                let crossLeading = axis == .horizontal ? style.marginTop : style.marginLeft
+                let crossTrailing = axis == .horizontal ? style.marginBottom : style.marginRight
                 let alignment = style.alignSelf ?? alignItems
-                let crossSize: CGFloat = alignment == "stretch" && styleCrossDimension(style) == nil ? lineCross : childCross
+                let crossSize: CGFloat = alignment == "stretch" && styleCrossDimension(style) == nil
+                    ? max(0, lineCross - crossLeading - crossTrailing) : childCross
                 let crossPosition: CGFloat
                 switch alignment {
-                case "center": crossPosition = (lineCross - crossSize) / 2
-                case "flex-end": crossPosition = lineCross - crossSize
-                default: crossPosition = 0
+                case "center": crossPosition = crossLeading + (lineCross - crossLeading - crossTrailing - crossSize) / 2
+                case "flex-end": crossPosition = lineCross - crossTrailing - crossSize
+                default: crossPosition = crossLeading
                 }
                 let frame: CGRect
                 if axis == .horizontal {
-                    frame = CGRect(x: content.minX + mainOffset, y: content.minY + crossOffset + crossPosition, width: size.width, height: crossSize)
+                    frame = CGRect(x: content.minX + mainOffset + mainLeading, y: content.minY + crossOffset + crossPosition, width: size.width, height: crossSize)
                 } else {
-                    frame = CGRect(x: content.minX + crossOffset + crossPosition, y: content.minY + mainOffset, width: crossSize, height: size.height)
+                    frame = CGRect(x: content.minX + crossOffset + crossPosition, y: content.minY + mainOffset + mainLeading, width: crossSize, height: size.height)
                 }
                 child.frame = frame.integral
-                mainOffset += (axis == .horizontal ? size.width : size.height) + mainGapValue + between
+                mainOffset += mainLeading + (axis == .horizontal ? size.width : size.height) + mainTrailing + mainGapValue + between
             }
             crossOffset += lineCross + crossGapValue
         }
@@ -246,10 +268,10 @@ private final class CraftNativeFlowView: UIStackView {
         for (index, child) in flowChildren.enumerated() {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             let size = measuredSize(for: child, available: CGSize(width: 10_000, height: 10_000), style: style)
-            columnWidth = max(columnWidth, size.width)
             let row = index / columns
             while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
-            rowHeights[row] = max(rowHeights[row], size.height)
+            columnWidth = max(columnWidth, size.width + style.marginLeft + style.marginRight)
+            rowHeights[row] = max(rowHeights[row], size.height + style.marginTop + style.marginBottom)
         }
         let width = padding.left + padding.right + CGFloat(columns) * columnWidth + CGFloat(max(0, columns - 1)) * horizontalGap
         let height = padding.top + padding.bottom + rowHeights.reduce(0, +) + CGFloat(max(0, rowHeights.count - 1)) * verticalGap
@@ -269,11 +291,15 @@ private final class CraftNativeFlowView: UIStackView {
         var sizes: [CGSize] = []
         for (index, child) in flowChildren.enumerated() {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            let size = measuredSize(for: child, available: CGSize(width: cellWidth, height: content.height), style: style)
+            let size = measuredSize(
+                for: child,
+                available: CGSize(width: max(0, cellWidth - style.marginLeft - style.marginRight), height: content.height),
+                style: style
+            )
             sizes.append(size)
             let row = index / columns
             while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
-            rowHeights[row] = max(rowHeights[row], size.height)
+            rowHeights[row] = max(rowHeights[row], size.height + style.marginTop + style.marginBottom)
         }
         var rowTop = content.minY
         for (index, child) in flowChildren.enumerated() {
@@ -283,10 +309,14 @@ private final class CraftNativeFlowView: UIStackView {
             let rowHeight = rowHeights[row]
             let size = sizes[index]
             let align = style.alignSelf ?? alignItems
-            let width = align == "stretch" && style.width == nil ? cellWidth : min(cellWidth, size.width)
-            let height = align == "stretch" && style.height == nil ? rowHeight : min(rowHeight, size.height)
-            let x = content.minX + CGFloat(column) * (cellWidth + horizontalGap) + (align == "center" ? (cellWidth - width) / 2 : align == "flex-end" ? cellWidth - width : 0)
-            let y = rowTop + (align == "center" ? (rowHeight - height) / 2 : align == "flex-end" ? rowHeight - height : 0)
+            let availableWidth = max(0, cellWidth - style.marginLeft - style.marginRight)
+            let availableHeight = max(0, rowHeight - style.marginTop - style.marginBottom)
+            let width = align == "stretch" && style.width == nil ? availableWidth : min(availableWidth, size.width)
+            let height = align == "stretch" && style.height == nil ? availableHeight : min(availableHeight, size.height)
+            let x = content.minX + CGFloat(column) * (cellWidth + horizontalGap) + style.marginLeft
+                + (align == "center" ? (availableWidth - width) / 2 : align == "flex-end" ? availableWidth - width : 0)
+            let y = rowTop + style.marginTop
+                + (align == "center" ? (availableHeight - height) / 2 : align == "flex-end" ? availableHeight - height : 0)
             child.frame = CGRect(x: x, y: y, width: width, height: height).integral
             if column == columns - 1 || index == flowChildren.count - 1 { rowTop += rowHeight + verticalGap }
         }
@@ -304,6 +334,14 @@ private final class CraftNativeFlowView: UIStackView {
 
     private var mainGapValue: CGFloat { axis == .horizontal ? (columnGap ?? gap) : (rowGap ?? gap) }
     private var crossGapValue: CGFloat { axis == .horizontal ? (rowGap ?? 0) : (columnGap ?? 0) }
+
+    private func mainMargins(_ style: CraftNativeLayoutStyle) -> CGFloat {
+        axis == .horizontal ? style.marginLeft + style.marginRight : style.marginTop + style.marginBottom
+    }
+
+    private func crossMargins(_ style: CraftNativeLayoutStyle) -> CGFloat {
+        axis == .horizontal ? style.marginTop + style.marginBottom : style.marginLeft + style.marginRight
+    }
 
     private func styleCrossDimension(_ style: CraftNativeLayoutStyle) -> CGFloat? {
         axis == .horizontal ? style.height : style.width

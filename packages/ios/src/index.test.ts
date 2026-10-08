@@ -68,6 +68,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('stack.wrap = style["flexWrap"] as? String == "wrap"')
     expect(nativeSwift).toContain('style.position == "absolute"')
     expect(nativeSwift).toContain('style.minWidth')
+    expect(nativeSwift).toContain('marginTop: CGFloat')
+    expect(nativeSwift).toContain('mainMargins(styles[index])')
     expect(nativeSwift).toContain('flexGrow')
     expect(nativeSwift).toContain('distributeMainAxisSizes')
     expect(nativeSwift).toContain('style.alignSelf ?? alignItems')

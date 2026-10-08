@@ -77,6 +77,14 @@ describe('native renderer component contract', () => {
     expect(android).toContain('cellWidth * columns')
   })
 
+  it('keeps per-edge margins in native flex and grid layout', () => {
+    expect(ios).toContain('marginTop: CGFloat')
+    expect(ios).toContain('let horizontalMargin = number(raw["marginHorizontal"]) ?? margin')
+    expect(ios).toContain('mainMargins(styles[index])')
+    expect(android).toContain('style.optDouble("marginLeft", horizontal)')
+    expect(android).toContain('setMargins(')
+  })
+
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
     expect(iosFlatList).toContain('withHorizontalFittingPriority: .fittingSizeLevel')
