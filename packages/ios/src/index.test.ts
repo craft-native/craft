@@ -92,6 +92,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: field.textAlignment)')
     expect(nativeSwift).toContain('textView.typingAttributes = attributes')
     expect(nativeSwift).toContain('textView.selectedRange = selectedRange')
+    expect(nativeSwift).toContain('updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)')
+    expect(nativeSwift).toContain('if text == "\\n", let handler = submitHandlers[ObjectIdentifier(textView)]')
     expect(nativeSwift).toContain('events["onSlidingComplete"]')
     expect(nativeSwift).toContain('minimumTrackTintColor')
     expect(nativeSwift).toContain('sliderFinished')

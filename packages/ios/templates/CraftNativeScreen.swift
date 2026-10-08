@@ -1373,6 +1373,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
         updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
         updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: textView)
+        updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)
         if props["autoFocus"] as? Bool == true, !textView.isFirstResponder {
             DispatchQueue.main.async { _ = textView.becomeFirstResponder() }
         }
@@ -1723,6 +1724,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if text == "\n", let handler = submitHandlers[ObjectIdentifier(textView)] {
+            send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
+        }
         guard let maxLength = textMaxLengths[ObjectIdentifier(textView)],
               let current = textView.text,
               let stringRange = Range(range, in: current) else { return true }

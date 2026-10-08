@@ -42,6 +42,8 @@ describe('native renderer component contract', () => {
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')
+    expect(ios).toContain('updateAuxiliaryHandler(events["onSubmitEditing"], in: &submitHandlers, for: textView)')
+    expect(ios).toContain('if text == "\\n", let handler = submitHandlers[ObjectIdentifier(textView)]')
     expect(android).toContain('configureTextStyle(this, style)')
   })
 
