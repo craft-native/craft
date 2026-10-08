@@ -242,8 +242,10 @@ describe('native renderer component contract', () => {
 
   it('keeps scroll bounce behavior aligned across hosts', () => {
     expect(ios).toContain('scroll.bounces = props["bounces"] as? Bool ?? true')
+    expect(ios).toContain('list.bounces = props["bounces"] as? Bool ?? true')
     expect(android).toContain('fun setBounces(value: Boolean)')
     expect(android).toContain('setBounces(props.optBoolean("bounces", true))')
+    expect(android).toContain('overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS')
     expect(guide).toContain('`bounces` to control the platform overscroll effect')
   })
 })

@@ -1172,6 +1172,7 @@ class MainActivity : AppCompatActivity() {
                     (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                         ?.hideSoftInputFromWindow(windowToken, 0)
                 }
+                overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
                 reconcileFlatList(screen, this, children, path, protocolId ?: path, props, events)
             }
             "View", "SafeAreaView" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
