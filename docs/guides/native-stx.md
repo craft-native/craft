@@ -34,6 +34,7 @@ bundle must be local at build time.
 | `View`, `SafeAreaView` | `CraftNativeFlowView` | `CraftNativeFlexLayout` (a `LinearLayout`) |
 | `Text` | `UILabel` | `TextView` |
 | `Button` | `UIButton` | `Button` |
+| `Link` | underlined `UIButton` | underlined clickable `TextView` |
 | `TextInput` | `UITextField` | `EditText` |
 | `Image` | `UIImageView` | `ImageView` |
 | `ScrollView` | `UIScrollView` | `ScrollView` or `HorizontalScrollView` |

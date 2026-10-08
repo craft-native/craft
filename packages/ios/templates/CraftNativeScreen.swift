@@ -720,14 +720,25 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         case "Text":
             let label = result as! UILabel
             configureText(label, text: children.compactMap { $0 as? String }.joined(), style: style)
-        case "Button":
+        case "Button", "Link":
             let button = result as! UIButton
-            button.setTitle(props["title"] as? String ?? children.compactMap { $0 as? String }.joined(), for: .normal)
-            button.setTitleColor(color(style["color"]) ?? .systemBlue, for: .normal)
-            button.titleLabel?.font = textFont(
+            let title = props["title"] as? String ?? children.compactMap { $0 as? String }.joined()
+            let titleColor = color(style["color"]) ?? .systemBlue
+            let font = textFont(
                 style,
                 default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)
             )
+            if type == "Link" {
+                button.setAttributedTitle(NSAttributedString(string: title, attributes: [
+                    .foregroundColor: titleColor,
+                    .font: font,
+                    .underlineStyle: NSUnderlineStyle.single.rawValue,
+                ]), for: .normal)
+            } else {
+                button.setTitle(title, for: .normal)
+                button.setTitleColor(titleColor, for: .normal)
+                button.titleLabel?.font = font
+            }
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
             let field = result as! UITextField
@@ -791,7 +802,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        if type != "Button" && type != "TextInput" {
+        if type != "Button" && type != "Link" && type != "TextInput" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -804,7 +815,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             let label = UILabel()
             label.numberOfLines = 0
             return label
-        case "Button":
+        case "Button", "Link":
             let button = UIButton(type: .system)
             button.addTarget(self, action: #selector(buttonPressed(_:)), for: .touchUpInside)
             return button
@@ -1190,7 +1201,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
         }
         let role = props["accessibilityRole"] as? String
-        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Image", "TextInput"].contains(type))
+        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput"].contains(type))
         var traits: UIAccessibilityTraits = []
         switch role ?? type.lowercased() {
         case "button": traits.insert(.button)
