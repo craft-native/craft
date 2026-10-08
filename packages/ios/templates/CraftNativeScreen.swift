@@ -479,6 +479,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
+    private var tintedImages = Set<ObjectIdentifier>()
     private var imageLoadStartHandlers: [ObjectIdentifier: String] = [:]
     private var imageLoadHandlers: [ObjectIdentifier: String] = [:]
     private var imageLoadEndHandlers: [ObjectIdentifier: String] = [:]
@@ -934,6 +935,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         case "Image":
             let image = result as! UIImageView
+            let imageID = ObjectIdentifier(image)
+            if let tint = color(style["tintColor"]) {
+                tintedImages.insert(imageID)
+                image.tintColor = tint
+            } else {
+                tintedImages.remove(imageID)
+                image.tintColor = nil
+            }
+            if let current = image.image { image.image = imageForDisplay(current, view: image) }
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
             image.clipsToBounds = image.contentMode == .scaleAspectFill
             updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: image)
@@ -1168,6 +1178,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         imageSources.removeValue(forKey: id)
         imageTasks.removeValue(forKey: id)?.cancel()
+        tintedImages.remove(id)
         imageLoadStartHandlers.removeValue(forKey: id)
         imageLoadHandlers.removeValue(forKey: id)
         imageLoadEndHandlers.removeValue(forKey: id)
@@ -1448,7 +1459,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 imageFailure(view, uri: uri, message: "Image data is invalid")
                 return
             }
-            view.image = image
+            view.image = imageForDisplay(image, view: view)
             emitImageEvent(view, handler: imageLoadHandlers[id])
             emitImageEvent(view, handler: imageLoadEndHandlers[id])
             return
@@ -1463,7 +1474,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                         self.imageFailure(view, uri: uri, message: "Image download failed")
                         return
                     }
-                    view.image = image
+                    view.image = self.imageForDisplay(image, view: view)
                     self.emitImageEvent(view, handler: self.imageLoadHandlers[ObjectIdentifier(view)])
                     self.emitImageEvent(view, handler: self.imageLoadEndHandlers[ObjectIdentifier(view)])
                 }
@@ -1477,7 +1488,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 imageFailure(view, uri: uri, message: "Bundled image was not found")
                 return
             }
-            view.image = image
+            view.image = imageForDisplay(image, view: view)
             emitImageEvent(view, handler: imageLoadHandlers[id])
             emitImageEvent(view, handler: imageLoadEndHandlers[id])
             return
@@ -1492,6 +1503,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         emitImageEvent(view, handler: imageErrorHandlers[id], nativeEvent: ["error": ["message": message]])
         emitImageEvent(view, handler: imageLoadEndHandlers[id])
         NSLog("[craft native] %@: %@", message, uri ?? "<missing>")
+    }
+
+    private func imageForDisplay(_ image: UIImage, view: UIImageView) -> UIImage {
+        image.withRenderingMode(tintedImages.contains(ObjectIdentifier(view)) ? .alwaysTemplate : .alwaysOriginal)
     }
 
     private func emitImageEvent(

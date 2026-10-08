@@ -469,6 +469,15 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('position != "absolute"')
   })
 
+  it('applies image tinting to every native image source', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-image-tint-'))
+    await init({ runtimeDir: null, name: 'NativeImageTint', bundleId: 'org.example.native-image-tint', output, config: { renderer: 'native' } })
+    const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain('private var tintedImages = Set<ObjectIdentifier>()')
+    expect(source).toContain('.alwaysTemplate')
+    expect(source).toContain('imageForDisplay(image, view: view)')
+  })
+
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-health-'))
     await init({ runtimeDir: null, name: 'Health', bundleId: 'com.example.health', output, config: { enableHealthKit: true } })

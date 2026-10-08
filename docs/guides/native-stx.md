@@ -164,7 +164,8 @@ type:
 - for text: `color`, `fontFamily`, `fontSize`, `fontStyle`, `fontWeight`,
   `letterSpacing`, `lineHeight`, `textAlign`, `textDecorationLine`, and
   `textTransform`;
-- for images: `resizeMode` (`contain`, `cover`, `stretch`, or `center`).
+- for images: `resizeMode` (`contain`, `cover`, `stretch`, or `center`) and
+  `tintColor` for template rendering.
 
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
