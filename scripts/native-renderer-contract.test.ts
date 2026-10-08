@@ -183,6 +183,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('func number(_ value: Any?) -> CGFloat?')
     expect(android).toContain('if (!raw.has(name) || raw.isNull(name)) return null')
     expect(android).toContain('raw.optDouble(name, Double.NaN)')
+    expect(android).toContain('style.has("backgroundColor") && !style.isNull("backgroundColor")')
     expect(android).toContain('val width = style.optDouble("width", Double.NaN)')
     expect(android).toContain('width ?: ViewGroup.LayoutParams.WRAP_CONTENT')
     expect(android).toContain('gridAutoRows = style.optDouble("gridAutoRows", Double.NaN)')

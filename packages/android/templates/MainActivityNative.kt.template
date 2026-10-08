@@ -1514,7 +1514,7 @@ class MainActivity : AppCompatActivity() {
         view.alpha = style.optDouble("opacity", 1.0).toFloat()
         view.visibility = if (style.optString("display") == "none") View.GONE else View.VISIBLE
         view.elevation = dp(style.optDouble("elevation", 0.0)).toFloat()
-        val background = style.has("backgroundColor")
+        val background = style.has("backgroundColor") && !style.isNull("backgroundColor")
         val border = style.optDouble("borderWidth", 0.0)
         val radius = style.optDouble("borderRadius", 0.0)
         val defaultBackground = if (defaultBackgrounds.containsKey(view)) {

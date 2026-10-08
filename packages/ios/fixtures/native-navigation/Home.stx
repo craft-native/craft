@@ -204,7 +204,7 @@ function openCapabilities() {
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
     <Text testID="panel-style-status">{panelStyleStatus}</Text>
-    <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : undefined,"borderWidth":panelStyled ? 2 : undefined,"borderColor":panelStyled ? "#abcdef" : undefined}} />
+    <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : null,"borderWidth":panelStyled ? 2 : null,"borderColor":panelStyled ? "#abcdef" : null}} />
     <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
     <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
     <Switch testID="native-switch" value={switchValue} accessibilityState={{"checked":switchValue}} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />

@@ -100,6 +100,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('private class CraftNativeFlexLayout(context: Context) : LinearLayout(context)')
       expect(nativeActivity).toContain('if (!raw.has(name) || raw.isNull(name)) return null')
       expect(nativeActivity).toContain('raw.optDouble(name, Double.NaN)')
+      expect(nativeActivity).toContain('style.has("backgroundColor") && !style.isNull("backgroundColor")')
       expect(nativeActivity).toContain('val width = style.optDouble("width", Double.NaN)')
       expect(nativeActivity).toContain('width ?: ViewGroup.LayoutParams.WRAP_CONTENT')
       expect(nativeActivity).toContain('gridAutoRows = style.optDouble("gridAutoRows", Double.NaN)')
