@@ -138,6 +138,17 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.clearColorFilter()')
   })
 
+  it('keeps activity indicator visibility and sizing props aligned', () => {
+    expect(ios).toContain('if let numericSize = requestedSize as? NSNumber')
+    expect(ios).toContain('indicator.transform = CGAffineTransform(scaleX: scale, y: scale)')
+    expect(ios).toContain('indicator.hidesWhenStopped = props["hidesWhenStopped"] as? Bool ?? true')
+    expect(ios).toContain('indicator.stopAnimating()')
+    expect(android).toContain('val requestedSize = props.opt("size")')
+    expect(android).toContain('is Number -> (requestedSize.toDouble() / 24.0).toFloat().coerceAtLeast(0.5f)')
+    expect(android).toContain('isIndeterminate = animating')
+    expect(android).toContain('props.optBoolean("hidesWhenStopped", true)')
+  })
+
   it('resets removed accessibility metadata on both hosts', () => {
     expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
     expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')

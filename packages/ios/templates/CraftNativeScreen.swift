@@ -967,8 +967,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onSlidingComplete"], in: &sliderCompleteHandlers, for: slider)
         case "ActivityIndicator":
             let indicator = result as! UIActivityIndicatorView
-            indicator.style = (props["size"] as? String) == "large" ? .large : .medium
+            let requestedSize = props["size"]
+            indicator.style = (requestedSize as? String) == "large" ? .large : .medium
+            let scale: CGFloat
+            if let numericSize = requestedSize as? NSNumber {
+                scale = max(0.5, CGFloat(numericSize.doubleValue / 20.0))
+            } else if (requestedSize as? String) == "small" {
+                scale = 0.75
+            } else {
+                scale = 1
+            }
+            indicator.transform = CGAffineTransform(scaleX: scale, y: scale)
             indicator.color = color(props["color"]) ?? .tintColor
+            indicator.hidesWhenStopped = props["hidesWhenStopped"] as? Bool ?? true
             if props["animating"] as? Bool == false {
                 indicator.stopAnimating()
             } else {

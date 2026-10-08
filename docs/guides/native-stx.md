@@ -60,6 +60,10 @@ generated renderers, so a platform can’t silently lose a native primitive.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.
+`ActivityIndicator` accepts `color`, `animating`, `hidesWhenStopped`, and
+`size` (`small`, `large`, or a numeric point/unit value). The native host keeps
+the indicator visible when animation is stopped only when `hidesWhenStopped` is
+false.
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an

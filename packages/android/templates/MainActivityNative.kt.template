@@ -1071,8 +1071,18 @@ class MainActivity : AppCompatActivity() {
                 })
             }
             "ActivityIndicator" -> (previous as? android.widget.ProgressBar ?: android.widget.ProgressBar(this)).apply {
-                isIndeterminate = true
-                visibility = if (props.optBoolean("animating", true)) View.VISIBLE else View.GONE
+                val requestedSize = props.opt("size")
+                val scale = when (requestedSize) {
+                    "large" -> 1.35f
+                    "small" -> 0.75f
+                    is Number -> (requestedSize.toDouble() / 24.0).toFloat().coerceAtLeast(0.5f)
+                    else -> 1f
+                }
+                scaleX = scale
+                scaleY = scale
+                val animating = props.optBoolean("animating", true)
+                isIndeterminate = animating
+                visibility = if (!animating && props.optBoolean("hidesWhenStopped", true)) View.GONE else View.VISIBLE
                 indeterminateTintList = props.optString("color").takeIf { it.isNotBlank() }
                     ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }
             }
