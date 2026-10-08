@@ -191,7 +191,9 @@ or Android app assets, so the asset must be packaged separately under the same
 name for a shared bundle. Plain HTTP, file URLs, and other schemes are rejected.
 Invalid data, missing bundled images, failed HTTPS downloads, and unsupported
 schemes clear stale pixels, log a diagnostic, and expose a short accessibility
-error value. Route teardown and node removal cancel outstanding downloads.
+error value. `onLoadStart`, `onLoad`, and `onLoadEnd` report the image lifecycle;
+`onError` receives `nativeEvent.error.message` for failures. Route teardown and
+node removal cancel outstanding downloads.
 
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
 renders its children as native views. `scrollEnabled`, the platform scroll
