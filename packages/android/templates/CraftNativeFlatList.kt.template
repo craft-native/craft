@@ -227,6 +227,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         onMomentumScrollEnd = null
     }
 
+    fun refreshThemeDefaults() {
+        if (listAdapter.itemCount > 0) listAdapter.notifyItemRangeChanged(0, listAdapter.itemCount)
+    }
+
     private fun configureLayoutManager() {
         layoutManager = when {
             horizontal -> LinearLayoutManager(context, HORIZONTAL, false)

@@ -320,6 +320,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('val probe = EditText(this)')
   })
 
+  it('rebinds unchanged virtualized rows when theme traits change', () => {
+    expect(iosFlatList).toContain('func refreshThemeDefaults()')
+    expect(iosFlatList).toContain('snapshot.reconfigureItems(identities)')
+    expect(ios).toContain('refreshTraitDefaults(in: renderedRoot)')
+    expect(androidFlatList).toContain('fun refreshThemeDefaults()')
+    expect(androidFlatList).toContain('notifyItemRangeChanged(0, listAdapter.itemCount)')
+    expect(android).toContain('filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }')
+  })
+
   it('keeps scroll bounce behavior aligned across hosts', () => {
     expect(ios).toContain('scroll.bounces = props["bounces"] as? Bool ?? true')
     expect(ios).toContain('list.bounces = props["bounces"] as? Bool ?? true')

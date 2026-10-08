@@ -593,6 +593,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else {
             rootStack.setNeedsLayout()
         }
+        refreshTraitDefaults(in: renderedRoot)
+    }
+
+    private func refreshTraitDefaults(in node: RenderedNode?) {
+        guard let node else { return }
+        (node.view as? CraftNativeFlatList)?.refreshThemeDefaults()
+        node.children.forEach { refreshTraitDefaults(in: $0) }
     }
 
     override func viewDidLayoutSubviews() {

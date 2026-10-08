@@ -845,6 +845,7 @@ class MainActivity : AppCompatActivity() {
         refreshInputDefaultsForTraitChange()
         screens.lastOrNull()?.let { screen ->
             screen.mutations.node("root")?.let { renderCommitted(screen, it) }
+            screen.controls.values.filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }
         }
     }
 

@@ -265,6 +265,15 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         onMomentumScrollEnd = nil
     }
 
+    func refreshThemeDefaults() {
+        guard !isApplyingSnapshot else { return }
+        var snapshot = diffableDataSource.snapshot()
+        let identities = snapshot.itemIdentifiers
+        guard !identities.isEmpty else { return }
+        snapshot.reconfigureItems(identities)
+        diffableDataSource.apply(snapshot, animatingDifferences: false)
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         onScrollEvent?(scrollView)
         evaluateEndReached()
