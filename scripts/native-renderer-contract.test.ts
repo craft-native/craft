@@ -47,6 +47,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
     expect(android).toContain('configureText(this, title, style)')
     expect(android).toContain('props.optString("color").takeIf { it.isNotBlank() }?.let { setTextColor(color(it, defaultTextColor)) }')
+    expect(android).toContain('val linkColor = props.optString("color").takeIf { it.isNotBlank() } ?: style.optString("color")')
+    expect(android).toContain('setTextColor(color(linkColor, Color.rgb(33, 150, 243)))')
     expect(android).toContain('(previous as? TextView)?.takeUnless { it is Button } ?: TextView(this)')
   })
 
