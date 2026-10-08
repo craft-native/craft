@@ -138,6 +138,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('inputHighlightDefaults.getOrPut(this)')
       expect(nativeActivity).toContain('setHintTextColor(')
       expect(nativeActivity).toContain('inputHintDefaults.remove(it)')
+      expect(nativeActivity).toContain('screen.suppressedTextChanges.remove(it)')
       expect(nativeActivity).toContain('if (defaultBackgrounds.containsKey(view))')
       expect(nativeActivity).toContain('} else view.background = defaultBackground')
       expect(nativeActivity).toContain('released.forEach(defaultBackgrounds::remove)')

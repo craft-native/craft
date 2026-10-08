@@ -1927,6 +1927,7 @@ class MainActivity : AppCompatActivity() {
         released.filterIsInstance<EditText>().forEach {
             inputHintDefaults.remove(it)
             inputHighlightDefaults.remove(it)
+            screen.suppressedTextChanges.remove(it)
         }
         released.forEach(defaultBackgrounds::remove)
         screen.handlers.keys.removeAll(released)

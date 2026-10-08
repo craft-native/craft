@@ -75,6 +75,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('setTextPreservingSelection(this, props.optString("value"))')
     expect(android).toContain('screen.suppressedTextChanges.add(this)')
     expect(android).toContain('if (screen.suppressedTextChanges.remove(this@apply)) return')
+    expect(android).toContain('screen.suppressedTextChanges.remove(it)')
     expect(android).toContain('field.setSelection(minOf(boundedStart, boundedEnd), maxOf(boundedStart, boundedEnd))')
     expect(ios).toContain('private var inputDrafts: [String: String] = [:]')
     expect(ios).toContain('inputDrafts[current.identity] ?? props["defaultValue"] as? String')
