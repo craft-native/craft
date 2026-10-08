@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.121...v0.0.122)
+
+## 🐛 Bug Fixes
+
+- **ios**: purpose strings for every API the shell links, so App Store Connect accepts the build ([b5189b1](https://github.com/craft-native/craft/commit/b5189b1)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.120...v0.0.121)
 
 ## 🚀 Features
