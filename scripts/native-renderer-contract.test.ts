@@ -151,6 +151,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('val crossLeading = if (orientation == HORIZONTAL)')
   })
 
+  it('keeps flex distribution inside declared min and max bounds', () => {
+    expect(ios).toContain('clamp(max(0, size.width + delta), min: style.minWidth, max: style.maxWidth)')
+    expect(ios).toContain('clamp(max(0, size.height + delta), min: style.minHeight, max: style.maxHeight)')
+    expect(android).toContain('clamp(primary, line.entries[index].style.minWidth, line.entries[index].style.maxWidth)')
+    expect(android).toContain('clamp(distributed, entry.style.minHeight, entry.style.maxHeight)')
+  })
+
   it('keeps elevation visible on both native hosts', () => {
     expect(ios).toContain('let elevation = max(0, number(style["elevation"]) ?? 0)')
     expect(ios).toContain('view.layer.shadowOpacity = elevation > 0')

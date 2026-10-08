@@ -368,8 +368,11 @@ private final class CraftNativeFlowView: UIStackView {
         guard total > 0, free != 0 else { return sizes }
         return sizes.enumerated().map { index, size in
             let delta = free * factors[index] / total
-            if axis == .horizontal { return CGSize(width: max(0, size.width + delta), height: size.height) }
-            return CGSize(width: size.width, height: max(0, size.height + delta))
+            let style = styles[index]
+            if axis == .horizontal {
+                return CGSize(width: clamp(max(0, size.width + delta), min: style.minWidth, max: style.maxWidth), height: size.height)
+            }
+            return CGSize(width: size.width, height: clamp(max(0, size.height + delta), min: style.minHeight, max: style.maxHeight))
         }
     }
 

@@ -376,10 +376,15 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val distributedMain = line.entries.indices.sumOf { index ->
                 val base = if (orientation == HORIZONTAL) line.entries[index].width else line.entries[index].height
                 val primary = if (totalFactor > 0) max(0, (base + rawFree * factors[index] / totalFactor).toInt()) else base
+                val constrained = if (orientation == HORIZONTAL) {
+                    clamp(primary, line.entries[index].style.minWidth, line.entries[index].style.maxWidth)
+                } else {
+                    clamp(primary, line.entries[index].style.minHeight, line.entries[index].style.maxHeight)
+                }
                 val lp = line.entries[index].view.layoutParams as? MarginLayoutParams
                 val margins = if (orientation == HORIZONTAL) (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
                     else (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
-                primary + margins
+                constrained + margins
             } + max(0, line.entries.size - 1) * gap
             val free = max(0, availableMain - distributedMain)
             val (leading, between) = distribution(free, line.entries.size)
@@ -404,7 +409,12 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 val x = if (orientation == HORIZONTAL) mainOffset + marginStart else crossOffset + crossPosition
                 val y = if (orientation == HORIZONTAL) crossOffset + crossPosition else mainOffset + marginStart
                 val primary = if (orientation == HORIZONTAL) entry.width else entry.height
-                val distributedPrimary = if (totalFactor > 0) max(0, (primary + rawFree * factors[index] / totalFactor).toInt()) else primary
+                val distributed = if (totalFactor > 0) max(0, (primary + rawFree * factors[index] / totalFactor).toInt()) else primary
+                val distributedPrimary = if (orientation == HORIZONTAL) {
+                    clamp(distributed, entry.style.minWidth, entry.style.maxWidth)
+                } else {
+                    clamp(distributed, entry.style.minHeight, entry.style.maxHeight)
+                }
                 val w = if (orientation == HORIZONTAL) distributedPrimary else crossSize
                 val h = if (orientation == HORIZONTAL) crossSize else distributedPrimary
                 entry.view.layout(x, y, x + w, y + h)
