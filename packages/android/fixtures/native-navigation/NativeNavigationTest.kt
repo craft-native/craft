@@ -15,6 +15,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -193,6 +194,7 @@ class NativeNavigationTest {
             assertTrue("native slider should be a SeekBar", slider is SeekBar)
             instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
             assertEquals("slider moved", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            assertTrue("native indicator should be a ProgressBar", awaitView(activity, "native-indicator") is ProgressBar)
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             assertEquals("layout measured", (awaitView(activity, "layout-status") as TextView).text.toString())
             val bounded = awaitView(activity, "layout-min")

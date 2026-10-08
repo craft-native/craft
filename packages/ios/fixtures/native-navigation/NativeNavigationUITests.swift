@@ -93,6 +93,8 @@ final class NativeNavigationUITests: XCTestCase {
         slider.adjust(toNormalizedSliderPosition: 0.8)
         XCTAssertTrue(app.staticTexts["slider moved"].waitForExistence(timeout: 5))
 
+        XCTAssertTrue(app.activityIndicators["native-indicator"].waitForExistence(timeout: 5))
+
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["layout measured"].waitForExistence(timeout: 5), "native onLayout did not report a frame")
