@@ -144,7 +144,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('traits.insert(.selected)')
     expect(nativeSwift).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }')
     expect(nativeSwift).toContain('if let control = view as? UIControl {')
-    expect(nativeSwift).toContain('else if handlers[ObjectIdentifier(view)] != nil {')
+    expect(nativeSwift).toContain('else if handlers[ObjectIdentifier(view)] != nil || longPressHandlers[ObjectIdentifier(view)] != nil {')
     expect(flatListSwift).toContain('UICollectionViewDiffableDataSource<Int, String>')
     expect(flatListSwift).toContain('reconfigureItems(changedLive)')
     expect(flatListSwift).toContain('preferredLayoutAttributesFitting')
