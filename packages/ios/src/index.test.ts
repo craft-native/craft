@@ -35,6 +35,7 @@ describe('Craft iOS builder', () => {
     const mutationSwift = readFileSync(join(output, 'Sources', 'CraftNativeMutation.swift'), 'utf8')
     expect(config.renderer).toBe('native')
     expect(swift).toContain('if appState.config.renderer == "native"')
+    expect(swift).toContain('// CRAFT_IOS_PAGE_BRIDGE_DISPATCHER')
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')

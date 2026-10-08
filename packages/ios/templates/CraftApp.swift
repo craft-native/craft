@@ -1155,6 +1155,7 @@ struct CraftWebView: UIViewRepresentable {
             networkMonitor?.start(queue: DispatchQueue.global())
         }
 
+        // CRAFT_IOS_PAGE_BRIDGE_DISPATCHER
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             let securityOrigin = message.frameInfo.securityOrigin
             guard isTrustedOrigin(scheme: securityOrigin.protocol, host: securityOrigin.host, port: securityOrigin.port) else {

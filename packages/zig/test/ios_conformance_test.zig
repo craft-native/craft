@@ -70,6 +70,7 @@ const zig_sources = [_][]const u8{
 /// over haptic styles, permission names, orientations, AR primitives. A whole
 /// file scan would count `case "box"` as a bridge action and then fail forever
 /// on a list nobody can satisfy.
+const dispatch_marker = "// CRAFT_IOS_PAGE_BRIDGE_DISPATCHER";
 const dispatch_begin = "func userContentController(";
 const dispatch_end = "func webView(";
 
@@ -136,7 +137,11 @@ const dispatch_end = "func webView(";
 const max_not_yet_migrated: usize = 17;
 
 fn dispatcherRegion() []const u8 {
-    const begin = std.mem.indexOf(u8, swift_spec, dispatch_begin) orelse return "";
+    // CraftApp.swift also contains chrome, console and bridge-relay handlers.
+    // Anchor on the page bridge's explicit marker so a new handler before it
+    // cannot silently make this scan vacuous.
+    const marker = std.mem.indexOf(u8, swift_spec, dispatch_marker) orelse return "";
+    const begin = std.mem.indexOfPos(u8, swift_spec, marker + dispatch_marker.len, dispatch_begin) orelse return "";
     const rest = swift_spec[begin..];
     const end = std.mem.indexOf(u8, rest, dispatch_end) orelse return rest;
     return rest[0..end];
