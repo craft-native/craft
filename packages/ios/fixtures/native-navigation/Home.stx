@@ -154,6 +154,7 @@ function openCapabilities() {
     <Switch testID="native-switch" value={switchValue} accessibilityState={{"checked":switchValue}} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
+    <Text testID="slider-completions">Slider completions: {sliderCompletions}</Text>
     <ActivityIndicator testID="native-indicator" />
     <View testID="layout-wrap" onLayout={captureLayout} style={{"width":layoutWide ? 240 : 180,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>

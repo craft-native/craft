@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.text.InputFilter
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
 import android.view.View
 import android.view.ViewGroup
@@ -257,6 +258,25 @@ class NativeNavigationTest {
             instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
             assertEquals("slider moved", (awaitView(activity, "native-link-status") as TextView).text.toString())
             assertEquals("0.8", (awaitView(activity, "slider-value") as TextView).text.toString())
+            val nativeSlider = slider as SeekBar
+            instrumentation.runOnMainSync {
+                val downTime = SystemClock.uptimeMillis()
+                val y = nativeSlider.height / 2f
+                val end = nativeSlider.width.toFloat().coerceAtLeast(1f) * 0.8f
+                val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, 0f, y, 0)
+                val move = MotionEvent.obtain(downTime, downTime + 16, MotionEvent.ACTION_MOVE, end, y, 0)
+                val up = MotionEvent.obtain(downTime, downTime + 32, MotionEvent.ACTION_UP, end, y, 0)
+                try {
+                    nativeSlider.dispatchTouchEvent(down)
+                    nativeSlider.dispatchTouchEvent(move)
+                    nativeSlider.dispatchTouchEvent(up)
+                } finally {
+                    down.recycle()
+                    move.recycle()
+                    up.recycle()
+                }
+            }
+            awaitText(activity, "slider-completions", "Slider completions: 1")
             assertTrue("native indicator should be a ProgressBar", awaitView(activity, "native-indicator") is ProgressBar)
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             assertEquals("Layout width: 240", (awaitView(activity, "layout-status") as TextView).text.toString())
