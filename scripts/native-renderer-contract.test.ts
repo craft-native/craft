@@ -54,7 +54,7 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps reverse row scroll containers horizontal on both hosts', () => {
-    expect(ios).toContain('direction == "row" || direction == "row-reverse"')
+    expect(ios).toContain('|| flexDirection == "row-reverse"')
     expect(android).toContain('in setOf("row", "row-reverse")')
   })
 

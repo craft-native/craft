@@ -960,7 +960,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateImage(image, source: props["source"])
         case "ScrollView":
             let scroll = result as! CraftNativeScrollView
-            let direction = (props["horizontal"] as? Bool) == true || style["flexDirection"] as? String == "row"
+            let flexDirection = style["flexDirection"] as? String
+            let direction = (props["horizontal"] as? Bool) == true
+                || flexDirection == "row"
+                || flexDirection == "row-reverse"
                 ? NSLayoutConstraint.Axis.horizontal : .vertical
             scroll.setAxis(direction)
             scroll.delegate = self

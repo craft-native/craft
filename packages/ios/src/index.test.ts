@@ -110,6 +110,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('contentOffset')
     expect(nativeSwift).toContain('scroll.alwaysBounceVertical')
     expect(nativeSwift).toContain('?? (direction == .vertical)')
+    expect(nativeSwift).toContain('|| flexDirection == "row-reverse"')
     expect(nativeSwift).toContain('if let control = view as? UIControl')
     expect(nativeSwift).toContain('accessibilityValue')
     expect(nativeSwift).not.toContain('else if type == "TextInput", let field = view as? UITextField')
