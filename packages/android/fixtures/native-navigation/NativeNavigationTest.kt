@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.text.InputFilter
+import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
@@ -177,6 +178,8 @@ class NativeNavigationTest {
             val readonly = awaitView(activity, "readonly-input") as EditText
             assertTrue("editable=false should disable the native input", !readonly.isEnabled)
             assertEquals("Read only", readonly.text.toString())
+            val password = awaitView(activity, "password-input") as EditText
+            assertEquals(InputType.TYPE_TEXT_VARIATION_PASSWORD, password.inputType and InputType.TYPE_MASK_VARIATION)
             val title = awaitView(activity, "home-title")
             assertTrue(title is TextView)
             assertEquals(Color.WHITE, (title as TextView).currentTextColor)

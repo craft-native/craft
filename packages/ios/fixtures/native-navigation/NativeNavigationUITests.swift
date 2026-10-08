@@ -157,6 +157,8 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(readonly.waitForExistence(timeout: 5))
         XCTAssertFalse(readonly.isEnabled)
         XCTAssertEqual(readonly.value as? String, "Read only")
+        let password = app.secureTextFields["password-input"]
+        XCTAssertTrue(password.waitForExistence(timeout: 5))
         app.buttons["toggle-input-colors"].tap()
         XCTAssertTrue(app.staticTexts["input colors off"].waitForExistence(timeout: 5))
         XCTAssertTrue(field.exists, "removing input colors replaced the native field")
