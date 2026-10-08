@@ -148,6 +148,9 @@ type:
 - `flexDirection` (`row`, `column`, and their reverse forms), `alignItems`,
   `alignSelf`, `justifyContent`, `flexWrap: 'wrap'`, `gap`, `rowGap`, and
   `columnGap`;
+- `flex`, `flexGrow`, `flexShrink`, and numeric `flexBasis` distribute
+  remaining or overflowing main-axis space per flex line while preserving
+  gaps and margins;
 - `display: 'grid'` with equal tracks from numeric `gridTemplateColumns` (or
   CSS-shaped `repeat(N, 1fr)` text), plus numeric `gridAutoRows`; grid children
   fill their track by default, pack in source order, and honor `alignSelf`,
