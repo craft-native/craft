@@ -668,9 +668,7 @@ class MainActivity : AppCompatActivity() {
         hapticsEnabled = config.optBoolean("enableHaptics", false)
         clipboardEnabled = config.optBoolean("enableClipboard", false)
         capabilities = CraftNativeCapabilities(this, config)
-        val background = ContextCompat.getColor(this, R.color.background)
-        root.setBackgroundColor(background)
-        defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
+        refreshThemeDefaults()
         bundle = runCatching {
             assets.open("native-screen.js").bufferedReader().use { it.readText() }
         }.getOrElse {
@@ -832,14 +830,18 @@ class MainActivity : AppCompatActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         if (!::root.isInitialized) return
-        val background = ContextCompat.getColor(this, R.color.background)
-        root.setBackgroundColor(background)
-        defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
+        refreshThemeDefaults()
         ViewCompat.requestApplyInsets(root)
         refreshInputDefaultsForTraitChange()
         screens.lastOrNull()?.let { screen ->
             screen.mutations.node("root")?.let { renderCommitted(screen, it) }
         }
+    }
+
+    private fun refreshThemeDefaults() {
+        val background = ContextCompat.getColor(this, R.color.background)
+        root.setBackgroundColor(background)
+        defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
     }
 
     private fun refreshInputDefaultsForTraitChange() {

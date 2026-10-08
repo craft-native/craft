@@ -268,8 +268,12 @@ describe('native renderer component contract', () => {
   it('refreshes theme-default native controls when traits change', () => {
     expect(ios).toContain('mutationDocument.node("root")')
     expect(ios).toContain('renderCommitted(document)')
+    expect(ios).toContain('private func refreshTraitDefaults()')
+    expect(ios).toContain('refreshTraitDefaults()')
     expect(android).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
     expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+    expect(android).toContain('private fun refreshThemeDefaults()')
+    expect(android).toContain('refreshThemeDefaults()')
     expect(android).toContain('refreshInputDefaultsForTraitChange()')
     expect(android).toContain('val probe = EditText(this)')
   })

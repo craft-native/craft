@@ -579,6 +579,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
+        refreshTraitDefaults()
+    }
+
+    private func refreshTraitDefaults() {
         view.backgroundColor = config.resolvedBackgroundColor
         if let document = mutationDocument.node("root") {
             renderCommitted(document)
