@@ -55,6 +55,12 @@ including Android system bars and display cutouts.
 CI also checks the host-neutral component and fallback contract against both
 generated renderers, so a platform can’t silently lose a native primitive.
 
+`Switch` accepts the shared `trackColor` object (`false` and `true` states) and
+`thumbColor`; iOS also honors `ios_backgroundColor` for the off-state track.
+`Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
+`thumbTintColor` on both hosts, with `step` snapping values before events are
+delivered.
+
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an
 existing native control when its identity and type are unchanged, preserving
