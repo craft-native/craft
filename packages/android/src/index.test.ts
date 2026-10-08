@@ -102,6 +102,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('raw.optDouble(name, Double.NaN)')
       expect(nativeActivity).toContain('val width = style.optDouble("width", Double.NaN)')
       expect(nativeActivity).toContain('width ?: ViewGroup.LayoutParams.WRAP_CONTENT')
+      expect(nativeActivity).toContain('gridAutoRows = style.optDouble("gridAutoRows", Double.NaN)')
       expect(nativeActivity).toContain('maxLines = props.optInt("numberOfLines", 0).takeIf { it > 0 } ?: Int.MAX_VALUE')
       expect(nativeActivity).toContain('"middle" -> TextUtils.TruncateAt.MIDDLE')
       expect(nativeActivity).toContain('wrap = style.optString("flexWrap") == "wrap"')

@@ -141,7 +141,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         gridColumns = craftNativeGridColumnCount(
             if (style.has("gridTemplateColumns")) style.opt("gridTemplateColumns") else style.opt("gridColumns")
         )
-        gridAutoRows = if (style.has("gridAutoRows")) (style.optDouble("gridAutoRows") * density).toInt() else null
+        gridAutoRows = style.optDouble("gridAutoRows", Double.NaN).takeUnless { it.isNaN() }?.let { (it * density).toInt() }
         val padding = (style.optDouble("padding", 0.0) * density).toInt()
         val horizontal = (style.optDouble("paddingHorizontal", padding.toDouble() / density.toDouble()) * density).toInt()
         val vertical = (style.optDouble("paddingVertical", padding.toDouble() / density.toDouble()) * density).toInt()

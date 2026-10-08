@@ -183,6 +183,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('raw.optDouble(name, Double.NaN)')
     expect(android).toContain('val width = style.optDouble("width", Double.NaN)')
     expect(android).toContain('width ?: ViewGroup.LayoutParams.WRAP_CONTENT')
+    expect(android).toContain('gridAutoRows = style.optDouble("gridAutoRows", Double.NaN)')
     expect(navigationHome).toContain('style={{"width":textWidthUnset ? null : 160')
     expect(navigationHome).toContain('testID="toggle-null-width"')
   })
