@@ -485,7 +485,7 @@ class MainActivity : AppCompatActivity() {
         hapticsEnabled = config.optBoolean("enableHaptics", false)
         clipboardEnabled = config.optBoolean("enableClipboard", false)
         capabilities = CraftNativeCapabilities(this, config)
-        val background = color(config.optString("backgroundColor", "#1a1a2e"), Color.BLACK)
+        val background = ContextCompat.getColor(this, R.color.background)
         root.setBackgroundColor(background)
         defaultTextColor = if (Color.luminance(background) < 0.5) Color.WHITE else Color.BLACK
         bundle = runCatching {

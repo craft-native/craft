@@ -53,6 +53,7 @@ export interface CraftAndroidConfig {
   versionCode?: number
   darkMode?: boolean
   backgroundColor?: string
+  backgroundColorDark?: string
   enableSpeechRecognition?: boolean
   enableHaptics?: boolean
   enableShare?: boolean
@@ -257,6 +258,10 @@ function validateAndroidConfig(config: CraftAndroidConfig): void {
 
   if (!/^#(?:[\dA-F]{3,4}|[\dA-F]{6}|[\dA-F]{8})$/i.test(config.backgroundColor ?? '')) {
     throw new Error(`Invalid Android background color: ${config.backgroundColor}`)
+  }
+
+  if (config.backgroundColorDark !== undefined && !config.backgroundColorDark.match(/^#[\dA-F]{3,4}$|^#[\dA-F]{6}$|^#[\dA-F]{8}$/i)) {
+    throw new Error(`Invalid Android dark background color: ${config.backgroundColorDark}`)
   }
 
   for (const [name, value] of [
@@ -499,6 +504,7 @@ export async function init(options: InitOptions): Promise<void> {
     join(output, 'app/src/main/java', packagePath),
     join(output, 'app/src/main/res/layout'),
     join(output, 'app/src/main/res/values'),
+    join(output, 'app/src/main/res/values-night'),
     join(output, 'app/src/main/res/drawable'),
     join(output, 'app/src/main/assets'),
     join(output, 'gradle/wrapper'),
@@ -729,6 +735,17 @@ zipStorePath=wrapper/dists
 </resources>
 `
   writeFileSync(join(output, 'app/src/main/res/values/colors.xml'), colorsXml)
+  const darkColorsPath = join(output, 'app/src/main/res/values-night/colors.xml')
+  if (config.backgroundColorDark) {
+    writeFileSync(darkColorsPath, `<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">${config.backgroundColorDark}</color>
+</resources>
+`)
+  }
+  else {
+    rmSync(darkColorsPath, { force: true })
+  }
 
   const appIconXml = `<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"

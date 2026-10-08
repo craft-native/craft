@@ -85,6 +85,7 @@ describe('Craft Android builder', () => {
       expect(flatList).toContain('dataPositions.indexOfLast')
       expect(flatList).toContain('else view.layoutParams = hostedLayout')
       expect(nativeActivity).toContain('Color.luminance(background)')
+      expect(nativeActivity).toContain('ContextCompat.getColor(this, R.color.background)')
       expect(nativeActivity).toContain('WindowInsetsCompat.Type.systemBars()')
       expect(nativeActivity).toContain('WindowInsetsCompat.Type.displayCutout()')
       expect(nativeActivity).toContain('ViewCompat.requestApplyInsets(root)')
@@ -149,6 +150,20 @@ describe('Craft Android builder', () => {
         .toBe('globalThis.__stxNativeRoute = "home";')
     }
     finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('generates a DayNight background resource for native screens', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-dark-background-'))
+    await init({
+      name: 'NativeDarkBackground',
+      output,
+      runtimeDir: null,
+      config: { renderer: 'native', backgroundColor: '#f8fafc', backgroundColorDark: '#020617' },
+    })
+    expect(readFileSync(join(output, 'app/src/main/res/values-night/colors.xml'), 'utf8'))
+      .toContain('<color name="background">#020617</color>')
+    expect(JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8')).backgroundColorDark)
+      .toBe('#020617')
   })
 
   it('rejects unknown native renderers before creating a project', async () => {

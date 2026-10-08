@@ -46,6 +46,8 @@ accessibility compatibility while supplying the shared wrapping and positioning
 rules; Android keeps the corresponding `LinearLayout` compatibility surface.
 The native host follows the configured appearance, and iOS reapplies its
 resolved background when the system trait changes without recreating the screen.
+On Android, set `backgroundColorDark` to let the generated Material DayNight
+theme swap the native background when the system enters night mode.
 Both generated hosts keep native content inside platform safe-area insets,
 including Android system bars and display cutouts.
 CI also checks the host-neutral component and fallback contract against both
