@@ -37,7 +37,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         override fun getItemId(position: Int): Long = stableId(getItem(position).identity)
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = Holder(FrameLayout(parent.context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+            layoutParams = LayoutParams(
+                if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT,
+            )
         })
 
         override fun onBindViewHolder(holder: Holder, position: Int) {

@@ -4,7 +4,9 @@ import { describe, expect, it } from 'bun:test'
 
 const root = join(import.meta.dir, '..')
 const ios = readFileSync(join(root, 'packages/ios/templates/CraftNativeScreen.swift'), 'utf8')
+const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeFlatList.swift'), 'utf8')
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
+const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
@@ -46,5 +48,10 @@ describe('native renderer component contract', () => {
   it('keeps reverse row scroll containers horizontal on both hosts', () => {
     expect(ios).toContain('direction == "row" || direction == "row-reverse"')
     expect(android).toContain('in setOf("row", "row-reverse")')
+  })
+
+  it('keeps horizontal list rows intrinsically sized across hosts', () => {
+    expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
+    expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
   })
 })
