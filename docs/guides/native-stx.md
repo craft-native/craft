@@ -48,6 +48,8 @@ The native host follows the configured appearance, and iOS reapplies its
 resolved background when the system trait changes without recreating the screen.
 Both generated hosts keep native content inside platform safe-area insets,
 including Android system bars and display cutouts.
+CI also checks the host-neutral component and fallback contract against both
+generated renderers, so a platform can’t silently lose a native primitive.
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an

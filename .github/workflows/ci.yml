@@ -402,6 +402,9 @@ jobs:
       - name: Verify API documentation links
         run: bun run verify:docs
 
+      - name: Test host-neutral native renderer contract
+        run: bun test ./scripts/native-renderer-contract.test.ts
+
       - name: Test dependency-bot job selection
         run: bun test ./scripts/buddy-schedule.test.ts ./scripts/buddy-update.test.ts
 
