@@ -232,6 +232,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }')
     expect(ios).toContain('if let handler, !handler.isEmpty { handlers[id] = handler }')
     expect(ios).toContain('let handler = handler?.isEmpty == false ? handler : nil')
+    expect(ios).toContain('list.onMomentumScrollEnd = nonEmptyHandler(events["onMomentumScrollEnd"]).map')
+    expect(ios).toContain('private func nonEmptyHandler(_ handler: String?) -> String?')
     expect(android).toContain('control.isClickable = true')
     expect(android).toContain('control.setOnClickListener {')
   })
@@ -288,7 +290,7 @@ describe('native renderer component contract', () => {
   })
 
   it('forwards FlatList scroll and momentum callbacks through virtualized hosts', () => {
-    expect(ios).toContain('list.onScrollEvent = events["onScroll"]')
+    expect(ios).toContain('list.onScrollEvent = nonEmptyHandler(events["onScroll"])')
     expect(iosFlatList).toContain('var onMomentumScrollBegin: ((UIScrollView) -> Void)?')
     expect(iosFlatList).toContain('func scrollViewDidEndDecelerating')
     expect(android).toContain('list.onScrollEvent = events.optString("onScroll")')

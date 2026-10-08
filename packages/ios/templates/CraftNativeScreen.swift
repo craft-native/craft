@@ -1212,19 +1212,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         for child in children { registerFlatListOwnership(child, owner: owner) }
         list.bounces = props["bounces"] as? Bool ?? true
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
-        list.onScrollEvent = events["onScroll"].map { handler in
+        list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
         }
-        list.onScrollBeginDrag = events["onScrollBeginDrag"].map { handler in
+        list.onScrollBeginDrag = nonEmptyHandler(events["onScrollBeginDrag"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
         }
-        list.onScrollEndDrag = events["onScrollEndDrag"].map { handler in
+        list.onScrollEndDrag = nonEmptyHandler(events["onScrollEndDrag"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
         }
-        list.onMomentumScrollBegin = events["onMomentumScrollBegin"].map { handler in
+        list.onMomentumScrollBegin = nonEmptyHandler(events["onMomentumScrollBegin"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
         }
-        list.onMomentumScrollEnd = events["onMomentumScrollEnd"].map { handler in
+        list.onMomentumScrollEnd = nonEmptyHandler(events["onMomentumScrollEnd"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
         }
 
@@ -1256,7 +1256,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                       let row = self.flatListRows[listKey]?.removeValue(forKey: identity) else { return }
                 self.forgetHandlers(row, preservingInputDrafts: true)
             },
-            endReached: events["onEndReached"].map { [weak self] handler in
+            endReached: nonEmptyHandler(events["onEndReached"]).map { [weak self] handler in
                 { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
             }
         )
@@ -1383,6 +1383,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let id = ObjectIdentifier(view)
         if let handler, !handler.isEmpty { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
+    }
+
+    private func nonEmptyHandler(_ handler: String?) -> String? {
+        guard let handler, !handler.isEmpty else { return nil }
+        return handler
     }
 
     private func updatePressHandler(_ handler: String?, for view: UIView) {

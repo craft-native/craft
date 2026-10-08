@@ -118,6 +118,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('private weak var lastFocusedInput: UIView?')
     expect(nativeSwift).toContain('if let handler, !handler.isEmpty { handlers[id] = handler }')
     expect(nativeSwift).toContain('let handler = handler?.isEmpty == false ? handler : nil')
+    expect(nativeSwift).toContain('list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map')
+    expect(nativeSwift).toContain('endReached: nonEmptyHandler(events["onEndReached"]).map')
     expect(nativeSwift).toContain('UITextViewDelegate')
     expect(nativeSwift).toContain('textViewDidChange')
     expect(nativeSwift).toContain('numberOfLines')
