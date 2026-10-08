@@ -173,6 +173,19 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(imageView === find(UIImageView.self, key: "avatar", below: controller.view))
     }
 
+    func testHeaderAccessibilityRoleMapsToUIKitTrait() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([[
+            "type": "Text",
+            "props": ["key": "header", "accessibilityRole": "header"],
+            "children": ["People directory"],
+        ]]))
+
+        let header = try XCTUnwrap(find(UILabel.self, key: "header", below: controller.view))
+        XCTAssertTrue(header.accessibilityTraits.contains(.header))
+    }
+
     func testSharedLayoutColorAndTextStylesMapToUIKit() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

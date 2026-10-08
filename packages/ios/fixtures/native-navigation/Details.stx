@@ -46,7 +46,7 @@ function replaceWithSummary() {
       onEndReachedThreshold={0.1}
       style={{"height":160}}
     >
-      <Text listRole="header" testID="people-header">People directory</Text>
+      <Text listRole="header" accessibilityRole="header" testID="people-header">People directory</Text>
       <View listRole="item" accessibilityLabel={item.name}>
         <Text testID={'person-label-' + item.id}>{index}: {item.name}</Text>
         <TextInput testID={'person-input-' + item.id} placeholder="Note" />

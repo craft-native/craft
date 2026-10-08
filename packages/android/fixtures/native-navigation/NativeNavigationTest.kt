@@ -349,6 +349,10 @@ class NativeNavigationTest {
             assertEquals("Details for Ada", (awaitView(activity, "details-title") as TextView).text.toString())
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
             val people = awaitView(activity, "people-list") as RecyclerView
+            val peopleHeader = awaitView(activity, "people-header") as TextView
+            var peopleHeaderInfo: AccessibilityNodeInfo? = null
+            instrumentation.runOnMainSync { peopleHeaderInfo = peopleHeader.createAccessibilityNodeInfo() }
+            assertTrue("FlatList header did not expose heading semantics", peopleHeaderInfo?.isHeading == true)
             val personZero = awaitView(activity, "person-label-person-0") as TextView
             val personInput = awaitView(activity, "person-input-person-0") as EditText
             instrumentation.runOnMainSync {
