@@ -95,9 +95,16 @@ private data class CraftNativeLayoutStyle(
                 width = number("width"), height = number("height"),
                 minWidth = number("minWidth"), maxWidth = number("maxWidth"),
                 minHeight = number("minHeight"), maxHeight = number("maxHeight"),
-                position = raw.optString("position", "relative"),
+                position = raw.opt("position")
+                    ?.takeUnless { it == JSONObject.NULL }
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "relative",
                 top = number("top"), right = number("right"), bottom = number("bottom"), left = number("left"),
-                alignSelf = raw.optString("alignSelf").takeIf { it.isNotBlank() },
+                alignSelf = raw.opt("alignSelf")
+                    ?.takeUnless { it == JSONObject.NULL }
+                    ?.toString()
+                    ?.takeIf { it.isNotBlank() },
                 flexGrow = raw.optDouble("flexGrow", raw.optDouble("flex", 0.0)),
                 flexShrink = raw.optDouble("flexShrink", 0.0),
                 flexBasis = number("flexBasis"),

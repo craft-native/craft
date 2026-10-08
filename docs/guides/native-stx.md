@@ -188,7 +188,9 @@ sizes are measured by the host-native control, and `Button`/`Link` text uses the
 same font, color, alignment, and decoration styles as `Text`. Generated hosts
 pin the native screen root to the platform safe-area insets. Percentage
 dimensions, transforms, and shadows remain outside the native renderer
-contract. Unsupported values are ignored rather than interpreted as CSS.
+contract. Unsupported values are ignored rather than interpreted as CSS. Explicit `null`
+layout values, including `alignSelf` and `position`, clear the previous value
+and restore the host default during reconciliation.
 
 Scroll content is measured with an unbounded scroll-axis constraint, so intrinsic
 text and image sizes contribute to the content extent instead of collapsing to
