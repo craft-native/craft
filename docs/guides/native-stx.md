@@ -46,10 +46,12 @@ bundle must be local at build time.
 On iOS, `CraftNativeFlowView` remains a `UIStackView` subclass for source and
 accessibility compatibility while supplying the shared wrapping and positioning
 rules; Android keeps the corresponding `LinearLayout` compatibility surface.
-The native host follows the configured appearance, and iOS reapplies its
-resolved background when the system trait changes without recreating the screen.
-On Android, set `backgroundColorDark` to let the generated Material DayNight
-theme swap the native background when the system enters night mode.
+Both native hosts follow the configured `appearance` (`system`, `light`, or
+`dark`) and reapply theme-default controls when the system trait changes without
+recreating the screen. When `appearance` is omitted, the legacy `darkMode`
+boolean pins the host for compatibility. On Android, set `backgroundColorDark`
+to let the generated Material DayNight theme swap the native background when
+the system enters night mode; iOS resolves the same color dynamically.
 Both generated hosts keep native content inside platform safe-area insets,
 including Android system bars and display cutouts.
 CI also checks the host-neutral component and fallback contract against both

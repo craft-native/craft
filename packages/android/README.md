@@ -168,6 +168,7 @@ Edit `craft.config.json` in your Android project:
   "version": "1.0.0",
   "versionCode": 1,
   "darkMode": true,
+  "appearance": "system",
   "backgroundColor": "#1a1a2e",
   "enableSpeechRecognition": true,
   "enableHaptics": true,
@@ -209,6 +210,12 @@ Health Connect normalizes `compileSdk` to at least 36.
 The same effective `minSdk` is written to Gradle and both configuration files.
 A custom `appIconPath` must be a regular PNG, WebP, JPG, or GIF file; its supported
 extension is preserved in the generated drawable resource.
+
+`appearance` accepts `"system"`, `"light"`, or `"dark"`. System follows the
+device's DayNight setting and refreshes native controls when that setting
+changes; the other two values pin the generated host. If it is omitted,
+`darkMode` remains the compatibility switch (`false` pins light, `true` pins
+dark).
 
 Remote app and trusted-origin URLs must use HTTPS. Local development may use
 HTTP with `localhost`, `127.0.0.1`, or the Android emulator host `10.0.2.2`.
