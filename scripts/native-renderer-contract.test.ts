@@ -230,6 +230,7 @@ describe('native renderer component contract', () => {
 
   it('keeps generic pressable views interactive without disabling scroll containers', () => {
     expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }')
+    expect(ios).toContain('if let handler, !handler.isEmpty { handlers[id] = handler }')
     expect(ios).toContain('let handler = handler?.isEmpty == false ? handler : nil')
     expect(android).toContain('control.isClickable = true')
     expect(android).toContain('control.setOnClickListener {')

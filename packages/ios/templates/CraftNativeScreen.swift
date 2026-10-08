@@ -1325,7 +1325,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func updateHandler(_ handler: String?, for view: UIView) {
         let id = ObjectIdentifier(view)
-        if let handler = handler { handlers[id] = handler }
+        if let handler, !handler.isEmpty { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
     }
 

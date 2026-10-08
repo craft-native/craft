@@ -116,6 +116,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('_ = focused.becomeFirstResponder()')
     expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')
     expect(nativeSwift).toContain('private weak var lastFocusedInput: UIView?')
+    expect(nativeSwift).toContain('if let handler, !handler.isEmpty { handlers[id] = handler }')
     expect(nativeSwift).toContain('let handler = handler?.isEmpty == false ? handler : nil')
     expect(nativeSwift).toContain('UITextViewDelegate')
     expect(nativeSwift).toContain('textViewDidChange')
