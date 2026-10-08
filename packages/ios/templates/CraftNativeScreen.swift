@@ -437,6 +437,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         observeNativeEvents()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
+        view.backgroundColor = config.resolvedBackgroundColor
+        rootStack.setNeedsLayout()
+    }
+
     private func setupJavaScript() {
         if let routeName = routeName {
             jsContext.setObject(routeName, forKeyedSubscript: "__stxNativeRoute" as NSString)

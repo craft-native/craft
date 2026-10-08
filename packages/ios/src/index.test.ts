@@ -408,6 +408,20 @@ describe('Craft iOS builder', () => {
     expect(swift.lastIndexOf('#if DEBUG', relayStart)).toBeGreaterThan(swift.lastIndexOf('#endif', relayStart))
   })
 
+  it('refreshes native screen backgrounds when the iOS trait changes', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-trait-'))
+    await init({
+      runtimeDir: null,
+      name: 'NativeTraitRefresh',
+      bundleId: 'org.example.native-trait',
+      output,
+      config: { renderer: 'native', appearance: 'system', backgroundColor: '#ffffff', backgroundColorDark: '#000000' },
+    })
+    const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain('traitCollectionDidChange')
+    expect(source).toContain('config.resolvedBackgroundColor')
+  })
+
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-health-'))
     await init({ runtimeDir: null, name: 'Health', bundleId: 'com.example.health', output, config: { enableHealthKit: true } })

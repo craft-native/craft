@@ -43,6 +43,8 @@ bundle must be local at build time.
 On iOS, `CraftNativeFlowView` remains a `UIStackView` subclass for source and
 accessibility compatibility while supplying the shared wrapping and positioning
 rules; Android keeps the corresponding `LinearLayout` compatibility surface.
+The native host follows the configured appearance, and iOS reapplies its
+resolved background when the system trait changes without recreating the screen.
 
 `key` is scoped to sibling nodes. `testID` is also accepted as an identity for
 existing screens. Unkeyed children reconcile by position. A rerender updates an
