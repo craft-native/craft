@@ -94,6 +94,16 @@ export interface CraftConfig {
   appGroups?: string[]
   appIconPath?: string
   /**
+   * The logo the launch screen shows on `backgroundColor`, and that stays on
+   * screen until the page says it is ready (`splash.hide()`), so the app goes
+   * from launch to content without a blank web view in between. PNG, PDF or
+   * SVG, drawn at its own size in points: give an SVG the width and height it
+   * should have on screen.
+   */
+  splashImagePath?: string
+  /** The splash logo in Dark Mode, on `backgroundColorDark`. The light one if unset. */
+  splashImagePathDark?: string
+  /**
    * Whether the app uses encryption beyond the exempt kinds (HTTPS, the
    * system's own). Written as `ITSAppUsesNonExemptEncryption`, so App Store
    * Connect does not ask the export-compliance question on every build.
@@ -524,6 +534,45 @@ function renderAssetCatalog(output: string, config: CraftConfig): void {
     colors,
     info: { author: 'xcode', version: 1 },
   }, null, 2)}\n`)
+
+  renderLaunchLogo(catalog, config)
+}
+
+/** The asset the launch screen and the splash both draw, so one hands over to the other unseen. */
+export const LAUNCH_LOGO = 'LaunchLogo'
+
+function renderLaunchLogo(catalog: string, config: CraftConfig): void {
+  const imageset = join(catalog, `${LAUNCH_LOGO}.imageset`)
+  rmSync(imageset, { recursive: true, force: true })
+  if (!config.splashImagePath) return
+  mkdirSync(imageset, { recursive: true })
+  const images: Array<Record<string, unknown>> = []
+  let vector = false
+  for (const [source, dark] of [[config.splashImagePath, false], [config.splashImagePathDark, true]] as const) {
+    if (!source) continue
+    if (!existsSync(source)) throw new Error(`Splash image not found: ${source}`)
+    const extension = source.split('.').pop()!.toLowerCase()
+    if (extension === 'svg' || extension === 'pdf') vector = true
+    const filename = `${LAUNCH_LOGO}${dark ? '-dark' : ''}.${extension}`
+    cpSync(source, join(imageset, filename))
+    images.push({
+      ...(dark ? { appearances: [{ appearance: 'luminosity', value: 'dark' }] } : {}),
+      filename,
+      idiom: 'universal',
+    })
+  }
+  writeFileSync(join(imageset, 'Contents.json'), `${JSON.stringify({
+    images,
+    info: { author: 'xcode', version: 1 },
+    // Kept as a vector, so the logo is sharp at every scale rather than rasterised once.
+    ...(vector ? { properties: { 'preserves-vector-representation': true } } : {}),
+  }, null, 2)}\n`)
+}
+
+/** The launch screen: the background colour, and the splash logo on it when there is one. */
+export function renderLaunchScreen(config: Pick<CraftConfig, 'splashImagePath'>): string {
+  const image = config.splashImagePath ? `\n        <key>UIImageName</key>\n        <string>${LAUNCH_LOGO}</string>` : ''
+  return `        <key>UIColorName</key>\n        <string>LaunchBackground</string>${image}`
 }
 
 /** Replace the bundled web application atomically so removed assets cannot linger. */
@@ -764,6 +813,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{URL_TYPES\}\}/g, renderUrlTypes(config))
     .replace(/\{\{APP_BOUND_DOMAINS\}\}/g, renderAppBoundDomains(config))
     .replace(/\{\{BACKGROUND_MODES\}\}/g, renderBackgroundModes(config))
+    .replace(/\{\{LAUNCH_SCREEN\}\}/g, renderLaunchScreen(config))
     .replace(/\{\{NON_EXEMPT_ENCRYPTION\}\}/g, config.usesNonExemptEncryption ? 'true' : 'false')
     .replace(/\{\{LIVE_ACTIVITY_SUPPORT\}\}/g, config.enableLiveActivities
       ? '    <key>NSSupportsLiveActivities</key>\n    <true/>\n    <key>NSSupportsLiveActivitiesFrequentUpdates</key>\n    <true/>'

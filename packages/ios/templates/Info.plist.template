@@ -26,8 +26,7 @@
     <{{NON_EXEMPT_ENCRYPTION}}/>
     <key>UILaunchScreen</key>
     <dict>
-        <key>UIColorName</key>
-        <string>LaunchBackground</string>
+{{LAUNCH_SCREEN}}
     </dict>
     <key>UIRequiredDeviceCapabilities</key>
     <array>

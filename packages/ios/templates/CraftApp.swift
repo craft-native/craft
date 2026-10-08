@@ -225,8 +225,14 @@ struct CraftApp: App {
                 if appState.config.renderer == "native" {
                     CraftNativeScreen(config: appState.config)
                 } else {
-                    CraftWebView(config: appState.config)
-                        .ignoresSafeArea()
+                    // The page's own chrome, drawn natively over it: the tab
+                    // bar the page asks for, and the splash until it is ready.
+                    ZStack(alignment: .bottom) {
+                        CraftWebView(config: appState.config)
+                            .ignoresSafeArea()
+                        CraftTabBarView()
+                        CraftSplashView(background: appState.config.resolvedBackgroundColor)
+                    }
                 }
             }
                 .preferredColorScheme(appState.config.colorScheme)
@@ -240,6 +246,255 @@ struct CraftApp: App {
                         DeepLinkManager.shared.handleURL(url)
                     }
                 }
+        }
+    }
+}
+
+// MARK: - Native chrome: the tab bar and the launch splash
+//
+// Both belong to the screen rather than to the page, so they are drawn here in
+// SwiftUI and the page only describes them. The page reaches them through the
+// `craftChrome` message handler, which exists from the first byte of the
+// document; `window.craft` arrives only once the page has finished loading,
+// images and all, and a tab bar or a splash that waited for it would be late
+// on every launch.
+
+final class CraftChrome: ObservableObject {
+    static let shared = CraftChrome()
+
+    struct Tab: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let symbol: String
+        let badge: String?
+    }
+
+    @Published var tabs: [Tab] = []
+    @Published var selected: String?
+    @Published var tabBarVisible = false
+    @Published var splashVisible = true
+    @Published var tint: UIColor?
+
+    weak var webView: WKWebView?
+    /// What the tab bar covers at the bottom of the screen, in points.
+    private var occupied: CGFloat = 0
+    private var pendingHide: DispatchWorkItem?
+
+    private init() {
+        // However the page behaves, the splash never outstays ten seconds.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.hideSplash() }
+    }
+
+    func handle(_ body: [String: Any]) {
+        switch body["type"] as? String {
+        case "tabBar":
+            pendingHide?.cancel()
+            tabs = (body["tabs"] as? [[String: Any]] ?? []).compactMap { item in
+                guard let id = item["id"] as? String, let title = item["title"] as? String else { return nil }
+                let badge = (item["badge"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                return Tab(id: id, title: title, symbol: item["symbol"] as? String ?? "circle", badge: badge)
+            }
+            if let selected = body["selected"] as? String { self.selected = selected }
+            if let hex = body["tint"] as? String {
+                let light = UIColor(hex: hex)
+                let dark = (body["tintDark"] as? String).flatMap { UIColor(hex: $0) }
+                tint = light.map { light in dark.map { dark in UIColor { $0.userInterfaceStyle == .dark ? dark : light } } ?? light }
+            }
+            withAnimation(.easeOut(duration: 0.2)) { tabBarVisible = !tabs.isEmpty }
+            publishLayout()
+        case "selectTab":
+            if let id = body["id"] as? String, id != selected {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selected = id }
+            }
+        case "hideTabBar":
+            // Later, and only if no screen asks for the bar meanwhile: moving
+            // between two screens that both have it unmounts one bar and
+            // mounts the next, and the bar must not blink in between.
+            pendingHide?.cancel()
+            let hide = DispatchWorkItem { [weak self] in
+                withAnimation(.easeIn(duration: 0.18)) { self?.tabBarVisible = false }
+                self?.occupied = 0
+                self?.publishLayout()
+            }
+            pendingHide = hide
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: hide)
+        case "ready":
+            hideSplash()
+        default:
+            break
+        }
+    }
+
+    /// A tap on a tab: the page navigates, and says which tab is current.
+    func tap(_ tab: Tab) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        if tab.id != selected {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selected = tab.id }
+        }
+        emit("craftTabSelect", ["id": tab.id])
+    }
+
+    func hideSplash() {
+        guard splashVisible else { return }
+        withAnimation(.easeOut(duration: 0.28)) { splashVisible = false }
+    }
+
+    /// A page that loaded and never said it was ready still gets shown.
+    func pageFinished() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in self?.hideSplash() }
+    }
+
+    func layoutChanged(_ height: CGFloat) {
+        let rounded = height.rounded()
+        guard rounded != occupied else { return }
+        occupied = rounded
+        publishLayout()
+    }
+
+    /// The bar's height as `--craft-tab-bar-height`, so the page leaves room
+    /// for it, and as an event for anything that measures.
+    func publishLayout() {
+        let height = tabBarVisible ? Int(occupied) : 0
+        let script = "document.documentElement.style.setProperty('--craft-tab-bar-height','\(height)px');window.dispatchEvent(new CustomEvent('craftTabBarLayout',{detail:{height:\(height)}}));"
+        DispatchQueue.main.async { [weak self] in self?.webView?.evaluateJavaScript(script, completionHandler: nil) }
+    }
+
+    private func emit(_ event: String, _ detail: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: detail),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let script = "window.dispatchEvent(new CustomEvent('\(event)',{detail:\(json)}));"
+        DispatchQueue.main.async { [weak self] in self?.webView?.evaluateJavaScript(script, completionHandler: nil) }
+    }
+}
+
+/// Receives the page's chrome messages. Only from a trusted origin, like the bridge.
+final class CraftChromeRelay: NSObject, WKScriptMessageHandler {
+    private let trusts: (WKSecurityOrigin) -> Bool
+
+    init(trusts: @escaping (WKSecurityOrigin) -> Bool) {
+        self.trusts = trusts
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.frameInfo.isMainFrame, trusts(message.frameInfo.securityOrigin),
+              let body = message.body as? [String: Any] else { return }
+        DispatchQueue.main.async { CraftChrome.shared.handle(body) }
+    }
+}
+
+/// The floating tab bar: Liquid Glass on iOS 26 and later, a material capsule before.
+struct CraftTabBarView: View {
+    @ObservedObject private var chrome = CraftChrome.shared
+    @Namespace private var selection
+
+    var body: some View {
+        if chrome.tabBarVisible && !chrome.tabs.isEmpty {
+            bar
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
+                .background(GeometryReader { proxy in
+                    Color.clear
+                        .onAppear { report(proxy) }
+                        .onChange(of: proxy.frame(in: .global)) { _ in report(proxy) }
+                })
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .ignoresSafeArea(.keyboard)
+        }
+    }
+
+    private func report(_ proxy: GeometryProxy) {
+        let screen = UIScreen.main.bounds.height
+        chrome.layoutChanged(max(0, screen - proxy.frame(in: .global).minY))
+    }
+
+    @ViewBuilder private var bar: some View {
+        if #available(iOS 26.0, *) {
+            GlassEffectContainer {
+                items
+                    .padding(4)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            }
+        } else {
+            items
+                .padding(4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.35), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.12), radius: 18, y: 6)
+        }
+    }
+
+    private var items: some View {
+        HStack(spacing: 0) {
+            ForEach(chrome.tabs) { tab in
+                let isSelected = tab.id == chrome.selected
+                Button { chrome.tap(tab) } label: {
+                    VStack(spacing: 3) {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: symbol(tab.symbol, selected: isSelected))
+                                .font(.system(size: 20, weight: isSelected ? .semibold : .regular))
+                                .frame(height: 26)
+                            if let badge = tab.badge {
+                                Text(badge)
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 4)
+                                    .frame(minWidth: 16, minHeight: 16)
+                                    .background(Capsule().fill(Color.red))
+                                    .offset(x: 10, y: -4)
+                            }
+                        }
+                        Text(tab.title)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundStyle(isSelected ? selectedColor : Color.primary)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background {
+                        if isSelected {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.09))
+                                .matchedGeometryEffect(id: "selection", in: selection)
+                        }
+                    }
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.badge.map { "\(tab.title), \($0)" } ?? tab.title)
+                .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+            }
+        }
+    }
+
+    private var selectedColor: Color {
+        chrome.tint.map { Color($0) } ?? Color.primary
+    }
+
+    /// The filled variant for the current tab, when the symbol has one.
+    private func symbol(_ name: String, selected: Bool) -> String {
+        guard selected, !name.hasSuffix(".fill"), UIImage(systemName: "\(name).fill") != nil else { return name }
+        return "\(name).fill"
+    }
+}
+
+/// The launch screen, held until the page is ready: the same colour and the
+/// same logo at the same place, so the hand-over from the system's launch
+/// screen cannot be seen.
+struct CraftSplashView: View {
+    @ObservedObject private var chrome = CraftChrome.shared
+    let background: UIColor
+
+    var body: some View {
+        if chrome.splashVisible {
+            ZStack {
+                Color(background)
+                if let logo = UIImage(named: "LaunchLogo") {
+                    Image(uiImage: logo)
+                }
+            }
+            .ignoresSafeArea()
+            .allowsHitTesting(true)
+            .transition(.opacity)
         }
     }
 }
@@ -634,6 +889,14 @@ struct CraftWebView: UIViewRepresentable {
         // Add native bridge
         let contentController = WKUserContentController()
         contentController.add(context.coordinator, name: "craft")
+        // The tab bar and the splash, outside the bridge's action dispatch:
+        // they are the screen's, not a device API, and the page needs them
+        // before the bridge is installed.
+        let coordinator = context.coordinator
+        contentController.add(CraftChromeRelay(trusts: { [weak coordinator] origin in coordinator?.trusts(origin) ?? false }), name: "craftChrome")
+        // From the first byte, so the page's CSS knows before it paints that
+        // the shell draws the tab bar, and does not draw its own for a frame.
+        contentController.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('data-craft-chrome','ios')", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         webConfig.userContentController = contentController
         #if DEBUG
         // The page's errors and console, in the device log, so a debug build
@@ -664,6 +927,7 @@ struct CraftWebView: UIViewRepresentable {
         // Register with DeepLinkManager
         DeepLinkManager.shared.setWebView(webView)
         CraftEventManager.shared.setWebView(webView)
+        CraftChrome.shared.webView = webView
 
         // Parse background color
         let bgColor = config.resolvedBackgroundColor
@@ -1737,6 +2001,8 @@ struct CraftWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             self.webView = webView
+            CraftChrome.shared.pageFinished()
+            CraftChrome.shared.publishLayout()
             guard isTrustedURL(webView.url) else { return }
             injectNativeBridge()
         }
@@ -1852,6 +2118,11 @@ struct CraftWebView: UIViewRepresentable {
         /// now, and `scripts/mobile-e2e.ts` runs a real round trip on a booted
         /// simulator so a future hardening pass cannot quietly take the bridge
         /// away again.
+        /// Whether a message from this origin may drive the app's chrome.
+        func trusts(_ origin: WKSecurityOrigin) -> Bool {
+            isTrustedOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+        }
+
         private func isTrustedOrigin(scheme: String, host: String, port: Int) -> Bool {
             if scheme == "craft" && host == "app" { return true }
             if scheme == "file" { return true }

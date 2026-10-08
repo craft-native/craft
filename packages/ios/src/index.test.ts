@@ -234,6 +234,27 @@ describe('Craft iOS builder', () => {
     expect(readFileSync(join(custom, 'Info.plist'), 'utf8')).toContain('<key>ITSAppUsesNonExemptEncryption</key>\n    <true/>')
   })
 
+  it('shows the splash logo on the launch screen, light and dark, kept as a vector', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'craft-ios-splash-'))
+    const light = join(dir, 'logo.svg')
+    const dark = join(dir, 'logo-dark.svg')
+    writeFileSync(light, '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="48"/>')
+    writeFileSync(dark, '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="48"/>')
+    const output = join(dir, 'app')
+    await init({ runtimeDir: null, name: 'SplashApp', bundleId: 'org.example.splash', output, config: { splashImagePath: light, splashImagePathDark: dark } })
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    expect(plist).toContain('<key>UILaunchScreen</key>\n    <dict>\n        <key>UIColorName</key>\n        <string>LaunchBackground</string>\n        <key>UIImageName</key>\n        <string>LaunchLogo</string>\n    </dict>')
+    const contents = JSON.parse(readFileSync(join(output, 'Assets.xcassets', 'LaunchLogo.imageset', 'Contents.json'), 'utf8'))
+    expect(contents.images.map((image: any) => image.filename)).toEqual(['LaunchLogo.svg', 'LaunchLogo-dark.svg'])
+    expect(contents.images[1].appearances).toEqual([{ appearance: 'luminosity', value: 'dark' }])
+    expect(contents.properties).toEqual({ 'preserves-vector-representation': true })
+
+    // Without one, the launch screen is the colour alone and no stale logo is left behind.
+    await init({ runtimeDir: null, name: 'SplashApp', bundleId: 'org.example.splash', output, config: {} })
+    expect(readFileSync(join(output, 'Info.plist'), 'utf8')).not.toContain('UIImageName')
+    expect(existsSync(join(output, 'Assets.xcassets', 'LaunchLogo.imageset'))).toBe(false)
+  })
+
   it('shares a scheme that builds and archives the app, for CI such as Xcode Cloud', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-scheme-'))
     await init({ runtimeDir: null, name: 'SchemeApp', bundleId: 'org.example.scheme', output })

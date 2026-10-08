@@ -24,7 +24,7 @@ import type {
   LiveActivityHandle,
   LiveActivityOptions,
 } from '../api/mobile'
-import mobile, { biometrics, bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, secureStorage, speech, watchConnectivity } from '../api/mobile'
+import mobile, { biometrics, bridgeNotification, normalizeDeepLinkURL, notifications, pushNotifications, secureStorage, speech, splash, tabBar, watchConnectivity } from '../api/mobile'
 
 describe('Mobile deep links', () => {
   it('normalizes native payloads to the public string contract', () => {
@@ -572,5 +572,59 @@ describe('Mobile API Types', () => {
       expect(live.distanceMeters).toBe(1609)
       expect(handle.id).toBe('native-activity-1')
     })
+  })
+})
+
+describe('Mobile native chrome', () => {
+  it('describes the tab bar and the splash to the shell, through its own channel', () => {
+    const previousWindow = (globalThis as any).window
+    const posted: unknown[] = []
+    const listeners = new Map<string, (event: Event) => void>()
+    ;(globalThis as any).window = {
+      webkit: { messageHandlers: { craftChrome: { postMessage: (message: unknown) => posted.push(message) } } },
+      addEventListener: (name: string, listener: (event: Event) => void) => listeners.set(name, listener),
+      removeEventListener: (name: string) => listeners.delete(name),
+    }
+    try {
+      expect(tabBar.isAvailable()).toBe(true)
+      expect(tabBar.set([{ id: '/m', title: 'Today', symbol: 'sun.max' }], { selected: '/m', tint: '#1d4ed8' })).toBe(true)
+      tabBar.select('/m/calendar')
+      tabBar.hide()
+      splash.hide()
+      expect(posted).toEqual([
+        { type: 'tabBar', tabs: [{ id: '/m', title: 'Today', symbol: 'sun.max' }], selected: '/m', tint: '#1d4ed8' },
+        { type: 'selectTab', id: '/m/calendar' },
+        { type: 'hideTabBar' },
+        { type: 'ready' },
+      ])
+
+      const selected: string[] = []
+      const stop = tabBar.onSelect(id => selected.push(id))
+      listeners.get('craftTabSelect')!({ detail: { id: '/m/health' } } as unknown as Event)
+      listeners.get('craftTabSelect')!({ detail: { id: 42 } } as unknown as Event)
+      stop()
+      expect(selected).toEqual(['/m/health'])
+      expect(listeners.has('craftTabSelect')).toBe(false)
+      expect(mobile.tabBar).toBe(tabBar)
+      expect(mobile.splash).toBe(splash)
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
+  })
+
+  it('answers false in a browser, so the page draws its own bar', () => {
+    const previousWindow = (globalThis as any).window
+    ;(globalThis as any).window = {}
+    try {
+      expect(tabBar.isAvailable()).toBe(false)
+      expect(tabBar.set([])).toBe(false)
+      expect(splash.hide()).toBe(false)
+    }
+    finally {
+      if (previousWindow === undefined) delete (globalThis as any).window
+      else (globalThis as any).window = previousWindow
+    }
   })
 })

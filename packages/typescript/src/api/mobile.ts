@@ -1512,6 +1512,97 @@ export const network = {
   }
 }
 
+/** A tab the native tab bar shows. */
+export interface NativeTab {
+  /** Comes back in `onSelect` when the tab is tapped. */
+  id: string
+  title: string
+  /** An SF Symbol name, such as `calendar`; the current tab draws its `.fill` variant when there is one. */
+  symbol: string
+  /** A count on the icon; empty draws none. */
+  badge?: string
+}
+
+export interface NativeTabBarOptions {
+  /** The current tab's id. */
+  selected?: string
+  /** The current tab's colour, as `#rrggbb`; the system's label colour if unset. */
+  tint?: string
+  tintDark?: string
+}
+
+interface ChromeHandler { postMessage: (message: unknown) => void }
+
+/**
+ * The shell's chrome channel, there from the first byte of the document.
+ * `window.craft` is installed only once the page has loaded, too late for a
+ * tab bar or a splash.
+ */
+function chromeHandler(): ChromeHandler | null {
+  if (typeof window === 'undefined') return null
+  const handler = (window as any).webkit?.messageHandlers?.craftChrome
+  return handler && typeof handler.postMessage === 'function' ? handler : null
+}
+
+function postChrome(message: Record<string, unknown>): boolean {
+  const handler = chromeHandler()
+  if (!handler) return false
+  try {
+    handler.postMessage(message)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+/**
+ * The phone's own tab bar, floating over the page: Liquid Glass on iOS 26 and
+ * later. The page describes it and keeps it on the current tab; a tap comes
+ * back through `onSelect` for the page to navigate. Where there is no native
+ * bar (a browser, Android for now), `isAvailable()` is false and every call is
+ * a no-op answering false, so the page draws its own.
+ *
+ * While the bar shows, `--craft-tab-bar-height` on the root element says how
+ * much of the screen's bottom it covers.
+ */
+export const tabBar = {
+  isAvailable(): boolean {
+    return chromeHandler() !== null
+  },
+  set(tabs: NativeTab[], options: NativeTabBarOptions = {}): boolean {
+    return postChrome({ type: 'tabBar', tabs, ...options })
+  },
+  select(id: string): boolean {
+    return postChrome({ type: 'selectTab', id })
+  },
+  hide(): boolean {
+    return postChrome({ type: 'hideTabBar' })
+  },
+  onSelect(callback: (id: string) => void): () => void {
+    if (typeof window === 'undefined') return () => {}
+    const listener = (event: Event) => {
+      const id = (event as CustomEvent<{ id?: unknown }>).detail?.id
+      if (typeof id === 'string') callback(id)
+    }
+    window.addEventListener('craftTabSelect', listener)
+    return () => window.removeEventListener('craftTabSelect', listener)
+  },
+}
+
+/**
+ * The launch splash, which the shell holds over the page until the page says
+ * it is ready, so the app goes from its launch screen to content with no blank
+ * page in between. Call `hide()` once the first screen has painted. The shell
+ * hides it anyway a moment after the page finishes loading, and after ten
+ * seconds at most.
+ */
+export const splash = {
+  hide(): boolean {
+    return postChrome({ type: 'ready' })
+  },
+}
+
 export const appReview = {
   async request(): Promise<boolean> {
     const craft = getCraftRoot()
@@ -1939,6 +2030,8 @@ const mobile: {
   health: typeof health
   liveActivities: typeof liveActivities
   watchConnectivity: typeof watchConnectivity
+  tabBar: typeof tabBar
+  splash: typeof splash
 } = {
   device: device,
   haptics: haptics,
@@ -1959,6 +2052,8 @@ const mobile: {
   health: health,
   liveActivities: liveActivities,
   watchConnectivity: watchConnectivity,
+  tabBar: tabBar,
+  splash: splash,
 }
 
 export default mobile
