@@ -506,6 +506,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var focusHandlers: [ObjectIdentifier: String] = [:]
     private var blurHandlers: [ObjectIdentifier: String] = [:]
     private var submitHandlers: [ObjectIdentifier: String] = [:]
+    private var longPressHandlers: [ObjectIdentifier: String] = [:]
     private var textMaxLengths: [ObjectIdentifier: Int] = [:]
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
@@ -515,6 +516,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
+    private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var tintedImages = Set<ObjectIdentifier>()
@@ -1038,6 +1040,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
+        updateLongPressHandler(events["onLongPress"], for: result)
         if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
         }
@@ -1226,6 +1229,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         focusHandlers.removeValue(forKey: id)
         blurHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
+        longPressHandlers.removeValue(forKey: id)
         textMaxLengths.removeValue(forKey: id)
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
@@ -1233,6 +1237,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
+            node.view.removeGestureRecognizer(recognizer)
+        }
+        if let recognizer = longPressRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
         imageSources.removeValue(forKey: id)
@@ -1314,7 +1321,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else if handler == nil, let recognizer = tapRecognizers.removeValue(forKey: id) {
             view.removeGestureRecognizer(recognizer)
         }
-        if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil }
+        if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }
+    }
+
+    private func updateLongPressHandler(_ handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        if let handler, !handler.isEmpty {
+            longPressHandlers[id] = handler
+            if longPressRecognizers[id] == nil {
+                let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(viewLongPressed(_:)))
+                longPressRecognizers[id] = recognizer
+                view.addGestureRecognizer(recognizer)
+            }
+        } else {
+            longPressHandlers.removeValue(forKey: id)
+            if let recognizer = longPressRecognizers.removeValue(forKey: id) {
+                view.removeGestureRecognizer(recognizer)
+            }
+        }
     }
 
     private func updateField(_ field: UITextField, value: String?) {
@@ -1813,6 +1837,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+    }
+
+    @objc private func viewLongPressed(_ sender: UILongPressGestureRecognizer) {
+        guard sender.state == .began,
+              let view = sender.view,
+              let handler = longPressHandlers[ObjectIdentifier(view)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
 

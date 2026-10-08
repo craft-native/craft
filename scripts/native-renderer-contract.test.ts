@@ -157,9 +157,21 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps generic pressable views interactive without disabling scroll containers', () => {
-    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil }')
+    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }')
     expect(android).toContain('control.isClickable = true')
     expect(android).toContain('control.setOnClickListener {')
+  })
+
+  it('delivers long-press events and releases their native handlers', () => {
+    expect(ios).toContain('private var longPressHandlers: [ObjectIdentifier: String] = [:]')
+    expect(ios).toContain('UILongPressGestureRecognizer(target: self, action: #selector(viewLongPressed(_:)))')
+    expect(ios).toContain('guard sender.state == .began')
+    expect(ios).toContain('longPressRecognizers.removeValue(forKey: id)')
+    expect(android).toContain('val longPressHandlers = mutableMapOf<View, String>()')
+    expect(android).toContain('events.optString("onLongPress")')
+    expect(android).toContain('control.setOnLongClickListener {')
+    expect(android).toContain('screen.longPressHandlers.keys.removeAll(released)')
+    expect(guide).toContain('`onLongPress`')
   })
 
   it('lets accessibility disabled state disable controls without re-enabling them', () => {

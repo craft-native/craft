@@ -525,6 +525,7 @@ class MainActivity : AppCompatActivity() {
         val drafts = mutableMapOf<String, String>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val longPressHandlers = mutableMapOf<View, String>()
         val scrollHandlers = mutableMapOf<View, String>()
         val scrollBeginHandlers = mutableMapOf<View, String>()
         val scrollEndHandlers = mutableMapOf<View, String>()
@@ -1180,6 +1181,18 @@ class MainActivity : AppCompatActivity() {
                 control.setOnClickListener(null)
             }
         }
+        val longPressHandler = events.optString("onLongPress")
+        if (longPressHandler.isNotBlank()) {
+            screen.longPressHandlers[control] = longPressHandler
+            control.setOnLongClickListener {
+                val current = screen.longPressHandlers[control] ?: return@setOnLongClickListener false
+                send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                true
+            }
+        } else {
+            screen.longPressHandlers.remove(control)
+            control.setOnLongClickListener(null)
+        }
         applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
         val layoutHandler = events.optString("onLayout")
         if (layoutHandler.isNotBlank()) {
@@ -1729,6 +1742,7 @@ class MainActivity : AppCompatActivity() {
         }
         released.forEach(defaultBackgrounds::remove)
         screen.handlers.keys.removeAll(released)
+        screen.longPressHandlers.keys.removeAll(released)
         screen.layoutHandlers.keys.removeAll(released)
         screen.lastLayoutBounds.keys.removeAll(released)
         screen.scrollHandlers.keys.removeAll(released)

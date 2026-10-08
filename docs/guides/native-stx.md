@@ -274,7 +274,9 @@ incremental mutation protocol.
 ## Events, accessibility, and navigation
 
 `onPress` and `onClick` deliver an empty `nativeEvent` from buttons and other
-pressable native views. `TextInput` accepts `onChange` or `onChangeText` and
+pressable native views. `onLongPress` fires once after the native long-press
+gesture begins and also delivers an empty `nativeEvent`; removing the handler
+releases the platform gesture recognizer. `TextInput` accepts `onChange` or `onChangeText` and
 delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `onSubmitEditing` are also native events. `keyboardType`, `returnKeyType`,
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
