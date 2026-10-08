@@ -143,7 +143,7 @@ function openCapabilities() {
       <Text testID="flex-grow-first" style={{"width":40,"flexGrow":1}}>grow</Text>
       <Text testID="flex-grow-second" style={{"width":40}}>fixed</Text>
     </View>
-    <Link testID="native-link" accessibilityState={{"disabled":linkAccessibilityDisabled}} onPress={() => setStatus('link pressed')}>Open native link</Link>
+    <Link testID="native-link" accessibilityHint="Opens status" accessibilityValue="ready" accessibilityState={{"disabled":linkAccessibilityDisabled}} onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
     <Button testID="toggle-button-style" onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>

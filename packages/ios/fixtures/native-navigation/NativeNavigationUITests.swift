@@ -96,6 +96,7 @@ final class NativeNavigationUITests: XCTestCase {
         let link = app.buttons["native-link"]
         XCTAssertTrue(link.waitForExistence(timeout: 5))
         XCTAssertEqual(link.label, "Open native link")
+        XCTAssertEqual(link.value as? String, "ready")
         link.tap()
         XCTAssertTrue(app.staticTexts["link pressed"].waitForExistence(timeout: 5))
         let accessibilityToggle = app.buttons["toggle-link-accessibility"]

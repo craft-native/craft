@@ -207,6 +207,8 @@ class NativeNavigationTest {
             val link = awaitView(activity, "native-link")
             assertTrue("native link should be a TextView", link is TextView)
             assertEquals("Open native link", (link as TextView).text.toString())
+            assertTrue(link.contentDescription.toString().contains("ready"))
+            assertEquals("Opens status", link.tooltipText)
             instrumentation.runOnMainSync { link.performClick() }
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             click(activity, "toggle-link-accessibility")
