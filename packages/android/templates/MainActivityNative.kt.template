@@ -799,6 +799,7 @@ class MainActivity : AppCompatActivity() {
                 configureText(this, props.optString("title").ifBlank { childText(children) }, style)
                 setTextColor(color(style.optString("color"), Color.rgb(33, 150, 243)))
                 paintFlags = paintFlags or Paint.UNDERLINE_TEXT_FLAG
+                isEnabled = !props.optBoolean("disabled", false)
                 isClickable = true
                 isFocusable = true
                 val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
@@ -810,6 +811,7 @@ class MainActivity : AppCompatActivity() {
             }
             "Button" -> (previous as? Button ?: Button(this)).apply {
                 text = props.optString("title").ifBlank { childText(children) }
+                isEnabled = !props.optBoolean("disabled", false)
                 val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 setOnClickListener {

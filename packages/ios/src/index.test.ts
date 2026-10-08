@@ -75,6 +75,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('let desiredReturnKeyType = returnKeyType(props["returnKeyType"])')
     expect(nativeSwift).toContain('case "ActivityIndicator":')
     expect(nativeSwift).toContain('UIActivityIndicatorView(style: .medium)')
+    expect(nativeSwift).toContain('button.isEnabled = props["disabled"] as? Bool != true')
     expect(nativeSwift).toContain('private func restoreFocus(_ focused: UIView?)')
     expect(nativeSwift).toContain('_ = focused.becomeFirstResponder()')
     expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')

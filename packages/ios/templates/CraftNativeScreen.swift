@@ -754,6 +754,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
                 button.setTitleColor(titleColor, for: .normal)
                 button.titleLabel?.font = font
             }
+            button.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
             let field = result as! UITextField

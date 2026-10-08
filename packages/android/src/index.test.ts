@@ -104,6 +104,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('imeOptions = imeOptionsFor(props)')
       expect(nativeActivity).toContain('"ActivityIndicator" ->')
       expect(nativeActivity).toContain('indeterminateTintList')
+      expect(nativeActivity).toContain('isEnabled = !props.optBoolean("disabled", false)')
       expect(nativeActivity).toContain('setOnEditorActionListener')
       expect(nativeActivity).toContain('screen.submitHandlers')
       expect(nativeActivity).toContain('showSoftInput')
