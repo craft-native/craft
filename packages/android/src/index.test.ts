@@ -133,6 +133,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('cellWidth * columns')
       expect(nativeActivity).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
       expect(nativeActivity).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+      expect(nativeActivity).toContain('private fun refreshInputDefaultsForTraitChange()')
+      expect(nativeActivity).toContain('val probe = EditText(this)')
       expect(readFileSync(join(native, 'app/src/main/AndroidManifest.xml'), 'utf8'))
         .toContain('screenLayout|keyboardHidden|uiMode')
       expect(nativeActivity).toContain('imageLoadStartHandlers')

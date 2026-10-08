@@ -105,5 +105,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('renderCommitted(document)')
     expect(android).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
     expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+    expect(android).toContain('refreshInputDefaultsForTraitChange()')
+    expect(android).toContain('val probe = EditText(this)')
   })
 })
