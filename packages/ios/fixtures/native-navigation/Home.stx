@@ -155,7 +155,8 @@ function openCapabilities() {
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
     <Text testID="slider-completions">Slider completions: {sliderCompletions}</Text>
-    <ActivityIndicator testID="native-indicator" />
+    <ActivityIndicator testID="native-indicator" color="#22c55e" size="large" />
+    <ActivityIndicator testID="stopped-indicator" color="#ef4444" size="small" animating={false} hidesWhenStopped={false} />
     <View testID="layout-wrap" onLayout={captureLayout} style={{"width":layoutWide ? 240 : 180,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>
       <Text testID="layout-stretch" style={{"width":100,"height":24,"alignSelf":"stretch"}}>wrapped</Text>

@@ -278,6 +278,10 @@ class NativeNavigationTest {
             }
             awaitText(activity, "slider-completions", "Slider completions: 1")
             assertTrue("native indicator should be a ProgressBar", awaitView(activity, "native-indicator") is ProgressBar)
+            val stoppedIndicator = awaitView(activity, "stopped-indicator") as ProgressBar
+            assertTrue("stopped indicator should stay visible when requested", stoppedIndicator.isShown)
+            assertTrue("stopped indicator should not animate", !stoppedIndicator.isIndeterminate)
+            assertEquals(0.75f, stoppedIndicator.scaleX)
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             assertEquals("Layout width: 240", (awaitView(activity, "layout-status") as TextView).text.toString())
             click(activity, "toggle-layout-width")
