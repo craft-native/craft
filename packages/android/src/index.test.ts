@@ -151,6 +151,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('setOnEditorActionListener')
       expect(nativeActivity).toContain('screen.submitHandlers')
       expect(nativeActivity).toContain('showSoftInput')
+      expect(nativeActivity).toContain('if (props.optBoolean("autoFocus", false) && !isFocused) post')
+      expect(nativeActivity).toContain('if (!isFocused) {\n                        requestFocus()')
       expect(nativeActivity).toContain('isNestedScrollingEnabled = true')
       expect(nativeActivity).toContain('setNativeNestedScrollingEnabled(true)')
       expect(nativeActivity).toContain('setOnScrollChangeListener')

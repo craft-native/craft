@@ -48,6 +48,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('textView.returnKeyType = returnKeyType(props["returnKeyType"])')
     expect(ios).toContain('textView.isSecureTextEntry = props["secureTextEntry"] as? Bool == true')
     expect(android).toContain('configureTextStyle(this, style)')
+    expect(android).toContain('if (props.optBoolean("autoFocus", false) && !isFocused) post')
+    expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
   })
 
   it('keeps native capability and WebView fallback gates intact', () => {

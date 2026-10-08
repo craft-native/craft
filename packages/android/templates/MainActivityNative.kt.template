@@ -988,10 +988,12 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("text", text.toString())))
                     true
                 }
-                if (props.optBoolean("autoFocus", false)) post {
-                    requestFocus()
-                    (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
-                        ?.showSoftInput(this, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                if (props.optBoolean("autoFocus", false) && !isFocused) post {
+                    if (!isFocused) {
+                        requestFocus()
+                        (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                            ?.showSoftInput(this, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                    }
                 }
                 if (this !== previous) addTextChangedListener(object : TextWatcher {
                     override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
