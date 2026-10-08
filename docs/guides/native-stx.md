@@ -220,7 +220,9 @@ both hosts. `onScroll` reports
 `contentOffset`, `contentSize`, and `layoutMeasurement`; `onScrollBeginDrag`
 and `onScrollEndDrag` report the corresponding gesture boundaries.
 `onMomentumScrollBegin` and `onMomentumScrollEnd` report the native deceleration
-interval. Refresh controls remain outside this versioned contract. Use
+interval. `FlatList` forwards the same scroll, drag, and momentum callbacks from
+its virtualized collection or recycler host. Refresh controls remain outside
+this versioned contract. Use
 `ScrollView` for bounded content and `FlatList` for data sets that need
 recycling.
 

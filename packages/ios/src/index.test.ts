@@ -53,7 +53,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('import JavaScriptCore')
     expect(nativeSwift).not.toContain('WKWebView')
     expect(nativeSwift).toContain('CraftNativeActions.perform(')
-    expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above and accept')
+    expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above, accept')
     expect(nativeSwift).toContain('platform: "ios"')
     expect(nativeSwift).toContain('mutationProtocolVersion: 1')
     expect(nativeSwift).toContain('capabilityProtocolVersion: \\(craftNativeCapabilityProtocolVersion)')

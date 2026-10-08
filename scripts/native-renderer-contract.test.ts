@@ -232,6 +232,15 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`onMomentumScrollBegin` and `onMomentumScrollEnd`')
   })
 
+  it('forwards FlatList scroll and momentum callbacks through virtualized hosts', () => {
+    expect(ios).toContain('list.onScrollEvent = events["onScroll"]')
+    expect(iosFlatList).toContain('var onMomentumScrollBegin: ((UIScrollView) -> Void)?')
+    expect(iosFlatList).toContain('func scrollViewDidEndDecelerating')
+    expect(android).toContain('list.onScrollEvent = events.optString("onScroll")')
+    expect(androidFlatList).toContain('var onMomentumScrollEnd: (() -> Unit)? = null')
+    expect(androidFlatList).toContain('RecyclerView.SCROLL_STATE_SETTLING')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')
