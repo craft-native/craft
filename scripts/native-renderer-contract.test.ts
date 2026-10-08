@@ -83,6 +83,9 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('mainMargins(styles[index])')
     expect(android).toContain('style.optDouble("marginLeft", horizontal)')
     expect(android).toContain('setMargins(')
+    expect(android).toContain('entry.height + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)')
+    expect(android).toContain('val availableWidth = max(0, layout.cellWidth - marginLeft - marginRight)')
+    expect(android).toContain('val crossLeading = if (orientation == HORIZONTAL)')
   })
 
   it('keeps horizontal list rows intrinsically sized across hosts', () => {

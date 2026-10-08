@@ -219,7 +219,12 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 rows.last() += entry
             }
         }
-        val rowHeights = rows.map { row -> max(gridAutoRows ?: 0, row.maxOfOrNull { it.height } ?: 0) }
+        val rowHeights = rows.map { row ->
+            max(gridAutoRows ?: 0, row.maxOfOrNull { entry ->
+                val lp = entry.view.layoutParams as? MarginLayoutParams
+                entry.height + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            } ?: 0)
+        }
         return GridLayout(rows, absolute, cellWidth, rowHeights)
     }
 
@@ -321,16 +326,23 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 val rowHeight = layout.rowHeights[rowIndex]
                 for ((column, entry) in row.withIndex()) {
                     val align = entry.style.alignSelf ?: alignItems
-                    val childWidth = if (align == "stretch" && entry.style.width == null) layout.cellWidth else min(layout.cellWidth, entry.width)
-                    val childHeight = if (align == "stretch" && entry.style.height == null) rowHeight else min(rowHeight, entry.height)
-                    val x = paddingLeft + column * (layout.cellWidth + columnGap) + when (align) {
-                        "center" -> (layout.cellWidth - childWidth) / 2
-                        "flex-end" -> layout.cellWidth - childWidth
+                    val lp = entry.view.layoutParams as? MarginLayoutParams
+                    val marginLeft = lp?.leftMargin ?: 0
+                    val marginRight = lp?.rightMargin ?: 0
+                    val marginTop = lp?.topMargin ?: 0
+                    val marginBottom = lp?.bottomMargin ?: 0
+                    val availableWidth = max(0, layout.cellWidth - marginLeft - marginRight)
+                    val availableHeight = max(0, rowHeight - marginTop - marginBottom)
+                    val childWidth = if (align == "stretch" && entry.style.width == null) availableWidth else min(availableWidth, entry.width)
+                    val childHeight = if (align == "stretch" && entry.style.height == null) availableHeight else min(availableHeight, entry.height)
+                    val x = paddingLeft + column * (layout.cellWidth + columnGap) + marginLeft + when (align) {
+                        "center" -> (availableWidth - childWidth) / 2
+                        "flex-end" -> availableWidth - childWidth
                         else -> 0
                     }
-                    val y = rowTop + when (align) {
-                        "center" -> (rowHeight - childHeight) / 2
-                        "flex-end" -> rowHeight - childHeight
+                    val y = rowTop + marginTop + when (align) {
+                        "center" -> (availableHeight - childHeight) / 2
+                        "flex-end" -> availableHeight - childHeight
                         else -> 0
                     }
                     entry.view.layout(x, y, x + childWidth, y + childHeight)
@@ -380,13 +392,16 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                     max(0, line.cross - (if (orientation == HORIZONTAL) (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0) else (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)))
                 else if (orientation == HORIZONTAL) entry.height else entry.width
                 val align = entry.style.alignSelf ?: alignItems
+                val crossLeading = if (orientation == HORIZONTAL) lp?.topMargin ?: 0 else lp?.leftMargin ?: 0
+                val crossTrailing = if (orientation == HORIZONTAL) lp?.bottomMargin ?: 0 else lp?.rightMargin ?: 0
+                val crossAvailable = max(0, line.cross - crossLeading - crossTrailing)
                 val crossPosition = when (align) {
-                    "center" -> (line.cross - crossSize) / 2
-                    "flex-end" -> line.cross - crossSize
-                    else -> 0
+                    "center" -> crossLeading + (crossAvailable - crossSize) / 2
+                    "flex-end" -> line.cross - crossTrailing - crossSize
+                    else -> crossLeading
                 }
-                val x = if (orientation == HORIZONTAL) mainOffset + marginStart else crossOffset + crossPosition + (lp?.leftMargin ?: 0)
-                val y = if (orientation == HORIZONTAL) crossOffset + crossPosition + (lp?.topMargin ?: 0) else mainOffset + marginStart
+                val x = if (orientation == HORIZONTAL) mainOffset + marginStart else crossOffset + crossPosition
+                val y = if (orientation == HORIZONTAL) crossOffset + crossPosition else mainOffset + marginStart
                 val primary = if (orientation == HORIZONTAL) entry.width else entry.height
                 val distributedPrimary = if (totalFactor > 0) max(0, (primary + rawFree * factors[index] / totalFactor).toInt()) else primary
                 val w = if (orientation == HORIZONTAL) distributedPrimary else crossSize
