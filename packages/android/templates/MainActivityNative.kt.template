@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
@@ -551,6 +552,7 @@ class MainActivity : AppCompatActivity() {
     private val imageErrors = mutableMapOf<ImageView, String>()
     private val inputHintDefaults = mutableMapOf<EditText, ColorStateList>()
     private val inputHighlightDefaults = mutableMapOf<EditText, Int>()
+    private val defaultBackgrounds = mutableMapOf<View, Drawable?>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1264,13 +1266,18 @@ class MainActivity : AppCompatActivity() {
         val background = style.has("backgroundColor")
         val border = style.optDouble("borderWidth", 0.0)
         val radius = style.optDouble("borderRadius", 0.0)
+        val defaultBackground = if (defaultBackgrounds.containsKey(view)) {
+            defaultBackgrounds[view]
+        } else {
+            view.background.also { defaultBackgrounds[view] = it }
+        }
         if (background || border > 0 || radius > 0) {
             view.background = GradientDrawable().apply {
                 setColor(color(style.optString("backgroundColor"), Color.TRANSPARENT))
                 cornerRadius = dp(radius).toFloat()
                 if (border > 0) setStroke(dp(border), color(style.optString("borderColor"), Color.TRANSPARENT))
             }
-        }
+        } else view.background = defaultBackground
         view.clipToOutline = style.optString("overflow") == "hidden"
         if (view is ViewGroup) view.clipChildren = style.optString("overflow") == "hidden"
         if (view is ImageView) {
@@ -1663,6 +1670,7 @@ class MainActivity : AppCompatActivity() {
             inputHintDefaults.remove(it)
             inputHighlightDefaults.remove(it)
         }
+        released.forEach(defaultBackgrounds::remove)
         screen.handlers.keys.removeAll(released)
         screen.layoutHandlers.keys.removeAll(released)
         screen.lastLayoutBounds.keys.removeAll(released)

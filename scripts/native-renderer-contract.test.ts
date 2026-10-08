@@ -93,6 +93,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('inputHintDefaults.remove(it)')
   })
 
+  it('restores native backgrounds when custom styles are removed', () => {
+    expect(ios).toContain('view.backgroundColor = color(style["backgroundColor"]) ?? .clear')
+    expect(android).toContain('if (defaultBackgrounds.containsKey(view))')
+    expect(android).toContain('} else view.background = defaultBackground')
+    expect(android).toContain('released.forEach(defaultBackgrounds::remove)')
+  })
+
   it('refreshes theme-default native controls when traits change', () => {
     expect(ios).toContain('mutationDocument.node("root")')
     expect(ios).toContain('renderCommitted(document)')
