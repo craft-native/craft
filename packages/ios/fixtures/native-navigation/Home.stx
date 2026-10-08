@@ -21,6 +21,8 @@ let layoutWide = true
 let imageStatus = ''
 let imageErrorStatus = ''
 let imageTinted = true
+let imageSource = 'http://example.com/image.png'
+let validImageSource = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
 let buttonAccent = false
 let inputColors = true
 let inputStyleStatus = ''
@@ -54,6 +56,12 @@ function imageLoaded() {
 
 function imageFailed() {
   imageErrorStatus = 'image failed'
+}
+
+function toggleImageSource() {
+  imageSource = imageSource.startsWith('http') ? validImageSource : 'http://example.com/image.png'
+  imageStatus = ''
+  imageErrorStatus = ''
 }
 
 function toggleImageTint() {
@@ -222,11 +230,14 @@ function openCapabilities() {
       <Text testID="image-error-status">{imageErrorStatus}</Text>
       <Image
         testID="unsupported-image"
-        source={{"uri":"http://example.com/image.png"}}
+        source={{"uri":imageSource}}
         accessibilityLabel="Unsupported image"
+        onLoad={imageLoaded}
+        onLoadEnd={imageLoaded}
         onError={imageFailed}
         style={{"width":16,"height":16}}
       />
+      <Button testID="toggle-image-source" onPress={toggleImageSource}>Toggle image source</Button>
       <View style={{"height":120}} />
       <Text testID="scroll-end">End of native scroll content</Text>
     </ScrollView>

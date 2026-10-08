@@ -365,6 +365,10 @@ class NativeNavigationTest {
             assertTrue("image accessibility label was lost on failure", unsupported.contentDescription.toString().contains("Unsupported image"))
             assertTrue(unsupported.contentDescription.toString().contains("Unsupported image source"))
             awaitText(activity, "image-error-status", "image failed")
+            click(activity, "toggle-image-source")
+            awaitText(activity, "image-status", "image loaded")
+            assertTrue("image source recovery did not decode", unsupported.drawable != null)
+            assertEquals("image error metadata was not cleared on recovery", "Unsupported image", unsupported.contentDescription.toString())
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {
