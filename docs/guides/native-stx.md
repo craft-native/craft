@@ -60,6 +60,8 @@ generated renderers, so a platform can’t silently lose a native primitive.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.
+`Button.color` sets the native action-label color; `style.color` remains the
+shared fallback when the prop is omitted.
 `Text` supports positive `numberOfLines` values and `ellipsizeMode` (`head`,
 `middle`, `tail`, or `clip`) on both hosts; omitting the line count keeps the
 label intrinsically multiline.

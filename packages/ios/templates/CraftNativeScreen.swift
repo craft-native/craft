@@ -881,7 +881,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let button = result as! UIButton
             let title = props["title"] as? String ?? children.compactMap { $0 as? String }.joined()
             let transformedTitle = transformedText(title, style: style)
-            let titleColor = color(style["color"]) ?? .systemBlue
+            let titleColor = color(props["color"]) ?? color(style["color"]) ?? .systemBlue
             let font = textFont(
                 style,
                 default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)

@@ -36,8 +36,10 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('let transformedTitle = transformedText(title, style: style)')
     expect(ios).toContain('private func transformedText(_ text: String, style: [String: Any])')
     expect(ios).toContain('buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")')
+    expect(ios).toContain('let titleColor = color(props["color"]) ?? color(style["color"]) ?? .systemBlue')
     expect(ios).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
     expect(android).toContain('configureText(this, title, style)')
+    expect(android).toContain('props.optString("color").takeIf { it.isNotBlank() }?.let { setTextColor(color(it, defaultTextColor)) }')
   })
 
   it('keeps native text truncation props aligned across hosts', () => {
