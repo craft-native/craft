@@ -451,8 +451,9 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('list.bounces = props["bounces"] as? Bool ?? true')
     expect(android).toContain('fun setBounces(value: Boolean)')
     expect(android).toContain('setBounces(props.optBoolean("bounces", true))')
-    expect(android).toContain('overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS')
-    expect(guide).toContain('`bounces` to control the platform overscroll effect')
+    expect(android).toContain('private fun applyBounceModes()')
+    expect(android).toContain('if (bounces && alwaysBounceVertical) View.OVER_SCROLL_ALWAYS')
+    expect(guide).toContain('`bounces`, `alwaysBounceVertical`, and `alwaysBounceHorizontal` to control the')
   })
 
   it('keeps ScrollView paging behavior aligned across hosts', () => {
@@ -461,5 +462,14 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (pagingEnabled) snapToPage(scroller)')
     expect(android).toContain('setPagingEnabled(props.optBoolean("pagingEnabled", false))')
     expect(guide).toContain('`pagingEnabled` snaps `ScrollView` content')
+  })
+
+  it('keeps ScrollView bounce axes aligned across hosts', () => {
+    expect(ios).toContain('scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? (direction == .vertical)')
+    expect(ios).toContain('scroll.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? (direction == .horizontal)')
+    expect(android).toContain('fun setAlwaysBounce(vertical: Boolean, horizontal: Boolean)')
+    expect(android).toContain('alwaysBounceVertical')
+    expect(android).toContain('alwaysBounceHorizontal')
+    expect(android).toContain('setAlwaysBounce(')
   })
 })

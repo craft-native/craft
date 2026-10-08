@@ -322,7 +322,8 @@ callback restores focus after dispatch and schedules a short delayed main-queue
 handoff after UIKit finishes the touch, even if UIKit temporarily clears first
 responder status while dispatching the event. `FlatList` supports `onEndReached`.
 `ScrollView` and `FlatList` emit the scroll callbacks described above, accept
-`bounces` to control the platform overscroll effect, and accept
+`bounces`, `alwaysBounceVertical`, and `alwaysBounceHorizontal` to control the
+platform overscroll effect, and accept
 `keyboardDismissMode="on-drag"` or `"interactive"`; omitting it keeps the
 keyboard open while scrolling.
 

@@ -452,6 +452,9 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     private val horizontal = HorizontalScrollView(context)
     private var horizontalMode: Boolean? = null
     private var pagingEnabled = false
+    private var bounces = true
+    private var alwaysBounceVertical = true
+    private var alwaysBounceHorizontal = true
 
     init {
         vertical.isNestedScrollingEnabled = true
@@ -486,9 +489,19 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     }
 
     fun setBounces(value: Boolean) {
-        val mode = if (value) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
-        vertical.overScrollMode = mode
-        horizontal.overScrollMode = mode
+        bounces = value
+        applyBounceModes()
+    }
+
+    fun setAlwaysBounce(vertical: Boolean, horizontal: Boolean) {
+        alwaysBounceVertical = vertical
+        alwaysBounceHorizontal = horizontal
+        applyBounceModes()
+    }
+
+    private fun applyBounceModes() {
+        vertical.overScrollMode = if (bounces && alwaysBounceVertical) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
+        horizontal.overScrollMode = if (bounces && alwaysBounceHorizontal) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
     }
 
     fun setPagingEnabled(value: Boolean) {
@@ -1266,6 +1279,10 @@ class MainActivity : AppCompatActivity() {
                 )
                 setScrollEnabled(props.optBoolean("scrollEnabled", true))
                 setBounces(props.optBoolean("bounces", true))
+                setAlwaysBounce(
+                    props.optBoolean("alwaysBounceVertical", !horizontal),
+                    props.optBoolean("alwaysBounceHorizontal", horizontal),
+                )
                 setPagingEnabled(props.optBoolean("pagingEnabled", false))
                 val onScroll = events.optString("onScroll")
                 if (onScroll.isNotBlank()) screen.scrollHandlers[this] = onScroll else screen.scrollHandlers.remove(this)
