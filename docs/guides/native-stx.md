@@ -293,6 +293,10 @@ Removing `placeholderTextColor` or `selectionColor` from a reused `TextInput`
 restores the platform theme default on both hosts instead of retaining the
 previous native color.
 
+Android handles `uiMode` changes in place: the active native document is
+reconciled against the new DayNight resources, so theme-default text colors,
+safe-area insets, and focused input state survive a light/dark transition.
+
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
 `accessibilityState`, and `accessibilityRole` map to native accessibility
 metadata and traits. The portable roles are `button`, `image`, `header`,
