@@ -794,6 +794,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             slider.value = min(slider.maximumValue, max(slider.minimumValue, value))
             slider.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onValueChange"] ?? events["onChange"], for: slider)
+        case "ActivityIndicator":
+            let indicator = result as! UIActivityIndicatorView
+            indicator.style = (props["size"] as? String) == "large" ? .large : .medium
+            indicator.color = color(props["color"]) ?? .tintColor
+            if props["animating"] as? Bool == false {
+                indicator.stopAnimating()
+            } else {
+                indicator.startAnimating()
+            }
         case "Image":
             let image = result as! UIImageView
             image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
@@ -830,7 +839,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" {
+        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
             updatePressHandler(events["onPress"] ?? events["onClick"], for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -863,6 +872,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             let slider = UISlider()
             slider.addTarget(self, action: #selector(sliderChanged(_:)), for: .valueChanged)
             return slider
+        case "ActivityIndicator":
+            return UIActivityIndicatorView(style: .medium)
         case "Image":
             return UIImageView()
         case "ScrollView":

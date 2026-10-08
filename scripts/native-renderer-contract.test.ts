@@ -13,6 +13,7 @@ const COMPONENTS: Array<[string, string, string]> = [
   ['Link', 'case "Button", "Link":', '"Link" ->'],
   ['Switch', 'case "Switch":', '"Switch" ->'],
   ['TextInput', 'case "TextInput":', '"TextInput" ->'],
+  ['ActivityIndicator', 'case "ActivityIndicator":', '"ActivityIndicator" ->'],
   ['Image', 'case "Image":', '"Image" ->'],
   ['ScrollView', 'case "ScrollView":', '"ScrollView" ->'],
   ['FlatList', 'case "FlatList":', '"FlatList" ->'],
