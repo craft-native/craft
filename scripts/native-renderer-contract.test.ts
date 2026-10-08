@@ -99,6 +99,13 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('inputIdentities[id].map { inputDrafts[$0] = textView.text ?? "" }')
   })
 
+  it('uses the shared 16-point default text size across hosts', () => {
+    expect(ios).toContain('textFont(style, default: .systemFont(ofSize: 16))')
+    expect(ios).toContain('field.font = textFont(style, default: .systemFont(ofSize: 16))')
+    expect(ios).toContain('textView.font = textFont(style, default: .systemFont(ofSize: 16))')
+    expect(android).toContain('style.optDouble("fontSize", 16.0)')
+  })
+
   it('keeps TextInput keyboard traits aligned across hosts', () => {
     expect(ios).toContain('case "email-address": return .emailAddress')
     expect(ios).toContain('case "decimal-pad": return .decimalPad')

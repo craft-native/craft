@@ -315,7 +315,8 @@ map to the platform input control. `placeholderTextColor`, `selectionColor`,
 positive `maxLength`, `multiline`, and `numberOfLines` values are applied on
 both hosts, including keyboard and return-key traits on multiline inputs. Shared text styles (`color`, `fontSize`, `fontFamily`, `fontWeight`,
 `fontStyle`, `textAlign`, `letterSpacing`, and `lineHeight`) also apply to
-native text inputs. Configuration changes are applied only when
+native text inputs. When `fontSize` is omitted, text uses the shared 16-point
+default on both hosts. Configuration changes are applied only when
 their values change, so state reconciliation preserves the focused field and
 its keyboard; UIKit text inputs retain their dynamic accessibility value unless
 an explicit `accessibilityValue` prop overrides it. The host also restores the first responder around synchronous

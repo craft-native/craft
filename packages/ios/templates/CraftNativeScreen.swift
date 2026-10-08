@@ -438,7 +438,7 @@ private final class CraftNativeTextView: UITextView {
         didSet { placeholderLabel.textColor = placeholderColor ?? .placeholderText }
     }
     var placeholderFont: UIFont? {
-        didSet { placeholderLabel.font = placeholderFont ?? .systemFont(ofSize: UIFont.systemFontSize) }
+        didSet { placeholderLabel.font = placeholderFont ?? .systemFont(ofSize: 16) }
     }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
@@ -909,7 +909,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let titleColor = color(props["color"]) ?? color(style["color"]) ?? .systemBlue
             let font = textFont(
                 style,
-                default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)
+                default: .systemFont(ofSize: 16)
             )
             button.setAttributedTitle(NSAttributedString(
                 string: transformedTitle,
@@ -953,9 +953,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             field.delegate = self
             field.textColor = color(style["color"]) ?? .label
-            field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
+            field.font = textFont(style, default: .systemFont(ofSize: 16))
             field.textAlignment = textAlignment(style["textAlign"])
-            field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: field.textAlignment)
+            field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: 16), alignment: field.textAlignment)
             let desiredKeyboardType = keyboardType(props["keyboardType"])
             if field.keyboardType != desiredKeyboardType { field.keyboardType = desiredKeyboardType }
             let desiredReturnKeyType = returnKeyType(props["returnKeyType"])
@@ -1459,7 +1459,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let id = ObjectIdentifier(textView)
         textView.delegate = self
         textView.textColor = color(style["color"]) ?? .label
-        textView.font = textFont(style, default: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize))
+        textView.font = textFont(style, default: .systemFont(ofSize: 16))
         textView.textAlignment = textAlignment(style["textAlign"])
         textView.tintColor = color(props["selectionColor"])
         textView.keyboardType = keyboardType(props["keyboardType"])
@@ -1486,7 +1486,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         updateTextView(textView, value: (props["value"] as? String) ?? defaultValue)
         let selectedRange = textView.selectedRange
-        let attributes = inputTextAttributes(style, font: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: textView.textAlignment)
+        let attributes = inputTextAttributes(style, font: textView.font ?? .systemFont(ofSize: 16), alignment: textView.textAlignment)
         textView.typingAttributes = attributes
         if !textView.text.isEmpty {
             textView.attributedText = NSAttributedString(string: textView.text, attributes: attributes)
@@ -1552,7 +1552,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func configureText(_ label: UILabel, text: String, style: [String: Any]) {
         let transformed = transformedText(text, style: style)
         label.textColor = color(style["color"]) ?? .label
-        label.font = textFont(style, default: .systemFont(ofSize: UIFont.systemFontSize))
+        label.font = textFont(style, default: .systemFont(ofSize: 16))
         label.textAlignment = textAlignment(style["textAlign"])
         var attributes: [NSAttributedString.Key: Any] = [:]
         if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
