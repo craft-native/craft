@@ -1646,7 +1646,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         switch style["textTransform"] as? String {
         case "uppercase": return text.uppercased()
         case "lowercase": return text.lowercased()
-        case "capitalize": return text.capitalized
+        case "capitalize": return text.split(separator: " ", omittingEmptySubsequences: false).map { word in
+            guard let first = word.first else { return String(word) }
+            return String(first).uppercased() + String(word.dropFirst())
+        }.joined(separator: " ")
         default: return text
         }
     }

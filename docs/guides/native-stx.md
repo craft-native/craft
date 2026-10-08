@@ -180,6 +180,9 @@ type:
 - for images: `resizeMode` (`contain`, `cover`, `stretch`, or `center`) and
   `tintColor` for template rendering.
 
+`textTransform: 'capitalize'` uppercases the first character of each
+space-delimited word while preserving the remaining characters on both hosts.
+
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
 Android. Both hosts use the same line-breaking, gap, min/max clamping, absolute

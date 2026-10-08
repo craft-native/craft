@@ -53,6 +53,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('(previous as? TextView)?.takeUnless { it is Button } ?: TextView(this)')
   })
 
+  it('keeps capitalize semantics aligned across hosts', () => {
+    expect(ios).toContain('text.split(separator: " ", omittingEmptySubsequences: false)')
+    expect(ios).toContain('String(first).uppercased() + String(word.dropFirst())')
+    expect(android).toContain('value.split(\' \').joinToString(" ")')
+  })
+
   it('keeps native text truncation props aligned across hosts', () => {
     expect(ios).toContain('label.numberOfLines = max(0, (props["numberOfLines"] as? NSNumber)?.intValue ?? 0)')
     expect(ios).toContain('label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])')
