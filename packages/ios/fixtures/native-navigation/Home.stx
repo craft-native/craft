@@ -188,6 +188,7 @@ function openCapabilities() {
       <Text testID="styled-first" style={{"width":70,"color":"#fedcba","fontSize":21,"fontWeight":"700","fontStyle":"italic","textAlign":"right","letterSpacing":1,"lineHeight":26,"textTransform":"uppercase","textDecorationLine":"underline"}}>first</Text>
       <Text testID="styled-second" style={{"width":70}}>second</Text>
     </View>
+    <Text testID="justified-text" style={{"width":240,"textAlign":"justify"}}>A justified native paragraph exercises shared text alignment.</Text>
     <View testID="grid-wrap" style={{"display":"grid","gridTemplateColumns":"repeat(2, 1fr)","gridAutoRows":28,"columnGap":6,"rowGap":4,"width":240,"padding":4,"backgroundColor":"#334455"}}>
       <Text testID="grid-first">grid one</Text>
       <Text testID="grid-second">grid two</Text>

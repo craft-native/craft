@@ -74,6 +74,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('import android.text.Layout')
     expect(android).toContain('Layout.JUSTIFICATION_MODE_INTER_WORD')
     expect(android).toContain('Layout.JUSTIFICATION_MODE_NONE')
+    expect(navigationHome).toContain('testID="justified-text"')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {

@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.SystemClock
 import android.text.InputFilter
 import android.text.InputType
+import android.text.Layout
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.inputmethod.EditorInfo
@@ -309,6 +310,8 @@ class NativeNavigationTest {
             assertTrue("native switch should apply track tint", nativeSwitch.trackTintList != null)
             assertTrue("native switch should apply thumb tint", nativeSwitch.thumbTintList != null)
             assertTrue("null switch value should fall back to checked", (awaitView(activity, "nullable-switch") as Switch).isChecked)
+            val justifiedText = awaitView(activity, "justified-text") as TextView
+            assertEquals("justified text should use the Android inter-word mode", Layout.JUSTIFICATION_MODE_INTER_WORD, justifiedText.justificationMode)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
             assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
             var switchInfo: AccessibilityNodeInfo? = null
