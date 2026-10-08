@@ -96,6 +96,12 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     var onScrollEndDrag: (() -> Unit)? = null
     var onMomentumScrollBegin: (() -> Unit)? = null
     var onMomentumScrollEnd: (() -> Unit)? = null
+    var onLayoutChanged: (() -> Unit)? = null
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        onLayoutChanged?.invoke()
+    }
 
     init {
         adapter = listAdapter
@@ -225,6 +231,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         onScrollEndDrag = null
         onMomentumScrollBegin = null
         onMomentumScrollEnd = null
+        onLayoutChanged = null
     }
 
     fun refreshThemeDefaults() {

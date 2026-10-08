@@ -284,6 +284,9 @@ describe('native renderer component contract', () => {
   it('emits onLayout for virtualized rows on both hosts', () => {
     expect(ios).toContain('flatListRows[ObjectIdentifier(list)]?.values.forEach { emitLayoutEvents(for: $0) }')
     expect(android).toContain('private fun emitLayoutEvents(screen: Screen, view: View)')
+    expect(androidFlatList).toContain('var onLayoutChanged: (() -> Unit)? = null')
+    expect(androidFlatList).toContain('onLayoutChanged?.invoke()')
+    expect(android).toContain('list.onLayoutChanged = {')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

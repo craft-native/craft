@@ -1419,6 +1419,9 @@ class MainActivity : AppCompatActivity() {
     ) {
         screen.flatListOwners.entries.removeAll { it.value == owner }
         screen.flatListOwnerByView[list] = owner
+        list.onLayoutChanged = {
+            if (screen.active) emitLayoutEvents(screen)
+        }
         val nodes = (0 until children.length()).mapNotNull { children.optJSONObject(it) }
         nodes.forEach { registerFlatListOwnership(screen, it, owner) }
         list.onScrollEvent = events.optString("onScroll").takeIf { it.isNotBlank() }?.let { handler ->
