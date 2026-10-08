@@ -86,6 +86,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('sliderFinished')
     expect(nativeSwift).toContain('toggle.onTintColor')
     expect(nativeSwift).toContain('toggle.thumbTintColor')
+    expect(nativeSwift).toContain('toggle.onTintColor = nil')
     expect(nativeSwift).toContain('imageLoadStartHandlers')
     expect(nativeSwift).toContain('imageLoadEndHandlers')
     expect(nativeSwift).toContain('imageFailure')

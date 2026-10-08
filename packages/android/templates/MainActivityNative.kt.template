@@ -960,10 +960,9 @@ class MainActivity : AppCompatActivity() {
                         arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                         intArrayOf(trueColor, falseColor),
                     )
-                }
-                props.optString("thumbColor").takeIf { it.isNotBlank() }?.let {
-                    thumbTintList = ColorStateList.valueOf(color(it, Color.WHITE))
-                }
+                } ?: run { trackTintList = null }
+                thumbTintList = props.optString("thumbColor").takeIf { it.isNotBlank() }
+                    ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }
                 val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 setOnCheckedChangeListener { _, checked ->
@@ -980,15 +979,12 @@ class MainActivity : AppCompatActivity() {
                 progress = (((props.optDouble("value", minimum) - minimum) / (maximum - minimum)) * max).toInt().coerceIn(0, max)
                 val step = props.optDouble("step", 0.0).takeIf { it > 0 }
                 if (step != null) screen.sliderSteps[this] = step else screen.sliderSteps.remove(this)
-                props.optString("minimumTrackTintColor").takeIf { it.isNotBlank() }?.let {
-                    progressTintList = ColorStateList.valueOf(color(it, Color.WHITE))
-                }
-                props.optString("maximumTrackTintColor").takeIf { it.isNotBlank() }?.let {
-                    progressBackgroundTintList = ColorStateList.valueOf(color(it, Color.GRAY))
-                }
-                props.optString("thumbTintColor").takeIf { it.isNotBlank() }?.let {
-                    thumbTintList = ColorStateList.valueOf(color(it, Color.WHITE))
-                }
+                progressTintList = props.optString("minimumTrackTintColor").takeIf { it.isNotBlank() }
+                    ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }
+                progressBackgroundTintList = props.optString("maximumTrackTintColor").takeIf { it.isNotBlank() }
+                    ?.let { ColorStateList.valueOf(color(it, Color.GRAY)) }
+                thumbTintList = props.optString("thumbTintColor").takeIf { it.isNotBlank() }
+                    ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }
                 isEnabled = !props.optBoolean("disabled", false)
                 val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
@@ -1015,9 +1011,8 @@ class MainActivity : AppCompatActivity() {
             "ActivityIndicator" -> (previous as? android.widget.ProgressBar ?: android.widget.ProgressBar(this)).apply {
                 isIndeterminate = true
                 visibility = if (props.optBoolean("animating", true)) View.VISIBLE else View.GONE
-                props.optString("color").takeIf { it.isNotBlank() }?.let {
-                    indeterminateTintList = ColorStateList.valueOf(color(it, Color.WHITE))
-                }
+                indeterminateTintList = props.optString("color").takeIf { it.isNotBlank() }
+                    ?.let { ColorStateList.valueOf(color(it, Color.WHITE)) }
             }
             "Image" -> (previous as? ImageView ?: ImageView(this)).apply {
                 scaleType = when (style.optString("resizeMode").ifBlank { props.optString("resizeMode") }) {

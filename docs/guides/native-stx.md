@@ -401,3 +401,7 @@ of truth when those platform prerequisites are unavailable locally. The
 host-neutral benchmark includes 100, 1,000, and 10,000-node full renders and
 single-node mutations; the platform suites separately verify native recycling,
 capability persistence across relaunch, and notification cancellation.
+
+When a style or color prop is removed during reconciliation, reused native
+controls reset that value to the platform default instead of retaining stale
+state.

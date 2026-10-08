@@ -906,6 +906,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let track = props["trackColor"] as? [String: Any] {
                 toggle.onTintColor = color(track["true"])
                 toggle.tintColor = color(track["false"])
+            } else {
+                toggle.onTintColor = nil
+                toggle.tintColor = nil
             }
             toggle.thumbTintColor = color(props["thumbColor"])
             if let background = color(props["ios_backgroundColor"]) { toggle.tintColor = background }
