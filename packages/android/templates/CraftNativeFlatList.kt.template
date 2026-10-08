@@ -99,6 +99,24 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         })
     }
 
+    fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit) {
+        if (mode !in setOf("on-drag", "interactive")) {
+            setOnTouchListener(null)
+            return
+        }
+        var dismissed = false
+        setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> dismissed = false
+                android.view.MotionEvent.ACTION_MOVE -> if (!dismissed) {
+                    dismissed = true
+                    dismissKeyboard()
+                }
+            }
+            false
+        }
+    }
+
     fun apply(
         nodes: List<JSONObject>,
         horizontal: Boolean,

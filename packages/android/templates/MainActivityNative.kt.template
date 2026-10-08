@@ -1138,6 +1138,10 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, content, children, path, next, style, previousControls)
             }
             "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
+                setKeyboardDismissMode(props.optString("keyboardDismissMode")) {
+                    (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                        ?.hideSoftInputFromWindow(windowToken, 0)
+                }
                 reconcileFlatList(screen, this, children, path, protocolId ?: path, props, events)
             }
             "View", "SafeAreaView" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {

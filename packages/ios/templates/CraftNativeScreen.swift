@@ -1150,6 +1150,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let owner = parent.protocolId ?? path
         flatListOwners = flatListOwners.filter { $0.value != owner }
         for child in children { registerFlatListOwnership(child, owner: owner) }
+        list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
 
         list.apply(
             nodes: children,

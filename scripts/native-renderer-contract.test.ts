@@ -155,6 +155,10 @@ describe('native renderer component contract', () => {
     expect(android).toContain('keyboardDismissMode: String')
     expect(android).toContain('keyboardDismissMode in setOf("on-drag", "interactive")')
     expect(android).toContain('hideSoftInputFromWindow(nativeScroll.windowToken, 0)')
+    expect(ios).toContain('list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])')
+    expect(android).toContain('setKeyboardDismissMode(props.optString("keyboardDismissMode"))')
+    expect(androidFlatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
+    expect(androidFlatList).toContain('android.view.MotionEvent.ACTION_MOVE')
     expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
   })
 
