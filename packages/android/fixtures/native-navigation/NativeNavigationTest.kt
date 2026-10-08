@@ -170,6 +170,7 @@ class NativeNavigationTest {
             assertTrue("multiline TextInput should be an EditText", notes is EditText)
             assertFalse("multiline TextInput should not be single line", (notes as EditText).isSingleLine)
             assertEquals(3, notes.maxLines)
+            assertEquals("Draft", (notes as EditText).text.toString())
             assertEquals("Notes", notes.hint.toString())
             assertEquals(Color.rgb(0x22, 0xc5, 0x5e), notes.highlightColor)
             val title = awaitView(activity, "home-title")
