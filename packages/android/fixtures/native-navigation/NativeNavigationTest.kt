@@ -189,8 +189,11 @@ class NativeNavigationTest {
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val toggle = awaitView(activity, "native-switch")
             assertTrue("native switch should be an Android Switch", toggle is Switch)
-            assertTrue("native switch should start off", !(toggle as Switch).isChecked)
-            instrumentation.runOnMainSync { toggle.performClick() }
+            val nativeSwitch = toggle as Switch
+            assertTrue("native switch should start off", !nativeSwitch.isChecked)
+            assertTrue("native switch should apply track tint", nativeSwitch.trackTintList != null)
+            assertTrue("native switch should apply thumb tint", nativeSwitch.thumbTintList != null)
+            instrumentation.runOnMainSync { nativeSwitch.performClick() }
             assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val slider = awaitView(activity, "native-slider")
             assertTrue("native slider should be a SeekBar", slider is SeekBar)

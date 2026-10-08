@@ -87,6 +87,7 @@ final class NativeNavigationUITests: XCTestCase {
         let toggle = app.switches["native-switch"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "0")
+        XCTAssertTrue(toggle.isEnabled)
         toggle.tap()
         XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
 
