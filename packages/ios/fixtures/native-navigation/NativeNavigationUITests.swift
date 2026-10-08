@@ -55,6 +55,8 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
         let scroll = app.scrollViews["native-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["disabled-button"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["disabled-button"].isEnabled)
         let image = app.images["native-image"]
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertEqual(image.label, "Native pixel")

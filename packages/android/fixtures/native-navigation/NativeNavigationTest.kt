@@ -157,6 +157,8 @@ class NativeNavigationTest {
             val title = awaitView(activity, "home-title")
             assertTrue(title is TextView)
             assertEquals(Color.WHITE, (title as TextView).currentTextColor)
+            val disabled = awaitView(activity, "disabled-button") as Button
+            assertFalse(disabled.isEnabled)
             val styled = awaitView(activity, "styled-row") as LinearLayout
             val styledFirst = awaitView(activity, "styled-first") as TextView
             val styledSecond = awaitView(activity, "styled-second") as TextView
