@@ -203,6 +203,7 @@ function openCapabilities() {
     <Text testID="input-style-status">{inputStyleStatus}</Text>
     <TextInput testID="name-input" placeholder="Your name" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onFocus={focusName} onSubmitEditing={submitName} onBlur={blurName} onEndEditing={endNameEditing} />
     <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} defaultValue="Draft" placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} onSubmitEditing={submitName} onBlur={blurNotes} onEndEditing={endNotesEditing} />
+    <TextInput testID="readonly-input" editable={false} defaultValue="Read only" />
     <Text testID="greeting">Hello {name}</Text>
     <Text testID="name-submits">Submits: {submits}</Text>
     <Text testID="name-focuses">Focuses: {nameFocuses}</Text>

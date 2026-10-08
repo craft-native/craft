@@ -174,6 +174,9 @@ class NativeNavigationTest {
             assertEquals("Draft", (notes as EditText).text.toString())
             assertEquals("Notes", notes.hint.toString())
             assertEquals(Color.rgb(0x22, 0xc5, 0x5e), notes.highlightColor)
+            val readonly = awaitView(activity, "readonly-input") as EditText
+            assertTrue("editable=false should disable the native input", !readonly.isEnabled)
+            assertEquals("Read only", readonly.text.toString())
             val title = awaitView(activity, "home-title")
             assertTrue(title is TextView)
             assertEquals(Color.WHITE, (title as TextView).currentTextColor)
