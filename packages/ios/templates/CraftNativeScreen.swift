@@ -537,7 +537,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
         view.backgroundColor = config.resolvedBackgroundColor
-        rootStack.setNeedsLayout()
+        if let document = mutationDocument.node("root") {
+            renderCommitted(document)
+        } else {
+            rootStack.setNeedsLayout()
+        }
     }
 
     override func viewDidLayoutSubviews() {

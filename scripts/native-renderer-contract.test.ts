@@ -62,4 +62,11 @@ describe('native renderer component contract', () => {
     expect(android).toContain('inputHighlightDefaults.getOrPut(this)')
     expect(android).toContain('inputHintDefaults.remove(it)')
   })
+
+  it('refreshes theme-default native controls when traits change', () => {
+    expect(ios).toContain('mutationDocument.node("root")')
+    expect(ios).toContain('renderCommitted(document)')
+    expect(android).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
+    expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+  })
 })

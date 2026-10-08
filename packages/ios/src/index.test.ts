@@ -442,6 +442,8 @@ describe('Craft iOS builder', () => {
     const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
     expect(source).toContain('traitCollectionDidChange')
     expect(source).toContain('config.resolvedBackgroundColor')
+    expect(source).toContain('mutationDocument.node("root")')
+    expect(source).toContain('renderCommitted(document)')
   })
 
   it('emits native layout measurements only when a view changes frame', async () => {

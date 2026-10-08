@@ -296,6 +296,8 @@ previous native color.
 Android handles `uiMode` changes in place: the active native document is
 reconciled against the new DayNight resources, so theme-default text colors,
 safe-area insets, and focused input state survive a light/dark transition.
+On iOS, `traitCollectionDidChange` performs the same reconciliation so system
+label/tint colors and native accessibility traits follow the new appearance.
 
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
 `accessibilityState`, and `accessibilityRole` map to native accessibility
