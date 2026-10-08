@@ -66,6 +66,16 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(scrollEnd.waitForExistence(timeout: 5))
         XCTAssertTrue(scrollEnd.isHittable, "native ScrollView did not reveal overflow content")
 
+        let grid = app.otherElements["grid-wrap"]
+        XCTAssertTrue(grid.waitForExistence(timeout: 5))
+        let gridFirst = app.staticTexts["grid-first"]
+        let gridSecond = app.staticTexts["grid-second"]
+        let gridThird = app.staticTexts["grid-third"]
+        XCTAssertTrue(gridFirst.exists && gridSecond.exists && gridThird.exists)
+        XCTAssertEqual(gridFirst.frame.minY, gridSecond.frame.minY, accuracy: 2, "grid tracks did not share a row")
+        XCTAssertGreaterThan(gridSecond.frame.minX, gridFirst.frame.minX, "grid columns did not lay out side by side")
+        XCTAssertGreaterThan(gridThird.frame.minY, gridFirst.frame.minY, "grid rows did not advance after the first track")
+
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
         let bounded = app.staticTexts["layout-min"]

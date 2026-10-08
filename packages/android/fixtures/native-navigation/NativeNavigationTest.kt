@@ -170,6 +170,13 @@ class NativeNavigationTest {
             assertTrue(styledFirst.typeface.style and Typeface.ITALIC != 0)
             assertTrue(styledFirst.paintFlags and Paint.UNDERLINE_TEXT_FLAG != 0)
             assertEquals((70 * density).toInt(), styledFirst.layoutParams.width)
+            awaitView(activity, "grid-wrap")
+            val gridFirst = awaitView(activity, "grid-first")
+            val gridSecond = awaitView(activity, "grid-second")
+            val gridThird = awaitView(activity, "grid-third")
+            assertEquals(gridFirst.top, gridSecond.top)
+            assertTrue("grid columns did not lay out side by side", gridSecond.left > gridFirst.left)
+            assertTrue("grid rows did not advance after the first track", gridThird.top > gridFirst.top)
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             val bounded = awaitView(activity, "layout-min")
             val absolute = awaitView(activity, "layout-absolute")
