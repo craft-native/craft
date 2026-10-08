@@ -1338,9 +1338,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         stack.wrap = style["flexWrap"] as? String == "wrap" || style["flexWrap"] as? Bool == true
         stack.alignItems = style["alignItems"] as? String ?? "stretch"
         stack.justifyContent = style["justifyContent"] as? String ?? "flex-start"
-        stack.gap = number(style["gap"]) ?? 0
-        stack.rowGap = number(style["rowGap"])
-        stack.columnGap = number(style["columnGap"])
+        let gap = number(style["gap"]) ?? 0
+        stack.gap = gap
+        stack.rowGap = number(style["rowGap"]) ?? gap
+        stack.columnGap = number(style["columnGap"]) ?? gap
         stack.grid = style["display"] as? String == "grid"
         stack.gridColumns = craftNativeGridColumnCount(style["gridTemplateColumns"] ?? style["gridColumns"])
         stack.gridAutoRows = number(style["gridAutoRows"])

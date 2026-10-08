@@ -58,6 +58,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('in setOf("row", "row-reverse")')
   })
 
+  it('applies the shared gap fallback on both flex axes', () => {
+    expect(ios).toContain('stack.rowGap = number(style["rowGap"]) ?? gap')
+    expect(ios).toContain('stack.columnGap = number(style["columnGap"]) ?? gap')
+    expect(android).toContain('val crossGap = if (orientation == HORIZONTAL) rowGap else columnGap')
+    expect(android).toContain('crossOffset += line.cross + crossGap')
+  })
+
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')

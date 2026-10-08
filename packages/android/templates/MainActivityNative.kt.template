@@ -351,6 +351,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         val contentHeight = height - paddingTop - paddingBottom
         val (lines, absolute) = entries(width, height)
         val gap = if (orientation == HORIZONTAL) columnGap else rowGap
+        val crossGap = if (orientation == HORIZONTAL) rowGap else columnGap
         val availableMain = if (orientation == HORIZONTAL) contentWidth else contentHeight
         var crossOffset = if (orientation == HORIZONTAL) paddingTop else paddingLeft
         for (line in lines) {
@@ -391,7 +392,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 entry.view.layout(x, y, x + w, y + h)
                 mainOffset += distributedPrimary + marginStart + marginEnd + gap + between
             }
-            crossOffset += line.cross + gap
+            crossOffset += line.cross + crossGap
         }
         for (entry in absolute) {
             val widthValue = if (entry.style.left != null && entry.style.right != null) contentWidth - entry.style.left!! - entry.style.right!! else entry.width
