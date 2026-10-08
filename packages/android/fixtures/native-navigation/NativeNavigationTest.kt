@@ -286,6 +286,10 @@ class NativeNavigationTest {
             awaitText(activity, "name-submits", "Submits: 1")
             instrumentation.runOnMainSync {
                 notes.requestFocus()
+            }
+            awaitText(activity, "name-blurs", "Blurs: 1")
+            awaitText(activity, "name-end-editings", "End edits: 1")
+            instrumentation.runOnMainSync {
                 (notes as EditText).setText("Note")
                 (notes as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE)
             }
