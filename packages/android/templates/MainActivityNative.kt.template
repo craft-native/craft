@@ -1309,7 +1309,12 @@ class MainActivity : AppCompatActivity() {
             screen.layoutHandlers.remove(control)
             screen.lastLayoutBounds.remove(control)
         }
-        if (control is ImageView) imageErrors[control]?.let { control.contentDescription = "${control.contentDescription}, $it" }
+        if (control is ImageView) imageErrors[control]?.let { message ->
+            val current = control.contentDescription?.toString().orEmpty()
+            if (!current.contains(message)) {
+                control.contentDescription = listOf(current, message).filter { it.isNotBlank() }.joinToString(", ")
+            }
+        }
         next[identity] = control
         applyViewStyle(control, style)
         control.layoutParams = LinearLayout.LayoutParams(

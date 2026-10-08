@@ -189,6 +189,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('imageErrors[ObjectIdentifier(view)] = message')
     expect(ios).toContain('if type == "Image", let message = imageErrors[ObjectIdentifier(view)]')
     expect(android).toContain('if (control is ImageView) imageErrors[control]?.let')
+    expect(android).toContain('if (!current.contains(message))')
+    expect(android).toContain('joinToString(", ")')
   })
 
   it('keeps activity indicator visibility and sizing props aligned', () => {

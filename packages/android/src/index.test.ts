@@ -198,6 +198,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('style.optString("flexDirection").endsWith("-reverse")')
       expect(nativeActivity).toContain('style.optString("flexDirection") in setOf("row", "row-reverse")')
       expect(nativeActivity).toContain('Unsupported image source')
+      expect(nativeActivity).toContain('if (!current.contains(message))')
+      expect(nativeActivity).toContain('joinToString(", ")')
       expect(nativeActivity).toContain('screen.controls.putAll(next)')
       expect(nativeActivity).toContain('if (layout.getChildAt(index) !== childView)')
       expect(nativeActivity).toContain('override fun onBackPressed() = back()')
