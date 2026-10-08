@@ -503,25 +503,61 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         onScroll: ((Int, Int) -> Unit)?,
         onBeginDrag: (() -> Unit)?,
         onEndDrag: (() -> Unit)?,
+        onMomentumBegin: (() -> Unit)?,
+        onMomentumEnd: (() -> Unit)?,
         keyboardDismissMode: String,
         dismissKeyboard: (() -> Unit)?,
     ) {
         fun attach(scroller: View) {
             var dismissed = false
+            var moved = false
+            var momentumActive = false
+            var lastX = 0
+            var lastY = 0
+
+            fun pollMomentum() {
+                if (!momentumActive) return
+                val x = scroller.scrollX
+                val y = scroller.scrollY
+                if (x == lastX && y == lastY) {
+                    momentumActive = false
+                    onMomentumEnd?.invoke()
+                } else {
+                    lastX = x
+                    lastY = y
+                    scroller.postDelayed({ pollMomentum() }, 16L)
+                }
+            }
+
             scroller.setOnScrollChangeListener { _, x, y, _, _ -> onScroll?.invoke(x, y) }
             scroller.setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
+                        if (momentumActive) {
+                            momentumActive = false
+                            onMomentumEnd?.invoke()
+                        }
                         dismissed = false
+                        moved = false
                         onBeginDrag?.invoke()
                     }
-                    android.view.MotionEvent.ACTION_MOVE -> if (!dismissed && keyboardDismissMode in setOf("on-drag", "interactive")) {
-                        dismissed = true
-                        dismissKeyboard?.invoke()
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        moved = true
+                        if (!dismissed && keyboardDismissMode in setOf("on-drag", "interactive")) {
+                            dismissed = true
+                            dismissKeyboard?.invoke()
+                        }
                     }
                     android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                         onEndDrag?.invoke()
                         if (pagingEnabled) snapToPage(scroller)
+                        if (moved && !momentumActive) {
+                            momentumActive = true
+                            lastX = scroller.scrollX
+                            lastY = scroller.scrollY
+                            onMomentumBegin?.invoke()
+                            scroller.postDelayed({ pollMomentum() }, 16L)
+                        }
                     }
                 }
                 false
@@ -557,6 +593,8 @@ class MainActivity : AppCompatActivity() {
         val scrollHandlers = mutableMapOf<View, String>()
         val scrollBeginHandlers = mutableMapOf<View, String>()
         val scrollEndHandlers = mutableMapOf<View, String>()
+        val scrollMomentumBeginHandlers = mutableMapOf<View, String>()
+        val scrollMomentumEndHandlers = mutableMapOf<View, String>()
         val sliderCompleteHandlers = mutableMapOf<View, String>()
         val sliderSteps = mutableMapOf<View, Double>()
         val focusHandlers = mutableMapOf<View, String>()
@@ -1159,6 +1197,10 @@ class MainActivity : AppCompatActivity() {
                 if (onBegin.isNotBlank()) screen.scrollBeginHandlers[this] = onBegin else screen.scrollBeginHandlers.remove(this)
                 val onEnd = events.optString("onScrollEndDrag")
                 if (onEnd.isNotBlank()) screen.scrollEndHandlers[this] = onEnd else screen.scrollEndHandlers.remove(this)
+                val onMomentumBegin = events.optString("onMomentumScrollBegin")
+                if (onMomentumBegin.isNotBlank()) screen.scrollMomentumBeginHandlers[this] = onMomentumBegin else screen.scrollMomentumBeginHandlers.remove(this)
+                val onMomentumEnd = events.optString("onMomentumScrollEnd")
+                if (onMomentumEnd.isNotBlank()) screen.scrollMomentumEndHandlers[this] = onMomentumEnd else screen.scrollMomentumEndHandlers.remove(this)
                 val nativeScroll = this
                 setScrollListeners(
                     onScroll = { scrollX, scrollY ->
@@ -1177,6 +1219,16 @@ class MainActivity : AppCompatActivity() {
                     },
                     onEndDrag = {
                         screen.scrollEndHandlers[nativeScroll]?.let { current ->
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                        }
+                    },
+                    onMomentumBegin = {
+                        screen.scrollMomentumBeginHandlers[nativeScroll]?.let { current ->
+                            send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                        }
+                    },
+                    onMomentumEnd = {
+                        screen.scrollMomentumEndHandlers[nativeScroll]?.let { current ->
                             send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                         }
                     },
@@ -1790,6 +1842,8 @@ class MainActivity : AppCompatActivity() {
         screen.scrollHandlers.keys.removeAll(released)
         screen.scrollBeginHandlers.keys.removeAll(released)
         screen.scrollEndHandlers.keys.removeAll(released)
+        screen.scrollMomentumBeginHandlers.keys.removeAll(released)
+        screen.scrollMomentumEndHandlers.keys.removeAll(released)
         screen.sliderCompleteHandlers.keys.removeAll(released)
         screen.sliderSteps.keys.removeAll(released)
         screen.focusHandlers.keys.removeAll(released)
@@ -1814,6 +1868,8 @@ class MainActivity : AppCompatActivity() {
         screen.scrollHandlers.clear()
         screen.scrollBeginHandlers.clear()
         screen.scrollEndHandlers.clear()
+        screen.scrollMomentumBeginHandlers.clear()
+        screen.scrollMomentumEndHandlers.clear()
         screen.sliderCompleteHandlers.clear()
         screen.sliderSteps.clear()
         screen.focusHandlers.clear()

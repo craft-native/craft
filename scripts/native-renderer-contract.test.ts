@@ -222,6 +222,16 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above, accept')
   })
 
+  it('delivers ScrollView momentum callbacks on both hosts', () => {
+    expect(ios).toContain('events["onMomentumScrollBegin"]')
+    expect(ios).toContain('scrollViewWillBeginDecelerating')
+    expect(ios).toContain('scrollViewDidEndDecelerating')
+    expect(android).toContain('scrollMomentumBeginHandlers')
+    expect(android).toContain('onMomentumBegin: (() -> Unit)?')
+    expect(android).toContain('if (moved && !momentumActive)')
+    expect(guide).toContain('`onMomentumScrollBegin` and `onMomentumScrollEnd`')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

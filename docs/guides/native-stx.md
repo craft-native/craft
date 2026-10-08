@@ -218,8 +218,9 @@ setting to its underlying platform scroller rather than shadowing the wrapper's
 view API. `pagingEnabled` snaps `ScrollView` content to viewport-sized pages on
 both hosts. `onScroll` reports
 `contentOffset`, `contentSize`, and `layoutMeasurement`; `onScrollBeginDrag`
-and `onScrollEndDrag` report the corresponding gesture boundaries. Refresh
-controls and momentum callbacks remain outside this versioned contract. Use
+and `onScrollEndDrag` report the corresponding gesture boundaries.
+`onMomentumScrollBegin` and `onMomentumScrollEnd` report the native deceleration
+interval. Refresh controls remain outside this versioned contract. Use
 `ScrollView` for bounded content and `FlatList` for data sets that need
 recycling.
 

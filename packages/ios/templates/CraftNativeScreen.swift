@@ -511,6 +511,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
     private var scrollEndHandlers: [ObjectIdentifier: String] = [:]
+    private var scrollMomentumBeginHandlers: [ObjectIdentifier: String] = [:]
+    private var scrollMomentumEndHandlers: [ObjectIdentifier: String] = [:]
     private var sliderCompleteHandlers: [ObjectIdentifier: String] = [:]
     private var sliderSteps: [ObjectIdentifier: Float] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
@@ -1037,6 +1039,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onScroll"], in: &scrollHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollBeginDrag"], in: &scrollBeginHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
+            updateAuxiliaryHandler(events["onMomentumScrollBegin"], in: &scrollMomentumBeginHandlers, for: scroll)
+            updateAuxiliaryHandler(events["onMomentumScrollEnd"], in: &scrollMomentumEndHandlers, for: scroll)
             configureStack(scroll.contentStack, style: style)
             reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: style)
         case "FlatList":
@@ -1249,6 +1253,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         scrollHandlers.removeValue(forKey: id)
         scrollBeginHandlers.removeValue(forKey: id)
         scrollEndHandlers.removeValue(forKey: id)
+        scrollMomentumBeginHandlers.removeValue(forKey: id)
+        scrollMomentumEndHandlers.removeValue(forKey: id)
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
@@ -1886,6 +1892,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard let handler = scrollEndHandlers[ObjectIdentifier(scrollView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+        guard let handler = scrollMomentumBeginHandlers[ObjectIdentifier(scrollView)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard let handler = scrollMomentumEndHandlers[ObjectIdentifier(scrollView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
     }
 
