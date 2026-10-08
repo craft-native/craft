@@ -208,6 +208,14 @@ class NativeNavigationTest {
             assertEquals("Open native link", (link as TextView).text.toString())
             instrumentation.runOnMainSync { link.performClick() }
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            click(activity, "toggle-link-accessibility")
+            awaitText(activity, "native-link-status", "link accessibility disabled")
+            assertTrue("accessibilityState.disabled should disable the link", !link.isEnabled)
+            click(activity, "toggle-link-accessibility")
+            awaitText(activity, "native-link-status", "link accessibility enabled")
+            assertTrue("clearing accessibilityState.disabled should restore the link", link.isEnabled)
+            instrumentation.runOnMainSync { link.performClick() }
+            assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             click(activity, "toggle-image-tint")
             assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
             val image = awaitView(activity, "native-image") as ImageView

@@ -4,6 +4,7 @@ let count = 0
 let imageTaps = 0
 let submits = 0
 let status = ''
+let linkAccessibilityDisabled = false
 let switchValue = false
 let sliderValue = 0.5
 let sliderCompletions = 0
@@ -65,6 +66,11 @@ function setStatus(value) {
   status = value
 }
 
+function toggleLinkAccessibility() {
+  linkAccessibilityDisabled = !linkAccessibilityDisabled
+  status = linkAccessibilityDisabled ? 'link accessibility disabled' : 'link accessibility enabled'
+}
+
 function toggleSwitch(event) {
   switchValue = event.value
   status = switchValue ? 'switch on' : 'switch off'
@@ -117,8 +123,9 @@ function openCapabilities() {
       <Text testID="flex-grow-first" style={{"width":40,"flexGrow":1}}>grow</Text>
       <Text testID="flex-grow-second" style={{"width":40}}>fixed</Text>
     </View>
-    <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
+    <Link testID="native-link" accessibilityState={{"disabled":linkAccessibilityDisabled}} onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
+    <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
     <Button testID="toggle-button-style" onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
