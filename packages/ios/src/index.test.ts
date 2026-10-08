@@ -91,6 +91,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('UITextViewDelegate')
     expect(nativeSwift).toContain('textViewDidChange')
     expect(nativeSwift).toContain('numberOfLines')
+    expect(nativeSwift).toContain('CraftNativeTextView')
+    expect(nativeSwift).toContain('placeholderTextColor')
     expect(nativeSwift).toContain('firstResponder(in: rootStack) ?? lastFocusedInput')
     expect(nativeSwift).toContain('DispatchQueue.main.asyncAfter(deadline: .now() + 0.1)')
     expect(nativeSwift).toContain('restoreFocus(focused)')

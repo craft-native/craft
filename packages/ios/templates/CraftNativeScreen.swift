@@ -355,6 +355,59 @@ private final class CraftNativeScrollView: UIScrollView {
 
 private final class CraftNativeFlexSpacer: UIView {}
 
+private final class CraftNativeTextView: UITextView {
+    private let placeholderLabel = UILabel()
+    var placeholder: String? {
+        didSet { refreshPlaceholder() }
+    }
+    var placeholderColor: UIColor? {
+        didSet { placeholderLabel.textColor = placeholderColor ?? .placeholderText }
+    }
+    var placeholderFont: UIFont? {
+        didSet { placeholderLabel.font = placeholderFont ?? .systemFont(ofSize: UIFont.systemFontSize) }
+    }
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+        configurePlaceholder()
+    }
+
+    convenience init() {
+        self.init(frame: .zero, textContainer: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        configurePlaceholder()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let inset = textContainerInset
+        let padding = textContainer.lineFragmentPadding
+        placeholderLabel.frame = CGRect(
+            x: inset.left + padding,
+            y: inset.top,
+            width: max(0, bounds.width - inset.left - inset.right - padding * 2),
+            height: max(0, bounds.height - inset.top - inset.bottom)
+        )
+    }
+
+    func refreshPlaceholder() {
+        placeholderLabel.text = placeholder
+        placeholderLabel.isHidden = !(text?.isEmpty ?? true) || placeholder?.isEmpty != false
+    }
+
+    private func configurePlaceholder() {
+        placeholderLabel.numberOfLines = 0
+        placeholderLabel.font = font
+        placeholderLabel.textColor = .placeholderText
+        placeholderLabel.isUserInteractionEnabled = false
+        addSubview(placeholderLabel)
+        refreshPlaceholder()
+    }
+}
+
 final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate {
     private final class RenderedNode {
         let identity: String
@@ -897,7 +950,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return button
         case "TextInput":
             if props["multiline"] as? Bool == true {
-                let textView = UITextView()
+                let textView = CraftNativeTextView()
                 textView.delegate = self
                 return textView
             }
@@ -1186,6 +1239,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         textView.textColor = color(style["color"]) ?? .label
         textView.font = textFont(style, default: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize))
         textView.textAlignment = textAlignment(style["textAlign"])
+        textView.tintColor = color(props["selectionColor"])
         textView.isEditable = props["editable"] as? Bool != false
         textView.isScrollEnabled = false
         if let numberOfLines = (props["numberOfLines"] as? NSNumber)?.intValue, numberOfLines > 0 {
@@ -1198,7 +1252,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else {
             textMaxLengths.removeValue(forKey: id)
         }
+        if let craftTextView = textView as? CraftNativeTextView {
+            craftTextView.placeholder = props["placeholder"] as? String
+            craftTextView.placeholderColor = color(props["placeholderTextColor"])
+            craftTextView.placeholderFont = textView.font
+        }
         updateTextView(textView, value: props["value"] as? String)
+        (textView as? CraftNativeTextView)?.refreshPlaceholder()
         updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
         updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
         updateAuxiliaryHandler(events["onBlur"] ?? events["onEndEditing"], in: &blurHandlers, for: textView)
@@ -1444,6 +1504,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     func textViewDidChange(_ textView: UITextView) {
         lastFocusedInput = textView
+        (textView as? CraftNativeTextView)?.refreshPlaceholder()
         guard let handler = handlers[ObjectIdentifier(textView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
     }
