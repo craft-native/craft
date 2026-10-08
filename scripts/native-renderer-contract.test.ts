@@ -132,6 +132,7 @@ describe('native renderer component contract', () => {
   it('resets removed accessibility metadata on both hosts', () => {
     expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
     expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
+    expect(android).toContain('info.hintText = host.tooltipText')
   })
 
   it('resets removed text-input colors to each host theme', () => {

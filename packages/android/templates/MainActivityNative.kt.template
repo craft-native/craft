@@ -1456,6 +1456,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 info.isHeading = role == "header"
                 info.roleDescription = role.takeIf { it !in setOf("view", "text", "textinput", "scrollview") }
+                info.hintText = host.tooltipText
                 info.isEnabled = !disabled
                 info.isSelected = state?.optBoolean("selected", false) == true
                 info.isChecked = state?.optBoolean("checked", false) == true

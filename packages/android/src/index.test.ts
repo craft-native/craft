@@ -168,6 +168,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('info.isChecked')
       expect(nativeActivity).toContain('info.isSelected')
       expect(nativeActivity).toContain('info.roleDescription')
+      expect(nativeActivity).toContain('info.hintText = host.tooltipText')
       expect(nativeActivity).toContain('IMPORTANT_FOR_ACCESSIBILITY_NO')
       expect(nativeActivity).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
       expect(nativeActivity).toContain('val target = screen.flatListOwners[id] ?: id')
