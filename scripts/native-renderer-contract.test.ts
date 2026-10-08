@@ -83,6 +83,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (screen.suppressedTextChanges.remove(this@apply)) return')
     expect(android).toContain('screen.suppressedTextChanges.remove(it)')
     expect(android).toContain('field.setSelection(minOf(boundedStart, boundedEnd), maxOf(boundedStart, boundedEnd))')
+    expect(android).toContain('if (seekBar.progress != snappedProgress)')
+    expect(android).toContain('seekBar.progress = snappedProgress')
     expect(ios).toContain('private var inputDrafts: [String: String] = [:]')
     expect(ios).toContain('inputDrafts[current.identity] ?? props["defaultValue"] as? String')
     expect(ios).toContain('inputIdentities[id].map { inputDrafts[$0] = textView.text ?? "" }')

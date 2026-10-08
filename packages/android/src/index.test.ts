@@ -131,6 +131,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('onSlidingComplete')
       expect(nativeActivity).toContain('progressTintList')
       expect(nativeActivity).toContain('roundToInt()')
+      expect(nativeActivity).toContain('if (seekBar.progress != snappedProgress)')
+      expect(nativeActivity).toContain('seekBar.progress = snappedProgress')
       expect(nativeActivity).toContain('trackTintList = ColorStateList(')
       expect(nativeActivity).toContain('trackTintList = null')
       expect(nativeActivity).toContain('thumbTintList = props.optString("thumbColor")')

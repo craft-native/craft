@@ -1172,6 +1172,14 @@ class MainActivity : AppCompatActivity() {
                         val raw = minimum + (maximum - minimum) * progress.toDouble() / max.toDouble()
                         val step = screen.sliderSteps[seekBar]
                         val value = if (step != null) minimum + ((raw - minimum) / step).roundToInt() * step else raw
+                        if (step != null) {
+                            val snappedProgress = (((value - minimum) / (maximum - minimum)) * max)
+                                .roundToInt().coerceIn(0, max)
+                            if (seekBar.progress != snappedProgress) {
+                                seekBar.progress = snappedProgress
+                                return
+                            }
+                        }
                         send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject().put("value", value)))
                     }
                     override fun onStartTrackingTouch(seekBar: SeekBar) {}
