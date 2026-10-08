@@ -9,6 +9,7 @@ const stxCli = process.env.STX_NATIVE_CLI || resolve(import.meta.dir, '../../../
 const workspace = mkdtempSync(join(tmpdir(), 'craft-native-navigation-'))
 const output = join(workspace, 'NativeNavigation')
 const bundle = join(workspace, 'routes.js')
+const prepareOnly = process.argv.includes('--prepare-only')
 
 function run(args: string[], cwd: string): void {
   console.log(args.join(' '))
@@ -75,23 +76,28 @@ try {
   writeFileSync(project, addSchemeTestTargets(projectWithTargets, 'NativeNavigation', ['NativeNavigationUITests']))
   run(['xcodegen', 'generate'], output)
 
-  const device = await pickSimulator()
-  if (!device) throw new Error('No iOS simulator is available for native navigation tests')
-  await bootSimulator(device)
-  const resultBundle = join(workspace, 'NativeNavigation.xcresult')
-  const selectedTest = process.env.CRAFT_NATIVE_NAVIGATION_TEST
-  const selection = selectedTest
-    ? [`-only-testing:NativeNavigationUITests/NativeNavigationUITests/${selectedTest}`]
-    : []
-  runXcodeTests([
-    'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
-    '-configuration', 'Debug', '-destination', `id=${device.udid}`,
-    '-derivedDataPath', join(workspace, 'DerivedData'),
-    '-resultBundlePath', resultBundle,
-    ...selection,
-    '-parallel-testing-enabled', 'NO', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'test',
-  ], output, resultBundle)
-  console.log('Native navigation simulator tests passed')
+  if (prepareOnly) {
+    console.log('iOS native navigation fixture prepared')
+  }
+  else {
+    const device = await pickSimulator()
+    if (!device) throw new Error('No iOS simulator is available for native navigation tests')
+    await bootSimulator(device)
+    const resultBundle = join(workspace, 'NativeNavigation.xcresult')
+    const selectedTest = process.env.CRAFT_NATIVE_NAVIGATION_TEST
+    const selection = selectedTest
+      ? [`-only-testing:NativeNavigationUITests/NativeNavigationUITests/${selectedTest}`]
+      : []
+    runXcodeTests([
+      'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
+      '-configuration', 'Debug', '-destination', `id=${device.udid}`,
+      '-derivedDataPath', join(workspace, 'DerivedData'),
+      '-resultBundlePath', resultBundle,
+      ...selection,
+      '-parallel-testing-enabled', 'NO', 'CODE_SIGN_IDENTITY=-', 'CODE_SIGNING_REQUIRED=NO', 'test',
+    ], output, resultBundle)
+    console.log('Native navigation simulator tests passed')
+  }
 }
 finally {
   if (process.env.CRAFT_KEEP_NATIVE_NAVIGATION_PROJECT === '1')

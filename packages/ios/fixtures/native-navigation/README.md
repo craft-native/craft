@@ -22,3 +22,8 @@ generates a temporary iOS app, boots an available simulator, and runs
 `NativeNavigationUITests.swift`. CI pins the stx-native compiler commit and
 runs the same script on iOS and Android. The pinned compiler sends the initial
 tree as one atomic render, then uses keyed mutations for later updates.
+
+`--prepare-only` compiles the `.stx` bundle and generates the Xcode fixture
+without requiring an installed or bootable simulator. Set
+`CRAFT_KEEP_NATIVE_NAVIGATION_PROJECT=1` to keep the generated project for
+inspection; the normal command remains the CI simulator gate.

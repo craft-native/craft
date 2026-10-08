@@ -8,6 +8,7 @@ const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeF
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
+const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
@@ -312,6 +313,8 @@ describe('native renderer component contract', () => {
     expect(iosTests).toContain('FlatList did not report a row layout after recycling')
     expect(androidTests).toContain('awaitLayoutIncrease(activity, "people-layout-status", initialRowLayouts)')
     expect(androidTests).not.toContain('Rows laid out: ${initialRowLayouts + 1}')
+    expect(iosNavigationScript).toContain("const prepareOnly = process.argv.includes('--prepare-only')")
+    expect(iosNavigationScript).toContain("console.log('iOS native navigation fixture prepared')")
   })
 
   it('retains keyed iOS input drafts while FlatList rows recycle', () => {
