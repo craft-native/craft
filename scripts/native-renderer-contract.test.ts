@@ -241,6 +241,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('control.setOnLongClickListener {')
     expect(android).toContain('screen.longPressHandlers.keys.removeAll(released)')
     expect(guide).toContain('`onLongPress`')
+    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = true }')
+    expect(ios).toContain('view.isUserInteractionEnabled = handlers[id] != nil')
   })
 
   it('lets accessibility disabled state disable controls without re-enabling them', () => {

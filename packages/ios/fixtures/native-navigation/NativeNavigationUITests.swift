@@ -137,6 +137,10 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["panel accessibility enabled"].waitForExistence(timeout: 5))
         panel.tap()
         XCTAssertTrue(app.staticTexts["panel pressed"].waitForExistence(timeout: 5))
+        let longPressPanel = app.otherElements["long-press-panel"]
+        XCTAssertTrue(longPressPanel.waitForExistence(timeout: 5))
+        longPressPanel.press(forDuration: 1)
+        XCTAssertTrue(app.staticTexts["panel long pressed"].waitForExistence(timeout: 5))
         XCTAssertTrue(link.isEnabled)
         link.tap()
         XCTAssertTrue(app.staticTexts["link pressed"].waitForExistence(timeout: 5))

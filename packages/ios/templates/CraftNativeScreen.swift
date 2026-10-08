@@ -1402,6 +1402,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let id = ObjectIdentifier(view)
         if let handler, !handler.isEmpty {
             longPressHandlers[id] = handler
+            if !(view is UIScrollView) { view.isUserInteractionEnabled = true }
             if longPressRecognizers[id] == nil {
                 let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(viewLongPressed(_:)))
                 longPressRecognizers[id] = recognizer
@@ -1412,6 +1413,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let recognizer = longPressRecognizers.removeValue(forKey: id) {
                 view.removeGestureRecognizer(recognizer)
             }
+            if !(view is UIScrollView) { view.isUserInteractionEnabled = handlers[id] != nil }
         }
     }
 
