@@ -8,6 +8,7 @@ let switchValue = false
 let sliderValue = 0.5
 let sliderCompletions = 0
 let layoutWidth = 0
+let imageStatus = ''
 
 function changeName(event) {
   name = event.text
@@ -19,6 +20,14 @@ function increment() {
 
 function tapImage() {
   imageTaps += 1
+}
+
+function imageLoadStart() {
+  imageStatus = 'image loading'
+}
+
+function imageLoaded() {
+  imageStatus = 'image loaded'
 }
 
 function submitName() {
@@ -92,9 +101,13 @@ function openCapabilities() {
         accessibilityLabel="Native pixel"
         accessibilityRole="image"
         onPress={tapImage}
+        onLoadStart={imageLoadStart}
+        onLoad={imageLoaded}
+        onLoadEnd={imageLoaded}
         style={{"width":24,"height":24,"resizeMode":"cover"}}
       />
       <Text testID="native-caption">Image taps: {imageTaps}</Text>
+      <Text testID="image-status">{imageStatus}</Text>
       <Image
         testID="unsupported-image"
         source={{"uri":"http://example.com/image.png"}}

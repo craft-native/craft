@@ -60,6 +60,7 @@ final class NativeNavigationUITests: XCTestCase {
         let image = app.images["native-image"]
         XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertEqual(image.label, "Native pixel")
+        XCTAssertTrue(app.staticTexts["image loaded"].waitForExistence(timeout: 5))
         image.tap()
         XCTAssertEqual(app.staticTexts["native-caption"].label, "Image taps: 1")
         let scrollEnd = app.staticTexts["scroll-end"]

@@ -230,6 +230,7 @@ class NativeNavigationTest {
             assertTrue("Image did not render as ImageView", image is ImageView)
             assertTrue("Image data did not decode", (image as ImageView).drawable != null)
             assertEquals("Native pixel", image.contentDescription.toString())
+            awaitText(activity, "image-status", "image loaded")
             var imageInfo: AccessibilityNodeInfo? = null
             instrumentation.runOnMainSync { imageInfo = image.createAccessibilityNodeInfo() }
             assertEquals(ImageView::class.java.name, imageInfo?.className?.toString())
