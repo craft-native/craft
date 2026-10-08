@@ -3,6 +3,7 @@ let name = ''
 let count = 0
 let imageTaps = 0
 let submits = 0
+let status = ''
 
 function changeName(event) {
   name = event.text
@@ -18,6 +19,10 @@ function tapImage() {
 
 function submitName() {
   submits += 1
+}
+
+function setStatus(value) {
+  status = value
 }
 
 function openDetails() {
@@ -45,6 +50,8 @@ function openCapabilities() {
       <Text testID="grid-second">grid two</Text>
       <Text testID="grid-third">grid three</Text>
     </View>
+    <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
+    <Text testID="native-link-status">{status}</Text>
     <View testID="layout-wrap" style={{"width":240,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>
       <Text testID="layout-stretch" style={{"width":100,"height":24,"alignSelf":"stretch"}}>wrapped</Text>

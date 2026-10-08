@@ -76,6 +76,12 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertGreaterThan(gridSecond.frame.minX, gridFirst.frame.minX, "grid columns did not lay out side by side")
         XCTAssertGreaterThan(gridThird.frame.minY, gridFirst.frame.minY, "grid rows did not advance after the first track")
 
+        let link = app.buttons["native-link"]
+        XCTAssertTrue(link.waitForExistence(timeout: 5))
+        XCTAssertEqual(link.label, "Open native link")
+        link.tap()
+        XCTAssertTrue(app.staticTexts["link pressed"].waitForExistence(timeout: 5))
+
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
         let bounded = app.staticTexts["layout-min"]

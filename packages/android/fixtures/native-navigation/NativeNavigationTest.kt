@@ -177,6 +177,11 @@ class NativeNavigationTest {
             assertEquals(gridFirst.top, gridSecond.top)
             assertTrue("grid columns did not lay out side by side", gridSecond.left > gridFirst.left)
             assertTrue("grid rows did not advance after the first track", gridThird.top > gridFirst.top)
+            val link = awaitView(activity, "native-link")
+            assertTrue("native link should be a TextView", link is TextView)
+            assertEquals("Open native link", (link as TextView).text.toString())
+            instrumentation.runOnMainSync { link.performClick() }
+            assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             val bounded = awaitView(activity, "layout-min")
             val absolute = awaitView(activity, "layout-absolute")
