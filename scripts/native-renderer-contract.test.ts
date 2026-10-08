@@ -110,6 +110,14 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
   })
 
+  it('keeps vertical list rows intrinsically sized across hosts', () => {
+    expect(iosFlatList).toContain('let target = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)')
+    expect(iosFlatList).toContain('withHorizontalFittingPriority: .required')
+    expect(iosFlatList).toContain('attributes.size.height = max(1, measured.height)')
+    expect(androidFlatList).toContain('renderedLayout?.height ?: LayoutParams.WRAP_CONTENT')
+    expect(androidFlatList).toContain('holder.host.addView(view, hostedLayout)')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

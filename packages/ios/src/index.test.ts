@@ -132,6 +132,8 @@ describe('Craft iOS builder', () => {
     expect(flatListSwift).toContain('preferredLayoutAttributesFitting')
     expect(flatListSwift).toContain('attributes.size.width = max(1, measured.width)')
     expect(flatListSwift).toContain('withHorizontalFittingPriority: .fittingSizeLevel')
+    expect(flatListSwift).toContain('attributes.size.height = max(1, measured.height)')
+    expect(flatListSwift).toContain('height: UIView.layoutFittingCompressedSize.height')
     expect(flatListSwift).toContain('pendingApply')
     expect(swift).toContain('CraftNativeActions.perform(action: action, body: body, config: config)')
     expect(swift).toContain('private var nativeListeners: [UUID: (URL, Bool) -> Void] = [:]')
