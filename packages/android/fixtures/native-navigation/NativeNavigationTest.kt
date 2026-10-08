@@ -359,7 +359,17 @@ class NativeNavigationTest {
             }
             awaitText(activity, "name-focuses", "Focuses: 1")
             awaitText(activity, "greeting", "Hello Ada")
-            instrumentation.runOnMainSync { (name as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE) }
+            click(activity, "toggle-name-mode")
+            val multilineName = awaitView(activity, "name-input") as EditText
+            assertFalse("multiline mode did not replace the single-line input", multilineName.isSingleLine)
+            assertEquals("Ada", multilineName.text.toString())
+            assertEquals("multiline", (awaitView(activity, "name-mode") as TextView).text.toString())
+            click(activity, "toggle-name-mode")
+            val singleLineName = awaitView(activity, "name-input") as EditText
+            assertTrue("single-line mode did not restore the input", singleLineName.isSingleLine)
+            assertEquals("Ada", singleLineName.text.toString())
+            assertEquals("single-line", (awaitView(activity, "name-mode") as TextView).text.toString())
+            instrumentation.runOnMainSync { singleLineName.onEditorAction(EditorInfo.IME_ACTION_DONE) }
             awaitText(activity, "name-submits", "Submits: 1")
             instrumentation.runOnMainSync {
                 notes.requestFocus()
@@ -372,8 +382,8 @@ class NativeNavigationTest {
             }
             awaitText(activity, "name-submits", "Submits: 2")
             assertSame("View container was replaced after typing", root, awaitView(activity, "root"))
-            assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
-            assertTrue("TextInput lost focus after typing", name.isFocused)
+            assertSame("TextInput was replaced after typing", singleLineName, awaitView(activity, "name-input"))
+            assertTrue("TextInput lost focus after typing", singleLineName.isFocused)
             instrumentation.runOnMainSync {
                 notes.requestFocus()
                 notes.clearFocus()

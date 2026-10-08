@@ -204,6 +204,15 @@ final class NativeNavigationUITests: XCTestCase {
         let nameEndEditings = app.staticTexts["name-end-editings"]
         XCTAssertTrue(nameEndEditings.waitForExistence(timeout: 5))
         XCTAssertEqual(nameEndEditings.label, "End edits: 1")
+        app.buttons["toggle-name-mode"].tap()
+        let multilineField = app.textViews["name-input"]
+        XCTAssertTrue(multilineField.waitForExistence(timeout: 5))
+        XCTAssertEqual(multilineField.value as? String, "Ada")
+        XCTAssertEqual(app.staticTexts["name-mode"].label, "multiline")
+        app.buttons["toggle-name-mode"].tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        XCTAssertEqual(field.value as? String, "Ada")
+        XCTAssertEqual(app.staticTexts["name-mode"].label, "single-line")
         notes.typeText("Note")
         notes.typeText("\n")
         XCTAssertEqual(app.staticTexts["name-submits"].label, "Submits: 2")
