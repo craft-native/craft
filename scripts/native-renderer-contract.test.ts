@@ -30,6 +30,12 @@ describe('native renderer component contract', () => {
     }
   })
 
+  it('applies text transforms to native action labels on both hosts', () => {
+    expect(ios).toContain('let transformedTitle = transformedText(title, style: style)')
+    expect(ios).toContain('private func transformedText(_ text: String, style: [String: Any])')
+    expect(android).toContain('configureText(this, title, style)')
+  })
+
   it('keeps native capability and WebView fallback gates intact', () => {
     expect(ios).toContain('mutationProtocolVersion: 1')
     expect(android).toContain('mutationProtocolVersion: 1')

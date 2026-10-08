@@ -838,19 +838,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "Button", "Link":
             let button = result as! UIButton
             let title = props["title"] as? String ?? children.compactMap { $0 as? String }.joined()
+            let transformedTitle = transformedText(title, style: style)
             let titleColor = color(style["color"]) ?? .systemBlue
             let font = textFont(
                 style,
                 default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)
             )
             if type == "Link" {
-                button.setAttributedTitle(NSAttributedString(string: title, attributes: [
+                button.setAttributedTitle(NSAttributedString(string: transformedTitle, attributes: [
                     .foregroundColor: titleColor,
                     .font: font,
                     .underlineStyle: NSUnderlineStyle.single.rawValue,
                 ]), for: .normal)
             } else {
-                button.setTitle(title, for: .normal)
+                button.setTitle(transformedTitle, for: .normal)
                 button.setTitleColor(titleColor, for: .normal)
                 button.titleLabel?.font = font
             }
@@ -1376,13 +1377,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func configureText(_ label: UILabel, text: String, style: [String: Any]) {
-        let transformed: String
-        switch style["textTransform"] as? String {
-        case "uppercase": transformed = text.uppercased()
-        case "lowercase": transformed = text.lowercased()
-        case "capitalize": transformed = text.capitalized
-        default: transformed = text
-        }
+        let transformed = transformedText(text, style: style)
         label.textColor = color(style["color"]) ?? .label
         label.font = textFont(style, default: .systemFont(ofSize: UIFont.systemFontSize))
         label.textAlignment = textAlignment(style["textAlign"])
@@ -1405,6 +1400,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         label.attributedText = attributes.isEmpty ? nil : NSAttributedString(string: transformed, attributes: attributes)
         if attributes.isEmpty { label.text = transformed }
+    }
+
+    private func transformedText(_ text: String, style: [String: Any]) -> String {
+        switch style["textTransform"] as? String {
+        case "uppercase": return text.uppercased()
+        case "lowercase": return text.lowercased()
+        case "capitalize": return text.capitalized
+        default: return text
+        }
     }
 
     private func textFont(_ style: [String: Any], default fallback: UIFont) -> UIFont {
