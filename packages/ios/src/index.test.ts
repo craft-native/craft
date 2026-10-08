@@ -87,6 +87,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('button.isEnabled = props["disabled"] as? Bool != true')
     expect(nativeSwift).toContain('let transformedTitle = transformedText(title, style: style)')
     expect(nativeSwift).toContain('private func transformedText(_ text: String, style: [String: Any])')
+    expect(nativeSwift).toContain('buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")')
+    expect(nativeSwift).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
     expect(nativeSwift).toContain('events["onSlidingComplete"]')
     expect(nativeSwift).toContain('minimumTrackTintColor')
     expect(nativeSwift).toContain('sliderFinished')

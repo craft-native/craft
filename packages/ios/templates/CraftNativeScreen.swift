@@ -882,17 +882,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 style,
                 default: button.titleLabel?.font ?? .systemFont(ofSize: UIFont.buttonFontSize)
             )
-            if type == "Link" {
-                button.setAttributedTitle(NSAttributedString(string: transformedTitle, attributes: [
-                    .foregroundColor: titleColor,
-                    .font: font,
-                    .underlineStyle: NSUnderlineStyle.single.rawValue,
-                ]), for: .normal)
-            } else {
-                button.setTitle(transformedTitle, for: .normal)
-                button.setTitleColor(titleColor, for: .normal)
-                button.titleLabel?.font = font
-            }
+            button.setAttributedTitle(NSAttributedString(
+                string: transformedTitle,
+                attributes: buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")
+            ), for: .normal)
+            button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])
             button.isEnabled = props["disabled"] as? Bool != true
             updateHandler(events["onPress"] ?? events["onClick"], for: button)
         case "TextInput":
@@ -1446,6 +1440,35 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if attributes.isEmpty { label.text = transformed }
     }
 
+    private func buttonTitleAttributes(
+        _ style: [String: Any],
+        color: UIColor,
+        font: UIFont,
+        forceUnderline: Bool
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: color,
+            .font: font,
+        ]
+        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let lineHeight = number(style["lineHeight"]) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            attributes[.paragraphStyle] = paragraph
+        }
+        switch style["textDecorationLine"] as? String {
+        case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        case "line-through": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        case "underline line-through":
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        default: break
+        }
+        if forceUnderline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        return attributes
+    }
+
     private func transformedText(_ text: String, style: [String: Any]) -> String {
         switch style["textTransform"] as? String {
         case "uppercase": return text.uppercased()
@@ -1485,6 +1508,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "center": return .center
         case "justify": return .justified
         default: return .natural
+        }
+    }
+
+    private func buttonAlignment(_ value: Any?) -> UIControl.ContentHorizontalAlignment {
+        switch value as? String {
+        case "left": return .left
+        case "right": return .right
+        case "center": return .center
+        default: return .center
         }
     }
 

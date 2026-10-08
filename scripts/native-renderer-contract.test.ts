@@ -33,6 +33,8 @@ describe('native renderer component contract', () => {
   it('applies text transforms to native action labels on both hosts', () => {
     expect(ios).toContain('let transformedTitle = transformedText(title, style: style)')
     expect(ios).toContain('private func transformedText(_ text: String, style: [String: Any])')
+    expect(ios).toContain('buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")')
+    expect(ios).toContain('button.contentHorizontalAlignment = buttonAlignment(style["textAlign"])')
     expect(android).toContain('configureText(this, title, style)')
   })
 
