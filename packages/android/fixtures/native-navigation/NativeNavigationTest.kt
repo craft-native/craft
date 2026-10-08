@@ -402,6 +402,7 @@ class NativeNavigationTest {
             instrumentation.runOnMainSync {
                 notes.requestFocus()
             }
+            awaitText(activity, "notes-focus-text", "Notes focus: Draft")
             awaitText(activity, "name-blurs", "Blurs: 1")
             awaitText(activity, "name-end-editings", "End edits: 1")
             instrumentation.runOnMainSync {

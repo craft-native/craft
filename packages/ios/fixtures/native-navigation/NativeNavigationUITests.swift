@@ -233,6 +233,8 @@ final class NativeNavigationUITests: XCTestCase {
         field.typeText("\n")
         XCTAssertEqual(app.staticTexts["name-submits"].label, "Submits: 1")
         notes.tap()
+        XCTAssertTrue(app.staticTexts["notes-focus-text"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["notes-focus-text"].label, "Notes focus: Draft")
         let nameBlurs = app.staticTexts["name-blurs"]
         XCTAssertTrue(nameBlurs.waitForExistence(timeout: 5))
         XCTAssertEqual(nameBlurs.label, "Blurs: 1")
