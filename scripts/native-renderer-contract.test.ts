@@ -236,6 +236,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('UILongPressGestureRecognizer(target: self, action: #selector(viewLongPressed(_:)))')
     expect(ios).toContain('guard sender.state == .began')
     expect(ios).toContain('longPressRecognizers.removeValue(forKey: id)')
+    expect(ios).toContain('handlers[ObjectIdentifier(view)] != nil || longPressHandlers[ObjectIdentifier(view)] != nil')
     expect(android).toContain('val longPressHandlers = mutableMapOf<View, String>()')
     expect(android).toContain('events.optString("onLongPress")')
     expect(android).toContain('control.setOnLongClickListener {')
@@ -247,7 +248,7 @@ describe('native renderer component contract', () => {
 
   it('lets accessibility disabled state disable controls without re-enabling them', () => {
     expect(ios).toContain('if let control = view as? UIControl {')
-    expect(ios).toContain('else if handlers[ObjectIdentifier(view)] != nil {')
+    expect(ios).toContain('else if handlers[ObjectIdentifier(view)] != nil || longPressHandlers[ObjectIdentifier(view)] != nil {')
     expect(android).toContain('} else if (disabled) {\n            view.isEnabled = false')
     expect(android).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
   })

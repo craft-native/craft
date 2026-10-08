@@ -1813,7 +1813,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 traits.insert(.notEnabled)
                 if let control = view as? UIControl {
                     control.isEnabled = false
-                } else if handlers[ObjectIdentifier(view)] != nil {
+                } else if handlers[ObjectIdentifier(view)] != nil || longPressHandlers[ObjectIdentifier(view)] != nil {
                     view.isUserInteractionEnabled = false
                 }
             }

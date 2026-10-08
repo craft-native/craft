@@ -12,6 +12,7 @@ let status = ''
 let linkAccessibilityDisabled = false
 let panelAccessibilityDisabled = false
 let longPressStatus = ''
+let longPressAccessibilityDisabled = false
 let switchValue = false
 let sliderValue = 0.5
 let sliderCompletions = 0
@@ -121,6 +122,11 @@ function pressPanelLong() {
   longPressStatus = 'panel long pressed'
 }
 
+function toggleLongPressAccessibility() {
+  longPressAccessibilityDisabled = !longPressAccessibilityDisabled
+  longPressStatus = longPressAccessibilityDisabled ? 'long press disabled' : 'long press enabled'
+}
+
 function toggleSwitch(event) {
   switchValue = event.value
   status = switchValue ? 'switch on' : 'switch off'
@@ -178,7 +184,8 @@ function openCapabilities() {
     <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
     <View testID="native-panel" accessibilityState={{"disabled":panelAccessibilityDisabled}} onPress={pressPanel} style={{"height":24}}><Text>Native panel</Text></View>
     <Button testID="toggle-panel-accessibility" onPress={togglePanelAccessibility}>Toggle panel accessibility</Button>
-    <View testID="long-press-panel" onLongPress={pressPanelLong} style={{"height":24}}><Text>Long press panel</Text></View>
+    <View testID="long-press-panel" accessibilityState={{"disabled":longPressAccessibilityDisabled}} onLongPress={pressPanelLong} style={{"height":24}}><Text>Long press panel</Text></View>
+    <Button testID="toggle-long-press-accessibility" onPress={toggleLongPressAccessibility}>Toggle long press accessibility</Button>
     <Text testID="long-press-status">{longPressStatus}</Text>
     <Button testID="toggle-button-style" accessibilityState={{"selected":buttonAccent}} onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
