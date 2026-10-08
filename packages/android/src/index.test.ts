@@ -170,6 +170,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('info.roleDescription')
       expect(nativeActivity).toContain('info.hintText = host.tooltipText')
       expect(nativeActivity).toContain('IMPORTANT_FOR_ACCESSIBILITY_NO')
+      expect(nativeActivity).toContain('if (disabled) view.isEnabled = false')
+      expect(nativeActivity).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
       expect(nativeActivity).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
       expect(nativeActivity).toContain('val target = screen.flatListOwners[id] ?: id')
       expect(nativeActivity).toContain('private fun applyViewStyle(view: View, style: JSONObject)')

@@ -132,6 +132,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('traits.insert(.notEnabled)')
     expect(nativeSwift).toContain('traits.insert(.selected)')
     expect(nativeSwift).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil }')
+    expect(nativeSwift).toContain('(view as? UIControl)?.isEnabled = false')
     expect(flatListSwift).toContain('UICollectionViewDiffableDataSource<Int, String>')
     expect(flatListSwift).toContain('reconfigureItems(changedLive)')
     expect(flatListSwift).toContain('preferredLayoutAttributesFitting')

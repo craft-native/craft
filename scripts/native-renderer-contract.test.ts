@@ -141,6 +141,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('control.setOnClickListener {')
   })
 
+  it('lets accessibility disabled state disable controls without re-enabling them', () => {
+    expect(ios).toContain('(view as? UIControl)?.isEnabled = false')
+    expect(android).toContain('if (disabled) view.isEnabled = false')
+    expect(android).not.toContain('if (state != null && state.has("disabled")) view.isEnabled = !disabled')
+  })
+
   it('resets removed text-input colors to each host theme', () => {
     expect(ios).toContain('field.attributedPlaceholder = nil')
     expect(ios).toContain('field.tintColor = color(props["selectionColor"])')

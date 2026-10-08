@@ -1443,7 +1443,7 @@ class MainActivity : AppCompatActivity() {
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")
         val disabled = state?.optBoolean("disabled", false) == true
-        if (state != null && state.has("disabled")) view.isEnabled = !disabled
+        if (disabled) view.isEnabled = false
         ViewCompat.setAccessibilityDelegate(view, object : AccessibilityDelegateCompat() {
             override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
                 super.onInitializeAccessibilityNodeInfo(host, info)

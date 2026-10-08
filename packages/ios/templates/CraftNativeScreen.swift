@@ -1667,7 +1667,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         default: break
         }
         if let state = props["accessibilityState"] as? [String: Any] {
-            if state["disabled"] as? Bool == true { traits.insert(.notEnabled) }
+            if state["disabled"] as? Bool == true {
+                traits.insert(.notEnabled)
+                (view as? UIControl)?.isEnabled = false
+            }
             if state["selected"] as? Bool == true { traits.insert(.selected) }
             if state["checked"] as? Bool == true { traits.insert(.selected) }
         }
