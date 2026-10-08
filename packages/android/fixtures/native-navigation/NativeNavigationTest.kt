@@ -231,6 +231,17 @@ class NativeNavigationTest {
             assertTrue("clearing accessibilityState.disabled should restore the link", link.isEnabled)
             instrumentation.runOnMainSync { link.performClick() }
             assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val panel = awaitView(activity, "native-panel")
+            instrumentation.runOnMainSync { panel.performClick() }
+            assertEquals("panel pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            click(activity, "toggle-panel-accessibility")
+            awaitText(activity, "native-link-status", "panel accessibility disabled")
+            assertFalse("accessibilityState.disabled should disable a generic pressable", panel.isEnabled)
+            click(activity, "toggle-panel-accessibility")
+            awaitText(activity, "native-link-status", "panel accessibility enabled")
+            assertTrue("clearing accessibilityState.disabled should restore a generic pressable", panel.isEnabled)
+            instrumentation.runOnMainSync { panel.performClick() }
+            assertEquals("panel pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             click(activity, "toggle-image-tint")
             assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
             val image = awaitView(activity, "native-image") as ImageView

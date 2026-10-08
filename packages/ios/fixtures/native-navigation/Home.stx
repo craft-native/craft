@@ -10,6 +10,7 @@ let notesBlurs = 0
 let notesEndEditings = 0
 let status = ''
 let linkAccessibilityDisabled = false
+let panelAccessibilityDisabled = false
 let switchValue = false
 let sliderValue = 0.5
 let sliderCompletions = 0
@@ -101,6 +102,15 @@ function toggleLinkAccessibility() {
   status = linkAccessibilityDisabled ? 'link accessibility disabled' : 'link accessibility enabled'
 }
 
+function togglePanelAccessibility() {
+  panelAccessibilityDisabled = !panelAccessibilityDisabled
+  status = panelAccessibilityDisabled ? 'panel accessibility disabled' : 'panel accessibility enabled'
+}
+
+function pressPanel() {
+  status = 'panel pressed'
+}
+
 function toggleSwitch(event) {
   switchValue = event.value
   status = switchValue ? 'switch on' : 'switch off'
@@ -156,6 +166,8 @@ function openCapabilities() {
     <Link testID="native-link" accessibilityHint="Opens status" accessibilityValue="ready" accessibilityState={{"disabled":linkAccessibilityDisabled}} onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
+    <View testID="native-panel" accessibilityState={{"disabled":panelAccessibilityDisabled}} onPress={pressPanel} style={{"height":24}}><Text>Native panel</Text></View>
+    <Button testID="toggle-panel-accessibility" onPress={togglePanelAccessibility}>Toggle panel accessibility</Button>
     <Button testID="toggle-button-style" accessibilityState={{"selected":buttonAccent}} onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
