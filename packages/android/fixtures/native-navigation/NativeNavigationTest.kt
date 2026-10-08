@@ -162,6 +162,11 @@ class NativeNavigationTest {
             assertEquals(Color.rgb(0x94, 0xa3, 0xb8), nameInput.hintTextColors.defaultColor)
             assertEquals(Color.rgb(0x22, 0xc5, 0x5e), nameInput.highlightColor)
             assertTrue(nameInput.filters.any { it is InputFilter.LengthFilter })
+            assertEquals(
+                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+                nameInput.inputType and InputType.TYPE_MASK_VARIATION,
+            )
+            assertEquals(EditorInfo.IME_ACTION_DONE, nameInput.imeOptions and EditorInfo.IME_MASK_ACTION)
             click(activity, "toggle-input-colors")
             assertEquals("input colors off", (awaitView(activity, "input-style-status") as TextView).text.toString())
             assertSame("Removing input colors replaced the native field", nameInput, awaitView(activity, "name-input"))

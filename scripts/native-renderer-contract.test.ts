@@ -71,6 +71,17 @@ describe('native renderer component contract', () => {
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
   })
 
+  it('keeps TextInput keyboard traits aligned across hosts', () => {
+    expect(ios).toContain('case "email-address": return .emailAddress')
+    expect(ios).toContain('case "decimal-pad": return .decimalPad')
+    expect(ios).toContain('case "done": return .done')
+    expect(ios).toContain('case "characters": return .allCharacters')
+    expect(android).toContain('"email-address" -> InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS')
+    expect(android).toContain('"decimal-pad" -> InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL')
+    expect(android).toContain('"done" -> EditorInfo.IME_ACTION_DONE')
+    expect(android).toContain('"characters" -> InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS')
+  })
+
   it('keeps blur and end-editing callbacks independent across hosts', () => {
     expect(ios).toContain('updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)')
     expect(ios).toContain('updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)')

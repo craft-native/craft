@@ -103,6 +103,49 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNotNil(find(UILabel.self, key: "name-input", below: controller.view))
     }
 
+    func testTextInputTraitsFollowHostNeutralProps() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([
+            [
+                "type": "TextInput",
+                "props": [
+                    "key": "single",
+                    "keyboardType": "email-address",
+                    "returnKeyType": "done",
+                    "autoCapitalize": "characters",
+                    "autoCorrect": false,
+                    "secureTextEntry": true,
+                    "editable": false,
+                ],
+            ],
+            [
+                "type": "TextInput",
+                "props": [
+                    "key": "multi",
+                    "multiline": true,
+                    "keyboardType": "decimal-pad",
+                    "returnKeyType": "send",
+                    "autoCapitalize": "words",
+                ],
+            ],
+        ]))
+
+        let single = try XCTUnwrap(find(UITextField.self, key: "single", below: controller.view))
+        XCTAssertEqual(single.keyboardType, .emailAddress)
+        XCTAssertEqual(single.returnKeyType, .done)
+        XCTAssertEqual(single.autocapitalizationType, .allCharacters)
+        XCTAssertEqual(single.autocorrectionType, .no)
+        XCTAssertTrue(single.isSecureTextEntry)
+        XCTAssertFalse(single.isEnabled)
+
+        let multi = try XCTUnwrap(find(UITextView.self, key: "multi", below: controller.view))
+        XCTAssertEqual(multi.keyboardType, .decimalPad)
+        XCTAssertEqual(multi.returnKeyType, .send)
+        XCTAssertEqual(multi.autocapitalizationType, .words)
+        XCTAssertEqual(multi.autocorrectionType, .default)
+    }
+
     func testPersistentStorageAndDatabaseCapabilitiesRoundTripJSONValues() async throws {
         _ = await capability("Storage", "clear")
         let stored = await capability("Storage", "set", ["profile", ["name": "Ada", "visits": 2]])
