@@ -1,6 +1,6 @@
 # WebView-free native navigation fixture
 
-The three `.stx` screens and `stx-native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a keyboard-configured `TextInput`, submit counter, counter, and keyed `FlatList`; the list covers two-column recycling, header/footer/empty content, row moves, focused-input retention, and `onEndReached`. Returning home must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
+The three `.stx` screens and `stx-native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a keyboard-configured `TextInput`, submit counter, counter, and keyed `FlatList`; the list covers two-column recycling, header/footer/empty content, row moves, focused-input retention, and `onEndReached`. The native list unit fixture also verifies scroll, drag, and momentum callback forwarding. Returning home must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
 
 From the Craft repository, with the sibling stx checkout at or after
 `6c1603f742`:

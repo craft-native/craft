@@ -99,6 +99,35 @@ class NativeFlatListTest {
     }
 
     @Test
+    fun forwardsScrollAndMomentumCallbacks() {
+        val context = instrumentation.targetContext
+        lateinit var list: CraftNativeFlatList
+        val scrollCount = AtomicInteger()
+        val momentumBeginCount = AtomicInteger()
+        val momentumEndCount = AtomicInteger()
+        val rows = (0 until 100).map(::row)
+        instrumentation.runOnMainSync {
+            list = CraftNativeFlatList(context)
+            attach(list)
+            list.onScrollEvent = { scrollCount.incrementAndGet() }
+            list.onMomentumScrollBegin = { momentumBeginCount.incrementAndGet() }
+            list.onMomentumScrollEnd = { momentumEndCount.incrementAndGet() }
+            list.apply(rows, false, 1, false, 0.1, renderer(context, AtomicInteger()), { _ -> }, null)
+        }
+        awaitCount(list, 100)
+        instrumentation.runOnMainSync {
+            list.smoothScrollToPosition(99)
+        }
+        repeat(50) {
+            if (momentumEndCount.get() > 0) return@repeat
+            SystemClock.sleep(50)
+        }
+        assertTrue("RecyclerView did not emit scroll callbacks", scrollCount.get() > 0)
+        assertEquals(1, momentumBeginCount.get())
+        assertEquals(1, momentumEndCount.get())
+    }
+
+    @Test
     fun configuresHorizontalGridInvertedAndChromeOnlyLists() {
         val context = instrumentation.targetContext
         lateinit var list: CraftNativeFlatList

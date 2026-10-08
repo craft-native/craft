@@ -418,6 +418,46 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertLessThan(rendered.count, 100)
     }
 
+    func testFlatListForwardsScrollAndMomentumCallbacks() {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 160)
+        var scrollCount = 0
+        var beginDragCount = 0
+        var endDragCount = 0
+        var momentumBeginCount = 0
+        var momentumEndCount = 0
+        list.onScrollEvent = { _ in scrollCount += 1 }
+        list.onScrollBeginDrag = { _ in beginDragCount += 1 }
+        list.onScrollEndDrag = { _ in endDragCount += 1 }
+        list.onMomentumScrollBegin = { _ in momentumBeginCount += 1 }
+        list.onMomentumScrollEnd = { _ in momentumEndCount += 1 }
+        let rows = (0..<20).map { index in
+            ["id": "row-\(index)", "type": "Text", "children": ["Row \(index)"]] as [String: Any]
+        }
+        let render: CraftNativeFlatList.RenderItem = { _, _, previous in previous ?? UILabel() }
+        list.apply(
+            nodes: rows,
+            horizontal: false,
+            columns: 1,
+            inverted: false,
+            endReachedThreshold: 0.1,
+            renderItem: render,
+            recycleItem: { _ in },
+            endReached: nil
+        )
+        list.layoutIfNeeded()
+        list.scrollViewWillBeginDragging(list)
+        list.scrollViewDidScroll(list)
+        list.scrollViewDidEndDragging(list, willDecelerate: true)
+        list.scrollViewWillBeginDecelerating(list)
+        list.scrollViewDidEndDecelerating(list)
+        XCTAssertEqual(scrollCount, 1)
+        XCTAssertEqual(beginDragCount, 1)
+        XCTAssertEqual(endDragCount, 1)
+        XCTAssertEqual(momentumBeginCount, 1)
+        XCTAssertEqual(momentumEndCount, 1)
+    }
+
     func testFlatListControllerLaysOutAndMovesMulticolumnRowsWithoutReentrantInvalidation() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
