@@ -177,6 +177,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('clamp(distributed, entry.style.minHeight, entry.style.maxHeight)')
   })
 
+  it('treats null layout values as unset on both hosts', () => {
+    expect(ios).toContain('func number(_ value: Any?) -> CGFloat?')
+    expect(android).toContain('if (!raw.has(name) || raw.isNull(name)) return null')
+    expect(android).toContain('raw.optDouble(name, Double.NaN)')
+  })
+
   it('keeps elevation visible on both native hosts', () => {
     expect(ios).toContain('let elevation = max(0, number(style["elevation"]) ?? 0)')
     expect(ios).toContain('view.layer.shadowOpacity = elevation > 0')

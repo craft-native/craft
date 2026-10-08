@@ -86,7 +86,10 @@ private data class CraftNativeLayoutStyle(
 ) {
     companion object {
         fun from(raw: JSONObject, density: Float): CraftNativeLayoutStyle {
-            fun number(name: String): Int? = if (raw.has(name)) (raw.optDouble(name) * density).toInt() else null
+            fun number(name: String): Int? {
+                if (!raw.has(name) || raw.isNull(name)) return null
+                return raw.optDouble(name, Double.NaN).takeUnless { it.isNaN() }?.let { (it * density).toInt() }
+            }
             return CraftNativeLayoutStyle(
                 width = number("width"), height = number("height"),
                 minWidth = number("minWidth"), maxWidth = number("maxWidth"),
