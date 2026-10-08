@@ -137,7 +137,7 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('|| flexDirection == "row-reverse"')
     expect(nativeSwift).toContain('if let control = view as? UIControl')
     expect(nativeSwift).toContain('accessibilityValue')
-    expect(nativeSwift).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
+    expect(nativeSwift).toContain('} else if type != "TextInput" && type != "Image" {\n            view.accessibilityValue = nil')
     expect(nativeSwift).not.toContain('else if type == "TextInput", let field = view as? UITextField')
     expect(nativeSwift).toContain('traits.insert(.notEnabled)')
     expect(nativeSwift).toContain('traits.insert(.selected)')

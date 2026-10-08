@@ -1759,7 +1759,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.accessibilityHint = props["accessibilityHint"] as? String
         if let value = props["accessibilityValue"] {
             view.accessibilityValue = (value as? String) ?? (value as? NSNumber)?.stringValue
-        } else if type != "TextInput" {
+        } else if type != "TextInput" && type != "Image" {
             view.accessibilityValue = nil
         }
         let role = props["accessibilityRole"] as? String

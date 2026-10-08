@@ -184,6 +184,11 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.clearColorFilter()')
   })
 
+  it('preserves image failure accessibility details across reconciliation', () => {
+    expect(ios).toContain('} else if type != "TextInput" && type != "Image" {\n            view.accessibilityValue = nil')
+    expect(android).toContain('if (control is ImageView) imageErrors[control]?.let')
+  })
+
   it('keeps activity indicator visibility and sizing props aligned', () => {
     expect(ios).toContain('if let numericSize = requestedSize as? NSNumber')
     expect(ios).toContain('indicator.transform = CGAffineTransform(scaleX: scale, y: scale)')
@@ -196,7 +201,7 @@ describe('native renderer component contract', () => {
   })
 
   it('resets removed accessibility metadata on both hosts', () => {
-    expect(ios).toContain('} else if type != "TextInput" {\n            view.accessibilityValue = nil')
+    expect(ios).toContain('} else if type != "TextInput" && type != "Image" {\n            view.accessibilityValue = nil')
     expect(android).toContain('view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }')
     expect(android).toContain('info.hintText = host.tooltipText')
     expect(android).toContain('info.isEnabled = host.isEnabled && !disabled')
