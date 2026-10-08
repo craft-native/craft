@@ -284,6 +284,12 @@ class NativeNavigationTest {
             awaitText(activity, "greeting", "Hello Ada")
             instrumentation.runOnMainSync { (name as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE) }
             awaitText(activity, "name-submits", "Submits: 1")
+            instrumentation.runOnMainSync {
+                notes.requestFocus()
+                (notes as EditText).setText("Note")
+                (notes as EditText).onEditorAction(EditorInfo.IME_ACTION_DONE)
+            }
+            awaitText(activity, "name-submits", "Submits: 2")
             assertSame("View container was replaced after typing", root, awaitView(activity, "root"))
             assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
             assertTrue("TextInput lost focus after typing", name.isFocused)

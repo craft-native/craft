@@ -168,7 +168,7 @@ function openCapabilities() {
     <Button testID="toggle-input-colors" onPress={toggleInputColors}>Toggle input colors</Button>
     <Text testID="input-style-status">{inputStyleStatus}</Text>
     <TextInput testID="name-input" placeholder="Your name" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onSubmitEditing={submitName} />
-    <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} />
+    <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} onSubmitEditing={submitName} />
     <Text testID="greeting">Hello {name}</Text>
     <Text testID="name-submits">Submits: {submits}</Text>
     <Button testID="increment" onPress={increment}>Increment</Button>
