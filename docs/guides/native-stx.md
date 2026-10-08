@@ -308,7 +308,8 @@ pressable native views. `onLongPress` fires once after the native long-press
 gesture begins and also delivers an empty `nativeEvent`; removing the handler
 releases the platform gesture recognizer. `TextInput` accepts `onChange` or `onChangeText` and
 delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
-`onSubmitEditing` are also native events. `keyboardType`, `returnKeyType`,
+`onSubmitEditing` are also native events and include the current text when
+the event applies to a `TextInput`. `keyboardType`, `returnKeyType`,
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. `placeholderTextColor`, `selectionColor`,
 positive `maxLength`, `multiline`, and `numberOfLines` values are applied on

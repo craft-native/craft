@@ -111,6 +111,9 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps blur and end-editing callbacks independent across hosts', () => {
+    expect(ios).toContain('"nativeEvent": ["text": textView.text ?? ""]')
+    expect(ios).toContain('"nativeEvent": ["text": sender.text ?? ""]')
+    expect(android).toContain('val nativeEvent = JSONObject().put("text", text.toString())')
     expect(ios).toContain('updateAuxiliaryHandler(events["onBlur"], in: &blurHandlers, for: field)')
     expect(ios).toContain('updateAuxiliaryHandler(events["onEndEditing"], in: &endEditingHandlers, for: field)')
     expect(ios).toContain('if let handler = endEditingHandlers[id]')

@@ -1888,7 +1888,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     func textViewDidBeginEditing(_ textView: UITextView) {
         lastFocusedInput = textView
         guard let handler = focusHandlers[ObjectIdentifier(textView)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": textView.text ?? ""]])
     }
 
     func textViewDidEndEditing(_ textView: UITextView) {
@@ -1935,7 +1935,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     @objc private func textFocused(_ sender: UITextField) {
         lastFocusedInput = sender
         guard let handler = focusHandlers[ObjectIdentifier(sender)] else { return }
-        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["text": sender.text ?? ""]])
     }
 
     @objc private func textBlurred(_ sender: UITextField) {
