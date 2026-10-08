@@ -111,7 +111,9 @@ JavaScriptSandbox process. Enable `enableLocalDatabase`,
 `enableLocalNotifications`, and `enableDeepLinks` explicitly. Disabled or
 malformed calls reject with stable capability/error codes, and in-flight calls
 have a deadline and cancellation path. The broader browser bridge remains
-specific to WebView mode. The shared component, capability, list, style,
+specific to WebView mode. Native views also expose `onLayout` callbacks with
+density-independent frame measurements that refresh after inset or orientation
+changes. The shared component, capability, list, style,
 image-source, event, accessibility, and reconciliation contract is documented in the
 [Native STX guide](../../docs/guides/native-stx.md).
 

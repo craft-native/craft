@@ -169,6 +169,13 @@ Scroll content is measured with an unbounded scroll-axis constraint, so intrinsi
 text and image sizes contribute to the content extent instead of collapsing to
 zero when the viewport supplies an unspecified size.
 
+Views also support `onLayout`. The host calls it after the first native layout
+and again only when that view's frame changes (including safe-area, rotation, or
+responsive-size changes). The callback receives
+`{ layout: { x, y, width, height } }`, measured in the view's parent coordinate
+space. Values are points on iOS and density-independent units on Android;
+removing a node removes its pending layout callback as well.
+
 ## Images and scrolling
 
 Use `{ uri: value }` for an image source. Data-image URIs and HTTPS URLs work on

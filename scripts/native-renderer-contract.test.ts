@@ -32,4 +32,13 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('Missing dist/native-screen.js')
     expect(android).toContain('Missing native-screen.js')
   })
+
+  it('keeps responsive layout events aligned across hosts', () => {
+    expect(ios).toContain('events["onLayout"]')
+    expect(ios).toContain('lastLayoutFrames[id] != frame')
+    expect(android).toContain('events.optString("onLayout")')
+    expect(android).toContain('lastLayoutBounds[view] != bounds')
+    expect(ios).toContain('"nativeEvent": ["layout": [')
+    expect(android).toContain('.put("layout", JSONObject()')
+  })
 })
