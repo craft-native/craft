@@ -221,6 +221,34 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         return GridLayout(rows, absolute, cellWidth, rowHeights)
     }
 
+    private fun gridIntrinsicSize(height: Int): Pair<Int, Int> {
+        val columns = max(1, gridColumns)
+        val columnWidths = IntArray(columns)
+        val rowHeights = mutableListOf<Int>()
+        var flowIndex = 0
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == GONE) continue
+            val style = styles[child] ?: CraftNativeLayoutStyle()
+            if (style.position == "absolute") continue
+            val lp = child.layoutParams as? MarginLayoutParams
+            val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
+            val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            val childWidth = measureChildWidth(child, style, 1_000_000, horizontalMargins)
+            val childHeight = measureChildHeight(child, style, height, verticalMargins)
+            val column = flowIndex % columns
+            val row = flowIndex / columns
+            while (rowHeights.size <= row) rowHeights += gridAutoRows ?: 0
+            columnWidths[column] = max(columnWidths[column], childWidth + horizontalMargins)
+            rowHeights[row] = max(rowHeights[row], childHeight + verticalMargins)
+            flowIndex += 1
+        }
+        val width = paddingLeft + paddingRight + columnWidths.sum() + max(0, columns - 1) * columnGap
+        val rowGapTotal = max(0, rowHeights.size - 1) * rowGap
+        val measuredHeight = paddingTop + paddingBottom + rowHeights.sum() + rowGapTotal
+        return width to measuredHeight
+    }
+
     private fun measureChildWidth(child: View, style: CraftNativeLayoutStyle, available: Int, margins: Int): Int {
         val flexBasis = if (orientation == HORIZONTAL) style.flexBasis else null
         val explicit = style.width ?: flexBasis
@@ -251,9 +279,18 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val width = View.MeasureSpec.getSize(widthMeasureSpec).takeUnless { View.MeasureSpec.getMode(widthMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
+        val widthMode = View.MeasureSpec.getMode(widthMeasureSpec)
+        val width = View.MeasureSpec.getSize(widthMeasureSpec).takeUnless { widthMode == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
         val height = View.MeasureSpec.getSize(heightMeasureSpec).takeUnless { View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED } ?: 1_000_000
         if (grid) {
+            if (widthMode == View.MeasureSpec.UNSPECIFIED) {
+                val (intrinsicWidth, intrinsicHeight) = gridIntrinsicSize(height)
+                setMeasuredDimension(
+                    resolveSize(intrinsicWidth, widthMeasureSpec),
+                    resolveSize(intrinsicHeight, heightMeasureSpec),
+                )
+                return
+            }
             val layout = gridLayout(width, height)
             val desiredWidth = paddingLeft + paddingRight + layout.cellWidth * gridColumns + max(0, gridColumns - 1) * columnGap
             val desiredHeight = paddingTop + paddingBottom + layout.rowHeights.sum() + max(0, layout.rowHeights.size - 1) * rowGap

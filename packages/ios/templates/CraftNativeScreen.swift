@@ -139,7 +139,10 @@ private final class CraftNativeFlowView: UIStackView {
     }
 
     override var intrinsicContentSize: CGSize {
-        let children = subviews.filter { !$0.isHidden && !($0 is CraftNativeFlexSpacer) }
+        let children = subviews.filter {
+            !$0.isHidden && !($0 is CraftNativeFlexSpacer)
+                && (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
+        }
         guard !children.isEmpty else { return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric) }
         if grid { return gridIntrinsicContentSize(children) }
         let sizes = children.map { measuredSize(for: $0, available: CGSize(width: 10_000, height: 10_000)) }
@@ -237,7 +240,10 @@ private final class CraftNativeFlowView: UIStackView {
         let verticalGap = rowGap ?? gap
         var columnWidth: CGFloat = 0
         var rowHeights: [CGFloat] = []
-        for (index, child) in children.enumerated() {
+        let flowChildren = children.filter {
+            (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
+        }
+        for (index, child) in flowChildren.enumerated() {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             let size = measuredSize(for: child, available: CGSize(width: 10_000, height: 10_000), style: style)
             columnWidth = max(columnWidth, size.width)

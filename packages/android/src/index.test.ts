@@ -145,6 +145,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('IMPORTANT_FOR_ACCESSIBILITY_NO')
       expect(nativeActivity).toContain('val target = screen.flatListOwners[id] ?: id')
       expect(nativeActivity).toContain('private fun applyViewStyle(view: View, style: JSONObject)')
+      expect(nativeActivity).toContain('private fun gridIntrinsicSize(height: Int): Pair<Int, Int>')
       expect(nativeActivity).toContain('private fun configureText(view: TextView, value: String, style: JSONObject)')
       expect(nativeActivity).toContain('style.optString("flexDirection").endsWith("-reverse")')
       expect(nativeActivity).toContain('Unsupported image source')

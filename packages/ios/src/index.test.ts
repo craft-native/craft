@@ -461,6 +461,14 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('frame.width')
   })
 
+  it('sizes intrinsic native grids from flow children only', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-grid-intrinsic-'))
+    await init({ runtimeDir: null, name: 'NativeGridIntrinsic', bundleId: 'org.example.native-grid-intrinsic', output, config: { renderer: 'native' } })
+    const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain('let flowChildren = children.filter')
+    expect(source).toContain('position != "absolute"')
+  })
+
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-health-'))
     await init({ runtimeDir: null, name: 'Health', bundleId: 'com.example.health', output, config: { enableHealthKit: true } })
