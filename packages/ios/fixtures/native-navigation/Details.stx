@@ -48,7 +48,8 @@ function replaceWithSummary() {
       keyExtractor={item.id}
       numColumns={2}
       onEndReached={loadMorePeople}
-      onEndReachedThreshold={0.1}
+      onEndReachedThreshold={null}
+      threshold={0.8}
       style={{"height":160}}
     >
       <Text listRole="header" accessibilityRole="header" testID="people-header">People directory</Text>

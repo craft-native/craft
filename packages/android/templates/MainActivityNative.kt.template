@@ -1477,10 +1477,10 @@ class MainActivity : AppCompatActivity() {
             horizontal = props.optBoolean("horizontal", false),
             columns = props.optInt("numColumns", 1),
             inverted = props.optBoolean("inverted", false),
-            endReachedThreshold = when {
-                props.has("onEndReachedThreshold") -> props.optDouble("onEndReachedThreshold", 0.1)
-                else -> props.optDouble("threshold", 0.1)
-            },
+            endReachedThreshold = props.opt("onEndReachedThreshold")
+                ?.takeUnless { it == JSONObject.NULL }
+                ?.let { props.optDouble("onEndReachedThreshold", 0.1) }
+                ?: props.optDouble("threshold", 0.1),
             renderItem = { node, itemIdentity, _ ->
                 val rows = screen.flatListRows.getOrPut(list) { mutableMapOf() }
                 val previous = rows[itemIdentity].orEmpty()

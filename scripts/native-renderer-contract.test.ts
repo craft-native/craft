@@ -8,6 +8,7 @@ const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeF
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
+const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
 
@@ -340,6 +341,14 @@ describe('native renderer component contract', () => {
     expect(android).toContain('list.onScrollEvent = events.optString("onScroll")')
     expect(androidFlatList).toContain('var onMomentumScrollEnd: (() -> Unit)? = null')
     expect(androidFlatList).toContain('RecyclerView.SCROLL_STATE_SETTLING')
+  })
+
+  it('falls back from null FlatList thresholds consistently', () => {
+    expect(android).toContain('props.opt("onEndReachedThreshold")')
+    expect(android).toContain('takeUnless { it == JSONObject.NULL }')
+    expect(android).toContain('props.optDouble("threshold", 0.1)')
+    expect(navigationDetails).toContain('onEndReachedThreshold={null}')
+    expect(navigationDetails).toContain('threshold={0.8}')
   })
 
   it('emits onLayout for virtualized rows on both hosts', () => {
