@@ -875,6 +875,17 @@ class MainActivity : AppCompatActivity() {
                     else -> props.optBoolean("checked", false)
                 }
                 isEnabled = !props.optBoolean("disabled", false)
+                props.optJSONObject("trackColor")?.let { track ->
+                    val falseColor = color(track.optString("false"), Color.GRAY)
+                    val trueColor = color(track.optString("true"), falseColor)
+                    trackTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(trueColor, falseColor),
+                    )
+                }
+                props.optString("thumbColor").takeIf { it.isNotBlank() }?.let {
+                    thumbTintList = ColorStateList.valueOf(color(it, Color.WHITE))
+                }
                 val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
                 if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
                 setOnCheckedChangeListener { _, checked ->

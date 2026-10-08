@@ -108,6 +108,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('onSlidingComplete')
       expect(nativeActivity).toContain('progressTintList')
       expect(nativeActivity).toContain('roundToInt()')
+      expect(nativeActivity).toContain('trackTintList = ColorStateList(')
+      expect(nativeActivity).toContain('thumbTintList = ColorStateList.valueOf')
       expect(nativeActivity).toContain('setOnEditorActionListener')
       expect(nativeActivity).toContain('screen.submitHandlers')
       expect(nativeActivity).toContain('showSoftInput')

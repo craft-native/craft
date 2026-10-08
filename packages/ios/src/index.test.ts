@@ -79,6 +79,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('events["onSlidingComplete"]')
     expect(nativeSwift).toContain('minimumTrackTintColor')
     expect(nativeSwift).toContain('sliderFinished')
+    expect(nativeSwift).toContain('toggle.onTintColor')
+    expect(nativeSwift).toContain('toggle.thumbTintColor')
     expect(nativeSwift).toContain('private func restoreFocus(_ focused: UIView?)')
     expect(nativeSwift).toContain('_ = focused.becomeFirstResponder()')
     expect(nativeSwift).toContain('let focused = firstResponder(in: rootStack)')

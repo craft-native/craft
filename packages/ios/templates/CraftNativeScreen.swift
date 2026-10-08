@@ -788,6 +788,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             let toggle = result as! UISwitch
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
             toggle.isEnabled = props["disabled"] as? Bool != true
+            if let track = props["trackColor"] as? [String: Any] {
+                toggle.onTintColor = color(track["true"])
+                toggle.tintColor = color(track["false"])
+            }
+            toggle.thumbTintColor = color(props["thumbColor"])
+            if let background = color(props["ios_backgroundColor"]) { toggle.tintColor = background }
             updateHandler(events["onValueChange"] ?? events["onChange"], for: toggle)
         case "Slider":
             let slider = result as! UISlider
