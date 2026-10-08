@@ -6,6 +6,7 @@ let submits = 0
 let status = ''
 let switchValue = false
 let sliderValue = 0.5
+let sliderCompletions = 0
 let layoutWidth = 0
 
 function changeName(event) {
@@ -36,6 +37,10 @@ function toggleSwitch(event) {
 function moveSlider(event) {
   sliderValue = event.value
   status = 'slider moved'
+}
+
+function finishSlider() {
+  sliderCompletions += 1
 }
 
 function captureLayout(event) {
@@ -71,7 +76,8 @@ function openCapabilities() {
     <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Switch testID="native-switch" value={switchValue} onValueChange={toggleSwitch} />
-    <Slider testID="native-slider" minimumValue={0} maximumValue={1} value={sliderValue} onValueChange={moveSlider} />
+    <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
+    <Text testID="slider-value">{sliderValue}</Text>
     <ActivityIndicator testID="native-indicator" />
     <View testID="layout-wrap" onLayout={captureLayout} style={{"width":240,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>

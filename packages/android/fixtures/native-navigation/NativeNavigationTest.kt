@@ -196,6 +196,7 @@ class NativeNavigationTest {
             assertTrue("native slider should be a SeekBar", slider is SeekBar)
             instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
             assertEquals("slider moved", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            assertEquals("0.8", (awaitView(activity, "slider-value") as TextView).text.toString())
             assertTrue("native indicator should be a ProgressBar", awaitView(activity, "native-indicator") is ProgressBar)
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             assertEquals("layout measured", (awaitView(activity, "layout-status") as TextView).text.toString())

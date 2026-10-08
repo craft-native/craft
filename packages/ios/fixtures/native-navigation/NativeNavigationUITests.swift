@@ -94,6 +94,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(slider.waitForExistence(timeout: 5))
         slider.adjust(toNormalizedSliderPosition: 0.8)
         XCTAssertTrue(app.staticTexts["slider moved"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["slider-value"].label, "0.8")
 
         XCTAssertTrue(app.activityIndicators["native-indicator"].waitForExistence(timeout: 5))
 
