@@ -546,6 +546,8 @@ class MainActivity : AppCompatActivity() {
     private val imageSources = mutableMapOf<ImageView, String>()
     private val imageJobs = mutableMapOf<ImageView, Future<*>>()
     private val imageErrors = mutableMapOf<ImageView, String>()
+    private val inputHintDefaults = mutableMapOf<EditText, ColorStateList>()
+    private val inputHighlightDefaults = mutableMapOf<EditText, Int>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -890,13 +892,19 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             "TextInput" -> (previous as? EditText ?: EditText(this)).apply {
+                val defaultHintColors = inputHintDefaults.getOrPut(this) {
+                    hintTextColors ?: ColorStateList.valueOf(Color.GRAY)
+                }
+                val defaultHighlightColor = inputHighlightDefaults.getOrPut(this) { highlightColor }
                 hint = props.optString("placeholder")
-                props.optString("placeholderTextColor").takeIf { it.isNotBlank() }?.let {
-                    setHintTextColor(color(it, Color.GRAY))
-                }
-                props.optString("selectionColor").takeIf { it.isNotBlank() }?.let {
-                    highlightColor = color(it, highlightColor)
-                }
+                setHintTextColor(
+                    props.optString("placeholderTextColor").takeIf { it.isNotBlank() }
+                        ?.let { ColorStateList.valueOf(color(it, Color.GRAY)) }
+                        ?: defaultHintColors,
+                )
+                highlightColor = props.optString("selectionColor").takeIf { it.isNotBlank() }
+                    ?.let { color(it, defaultHighlightColor) }
+                    ?: defaultHighlightColor
                 val maxLength = props.optInt("maxLength", 0)
                 filters = if (maxLength > 0) arrayOf(InputFilter.LengthFilter(maxLength)) else emptyArray()
                 inputType = inputTypeFor(props)
@@ -1632,6 +1640,10 @@ class MainActivity : AppCompatActivity() {
             if (owner != null) screen.flatListOwners.entries.removeAll { it.value == owner }
         }
         releaseImages(released)
+        released.filterIsInstance<EditText>().forEach {
+            inputHintDefaults.remove(it)
+            inputHighlightDefaults.remove(it)
+        }
         screen.handlers.keys.removeAll(released)
         screen.layoutHandlers.keys.removeAll(released)
         screen.lastLayoutBounds.keys.removeAll(released)

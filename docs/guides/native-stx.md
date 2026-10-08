@@ -289,6 +289,10 @@ handoff after UIKit finishes the touch, even if UIKit temporarily clears first
 responder status while dispatching the event. `FlatList` supports `onEndReached`.
 `ScrollView` emits the scroll callbacks described above.
 
+Removing `placeholderTextColor` or `selectionColor` from a reused `TextInput`
+restores the platform theme default on both hosts instead of retaining the
+previous native color.
+
 `accessibilityLabel`, `accessibilityHint`, `accessibilityValue`,
 `accessibilityState`, and `accessibilityRole` map to native accessibility
 metadata and traits. The portable roles are `button`, `image`, `header`,

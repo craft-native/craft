@@ -54,4 +54,12 @@ describe('native renderer component contract', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
   })
+
+  it('resets removed text-input colors to each host theme', () => {
+    expect(ios).toContain('field.attributedPlaceholder = nil')
+    expect(ios).toContain('field.tintColor = color(props["selectionColor"])')
+    expect(android).toContain('inputHintDefaults.getOrPut(this)')
+    expect(android).toContain('inputHighlightDefaults.getOrPut(this)')
+    expect(android).toContain('inputHintDefaults.remove(it)')
+  })
 })
