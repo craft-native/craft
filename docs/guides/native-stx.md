@@ -276,7 +276,7 @@ delivers `nativeEvent.text`; `onFocus`, `onBlur`, `onEndEditing`, and
 `autoCapitalize`, `autoCorrect`, `secureTextEntry`, `editable`, and `autoFocus`
 map to the platform input control. `placeholderTextColor`, `selectionColor`,
 positive `maxLength`, `multiline`, and `numberOfLines` values are applied on
-both hosts. Shared text styles (`color`, `fontSize`, `fontFamily`, `fontWeight`,
+both hosts, including keyboard and return-key traits on multiline inputs. Shared text styles (`color`, `fontSize`, `fontFamily`, `fontWeight`,
 `fontStyle`, `textAlign`, `letterSpacing`, and `lineHeight`) also apply to
 native text inputs. Configuration changes are applied only when
 their values change, so state reconciliation preserves the focused field and
@@ -287,7 +287,7 @@ thread. The host keeps a weak anchor to the last focused field so a control
 callback restores focus after dispatch and schedules a short delayed main-queue
 handoff after UIKit finishes the touch, even if UIKit temporarily clears first
 responder status while dispatching the event. `FlatList` supports `onEndReached`.
-`ScrollView` emits the scroll callbacks described above and accepts
+`ScrollView` and `FlatList` emit the scroll callbacks described above and accept
 `keyboardDismissMode="on-drag"` or `"interactive"`; omitting it keeps the
 keyboard open while scrolling.
 

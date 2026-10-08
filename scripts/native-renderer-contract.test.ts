@@ -8,6 +8,7 @@ const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeF
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
+const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
@@ -168,6 +169,8 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
     expect(androidFlatList).toContain('android.view.MotionEvent.ACTION_MOVE')
     expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
+    expect(guide).toContain('both hosts, including keyboard and return-key traits on multiline inputs')
+    expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above and accept')
   })
 
   it('resets removed text-input colors to each host theme', () => {
