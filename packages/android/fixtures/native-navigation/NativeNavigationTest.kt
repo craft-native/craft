@@ -293,6 +293,15 @@ class NativeNavigationTest {
             click(activity, "toggle-panel-style")
             awaitText(activity, "panel-style-status", "panel style on")
             assertTrue("restoring panel style should recreate its drawable", dynamicStyleBox.background is GradientDrawable)
+            val nullWidthText = awaitView(activity, "null-width-text")
+            val explicitTextWidth = nullWidthText.width
+            assertTrue("explicit text width was not applied", explicitTextWidth > (150 * density).toInt())
+            click(activity, "toggle-null-width")
+            repeat(20) {
+                if (nullWidthText.width < explicitTextWidth - (20 * density).toInt()) return@repeat
+                SystemClock.sleep(100)
+            }
+            assertTrue("null width should restore intrinsic text sizing", nullWidthText.width < explicitTextWidth - (20 * density).toInt())
             val toggle = awaitView(activity, "native-switch")
             assertTrue("native switch should be an Android Switch", toggle is Switch)
             val nativeSwitch = toggle as Switch

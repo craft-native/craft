@@ -24,6 +24,19 @@ final class NativeNavigationUITests: XCTestCase {
         return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
     }
 
+    private func waitForLayoutDecrease(
+        _ element: XCUIElement,
+        from baseline: CGFloat,
+        timeout: TimeInterval = 10
+    ) -> Bool {
+        let predicate = NSPredicate { object, _ in
+            guard let candidate = object as? XCUIElement else { return false }
+            return candidate.frame.width < baseline - 20
+        }
+        let expectation = XCTNSPredicateExpectation(predicate: predicate, object: element)
+        return XCTWaiter.wait(for: [expectation], timeout: timeout) == .completed
+    }
+
     private func openCapabilities(_ app: XCUIApplication) {
         XCTAssertTrue(app.buttons["open-capabilities"].waitForExistence(timeout: 15))
         app.buttons["open-capabilities"].tap()
@@ -96,6 +109,12 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["panel style off"].waitForExistence(timeout: 5))
         app.buttons["toggle-panel-style"].tap()
         XCTAssertTrue(app.staticTexts["panel style on"].waitForExistence(timeout: 5))
+        let nullWidthText = app.staticTexts["null-width-text"]
+        XCTAssertTrue(nullWidthText.waitForExistence(timeout: 5))
+        let explicitTextWidth = nullWidthText.frame.width
+        XCTAssertGreaterThan(explicitTextWidth, 150)
+        app.buttons["toggle-null-width"].tap()
+        XCTAssertTrue(waitForLayoutDecrease(nullWidthText, from: explicitTextWidth), "null width should restore intrinsic text sizing")
         let scrollEnd = app.staticTexts["scroll-end"]
         XCTAssertFalse(scrollEnd.isHittable)
         scroll.swipeUp()

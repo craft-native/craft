@@ -181,6 +181,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('func number(_ value: Any?) -> CGFloat?')
     expect(android).toContain('if (!raw.has(name) || raw.isNull(name)) return null')
     expect(android).toContain('raw.optDouble(name, Double.NaN)')
+    expect(navigationHome).toContain('style={{"width":textWidthUnset ? null : 160')
+    expect(navigationHome).toContain('testID="toggle-null-width"')
   })
 
   it('keeps elevation visible on both native hosts', () => {

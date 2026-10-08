@@ -29,6 +29,7 @@ let inputStyleStatus = ''
 let nameMultiline = false
 let panelStyled = true
 let panelStyleStatus = ''
+let textWidthUnset = false
 
 function changeName(event) {
   name = event.text
@@ -86,6 +87,10 @@ function toggleNameMode() {
 function togglePanelStyle() {
   panelStyled = !panelStyled
   panelStyleStatus = panelStyled ? 'panel style on' : 'panel style off'
+}
+
+function toggleTextWidth() {
+  textWidthUnset = !textWidthUnset
 }
 
 function submitName() {
@@ -200,6 +205,8 @@ function openCapabilities() {
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
     <Text testID="panel-style-status">{panelStyleStatus}</Text>
     <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : undefined,"borderWidth":panelStyled ? 2 : undefined,"borderColor":panelStyled ? "#abcdef" : undefined}} />
+    <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
+    <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
     <Switch testID="native-switch" value={switchValue} accessibilityState={{"checked":switchValue}} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
