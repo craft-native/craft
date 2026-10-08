@@ -1184,6 +1184,21 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         for child in children { registerFlatListOwnership(child, owner: owner) }
         list.bounces = props["bounces"] as? Bool ?? true
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
+        list.onScrollEvent = events["onScroll"].map { handler in
+            { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
+        }
+        list.onScrollBeginDrag = events["onScrollBeginDrag"].map { handler in
+            { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
+        }
+        list.onScrollEndDrag = events["onScrollEndDrag"].map { handler in
+            { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
+        }
+        list.onMomentumScrollBegin = events["onMomentumScrollBegin"].map { handler in
+            { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
+        }
+        list.onMomentumScrollEnd = events["onMomentumScrollEnd"].map { handler in
+            { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
+        }
 
         list.apply(
             nodes: children,

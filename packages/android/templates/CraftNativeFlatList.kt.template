@@ -90,12 +90,52 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private var columns = 1
     private var submissionGeneration = 0
     private var isSubmittingList = false
+    var onScrollEvent: (() -> Unit)? = null
+    var onScrollBeginDrag: (() -> Unit)? = null
+    var onScrollEndDrag: (() -> Unit)? = null
+    var onMomentumScrollBegin: (() -> Unit)? = null
+    var onMomentumScrollEnd: (() -> Unit)? = null
 
     init {
         adapter = listAdapter
         itemAnimator = null
         addOnScrollListener(object : OnScrollListener() {
-            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) = evaluateEndReached()
+            private var dragging = false
+            private var momentum = false
+
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                onScrollEvent?.invoke()
+                evaluateEndReached()
+            }
+
+            override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
+                when (newState) {
+                    RecyclerView.SCROLL_STATE_DRAGGING -> if (!dragging) {
+                        dragging = true
+                        onScrollBeginDrag?.invoke()
+                    }
+                    RecyclerView.SCROLL_STATE_SETTLING -> {
+                        if (dragging) {
+                            dragging = false
+                            onScrollEndDrag?.invoke()
+                        }
+                        if (!momentum) {
+                            momentum = true
+                            onMomentumScrollBegin?.invoke()
+                        }
+                    }
+                    RecyclerView.SCROLL_STATE_IDLE -> {
+                        if (dragging) {
+                            dragging = false
+                            onScrollEndDrag?.invoke()
+                        }
+                        if (momentum) {
+                            momentum = false
+                            onMomentumScrollEnd?.invoke()
+                        }
+                    }
+                }
+            }
         })
     }
 
@@ -175,6 +215,11 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         renderItem = null
         recycleItem = null
         endReached = null
+        onScrollEvent = null
+        onScrollBeginDrag = null
+        onScrollEndDrag = null
+        onMomentumScrollBegin = null
+        onMomentumScrollEnd = null
     }
 
     private fun configureLayoutManager() {

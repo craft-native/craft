@@ -101,6 +101,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var renderItem: RenderItem?
     private var recycleItem: ((String) -> Void)?
     private var endReached: (() -> Void)?
+    var onScrollEvent: ((UIScrollView) -> Void)?
+    var onScrollBeginDrag: ((UIScrollView) -> Void)?
+    var onScrollEndDrag: ((UIScrollView) -> Void)?
+    var onMomentumScrollBegin: ((UIScrollView) -> Void)?
+    var onMomentumScrollEnd: ((UIScrollView) -> Void)?
     private var endReachedThreshold = 0.1
     private var endReachedSignature: String?
     private var columns = 1
@@ -247,9 +252,33 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         renderItem = nil
         recycleItem = nil
         endReached = nil
+        onScrollEvent = nil
+        onScrollBeginDrag = nil
+        onScrollEndDrag = nil
+        onMomentumScrollBegin = nil
+        onMomentumScrollEnd = nil
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { evaluateEndReached() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        onScrollEvent?(scrollView)
+        evaluateEndReached()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        onScrollBeginDrag?(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        onScrollEndDrag?(scrollView)
+    }
+
+    func scrollViewWillBeginDecelerating(_ scrollView: UIScrollView) {
+        onMomentumScrollBegin?(scrollView)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        onMomentumScrollEnd?(scrollView)
+    }
 
     func collectionView(
         _ collectionView: UICollectionView,

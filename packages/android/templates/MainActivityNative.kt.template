@@ -1325,6 +1325,17 @@ class MainActivity : AppCompatActivity() {
         layout.configure(style, resources.displayMetrics.density)
     }
 
+    private fun flatListScrollEvent(list: CraftNativeFlatList): JSONObject = JSONObject()
+        .put("contentOffset", JSONObject()
+            .put("x", list.computeHorizontalScrollOffset())
+            .put("y", list.computeVerticalScrollOffset()))
+        .put("contentSize", JSONObject()
+            .put("width", list.computeHorizontalScrollRange())
+            .put("height", list.computeVerticalScrollRange()))
+        .put("layoutMeasurement", JSONObject()
+            .put("width", list.width)
+            .put("height", list.height))
+
     private fun reconcileChildren(
         screen: Screen,
         layout: CraftNativeFlexLayout,
@@ -1379,6 +1390,21 @@ class MainActivity : AppCompatActivity() {
         screen.flatListOwnerByView[list] = owner
         val nodes = (0 until children.length()).mapNotNull { children.optJSONObject(it) }
         nodes.forEach { registerFlatListOwnership(screen, it, owner) }
+        list.onScrollEvent = events.optString("onScroll").takeIf { it.isNotBlank() }?.let { handler ->
+            { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", flatListScrollEvent(list))) }
+        }
+        list.onScrollBeginDrag = events.optString("onScrollBeginDrag").takeIf { it.isNotBlank() }?.let { handler ->
+            { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", flatListScrollEvent(list))) }
+        }
+        list.onScrollEndDrag = events.optString("onScrollEndDrag").takeIf { it.isNotBlank() }?.let { handler ->
+            { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", flatListScrollEvent(list))) }
+        }
+        list.onMomentumScrollBegin = events.optString("onMomentumScrollBegin").takeIf { it.isNotBlank() }?.let { handler ->
+            { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", flatListScrollEvent(list))) }
+        }
+        list.onMomentumScrollEnd = events.optString("onMomentumScrollEnd").takeIf { it.isNotBlank() }?.let { handler ->
+            { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", flatListScrollEvent(list))) }
+        }
         list.apply(
             nodes = nodes,
             horizontal = props.optBoolean("horizontal", false),
