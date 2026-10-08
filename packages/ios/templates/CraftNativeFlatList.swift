@@ -112,6 +112,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var columns = 1
     private var isApplyingSnapshot = false
     private var pendingApply: (() -> Void)?
+    private var pendingThemeRefresh = false
 
     init() {
         let layout = CraftNativeFlatListLayout()
@@ -263,15 +264,23 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         onScrollEndDrag = nil
         onMomentumScrollBegin = nil
         onMomentumScrollEnd = nil
+        pendingThemeRefresh = false
     }
 
     func refreshThemeDefaults() {
-        guard !isApplyingSnapshot else { return }
+        if isApplyingSnapshot {
+            pendingThemeRefresh = true
+            return
+        }
         var snapshot = diffableDataSource.snapshot()
         let identities = snapshot.itemIdentifiers
         guard !identities.isEmpty else { return }
+        pendingThemeRefresh = false
         snapshot.reconfigureItems(identities)
-        diffableDataSource.apply(snapshot, animatingDifferences: false)
+        isApplyingSnapshot = true
+        diffableDataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
+            self?.finishApplyingSnapshot()
+        }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -334,6 +343,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             if let pendingApply = self.pendingApply {
                 self.pendingApply = nil
                 pendingApply()
+                return
+            }
+            if self.pendingThemeRefresh {
+                self.pendingThemeRefresh = false
+                self.refreshThemeDefaults()
                 return
             }
             self.evaluateEndReached()

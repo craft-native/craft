@@ -91,6 +91,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private var columns = 1
     private var submissionGeneration = 0
     private var isSubmittingList = false
+    private var pendingThemeRefresh = false
     var onScrollEvent: (() -> Unit)? = null
     var onScrollBeginDrag: (() -> Unit)? = null
     var onScrollEndDrag: (() -> Unit)? = null
@@ -212,6 +213,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
             if (generation != submissionGeneration) return@submitList
             retainedState?.let { layoutManager?.onRestoreInstanceState(it) }
             isSubmittingList = false
+            if (pendingThemeRefresh) {
+                pendingThemeRefresh = false
+                refreshThemeDefaults()
+            }
             evaluateEndReached()
         }
     }
@@ -220,6 +225,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         listAdapter.currentList.forEach { recycleItem?.invoke(it.identity) }
         val generation = ++submissionGeneration
         isSubmittingList = true
+        pendingThemeRefresh = false
         listAdapter.submitList(emptyList()) {
             if (generation == submissionGeneration) isSubmittingList = false
         }
@@ -236,6 +242,10 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     }
 
     fun refreshThemeDefaults() {
+        if (isSubmittingList) {
+            pendingThemeRefresh = true
+            return
+        }
         if (listAdapter.itemCount > 0) listAdapter.notifyItemRangeChanged(0, listAdapter.itemCount)
     }
 

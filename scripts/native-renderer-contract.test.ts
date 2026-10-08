@@ -343,9 +343,16 @@ describe('native renderer component contract', () => {
   it('rebinds unchanged virtualized rows when theme traits change', () => {
     expect(iosFlatList).toContain('func refreshThemeDefaults()')
     expect(iosFlatList).toContain('snapshot.reconfigureItems(identities)')
+    expect(iosFlatList).toContain('private var pendingThemeRefresh = false')
+    expect(iosFlatList).toContain('pendingThemeRefresh = true')
+    expect(iosFlatList).toContain('if self.pendingThemeRefresh')
+    expect(iosFlatList).toContain('isApplyingSnapshot = true')
     expect(ios).toContain('refreshTraitDefaults(in: renderedRoot)')
     expect(androidFlatList).toContain('fun refreshThemeDefaults()')
     expect(androidFlatList).toContain('notifyItemRangeChanged(0, listAdapter.itemCount)')
+    expect(androidFlatList).toContain('private var pendingThemeRefresh = false')
+    expect(androidFlatList).toContain('if (isSubmittingList)')
+    expect(androidFlatList).toContain('if (pendingThemeRefresh)')
     expect(android).toContain('filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }')
   })
 
