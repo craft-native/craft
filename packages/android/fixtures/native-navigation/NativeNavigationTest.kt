@@ -311,6 +311,7 @@ class NativeNavigationTest {
             val unsupported = awaitView(activity, "unsupported-image") as ImageView
             assertTrue(unsupported.drawable == null)
             assertTrue(unsupported.contentDescription.toString().contains("Unsupported image source"))
+            awaitText(activity, "image-error-status", "image failed")
             assertNoWebView(activity)
 
             instrumentation.runOnMainSync {

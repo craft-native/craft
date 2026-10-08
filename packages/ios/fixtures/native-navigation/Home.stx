@@ -15,6 +15,7 @@ let sliderCompletions = 0
 let layoutWidth = 0
 let layoutWide = true
 let imageStatus = ''
+let imageErrorStatus = ''
 let imageTinted = true
 let buttonAccent = false
 let inputColors = true
@@ -40,6 +41,10 @@ function imageLoadStart() {
 
 function imageLoaded() {
   imageStatus = 'image loaded'
+}
+
+function imageFailed() {
+  imageErrorStatus = 'image failed'
 }
 
 function toggleImageTint() {
@@ -178,10 +183,12 @@ function openCapabilities() {
       />
       <Text testID="native-caption">Image taps: {imageTaps}</Text>
       <Text testID="image-status">{imageStatus}</Text>
+      <Text testID="image-error-status">{imageErrorStatus}</Text>
       <Image
         testID="unsupported-image"
         source={{"uri":"http://example.com/image.png"}}
         accessibilityLabel="Unsupported image"
+        onError={imageFailed}
         style={{"width":16,"height":16}}
       />
       <View style={{"height":120}} />
