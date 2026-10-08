@@ -1234,6 +1234,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     path: "\(path).\(identity)",
                     previous: previous
                 )
+                if let previous, previous.view !== next.view {
+                    self.forgetHandlers(previous)
+                }
                 self.flatListRows[listKey, default: [:]][identity] = next
                 return next.view
             },

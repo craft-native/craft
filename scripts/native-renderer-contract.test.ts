@@ -304,6 +304,11 @@ describe('native renderer component contract', () => {
     expect(androidTests).not.toContain('Rows laid out: ${initialRowLayouts + 1}')
   })
 
+  it('releases replaced iOS row roots when a keyed identity changes type', () => {
+    expect(ios).toContain('if let previous, previous.view !== next.view {')
+    expect(ios).toContain('self.forgetHandlers(previous)')
+  })
+
   it('resets FlatList end-reached state when any data row changes', () => {
     expect(iosFlatList).toContain('private var dataContentSignature = ""')
     expect(iosFlatList).toContain('dataContentSignature = contentSignature')
