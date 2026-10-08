@@ -38,6 +38,7 @@ function replaceWithSummary() {
     <Text testID="people-count">People: {people.length}; events: {listEvents}</Text>
     <FlatList
       testID="people-list"
+      keyboardDismissMode="on-drag"
       data={people}
       keyExtractor={item.id}
       numColumns={2}

@@ -80,6 +80,8 @@ describe('Craft Android builder', () => {
       expect(mutation).toContain('class CraftNativeMutationDocument')
       expect(mutation).toContain('"moveChild" -> {')
       expect(flatList).toContain('class CraftNativeFlatList(context: Context) : RecyclerView(context)')
+      expect(flatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
+      expect(nativeActivity).toContain('setKeyboardDismissMode(props.optString("keyboardDismissMode"))')
       expect(flatList).toContain('renderedLayout?.height ?: LayoutParams.WRAP_CONTENT')
       expect(flatList).toContain('holder.host.addView(view, hostedLayout)')
       expect(flatList).toContain('ListAdapter<Item, Holder>')
