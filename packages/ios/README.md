@@ -122,6 +122,9 @@ supports it and fall back to whole-document rendering for older bundles.
 Updates reconcile the UIKit tree by sibling-scoped `key` (or `testID` for
 existing screens); unkeyed children reuse their position. `TextInput` objects
 therefore keep focus and selection while unrelated labels and buttons change.
+Native `TextInput` also applies `placeholderTextColor`, `selectionColor`, and
+positive `maxLength` values while preserving the WebView fallback for routes
+that do not opt into the renderer.
 The protocol wire format, atomic validation, revisions, and error codes are in
 the [Native STX guide](../../docs/guides/native-stx.md). On macOS,
 `bun packages/ios/scripts/test-native-render.ts` runs the renderer's unit and
