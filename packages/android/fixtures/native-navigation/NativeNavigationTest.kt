@@ -16,6 +16,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -188,6 +189,10 @@ class NativeNavigationTest {
             assertTrue("native switch should start off", !(toggle as Switch).isChecked)
             instrumentation.runOnMainSync { toggle.performClick() }
             assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val slider = awaitView(activity, "native-slider")
+            assertTrue("native slider should be a SeekBar", slider is SeekBar)
+            instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
+            assertEquals("slider moved", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val wrapped = awaitView(activity, "layout-wrap") as LinearLayout
             val bounded = awaitView(activity, "layout-min")
             val absolute = awaitView(activity, "layout-absolute")

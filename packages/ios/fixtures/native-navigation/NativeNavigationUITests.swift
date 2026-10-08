@@ -88,6 +88,11 @@ final class NativeNavigationUITests: XCTestCase {
         toggle.tap()
         XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
 
+        let slider = app.sliders["native-slider"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 5))
+        slider.adjust(toNormalizedSliderPosition: 0.8)
+        XCTAssertTrue(app.staticTexts["slider moved"].waitForExistence(timeout: 5))
+
         let wrapped = app.otherElements["layout-wrap"]
         XCTAssertTrue(wrapped.waitForExistence(timeout: 5))
         let bounded = app.staticTexts["layout-min"]

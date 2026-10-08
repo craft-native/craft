@@ -5,6 +5,7 @@ let imageTaps = 0
 let submits = 0
 let status = ''
 let switchValue = false
+let sliderValue = 0.5
 
 function changeName(event) {
   name = event.text
@@ -29,6 +30,11 @@ function setStatus(value) {
 function toggleSwitch(event) {
   switchValue = event.value
   status = switchValue ? 'switch on' : 'switch off'
+}
+
+function moveSlider(event) {
+  sliderValue = event.value
+  status = 'slider moved'
 }
 
 function openDetails() {
@@ -59,6 +65,7 @@ function openCapabilities() {
     <Link testID="native-link" onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Switch testID="native-switch" value={switchValue} onValueChange={toggleSwitch} />
+    <Slider testID="native-slider" minimumValue={0} maximumValue={1} value={sliderValue} onValueChange={moveSlider} />
     <View testID="layout-wrap" style={{"width":240,"height":90,"flexDirection":"row","flexWrap":"wrap","gap":4,"padding":4,"alignItems":"stretch","backgroundColor":"#223344"}}>
       <Text testID="layout-min" style={{"width":200,"minWidth":120,"maxWidth":140,"height":24}}>bounded</Text>
       <Text testID="layout-stretch" style={{"width":100,"height":24,"alignSelf":"stretch"}}>wrapped</Text>
