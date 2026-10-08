@@ -1040,7 +1040,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 image.tintColor = nil
             }
             if let current = image.image { image.image = imageForDisplay(current, view: image) }
-            image.contentMode = imageContentMode(style["resizeMode"] ?? props["resizeMode"])
+            let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String
+            image.contentMode = imageContentMode(requestedResizeMode)
             image.clipsToBounds = image.contentMode == .scaleAspectFill
             updateAuxiliaryHandler(events["onLoadStart"], in: &imageLoadStartHandlers, for: image)
             updateAuxiliaryHandler(events["onLoad"], in: &imageLoadHandlers, for: image)

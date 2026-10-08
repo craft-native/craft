@@ -259,6 +259,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.clearColorFilter()')
   })
 
+  it('treats a null image style resize mode as unset', () => {
+    expect(ios).toContain('let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String')
+    expect(ios).toContain('image.contentMode = imageContentMode(requestedResizeMode)')
+    expect(android).toContain('style.optString("resizeMode").ifBlank { props.optString("resizeMode") }')
+  })
+
   it('preserves image failure accessibility details across reconciliation', () => {
     expect(ios).toContain('private var imageErrors: [ObjectIdentifier: String] = [:]')
     expect(ios).toContain('imageErrors[ObjectIdentifier(view)] = message')

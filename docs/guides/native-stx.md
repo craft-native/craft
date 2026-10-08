@@ -184,6 +184,8 @@ type:
 space-delimited word while preserving the remaining characters on both hosts.
 `textAlign: 'justify'` uses UIKit justification on iOS and inter-word
 justification on Android when the platform API supports it.
+Explicit `null` image style values are treated as unset, so a prop-level
+`resizeMode` remains effective during reconciliation.
 
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on
