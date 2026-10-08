@@ -19,6 +19,8 @@ scroller rather than the native wrapper, so nested scroll offsets come from the
 platform control that actually moves. The FlatList assertion also requires row
 layout events to increase after recycled rows are materialized, rather than
 assuming a fixed callback count.
+The native form coverage also keeps a keyed input's draft while changing its
+single-line/multiline mode, recreating the incompatible platform control.
 CI uses the pinned stx-native compiler at `6c1603f742`, which installs an
 initial tree atomically before sending incremental keyed mutations.
 

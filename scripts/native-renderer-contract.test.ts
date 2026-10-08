@@ -70,7 +70,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('configureTextStyle(this, style)')
     expect(android).toContain('if (props.optBoolean("autoFocus", false) && !isFocused) post')
     expect(android).toContain('if (!isFocused) {\n                        requestFocus()')
-    expect(android).toContain('(previous as? EditText).takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }')
+    expect(android).toContain('reusableInput?.takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }')
   })
 
   it('keeps TextInput keyboard traits aligned across hosts', () => {

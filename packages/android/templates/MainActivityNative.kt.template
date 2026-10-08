@@ -995,6 +995,7 @@ class MainActivity : AppCompatActivity() {
             ?: explicitKey?.let { "${path.substringBeforeLast('.', "")}/$it" }
             ?: path
         val previous = previousControls[identity]
+        val reusableInput = previous as? EditText
         val control = when (type) {
             "Text" -> ((previous as? TextView)?.takeUnless { it is Button || it is EditText } ?: TextView(this)).apply {
                 maxLines = props.optInt("numberOfLines", 0).takeIf { it > 0 } ?: Int.MAX_VALUE
@@ -1032,7 +1033,7 @@ class MainActivity : AppCompatActivity() {
                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
                 }
             }
-            "TextInput" -> ((previous as? EditText).takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }
+            "TextInput" -> (reusableInput?.takeIf { it.isSingleLine == !props.optBoolean("multiline", false) }
                 ?: EditText(this)).apply {
                 val defaultHintColors = inputHintDefaults.getOrPut(this) {
                     hintTextColors ?: ColorStateList.valueOf(Color.GRAY)
