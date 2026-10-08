@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
 import {
   build,
   init,
@@ -24,6 +25,13 @@ import {
 } from './index'
 
 describe('Craft iOS builder', () => {
+  it('inserts simulator test targets before the shared schemes block', () => {
+    const project = 'targets:\n  App:\n    type: application\n\nschemes:\n  App:\n    build:\n      targets:\n        App: all\n'
+    const result = insertProjectTargetsBeforeSchemes(project, '  AppTests:\n    type: bundle.unit-test')
+    expect(result.indexOf('  AppTests:')).toBeLessThan(result.indexOf('schemes:'))
+    expect(result).toContain('  AppTests:\n    type: bundle.unit-test')
+  })
+
   it('keeps WebView as the default and opt-in native screens load a compiled bundle', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-'))
     await init({ runtimeDir: null, name: 'Native Slice', output, config: { renderer: 'native' } })

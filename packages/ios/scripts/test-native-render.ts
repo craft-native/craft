@@ -2,6 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
+import { insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-screen')
 const workspace = mkdtempSync(join(tmpdir(), 'craft-native-render-'))
@@ -34,7 +35,7 @@ try {
   copyFileSync(join(fixture, 'NativeRenderUnitTests.swift'), join(output, 'UnitTests', 'NativeRenderUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeRenderUITests.swift'), join(output, 'UITests', 'NativeRenderUITests.swift'))
   const project = join(output, 'project.yml')
-  writeFileSync(project, readFileSync(project, 'utf8') + `
+  writeFileSync(project, insertProjectTargetsBeforeSchemes(readFileSync(project, 'utf8'), `
   NativeRenderUnitTests:
     type: bundle.unit-test
     platform: iOS
@@ -52,7 +53,7 @@ try {
       - UITests
     dependencies:
       - target: NativeRender
-`)
+`))
   run(['xcodegen', 'generate'], output)
 
   const device = await pickSimulator()
