@@ -385,6 +385,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
     private var scrollHandlers: [ObjectIdentifier: String] = [:]
     private var scrollBeginHandlers: [ObjectIdentifier: String] = [:]
     private var scrollEndHandlers: [ObjectIdentifier: String] = [:]
+    private var layoutHandlers: [ObjectIdentifier: String] = [:]
+    private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
@@ -442,6 +444,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
         view.backgroundColor = config.resolvedBackgroundColor
         rootStack.setNeedsLayout()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        emitLayoutEvents()
     }
 
     private func setupJavaScript() {
@@ -722,6 +729,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
             result.setContentHuggingPriority(.required, for: .vertical)
         }
         applyViewStyle(style, to: result, node: current)
+        updateLayoutHandler(events["onLayout"], for: result)
 
         switch type {
         case "Text":
@@ -994,6 +1002,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         }
         let id = ObjectIdentifier(node.view)
         handlers.removeValue(forKey: id)
+        layoutHandlers.removeValue(forKey: id)
+        lastLayoutFrames.removeValue(forKey: id)
         focusHandlers.removeValue(forKey: id)
         blurHandlers.removeValue(forKey: id)
         submitHandlers.removeValue(forKey: id)
@@ -1012,6 +1022,42 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate 
         let id = ObjectIdentifier(view)
         if let handler = handler { handlers[id] = handler }
         else { handlers.removeValue(forKey: id) }
+    }
+
+    private func updateLayoutHandler(_ handler: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        guard let handler, !handler.isEmpty else {
+            layoutHandlers.removeValue(forKey: id)
+            lastLayoutFrames.removeValue(forKey: id)
+            return
+        }
+        if layoutHandlers[id] != handler { lastLayoutFrames.removeValue(forKey: id) }
+        layoutHandlers[id] = handler
+    }
+
+    private func emitLayoutEvents() {
+        guard let renderedRoot else { return }
+        emitLayoutEvents(for: renderedRoot)
+    }
+
+    private func emitLayoutEvents(for node: RenderedNode) {
+        let id = ObjectIdentifier(node.view)
+        if let handler = layoutHandlers[id], node.view.window != nil {
+            let frame = node.view.frame
+            if lastLayoutFrames[id] != frame {
+                lastLayoutFrames[id] = frame
+                send(type: "EVENT", payload: [
+                    "handlerName": handler,
+                    "nativeEvent": ["layout": [
+                        "x": frame.minX,
+                        "y": frame.minY,
+                        "width": frame.width,
+                        "height": frame.height,
+                    ]],
+                ])
+            }
+        }
+        for child in node.children { emitLayoutEvents(for: child) }
     }
 
     private func updateAuxiliaryHandler(

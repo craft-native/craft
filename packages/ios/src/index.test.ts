@@ -422,6 +422,24 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('config.resolvedBackgroundColor')
   })
 
+  it('emits native layout measurements only when a view changes frame', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-layout-'))
+    await init({
+      runtimeDir: null,
+      name: 'NativeLayout',
+      bundleId: 'org.example.native-layout',
+      output,
+      config: { renderer: 'native' },
+    })
+    const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain('events["onLayout"]')
+    expect(source).toContain('emitLayoutEvents()')
+    expect(source).toContain('lastLayoutFrames[id] != frame')
+    expect(source).toContain('"layout": [')
+    expect(source).toContain('frame.minX')
+    expect(source).toContain('frame.width')
+  })
+
   it('reads Apple Health workouts and daily values, each with the statistic its type has', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-health-'))
     await init({ runtimeDir: null, name: 'Health', bundleId: 'com.example.health', output, config: { enableHealthKit: true } })

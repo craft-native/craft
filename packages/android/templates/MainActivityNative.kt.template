@@ -103,6 +103,7 @@ private fun craftNativeGridColumnCount(value: Any?): Int {
 
 /** A deterministic flex-shaped container shared by normal views and scroll content. */
 private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
+    var onLayoutChanged: (() -> Unit)? = null
     private val styles = mutableMapOf<View, CraftNativeLayoutStyle>()
     private var wrap = false
     private var alignItems = "stretch"
@@ -292,6 +293,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
                 val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - childHeight } ?: 0))
                 entry.view.layout(x, y, x + max(0, childWidth), y + max(0, childHeight))
             }
+            onLayoutChanged?.invoke()
             return
         }
         val contentWidth = width - paddingLeft - paddingRight
@@ -333,6 +335,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val y = paddingTop + (entry.style.top ?: (entry.style.bottom?.let { contentHeight - it - heightValue } ?: 0))
             entry.view.layout(x, y, x + max(0, widthValue), y + max(0, heightValue))
         }
+        onLayoutChanged?.invoke()
     }
 
     private fun distribution(free: Int, count: Int): Pair<Int, Int> = when (justifyContent) {
@@ -410,6 +413,13 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
 
 private class CraftNativeFlexSpacer(context: Context) : View(context)
 
+private data class LayoutBounds(
+    val x: Double,
+    val y: Double,
+    val width: Double,
+    val height: Double,
+)
+
 /** WebView-free host for a compiled stx-native route bundle. */
 class MainActivity : AppCompatActivity() {
     private class Screen(
@@ -428,6 +438,8 @@ class MainActivity : AppCompatActivity() {
         val focusHandlers = mutableMapOf<View, String>()
         val blurHandlers = mutableMapOf<View, String>()
         val submitHandlers = mutableMapOf<View, String>()
+        val layoutHandlers = mutableMapOf<View, String>()
+        val lastLayoutBounds = mutableMapOf<View, LayoutBounds>()
         val flatListRows = mutableMapOf<CraftNativeFlatList, MutableMap<String, MutableMap<String, View>>>()
         val flatListOwners = mutableMapOf<String, String>()
         val flatListOwnerByView = mutableMapOf<CraftNativeFlatList, String>()
@@ -566,6 +578,9 @@ class MainActivity : AppCompatActivity() {
             null
         }
         val activeScreen = Screen(route, params, view, isolate, port)
+        activeScreen.view.onLayoutChanged = {
+            if (activeScreen.active) emitLayoutEvents(activeScreen)
+        }
         screen = activeScreen
         screens.add(activeScreen)
         show(activeScreen)
@@ -955,6 +970,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
         applyAccessibility(control, props, type, explicitKey ?: protocolId ?: path)
+        val layoutHandler = events.optString("onLayout")
+        if (layoutHandler.isNotBlank()) {
+            if (screen.layoutHandlers[control] != layoutHandler) screen.lastLayoutBounds.remove(control)
+            screen.layoutHandlers[control] = layoutHandler
+        } else {
+            screen.layoutHandlers.remove(control)
+            screen.lastLayoutBounds.remove(control)
+        }
         if (control is ImageView) imageErrors[control]?.let { control.contentDescription = "${control.contentDescription}, $it" }
         next[identity] = control
         applyViewStyle(control, style)
@@ -1386,6 +1409,36 @@ class MainActivity : AppCompatActivity() {
         return initialDeepLink
     }
 
+    private fun emitLayoutEvents(screen: Screen) {
+        emitLayoutEvents(screen, screen.view)
+    }
+
+    private fun emitLayoutEvents(screen: Screen, view: View) {
+        val handler = screen.layoutHandlers[view]
+        if (handler != null && view.isShown) {
+            val density = resources.displayMetrics.density
+            val bounds = LayoutBounds(
+                x = view.left.toDouble() / density.toDouble(),
+                y = view.top.toDouble() / density.toDouble(),
+                width = view.width.toDouble() / density.toDouble(),
+                height = view.height.toDouble() / density.toDouble(),
+            )
+            if (screen.lastLayoutBounds[view] != bounds) {
+                screen.lastLayoutBounds[view] = bounds
+                send(screen, "EVENT", JSONObject()
+                    .put("handlerName", handler)
+                    .put("nativeEvent", JSONObject().put("layout", JSONObject()
+                        .put("x", bounds.x)
+                        .put("y", bounds.y)
+                        .put("width", bounds.width)
+                        .put("height", bounds.height))))
+            }
+        }
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) emitLayoutEvents(screen, view.getChildAt(index))
+        }
+    }
+
     private fun send(screen: Screen, type: String, payload: JSONObject, correlationId: String? = null) {
         if (!screen.active) return
         val message = JSONObject().put("type", type).put("payload", payload)
@@ -1429,6 +1482,8 @@ class MainActivity : AppCompatActivity() {
         }
         releaseImages(released)
         screen.handlers.keys.removeAll(released)
+        screen.layoutHandlers.keys.removeAll(released)
+        screen.lastLayoutBounds.keys.removeAll(released)
         screen.scrollHandlers.keys.removeAll(released)
         screen.scrollBeginHandlers.keys.removeAll(released)
         screen.scrollEndHandlers.keys.removeAll(released)
@@ -1445,6 +1500,8 @@ class MainActivity : AppCompatActivity() {
         releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
+        screen.layoutHandlers.clear()
+        screen.lastLayoutBounds.clear()
         screen.scrollHandlers.clear()
         screen.scrollBeginHandlers.clear()
         screen.scrollEndHandlers.clear()
