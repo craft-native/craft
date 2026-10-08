@@ -166,6 +166,12 @@ final class NativeNavigationUITests: XCTestCase {
         notes.typeText("\n")
         XCTAssertEqual(app.staticTexts["name-submits"].label, "Submits: 2")
         app.buttons["increment"].tap()
+        let notesBlurs = app.staticTexts["notes-blurs"]
+        XCTAssertTrue(notesBlurs.waitForExistence(timeout: 5))
+        XCTAssertEqual(notesBlurs.label, "Notes blurs: 1")
+        let notesEndEditings = app.staticTexts["notes-end-editings"]
+        XCTAssertTrue(notesEndEditings.waitForExistence(timeout: 5))
+        XCTAssertEqual(notesEndEditings.label, "Notes end edits: 1")
         app.buttons["increment"].tap()
         XCTAssertEqual(app.staticTexts["count"].label, "Count: 2")
 

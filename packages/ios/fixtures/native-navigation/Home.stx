@@ -5,6 +5,8 @@ let imageTaps = 0
 let submits = 0
 let nameBlurs = 0
 let nameEndEditings = 0
+let notesBlurs = 0
+let notesEndEditings = 0
 let status = ''
 let linkAccessibilityDisabled = false
 let switchValue = false
@@ -70,6 +72,14 @@ function blurName() {
 
 function endNameEditing() {
   nameEndEditings += 1
+}
+
+function blurNotes() {
+  notesBlurs += 1
+}
+
+function endNotesEditing() {
+  notesEndEditings += 1
 }
 
 function setStatus(value) {
@@ -178,11 +188,13 @@ function openCapabilities() {
     <Button testID="toggle-input-colors" onPress={toggleInputColors}>Toggle input colors</Button>
     <Text testID="input-style-status">{inputStyleStatus}</Text>
     <TextInput testID="name-input" placeholder="Your name" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} maxLength={8} keyboardType="email-address" returnKeyType="done" onChange={changeName} onSubmitEditing={submitName} onBlur={blurName} onEndEditing={endNameEditing} />
-    <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} defaultValue="Draft" placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} onSubmitEditing={submitName} />
+    <TextInput testID="notes-input" multiline numberOfLines={3} maxLength={24} defaultValue="Draft" placeholder="Notes" placeholderTextColor={inputColors ? "#94a3b8" : undefined} selectionColor={inputColors ? "#22c55e" : undefined} onSubmitEditing={submitName} onBlur={blurNotes} onEndEditing={endNotesEditing} />
     <Text testID="greeting">Hello {name}</Text>
     <Text testID="name-submits">Submits: {submits}</Text>
     <Text testID="name-blurs">Blurs: {nameBlurs}</Text>
     <Text testID="name-end-editings">End edits: {nameEndEditings}</Text>
+    <Text testID="notes-blurs">Notes blurs: {notesBlurs}</Text>
+    <Text testID="notes-end-editings">Notes end edits: {notesEndEditings}</Text>
     <Button testID="increment" onPress={increment}>Increment</Button>
     <Text testID="count">Count: {count}</Text>
     <Button testID="open-details" onPress={openDetails}>Open details</Button>

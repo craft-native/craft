@@ -298,6 +298,12 @@ class NativeNavigationTest {
             assertSame("View container was replaced after typing", root, awaitView(activity, "root"))
             assertSame("TextInput was replaced after typing", name, awaitView(activity, "name-input"))
             assertTrue("TextInput lost focus after typing", name.isFocused)
+            instrumentation.runOnMainSync {
+                notes.requestFocus()
+                notes.clearFocus()
+            }
+            awaitText(activity, "notes-blurs", "Notes blurs: 1")
+            awaitText(activity, "notes-end-editings", "Notes end edits: 1")
 
             click(activity, "increment")
             click(activity, "increment")
