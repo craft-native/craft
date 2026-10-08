@@ -1387,6 +1387,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func updatePressHandler(_ handler: String?, for view: UIView) {
         let id = ObjectIdentifier(view)
+        let handler = handler?.isEmpty == false ? handler : nil
         updateHandler(handler, for: view)
         if handler != nil, tapRecognizers[id] == nil {
             let recognizer = UITapGestureRecognizer(target: self, action: #selector(viewPressed(_:)))
