@@ -17,6 +17,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.WindowCompat
 import androidx.webkit.WebViewAssetLoader
 import org.json.JSONObject
@@ -75,6 +76,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyConfiguredAppearance()
         super.onCreate(savedInstanceState)
 
         // Enable edge-to-edge
@@ -109,6 +111,21 @@ class MainActivity : AppCompatActivity() {
         setupWebView()
         loadContent()
         setupNetworkMonitoring()
+    }
+
+    private fun applyConfiguredAppearance() {
+        val configured = configJson()
+        val mode = when (configured?.optString("appearance")) {
+            "light" -> AppCompatDelegate.MODE_NIGHT_NO
+            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
+            "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            else -> if (configured?.optBoolean("darkMode", true) == false) {
+                AppCompatDelegate.MODE_NIGHT_NO
+            } else {
+                AppCompatDelegate.MODE_NIGHT_YES
+            }
+        }
+        AppCompatDelegate.setDefaultNightMode(mode)
     }
 
     @SuppressLint("SetJavaScriptEnabled")

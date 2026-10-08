@@ -49,6 +49,8 @@ export interface CraftAndroidConfig {
   appName: string
   packageName: string
   renderer?: 'web' | 'native'
+  /** "system" follows the device; light/dark pin the generated host. */
+  appearance?: 'light' | 'dark' | 'system'
   version?: string
   versionCode?: number
   darkMode?: boolean
@@ -248,6 +250,9 @@ function validateAndroidConfig(config: CraftAndroidConfig): void {
   if (!config.appName.trim()) throw new Error('Android app name must not be empty')
   if (config.renderer !== undefined && config.renderer !== 'web' && config.renderer !== 'native') {
     throw new Error(`Unknown Android renderer: ${config.renderer}. Expected web or native.`)
+  }
+  if (config.appearance !== undefined && !['light', 'dark', 'system'].includes(config.appearance)) {
+    throw new Error(`Unknown Android appearance: ${config.appearance}. Expected light, dark, or system.`)
   }
 
   const packageSegments = config.packageName.split('.')

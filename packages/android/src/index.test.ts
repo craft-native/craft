@@ -265,6 +265,25 @@ describe('Craft Android builder', () => {
       .toBe('#020617')
   })
 
+  it('pins Android appearance like the iOS host while keeping the system mode dynamic', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-appearance-'))
+    try {
+      await init({
+        name: 'NativeAppearance',
+        output,
+        runtimeDir: null,
+        config: { renderer: 'native', appearance: 'system', darkMode: false },
+      })
+      const config = JSON.parse(readFileSync(join(output, 'app/src/main/assets/craft.config.json'), 'utf8'))
+      const nativeActivity = readFileSync(join(output, 'app/src/main/java/com/craft/nativeappearance/MainActivity.kt'), 'utf8')
+      expect(config.appearance).toBe('system')
+      expect(nativeActivity).toContain('AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM')
+      expect(nativeActivity).toContain('AppCompatDelegate.MODE_NIGHT_NO')
+      expect(nativeActivity).toContain('AppCompatDelegate.MODE_NIGHT_YES')
+    }
+    finally { rmSync(output, { recursive: true, force: true }) }
+  })
+
   it('rejects unknown native renderers before creating a project', async () => {
     const output = join(mkdtempSync(join(tmpdir(), 'craft-android-renderer-')), 'invalid')
     await expect(init({ name: 'Invalid', output, config: { renderer: 'canvas' as 'web' } }))

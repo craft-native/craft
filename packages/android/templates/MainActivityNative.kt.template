@@ -43,6 +43,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.WindowInsetsCompat
@@ -663,6 +664,7 @@ class MainActivity : AppCompatActivity() {
     private val defaultBackgrounds = mutableMapOf<View, Drawable?>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyConfiguredAppearance()
         super.onCreate(savedInstanceState)
         initialDeepLink = savedInstanceState?.getString("craft.initialDeepLink")?.let(Uri::parse) ?: intent?.data
         initialDeepLinkClaimed = savedInstanceState?.getBoolean("craft.initialDeepLinkClaimed", false) ?: false
@@ -722,6 +724,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }, ContextCompat.getMainExecutor(this))
         }
+    }
+
+    private fun applyConfiguredAppearance() {
+        val configured = runCatching {
+            assets.open("craft.config.json").bufferedReader().use { JSONObject(it.readText()) }
+        }.getOrNull()
+        val mode = when (configured?.optString("appearance")) {
+            "light" -> AppCompatDelegate.MODE_NIGHT_NO
+            "dark" -> AppCompatDelegate.MODE_NIGHT_YES
+            "system" -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            else -> if (configured?.optBoolean("darkMode", true) == false) {
+                AppCompatDelegate.MODE_NIGHT_NO
+            } else {
+                AppCompatDelegate.MODE_NIGHT_YES
+            }
+        }
+        AppCompatDelegate.setDefaultNightMode(mode)
     }
 
     private fun attachSandbox(engine: JavaScriptSandbox) {
