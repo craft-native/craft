@@ -243,6 +243,9 @@ class NativeNavigationTest {
             assertTrue("native switch should apply thumb tint", nativeSwitch.thumbTintList != null)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
             assertEquals("switch on", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            var switchInfo: AccessibilityNodeInfo? = null
+            instrumentation.runOnMainSync { switchInfo = nativeSwitch.createAccessibilityNodeInfo() }
+            assertTrue("checked accessibility state was not exposed", switchInfo?.isChecked == true)
             val slider = awaitView(activity, "native-slider")
             assertTrue("native slider should be a SeekBar", slider is SeekBar)
             instrumentation.runOnMainSync { (slider as SeekBar).progress = 800 }
