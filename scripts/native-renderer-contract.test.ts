@@ -69,6 +69,13 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`Text` supports positive `numberOfLines` values')
   })
 
+  it('keeps justified text alignment active across hosts', () => {
+    expect(ios).toContain('case "justify": return .justified')
+    expect(android).toContain('import android.text.Layout')
+    expect(android).toContain('Layout.JUSTIFICATION_MODE_INTER_WORD')
+    expect(android).toContain('Layout.JUSTIFICATION_MODE_NONE')
+  })
+
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')

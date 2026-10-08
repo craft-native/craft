@@ -182,6 +182,8 @@ type:
 
 `textTransform: 'capitalize'` uppercases the first character of each
 space-delimited word while preserving the remaining characters on both hosts.
+`textAlign: 'justify'` uses UIKit justification on iOS and inter-word
+justification on Android when the platform API supports it.
 
 Colors use platform color syntax; hexadecimal colors are portable. Dimensions,
 spacing, and font sizes are points on iOS and density-independent units on

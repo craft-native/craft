@@ -30,6 +30,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.text.InputType
+import android.text.Layout
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -1613,6 +1614,13 @@ class MainActivity : AppCompatActivity() {
             "center" -> View.TEXT_ALIGNMENT_CENTER
             "justify" -> View.TEXT_ALIGNMENT_VIEW_START
             else -> View.TEXT_ALIGNMENT_INHERIT
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            view.justificationMode = if (style.optString("textAlign") == "justify") {
+                Layout.JUSTIFICATION_MODE_INTER_WORD
+            } else {
+                Layout.JUSTIFICATION_MODE_NONE
+            }
         }
         view.letterSpacing = style.optDouble("letterSpacing", Double.NaN)
             .takeUnless { it.isNaN() }
