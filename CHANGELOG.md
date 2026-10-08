@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.122...v0.0.123)
+
+## 🚀 Features
+
+- **ios**: a native Liquid Glass tab bar and a launch splash the page drives ([98e2e8a](https://github.com/craft-native/craft/commit/98e2e8a)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.121...v0.0.122)
 
 ## 🐛 Bug Fixes
