@@ -38,6 +38,12 @@ describe('native renderer component contract', () => {
     expect(android).toContain('configureText(this, title, style)')
   })
 
+  it('keeps TextInput text styles aligned across hosts', () => {
+    expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
+    expect(ios).toContain('textView.typingAttributes = attributes')
+    expect(android).toContain('configureTextStyle(this, style)')
+  })
+
   it('keeps native capability and WebView fallback gates intact', () => {
     expect(ios).toContain('mutationProtocolVersion: 1')
     expect(android).toContain('mutationProtocolVersion: 1')

@@ -916,6 +916,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             field.textColor = color(style["color"]) ?? .label
             field.font = textFont(style, default: field.font ?? .systemFont(ofSize: UIFont.systemFontSize))
             field.textAlignment = textAlignment(style["textAlign"])
+            field.defaultTextAttributes = inputTextAttributes(style, font: field.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: field.textAlignment)
             let desiredKeyboardType = keyboardType(props["keyboardType"])
             if field.keyboardType != desiredKeyboardType { field.keyboardType = desiredKeyboardType }
             let desiredReturnKeyType = returnKeyType(props["returnKeyType"])
@@ -1359,6 +1360,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             craftTextView.placeholderFont = textView.font
         }
         updateTextView(textView, value: props["value"] as? String)
+        let selectedRange = textView.selectedRange
+        let attributes = inputTextAttributes(style, font: textView.font ?? .systemFont(ofSize: UIFont.systemFontSize), alignment: textView.textAlignment)
+        textView.typingAttributes = attributes
+        if !textView.text.isEmpty {
+            textView.attributedText = NSAttributedString(string: textView.text, attributes: attributes)
+            textView.selectedRange = selectedRange
+        }
         (textView as? CraftNativeTextView)?.refreshPlaceholder()
         updateHandler(events["onChange"] ?? events["onChangeText"], for: textView)
         updateAuxiliaryHandler(events["onFocus"], in: &focusHandlers, for: textView)
@@ -1466,6 +1474,34 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         default: break
         }
         if forceUnderline { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        return attributes
+    }
+
+    private func inputTextAttributes(
+        _ style: [String: Any],
+        font: UIFont,
+        alignment: NSTextAlignment
+    ) -> [NSAttributedString.Key: Any] {
+        var attributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: color(style["color"]) ?? .label,
+            .font: font,
+        ]
+        if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
+        if let lineHeight = number(style["lineHeight"]) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            paragraph.alignment = alignment
+            attributes[.paragraphStyle] = paragraph
+        }
+        switch style["textDecorationLine"] as? String {
+        case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+        case "line-through": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        case "underline line-through":
+            attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        default: break
+        }
         return attributes
     }
 
