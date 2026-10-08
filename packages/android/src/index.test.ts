@@ -148,6 +148,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('private fun gridIntrinsicSize(height: Int): Pair<Int, Int>')
       expect(nativeActivity).toContain('private fun configureText(view: TextView, value: String, style: JSONObject)')
       expect(nativeActivity).toContain('style.optString("flexDirection").endsWith("-reverse")')
+      expect(nativeActivity).toContain('style.optString("flexDirection") in setOf("row", "row-reverse")')
       expect(nativeActivity).toContain('Unsupported image source')
       expect(nativeActivity).toContain('screen.controls.putAll(next)')
       expect(nativeActivity).toContain('if (layout.getChildAt(index) !== childView)')

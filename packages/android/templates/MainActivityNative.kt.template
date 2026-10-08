@@ -1036,7 +1036,7 @@ class MainActivity : AppCompatActivity() {
                 updateImage(screen, this, props.opt("source"))
             }
             "ScrollView" -> (previous as? CraftNativeScrollView ?: CraftNativeScrollView(this)).apply {
-                val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") == "row"
+                val horizontal = props.optBoolean("horizontal", false) || style.optString("flexDirection") in setOf("row", "row-reverse")
                 setHorizontal(horizontal)
                 setNativeNestedScrollingEnabled(true)
                 setScrollIndicators(
