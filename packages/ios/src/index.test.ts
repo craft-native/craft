@@ -851,6 +851,11 @@ describe('Craft iOS builder', () => {
 
     for (const action of ['dialogAlert', 'dialogConfirm', 'dialogActionSheet', 'contextMenuShow', 'browserOpen', 'symbolImage', 'statusBarSetStyle', 'chromeSetUnderPageColor', 'chromeSetKeyboardAccessory', 'refreshEnable', 'refreshDisable', 'refreshEnd'])
       expect(swift).toContain(`case "${action}":`)
+    // The system's own context menu from code on iOS 17.4 and later, the
+    // edit menu before it.
+    expect(ui).toContain('button.performPrimaryAction()')
+    expect(ui).toContain('button.showsMenuAsPrimaryAction = true')
+    expect(ui).toContain('override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration')
     expect(ui).toContain('UIEditMenuInteraction(delegate: self)')
     expect(ui).toContain('interaction.presentEditMenu(with: configuration)')
     expect(ui).toContain('ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme)')
@@ -879,7 +884,7 @@ describe('Craft iOS builder', () => {
     expect(swift).toContain('webView.scrollView.keyboardDismissMode = .interactive')
     expect(swift).toContain('if config.disableZoom != false {')
     expect(swift).toContain('webView.scrollView.pinchGestureRecognizer?.isEnabled = false')
-    expect(swift).toContain('controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))')
+    expect(swift).toContain('controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))')
     expect(swift).toContain('private lazy var keyboardAccessoryVisible = config.keyboardAccessory ?? false')
     expect(swift).toContain('if !keyboardAccessoryVisible { CraftKeyboardAccessory.setVisible(false, in: webView) }')
     expect(swift).toContain('webConfig.allowsPictureInPictureMediaPlayback = true')

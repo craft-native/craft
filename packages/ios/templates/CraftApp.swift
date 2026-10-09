@@ -1081,8 +1081,9 @@ extension CraftConfig {
     }
 
     /// Pins the page's viewport at its own width: no pinch, no double-tap
-    /// zoom. Run once the document is parsed, so it rewrites the page's own
-    /// viewport tag rather than racing it.
+    /// zoom. Installed at document start, so its DOMContentLoaded listener is
+    /// the first: the tag is rewritten once the page's own is parsed, before
+    /// any of the page's handlers read it.
     static let viewportScript = """
     (function() {
         function pin() {
@@ -2844,7 +2845,7 @@ struct CraftWebView: UIViewRepresentable {
             controller.addUserScript(WKUserScript(source: CraftChrome.paintScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             controller.addUserScript(WKUserScript(source: CraftPageAppearance.script(appearanceSnapshot(), announce: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))
             if config.disableZoom != false {
-                controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+                controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             }
             controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }

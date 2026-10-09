@@ -194,12 +194,14 @@ enum CraftDialogs {
 
 /// `craft.contextMenu.show`: a native menu pointing at a rect of the page.
 ///
-/// iOS has no public way to open a context menu (UIContextMenuInteraction)
-/// or a button's menu from code: both only open from a touch the system saw
-/// begin, and the touch here began in the web page. UIEditMenuInteraction
-/// (iOS 16) is the public API that presents a UIMenu at a point on request,
-/// so that is what this uses, anchored on a transparent view laid over the
-/// rect. Before iOS 16 the same items come up as an action sheet.
+/// A context menu normally opens only from a touch the system saw begin, and
+/// the touch here began in the web page. iOS 17.4 gave UIButton
+/// `performPrimaryAction()`, which opens a button's menu from code: so a
+/// transparent button is laid over the rect, given the menu, and asked to
+/// open it. That is the system's own menu, the list with symbols that a long
+/// press shows anywhere else, anchored where the page asked. Between iOS 16
+/// and 17.4 the public way to show a menu on request is UIEditMenuInteraction,
+/// the horizontal edit bar; before 16 the items come up as an action sheet.
 final class CraftContextMenu: NSObject {
     /// The menu on screen, kept alive until it answers.
     private static var current: CraftContextMenu?
@@ -251,11 +253,42 @@ final class CraftContextMenu: NSObject {
         overlay.frame = anchor.width > 0 && anchor.height > 0 ? anchor : CGRect(x: anchor.minX - 1, y: anchor.minY - 1, width: 2, height: 2)
         overlay.backgroundColor = .clear
         webView.addSubview(overlay)
+        if #available(iOS 17.4, *) {
+            let button = MenuButton(type: .custom)
+            button.frame = overlay.bounds
+            button.menu = menu
+            button.showsMenuAsPrimaryAction = true
+            button.onDismiss = { [weak self] in self?.finishSoon() }
+            overlay.addSubview(button)
+            button.performPrimaryAction()
+            return
+        }
         let interaction = UIEditMenuInteraction(delegate: self)
         overlay.addInteraction(interaction)
         let configuration = UIEditMenuConfiguration(identifier: nil, sourcePoint: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.minY))
         configuration.preferredArrowDirection = .automatic
         interaction.presentEditMenu(with: configuration)
+    }
+
+    /// The "nothing chosen" answer, a moment after the menu closes. A choice
+    /// calls its action around the dismissal, not necessarily before it, so
+    /// this loses to a choice that lands in the meantime.
+    fileprivate func finishSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.finish(nil) }
+    }
+
+    /// The button the iOS 17.4 menu hangs from; it says when the menu closes.
+    private final class MenuButton: UIButton {
+        var onDismiss: (() -> Void)?
+
+        override func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willEndFor configuration: UIContextMenuConfiguration, animator: UIContextMenuInteractionAnimating?) {
+            super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
+            if let animator {
+                animator.addCompletion { [weak self] in self?.onDismiss?() }
+            } else {
+                onDismiss?()
+            }
+        }
     }
 
     fileprivate func finish(_ id: String?) {
@@ -278,12 +311,7 @@ extension CraftContextMenu: UIEditMenuInteractionDelegate {
     }
 
     func editMenuInteraction(_ interaction: UIEditMenuInteraction, willDismissMenuFor configuration: UIEditMenuConfiguration, animator: UIEditMenuInteractionAnimating) {
-        // A choice calls its action around the dismissal, not necessarily
-        // before it, so the "nothing chosen" answer waits a moment and loses
-        // to a choice that lands in the meantime.
-        animator.addCompletion { [weak self] in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { self?.finish(nil) }
-        }
+        animator.addCompletion { [weak self] in self?.finishSoon() }
     }
 }
 
