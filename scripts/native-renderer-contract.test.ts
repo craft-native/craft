@@ -314,7 +314,7 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps intrinsic grid tracks equal across hosts', () => {
-    expect(ios).toContain('CGFloat(columns) * columnWidth')
+    expect(ios).toContain('let width = innerWidth ?? (CGFloat(columns) * cellWidth + gaps)')
     expect(android).toContain('val cellWidth = columnWidths.maxOrNull() ?: 0')
     expect(android).toContain('cellWidth * columns')
   })
@@ -322,7 +322,9 @@ describe('native renderer component contract', () => {
   it('keeps per-edge margins in native flex and grid layout', () => {
     expect(ios).toContain('marginTop: CGFloat')
     expect(ios).toContain('let horizontalMargin = number(raw["marginHorizontal"]) ?? margin')
-    expect(ios).toContain('mainMargins(styles[index])')
+    expect(ios).toContain('let mainLeading = horizontal ? style.marginLeft : style.marginTop')
+    expect(ios).toContain('let crossTrailing = horizontal ? style.marginBottom : style.marginRight')
+    expect(ios).toContain('var mainMargins: CGFloat { mainLeading + mainTrailing }')
     expect(android).toContain('style.optDouble("marginLeft", horizontal)')
     expect(android).toContain('setMargins(')
     expect(android).toContain('entry.height + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)')
@@ -331,8 +333,11 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps flex distribution inside declared min and max bounds', () => {
-    expect(ios).toContain('clamp(max(0, size.width + delta), min: style.minWidth, max: style.maxWidth)')
-    expect(ios).toContain('clamp(max(0, size.height + delta), min: style.minHeight, max: style.maxHeight)')
+    expect(ios).toContain('let minMain = (horizontal ? style.minWidth : style.minHeight)?.resolve(definiteMain)')
+    expect(ios).toContain('let maxMain = (horizontal ? style.maxWidth : style.maxHeight)?.resolve(definiteMain)')
+    expect(ios).toContain('items[index].main = clamp(items[index].basis + share, items[index].minMain, items[index].maxMain)')
+    expect(ios).toContain('items[index].main = clamp(items[index].basis - share, items[index].minMain, items[index].maxMain)')
+    expect(ios).toContain('items[index].cross = clamp(measured.cross, item.minCross, item.maxCross)')
     expect(android).toContain('clamp(primary, line.entries[index].style.minWidth, line.entries[index].style.maxWidth)')
     expect(android).toContain('clamp(distributed, entry.style.minHeight, entry.style.maxHeight)')
   })
@@ -359,8 +364,8 @@ describe('native renderer component contract', () => {
 
   it('keeps horizontal list rows intrinsically sized across hosts', () => {
     expect(iosFlatList).toContain('flowLayout.scrollDirection = horizontal ? .horizontal : .vertical')
-    expect(iosFlatList).toContain('withHorizontalFittingPriority: .fittingSizeLevel')
-    expect(iosFlatList).toContain('attributes.size.width = max(1, measured.width)')
+    expect(iosFlatList).toContain('maxWidth: CraftNativeFlexLayout.unbounded,')
+    expect(iosFlatList).toContain('attributes.size = CGSize(width: max(1, ceil(measured.width)), height: max(1, height))')
     expect(iosFlatList).not.toContain('bounds.width * 0.8')
     expect(androidFlatList).toContain('if (horizontal) LayoutParams.WRAP_CONTENT else LayoutParams.MATCH_PARENT')
     expect(androidFlatList).toContain('updateVisibleHolderLayoutParams()')
@@ -368,9 +373,9 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps vertical list rows intrinsically sized across hosts', () => {
-    expect(iosFlatList).toContain('let target = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)')
-    expect(iosFlatList).toContain('withHorizontalFittingPriority: .required')
-    expect(iosFlatList).toContain('attributes.size.height = max(1, measured.height)')
+    expect(iosFlatList).toContain('let width = fittingExtent ?? layoutAttributes.size.width')
+    expect(iosFlatList).toContain('maxHeight: CraftNativeFlexLayout.unbounded')
+    expect(iosFlatList).toContain('attributes.size = CGSize(width: max(1, width), height: max(1, ceil(measured.height)))')
     expect(androidFlatList).toContain('renderedLayout?.height ?: LayoutParams.WRAP_CONTENT')
     expect(androidFlatList).toContain('holder.host.addView(view, hostedLayout)')
   })
