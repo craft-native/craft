@@ -167,7 +167,77 @@ const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroun
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{"trustedOrigins"};
 const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "devServerURL" };
-const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains" };
+const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains", "allowsLinkPreview", "keyboardAccessory", "disableZoom" };
+/// Swift `Double`s with a default. Any JSON number decodes; a string or a
+/// boolean throws.
+const number_keys = [_][]const u8{ "splashMaxSeconds", "requestTimeoutSeconds" };
+/// Swift `[String: String]?`: an object whose every value is a string. A null
+/// value inside it throws; only a null at the top level is dropped.
+const optional_string_map_keys = [_][]const u8{ "nativeScreens", "shareStorage" };
+/// Swift `Codable` structs, whose fields are checked by `checkObject`.
+const optional_object_keys = [_]Nested{.{ .key = "backgroundRefresh", .fields = &background_refresh_fields }};
+/// Swift arrays of `Codable` structs. Every element is checked.
+const optional_array_of_object_keys = [_]Nested{.{ .key = "tabs", .fields = &tab_fields }};
+
+/// A stored key whose value is one of `CraftConfig`'s nested types.
+const Nested = struct { key: []const u8, fields: []const Field };
+
+/// One field of a nested type, as Swift's synthesized `Decodable` reads it.
+///
+/// `required` is not the same as "has no default". The defaults overlay in
+/// `CraftConfig.load` reaches only the top level, and synthesized decoding
+/// ignores a property's initial value, so `BackgroundRefresh.enabled`, which
+/// defaults to false, still throws when it is missing or null. An optional
+/// field may be missing or null. Both checked against `swiftc`.
+const Field = struct { name: []const u8, kind: Kind, required: bool };
+const Kind = enum { string, bool, number };
+
+/// `CraftConfig.BackgroundRefresh`.
+const background_refresh_fields = [_]Field{
+    .{ .name = "enabled", .kind = .bool, .required = true },
+    .{ .name = "identifier", .kind = .string, .required = false },
+    .{ .name = "minimumIntervalMinutes", .kind = .number, .required = false },
+};
+
+/// `CraftConfig.Tab`.
+const tab_fields = [_]Field{
+    .{ .name = "id", .kind = .string, .required = true },
+    .{ .name = "title", .kind = .string, .required = true },
+    .{ .name = "symbol", .kind = .string, .required = false },
+};
+
+fn isNumber(v: std.json.Value) bool {
+    return switch (v) {
+        .integer, .float, .number_string => true,
+        else => false,
+    };
+}
+
+fn isKind(v: std.json.Value, kind: Kind) bool {
+    return switch (kind) {
+        .string => v == .string,
+        .bool => v == .bool,
+        .number => isNumber(v),
+    };
+}
+
+/// Whether `v` decodes as the nested type `fields` describes. Unknown keys are
+/// ignored, as at the top level.
+fn checkObject(v: std.json.Value, fields: []const Field) bool {
+    if (v != .object) return false;
+    for (fields) |field| {
+        const present = v.object.get(field.name) orelse {
+            if (field.required) return false;
+            continue;
+        };
+        if (present == .null) {
+            if (field.required) return false;
+            continue;
+        }
+        if (!isKind(present, field.kind)) return false;
+    }
+    return true;
+}
 
 /// Decode `json` the way Swift decodes it.
 ///
@@ -224,6 +294,40 @@ pub fn parse(allocator: std.mem.Allocator, json: []const u8) Flags {
     inline for (optional_bool_keys) |key| {
         if (root.get(key)) |v| {
             if (v != .bool and v != .null) return Flags.empty;
+        }
+    }
+
+    inline for (number_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .null and !isNumber(v)) return Flags.empty;
+        }
+    }
+
+    inline for (optional_string_map_keys) |key| {
+        if (root.get(key)) |v| {
+            if (v != .null) {
+                if (v != .object) return Flags.empty;
+                for (v.object.values()) |item| {
+                    if (item != .string) return Flags.empty;
+                }
+            }
+        }
+    }
+
+    inline for (optional_object_keys) |nested| {
+        if (root.get(nested.key)) |v| {
+            if (v != .null and !checkObject(v, nested.fields)) return Flags.empty;
+        }
+    }
+
+    inline for (optional_array_of_object_keys) |nested| {
+        if (root.get(nested.key)) |v| {
+            if (v != .null) {
+                if (v != .array) return Flags.empty;
+                for (v.array.items) |item| {
+                    if (!checkObject(item, nested.fields)) return Flags.empty;
+                }
+            }
         }
     }
 
@@ -611,7 +715,66 @@ test "trustedOrigins is checked element by element" {
 }
 
 test "optional fields are type-checked when present" {
-    inline for (.{ "\"appearance\":7", "\"backgroundColorDark\":false", "\"swipeNavigation\":\"true\"", "\"renderer\":true" }) |bad| {
+    inline for (.{ "\"appearance\":7", "\"backgroundColorDark\":false", "\"swipeNavigation\":\"true\"", "\"renderer\":true", "\"disableZoom\":1", "\"allowsLinkPreview\":\"yes\"" }) |bad| {
+        const json = try completeConfig(testing.allocator, bad);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
+}
+
+test "number fields take any JSON number and nothing else" {
+    // `Double` decodes an integer as readily as a fraction; a quoted number
+    // or a boolean throws. Checked against `swiftc`.
+    inline for (.{ "\"splashMaxSeconds\":5", "\"splashMaxSeconds\":2.5", "\"requestTimeoutSeconds\":-1", "\"requestTimeoutSeconds\":null" }) |good| {
+        const json = try completeConfig(testing.allocator, good);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, json).count());
+    }
+    inline for (.{ "\"splashMaxSeconds\":\"5\"", "\"splashMaxSeconds\":true", "\"requestTimeoutSeconds\":[]" }) |bad| {
+        const json = try completeConfig(testing.allocator, bad);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
+}
+
+test "the hybrid maps are objects of strings, value by value" {
+    inline for (.{ "\"nativeScreens\":{\"/m\":\"today\"}", "\"nativeScreens\":{}", "\"shareStorage\":{\"auth_token\":\"auth.token\"}", "\"shareStorage\":null" }) |good| {
+        const json = try completeConfig(testing.allocator, good);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, json).count());
+    }
+    // A null value inside the map throws: only a top-level null is dropped.
+    inline for (.{ "\"nativeScreens\":{\"/m\":1}", "\"nativeScreens\":{\"/m\":null}", "\"nativeScreens\":[]", "\"shareStorage\":[\"a\"]" }) |bad| {
+        const json = try completeConfig(testing.allocator, bad);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
+    }
+}
+
+test "nested types decode field by field, defaults or not" {
+    inline for (.{
+        "\"backgroundRefresh\":{\"enabled\":true}",
+        "\"backgroundRefresh\":{\"enabled\":false,\"identifier\":null,\"minimumIntervalMinutes\":30,\"newer\":1}",
+        "\"tabs\":[]",
+        "\"tabs\":[{\"id\":\"a\",\"title\":\"A\"},{\"id\":\"b\",\"title\":\"B\",\"symbol\":null}]",
+    }) |good| {
+        const json = try completeConfig(testing.allocator, good);
+        defer testing.allocator.free(json);
+        try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, json).count());
+    }
+    // `enabled` defaults to false and is still required: the overlay of
+    // defaults stops at the top level.
+    inline for (.{
+        "\"backgroundRefresh\":{}",
+        "\"backgroundRefresh\":{\"enabled\":null}",
+        "\"backgroundRefresh\":{\"enabled\":true,\"identifier\":3}",
+        "\"backgroundRefresh\":{\"enabled\":true,\"minimumIntervalMinutes\":\"3\"}",
+        "\"backgroundRefresh\":true",
+        "\"tabs\":[{\"id\":\"a\"}]",
+        "\"tabs\":[{\"id\":\"a\",\"title\":\"A\",\"symbol\":1}]",
+        "\"tabs\":[null]",
+        "\"tabs\":{}",
+    }) |bad| {
         const json = try completeConfig(testing.allocator, bad);
         defer testing.allocator.free(json);
         try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());

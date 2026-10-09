@@ -626,14 +626,37 @@ fn collectSpecConfigBools(allocator: std.mem.Allocator) !std.StringHashMap(void)
 
     var it = std.mem.splitScalar(u8, rest[0..end], '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (!std.mem.startsWith(u8, trimmed, "var ")) continue;
-        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
-        const type_part = std.mem.trim(u8, trimmed[colon + 1 ..], " \t\r");
-        if (!std.mem.startsWith(u8, type_part, "Bool")) continue;
-        try set.put(std.mem.trim(u8, trimmed["var ".len..colon], " \t\r"), {});
+        const member = topLevelMember(line) orelse continue;
+        if (!std.mem.startsWith(u8, member.type_name, "Bool")) continue;
+        try set.put(member.name, {});
     }
     return set;
+}
+
+/// A stored property of `CraftConfig` itself: `var name: Type`, at the
+/// struct's own four-space indent.
+///
+/// The indent is the point. `CraftConfig` nests its own `Codable` types
+/// (`Tab`, `BackgroundRefresh`), and their fields sit one level deeper inside
+/// the same braces. Reading every `var` would count `id` and `enabled` as
+/// top-level keys, which Swift never reads there; those are checked against
+/// the nested schemas instead, by the test after the stored-keys one.
+const ConfigMember = struct { name: []const u8, type_name: []const u8 };
+
+fn topLevelMember(line: []const u8) ?ConfigMember {
+    return memberAtIndent(line, "    var ");
+}
+
+fn memberAtIndent(line: []const u8, comptime prefix: []const u8) ?ConfigMember {
+    if (!std.mem.startsWith(u8, line, prefix)) return null;
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse return null;
+    const after_colon = trimmed[colon + 1 ..];
+    const type_end = std.mem.indexOf(u8, after_colon, " =") orelse after_colon.len;
+    return .{
+        .name = std.mem.trim(u8, trimmed["var ".len..colon], " \t\r"),
+        .type_name = std.mem.trim(u8, after_colon[0..type_end], " \t\r"),
+    };
 }
 
 test "the gate scans find something, so the subset checks below mean something" {
@@ -895,7 +918,7 @@ fn collectZigKnownKeys(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
     errdefer set.deinit();
 
-    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys", "const optional_string_keys", "const optional_bool_keys" }) |decl| {
+    inline for (.{ "const string_keys", "const extra_bool_keys", "const array_of_string_keys", "const optional_string_keys", "const optional_bool_keys", "const number_keys", "const optional_string_map_keys", "const optional_object_keys", "const optional_array_of_object_keys" }) |decl| {
         const at = std.mem.indexOf(u8, zig_config_source, decl) orelse return error.KeyListNotFound;
         const line_end = std.mem.indexOfScalarPos(u8, zig_config_source, at, '\n').?;
         const line = zig_config_source[at..line_end];
@@ -939,14 +962,9 @@ test "Zig validates exactly the stored keys Swift decodes" {
     var optional_seen: usize = 0;
     var it = std.mem.splitScalar(u8, rest[0..end], '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (!std.mem.startsWith(u8, trimmed, "var ")) continue;
-        const colon = std.mem.indexOfScalar(u8, trimmed, ':') orelse continue;
-        const name = std.mem.trim(u8, trimmed["var ".len..colon], " \t\r");
-
-        const after_colon = trimmed[colon + 1 ..];
-        const type_end = std.mem.indexOf(u8, after_colon, " =") orelse after_colon.len;
-        const type_name = std.mem.trim(u8, after_colon[0..type_end], " \t\r");
+        const member = topLevelMember(line) orelse continue;
+        const name = member.name;
+        const type_name = member.type_name;
 
         if (std.mem.endsWith(u8, type_name, "?")) {
             optional_seen += 1;
@@ -966,6 +984,96 @@ test "Zig validates exactly the stored keys Swift decodes" {
     try testing.expectEqual(fields, zig_keys.count());
     try testing.expect(fields >= 40);
     try testing.expect(optional_seen >= 4);
+}
+
+/// `struct Name: Codable {` -> `name_fields`, the declaration in
+/// `ios_config.zig` that describes it: `BackgroundRefresh` is
+/// `background_refresh_fields`.
+fn zigFieldsDeclFor(buf: []u8, struct_name: []const u8) ![]const u8 {
+    const prefix = "const ";
+    const suffix = "_fields = [_]Field{";
+    if (prefix.len + 2 * struct_name.len + suffix.len > buf.len) return error.NameTooLong;
+    @memcpy(buf[0..prefix.len], prefix);
+    var len: usize = prefix.len;
+    for (struct_name, 0..) |c, i| {
+        if (std.ascii.isUpper(c) and i != 0) {
+            buf[len] = '_';
+            len += 1;
+        }
+        buf[len] = std.ascii.toLower(c);
+        len += 1;
+    }
+    @memcpy(buf[len .. len + suffix.len], suffix);
+    return buf[0 .. len + suffix.len];
+}
+
+test "Zig validates every field of the nested types Swift decodes, the way Swift does" {
+    // The stored-keys test above stops at the top level, and these are where
+    // the decode is least obvious: synthesized `Decodable` ignores a field's
+    // default, so `BackgroundRefresh.enabled` (default false) still throws
+    // when it is missing, and the overlay of defaults that saves the top level
+    // does not reach this far. So each nested field is matched by name, type
+    // and whether it may be missing, not only by name.
+    const at = std.mem.indexOf(u8, swift_spec, "struct CraftConfig: Codable {").?;
+    const rest = swift_spec[at..];
+    const end = std.mem.indexOf(u8, rest, "\n}").?;
+    const body = rest[0..end];
+
+    var nested_seen: usize = 0;
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, body, search, "\n    struct ")) |struct_at| {
+        const name_start = struct_at + "\n    struct ".len;
+        const name_end = std.mem.indexOfScalarPos(u8, body, name_start, ':') orelse return error.NestedTypeNotCodable;
+        const struct_name = body[name_start..name_end];
+        const struct_end = std.mem.indexOfPos(u8, body, name_end, "\n    }") orelse return error.NestedTypeNotClosed;
+        search = struct_end;
+        nested_seen += 1;
+
+        var decl_buf: [128]u8 = undefined;
+        const decl = try zigFieldsDeclFor(&decl_buf, struct_name);
+        const decl_at = std.mem.indexOf(u8, zig_config_source, decl) orelse {
+            std.debug.print("the spec's CraftConfig.{s} has no `{s}` in ios_config.zig.\n", .{ struct_name, decl });
+            return error.NestedTypeNotMirrored;
+        };
+        const decl_end = std.mem.indexOfPos(u8, zig_config_source, decl_at, "\n};") orelse return error.NestedTypeNotMirrored;
+        const zig_fields = zig_config_source[decl_at..decl_end];
+
+        var swift_fields: usize = 0;
+        var lines = std.mem.splitScalar(u8, body[name_end..struct_end], '\n');
+        while (lines.next()) |line| {
+            const member = memberAtIndent(line, "        var ") orelse continue;
+            swift_fields += 1;
+
+            const optional = std.mem.endsWith(u8, member.type_name, "?");
+            const base = if (optional) member.type_name[0 .. member.type_name.len - 1] else member.type_name;
+            const kind = if (std.mem.eql(u8, base, "String"))
+                "string"
+            else if (std.mem.eql(u8, base, "Bool"))
+                "bool"
+            else if (std.mem.eql(u8, base, "Double"))
+                "number"
+            else {
+                std.debug.print("CraftConfig.{s}.{s} is a {s}, which ios_config.zig has no Kind for.\n", .{ struct_name, member.name, base });
+                return error.NestedFieldKindUnknown;
+            };
+
+            var expected_buf: [256]u8 = undefined;
+            const expected = try std.fmt.bufPrint(&expected_buf, ".{{ .name = \"{s}\", .kind = .{s}, .required = {s} }},", .{
+                member.name, kind, if (optional) "false" else "true",
+            });
+            if (std.mem.indexOf(u8, zig_fields, expected) == null) {
+                std.debug.print("ios_config.zig does not read CraftConfig.{s}.{s} as Swift does; expected `{s}`.\n", .{ struct_name, member.name, expected });
+                return error.NestedFieldNotMirrored;
+            }
+        }
+
+        // A stale Zig field could reject a file Swift accepts.
+        try testing.expectEqual(swift_fields, std.mem.count(u8, zig_fields, ".{ .name = "));
+        try testing.expect(swift_fields > 0);
+    }
+
+    // Non-vacuity: `Tab` and `BackgroundRefresh`.
+    try testing.expect(nested_seen >= 2);
 }
 
 test "getDeviceInfo answers every field the spec answers" {
