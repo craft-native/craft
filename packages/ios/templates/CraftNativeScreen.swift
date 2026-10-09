@@ -396,6 +396,33 @@ private final class CraftNativeFlowView: UIStackView {
     }
 }
 
+private final class CraftNativeModalView: UIView {
+    let contentStack = CraftNativeFlowView()
+    private let blocker = UIView()
+
+    var transparent = false {
+        didSet { blocker.backgroundColor = transparent ? .clear : UIColor.black.withAlphaComponent(0.32) }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = true
+        blocker.isUserInteractionEnabled = true
+        blocker.backgroundColor = UIColor.black.withAlphaComponent(0.32)
+        addSubview(blocker)
+        contentStack.backgroundColor = .clear
+        addSubview(contentStack)
+    }
+
+    required init(coder: NSCoder) { super.init(coder: coder) }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        blocker.frame = bounds
+        contentStack.frame = bounds
+    }
+}
+
 private final class CraftNativeScrollView: UIScrollView {
     let contentStack = CraftNativeFlowView()
     private var crossAxisConstraint: NSLayoutConstraint?
@@ -935,7 +962,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         current.protocolId = node["id"] as? String
         current.style = style
         result.accessibilityIdentifier = accessibilityIdentifier(node, props: props) ?? path
-        if type != "View" && type != "SafeAreaView" && type != "ScrollView" && type != "FlatList" {
+        if type != "View" && type != "SafeAreaView" && type != "ScrollView" && type != "FlatList" && type != "Modal" {
             result.setContentHuggingPriority(.required, for: .vertical)
         }
         applyViewStyle(style, to: result, node: current)
@@ -1046,6 +1073,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             picker.isUserInteractionEnabled = props["disabled"] as? Bool != true
             updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: picker)
+        case "Modal":
+            let modal = result as! CraftNativeModalView
+            modal.transparent = props["transparent"] as? Bool == true
+            modal.isHidden = props["visible"] as? Bool != true
+            configureStack(modal.contentStack, style: style)
+            reconcileChildren(children, in: modal.contentStack, parent: current, path: path, style: style)
         case "Switch":
             let toggle = result as! UISwitch
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
@@ -1153,7 +1186,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
         updateLongPressHandler(events["onLongPress"], for: result)
-        if type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
+        if type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
             updatePressHandler(nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -1188,6 +1221,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             picker.dataSource = self
             picker.delegate = self
             return picker
+        case "Modal":
+            return CraftNativeModalView()
         case "Switch":
             let toggle = UISwitch()
             toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)

@@ -608,6 +608,26 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
 
 private class CraftNativeFlexSpacer(context: Context) : View(context)
 
+private class CraftNativeModalView(context: Context) : FrameLayout(context) {
+    val content = CraftNativeFlexLayout(context)
+    private val blocker = View(context)
+
+    var transparent: Boolean = false
+        set(value) {
+            field = value
+            blocker.setBackgroundColor(if (value) Color.TRANSPARENT else Color.argb(82, 0, 0, 0))
+        }
+
+    init {
+        isClickable = true
+        blocker.isClickable = true
+        blocker.setOnTouchListener { _, _ -> true }
+        blocker.setBackgroundColor(Color.argb(82, 0, 0, 0))
+        addView(blocker, LayoutParams(-1, -1))
+        addView(content, LayoutParams(-1, -1))
+    }
+}
+
 private data class LayoutBounds(
     val x: Double,
     val y: Double,
@@ -1203,6 +1223,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 setSelection(selected, false)
             }
+            "Modal" -> (previous as? CraftNativeModalView ?: CraftNativeModalView(this)).apply {
+                transparent = props.optBoolean("transparent", false)
+                content.configure(style, resources.displayMetrics.density)
+                reconcileChildren(screen, content, children, path, next, style, previousControls)
+                visibility = if (props.optBoolean("visible", false)) View.VISIBLE else View.GONE
+            }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
                 setOnCheckedChangeListener(null)
                 val requestedValue = props.opt("value")
@@ -1393,7 +1419,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
-        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
+        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
             if (handler.isNotBlank()) {
                 screen.handlers[control] = handler
@@ -1437,6 +1463,7 @@ class MainActivity : AppCompatActivity() {
         }
         next[identity] = control
         applyViewStyle(control, style)
+        if (type == "Modal" && !props.optBoolean("visible", false)) control.visibility = View.GONE
         val width = style.optDouble("width", Double.NaN).takeUnless { it.isNaN() }?.let(::dp)
         val height = style.optDouble("height", Double.NaN).takeUnless { it.isNaN() }?.let(::dp)
         control.layoutParams = LinearLayout.LayoutParams(
@@ -1785,7 +1812,7 @@ class MainActivity : AppCompatActivity() {
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")
         val disabled = state?.optBoolean("disabled", false) == true
-        if (type !in setOf("Button", "Link", "TextInput", "Picker", "Switch", "Slider", "ActivityIndicator")) {
+        if (type !in setOf("Button", "Link", "TextInput", "Picker", "Modal", "Switch", "Slider", "ActivityIndicator")) {
             view.isEnabled = !disabled
         } else if (disabled) {
             view.isEnabled = false

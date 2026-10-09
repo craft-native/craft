@@ -24,6 +24,7 @@ const COMPONENTS: Array<[string, string, string]> = [
   ['Slider', 'case "Slider":', '"Slider" ->'],
   ['TextInput', 'case "TextInput":', '"TextInput" ->'],
   ['Picker', 'case "Picker":', '"Picker" ->'],
+  ['Modal', 'case "Modal":', '"Modal" ->'],
   ['ActivityIndicator', 'case "ActivityIndicator":', '"ActivityIndicator" ->'],
   ['Image', 'case "Image":', '"Image" ->'],
   ['ScrollView', 'case "ScrollView":', '"ScrollView" ->'],
@@ -107,6 +108,15 @@ describe('native renderer component contract', () => {
     expect(navigationHome).toContain('<select testID="native-picker"')
     expect(navigationHome).toContain('<option value="one">One</option>')
     expect(guide).toContain('| `Picker` | `UIPickerView` | `Spinner` |')
+  })
+
+  it('keeps Modal visibility and parent blocking aligned across hosts', () => {
+    expect(ios).toContain('private final class CraftNativeModalView: UIView')
+    expect(ios).toContain('modal.isHidden = props["visible"] as? Bool != true')
+    expect(ios).toContain('modal.transparent = props["transparent"] as? Bool == true')
+    expect(android).toContain('private class CraftNativeModalView(context: Context) : FrameLayout(context)')
+    expect(android).toContain('visibility = if (props.optBoolean("visible", false)) View.VISIBLE else View.GONE')
+    expect(android).toContain('blocker.setOnTouchListener { _, _ -> true }')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {
@@ -408,7 +418,7 @@ describe('native renderer component contract', () => {
   })
 
   it('restores generic Android pressables when accessibility disabled clears', () => {
-    expect(android).toContain('if (type !in setOf("Button", "Link", "TextInput", "Picker", "Switch", "Slider", "ActivityIndicator")) {\n            view.isEnabled = !disabled')
+    expect(android).toContain('if (type !in setOf("Button", "Link", "TextInput", "Picker", "Modal", "Switch", "Slider", "ActivityIndicator")) {\n            view.isEnabled = !disabled')
   })
 
   it('dismisses the keyboard from native scroll containers on drag', () => {
