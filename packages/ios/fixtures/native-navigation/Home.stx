@@ -16,6 +16,7 @@ let longPressStatus = ''
 let longPressAccessibilityDisabled = false
 let switchValue = false
 let pickerValue = 'one'
+let modalVisible = false
 let sliderValue = 0.5
 let sliderCompletions = 0
 let layoutWidth = 0
@@ -156,6 +157,10 @@ function choosePicker(event) {
   status = `picker ${pickerValue}`
 }
 
+function toggleModal() {
+  modalVisible = !modalVisible
+}
+
 function moveSlider(event) {
   sliderValue = event.value
   status = 'slider moved'
@@ -227,6 +232,10 @@ function openCapabilities() {
       <option value="three">Three</option>
     </select>
     <Text testID="picker-value">{pickerValue}</Text>
+    <Button testID="toggle-modal" onPress={toggleModal}>Toggle modal</Button>
+    <Modal testID="native-modal" visible={modalVisible} transparent>
+      <Text testID="modal-content">Modal content</Text>
+    </Modal>
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
     <Text testID="slider-completions">Slider completions: {sliderCompletions}</Text>

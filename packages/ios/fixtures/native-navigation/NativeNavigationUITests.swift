@@ -188,6 +188,10 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["native-picker"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["picker-value"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["picker-value"].label, "one")
+        app.buttons["toggle-modal"].tap()
+        XCTAssertTrue(app.otherElements["native-modal"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["modal-content"].waitForExistence(timeout: 5))
+        app.buttons["toggle-modal"].tap()
 
         let slider = app.sliders["native-slider"]
         XCTAssertTrue(slider.waitForExistence(timeout: 5))

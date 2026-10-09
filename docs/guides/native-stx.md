@@ -37,6 +37,7 @@ bundle must be local at build time.
 | `Link` | underlined `UIButton` | underlined clickable `TextView` |
 | `TextInput` | `UITextField` | `EditText` |
 | `Picker` | `UIPickerView` | `Spinner` |
+| `Modal` | `CraftNativeModalView` | `CraftNativeModalView` (`FrameLayout`) |
 | `Switch` | `UISwitch` | `Switch` |
 | `Slider` | `UISlider` | `SeekBar` |
 | `ActivityIndicator` | `UIActivityIndicatorView` | `ProgressBar` |
@@ -68,6 +69,10 @@ delivered.
 `Picker` renders option children from `<select>`/`<option>` or the native
 primitive, accepts `value`/`selectedValue`, and sends the selected option's
 `value` plus `index` through `onValueChange` or `onChange`.
+`Modal` is parent-scoped: `visible` controls a native blocking layer around its
+children, `transparent` removes the dimming scrim, and hidden modals do not
+participate in layout or touch handling. The default WebView renderer remains
+unchanged.
 `Text` supports positive `numberOfLines` values and `ellipsizeMode` (`head`,
 `middle`, `tail`, or `clip`) on both hosts; omitting the line count keeps the
 label intrinsically multiline.

@@ -317,6 +317,17 @@ class NativeNavigationTest {
             instrumentation.runOnMainSync { (picker as Spinner).setSelection(1) }
             awaitText(activity, "picker-value", "two")
             assertEquals("picker two", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val modal = awaitView(activity, "native-modal")
+            assertTrue("native modal should be a container", modal is ViewGroup)
+            assertEquals("modal should start hidden", View.GONE, modal.visibility)
+            click(activity, "toggle-modal")
+            repeat(20) {
+                if (modal.visibility == View.VISIBLE) return@repeat
+                SystemClock.sleep(100)
+            }
+            assertEquals("modal should become visible", View.VISIBLE, modal.visibility)
+            assertEquals("Modal content", (awaitView(activity, "modal-content") as TextView).text.toString())
+            click(activity, "toggle-modal")
             val justifiedText = awaitView(activity, "justified-text") as TextView
             assertEquals("justified text should use the Android inter-word mode", Layout.JUSTIFICATION_MODE_INTER_WORD, justifiedText.justificationMode)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
