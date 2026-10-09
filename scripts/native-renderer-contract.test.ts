@@ -259,6 +259,17 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.clearColorFilter()')
   })
 
+  it('keeps FlatList gesture callbacks on the shared scroll payload', () => {
+    for (const callback of ['onScroll', 'onScrollBeginDrag', 'onScrollEndDrag', 'onMomentumScrollBegin', 'onMomentumScrollEnd']) {
+      const iosCallback = callback === 'onScroll' ? 'onScrollEvent' : callback
+      expect(ios, `${callback} missing iOS FlatList payload`).toContain(`list.${iosCallback} =`)
+      expect(android, `${callback} missing Android FlatList payload`).toContain(`list.${iosCallback} =`)
+    }
+    expect(ios).toContain('self?.scrollEvent(scrollView) ?? [:]')
+    expect(android).toContain('flatListScrollEvent(list)')
+    expect(guide).toContain('including the same')
+  })
+
   it('treats a null image style resize mode as unset', () => {
     expect(ios).toContain('let requestedResizeMode = style["resizeMode"] as? String ?? props["resizeMode"] as? String')
     expect(ios).toContain('image.contentMode = imageContentMode(requestedResizeMode)')
