@@ -10,6 +10,8 @@ let nameEndEditings = 0
 let notesBlurs = 0
 let notesEndEditings = 0
 let status = ''
+let pressIns = 0
+let pressOuts = 0
 let linkAccessibilityDisabled = false
 let panelAccessibilityDisabled = false
 let longPressStatus = ''
@@ -143,6 +145,14 @@ function pressNativePressable() {
   status = 'pressable pressed'
 }
 
+function pressNativePressableIn() {
+  pressIns += 1
+}
+
+function pressNativePressableOut() {
+  pressOuts += 1
+}
+
 function pressPanelLong() {
   longPressStatus = 'panel long pressed'
 }
@@ -231,7 +241,8 @@ function openCapabilities() {
     <Text testID="native-link-status">{status}</Text>
     <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
     <View testID="native-panel" accessibilityState={{"disabled":panelAccessibilityDisabled}} onPress={pressPanel} style={{"height":24}}><Text>Native panel</Text></View>
-    <Pressable testID="native-pressable" onPress={pressNativePressable} style={{"height":24}}><Text>Native pressable</Text></Pressable>
+    <Pressable testID="native-pressable" onPress={pressNativePressable} onPressIn={pressNativePressableIn} onPressOut={pressNativePressableOut} style={{"height":24}}><Text>Native pressable</Text></Pressable>
+    <Text testID="pressable-lifecycle">Press lifecycle: {pressIns}/{pressOuts}</Text>
     <Pressable testID="disabled-pressable" disabled onPress={pressNativePressable} style={{"height":24}}><Text>Disabled pressable</Text></Pressable>
     <Button testID="toggle-panel-accessibility" onPress={togglePanelAccessibility}>Toggle panel accessibility</Button>
     <View testID="long-press-panel" accessibilityState={{"disabled":longPressAccessibilityDisabled}} onLongPress={pressPanelLong} style={{"height":24}}><Text>Long press panel</Text></View>

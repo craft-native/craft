@@ -165,6 +165,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(pressable.waitForExistence(timeout: 5))
         pressable.tap()
         XCTAssertTrue(app.staticTexts["pressable pressed"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["pressable-lifecycle"].label, "Press lifecycle: 1/1")
         let disabledPressable = app.otherElements["disabled-pressable"]
         XCTAssertTrue(disabledPressable.waitForExistence(timeout: 5))
         XCTAssertFalse(disabledPressable.isEnabled)
