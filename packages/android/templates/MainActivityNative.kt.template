@@ -2226,11 +2226,14 @@ class MainActivity : AppCompatActivity() {
         views: Collection<View>,
         preservingInputDrafts: Boolean = false,
     ) {
-        val released = views.toSet()
-        released.filterIsInstance<CraftNativeRefreshableFlatList>().forEach {
+        val released = views.toMutableSet()
+        val refreshableLists = released.filterIsInstance<CraftNativeRefreshableFlatList>()
+        val nestedLists = refreshableLists.map { it.list }.toSet()
+        released.addAll(nestedLists)
+        refreshableLists.forEach {
             releaseFlatList(screen, it.list, preservingInputDrafts)
         }
-        released.filterIsInstance<CraftNativeFlatList>().forEach {
+        released.filterIsInstance<CraftNativeFlatList>().filterNot { nestedLists.contains(it) }.forEach {
             releaseFlatList(screen, it, preservingInputDrafts)
         }
         releaseImages(released)

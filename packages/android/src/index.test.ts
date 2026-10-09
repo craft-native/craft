@@ -88,6 +88,8 @@ describe('Craft Android builder', () => {
       expect(flatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
       expect(nativeActivity).toContain('setKeyboardDismissMode(props.optString("keyboardDismissMode"))')
       expect(flatList).toContain('renderedLayout?.height ?: LayoutParams.WRAP_CONTENT')
+      expect(nativeActivity).toContain('val nestedLists = refreshableLists.map { it.list }.toSet()')
+      expect(nativeActivity).toContain('released.addAll(nestedLists)')
       expect(flatList).toContain('holder.host.addView(view, hostedLayout)')
       expect(flatList).toContain('ListAdapter<Item, Holder>')
       expect(flatList).toContain('GridLayoutManager(context, columns)')

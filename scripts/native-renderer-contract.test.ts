@@ -647,6 +647,8 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('if (pendingThemeRefresh)')
     expect(android).toContain('is CraftNativeRefreshableFlatList -> it.list')
     expect(android).toContain('is CraftNativeFlatList -> it')
+    expect(android).toContain('val nestedLists = refreshableLists.map { it.list }.toSet()')
+    expect(android).toContain('released.addAll(nestedLists)')
   })
 
   it('keeps scroll bounce behavior aligned across hosts', () => {
