@@ -1081,6 +1081,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var deepLinkListener: UUID?
     private var keyboardSafeAreaInset: CGFloat = 0
+    /// The hybrid shell (CraftHybrid.swift), when this screen is one of a web
+    /// app's native screens: told of the first frame, of a first frame that
+    /// could not be drawn, and of `craft.navigation.open(path)`.
+    weak var hybridEvents: CraftHybridScreenEvents?
+    private var hybridRendered = false
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -1173,6 +1178,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let message = exception?.toString() ?? "unknown"
             let stack = exception?.objectForKeyedSubscript("stack")?.toString() ?? ""
             CraftNativeConsole.write("error", category: self?.screenName(in: context) ?? "screen", message: stack.isEmpty || stack == "undefined" ? "Uncaught \(message)" : "Uncaught \(message)\n\(stack)")
+            self?.hybridFailed(message)
         }
         let postMessage: @convention(block) (String) -> Void = { [weak self] json in
             self?.receive(json)
@@ -1566,6 +1572,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         rootStack.addArrangedSubview(label)
         rootStack.setLayoutStyle(["alignSelf": "stretch"], for: label)
         NSLog("[craft native] %@", message)
+        hybridFailed(message)
+    }
+
+    /// Only before the first frame: later exceptions belong to a screen that
+    /// is up, and are logged.
+    private func hybridFailed(_ message: String) {
+        guard !hybridRendered else { return }
+        hybridEvents?.nativeScreen(self, didFail: message)
     }
 
     private func receive(_ raw: String) {
@@ -1609,6 +1623,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                   let navigation = navigationController else { return }
             let params = payload["params"] as? [String: Any] ?? [:]
             let next = CraftNativeScreenController(config: config, routeName: screen, routeParams: params)
+            next.hybridEvents = hybridEvents
             if type == "NAVIGATE" {
                 navigation.pushViewController(next, animated: true)
             } else {
@@ -1616,6 +1631,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         case "NAVIGATION_SET_OPTIONS":
             applyNavigationOptions(payload)
+        case "NAVIGATE_OPEN":
+            // A path rather than a screen: the hybrid shell opens it, natively
+            // or in the web view.
+            guard let path = payload["path"] as? String, !path.isEmpty else { return }
+            hybridEvents?.nativeScreen(self, open: path)
         case "NAVIGATE_BACK":
             if navigationController?.topViewController === self {
                 navigationController?.popViewController(animated: true)
@@ -1689,6 +1709,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     func render(_ document: [String: Any]) {
         mutationDocument.replace(with: document)
         renderCommitted(document)
+        if !hybridRendered {
+            hybridRendered = true
+            hybridEvents?.nativeScreenDidRender(self)
+        }
     }
 
     @discardableResult

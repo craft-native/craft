@@ -461,6 +461,16 @@ struct CraftApp: App {
             Group {
                 if appState.config.renderer == "native" {
                     CraftNativeScreen(config: appState.config)
+                } else if CraftHybrid.shared.isEnabled {
+                    // Web plus native screens (CraftHybrid.swift): the native
+                    // screen for the start path at once, the page warm behind it.
+                    ZStack(alignment: .bottom) {
+                        CraftColorSchemeObserver()
+                        CraftHybridRoot(config: appState.config)
+                            .ignoresSafeArea()
+                        CraftTabBarView()
+                        CraftSplashView(background: appState.config.resolvedBackgroundColor)
+                    }
                 } else {
                     // The page's own chrome, drawn natively over it: the tab
                     // bar the page asks for, and the splash until it is ready.
@@ -521,6 +531,17 @@ final class CraftChrome: ObservableObject {
 
     private init() {}
 
+    /// The tab bar from `tabs` in craft.config.json, there before the page
+    /// loads; the page's own `tabBar` message replaces it later. `splash`
+    /// false when the first screen is native and draws itself.
+    func configure(tabs configured: [CraftConfig.Tab], selected: String?, splash: Bool) {
+        splashVisible = splash
+        guard !configured.isEmpty else { return }
+        tabs = configured.map { Tab(id: $0.id, title: $0.title, symbol: $0.symbol ?? "circle", badge: nil) }
+        self.selected = selected ?? configured.first?.id
+        tabBarVisible = true
+    }
+
     /// However the page behaves, the splash is gone after `seconds`
     /// (`splashMaxSeconds`, three by default). It used to be ten: a page that
     /// never painted held a logo on screen for ten seconds, which reads as a
@@ -541,7 +562,10 @@ final class CraftChrome: ObservableObject {
                 let badge = (item["badge"] as? String).flatMap { $0.isEmpty ? nil : $0 }
                 return Tab(id: id, title: title, symbol: item["symbol"] as? String ?? "circle", badge: badge)
             }
-            if let selected = body["selected"] as? String { self.selected = selected }
+            if let selected = body["selected"] as? String {
+                self.selected = selected
+                CraftHybrid.shared.pageSelectedTab(selected)
+            }
             if let hex = body["tint"] as? String {
                 let light = UIColor(hex: hex)
                 let dark = (body["tintDark"] as? String).flatMap { UIColor(hex: $0) }
@@ -553,6 +577,7 @@ final class CraftChrome: ObservableObject {
             if let id = body["id"] as? String, id != selected {
                 withAnimation(Self.motion(.spring(response: 0.32, dampingFraction: 0.86))) { selected = id }
             }
+            if let id = body["id"] as? String { CraftHybrid.shared.pageSelectedTab(id) }
         case "hideTabBar":
             // Later, and only if no screen asks for the bar meanwhile: moving
             // between two screens that both have it unmounts one bar and
@@ -582,9 +607,13 @@ final class CraftChrome: ObservableObject {
     /// No haptic. UITabBar plays none, and a tab bar that ticks on every tap is
     /// one of the small things that gives a web shell away.
     func tap(_ tab: Tab) {
-        if tab.id != selected {
+        let reselect = tab.id == selected
+        if !reselect {
             withAnimation(Self.motion(.spring(response: 0.32, dampingFraction: 0.86))) { selected = tab.id }
         }
+        // A hybrid app shows the tab's own stack first; the page hears the
+        // tap unless the shell handled all of it (a native tab's reselect).
+        guard CraftHybrid.shared.tabTapped(tab.id, reselect: reselect) else { return }
         emit("craftTabSelect", ["id": tab.id])
     }
 
@@ -605,6 +634,9 @@ final class CraftChrome: ObservableObject {
         splashDeadline?.cancel()
         splashDeadline = nil
         guard splashVisible else { return }
+        #if DEBUG
+        NSLog("[craft] splash hidden")
+        #endif
         withAnimation(.easeOut(duration: 0.28)) { splashVisible = false }
     }
 
@@ -647,6 +679,7 @@ final class CraftChrome: ObservableObject {
     /// for it, and as an event for anything that measures.
     func publishLayout() {
         let height = tabBarVisible ? Int(occupied) : 0
+        CraftHybrid.shared.tabBarCovers(CGFloat(height))
         let script = "document.documentElement.style.setProperty('--craft-tab-bar-height','\(height)px');window.dispatchEvent(new CustomEvent('craftTabBarLayout',{detail:{height:\(height)}}));"
         DispatchQueue.main.async { [weak self] in self?.webView?.evaluateJavaScript(script, completionHandler: nil) }
     }
@@ -857,6 +890,19 @@ class DeepLinkManager {
             initialURL = url
         }
 
+        // A hybrid app opens a native path's screen itself, and tells the
+        // native screens that listen; every other link is the page's.
+        if CraftHybrid.shared.isEnabled {
+            if CraftHybrid.shared.handleDeepLink(url) {
+                dispatchNative(url, initial: false)
+            } else if isReady && webView != nil {
+                dispatchDeepLink(url, initial: false)
+            } else {
+                pendingURLs.append(url)
+            }
+            return
+        }
+
         if !nativeListeners.isEmpty {
             dispatchNative(url, initial: false)
         } else if isReady && webView != nil {
@@ -874,6 +920,9 @@ class DeepLinkManager {
     func addNativeListener(_ listener: @escaping (URL, Bool) -> Void) -> UUID {
         let token = UUID()
         nativeListeners[token] = listener
+        // In a hybrid app the page is the one waiting for the links that
+        // arrived early; a native screen hears only native ones, as they come.
+        if CraftHybrid.shared.isEnabled { return token }
         let firstNativeScreen = !hasBeenReady
         hasBeenReady = true
         let urls = pendingURLs
@@ -941,6 +990,9 @@ class AppState: ObservableObject {
         } else {
             self.config = CraftConfig()
         }
+        // Before the first frame: the hybrid start screen, and the tab bar
+        // from the config, are decided here.
+        CraftHybrid.shared.configure(config)
     }
 }
 
@@ -1048,6 +1100,20 @@ struct CraftConfig: Codable {
     var disableZoom: Bool? = nil
     /// iOS's scheduled app refresh, which fires `craftBackgroundRefresh`.
     var backgroundRefresh: BackgroundRefresh? = nil
+    /// Hybrid: app paths drawn natively, to the screen in `dist/native-screen.js`
+    /// that draws each (`{"/m": "today"}`). Everything else is the web page.
+    var nativeScreens: [String: String]? = nil
+    /// The tab bar to show before the page describes its own.
+    var tabs: [Tab]? = nil
+    /// Hybrid: web-storage keys the page's own code writes, mirrored into the
+    /// Keychain under another name for native screens (`{"auth_token": "auth.token"}`).
+    var shareStorage: [String: String]? = nil
+
+    struct Tab: Codable {
+        var id: String
+        var title: String
+        var symbol: String? = nil
+    }
 
     struct BackgroundRefresh: Codable {
         var enabled: Bool = false
@@ -1290,6 +1356,11 @@ struct CraftWebView: UIViewRepresentable {
         // they are the screen's, not a device API.
         let coordinator = context.coordinator
         contentController.add(CraftChromeRelay(trusts: { [weak coordinator] origin in coordinator?.trusts(origin) ?? false }), name: "craftChrome")
+        // Hybrid apps: navigation to native screens, snapshots and shared
+        // storage, outside the bridge's action dispatch like the chrome.
+        if CraftHybrid.shared.isEnabled {
+            contentController.add(CraftHybridRelay(trusts: { [weak coordinator] origin in coordinator?.trusts(origin) ?? false }), name: "craftHybrid")
+        }
         #if DEBUG
         // The page's errors and console, in the device log, so a debug build
         // can be diagnosed from `log stream` or `simctl spawn … log show`
@@ -1341,6 +1412,7 @@ struct CraftWebView: UIViewRepresentable {
         DeepLinkManager.shared.setWebView(webView)
         CraftEventManager.shared.setWebView(webView)
         CraftChrome.shared.webView = webView
+        CraftHybrid.shared.webView = webView
         CraftChrome.shared.holdSplash(atMost: config.splashMaxSeconds)
 
         // Parse background color
@@ -2604,7 +2676,11 @@ struct CraftWebView: UIViewRepresentable {
             recoverOnForeground = false
             switch recoveryBudget.onCrash(at: ProcessInfo.processInfo.systemUptime) {
             case .reload:
-                CraftChrome.shared.showSplash(atMost: config.splashMaxSeconds)
+                // Not over a native screen in a hybrid app: the page rebuilds
+                // out of sight there.
+                if CraftHybrid.shared.webIsVisible {
+                    CraftChrome.shared.showSplash(atMost: config.splashMaxSeconds)
+                }
                 installUserScripts(into: webView.configuration.userContentController)
                 if webView.url == nil, let lastURL = lastPageURL {
                     webView.load(config.request(for: lastURL))
@@ -2615,7 +2691,7 @@ struct CraftWebView: UIViewRepresentable {
                 }
             case .giveUp:
                 print("Craft: the page's content process died \(recoveryBudget.attempts) times in a minute; showing the offline page")
-                CraftChrome.shared.hideSplash()
+                if CraftHybrid.shared.webIsVisible { CraftChrome.shared.hideSplash() }
                 showOfflinePage(in: webView)
             }
         }
@@ -2705,6 +2781,10 @@ struct CraftWebView: UIViewRepresentable {
 
         /// True when a saved place was handed to the web view to load.
         func restoreInteractionState(into webView: WKWebView) -> Bool {
+            // A hybrid app that opens on a native screen loads the page at
+            // that screen's path, never where the page was left: the native
+            // screen is the start.
+            guard !CraftHybrid.shared.startsNative else { return false }
             guard #available(iOS 15.0, *), let file = Self.interactionStateFile,
                   UserDefaults.standard.string(forKey: Self.interactionStateBuildKey) == Self.currentBuild,
                   let state = try? Data(contentsOf: file) else { return false }
@@ -2790,6 +2870,19 @@ struct CraftWebView: UIViewRepresentable {
             }
             loadedBundledFallback = false
             webView.load(config.request(for: remote))
+        }
+
+        /// Load `path` on the app's own origin afresh: for a hybrid app whose
+        /// page cannot navigate itself (still loading, or the offline page).
+        func loadAppPath(_ path: String) {
+            guard let webView else { return }
+            guard let remote = config.devServerURL.flatMap(URL.init(string:)),
+                  let url = URL(string: path, relativeTo: remote)?.absoluteURL else {
+                if let bundled = URL(string: "craft://app\(path)") { webView.load(URLRequest(url: bundled)) }
+                return
+            }
+            loadedBundledFallback = false
+            webView.load(config.request(for: url))
         }
 
         fileprivate func isTrustedURL(_ url: URL?) -> Bool {
@@ -2882,6 +2975,9 @@ struct CraftWebView: UIViewRepresentable {
                 controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             }
             controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            if CraftHybrid.shared.isEnabled {
+                controller.addUserScript(WKUserScript(source: CraftHybrid.shared.pageScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            }
         }
 
         private func appearanceSnapshot() -> [String: Any] {
