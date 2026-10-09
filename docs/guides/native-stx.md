@@ -36,6 +36,7 @@ bundle must be local at build time.
 | `Button` | `UIButton` | `Button` |
 | `Link` | underlined `UIButton` | underlined clickable `TextView` |
 | `TextInput` | `UITextField` | `EditText` |
+| `Picker` | `UIPickerView` | `Spinner` |
 | `Switch` | `UISwitch` | `Switch` |
 | `Slider` | `UISlider` | `SeekBar` |
 | `ActivityIndicator` | `UIActivityIndicatorView` | `ProgressBar` |
@@ -64,6 +65,9 @@ generated renderers, so a platform can’t silently lose a native primitive.
 delivered.
 `Button.color` and `Link.color` set the native action-label color;
 `style.color` remains the shared fallback when either prop is omitted.
+`Picker` renders option children from `<select>`/`<option>` or the native
+primitive, accepts `value`/`selectedValue`, and sends the selected option's
+`value` plus `index` through `onValueChange` or `onChange`.
 `Text` supports positive `numberOfLines` values and `ellipsizeMode` (`head`,
 `middle`, `tail`, or `clip`) on both hosts; omitting the line count keeps the
 label intrinsically multiline.

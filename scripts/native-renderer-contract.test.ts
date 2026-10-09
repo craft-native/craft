@@ -97,6 +97,18 @@ describe('native renderer component contract', () => {
     expect(guide).toContain('`Slider` accepts `minimumTrackTintColor`')
   })
 
+  it('keeps Picker option selection aligned across hosts and fixtures', () => {
+    expect(ios).toContain('UIPickerViewDataSource, UIPickerViewDelegate')
+    expect(ios).toContain('picker.selectRow(row, inComponent: 0, animated: false)')
+    expect(ios).toContain('"nativeEvent": ["value": option.value, "index": row]')
+    expect(android).toContain('"Picker" -> (previous as? Spinner ?: Spinner(this)).apply')
+    expect(android).toContain('setSelection(selected, false)')
+    expect(android).toContain('.put("value", option.first).put("index", position)')
+    expect(navigationHome).toContain('<select testID="native-picker"')
+    expect(navigationHome).toContain('<option value="one">One</option>')
+    expect(guide).toContain('| `Picker` | `UIPickerView` | `Spinner` |')
+  })
+
   it('keeps TextInput text styles aligned across hosts', () => {
     expect(ios).toContain('field.defaultTextAttributes = inputTextAttributes(')
     expect(ios).toContain('textView.typingAttributes = attributes')

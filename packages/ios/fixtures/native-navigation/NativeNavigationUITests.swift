@@ -185,6 +185,10 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["switch on"].waitForExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "1")
 
+        XCTAssertTrue(app.otherElements["native-picker"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["picker-value"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["picker-value"].label, "one")
+
         let slider = app.sliders["native-slider"]
         XCTAssertTrue(slider.waitForExistence(timeout: 5))
         slider.adjust(toNormalizedSliderPosition: 0.8)

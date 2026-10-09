@@ -15,6 +15,7 @@ let panelAccessibilityDisabled = false
 let longPressStatus = ''
 let longPressAccessibilityDisabled = false
 let switchValue = false
+let pickerValue = 'one'
 let sliderValue = 0.5
 let sliderCompletions = 0
 let layoutWidth = 0
@@ -150,6 +151,11 @@ function toggleSwitch(event) {
   status = switchValue ? 'switch on' : 'switch off'
 }
 
+function choosePicker(event) {
+  pickerValue = event.value
+  status = `picker ${pickerValue}`
+}
+
 function moveSlider(event) {
   sliderValue = event.value
   status = 'slider moved'
@@ -215,6 +221,12 @@ function openCapabilities() {
     <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
     <Switch testID="native-switch" value={switchValue} accessibilityState={{"checked":switchValue}} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Switch testID="nullable-switch" value={null} checked={true} />
+    <select testID="native-picker" value={pickerValue} onChange={choosePicker}>
+      <option value="one">One</option>
+      <option value="two">Two</option>
+      <option value="three">Three</option>
+    </select>
+    <Text testID="picker-value">{pickerValue}</Text>
     <Slider testID="native-slider" minimumValue={0} maximumValue={1} step={0.1} value={sliderValue} minimumTrackTintColor="#22c55e" maximumTrackTintColor="#64748b" thumbTintColor="#16a34a" onValueChange={moveSlider} onSlidingComplete={finishSlider} />
     <Text testID="slider-value">{sliderValue}</Text>
     <Text testID="slider-completions">Slider completions: {sliderCompletions}</Text>

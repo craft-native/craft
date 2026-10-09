@@ -23,6 +23,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -310,6 +311,12 @@ class NativeNavigationTest {
             assertTrue("native switch should apply track tint", nativeSwitch.trackTintList != null)
             assertTrue("native switch should apply thumb tint", nativeSwitch.thumbTintList != null)
             assertTrue("null switch value should fall back to checked", (awaitView(activity, "nullable-switch") as Switch).isChecked)
+            val picker = awaitView(activity, "native-picker")
+            assertTrue("native picker should be an Android Spinner", picker is Spinner)
+            assertEquals("one", (awaitView(activity, "picker-value") as TextView).text.toString())
+            instrumentation.runOnMainSync { (picker as Spinner).setSelection(1) }
+            awaitText(activity, "picker-value", "two")
+            assertEquals("picker two", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val justifiedText = awaitView(activity, "justified-text") as TextView
             assertEquals("justified text should use the Android inter-word mode", Layout.JUSTIFICATION_MODE_INTER_WORD, justifiedText.justificationMode)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
