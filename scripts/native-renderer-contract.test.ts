@@ -123,6 +123,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('modal.onRequestClose =')
     expect(ios).toContain('let flowChildren = next.filter { $0.type != "Modal" }')
     expect(ios).toContain('stack.bringSubviewToFront(modal)')
+    expect(ios).toContain('!($0 is CraftNativeModalView)')
     expect(android).toContain('private class CraftNativeModalView(context: Context) : FrameLayout(context)')
     expect(android).toContain('setVisible(visible, style.optDouble("opacity", 1.0).toFloat(), props.optString("animationType").ifBlank { null })')
     expect(android).toContain('blocker.setOnTouchListener { _, _ -> true }')

@@ -153,7 +153,7 @@ private final class CraftNativeFlowView: UIStackView {
 
     override var intrinsicContentSize: CGSize {
         let children = subviews.filter {
-            !$0.isHidden && !($0 is CraftNativeFlexSpacer)
+            !$0.isHidden && !($0 is CraftNativeFlexSpacer) && !($0 is CraftNativeModalView)
                 && (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
         }
         guard !children.isEmpty else { return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric) }
@@ -193,7 +193,7 @@ private final class CraftNativeFlowView: UIStackView {
             items = []; sizes = []; main = 0; cross = 0
         }
 
-        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) {
+        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) && !(child is CraftNativeModalView) {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             if style.position == "absolute" { continue }
             let size = measuredSize(for: child, available: content.size, style: style)
@@ -246,7 +246,7 @@ private final class CraftNativeFlowView: UIStackView {
             crossOffset += lineCross + crossGapValue
         }
 
-        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) {
+        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) && !(child is CraftNativeModalView) {
             let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
             guard style.position == "absolute" else { continue }
             let size = measuredSize(for: child, available: content.size, style: style)
