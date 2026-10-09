@@ -58,6 +58,17 @@ const fixtures: CompileFixture[] = [
       enableWatchApp: true,
     },
   },
+  {
+    // Web plus native screens: CraftHybrid.swift and its hooks compile.
+    name: 'HybridProbe',
+    bundleId: 'dev.craft.templates.hybrid',
+    config: {
+      devServerURL: 'http://localhost:3000/m',
+      nativeScreens: { '/m': 'Today', '/m/workout/:id': 'Workout' },
+      tabs: [{ id: '/m', title: 'Today', symbol: 'sun.max' }, { id: '/m/calendar', title: 'Calendar', symbol: 'calendar' }],
+      shareStorage: { auth_token: 'auth.token' },
+    },
+  },
 ]
 
 /** Push on and nothing else, so the entitlement builds stay quick. */

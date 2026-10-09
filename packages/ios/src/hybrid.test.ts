@@ -219,6 +219,16 @@ describe('hybrid page script', () => {
     expect(page.posts.at(-1).type).toBe('navigateNative')
   })
 
+  it('answers the shell once the page has drawn the path, or when it went nowhere', async () => {
+    const page = loadPage()
+    let drawn = false
+    const pending = page.window.__craftHybrid.navigate('/m/workout/7').then((answer: any) => { drawn = true; return answer })
+    expect(drawn).toBe(false)
+    expect(await pending).toEqual({ path: '/m/workout/7', depth: 1 })
+    // Off-origin: the router declines (answers false) and reports nothing.
+    expect(await page.window.__craftHybrid.navigate('https://elsewhere.test/x')).toEqual({ path: '/m/workout/7', depth: 1 })
+  })
+
   it('navigates a page without a router by loading the path', async () => {
     const page = loadPage()
     page.window.stxRouter = undefined

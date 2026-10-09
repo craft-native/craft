@@ -239,16 +239,6 @@ final class CraftHybrid: NSObject {
     private(set) var startPath = "/"
     /// Whether that path is a native screen, drawn before the page loads.
     private(set) var startsNative = false
-    /// When the process started, for the first-frame log line.
-    let launchedAt: Date = {
-        var info = kinfo_proc()
-        var size = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
-        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return Date() }
-        let start = info.kp_proc.p_starttime
-        return Date(timeIntervalSince1970: Double(start.tv_sec) + Double(start.tv_usec) / 1_000_000)
-    }()
-
     weak var controller: CraftHybridController?
     weak var webView: WKWebView?
 
@@ -398,6 +388,9 @@ final class CraftHybrid: NSObject {
       function atBase() { return base !== null && depth() <= base; }
       var hostNav = null;
       var hostPop = false;
+      // The shell's navigation in flight, answered once the page has drawn it.
+      var arriving = null;
+      function frame(callback) { (window.requestAnimationFrame || setTimeout)(callback); }
 
       var navigate = null;
       var historyBack = history.back.bind(history);
@@ -470,6 +463,12 @@ final class CraftHybrid: NSObject {
         if (direction === 'pop' && hostPop) { message.byHost = true; hostPop = false; }
         else if (hostNav !== null && local(hostNav) === message.path) { message.byHost = true; hostNav = null; }
         post(message);
+        if (arriving && arriving.path === message.path) {
+          var finish = arriving.finish;
+          arriving = null;
+          // Two frames on: the new screen is on screen, not just in the DOM.
+          frame(function () { frame(finish); });
+        }
       }
       window.addEventListener('stx:navigate', function (event) {
         var detail = (event && event.detail) || {};
@@ -501,19 +500,29 @@ final class CraftHybrid: NSObject {
         match: function (url) { var path = local(url); return path === null ? null : match(path); },
         // The shell's own navigation: never handed back to it, and without
         // the page's slide, since the shell animates the push itself.
+        // Answers once the page has drawn `path` (its router settles before
+        // the new screen is up), or at once when it went nowhere.
         navigate: function (path) {
           hostNav = path;
-          var finish = function () {
-            // The router reports before it settles; a navigation that never
-            // reported must not leave the next one unhandled.
-            setTimeout(function () { if (hostNav === path) hostNav = null; }, 0);
-            return { path: location.pathname + location.search, depth: depth() };
-          };
-          if (navigate && current && current.__craftHybrid) {
-            return Promise.resolve(navigate(path, { instant: true })).then(finish, finish);
-          }
-          location.assign(path);
-          return Promise.resolve({ path: path, depth: 0 });
+          return new Promise(function (resolve) {
+            var done = false;
+            var finish = function () {
+              if (done) return;
+              done = true;
+              // A navigation that never reported must not leave the next one unhandled.
+              setTimeout(function () { if (hostNav === path) hostNav = null; }, 0);
+              resolve({ path: location.pathname + location.search, depth: depth() });
+            };
+            if (!(navigate && current && current.__craftHybrid)) {
+              location.assign(path);
+              resolve({ path: path, depth: 0 });
+              return;
+            }
+            arriving = { path: local(path), finish: finish };
+            Promise.resolve(navigate(path, { instant: true })).then(function (went) {
+              if (went === false && arriving && arriving.finish === finish) { arriving = null; finish(); }
+            }, function () { arriving = null; finish(); });
+          });
         },
         setBase: function (value) { base = typeof value === 'number' ? value : null; },
         // Back to `target` in the page's stack, after the shell popped the
@@ -615,8 +624,10 @@ final class CraftHybrid: NSObject {
     // MARK: Driving the page
 
     /// Navigate the page to `path` and answer with its depth there, or nil
-    /// when the page could only be loaded afresh. Answers within 0.6 s.
-    func navigatePage(_ path: String, completion: @escaping (Int?) -> Void) {
+    /// when the page could only be loaded afresh or is still on its way.
+    /// Answers within `within` seconds: a push waits that long at most for
+    /// the page, then slides in and shows the page when it has arrived.
+    func navigatePage(_ path: String, within: TimeInterval = 0.35, completion: @escaping (Int?) -> Void) {
         var answered = false
         let answer: (Int?) -> Void = { depth in
             guard !answered else { return }
@@ -628,7 +639,7 @@ final class CraftHybrid: NSObject {
             answer(nil)
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { answer(nil) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + within) { answer(nil) }
         webView.callAsyncJavaScript(
             "if (!window.__craftHybrid) return null; var r = await window.__craftHybrid.navigate(path); return r ? r.depth : null;",
             arguments: ["path": path],
@@ -685,6 +696,9 @@ final class CraftHybridWebSlot: UIViewController {
     /// page's stack is all the page's.
     var depth: Int?
     let isTabRoot: Bool
+    /// The page has not reached `path` yet: the entry shows its background,
+    /// not the page it is leaving, until it has.
+    var awaitingPage = false
 
     init(path: String, depth: Int?, isTabRoot: Bool) {
         self.path = path
@@ -757,15 +771,30 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
     private func attachWeb() {
         guard !webAttached else { return }
         webAttached = true
-        addChild(webHost)
         webHost.view.backgroundColor = config.resolvedBackgroundColor
         if #available(iOS 16.4, *) { webHost.safeAreaRegions = [] }
         if let slot = visibleStack?.topViewController as? CraftHybridWebSlot, slot.isViewLoaded {
-            place(webHost.view, in: slot.view)
+            moveWeb(to: slot, in: slot.view)
         } else {
-            place(webHost.view, in: parking)
+            moveWeb(to: self, in: parking)
         }
-        webHost.didMove(toParent: self)
+    }
+
+    /// The web view's controller is the child of whichever controller shows
+    /// it: UIKit refuses a child's view in another controller's hierarchy.
+    private func moveWeb(to owner: UIViewController, in container: UIView) {
+        if webHost.parent !== owner {
+            if webHost.parent != nil {
+                webHost.willMove(toParent: nil)
+                webHost.view.removeFromSuperview()
+                webHost.removeFromParent()
+            }
+            owner.addChild(webHost)
+            place(webHost.view, in: container)
+            webHost.didMove(toParent: owner)
+        } else if webHost.view.superview !== container {
+            place(webHost.view, in: container)
+        }
     }
 
     private func place(_ child: UIView, in container: UIView) {
@@ -792,7 +821,6 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
     private func makeStack(tab: String, rootPath: String) -> UINavigationController {
         let nav = UINavigationController(rootViewController: entry(for: rootPath, isTabRoot: true, depth: nil))
         nav.delegate = self
-        nav.interactivePopGestureRecognizer?.delegate = self
         nav.view.backgroundColor = config.resolvedBackgroundColor
         nav.additionalSafeAreaInsets.bottom = safeAreaForTabBar()
         nav.setNavigationBarHidden(true, animated: false)
@@ -801,6 +829,9 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(nav.view)
         nav.didMove(toParent: self)
+        // Only once the stack's view has loaded: the recognizer is made then,
+        // and before it is nil, so the delegate never took.
+        for recognizer in popRecognizers(of: nav) { recognizer.delegate = self }
         stacks[tab] = nav
         shownStacks[ObjectIdentifier(nav)] = nav.viewControllers
         return nav
@@ -841,13 +872,15 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
     func adoptWeb(into slot: CraftHybridWebSlot) {
         guard slot.navigationController === visibleStack || visibleStack == nil else { return }
         attachWeb()
-        if webHost.view.superview !== slot.view { place(webHost.view, in: slot.view) }
+        moveWeb(to: slot, in: slot.view)
+        webHost.view.alpha = slot.awaitingPage ? 0 : 1
         hybrid.setPageBase(slot.isTabRoot ? nil : slot.depth)
     }
 
     private func parkWeb() {
         guard webAttached else { return }
-        if webHost.view.superview !== parking { place(webHost.view, in: parking) }
+        webHost.view.alpha = 1
+        moveWeb(to: self, in: parking)
     }
 
     // MARK: Opening paths
@@ -914,9 +947,23 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
             guard let self else { return }
             self.openingWeb = false
             guard let nav else { return }
-            let slot = CraftHybridWebSlot(path: path, depth: depth ?? self.hybrid.pageDepth, isTabRoot: false)
+            let slot = CraftHybridWebSlot(path: path, depth: depth, isTabRoot: false)
+            // Slow to answer: slide in the entry, and the page once it is there.
+            if depth == nil {
+                slot.awaitingPage = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self, weak slot] in
+                    guard let slot, slot.awaitingPage else { return }
+                    self?.reveal(slot)
+                }
+            }
             nav.pushViewController(slot, animated: true)
         }
+    }
+
+    private func reveal(_ slot: CraftHybridWebSlot) {
+        slot.awaitingPage = false
+        guard webHost.view.superview === slot.view else { return }
+        UIView.animate(withDuration: 0.15) { self.webHost.view.alpha = 1 }
     }
 
     /// Back from the web entry on top, as the page's Back at that entry asks.
@@ -934,6 +981,7 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         }
         if let slot = visibleStack?.topViewController as? CraftHybridWebSlot {
             if !slot.isTabRoot, slot.depth == nil { slot.depth = depth }
+            if slot.awaitingPage, CraftHybridRoutes.normalize(path) == CraftHybridRoutes.normalize(slot.path) { reveal(slot) }
             if webIsVisible { hybrid.setPageBase(slot.isTabRoot ? nil : slot.depth) }
         }
         guard !byHost, direction != "tab", !openingWeb, let nav = visibleStack else { return }
@@ -987,8 +1035,21 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         return true
     }
 
+    /// The page's own idea of its tab counts only while the page is a
+    /// tab's root: over a native screen, or on an entry the shell pushed
+    /// there, the page cannot know which tab it is in (a workout page
+    /// loaded on its own lights Calendar, though Today opened it). The bar
+    /// then keeps the tab that is on screen.
     func pageSelectedTab(_ id: String) {
         guard id != currentTab, pendingTab?.id != id else { return }
+        guard let top = visibleStack?.topViewController as? CraftHybridWebSlot, top.isTabRoot else {
+            let shown = currentTab
+            DispatchQueue.main.async {
+                guard CraftChrome.shared.selected != shown else { return }
+                CraftChrome.shared.selected = shown
+            }
+            return
+        }
         show(tab: id)
     }
 
@@ -1039,14 +1100,49 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
 
     // MARK: UIGestureRecognizerDelegate
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let nav = visibleStack, gestureRecognizer === nav.interactivePopGestureRecognizer,
-              nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
-        // From a web entry, only while the page is at that entry: deeper, the
-        // swipe is the page's own.
-        if let slot = nav.topViewController as? CraftHybridWebSlot, let depth = slot.depth {
-            return hybrid.pageDepth <= depth
+    /// The edge swipe back, and on iOS 26 the swipe back from anywhere on the
+    /// screen, which is the one that answers a swipe that starts a little in
+    /// from the edge. Both refuse on their own while the bar is hidden, which
+    /// it is over a web entry; the shell decides for them instead.
+    private func popRecognizers(of nav: UINavigationController) -> [UIGestureRecognizer] {
+        var recognizers = [nav.interactivePopGestureRecognizer].compactMap { $0 }
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *), let content = nav.interactiveContentPopGestureRecognizer {
+            recognizers.append(content)
         }
+        #endif
+        return recognizers
+    }
+
+    private func isPopRecognizer(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard let nav = visibleStack else { return false }
+        return popRecognizers(of: nav).contains { $0 === recognizer }
+    }
+
+    /// The edge swipe goes ahead of the web view's own gestures, which
+    /// otherwise hold every touch over the page until the page has answered it.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === visibleStack?.interactivePopGestureRecognizer
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let nav = visibleStack, isPopRecognizer(gestureRecognizer),
+              nav.viewControllers.count > 1, nav.transitionCoordinator == nil else { return false }
+        guard let slot = nav.topViewController as? CraftHybridWebSlot else { return true }
+        // Over the page, only from its left edge: a swipe across the page is
+        // the page's (a carousel, a slider).
+        if gestureRecognizer !== nav.interactivePopGestureRecognizer {
+            // Where the finger came down: where it is, less how far it moved.
+            let moved = (gestureRecognizer as? UIPanGestureRecognizer)?.translation(in: nav.view).x ?? 0
+            if gestureRecognizer.location(in: nav.view).x - moved > 32 { return false }
+        }
+        // And only while the page is at that entry: deeper, the swipe is the
+        // page's own Back.
+        if let depth = slot.depth { return hybrid.pageDepth <= depth }
         return true
     }
 
@@ -1056,9 +1152,10 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         guard !firstFrameLogged else { return }
         firstFrameLogged = true
         let path = nativePaths[ObjectIdentifier(screen)] ?? "?"
-        let started = hybrid.launchedAt
+        // Logged when the frame is committed: a cold launch is timed from the
+        // process's first log line to this one, as the web's "splash hidden".
         CATransaction.setCompletionBlock { [weak self] in
-            NSLog("[craft hybrid] native first frame %@ %.0f ms after the process started", path, Date().timeIntervalSince(started) * 1000)
+            NSLog("[craft hybrid] native first frame %@", path)
             self?.attachWeb()
         }
         CraftChrome.shared.hideSplash()
