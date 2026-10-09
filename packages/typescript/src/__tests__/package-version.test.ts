@@ -28,13 +28,17 @@ test('relocated ESM and CJS bundles retain their build-time SDK version', async 
     const native = join(temp, 'native')
     writeFileSync(native, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "craft version $CRAFT_TEST_VERSION"; fi\n')
     chmodSync(native, 0o755)
+    // The CJS bundle is for Node, so it runs there when Node is installed, as
+    // it is in CI. A machine with only Bun still runs it, under Bun's own
+    // require, instead of failing to find an executable.
+    const cjsRuntime = Bun.which('node') ?? process.execPath
     for (const format of ['esm', 'cjs'] as const) {
       const bundle = join(temp, format, format === 'cjs' ? 'sdk.cjs' : 'sdk.mjs')
       const consumer = join(temp, format === 'cjs' ? 'consumer.cjs' : 'consumer.mjs')
       const load = format === 'cjs' ? `const sdk = require(${JSON.stringify(bundle)})` : `import * as sdk from ${JSON.stringify(bundle)}`
       writeFileSync(consumer, `${load}\nsdk.createApp({ url: 'https://example.test', craftPath: ${JSON.stringify(native)}, quiet: true }).show().catch(error => { console.error(error); process.exitCode = 1 })\n`)
       for (const nativeVersion of ['7.8.9', '7.8.10']) {
-        const result = Bun.spawnSync([format === 'cjs' ? 'node' : process.execPath, consumer], {
+        const result = Bun.spawnSync([format === 'cjs' ? cjsRuntime : process.execPath, consumer], {
           cwd: temp,
           env: { ...process.env, CRAFT_TEST_VERSION: nativeVersion },
           stdout: 'pipe', stderr: 'pipe',
