@@ -106,6 +106,24 @@ class NativeNavigationTest {
         instrumentation.runOnMainSync { view.performClick() }
     }
 
+    private fun pullToRefresh(host: CraftNativeRefreshableFlatList) {
+        val downTime = SystemClock.uptimeMillis()
+        val x = host.width / 2f
+        val startY = 2f
+        val endY = (host.height * 0.9f).coerceAtLeast(120f)
+        instrumentation.runOnMainSync {
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, startY, 0)
+            val move = MotionEvent.obtain(downTime, downTime + 16, MotionEvent.ACTION_MOVE, x, endY, 0)
+            val up = MotionEvent.obtain(downTime, downTime + 32, MotionEvent.ACTION_UP, x, endY, 0)
+            host.dispatchTouchEvent(down)
+            host.dispatchTouchEvent(move)
+            host.dispatchTouchEvent(up)
+            down.recycle()
+            move.recycle()
+            up.recycle()
+        }
+    }
+
     private fun awaitText(activity: MainActivity, id: String, expected: String): TextView {
         repeat(75) {
             var matching: TextView? = null
@@ -473,9 +491,8 @@ class NativeNavigationTest {
             val peopleHost = awaitView(activity, "people-list") as CraftNativeRefreshableFlatList
             val people = peopleHost.list
             assertTrue("FlatList refresh host did not enable pull-to-refresh", peopleHost.isEnabled)
-            instrumentation.runOnMainSync { peopleHost.isRefreshing = true }
-            assertTrue("FlatList refresh host did not enter refreshing state", peopleHost.isRefreshing)
-            instrumentation.runOnMainSync { peopleHost.isRefreshing = false }
+            pullToRefresh(peopleHost)
+            awaitText(activity, "people-count", "People: 40; events: 1")
             val peopleHeader = awaitView(activity, "people-header") as TextView
             assertTrue("FlatList contentContainerStyle did not add top padding", peopleHeader.top >= people.top + (8 * density).toInt())
             val peopleLayouts = awaitView(activity, "people-layout-status") as TextView
@@ -497,12 +514,12 @@ class NativeNavigationTest {
             assertEquals("draft", personInput.text.toString())
             assertTrue("keyed list update dropped input focus", personInput.isFocused)
             instrumentation.runOnMainSync { people.scrollToPosition(people.adapter!!.itemCount - 1) }
-            awaitText(activity, "people-count", "People: 41; events: 2")
+            awaitText(activity, "people-count", "People: 41; events: 3")
             awaitLayoutIncrease(activity, "people-layout-status", initialRowLayouts)
             click(activity, "clear-people")
             assertEquals("Nobody here", (awaitView(activity, "people-empty") as TextView).text.toString())
             assertEquals("End of people", (awaitView(activity, "people-footer") as TextView).text.toString())
-            awaitText(activity, "people-count", "People: 0; events: 3")
+            awaitText(activity, "people-count", "People: 0; events: 4")
             assertNoWebView(activity)
 
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
