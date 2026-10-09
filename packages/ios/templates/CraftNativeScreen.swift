@@ -1327,7 +1327,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         for child in parent.children where !next.contains(where: { $0 === child }) {
             detach(child, from: stack)
         }
-        for (index, child) in next.enumerated() {
+        for modal in stack.arrangedSubviews where modal is CraftNativeModalView {
+            stack.removeArrangedSubview(modal)
+        }
+        let flowChildren = next.filter { $0.type != "Modal" }
+        for (index, child) in flowChildren.enumerated() {
             if index < stack.arrangedSubviews.count, stack.arrangedSubviews[index] === child.view {
                 stack.setLayoutStyle(child.style, for: child.view)
                 continue
@@ -1335,6 +1339,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if child.view.superview === stack { stack.removeArrangedSubview(child.view) }
             stack.insertArrangedSubview(child.view, at: min(index, stack.arrangedSubviews.count))
             stack.setLayoutStyle(child.style, for: child.view)
+        }
+        for child in next where child.type == "Modal" {
+            guard let modal = child.view as? CraftNativeModalView else { continue }
+            if modal.superview !== stack {
+                modal.removeFromSuperview()
+                stack.addSubview(modal)
+            }
+            modal.frame = stack.bounds
+            modal.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            stack.bringSubviewToFront(modal)
         }
         parent.children = next
         addJustificationSpacers(to: stack, value: style["justifyContent"] as? String)
@@ -1417,6 +1431,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     private func detach(_ node: RenderedNode, from stack: CraftNativeFlowView) {
         forgetHandlers(node)
+        if node.type == "Modal" {
+            node.view.removeFromSuperview()
+            return
+        }
         stack.removeLayoutStyle(for: node.view)
         stack.removeArrangedSubview(node.view)
         node.view.removeFromSuperview()

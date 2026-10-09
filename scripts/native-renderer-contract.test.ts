@@ -118,11 +118,15 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('modal.transparent = props["transparent"] as? Bool == true')
     expect(ios).toContain('events["onShow"]')
     expect(ios).toContain('modal.onRequestClose =')
+    expect(ios).toContain('let flowChildren = next.filter { $0.type != "Modal" }')
+    expect(ios).toContain('stack.bringSubviewToFront(modal)')
     expect(android).toContain('private class CraftNativeModalView(context: Context) : FrameLayout(context)')
     expect(android).toContain('setVisible(visible, style.optDouble("opacity", 1.0).toFloat(), props.optString("animationType").ifBlank { null })')
     expect(android).toContain('blocker.setOnTouchListener { _, _ -> true }')
     expect(android).toContain('screen.modalCloseHandlers[modal.key]')
     expect(android).toContain('events.optString("onShow")')
+    expect(android).toContain('if (child is CraftNativeModalView)')
+    expect(android).toContain('entry.view.bringToFront()')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {

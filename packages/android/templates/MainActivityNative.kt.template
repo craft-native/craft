@@ -194,6 +194,16 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val lp = child.layoutParams as? MarginLayoutParams
             val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
             val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            if (child is CraftNativeModalView) {
+                val modalWidth = max(0, width - paddingLeft - paddingRight)
+                val modalHeight = max(0, height - paddingTop - paddingBottom)
+                child.measure(
+                    View.MeasureSpec.makeMeasureSpec(modalWidth, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(modalHeight, View.MeasureSpec.EXACTLY),
+                )
+                absolute += Entry(child, style, modalWidth, modalHeight)
+                continue
+            }
             val childWidth = measureChildWidth(child, style, width - paddingLeft - paddingRight, horizontalMargins)
             val childHeight = measureChildHeight(child, style, height - paddingTop - paddingBottom, verticalMargins)
             val entry = Entry(child, style, childWidth, childHeight)
@@ -226,6 +236,16 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val lp = child.layoutParams as? MarginLayoutParams
             val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
             val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            if (child is CraftNativeModalView) {
+                val modalWidth = max(0, width - paddingLeft - paddingRight)
+                val modalHeight = max(0, height - paddingTop - paddingBottom)
+                child.measure(
+                    View.MeasureSpec.makeMeasureSpec(modalWidth, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(modalHeight, View.MeasureSpec.EXACTLY),
+                )
+                absolute += Entry(child, style, modalWidth, modalHeight)
+                continue
+            }
             val childWidth = measureChildWidth(child, style, cellWidth, horizontalMargins)
             val childHeight = measureChildHeight(child, style, height - paddingTop - paddingBottom, verticalMargins)
             val entry = Entry(child, style, childWidth, childHeight)
@@ -253,7 +273,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val child = getChildAt(index)
             if (child.visibility == GONE) continue
             val style = styles[child] ?: CraftNativeLayoutStyle()
-            if (style.position == "absolute") continue
+            if (style.position == "absolute" || child is CraftNativeModalView) continue
             val lp = child.layoutParams as? MarginLayoutParams
             val horizontalMargins = (lp?.leftMargin ?: 0) + (lp?.rightMargin ?: 0)
             val verticalMargins = (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
@@ -368,6 +388,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             val contentWidth = width - paddingLeft - paddingRight
             val contentHeight = height - paddingTop - paddingBottom
             for (entry in layout.absolute) {
+                if (entry.view is CraftNativeModalView && entry.view.visibility == View.VISIBLE) entry.view.bringToFront()
                 val childWidth = if (entry.style.left != null && entry.style.right != null) contentWidth - entry.style.left!! - entry.style.right!! else entry.width
                 val childHeight = if (entry.style.top != null && entry.style.bottom != null) contentHeight - entry.style.top!! - entry.style.bottom!! else entry.height
                 val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - childWidth } ?: 0))
@@ -438,6 +459,7 @@ private class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
             crossOffset += line.cross + crossGap
         }
         for (entry in absolute) {
+            if (entry.view is CraftNativeModalView && entry.view.visibility == View.VISIBLE) entry.view.bringToFront()
             val widthValue = if (entry.style.left != null && entry.style.right != null) contentWidth - entry.style.left!! - entry.style.right!! else entry.width
             val heightValue = if (entry.style.top != null && entry.style.bottom != null) contentHeight - entry.style.top!! - entry.style.bottom!! else entry.height
             val x = paddingLeft + (entry.style.left ?: (entry.style.right?.let { contentWidth - it - widthValue } ?: 0))
