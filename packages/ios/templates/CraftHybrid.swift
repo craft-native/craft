@@ -1077,8 +1077,11 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
 
     func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController, animated: Bool) {
         // The page draws its own header, and a tab's root screen its own
-        // title; a pushed native screen gets the bar and its Back.
-        let bare = viewController is CraftHybridWebSlot || navigationController.viewControllers.first === viewController
+        // title unless it asked for the bar; a pushed native screen gets the
+        // bar and its Back.
+        // A root screen that asked for its own bar (setOptions) keeps it.
+        let asksForBar = (viewController as? CraftNativeScreenController)?.wantsNavigationBar ?? false
+        let bare = viewController is CraftHybridWebSlot || (navigationController.viewControllers.first === viewController && !asksForBar)
         navigationController.setNavigationBarHidden(bare, animated: animated)
     }
 

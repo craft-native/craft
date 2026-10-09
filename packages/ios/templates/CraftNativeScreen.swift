@@ -1289,7 +1289,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let navigationBarHidden, navigationController?.isNavigationBarHidden != navigationBarHidden {
             navigationController?.setNavigationBarHidden(navigationBarHidden, animated: animated)
         } else if navigationBarHidden == nil, navigationController?.isNavigationBarHidden == true,
-                  navigationController?.viewControllers.first !== self {
+                  navigationController?.viewControllers.first !== self || wantsNavigationBar {
             // A screen that did not ask for a hidden bar shows one, even after
             // a screen that hid its own.
             navigationController?.setNavigationBarHidden(false, animated: animated)
@@ -1391,6 +1391,33 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                         if (!callback) return;
                         timers.delete(id);
                         callback();
+                    };
+                })();
+            }
+            // Repeating timers, on the one-shot ones: each tick schedules the
+            // next before running, so a callback that throws or clears itself
+            // still behaves, and a screen that closes cancels them with the rest.
+            if (typeof globalThis.setInterval !== 'function') {
+                (function() {
+                    var intervals = new Map();
+                    var nextInterval = 0;
+                    globalThis.setInterval = function(callback, delay) {
+                        var args = Array.prototype.slice.call(arguments, 2);
+                        var id = ++nextInterval;
+                        var ms = Math.max(Number(delay) || 0, 1);
+                        var tick = function() {
+                            if (!intervals.has(id)) return;
+                            intervals.set(id, globalThis.setTimeout(tick, ms));
+                            if (typeof callback === 'function') callback.apply(undefined, args);
+                        };
+                        intervals.set(id, globalThis.setTimeout(tick, ms));
+                        return id;
+                    };
+                    globalThis.clearInterval = function(id) {
+                        var timer = intervals.get(id);
+                        if (timer === undefined) return;
+                        intervals.delete(id);
+                        globalThis.clearTimeout(timer);
                     };
                 })();
             }
@@ -1570,6 +1597,14 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var rootTopToView: NSLayoutConstraint?
     private var navigationBarHidden: Bool?
     private var prefersLargeTitle: Bool?
+
+    /// Whether this screen asked for a bar of its own through `setOptions`: a
+    /// title, a large title or buttons, and not `hidden`. A tab's root screen
+    /// in a hybrid app is shown bare unless it did.
+    var wantsNavigationBar: Bool {
+        if let navigationBarHidden { return !navigationBarHidden }
+        return titleFromOptions || prefersLargeTitle == true || !(navigationItem.rightBarButtonItems ?? []).isEmpty
+    }
     private weak var trackedScrollView: UIScrollView?
 
     /// `craft.navigation.setOptions`: this screen's bar. Every key is
@@ -1597,6 +1632,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if options.keys.contains("rightButtons") {
             let buttons = (options["rightButtons"] as? [[String: Any]]) ?? []
             navigationItem.rightBarButtonItems = buttons.compactMap(navigationButton).reversed()
+        }
+        // Asked for after the bar was hidden for a bare root screen.
+        if navigationBarHidden == nil, wantsNavigationBar, navigationController?.topViewController === self,
+           navigationController?.isNavigationBarHidden == true {
+            navigationController?.setNavigationBarHidden(false, animated: view.window != nil)
         }
     }
 
