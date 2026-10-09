@@ -11,6 +11,7 @@ const androidRefreshableFlatList = readFileSync(join(root, 'packages/android/tem
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
+const iosNativeUnitTests = readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeRenderUnitTests.swift'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
 const iosReadme = readFileSync(join(root, 'packages/ios/README.md'), 'utf8')
 const androidReadme = readFileSync(join(root, 'packages/android/README.md'), 'utf8')
@@ -543,6 +544,12 @@ describe('native renderer component contract', () => {
     expect(androidRefreshableFlatList).toContain('SwipeRefreshLayout')
     expect(androidRefreshableFlatList).toContain('isRefreshing = handler != null && refreshing')
     expect(guide).toContain('pull-to-refresh')
+  })
+
+  it('tests the iOS refresh control callback and controlled state', () => {
+    expect(iosNativeUnitTests).toContain('testFlatListRefreshControlForwardsAndTracksControlledState')
+    expect(iosNativeUnitTests).toContain('control.sendActions(for: .valueChanged)')
+    expect(iosNativeUnitTests).toContain('XCTAssertTrue(control.isRefreshing)')
   })
 
   it('emits onLayout for virtualized rows on both hosts', () => {

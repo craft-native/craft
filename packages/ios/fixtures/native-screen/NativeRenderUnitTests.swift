@@ -529,6 +529,23 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(momentumEndCount, 1)
     }
 
+    func testFlatListRefreshControlForwardsAndTracksControlledState() {
+        let list = CraftNativeFlatList()
+        var refreshCount = 0
+        list.setRefreshHandler({ refreshCount += 1 }, refreshing: false)
+
+        let control = try! XCTUnwrap(list.refreshControl)
+        control.sendActions(for: .valueChanged)
+        XCTAssertEqual(refreshCount, 1)
+
+        list.setRefreshHandler({ refreshCount += 1 }, refreshing: true)
+        XCTAssertTrue(control.isRefreshing)
+        list.setRefreshHandler({ refreshCount += 1 }, refreshing: false)
+        XCTAssertFalse(control.isRefreshing)
+        list.setRefreshHandler(nil, refreshing: false)
+        XCTAssertNil(list.refreshControl)
+    }
+
     func testFlatListControllerLaysOutAndMovesMulticolumnRowsWithoutReentrantInvalidation() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
