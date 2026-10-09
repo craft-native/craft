@@ -33,6 +33,7 @@ try {
   mkdirSync(join(output, 'UnitTests'))
   mkdirSync(join(output, 'UITests'))
   copyFileSync(join(fixture, 'NativeRenderUnitTests.swift'), join(output, 'UnitTests', 'NativeRenderUnitTests.swift'))
+  copyFileSync(join(fixture, 'NativeLayoutUnitTests.swift'), join(output, 'UnitTests', 'NativeLayoutUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeRenderUITests.swift'), join(output, 'UITests', 'NativeRenderUITests.swift'))
   const project = join(output, 'project.yml')
   const projectWithTargets = insertProjectTargetsBeforeSchemes(readFileSync(project, 'utf8'), `
@@ -57,9 +58,12 @@ try {
   writeFileSync(project, addSchemeTestTargets(projectWithTargets, 'NativeRender', ['NativeRenderUnitTests', 'NativeRenderUITests']))
   run(['xcodegen', 'generate'], output)
 
-  const device = await pickSimulator()
+  // A simulator of its own (CRAFT_NATIVE_RENDER_SIMULATOR=<udid>) keeps other
+  // apps launched on a shared one from interrupting the UI test.
+  const requested = process.env.CRAFT_NATIVE_RENDER_SIMULATOR
+  const device = requested ? { udid: requested, name: requested, state: 'Booted', runtime: 'iOS' } : await pickSimulator()
   if (!device) throw new Error('No iOS simulator is available for native renderer tests')
-  await bootSimulator(device)
+  if (!requested) await bootSimulator(device)
   run([
     'xcodebuild', '-project', 'NativeRender.xcodeproj', '-scheme', 'NativeRender',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,
