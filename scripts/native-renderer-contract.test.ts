@@ -460,7 +460,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('longPressRecognizers.removeValue(forKey: id)')
     expect(ios).toContain('handlers[ObjectIdentifier(view)] != nil || longPressHandlers[ObjectIdentifier(view)] != nil')
     expect(android).toContain('val longPressHandlers = mutableMapOf<View, String>()')
-    expect(android).toContain('events.optString("onLongPress")')
+    expect(android).toContain('events.optString("onLongPress").takeUnless { props.optBoolean("disabled", false) } ?: ""')
     expect(android).toContain('control.setOnLongClickListener {')
     expect(android).toContain('screen.longPressHandlers.keys.removeAll(released)')
     expect(guide).toContain('`onLongPress`')

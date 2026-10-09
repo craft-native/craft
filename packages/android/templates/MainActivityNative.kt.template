@@ -1584,7 +1584,7 @@ class MainActivity : AppCompatActivity() {
             }
             control.isEnabled = !disabled
         }
-        val longPressHandler = events.optString("onLongPress").takeUnless { props.optBoolean("disabled", false) }
+        val longPressHandler = events.optString("onLongPress").takeUnless { props.optBoolean("disabled", false) } ?: ""
         if (longPressHandler.isNotBlank()) {
             screen.longPressHandlers[control] = longPressHandler
             control.setOnLongClickListener {
