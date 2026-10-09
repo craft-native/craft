@@ -1,5 +1,88 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.124...v0.0.125)
+
+## 🚀 Features
+
+- **ios**: web plus native screens in one app ([4efabb6](https://github.com/craft-native/craft/commit/4efabb6)) _(by Chris)_
+- **mobile**: snapshots and hybrid navigation for native screens ([d672c7a](https://github.com/craft-native/craft/commit/d672c7a)) _(by Chris)_
+- **ios**: native screens lay out with flexbox and read their first frame synchronously ([b370456](https://github.com/craft-native/craft/commit/b370456)) _(by Chris)_
+- **native**: add flat list refresh controls ([6300d42](https://github.com/craft-native/craft/commit/6300d42)) _(by glennmichael123)_
+- **android**: add native flat list refresh host ([0b4f142](https://github.com/craft-native/craft/commit/0b4f142)) _(by glennmichael123)_
+- **native**: emit press lifecycle callbacks ([d702f30](https://github.com/craft-native/craft/commit/d702f30)) _(by glennmichael123)_
+- **native**: honor keyboard tap persistence ([d2f8f1b](https://github.com/craft-native/craft/commit/d2f8f1b)) _(by glennmichael123)_
+- **native**: support pressable primitive containers ([131396e](https://github.com/craft-native/craft/commit/131396e)) _(by glennmichael123)_
+- **native**: add modal lifecycle events ([51589ce](https://github.com/craft-native/craft/commit/51589ce)) _(by glennmichael123)_
+- **native**: render parent-scoped modal controls ([fd19ffb](https://github.com/craft-native/craft/commit/fd19ffb)) _(by glennmichael123)_
+- **native**: render picker controls on both hosts ([e783aa6](https://github.com/craft-native/craft/commit/e783aa6)) _(by glennmichael123)_
+- **ios**: fetch and timers for native screens ([2002006](https://github.com/craft-native/craft/commit/2002006)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **native**: stabilize mobile reconciliation fixtures ([1d5d3bc](https://github.com/craft-native/craft/commit/1d5d3bc)) _(by glennmichael123)_
+- **ci**: resolve external stx dependencies with pantry bun ([06f7350](https://github.com/craft-native/craft/commit/06f7350)) _(by glennmichael123)_
+- **ios**: escape the backticks in the CLI's --native-bundle help ([9c88be1](https://github.com/craft-native/craft/commit/9c88be1)) _(by Chris)_
+- **ci**: pin mobile compiler to lockfile release ([b8af55c](https://github.com/craft-native/craft/commit/b8af55c)) _(by glennmichael123)_
+- **ios**: send background work events by name at their call sites ([09f7574](https://github.com/craft-native/craft/commit/09f7574)) _(by Chris)_
+- **ios**: Zig validates every stored config key Swift decodes ([45a7d37](https://github.com/craft-native/craft/commit/45a7d37)) _(by Chris)_
+- **native**: repair iOS fixture initialization and props ([dac7d21](https://github.com/craft-native/craft/commit/dac7d21)) _(by glennmichael123)_
+- **ios**: a hybrid app's swipe back, tabs and pushes, as tried on the simulator ([938e849](https://github.com/craft-native/craft/commit/938e849)) _(by Chris)_
+- **ios**: build the native modal on Xcode 27 and settle three renderer tests ([aa620bd](https://github.com/craft-native/craft/commit/aa620bd)) _(by Chris)_
+- **native**: repair mobile fixture compilation ([dba0c22](https://github.com/craft-native/craft/commit/dba0c22)) _(by glennmichael123)_
+- **native**: compile generated mobile renderers ([9e5891c](https://github.com/craft-native/craft/commit/9e5891c)) _(by glennmichael123)_
+- **ios**: release flat list refresh handlers ([77ce467](https://github.com/craft-native/craft/commit/77ce467)) _(by glennmichael123)_
+- **android**: release refresh list handlers ([ccde8eb](https://github.com/craft-native/craft/commit/ccde8eb)) _(by glennmichael123)_
+- **android**: reset refresh state on detach ([17c94c6](https://github.com/craft-native/craft/commit/17c94c6)) _(by glennmichael123)_
+- **native**: honor flat list content padding ([69aeb76](https://github.com/craft-native/craft/commit/69aeb76)) _(by glennmichael123)_
+- **native**: honor scroll content container styles ([cee06a3](https://github.com/craft-native/craft/commit/cee06a3)) _(by glennmichael123)_
+- **ios**: resize native screens around keyboard ([43d9849](https://github.com/craft-native/craft/commit/43d9849)) _(by glennmichael123)_
+- **ios**: exclude modal overlays from flow measurement ([8470251](https://github.com/craft-native/craft/commit/8470251)) _(by glennmichael123)_
+- **android**: refresh layout after inset changes ([aaf7b7f](https://github.com/craft-native/craft/commit/aaf7b7f)) _(by glennmichael123)_
+- **native**: match pressable opacity feedback ([f17cab1](https://github.com/craft-native/craft/commit/f17cab1)) _(by glennmichael123)_
+- **native**: make modal controls cover their parent ([8c8b2f1](https://github.com/craft-native/craft/commit/8c8b2f1)) _(by glennmichael123)_
+- **ios**: keep native containers touchable without a press handler of their own ([f23c03d](https://github.com/craft-native/craft/commit/f23c03d)) _(by Chris)_
+
+## 📚 Documentation
+
+- **native**: document keyboard tap persistence ([3fdf2d9](https://github.com/craft-native/craft/commit/3fdf2d9)) _(by glennmichael123)_
+- **native**: describe keyboard layout measurement ([9c8347b](https://github.com/craft-native/craft/commit/9c8347b)) _(by glennmichael123)_
+- **native**: document pressable primitive parity ([130a4a4](https://github.com/craft-native/craft/commit/130a4a4)) _(by glennmichael123)_
+- **native**: document modal lifecycle contract ([9c36da1](https://github.com/craft-native/craft/commit/9c36da1)) _(by glennmichael123)_
+- **native**: align platform primitive inventories ([884ea50](https://github.com/craft-native/craft/commit/884ea50)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ci**: expect the stx compiler pin mobile-e2e now uses ([6b25827](https://github.com/craft-native/craft/commit/6b25827)) _(by Chris)_
+- **ios**: clear the page script's timers when each test ends ([327c552](https://github.com/craft-native/craft/commit/327c552)) _(by Chris)_
+- **typescript**: run the CJS bundle under Bun where Node is not installed ([171bf2e](https://github.com/craft-native/craft/commit/171bf2e)) _(by Chris)_
+- **native**: check the iOS flexbox engine for bounds, margins and list sizing ([fcbc650](https://github.com/craft-native/craft/commit/fcbc650)) _(by Chris)_
+- **ios**: count the dispatcher's own __craftReady as handled ([4ecaaa3](https://github.com/craft-native/craft/commit/4ecaaa3)) _(by Chris)_
+- **ios**: cover native screen layout and host functions on the simulator ([86dc44b](https://github.com/craft-native/craft/commit/86dc44b)) _(by Chris)_
+- **native**: exercise flat list refresh gestures ([9586bcf](https://github.com/craft-native/craft/commit/9586bcf)) _(by glennmichael123)_
+- **native**: exercise iOS refresh control ([a3f7acf](https://github.com/craft-native/craft/commit/a3f7acf)) _(by glennmichael123)_
+- **native**: cover flat list refresh state ([2334961](https://github.com/craft-native/craft/commit/2334961)) _(by glennmichael123)_
+- **native**: cover press lifecycle callbacks ([a960e2f](https://github.com/craft-native/craft/commit/a960e2f)) _(by glennmichael123)_
+- **native**: cover flat list content padding ([1dae7da](https://github.com/craft-native/craft/commit/1dae7da)) _(by glennmichael123)_
+- **native**: cover scroll content padding ([2d6ff18](https://github.com/craft-native/craft/commit/2d6ff18)) _(by glennmichael123)_
+- **native**: cover pressable fixture parity ([8e67cc7](https://github.com/craft-native/craft/commit/8e67cc7)) _(by glennmichael123)_
+- **native**: verify modal lifecycle fixtures ([52a1da5](https://github.com/craft-native/craft/commit/52a1da5)) _(by glennmichael123)_
+- **native**: lock modal generator output ([b643ac9](https://github.com/craft-native/craft/commit/b643ac9)) _(by glennmichael123)_
+- **native**: cover modal navigation fixtures ([ec89aa6](https://github.com/craft-native/craft/commit/ec89aa6)) _(by glennmichael123)_
+- **native**: align picker generator fixtures ([3363d7d](https://github.com/craft-native/craft/commit/3363d7d)) _(by glennmichael123)_
+- **native**: exercise picker fixture parity ([ffba42b](https://github.com/craft-native/craft/commit/ffba42b)) _(by glennmichael123)_
+- **native**: lock lifecycle fallback teardown ([b8efe29](https://github.com/craft-native/craft/commit/b8efe29)) _(by glennmichael123)_
+- **native**: cover slider renderer parity ([47cb9bc](https://github.com/craft-native/craft/commit/47cb9bc)) _(by glennmichael123)_
+- **native**: lock FlatList scroll payload parity ([6ff1e51](https://github.com/craft-native/craft/commit/6ff1e51)) _(by glennmichael123)_
+
+## 🧹 Chores
+
+- **native**: compile native screens with `stx native compile` ([ed26283](https://github.com/craft-native/craft/commit/ed26283)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.123...v0.0.124)
 
 ## 🚀 Features
