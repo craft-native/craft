@@ -35,6 +35,87 @@ import SafariServices
 extension Notification.Name {
     static let craftPushToken = Notification.Name("craftPushToken")
     static let craftPushRegistrationError = Notification.Name("craftPushRegistrationError")
+    /// The screen's Light or Dark appearance changed (SwiftUI sees it first).
+    static let craftColorSchemeChanged = Notification.Name("craftColorSchemeChanged")
+}
+
+/// The reading and motion settings the page should match: text size, Reduce
+/// Motion, Reduce Transparency, Light or Dark.
+///
+/// A web page sees Dark Mode through `prefers-color-scheme` and Reduce Motion
+/// through `prefers-reduced-motion`, but not the Dynamic Type size a native
+/// app's text follows, so a page could not grow its text with everything else
+/// on the phone. The shell tells it, from the first byte of every document
+/// (`--craft-font-scale` and `data-craft-*` on the root element) and with a
+/// `craftAppearance` event when any of it changes.
+enum CraftPageAppearance {
+    static func snapshot(style: UIUserInterfaceStyle) -> [String: Any] {
+        let category = UIApplication.shared.preferredContentSizeCategory
+        let traits = UITraitCollection(preferredContentSizeCategory: category)
+        // How much body text has grown or shrunk from its default 17 points.
+        let scale = UIFontMetrics(forTextStyle: .body).scaledValue(for: 17, compatibleWith: traits) / 17
+        return [
+            "contentSizeCategory": name(category),
+            "fontScale": (Double(scale) * 1000).rounded() / 1000,
+            "reduceMotion": UIAccessibility.isReduceMotionEnabled,
+            "reduceTransparency": UIAccessibility.isReduceTransparencyEnabled,
+            "colorScheme": style == .dark ? "dark" : "light",
+        ]
+    }
+
+    /// The script that applies a snapshot to the page, announcing it as
+    /// `craftAppearance` when `announce` is true.
+    static func script(_ snapshot: [String: Any], announce: Bool) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: snapshot),
+              let json = String(data: data, encoding: .utf8) else { return "" }
+        return """
+        (function(a) {
+            var root = document.documentElement;
+            if (root) {
+                root.style.setProperty('--craft-font-scale', String(a.fontScale));
+                root.setAttribute('data-craft-reduce-motion', a.reduceMotion ? 'true' : 'false');
+                root.setAttribute('data-craft-reduce-transparency', a.reduceTransparency ? 'true' : 'false');
+                root.setAttribute('data-craft-content-size', a.contentSizeCategory);
+            }
+            window.__craftAppearance = a;
+            \(announce ? "window.dispatchEvent(new CustomEvent('craftAppearance', {detail: a}));" : "")
+        })(\(json));
+        """
+    }
+
+    private static func name(_ category: UIContentSizeCategory) -> String {
+        switch category {
+        case .extraSmall: return "extraSmall"
+        case .small: return "small"
+        case .medium: return "medium"
+        case .large: return "large"
+        case .extraLarge: return "extraLarge"
+        case .extraExtraLarge: return "extraExtraLarge"
+        case .extraExtraExtraLarge: return "extraExtraExtraLarge"
+        case .accessibilityMedium: return "accessibilityMedium"
+        case .accessibilityLarge: return "accessibilityLarge"
+        case .accessibilityExtraLarge: return "accessibilityExtraLarge"
+        case .accessibilityExtraExtraLarge: return "accessibilityExtraExtraLarge"
+        case .accessibilityExtraExtraExtraLarge: return "accessibilityExtraExtraExtraLarge"
+        default: return "large"
+        }
+    }
+}
+
+/// Tells the shell when SwiftUI's colour scheme changes: the one appearance
+/// setting with no notification of its own.
+struct CraftColorSchemeObserver: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onChange(of: colorScheme) { _ in
+                NotificationCenter.default.post(name: .craftColorSchemeChanged, object: nil)
+            }
+    }
 }
 
 /// Which failed page loads mean the remote origin is out of reach (#252).
@@ -229,6 +310,7 @@ struct CraftApp: App {
                     // The page's own chrome, drawn natively over it: the tab
                     // bar the page asks for, and the splash until it is ready.
                     ZStack(alignment: .bottom) {
+                        CraftColorSchemeObserver()
                         CraftWebView(config: appState.config)
                             .ignoresSafeArea()
                         CraftTabBarView()
@@ -310,11 +392,11 @@ final class CraftChrome: ObservableObject {
                 let dark = (body["tintDark"] as? String).flatMap { UIColor(hex: $0) }
                 tint = light.map { light in dark.map { dark in UIColor { $0.userInterfaceStyle == .dark ? dark : light } } ?? light }
             }
-            withAnimation(.easeOut(duration: 0.2)) { tabBarVisible = !tabs.isEmpty }
+            withAnimation(Self.motion(.easeOut(duration: 0.2))) { tabBarVisible = !tabs.isEmpty }
             publishLayout()
         case "selectTab":
             if let id = body["id"] as? String, id != selected {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selected = id }
+                withAnimation(Self.motion(.spring(response: 0.32, dampingFraction: 0.86))) { selected = id }
             }
         case "hideTabBar":
             // Later, and only if no screen asks for the bar meanwhile: moving
@@ -322,7 +404,7 @@ final class CraftChrome: ObservableObject {
             // mounts the next, and the bar must not blink in between.
             pendingHide?.cancel()
             let hide = DispatchWorkItem { [weak self] in
-                withAnimation(.easeIn(duration: 0.18)) { self?.tabBarVisible = false }
+                withAnimation(Self.motion(.easeIn(duration: 0.18))) { self?.tabBarVisible = false }
                 self?.occupied = 0
                 self?.publishLayout()
             }
@@ -346,9 +428,15 @@ final class CraftChrome: ObservableObject {
     /// one of the small things that gives a web shell away.
     func tap(_ tab: Tab) {
         if tab.id != selected {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selected = tab.id }
+            withAnimation(Self.motion(.spring(response: 0.32, dampingFraction: 0.86))) { selected = tab.id }
         }
         emit("craftTabSelect", ["id": tab.id])
+    }
+
+    /// The animation, or none with Reduce Motion on: the selection jumps to
+    /// its tab rather than springing there, as UIKit's own controls do.
+    static func motion(_ animation: Animation) -> Animation? {
+        UIAccessibility.isReduceMotionEnabled ? nil : animation
     }
 
     func hideSplash() {
@@ -428,6 +516,13 @@ final class CraftChromeRelay: NSObject, WKScriptMessageHandler {
 struct CraftTabBarView: View {
     @ObservedObject private var chrome = CraftChrome.shared
     @Namespace private var selection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    // Dynamic Type, relative to the styles UIKit's own bar uses. The bar is
+    // capped at the largest standard size (below), as UITabBar is; past that
+    // a long press shows the large content viewer instead.
+    @ScaledMetric(relativeTo: .title3) private var iconSize: CGFloat = 20
+    @ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
 
     var body: some View {
         if chrome.tabBarVisible && !chrome.tabs.isEmpty {
@@ -439,8 +534,9 @@ struct CraftTabBarView: View {
                         .onAppear { report(proxy) }
                         .onChange(of: proxy.frame(in: .global)) { _ in report(proxy) }
                 })
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 .ignoresSafeArea(.keyboard)
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         }
     }
 
@@ -481,11 +577,11 @@ struct CraftTabBarView: View {
                     VStack(spacing: 3) {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: symbol(tab.symbol, selected: isSelected))
-                                .font(.system(size: 20, weight: isSelected ? .semibold : .regular))
-                                .frame(height: 26)
+                                .font(.system(size: iconSize, weight: isSelected ? .semibold : .regular))
+                                .frame(height: iconSize + 6)
                             if let badge = tab.badge {
                                 Text(badge)
-                                    .font(.system(size: 10, weight: .bold))
+                                    .font(.system(size: badgeSize, weight: .bold))
                                     .foregroundStyle(.white)
                                     .padding(.horizontal, 4)
                                     .frame(minWidth: 16, minHeight: 16)
@@ -494,7 +590,7 @@ struct CraftTabBarView: View {
                             }
                         }
                         Text(tab.title)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                            .font(.system(size: labelSize, weight: isSelected ? .semibold : .medium))
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
@@ -510,6 +606,10 @@ struct CraftTabBarView: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .accessibilityShowsLargeContentViewer {
+                    Image(systemName: symbol(tab.symbol, selected: isSelected))
+                    Text(tab.title)
+                }
                 .accessibilityLabel(tab.badge.map { "\(tab.title), \($0)" } ?? tab.title)
                 .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
             }
@@ -1237,6 +1337,9 @@ struct CraftWebView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushToken(_:)), name: .craftPushToken, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushRegistrationError(_:)), name: .craftPushRegistrationError, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+            for name in [UIContentSizeCategory.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification, UIAccessibility.reduceTransparencyStatusDidChangeNotification, .craftColorSchemeChanged] {
+                NotificationCenter.default.addObserver(self, selector: #selector(appearanceChanged(_:)), name: name, object: nil)
+            }
             setupNetworkMonitoring()
         }
 
@@ -2423,10 +2526,24 @@ struct CraftWebView: UIViewRepresentable {
             controller.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             #endif
             controller.addUserScript(WKUserScript(source: CraftChrome.paintScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: CraftPageAppearance.script(appearanceSnapshot(), announce: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))
             if config.disableZoom != false {
                 controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
             }
             controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+
+        private func appearanceSnapshot() -> [String: Any] {
+            CraftPageAppearance.snapshot(style: webView?.traitCollection.userInterfaceStyle ?? UITraitCollection.current.userInterfaceStyle)
+        }
+
+        /// Text size, Reduce Motion, Reduce Transparency or Light/Dark changed:
+        /// the page gets the new values and a `craftAppearance` event.
+        @objc private func appearanceChanged(_ notification: Notification) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let webView = self.webView else { return }
+                webView.evaluateJavaScript(CraftPageAppearance.script(self.appearanceSnapshot(), announce: true), completionHandler: nil)
+            }
         }
 
         /// The page announced the bridge (`craftReady`): from here it can be
@@ -4330,6 +4447,18 @@ struct CraftWebView: UIViewRepresentable {
                         return settle(craft._invoke('chromeSetKeyboardAccessory', {visible: visible !== false}), false);
                     }
                 };
+                // Text size, Reduce Motion, Reduce Transparency and Light or
+                // Dark, as the shell last reported them.
+                Object.defineProperty(craft, 'appearance', {
+                    configurable: true,
+                    enumerable: true,
+                    get: function() { return window.__craftAppearance || null; }
+                });
+                craft.onAppearanceChange = function(callback) {
+                    var listener = function(e) { callback(e.detail); };
+                    window.addEventListener('craftAppearance', listener);
+                    return function() { window.removeEventListener('craftAppearance', listener); };
+                };
                 craft.refresh = {
                     enable: function(value) {
                         return settle(craft._invoke('refreshEnable', {tintColor: (value && value.tintColor) || null}), false);
@@ -4383,6 +4512,9 @@ struct CraftWebView: UIViewRepresentable {
                     if (craft.ready) return;
                     craft.ready = true;
                     window.dispatchEvent(new CustomEvent('craftReady', {detail: craft}));
+                    // The appearance the document started with, for a page
+                    // that subscribes rather than reading craft.appearance.
+                    if (window.__craftAppearance) window.dispatchEvent(new CustomEvent('craftAppearance', {detail: window.__craftAppearance}));
                     try { window.webkit.messageHandlers.craft.postMessage({action: '__craftReady'}); } catch (e) {}
                 }
                 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);

@@ -99,6 +99,9 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
       page.dispatchEvent(new CustomEvent('craftNotificationReceived', { detail })),
     position: (detail: unknown) =>
       page.dispatchEvent(new CustomEvent('craftLocationUpdate', { detail })),
+    // Any event native dispatches on window.
+    emit: (type: string, detail: unknown) =>
+      page.dispatchEvent(new CustomEvent(type, { detail })),
   }
 }
 
@@ -489,6 +492,32 @@ describe('when the bridge announces itself', () => {
     })
     expect(readyEvents).toBe(1)
     expect(page.count('__craftReady')).toBe(1)
+  })
+})
+
+describe('the appearance the page should match', () => {
+  const snapshot = { contentSizeCategory: 'extraExtraLarge', fontScale: 1.235, reduceMotion: true, reduceTransparency: false, colorScheme: 'dark' }
+
+  it('announces the starting appearance with craftReady, and reads it back', () => {
+    const seen: unknown[] = []
+    const page = loadPage((window) => {
+      window.__craftAppearance = snapshot
+      window.addEventListener('craftAppearance', (event: { detail: unknown }) => seen.push(event.detail))
+    })
+    expect(seen).toEqual([snapshot])
+    expect(page.craft.appearance).toEqual(snapshot)
+  })
+
+  it('hands later changes to onAppearanceChange until unsubscribed', () => {
+    const page = loadPage()
+    expect(page.craft.appearance).toBeNull()
+    const seen: unknown[] = []
+    const stop = page.craft.onAppearanceChange((detail: unknown) => seen.push(detail))
+    // What CraftPageAppearance.script(_, announce: true) dispatches.
+    page.emit('craftAppearance', { ...snapshot, fontScale: 1.412 })
+    stop()
+    page.emit('craftAppearance', snapshot)
+    expect(seen).toEqual([{ ...snapshot, fontScale: 1.412 }])
   })
 })
 

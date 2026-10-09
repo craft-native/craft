@@ -888,6 +888,31 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain('{{CRAFT_VERSION}}')
   })
 
+  it('tells the page the text size and motion settings, and sizes the tab bar with Dynamic Type', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-appearance-'))
+    await init({ runtimeDir: null, name: 'Appearance', bundleId: 'org.example.appearance', output })
+    const swift = readFileSync(join(output, 'Sources', 'AppearanceApp.swift'), 'utf8')
+
+    // From the first byte of every document, and again on every change.
+    expect(swift).toContain('controller.addUserScript(WKUserScript(source: CraftPageAppearance.script(appearanceSnapshot(), announce: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))')
+    expect(swift).toContain("root.style.setProperty('--craft-font-scale', String(a.fontScale));")
+    expect(swift).toContain("root.setAttribute('data-craft-reduce-motion', a.reduceMotion ? 'true' : 'false');")
+    expect(swift).toContain('UIFontMetrics(forTextStyle: .body).scaledValue(for: 17, compatibleWith: traits) / 17')
+    for (const name of ['UIContentSizeCategory.didChangeNotification', 'UIAccessibility.reduceMotionStatusDidChangeNotification', 'UIAccessibility.reduceTransparencyStatusDidChangeNotification', '.craftColorSchemeChanged'])
+      expect(swift).toContain(name)
+    expect(swift).toContain('webView.evaluateJavaScript(CraftPageAppearance.script(self.appearanceSnapshot(), announce: true), completionHandler: nil)')
+
+    // The bar's type scales, up to the cap UITabBar has, and its motion
+    // respects Reduce Motion.
+    expect(swift).toContain('@ScaledMetric(relativeTo: .caption2) private var labelSize: CGFloat = 11')
+    expect(swift).toContain('.font(.system(size: labelSize, weight: isSelected ? .semibold : .medium))')
+    expect(swift).not.toContain('.font(.system(size: 11, weight:')
+    expect(swift).toContain('.dynamicTypeSize(...DynamicTypeSize.xxxLarge)')
+    expect(swift).toContain('.accessibilityShowsLargeContentViewer {')
+    expect(swift).toContain('UIAccessibility.isReduceMotionEnabled ? nil : animation')
+    expect(swift).not.toContain('withAnimation(.spring(')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled
