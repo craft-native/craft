@@ -1,5 +1,6 @@
 import Foundation
 import JavaScriptCore
+import OSLog
 import SwiftUI
 import UIKit
 
@@ -30,13 +31,46 @@ struct CraftNativeScreen: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: UINavigationController, context: Context) {}
 }
 
+/// A length as a style gives it: points, or a percentage of the parent's
+/// content box. A percentage against a size that is not known yet (a column
+/// whose height comes from its content) resolves to nothing, as on the web.
+private enum CraftNativeLength {
+    case points(CGFloat)
+    case percent(CGFloat)
+
+    init?(_ value: Any?) {
+        if let number = value as? NSNumber {
+            self = .points(CGFloat(truncating: number))
+            return
+        }
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
+        if text.hasSuffix("%"), let fraction = Double(text.dropLast()) {
+            self = .percent(CGFloat(fraction) / 100)
+        } else if text.hasSuffix("px"), let points = Double(text.dropLast(2)) {
+            self = .points(CGFloat(points))
+        } else if let points = Double(text) {
+            self = .points(CGFloat(points))
+        } else {
+            return nil
+        }
+    }
+
+    func resolve(_ base: CGFloat?) -> CGFloat? {
+        switch self {
+        case .points(let value): return value
+        case .percent(let fraction): return base.map { max(0, $0 * fraction) }
+        }
+    }
+}
+
+/// How a parent lays a child out, read once from the child's style.
 private struct CraftNativeLayoutStyle {
-    let width: CGFloat?
-    let height: CGFloat?
-    let minWidth: CGFloat?
-    let maxWidth: CGFloat?
-    let minHeight: CGFloat?
-    let maxHeight: CGFloat?
+    let width: CraftNativeLength?
+    let height: CraftNativeLength?
+    let minWidth: CraftNativeLength?
+    let maxWidth: CraftNativeLength?
+    let minHeight: CraftNativeLength?
+    let maxHeight: CraftNativeLength?
     let position: String
     let top: CGFloat?
     let right: CGFloat?
@@ -44,8 +78,10 @@ private struct CraftNativeLayoutStyle {
     let left: CGFloat?
     let alignSelf: String?
     let flexGrow: CGFloat
-    let flexShrink: CGFloat
-    let flexBasis: CGFloat?
+    /// Nil when the style does not say: the parent picks the default for the
+    /// kind of view (text shrinks along a row, a box does not).
+    let flexShrink: CGFloat?
+    let flexBasis: CraftNativeLength?
     let marginTop: CGFloat
     let marginRight: CGFloat
     let marginBottom: CGFloat
@@ -54,23 +90,30 @@ private struct CraftNativeLayoutStyle {
     let gridColumns: Int
     let gridAutoRows: CGFloat?
 
+    static let empty = CraftNativeLayoutStyle([:])
+
     init(_ raw: [String: Any]) {
         func number(_ value: Any?) -> CGFloat? { (value as? NSNumber).map { CGFloat(truncating: $0) } }
-        width = number(raw["width"])
-        height = number(raw["height"])
-        minWidth = number(raw["minWidth"])
-        maxWidth = number(raw["maxWidth"])
-        minHeight = number(raw["minHeight"])
-        maxHeight = number(raw["maxHeight"])
+        width = CraftNativeLength(raw["width"])
+        height = CraftNativeLength(raw["height"])
+        minWidth = CraftNativeLength(raw["minWidth"])
+        maxWidth = CraftNativeLength(raw["maxWidth"])
+        minHeight = CraftNativeLength(raw["minHeight"])
+        maxHeight = CraftNativeLength(raw["maxHeight"])
         position = raw["position"] as? String ?? "relative"
         top = number(raw["top"])
         right = number(raw["right"])
         bottom = number(raw["bottom"])
         left = number(raw["left"])
-        alignSelf = raw["alignSelf"] as? String
-        flexGrow = number(raw["flexGrow"] ?? raw["flex"]) ?? 0
-        flexShrink = number(raw["flexShrink"]) ?? 0
-        flexBasis = number(raw["flexBasis"])
+        let align = raw["alignSelf"] as? String
+        alignSelf = align == "auto" ? nil : align
+        // `flex: n` is the web's and React Native's shorthand: a positive
+        // number grows by n, shrinks, and starts from nothing, so `flex-1`
+        // siblings share a row equally whatever their content.
+        let flex = number(raw["flex"])
+        flexGrow = number(raw["flexGrow"]) ?? flex.map { max(0, $0) } ?? 0
+        flexShrink = number(raw["flexShrink"]) ?? flex.map { $0 != 0 ? 1 : 0 }
+        flexBasis = CraftNativeLength(raw["flexBasis"]) ?? flex.flatMap { $0 > 0 ? .points(0) : nil }
         let margin = number(raw["margin"]) ?? 0
         let horizontalMargin = number(raw["marginHorizontal"]) ?? margin
         let verticalMargin = number(raw["marginVertical"]) ?? margin
@@ -84,33 +127,146 @@ private struct CraftNativeLayoutStyle {
     }
 }
 
+private final class CraftNativeLayoutStyleBox {
+    let style: CraftNativeLayoutStyle
+    init(_ style: CraftNativeLayoutStyle) { self.style = style }
+}
+
+private var craftNativeLayoutStyleKey: UInt8 = 0
+private var craftNativeCornerRadiusKey: UInt8 = 0
+
+extension UIView {
+    /// The layout style this view's parent reads. It lives on the view, so an
+    /// in-place style update reaches the parent's next layout pass without the
+    /// parent being reconciled too.
+    fileprivate var craftLayoutStyle: CraftNativeLayoutStyle {
+        get { (objc_getAssociatedObject(self, &craftNativeLayoutStyleKey) as? CraftNativeLayoutStyleBox)?.style ?? .empty }
+        set { objc_setAssociatedObject(self, &craftNativeLayoutStyleKey, CraftNativeLayoutStyleBox(newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
+    }
+
+    /// The corner radius the style asked for. The layer gets at most half the
+    /// shortest side: Core Animation draws nothing at all for a radius larger
+    /// than the view (`rounded-full` is 9999).
+    var craftRequestedCornerRadius: CGFloat? {
+        get { (objc_getAssociatedObject(self, &craftNativeCornerRadiusKey) as? NSNumber).map { CGFloat(truncating: $0) } }
+        set {
+            objc_setAssociatedObject(self, &craftNativeCornerRadiusKey, newValue.map { NSNumber(value: Double($0)) }, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            craftApplyCornerRadius()
+        }
+    }
+
+    func craftApplyCornerRadius() {
+        let requested = craftRequestedCornerRadius ?? 0
+        let limit = min(bounds.width, bounds.height) / 2
+        let radius = limit > 0 ? min(requested, limit) : min(requested, 9_998)
+        if layer.cornerRadius != radius { layer.cornerRadius = radius }
+    }
+}
+
+/// Measures any native-screen view the way its parent's flex layout needs:
+/// at a width (or height) the parent fixes, or at its natural size within the
+/// room there is. Shared by the flow views, the scroll view and FlatList rows.
+enum CraftNativeFlexLayout {
+    static let unbounded: CGFloat = 1_000_000
+
+    static func measure(_ view: UIView, width: CGFloat?, height: CGFloat?, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+        let maxWidth = max(0, maxWidth)
+        let maxHeight = max(0, maxHeight)
+        switch view {
+        case let flow as CraftNativeFlowView:
+            return flow.measure(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight)
+        case let scroll as CraftNativeScrollView:
+            return scroll.measure(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight)
+        case let list as CraftNativeFlatList:
+            let listWidth = width ?? maxWidth
+            return CGSize(width: listWidth, height: height ?? list.fittingHeight(width: listWidth))
+        case let label as UILabel:
+            // Text takes the width it needs up to the room there is, and
+            // wraps or truncates inside it rather than widening its parent.
+            let limit = width ?? maxWidth
+            let natural = label.sizeThatFits(CGSize(width: limit, height: unbounded))
+            let resolvedWidth = width ?? min(ceil(natural.width), limit)
+            let resolvedHeight = height ?? ceil(resolvedWidth < limit
+                ? label.sizeThatFits(CGSize(width: resolvedWidth, height: unbounded)).height
+                : natural.height)
+            return CGSize(width: resolvedWidth, height: resolvedHeight)
+        case let image as UIImageView where image.image == nil:
+            return CGSize(width: width ?? 0, height: height ?? 0)
+        default:
+            let intrinsic = view.intrinsicContentSize
+            let fitted = view.sizeThatFits(CGSize(width: width ?? maxWidth, height: height ?? maxHeight))
+            let naturalWidth = intrinsic.width > 0 && intrinsic.width != UIView.noIntrinsicMetric ? intrinsic.width : fitted.width
+            let naturalHeight = intrinsic.height > 0 && intrinsic.height != UIView.noIntrinsicMetric ? intrinsic.height : fitted.height
+            return CGSize(width: width ?? min(max(0, naturalWidth), maxWidth), height: height ?? max(0, naturalHeight))
+        }
+    }
+
+    /// Marks every flex container above `view` for measuring again, after a
+    /// change inside it that may change its size. A FlatList row stops the
+    /// walk: the list measures its rows itself.
+    static func invalidateAncestors(of view: UIView) {
+        var current = view.superview
+        while let ancestor = current, !(ancestor is UICollectionViewCell) {
+            if let flow = ancestor as? CraftNativeFlowView { flow.invalidateMeasurements() }
+            if let scroll = ancestor as? CraftNativeScrollView { scroll.setContentNeedsLayout() }
+            current = ancestor.superview
+        }
+    }
+
+    /// A frame snapped to the screen's pixels edge by edge, so neighbours
+    /// neither overlap nor leave a hairline between them.
+    static func snapped(_ rect: CGRect, scale: CGFloat) -> CGRect {
+        let scale = max(1, scale)
+        func snap(_ value: CGFloat) -> CGFloat { (value * scale).rounded() / scale }
+        let minX = snap(rect.minX), minY = snap(rect.minY)
+        return CGRect(x: minX, y: minY, width: max(0, snap(rect.maxX) - minX), height: max(0, snap(rect.maxY) - minY))
+    }
+}
+
+/// A flexbox container: rows and columns with grow, shrink and basis, wrap,
+/// gaps, alignment, margins, percentages, absolute children and a simple
+/// grid. It is a UIStackView in name only, so existing callers and tests keep
+/// `axis`, `alignment` and `arrangedSubviews`; the stack view's own
+/// constraints are never created, and every frame comes from `layout`.
 private final class CraftNativeFlowView: UIStackView {
     var pressActiveOpacity: CGFloat?
     var pressBaseOpacity: CGFloat = 1
-    var wrap = false { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var alignItems = "stretch" { didSet { alignment = alignmentValue; setNeedsLayout() } }
-    var justifyContent = "flex-start" { didSet { distribution = distributionValue; setNeedsLayout() } }
-    var gap: CGFloat = 0 { didSet { spacing = gap; invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var rowGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var columnGap: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var grid = false { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var gridColumns = 1 { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
-    var gridAutoRows: CGFloat? { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
+    var wrap = false { didSet { if wrap != oldValue { invalidateMeasurements() } } }
+    var alignItems = "stretch" { didSet { alignment = alignmentValue; if alignItems != oldValue { invalidateMeasurements() } } }
+    var justifyContent = "flex-start" { didSet { distribution = distributionValue; if justifyContent != oldValue { invalidateMeasurements() } } }
+    var gap: CGFloat = 0 { didSet { spacing = gap; if gap != oldValue { invalidateMeasurements() } } }
+    var rowGap: CGFloat? { didSet { if rowGap != oldValue { invalidateMeasurements() } } }
+    var columnGap: CGFloat? { didSet { if columnGap != oldValue { invalidateMeasurements() } } }
+    var grid = false { didSet { if grid != oldValue { invalidateMeasurements() } } }
+    var gridColumns = 1 { didSet { if gridColumns != oldValue { invalidateMeasurements() } } }
+    var gridAutoRows: CGFloat? { didSet { if gridAutoRows != oldValue { invalidateMeasurements() } } }
     var padding = UIEdgeInsets.zero {
         didSet {
             layoutMargins = padding
             isLayoutMarginsRelativeArrangement = true
-            invalidateIntrinsicContentSize()
-            setNeedsLayout()
+            if padding != oldValue { invalidateMeasurements() }
         }
     }
-    private var childStyles: [ObjectIdentifier: CraftNativeLayoutStyle] = [:]
+    override var axis: NSLayoutConstraint.Axis {
+        didSet { if axis != oldValue { invalidateMeasurements() } }
+    }
+
+    private var flowChildren: [UIView] = []
+    private var measurements: [MeasureKey: CGSize] = [:]
+
+    private struct MeasureKey: Hashable {
+        let width: CGFloat?
+        let height: CGFloat?
+        let maxWidth: CGFloat
+        let maxHeight: CGFloat
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         alignment = .fill
         distribution = .fill
         isLayoutMarginsRelativeArrangement = true
+        insetsLayoutMarginsFromSafeArea = false
     }
 
     required init(coder: NSCoder) { super.init(coder: coder) }
@@ -133,268 +289,443 @@ private final class CraftNativeFlowView: UIStackView {
         }
     }
 
-    func setLayoutStyle(_ raw: [String: Any], for view: UIView) {
-        childStyles[ObjectIdentifier(view)] = CraftNativeLayoutStyle(raw)
-        invalidateIntrinsicContentSize()
-        setNeedsLayout()
+    // MARK: Children
+
+    override var arrangedSubviews: [UIView] { flowChildren }
+
+    override func addArrangedSubview(_ view: UIView) {
+        insertArrangedSubview(view, at: flowChildren.count)
     }
 
-    func removeLayoutStyle(for view: UIView) { childStyles.removeValue(forKey: ObjectIdentifier(view)) }
+    override func insertArrangedSubview(_ view: UIView, at stackIndex: Int) {
+        flowChildren.removeAll { $0 === view }
+        flowChildren.insert(view, at: min(max(0, stackIndex), flowChildren.count))
+        if view.superview !== self {
+            view.removeFromSuperview()
+            addSubview(view)
+        }
+        view.translatesAutoresizingMaskIntoConstraints = true
+        invalidateMeasurements()
+    }
 
-    override func didAddSubview(_ subview: UIView) {
-        super.didAddSubview(subview)
-        setNeedsLayout()
+    override func removeArrangedSubview(_ view: UIView) {
+        flowChildren.removeAll { $0 === view }
+        invalidateMeasurements()
     }
 
     override func willRemoveSubview(_ subview: UIView) {
-        childStyles.removeValue(forKey: ObjectIdentifier(subview))
+        flowChildren.removeAll { $0 === subview }
         super.willRemoveSubview(subview)
+        invalidateMeasurements()
     }
 
+    func setLayoutStyle(_ raw: [String: Any], for view: UIView) {
+        view.craftLayoutStyle = CraftNativeLayoutStyle(raw)
+        invalidateMeasurements()
+    }
+
+    func removeLayoutStyle(for view: UIView) {
+        view.craftLayoutStyle = .empty
+    }
+
+    /// Forgets measured sizes and lays out again on the next pass.
+    func invalidateMeasurements() {
+        measurements.removeAll(keepingCapacity: true)
+        setNeedsLayout()
+    }
+
+    // MARK: Measuring and layout
+
     override var intrinsicContentSize: CGSize {
-        let children = subviews.filter {
-            !$0.isHidden && !($0 is CraftNativeFlexSpacer) && !($0 is CraftNativeModalView)
-                && (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
-        }
-        guard !children.isEmpty else { return CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric) }
-        if grid { return gridIntrinsicContentSize(children) }
-        let sizes = children.map { measuredSize(for: $0, available: CGSize(width: 10_000, height: 10_000)) }
-        let styles = children.map { childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:]) }
-        let main = sizes.enumerated().map { index, size in
-            (axis == .horizontal ? size.width : size.height) + mainMargins(styles[index])
-        }.reduce(0, +)
-        let cross = sizes.enumerated().map { index, size in
-            (axis == .horizontal ? size.height : size.width) + crossMargins(styles[index])
-        }.max() ?? 0
-        let mainGap = max(0, CGFloat(max(0, children.count - 1))) * mainGapValue
-        if axis == .horizontal {
-            return CGSize(width: padding.left + padding.right + main + mainGap, height: padding.top + padding.bottom + cross)
-        }
-        return CGSize(width: padding.left + padding.right + cross, height: padding.top + padding.bottom + main + mainGap)
+        CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
+    }
+
+    override func sizeThatFits(_ size: CGSize) -> CGSize {
+        measure(width: nil, height: nil, maxWidth: size.width, maxHeight: size.height)
+    }
+
+    func measure(width: CGFloat?, height: CGFloat?, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+        let key = MeasureKey(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight)
+        if let cached = measurements[key] { return cached }
+        let size = layout(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight, place: false).size
+        measurements[key] = size
+        return size
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let content = bounds.inset(by: padding)
-        if grid {
-            layoutGrid(content: content)
-            return
+        craftApplyCornerRadius()
+        let scale = window?.screen.scale ?? traitCollection.displayScale
+        let result = layout(width: bounds.width, height: bounds.height, maxWidth: bounds.width, maxHeight: bounds.height, place: true)
+        for (child, frame) in result.frames {
+            let snapped = CraftNativeFlexLayout.snapped(frame, scale: scale)
+            if child.frame != snapped { child.frame = snapped }
+            child.craftApplyCornerRadius()
         }
-        let availableMain = axis == .horizontal ? content.width : content.height
-        var lines: [([UIView], [CGSize], CGFloat, CGFloat)] = []
-        var items: [UIView] = []
-        var sizes: [CGSize] = []
+    }
+
+    private struct Item {
+        let view: UIView
+        let style: CraftNativeLayoutStyle
+        let align: String
+        let mainLeading: CGFloat
+        let mainTrailing: CGFloat
+        let crossLeading: CGFloat
+        let crossTrailing: CGFloat
+        let minMain: CGFloat?
+        let maxMain: CGFloat?
+        let minCross: CGFloat?
+        let maxCross: CGFloat?
+        let fixedCross: CGFloat?
+        let grow: CGFloat
+        let shrink: CGFloat
+        var basis: CGFloat
         var main: CGFloat = 0
         var cross: CGFloat = 0
 
-        func flush() {
-            guard !items.isEmpty else { return }
-            lines.append((items, sizes, main, cross))
-            items = []; sizes = []; main = 0; cross = 0
-        }
+        var mainMargins: CGFloat { mainLeading + mainTrailing }
+        var crossMargins: CGFloat { crossLeading + crossTrailing }
+    }
 
-        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) && !(child is CraftNativeModalView) {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            if style.position == "absolute" { continue }
-            let size = measuredSize(for: child, available: content.size, style: style)
-            let childMain = (axis == .horizontal ? size.width : size.height) + mainMargins(style)
-            let childCross = (axis == .horizontal ? size.height : size.width) + crossMargins(style)
-            let next = items.isEmpty ? childMain : main + mainGapValue + childMain
-            if wrap && !items.isEmpty && next > availableMain { flush() }
-            items.append(child); sizes.append(size)
-            main = items.count == 1 ? childMain : main + mainGapValue + childMain
-            cross = max(cross, childCross)
-        }
-        flush()
+    private func clamp(_ value: CGFloat, _ lower: CGFloat?, _ upper: CGFloat?) -> CGFloat {
+        var result = value
+        if let upper { result = min(result, upper) }
+        if let lower { result = max(result, lower) }
+        return max(0, result)
+    }
 
-        var crossOffset: CGFloat = 0
-        for (lineItems, lineSizes, lineMain, lineCross) in lines {
-            let styles = lineItems.map { childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:]) }
-            let distributed = distributeMainAxisSizes(lineSizes, styles: styles, available: availableMain, lineMain: lineMain)
-            let distributedMain = distributed.enumerated().reduce(0) { total, entry in
-                total + (axis == .horizontal ? entry.element.width : entry.element.height) + mainMargins(styles[entry.offset])
-            } + CGFloat(max(0, lineItems.count - 1)) * mainGapValue
-            let free = max(0, availableMain - distributedMain)
-            let (leading, between) = distribution(free: free, count: lineItems.count)
-            var mainOffset = leading
-            for (index, child) in lineItems.enumerated() {
-                let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-                let size = distributed[index]
-                let childCross = axis == .horizontal ? size.height : size.width
-                let mainLeading = axis == .horizontal ? style.marginLeft : style.marginTop
-                let mainTrailing = axis == .horizontal ? style.marginRight : style.marginBottom
-                let crossLeading = axis == .horizontal ? style.marginTop : style.marginLeft
-                let crossTrailing = axis == .horizontal ? style.marginBottom : style.marginRight
-                let alignment = style.alignSelf ?? alignItems
-                let crossSize: CGFloat = alignment == "stretch" && styleCrossDimension(style) == nil
-                    ? max(0, lineCross - crossLeading - crossTrailing) : childCross
-                let crossPosition: CGFloat
-                switch alignment {
-                case "center": crossPosition = crossLeading + (lineCross - crossLeading - crossTrailing - crossSize) / 2
-                case "flex-end": crossPosition = lineCross - crossTrailing - crossSize
-                default: crossPosition = crossLeading
-                }
-                let frame: CGRect
-                if axis == .horizontal {
-                    frame = CGRect(x: content.minX + mainOffset + mainLeading, y: content.minY + crossOffset + crossPosition, width: size.width, height: crossSize)
-                } else {
-                    frame = CGRect(x: content.minX + crossOffset + crossPosition, y: content.minY + mainOffset + mainLeading, width: crossSize, height: size.height)
-                }
-                child.frame = frame.integral
-                mainOffset += mainLeading + (axis == .horizontal ? size.width : size.height) + mainTrailing + mainGapValue + between
+    /// Children that take part in the flow: shown, not a modal overlay.
+    private var visibleChildren: [UIView] {
+        flowChildren.filter { $0.superview === self && !$0.isHidden && !($0 is CraftNativeModalView) }
+    }
+
+    /// The flexbox algorithm, single pass. `width`/`height` are this view's
+    /// outer size when its parent fixes it, nil when it sizes to its content
+    /// within `maxWidth`/`maxHeight`. Returns its outer size and, when
+    /// placing, every child's frame in its own coordinates.
+    private func layout(
+        width: CGFloat?,
+        height: CGFloat?,
+        maxWidth: CGFloat,
+        maxHeight: CGFloat,
+        place: Bool
+    ) -> (size: CGSize, frames: [(UIView, CGRect)]) {
+        let children = visibleChildren
+        let flow = children.filter { $0.craftLayoutStyle.position != "absolute" }
+        let horizontal = axis == .horizontal
+        let paddingWidth = padding.left + padding.right
+        let paddingHeight = padding.top + padding.bottom
+        let innerWidth = width.map { max(0, $0 - paddingWidth) }
+        let innerHeight = height.map { max(0, $0 - paddingHeight) }
+        let roomWidth = max(0, (width ?? maxWidth) - paddingWidth)
+        let roomHeight = max(0, (height ?? maxHeight) - paddingHeight)
+
+        var frames: [(UIView, CGRect)] = []
+        var contentSize: CGSize
+        if grid {
+            contentSize = layoutGrid(flow, innerWidth: innerWidth, roomWidth: roomWidth, innerHeight: innerHeight, place: place, frames: &frames)
+        } else {
+            contentSize = layoutFlex(
+                flow,
+                horizontal: horizontal,
+                innerWidth: innerWidth,
+                innerHeight: innerHeight,
+                roomWidth: roomWidth,
+                roomHeight: roomHeight,
+                place: place,
+                frames: &frames
+            )
+        }
+        let size = CGSize(width: width ?? contentSize.width + paddingWidth, height: height ?? contentSize.height + paddingHeight)
+
+        if place {
+            let content = CGRect(x: padding.left, y: padding.top, width: max(0, size.width - paddingWidth), height: max(0, size.height - paddingHeight))
+            for child in children where child.craftLayoutStyle.position == "absolute" {
+                let style = child.craftLayoutStyle
+                let fixedWidth = style.left != nil && style.right != nil
+                    ? max(0, content.width - (style.left ?? 0) - (style.right ?? 0))
+                    : style.width?.resolve(content.width)
+                let fixedHeight = style.top != nil && style.bottom != nil
+                    ? max(0, content.height - (style.top ?? 0) - (style.bottom ?? 0))
+                    : style.height?.resolve(content.height)
+                let measured = CraftNativeFlexLayout.measure(child, width: fixedWidth, height: fixedHeight, maxWidth: content.width, maxHeight: content.height)
+                let x = style.left ?? (style.right.map { content.width - $0 - measured.width } ?? 0)
+                let y = style.top ?? (style.bottom.map { content.height - $0 - measured.height } ?? 0)
+                frames.append((child, CGRect(x: content.minX + x, y: content.minY + y, width: measured.width, height: measured.height)))
             }
-            crossOffset += lineCross + crossGapValue
         }
-
-        for child in subviews where !child.isHidden && !(child is CraftNativeFlexSpacer) && !(child is CraftNativeModalView) {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            guard style.position == "absolute" else { continue }
-            let size = measuredSize(for: child, available: content.size, style: style)
-            let width = style.left != nil && style.right != nil ? max(0, content.width - (style.left ?? 0) - (style.right ?? 0)) : size.width
-            let height = style.top != nil && style.bottom != nil ? max(0, content.height - (style.top ?? 0) - (style.bottom ?? 0)) : size.height
-            let x = style.left ?? (style.right.map { content.width - $0 - width } ?? 0)
-            let y = style.top ?? (style.bottom.map { content.height - $0 - height } ?? 0)
-            child.frame = CGRect(x: content.minX + x, y: content.minY + y, width: width, height: height).integral
-        }
+        return (size, frames)
     }
 
-    private func gridIntrinsicContentSize(_ children: [UIView]) -> CGSize {
+    private func layoutFlex(
+        _ children: [UIView],
+        horizontal: Bool,
+        innerWidth: CGFloat?,
+        innerHeight: CGFloat?,
+        roomWidth: CGFloat,
+        roomHeight: CGFloat,
+        place: Bool,
+        frames: inout [(UIView, CGRect)]
+    ) -> CGSize {
+        let definiteMain = horizontal ? innerWidth : innerHeight
+        let definiteCross = horizontal ? innerHeight : innerWidth
+        let roomMain = horizontal ? roomWidth : roomHeight
+        let roomCross = horizontal ? roomHeight : roomWidth
+        let mainGap = horizontal ? (columnGap ?? gap) : (rowGap ?? gap)
+        let crossGap = horizontal ? (rowGap ?? 0) : (columnGap ?? 0)
+
+        func measure(_ view: UIView, main: CGFloat?, cross: CGFloat?, mainLimit: CGFloat, crossLimit: CGFloat) -> (main: CGFloat, cross: CGFloat) {
+            let size = horizontal
+                ? CraftNativeFlexLayout.measure(view, width: main, height: cross, maxWidth: mainLimit, maxHeight: crossLimit)
+                : CraftNativeFlexLayout.measure(view, width: cross, height: main, maxWidth: crossLimit, maxHeight: mainLimit)
+            return horizontal ? (size.width, size.height) : (size.height, size.width)
+        }
+
+        var items: [Item] = children.map { view in
+            let style = view.craftLayoutStyle
+            let mainLeading = horizontal ? style.marginLeft : style.marginTop
+            let mainTrailing = horizontal ? style.marginRight : style.marginBottom
+            let crossLeading = horizontal ? style.marginTop : style.marginLeft
+            let crossTrailing = horizontal ? style.marginBottom : style.marginRight
+            let align = style.alignSelf ?? alignItems
+            let explicitMain = (horizontal ? style.width : style.height)?.resolve(definiteMain)
+            let explicitCross = (horizontal ? style.height : style.width)?.resolve(definiteCross)
+            let minMain = (horizontal ? style.minWidth : style.minHeight)?.resolve(definiteMain)
+            let maxMain = (horizontal ? style.maxWidth : style.maxHeight)?.resolve(definiteMain)
+            let minCross = (horizontal ? style.minHeight : style.minWidth)?.resolve(definiteCross)
+            let maxCross = (horizontal ? style.maxHeight : style.maxWidth)?.resolve(definiteCross)
+            var fixedCross = explicitCross
+            if fixedCross == nil, align == "stretch", !wrap, let definiteCross {
+                fixedCross = definiteCross - crossLeading - crossTrailing
+            }
+            fixedCross = fixedCross.map { clamp($0, minCross, maxCross) }
+            let defaultShrink: CGFloat
+            if view is UIScrollView {
+                defaultShrink = 1
+            } else if view is UILabel {
+                defaultShrink = horizontal ? 1 : 0
+            } else {
+                defaultShrink = 0
+            }
+
+            // The basis: a flex-basis, else the explicit size, else the
+            // content's size. A zero basis (`flex-1`) means "share the free
+            // space" only when there is a free space to share; in a container
+            // sized by its content, the content is the basis, as on the web.
+            let basis: CGFloat
+            if let flexBasis = style.flexBasis?.resolve(definiteMain), definiteMain != nil || flexBasis > 0 {
+                basis = flexBasis
+            } else if let explicitMain {
+                basis = explicitMain
+            } else {
+                basis = measure(
+                    view,
+                    main: nil,
+                    cross: fixedCross,
+                    mainLimit: max(0, (maxMain ?? roomMain) - mainLeading - mainTrailing),
+                    crossLimit: max(0, (fixedCross ?? (maxCross ?? roomCross - crossLeading - crossTrailing)))
+                ).main
+            }
+            return Item(
+                view: view,
+                style: style,
+                align: align,
+                mainLeading: mainLeading,
+                mainTrailing: mainTrailing,
+                crossLeading: crossLeading,
+                crossTrailing: crossTrailing,
+                minMain: minMain,
+                maxMain: maxMain,
+                minCross: minCross,
+                maxCross: maxCross,
+                fixedCross: fixedCross,
+                grow: style.flexGrow,
+                shrink: style.flexShrink ?? defaultShrink,
+                basis: clamp(basis, minMain, maxMain)
+            )
+        }
+
+        // Lines: one, or as many as wrapping needs.
+        var lines: [Range<Int>] = []
+        let lineLimit = definiteMain ?? roomMain
+        var start = 0
+        var used: CGFloat = 0
+        for index in items.indices {
+            let size = items[index].basis + items[index].mainMargins
+            let next = index == start ? size : used + mainGap + size
+            if wrap, index > start, next > lineLimit {
+                lines.append(start..<index)
+                start = index
+                used = size
+            } else {
+                used = next
+            }
+        }
+        if start < items.count { lines.append(start..<items.count) }
+
+        var lineMains: [CGFloat] = []
+        var lineCrosses: [CGFloat] = []
+        for line in lines {
+            let gaps = CGFloat(max(0, line.count - 1)) * mainGap
+            let hypothetical = line.reduce(0) { $0 + items[$1].basis + items[$1].mainMargins } + gaps
+            // A row sized by its content is as wide as that content, up to the
+            // room it has; a column sized by its content is as tall as it is.
+            let lineMain = definiteMain ?? (horizontal ? min(hypothetical, roomMain) : hypothetical)
+            let free = lineMain - hypothetical
+            if free > 0 {
+                let total = line.reduce(0) { $0 + items[$1].grow }
+                for index in line {
+                    let share = total > 0 ? free * items[index].grow / total : 0
+                    items[index].main = clamp(items[index].basis + share, items[index].minMain, items[index].maxMain)
+                }
+            } else if free < 0 {
+                let total = line.reduce(0) { $0 + items[$1].shrink * items[$1].basis }
+                for index in line {
+                    let share = total > 0 ? -free * items[index].shrink * items[index].basis / total : 0
+                    items[index].main = clamp(items[index].basis - share, items[index].minMain, items[index].maxMain)
+                }
+            } else {
+                for index in line { items[index].main = items[index].basis }
+            }
+
+            var lineCross: CGFloat = 0
+            for index in line {
+                let item = items[index]
+                if let fixedCross = item.fixedCross {
+                    items[index].cross = fixedCross
+                } else {
+                    let measured = measure(
+                        item.view,
+                        main: item.main,
+                        cross: nil,
+                        mainLimit: item.main,
+                        crossLimit: max(0, (item.maxCross ?? roomCross) - item.crossMargins)
+                    )
+                    items[index].cross = clamp(measured.cross, item.minCross, item.maxCross)
+                }
+                lineCross = max(lineCross, items[index].cross + item.crossMargins)
+            }
+            // A single line is as thick as the container when the container's
+            // size is known: stretched children fill it, others align in it.
+            if !wrap, let definiteCross { lineCross = definiteCross }
+            for index in line where items[index].fixedCross == nil && items[index].align == "stretch" {
+                let item = items[index]
+                if case .some = (horizontal ? item.style.height : item.style.width) { continue }
+                items[index].cross = clamp(lineCross - item.crossMargins, item.minCross, item.maxCross)
+            }
+            lineMains.append(line.reduce(0) { $0 + items[$1].main + items[$1].mainMargins } + gaps)
+            lineCrosses.append(lineCross)
+        }
+
+        let contentMain = definiteMain ?? (lineMains.max() ?? 0)
+        let contentCross = definiteCross
+            ?? (lineCrosses.reduce(0, +) + CGFloat(max(0, lineCrosses.count - 1)) * crossGap)
+
+        if place {
+            var crossOffset: CGFloat = 0
+            for (lineIndex, line) in lines.enumerated() {
+                let free = max(0, contentMain - lineMains[lineIndex])
+                let count = line.count
+                let leading: CGFloat
+                let between: CGFloat
+                switch justifyContent {
+                case "center": leading = free / 2; between = 0
+                case "flex-end": leading = free; between = 0
+                case "space-between": leading = 0; between = count > 1 ? free / CGFloat(count - 1) : 0
+                case "space-around": leading = free / CGFloat(count * 2); between = free / CGFloat(count)
+                case "space-evenly": leading = free / CGFloat(count + 1); between = free / CGFloat(count + 1)
+                default: leading = 0; between = 0
+                }
+                let lineCross = lineCrosses[lineIndex]
+                var mainOffset = leading
+                for index in line {
+                    let item = items[index]
+                    let crossPosition: CGFloat
+                    switch item.align {
+                    case "center": crossPosition = item.crossLeading + (lineCross - item.crossMargins - item.cross) / 2
+                    case "flex-end": crossPosition = lineCross - item.crossTrailing - item.cross
+                    default: crossPosition = item.crossLeading
+                    }
+                    let mainPosition = mainOffset + item.mainLeading
+                    let frame = horizontal
+                        ? CGRect(x: padding.left + mainPosition, y: padding.top + crossOffset + crossPosition, width: item.main, height: item.cross)
+                        : CGRect(x: padding.left + crossOffset + crossPosition, y: padding.top + mainPosition, width: item.cross, height: item.main)
+                    frames.append((item.view, frame))
+                    mainOffset += item.mainMargins + item.main + mainGap + between
+                }
+                crossOffset += lineCross + crossGap
+            }
+        }
+        return horizontal ? CGSize(width: contentMain, height: contentCross) : CGSize(width: contentCross, height: contentMain)
+    }
+
+    private func layoutGrid(
+        _ children: [UIView],
+        innerWidth: CGFloat?,
+        roomWidth: CGFloat,
+        innerHeight: CGFloat?,
+        place: Bool,
+        frames: inout [(UIView, CGRect)]
+    ) -> CGSize {
         let columns = max(1, gridColumns)
         let horizontalGap = columnGap ?? gap
         let verticalGap = rowGap ?? gap
-        var columnWidth: CGFloat = 0
-        var rowHeights: [CGFloat] = []
-        let flowChildren = children.filter {
-            (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
+        let gaps = CGFloat(columns - 1) * horizontalGap
+        var cellWidth: CGFloat
+        if let innerWidth {
+            cellWidth = max(0, (innerWidth - gaps) / CGFloat(columns))
+        } else {
+            // Sized by content: the widest cell, as long as the row fits.
+            let widest = children.map { child -> CGFloat in
+                let style = child.craftLayoutStyle
+                return CraftNativeFlexLayout.measure(child, width: style.width?.resolve(nil), height: nil, maxWidth: roomWidth, maxHeight: CraftNativeFlexLayout.unbounded).width
+                    + style.marginLeft + style.marginRight
+            }.max() ?? 0
+            cellWidth = min(widest, max(0, (roomWidth - gaps) / CGFloat(columns)))
         }
-        for (index, child) in flowChildren.enumerated() {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            let size = measuredSize(for: child, available: CGSize(width: 10_000, height: 10_000), style: style)
-            let row = index / columns
-            while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
-            columnWidth = max(columnWidth, size.width + style.marginLeft + style.marginRight)
-            rowHeights[row] = max(rowHeights[row], size.height + style.marginTop + style.marginBottom)
-        }
-        let width = padding.left + padding.right + CGFloat(columns) * columnWidth + CGFloat(max(0, columns - 1)) * horizontalGap
-        let height = padding.top + padding.bottom + rowHeights.reduce(0, +) + CGFloat(max(0, rowHeights.count - 1)) * verticalGap
-        return CGSize(width: width, height: height)
-    }
-
-    private func layoutGrid(content: CGRect) {
-        let children = subviews.filter { !$0.isHidden && !($0 is CraftNativeFlexSpacer) }
-        let flowChildren = children.filter {
-            (childStyles[ObjectIdentifier($0)] ?? CraftNativeLayoutStyle([:])).position != "absolute"
-        }
-        let columns = max(1, gridColumns)
-        let horizontalGap = columnGap ?? gap
-        let verticalGap = rowGap ?? gap
-        let cellWidth = max(0, (content.width - CGFloat(max(0, columns - 1)) * horizontalGap) / CGFloat(columns))
         var rowHeights: [CGFloat] = []
         var sizes: [CGSize] = []
-        for (index, child) in flowChildren.enumerated() {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            let size = measuredSize(
-                for: child,
-                available: CGSize(width: max(0, cellWidth - style.marginLeft - style.marginRight), height: content.height),
-                style: style
+        for (index, child) in children.enumerated() {
+            let style = child.craftLayoutStyle
+            let available = max(0, cellWidth - style.marginLeft - style.marginRight)
+            let align = style.alignSelf ?? alignItems
+            let fixedWidth = style.width?.resolve(cellWidth) ?? (align == "stretch" ? available : nil)
+            let size = CraftNativeFlexLayout.measure(
+                child,
+                width: fixedWidth.map { min($0, available) },
+                height: style.height?.resolve(nil),
+                maxWidth: available,
+                maxHeight: CraftNativeFlexLayout.unbounded
             )
             sizes.append(size)
             let row = index / columns
             while rowHeights.count <= row { rowHeights.append(gridAutoRows ?? 0) }
             rowHeights[row] = max(rowHeights[row], size.height + style.marginTop + style.marginBottom)
         }
-        var rowTop = content.minY
-        for (index, child) in flowChildren.enumerated() {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            let row = index / columns
-            let column = index % columns
-            let rowHeight = rowHeights[row]
-            let size = sizes[index]
-            let align = style.alignSelf ?? alignItems
-            let availableWidth = max(0, cellWidth - style.marginLeft - style.marginRight)
-            let availableHeight = max(0, rowHeight - style.marginTop - style.marginBottom)
-            let width = align == "stretch" && style.width == nil ? availableWidth : min(availableWidth, size.width)
-            let height = align == "stretch" && style.height == nil ? availableHeight : min(availableHeight, size.height)
-            let x = content.minX + CGFloat(column) * (cellWidth + horizontalGap) + style.marginLeft
-                + (align == "center" ? (availableWidth - width) / 2 : align == "flex-end" ? availableWidth - width : 0)
-            let y = rowTop + style.marginTop
-                + (align == "center" ? (availableHeight - height) / 2 : align == "flex-end" ? availableHeight - height : 0)
-            child.frame = CGRect(x: x, y: y, width: width, height: height).integral
-            if column == columns - 1 || index == flowChildren.count - 1 { rowTop += rowHeight + verticalGap }
-        }
-        for child in children {
-            let style = childStyles[ObjectIdentifier(child)] ?? CraftNativeLayoutStyle([:])
-            guard style.position == "absolute" else { continue }
-            let size = measuredSize(for: child, available: content.size, style: style)
-            let width = style.left != nil && style.right != nil ? max(0, content.width - (style.left ?? 0) - (style.right ?? 0)) : size.width
-            let height = style.top != nil && style.bottom != nil ? max(0, content.height - (style.top ?? 0) - (style.bottom ?? 0)) : size.height
-            let x = style.left ?? (style.right.map { content.width - $0 - width } ?? 0)
-            let y = style.top ?? (style.bottom.map { content.height - $0 - height } ?? 0)
-            child.frame = CGRect(x: content.minX + x, y: content.minY + y, width: width, height: height).integral
-        }
-    }
-
-    private var mainGapValue: CGFloat { axis == .horizontal ? (columnGap ?? gap) : (rowGap ?? gap) }
-    private var crossGapValue: CGFloat { axis == .horizontal ? (rowGap ?? 0) : (columnGap ?? 0) }
-
-    private func mainMargins(_ style: CraftNativeLayoutStyle) -> CGFloat {
-        axis == .horizontal ? style.marginLeft + style.marginRight : style.marginTop + style.marginBottom
-    }
-
-    private func crossMargins(_ style: CraftNativeLayoutStyle) -> CGFloat {
-        axis == .horizontal ? style.marginTop + style.marginBottom : style.marginLeft + style.marginRight
-    }
-
-    private func styleCrossDimension(_ style: CraftNativeLayoutStyle) -> CGFloat? {
-        axis == .horizontal ? style.height : style.width
-    }
-
-    private func measuredSize(for view: UIView, available: CGSize, style: CraftNativeLayoutStyle? = nil) -> CGSize {
-        let style = style ?? childStyles[ObjectIdentifier(view)] ?? CraftNativeLayoutStyle([:])
-        let intrinsic = view.intrinsicContentSize
-        let fitted = view.sizeThatFits(available)
-        let width = (axis == .horizontal ? style.flexBasis : nil) ?? style.width ?? (intrinsic.width > 0 && intrinsic.width != UIView.noIntrinsicMetric ? intrinsic.width : max(0, fitted.width))
-        let height = (axis == .vertical ? style.flexBasis : nil) ?? style.height ?? (intrinsic.height > 0 && intrinsic.height != UIView.noIntrinsicMetric ? intrinsic.height : max(0, fitted.height))
-        return CGSize(width: clamp(width, min: style.minWidth, max: style.maxWidth), height: clamp(height, min: style.minHeight, max: style.maxHeight))
-    }
-
-    private func distributeMainAxisSizes(
-        _ sizes: [CGSize],
-        styles: [CraftNativeLayoutStyle],
-        available: CGFloat,
-        lineMain: CGFloat
-    ) -> [CGSize] {
-        let free = available - lineMain
-        let factors = free >= 0 ? styles.map(\.flexGrow) : styles.map(\.flexShrink)
-        let total = factors.reduce(0, +)
-        guard total > 0, free != 0 else { return sizes }
-        return sizes.enumerated().map { index, size in
-            let delta = free * factors[index] / total
-            let style = styles[index]
-            if axis == .horizontal {
-                return CGSize(width: clamp(max(0, size.width + delta), min: style.minWidth, max: style.maxWidth), height: size.height)
+        let width = innerWidth ?? (CGFloat(columns) * cellWidth + gaps)
+        let height = rowHeights.reduce(0, +) + CGFloat(max(0, rowHeights.count - 1)) * verticalGap
+        if place {
+            var rowTop = padding.top
+            for (index, child) in children.enumerated() {
+                let style = child.craftLayoutStyle
+                let row = index / columns
+                let column = index % columns
+                let rowHeight = rowHeights[row]
+                let size = sizes[index]
+                let align = style.alignSelf ?? alignItems
+                let availableWidth = max(0, cellWidth - style.marginLeft - style.marginRight)
+                let availableHeight = max(0, rowHeight - style.marginTop - style.marginBottom)
+                let childWidth = min(availableWidth, size.width)
+                let childHeight = align == "stretch" && style.height == nil ? availableHeight : min(availableHeight, size.height)
+                let x = padding.left + CGFloat(column) * (cellWidth + horizontalGap) + style.marginLeft
+                    + (align == "center" ? (availableWidth - childWidth) / 2 : align == "flex-end" ? availableWidth - childWidth : 0)
+                let y = rowTop + style.marginTop
+                    + (align == "center" ? (availableHeight - childHeight) / 2 : align == "flex-end" ? availableHeight - childHeight : 0)
+                frames.append((child, CGRect(x: x, y: y, width: childWidth, height: childHeight)))
+                if column == columns - 1 || index == children.count - 1 { rowTop += rowHeight + verticalGap }
             }
-            return CGSize(width: size.width, height: clamp(max(0, size.height + delta), min: style.minHeight, max: style.maxHeight))
         }
-    }
-
-    private func clamp(_ value: CGFloat, min lower: CGFloat?, max upper: CGFloat?) -> CGFloat {
-        var result = value
-        if let lower { result = max(result, lower) }
-        if let upper { result = min(result, upper) }
-        return result
-    }
-
-    private func distribution(free: CGFloat, count: Int) -> (CGFloat, CGFloat) {
-        guard count > 0 else { return (0, 0) }
-        switch justifyContent {
-        case "center": return (free / 2, 0)
-        case "flex-end": return (free, 0)
-        case "space-between": return (0, count > 1 ? free / CGFloat(count - 1) : 0)
-        case "space-around": return (free / CGFloat(count * 2), free / CGFloat(count))
-        case "space-evenly": return (free / CGFloat(count + 1), free / CGFloat(count + 1))
-        default: return (0, 0)
-        }
+        return CGSize(width: width, height: innerHeight ?? height)
     }
 }
 
@@ -449,9 +780,12 @@ private final class CraftNativeModalView: UIView {
 
 private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDelegate {
     let contentStack = CraftNativeFlowView()
-    private var crossAxisConstraint: NSLayoutConstraint?
     private let keyboardTapGesture = UITapGestureRecognizer()
     private var keyboardShouldPersistTaps = "never"
+    private var contentNeedsLayout = true
+    private var laidOutSize: CGSize = .zero
+    private let pullToRefresh = UIRefreshControl()
+    private var refreshHandler: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -459,18 +793,96 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         keyboardTapGesture.delegate = self
         keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
         addGestureRecognizer(keyboardTapGesture)
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        pullToRefresh.addTarget(self, action: #selector(refreshPulled), for: .valueChanged)
         addSubview(contentStack)
-        NSLayoutConstraint.activate([
-            contentStack.topAnchor.constraint(equalTo: contentLayoutGuide.topAnchor),
-            contentStack.bottomAnchor.constraint(equalTo: contentLayoutGuide.bottomAnchor),
-            contentStack.leadingAnchor.constraint(equalTo: contentLayoutGuide.leadingAnchor),
-            contentStack.trailingAnchor.constraint(equalTo: contentLayoutGuide.trailingAnchor)
-        ])
         setAxis(.vertical)
     }
 
     required init?(coder: NSCoder) { nil }
+
+    var isVertical: Bool { contentStack.axis == .vertical }
+
+    /// Lays the content out again on the next pass. Scrolling alone does not:
+    /// a scroll view lays out on every frame of a scroll.
+    func setContentNeedsLayout() {
+        contentNeedsLayout = true
+        setNeedsLayout()
+    }
+
+    /// The size of the content laid out across the visible width (or, sideways,
+    /// height), which is also the scroll view's own size when nothing fixes it.
+    func contentFitting(width: CGFloat?, height: CGFloat?) -> CGSize {
+        if isVertical {
+            let contentWidth = max(0, (width ?? bounds.width) - adjustedContentInset.left - adjustedContentInset.right)
+            return contentStack.measure(width: contentWidth, height: nil, maxWidth: contentWidth, maxHeight: CraftNativeFlexLayout.unbounded)
+        }
+        let contentHeight = height.map { max(0, $0 - adjustedContentInset.top - adjustedContentInset.bottom) }
+        return contentStack.measure(width: nil, height: contentHeight, maxWidth: CraftNativeFlexLayout.unbounded, maxHeight: contentHeight ?? CraftNativeFlexLayout.unbounded)
+    }
+
+    func measure(width: CGFloat?, height: CGFloat?, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+        if isVertical {
+            let resolvedWidth = width ?? maxWidth
+            return CGSize(width: resolvedWidth, height: height ?? contentFitting(width: resolvedWidth, height: nil).height)
+        }
+        let content = contentFitting(width: nil, height: height)
+        return CGSize(width: width ?? min(content.width, maxWidth), height: height ?? content.height)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        craftApplyCornerRadius()
+        guard contentNeedsLayout || laidOutSize != bounds.size else { return }
+        contentNeedsLayout = false
+        laidOutSize = bounds.size
+        var size = contentFitting(width: bounds.width, height: bounds.height)
+        if isVertical {
+            size.width = max(0, bounds.width - adjustedContentInset.left - adjustedContentInset.right)
+        } else {
+            size.height = max(0, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
+        }
+        let frame = CGRect(origin: .zero, size: size)
+        if contentStack.frame != frame { contentStack.frame = frame }
+        if contentSize != size { contentSize = size }
+    }
+
+    override func adjustedContentInsetDidChange() {
+        super.adjustedContentInsetDidChange()
+        setContentNeedsLayout()
+    }
+
+    private var refreshingProp = false
+
+    /// `onRefresh` and `refreshing`: the system's pull to refresh, controlled
+    /// as in React Native. The spinner shows while `refreshing` is true; a
+    /// pull that the screen does not answer with `refreshing` true ends at
+    /// once instead of spinning forever.
+    func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
+        refreshHandler = handler
+        refreshingProp = refreshing
+        if handler == nil {
+            if pullToRefresh.isRefreshing { pullToRefresh.endRefreshing() }
+            if refreshControl === pullToRefresh { refreshControl = nil }
+            return
+        }
+        if refreshControl !== pullToRefresh { refreshControl = pullToRefresh }
+        if refreshing, !pullToRefresh.isRefreshing {
+            pullToRefresh.beginRefreshing()
+        } else if !refreshing, pullToRefresh.isRefreshing {
+            pullToRefresh.endRefreshing()
+        }
+    }
+
+    var isRefreshingNow: Bool { pullToRefresh.isRefreshing }
+
+    @objc private func refreshPulled() {
+        refreshHandler?()
+        // The handler's synchronous render has landed by now.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.refreshingProp, self.pullToRefresh.isRefreshing else { return }
+            self.pullToRefresh.endRefreshing()
+        }
+    }
 
     func setKeyboardShouldPersistTaps(_ value: Any?) {
         let requested = value as? String
@@ -496,18 +908,57 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     }
 
     func setAxis(_ axis: NSLayoutConstraint.Axis) {
+        if contentStack.axis != axis { setContentNeedsLayout() }
         contentStack.axis = axis
-        crossAxisConstraint?.isActive = false
-        crossAxisConstraint = axis == .vertical
-            ? contentStack.widthAnchor.constraint(equalTo: frameLayoutGuide.widthAnchor)
-            : contentStack.heightAnchor.constraint(equalTo: frameLayoutGuide.heightAnchor)
-        crossAxisConstraint?.isActive = true
         alwaysBounceVertical = axis == .vertical
         alwaysBounceHorizontal = axis == .horizontal
     }
 }
 
+/// Text with padding of its own: the padding is inside the label, around
+/// the text, and counts in its measured size.
+private final class CraftNativeLabel: UILabel {
+    var insets = UIEdgeInsets.zero {
+        didSet {
+            guard insets != oldValue else { return }
+            invalidateIntrinsicContentSize()
+            setNeedsDisplay()
+        }
+    }
+
+    override func drawText(in rect: CGRect) {
+        super.drawText(in: rect.inset(by: insets))
+    }
+
+    override func textRect(forBounds bounds: CGRect, limitedToNumberOfLines numberOfLines: Int) -> CGRect {
+        guard insets != .zero else { return super.textRect(forBounds: bounds, limitedToNumberOfLines: numberOfLines) }
+        let inner = super.textRect(forBounds: bounds.inset(by: insets), limitedToNumberOfLines: numberOfLines)
+        return CGRect(
+            x: inner.minX - insets.left,
+            y: inner.minY - insets.top,
+            width: inner.width + insets.left + insets.right,
+            height: inner.height + insets.top + insets.bottom
+        )
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        craftApplyCornerRadius()
+    }
+}
+
 private final class CraftNativeFlexSpacer: UIView {}
+
+/// An SF Symbol leaf. Its natural size is the symbol's, or a 20 pt square
+/// when the style gives it no size at all.
+private final class CraftNativeIconView: UIImageView {
+    var defaultBox: CGFloat? { didSet { if defaultBox != oldValue { invalidateIntrinsicContentSize() } } }
+
+    override var intrinsicContentSize: CGSize {
+        if let defaultBox { return CGSize(width: defaultBox, height: defaultBox) }
+        return super.intrinsicContentSize
+    }
+}
 
 private final class CraftNativeTextView: UITextView {
     private let placeholderLabel = UILabel()
@@ -659,8 +1110,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         rootStack.alignItems = "stretch"
         rootStack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(rootStack)
+        rootTopToSafeArea = rootStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+        rootTopToView = rootStack.topAnchor.constraint(equalTo: view.topAnchor)
         NSLayoutConstraint.activate([
-            rootStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            rootTopToSafeArea!,
             rootStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             rootStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             rootStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
@@ -674,10 +1127,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         super.traitCollectionDidChange(previousTraitCollection)
         guard previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle else { return }
         refreshTraitDefaults()
+        send(type: "APPEARANCE", payload: ["colorScheme": colorScheme])
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        if let navigationBarHidden, navigationController?.isNavigationBarHidden != navigationBarHidden {
+            navigationController?.setNavigationBarHidden(navigationBarHidden, animated: animated)
+        } else if navigationBarHidden == nil, navigationController?.isNavigationBarHidden == true,
+                  navigationController?.viewControllers.first !== self {
+            // A screen that did not ask for a hidden bar shows one, even after
+            // a screen that hid its own.
+            navigationController?.setNavigationBarHidden(false, animated: animated)
+        }
         refreshTraitDefaults()
     }
 
@@ -707,8 +1169,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             jsContext.setObject(routeName, forKeyedSubscript: "__stxNativeRoute" as NSString)
         }
         jsContext.setObject(routeParams as NSDictionary, forKeyedSubscript: "__stxNativeParams" as NSString)
-        jsContext.exceptionHandler = { _, exception in
-            NSLog("[craft native] JavaScript exception: %@", exception?.toString() ?? "unknown")
+        jsContext.exceptionHandler = { [weak self] context, exception in
+            let message = exception?.toString() ?? "unknown"
+            let stack = exception?.objectForKeyedSubscript("stack")?.toString() ?? ""
+            CraftNativeConsole.write("error", category: self?.screenName(in: context) ?? "screen", message: stack.isEmpty || stack == "undefined" ? "Uncaught \(message)" : "Uncaught \(message)\n\(stack)")
         }
         let postMessage: @convention(block) (String) -> Void = { [weak self] json in
             self?.receive(json)
@@ -744,12 +1208,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 capabilityTimeoutMs: \(craftNativeCapabilityTimeoutMilliseconds),
                 capabilities: \(capabilityJSON),
                 initialAppState: "\(CraftNativeActions.currentAppState())",
+                colorScheme: "\(colorScheme)",
                 postMessage: function(message) { craftNativePostMessage(message); },
                 onMessage: function(callback) { globalThis.__stxNativeCallback = callback; }
             };
-            globalThis.console = {
-                log: function() {}, warn: function() {}, error: function() {}
-            };
+        """)
+        installHostAPIs()
+        jsContext.evaluateScript("""
             if (typeof globalThis.setTimeout !== 'function') {
                 (function() {
                     var timers = new Map();
@@ -777,6 +1242,154 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         """)
     }
 
+    /// `"dark"` or `"light"` for the bundle's `dark:` classes (contract A4):
+    /// the window's appearance once there is one, else the app's setting.
+    private var colorScheme: String {
+        let traits = [view.window?.traitCollection, CraftPresenter.keyWindow()?.traitCollection, traitCollection]
+        if let style = traits.compactMap({ $0 }).first(where: { $0.userInterfaceStyle != .unspecified })?.userInterfaceStyle {
+            return style == .dark ? "dark" : "light"
+        }
+        return config.appearance == "dark" ? "dark" : "light"
+    }
+
+    /// The screen's name as its script knows it: the route the host opened,
+    /// else the one a route bundle selected for itself.
+    private func screenName(in context: JSContext? = nil) -> String {
+        if let routeName, !routeName.isEmpty { return routeName }
+        if let selected = (context ?? jsContext).objectForKeyedSubscript("__stxNativeRoute"), selected.isString {
+            return selected.toString()
+        }
+        return "screen"
+    }
+
+    /// Host functions every screen script can call synchronously, installed
+    /// before the script runs (contract sections 3, 4 and 5):
+    ///
+    /// - `console.*` writes to the unified log, subsystem `craft.native`,
+    ///   category the screen's name.
+    /// - `craft.storage.getSync(key)` / `setSync(key, value)`: the store the
+    ///   asynchronous `craft.storage` uses. `getSync` answers what `get` would.
+    /// - `craft.snapshots.get(name)` (sync) and `set(name, value)` (a
+    ///   promise): `Application Support/craft-snapshots/<name>.json`.
+    /// - `craft.secureStorage.getSync(key)`: the Keychain item the web page's
+    ///   `craft.secureStorage.set` wrote.
+    /// - `craft.navigation.setOptions({ title, largeTitle, hidden, backTitle,
+    ///   rightButtons })`; a right button's tap is the event `navButton`.
+    ///
+    /// A runtime that assigns `craft.storage` (or the others) afterwards keeps
+    /// these: each namespace is a property whose setter adds them back to the
+    /// object it is given.
+    private func installHostAPIs() {
+        let log: @convention(block) (String, String, String) -> Void = { level, category, message in
+            CraftNativeConsole.write(level, category: category, message: message)
+        }
+        let storageGet: @convention(block) (String) -> String? = { key in
+            CraftNativeActions.storageJSON(forKey: key)
+        }
+        let storageSet: @convention(block) (String, JSValue) -> Bool = { key, value in
+            CraftNativeActions.setStorageJSON(value.isNull || value.isUndefined ? nil : value.toString(), forKey: key)
+        }
+        let snapshotGet: @convention(block) (String) -> String? = { name in
+            CraftSnapshots.read(name)
+        }
+        let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { name, value, done in
+            CraftSnapshots.write(name, json: value.isNull || value.isUndefined ? nil : value.toString()) { ok in
+                done.call(withArguments: [ok])
+            }
+        }
+        let config = self.config
+        let secureGet: @convention(block) (String) -> String? = { key in
+            config.enableSecureStorage ? CraftNativeActions.webSecureValue(forKey: key) : nil
+        }
+        let setOptions: @convention(block) (String) -> Void = { [weak self] json in
+            guard let data = json.data(using: .utf8),
+                  let options = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            self?.applyNavigationOptions(options)
+        }
+        jsContext.setObject(log, forKeyedSubscript: "craftNativeLog" as NSString)
+        jsContext.setObject(storageGet, forKeyedSubscript: "craftNativeStorageGet" as NSString)
+        jsContext.setObject(storageSet, forKeyedSubscript: "craftNativeStorageSet" as NSString)
+        jsContext.setObject(snapshotGet, forKeyedSubscript: "craftNativeSnapshotGet" as NSString)
+        jsContext.setObject(snapshotSet, forKeyedSubscript: "craftNativeSnapshotSet" as NSString)
+        jsContext.setObject(secureGet, forKeyedSubscript: "craftNativeSecureGet" as NSString)
+        jsContext.setObject(setOptions, forKeyedSubscript: "craftNativeSetOptions" as NSString)
+        jsContext.evaluateScript("""
+            (function() {
+                function text(value) {
+                    if (typeof value === 'string') return value;
+                    if (value === undefined) return 'undefined';
+                    if (value instanceof Error) return value.stack ? value.message + '\\n' + value.stack : String(value);
+                    try { var json = JSON.stringify(value); return json === undefined ? String(value) : json; }
+                    catch (error) { return String(value); }
+                }
+                function screen() {
+                    var route = globalThis.__stxNativeRoute;
+                    return typeof route === 'string' && route ? route : 'screen';
+                }
+                function writer(level) {
+                    return function() {
+                        craftNativeLog(level, screen(), Array.prototype.map.call(arguments, text).join(' '));
+                    };
+                }
+                globalThis.console = {
+                    log: writer('log'), info: writer('info'), debug: writer('debug'), trace: writer('debug'),
+                    warn: writer('warn'), error: writer('error')
+                };
+
+                function parsed(json) {
+                    if (json === null || json === undefined) return null;
+                    try { return JSON.parse(json); } catch (error) { return null; }
+                }
+                function encoded(value) {
+                    return value === null || value === undefined ? null : JSON.stringify(value);
+                }
+                var craft = globalThis.craft = globalThis.craft || {};
+                function keep(name, extras) {
+                    var current = {};
+                    function adopt(next) {
+                        current = next && typeof next === 'object' ? next : {};
+                        Object.keys(extras).forEach(function(key) {
+                            if (!(key in current)) current[key] = extras[key];
+                        });
+                    }
+                    adopt(craft[name]);
+                    Object.defineProperty(craft, name, {
+                        configurable: true,
+                        enumerable: true,
+                        get: function() { return current; },
+                        set: adopt
+                    });
+                }
+                keep('storage', {
+                    getSync: function(key) { return parsed(craftNativeStorageGet(String(key))); },
+                    setSync: function(key, value) {
+                        if (!craftNativeStorageSet(String(key), encoded(value))) throw new Error('craft.storage.setSync could not store ' + key);
+                    }
+                });
+                keep('snapshots', {
+                    get: function(name) { return parsed(craftNativeSnapshotGet(String(name))); },
+                    set: function(name, value) {
+                        return new Promise(function(resolve, reject) {
+                            craftNativeSnapshotSet(String(name), encoded(value), function(ok) {
+                                if (ok) resolve();
+                                else reject(new Error('craft.snapshots.set could not write ' + name));
+                            });
+                        });
+                    }
+                });
+                keep('secureStorage', {
+                    getSync: function(key) {
+                        var value = craftNativeSecureGet(String(key));
+                        return value === undefined ? null : value;
+                    }
+                });
+                keep('navigation', {
+                    setOptions: function(options) { craftNativeSetOptions(JSON.stringify(options || {})); }
+                });
+            })();
+        """)
+    }
+
     private func loadBundle() {
         guard let url = Bundle.main.url(forResource: "native-screen", withExtension: "js", subdirectory: "dist")
             ?? Bundle.main.url(forResource: "native-screen", withExtension: "js"),
@@ -785,9 +1398,104 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return
         }
         jsContext.evaluateScript(script)
-        if routeName == nil, let selected = jsContext.objectForKeyedSubscript("__stxNativeRoute")?.toString() {
-            navigationItem.title = selected
+        // A bundle that names no route leaves `__stxNativeRoute` undefined;
+        // its title is the app's, not the word "undefined". A title the
+        // script set with `navigation.setOptions` wins over both.
+        if routeName == nil, !titleFromOptions,
+           let selected = jsContext.objectForKeyedSubscript("__stxNativeRoute"), selected.isString,
+           let name = selected.toString(), !name.isEmpty {
+            navigationItem.title = name
         }
+    }
+
+    // MARK: Navigation bar options
+
+    private var titleFromOptions = false
+    private var rootTopToSafeArea: NSLayoutConstraint?
+    private var rootTopToView: NSLayoutConstraint?
+    private var navigationBarHidden: Bool?
+    private var prefersLargeTitle: Bool?
+    private weak var trackedScrollView: UIScrollView?
+
+    /// `craft.navigation.setOptions`: this screen's bar. Every key is
+    /// optional and only the keys given change.
+    private func applyNavigationOptions(_ options: [String: Any]) {
+        if options.keys.contains("title") {
+            navigationItem.title = options["title"] as? String
+            titleFromOptions = true
+        }
+        if options.keys.contains("backTitle") {
+            navigationItem.backButtonTitle = options["backTitle"] as? String
+        }
+        if let largeTitle = options["largeTitle"] as? Bool {
+            prefersLargeTitle = largeTitle
+            navigationItem.largeTitleDisplayMode = largeTitle ? .always : .never
+            if largeTitle { navigationController?.navigationBar.prefersLargeTitles = true }
+            trackContentScrollView()
+        }
+        if let hidden = options["hidden"] as? Bool {
+            navigationBarHidden = hidden
+            if navigationController?.topViewController === self {
+                navigationController?.setNavigationBarHidden(hidden, animated: view.window != nil)
+            }
+        }
+        if options.keys.contains("rightButtons") {
+            let buttons = (options["rightButtons"] as? [[String: Any]]) ?? []
+            navigationItem.rightBarButtonItems = buttons.compactMap(navigationButton).reversed()
+        }
+    }
+
+    /// A bar button from `{ id, symbol | title }`. Its tap is the event
+    /// `navButton` with `{ id }`.
+    private func navigationButton(_ spec: [String: Any]) -> UIBarButtonItem? {
+        guard let id = spec["id"] as? String, !id.isEmpty else { return nil }
+        let action = UIAction { [weak self] _ in
+            self?.send(type: "EVENT", payload: ["handlerName": "navButton", "nativeEvent": ["id": id]])
+        }
+        let item: UIBarButtonItem
+        if let symbol = spec["symbol"] as? String, let image = UIImage(systemName: symbol) {
+            item = UIBarButtonItem(image: image, primaryAction: action)
+        } else if let title = spec["title"] as? String {
+            item = UIBarButtonItem(title: title, primaryAction: action)
+        } else {
+            return nil
+        }
+        item.accessibilityIdentifier = "nav-\(id)"
+        if let label = (spec["accessibilityLabel"] as? String) ?? (spec["title"] as? String) {
+            item.accessibilityLabel = label
+        } else {
+            item.accessibilityLabel = id
+        }
+        if let tint = (spec["color"] as? String).flatMap({ UIColor(hex: $0) }) { item.tintColor = tint }
+        return item
+    }
+
+    /// The first vertical scroll view of the screen drives the bar: a large
+    /// title collapses as it scrolls, and the bar's background follows it.
+    private func trackContentScrollView() {
+        guard let renderedRoot else { return }
+        func find(_ node: RenderedNode) -> UIScrollView? {
+            if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical, scroll.isScrollEnabled { return scroll }
+            if let list = node.view as? CraftNativeFlatList, list.isScrollEnabled,
+               (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal { return list }
+            for child in node.children {
+                if let match = find(child) { return match }
+            }
+            return nil
+        }
+        let scroll = find(renderedRoot)
+        // Under a large title the screen runs edge to edge, as UIKit's own
+        // screens do: the scroll view starts under the bar and insets its
+        // content by it, so the title collapses and pull to refresh draws
+        // in the bar's space. Other screens stay inside the safe area.
+        let edgeToEdge = scroll != nil && prefersLargeTitle == true
+        if rootTopToView?.isActive != edgeToEdge {
+            rootTopToSafeArea?.isActive = !edgeToEdge
+            rootTopToView?.isActive = edgeToEdge
+        }
+        guard scroll !== trackedScrollView else { return }
+        trackedScrollView = scroll
+        setContentScrollView(scroll, for: .top)
     }
 
     private func observeNativeEvents() {
@@ -906,6 +1614,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             } else {
                 navigation.setViewControllers(Array(navigation.viewControllers.dropLast()) + [next], animated: true)
             }
+        case "NAVIGATION_SET_OPTIONS":
+            applyNavigationOptions(payload)
         case "NAVIGATE_BACK":
             if navigationController?.topViewController === self {
                 navigationController?.popViewController(animated: true)
@@ -968,6 +1678,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
     }
 
+    /// Runs script in the screen's JavaScript context. Internal for
+    /// simulator-hosted XCTest of the host APIs.
+    @discardableResult
+    func evaluateScript(_ script: String) -> JSValue? {
+        jsContext.evaluateScript(script)
+    }
+
     // Internal so simulator-hosted XCTest can assert actual UIView identity.
     func render(_ document: [String: Any]) {
         mutationDocument.replace(with: document)
@@ -989,7 +1706,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let target = flatListOwners[id] ?? id
             guard applied.insert(target).inserted else { continue }
             guard let document = mutationDocument.node(target), let previous = renderedNode(target) else { return false }
-            _ = reconcile(document, identity: previous.identity, path: target, previous: previous)
+            let next = reconcile(document, identity: previous.identity, path: target, previous: previous)
+            // A style patch is applied in place, layout included: the parent
+            // reads the node's new layout style on its next pass.
+            CraftNativeFlexLayout.invalidateAncestors(of: next.view)
         }
         restoreFocus(focused)
         return true
@@ -1013,7 +1733,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             rootStack.addArrangedSubview(next.view)
         }
         rootStack.setLayoutStyle(next.style, for: next.view)
+        rootStack.invalidateMeasurements()
         renderedRoot = next
+        trackContentScrollView()
         restoreFocus(focused)
     }
 
@@ -1065,6 +1787,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let label = result as! UILabel
             label.numberOfLines = max(0, (props["numberOfLines"] as? NSNumber)?.intValue ?? 0)
             label.lineBreakMode = textLineBreakMode(props["ellipsizeMode"])
+            (label as? CraftNativeLabel)?.insets = paddingInsets(style)
             configureText(label, text: children.compactMap { $0 as? String }.joined(), style: style)
         case "Button", "Link":
             let button = result as! UIButton
@@ -1242,6 +1965,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             } else {
                 indicator.startAnimating()
             }
+        case "Icon":
+            configureIcon(result as! UIImageView, props: props, style: style)
         case "Image":
             let image = result as! UIImageView
             let imageID = ObjectIdentifier(image)
@@ -1284,6 +2009,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
             updateAuxiliaryHandler(events["onMomentumScrollBegin"], in: &scrollMomentumBeginHandlers, for: scroll)
             updateAuxiliaryHandler(events["onMomentumScrollEnd"], in: &scrollMomentumEndHandlers, for: scroll)
+            scroll.setRefreshHandler(nonEmptyHandler(events["onRefresh"]).map { [weak self] handler in
+                { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+            }, refreshing: props["refreshing"] as? Bool == true)
             var contentStyle = style
             if let override = props["contentContainerStyle"] as? [String: Any] {
                 contentStyle.merge(override) { _, next in next }
@@ -1323,7 +2051,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func makeView(_ type: String, props: [String: Any]) -> UIView {
         switch type {
         case "Text":
-            let label = UILabel()
+            let label = CraftNativeLabel()
             label.numberOfLines = 0
             return label
         case "Button", "Link":
@@ -1363,6 +2091,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             return UIActivityIndicatorView(style: .medium)
         case "Image":
             return UIImageView()
+        case "Icon":
+            let icon = CraftNativeIconView()
+            icon.contentMode = .scaleAspectFit
+            return icon
         case "ScrollView":
             return CraftNativeScrollView()
         case "FlatList":
@@ -1460,6 +2192,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         flatListOwners = flatListOwners.filter { $0.value != owner }
         for child in children { registerFlatListOwnership(child, owner: owner) }
         list.bounces = props["bounces"] as? Bool ?? true
+        list.isScrollEnabled = props["scrollEnabled"] as? Bool != false
+        list.onFittingHeightChanged = { [weak list] in
+            guard let list else { return }
+            CraftNativeFlexLayout.invalidateAncestors(of: list)
+        }
         list.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])
         list.setContentContainerStyle(props["contentContainerStyle"] as? [String: Any])
         list.setRefreshHandler(nonEmptyHandler(events["onRefresh"]).map { [weak self] handler in
@@ -1539,6 +2276,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false) {
+        (node.view as? CraftNativeScrollView)?.setRefreshHandler(nil, refreshing: false)
         if let list = node.view as? CraftNativeFlatList {
             let listKey = ObjectIdentifier(list)
             list.setRefreshHandler(nil, refreshing: false)
@@ -1791,6 +2529,44 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
     }
 
+    /// `<Icon symbol="sun.max">`: an SF Symbol, tinted by `color`, sized by
+    /// `fontSize` or else the icon's box, weighted by `fontWeight`. A name
+    /// the system does not have draws `circle`, so a typo shows rather than
+    /// leaving a hole.
+    private func configureIcon(_ icon: UIImageView, props: [String: Any], style: [String: Any]) {
+        let name = (props["symbol"] as? String) ?? (props["name"] as? String) ?? ""
+        let box = [number(style["width"]), number(style["height"])].compactMap { $0 }.min()
+        let fontSize = number(style["fontSize"])
+        // Without a size of its own an icon is a 20 pt square (contract A2).
+        (icon as? CraftNativeIconView)?.defaultBox = box == nil && fontSize == nil ? 20 : nil
+        let pointSize = fontSize ?? (box ?? 20) * 0.84
+        let weight: UIImage.SymbolWeight
+        switch style["fontWeight"] as? String {
+        case "100": weight = .ultraLight
+        case "200": weight = .thin
+        case "300": weight = .light
+        case "500": weight = .medium
+        case "600": weight = .semibold
+        case "bold", "700": weight = .bold
+        case "800": weight = .heavy
+        case "900": weight = .black
+        default: weight = .regular
+        }
+        let scale: UIImage.SymbolScale
+        switch props["scale"] as? String {
+        case "small": scale = .small
+        case "large": scale = .large
+        default: scale = .medium
+        }
+        let configuration = UIImage.SymbolConfiguration(pointSize: max(1, pointSize), weight: weight, scale: scale)
+        let image = UIImage(systemName: name, withConfiguration: configuration)
+            ?? UIImage(systemName: "circle", withConfiguration: configuration)
+        if icon.image != image { icon.image = image }
+        icon.preferredSymbolConfiguration = configuration
+        icon.tintColor = color(style["color"]) ?? color(props["color"]) ?? .label
+        icon.contentMode = .scaleAspectFit
+    }
+
     private func configureStack(_ stack: CraftNativeFlowView, style: [String: Any]) {
         let direction = style["flexDirection"] as? String
         stack.axis = direction == "row" || direction == "row-reverse" ? .horizontal : .vertical
@@ -1804,15 +2580,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         stack.grid = style["display"] as? String == "grid"
         stack.gridColumns = craftNativeGridColumnCount(style["gridTemplateColumns"] ?? style["gridColumns"])
         stack.gridAutoRows = number(style["gridAutoRows"])
-        let padding = number(style["padding"]) ?? 0
-        let horizontal = number(style["paddingHorizontal"]) ?? padding
-        let vertical = number(style["paddingVertical"]) ?? padding
-        stack.padding = UIEdgeInsets(
-            top: number(style["paddingTop"]) ?? vertical,
-            left: number(style["paddingLeft"]) ?? horizontal,
-            bottom: number(style["paddingBottom"]) ?? vertical,
-            right: number(style["paddingRight"]) ?? horizontal
-        )
+        stack.padding = paddingInsets(style)
+        stack.invalidateMeasurements()
     }
 
     private func addJustificationSpacers(to stack: CraftNativeFlowView, value: String?) { }
@@ -1825,7 +2594,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.backgroundColor = color(style["backgroundColor"]) ?? .clear
         view.alpha = number(style["opacity"]) ?? 1
         view.isHidden = style["display"] as? String == "none"
-        view.layer.cornerRadius = number(style["borderRadius"]) ?? 0
+        view.craftRequestedCornerRadius = number(style["borderRadius"])
         view.layer.borderWidth = number(style["borderWidth"]) ?? 0
         view.layer.borderColor = (color(style["borderColor"]) ?? .clear).cgColor
         let elevation = max(0, number(style["elevation"]) ?? 0)
@@ -1833,8 +2602,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.layer.shadowOpacity = elevation > 0 ? Float(min(0.28, 0.12 + elevation * 0.02)) : 0
         view.layer.shadowRadius = elevation * 0.5
         view.layer.shadowOffset = CGSize(width: 0, height: elevation * 0.25)
+        // A label paints its background inside its own bounds, so a rounded
+        // chip of text clips to its corners.
         view.clipsToBounds = style["overflow"] as? String == "hidden"
+            || (view is UILabel && (view.craftRequestedCornerRadius ?? 0) > 0)
         view.layer.masksToBounds = view.clipsToBounds
+        view.craftLayoutStyle = CraftNativeLayoutStyle(style)
+        (view as? CraftNativeFlowView)?.invalidateMeasurements()
+        (view as? CraftNativeScrollView)?.setContentNeedsLayout()
+    }
+
+    private func paddingInsets(_ style: [String: Any]) -> UIEdgeInsets {
+        let padding = number(style["padding"]) ?? 0
+        let horizontal = number(style["paddingHorizontal"]) ?? padding
+        let vertical = number(style["paddingVertical"]) ?? padding
+        return UIEdgeInsets(
+            top: number(style["paddingTop"]) ?? vertical,
+            left: number(style["paddingLeft"]) ?? horizontal,
+            bottom: number(style["paddingBottom"]) ?? vertical,
+            right: number(style["paddingRight"]) ?? horizontal
+        )
     }
 
     private func configureText(_ label: UILabel, text: String, style: [String: Any]) {
@@ -1844,13 +2631,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         label.textAlignment = textAlignment(style["textAlign"])
         var attributes: [NSAttributedString.Key: Any] = [:]
         if let spacing = number(style["letterSpacing"]) { attributes[.kern] = spacing }
-        if let lineHeight = number(style["lineHeight"]) {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.minimumLineHeight = lineHeight
-            paragraph.maximumLineHeight = lineHeight
-            paragraph.alignment = label.textAlignment
-            attributes[.paragraphStyle] = paragraph
-        }
         switch style["textDecorationLine"] as? String {
         case "underline": attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue
         case "line-through": attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
@@ -1859,8 +2639,21 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         default: break
         }
+        if let lineHeight = number(style["lineHeight"]) {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight
+            paragraph.maximumLineHeight = lineHeight
+            paragraph.alignment = label.textAlignment
+            attributes[.paragraphStyle] = paragraph
+        }
+        let alignment = label.textAlignment
+        let lineBreakMode = label.lineBreakMode
         label.attributedText = attributes.isEmpty ? nil : NSAttributedString(string: transformed, attributes: attributes)
         if attributes.isEmpty { label.text = transformed }
+        // Attributed text brings its own paragraph style, which resets the
+        // label's alignment and truncation; set them again over the whole text.
+        label.textAlignment = alignment
+        label.lineBreakMode = lineBreakMode
     }
 
     private func textLineBreakMode(_ value: Any?) -> NSLineBreakMode {
@@ -2131,7 +2924,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if let value = value {
             if let constraint = constraint { constraint.constant = value }
             else {
+                // Below required: the flex layout owns frames, and a width
+                // the layout stretches or shrinks must not log a conflict.
                 constraint = anchor.constraint(equalToConstant: value)
+                constraint?.priority = UILayoutPriority(999)
                 constraint?.isActive = true
             }
         } else {
@@ -2380,8 +3176,33 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
     }
 
+    /// A style colour: CSS hex with or without alpha (`#10b9811a` is
+    /// emerald at 10%), `rgb()`/`rgba()` and the few names; `UIColor(hex:)`
+    /// for anything else it has always read.
     private func color(_ value: Any?) -> UIColor? {
-        guard let hex = value as? String else { return nil }
-        return UIColor(hex: hex)
+        guard let text = value as? String else { return nil }
+        return UIColor(css: text) ?? UIColor(hex: text)
+    }
+}
+
+/// `console` for native screens: the unified log, subsystem `craft.native`,
+/// category the screen's name. Read it with
+/// `log stream --predicate 'subsystem == "craft.native"'`.
+enum CraftNativeConsole {
+    private static var loggers: [String: Logger] = [:]
+    private static let lock = NSLock()
+
+    static func write(_ level: String, category: String, message: String) {
+        lock.lock()
+        let logger = loggers[category] ?? Logger(subsystem: "craft.native", category: category)
+        loggers[category] = logger
+        lock.unlock()
+        switch level {
+        case "debug": logger.debug("\(message, privacy: .public)")
+        case "info": logger.info("\(message, privacy: .public)")
+        case "warn": logger.warning("\(message, privacy: .public)")
+        case "error": logger.error("\(message, privacy: .public)")
+        default: logger.notice("\(message, privacy: .public)")
+        }
     }
 }

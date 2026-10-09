@@ -633,6 +633,120 @@ enum CraftNativeActions {
     }
 }
 
+// MARK: - Synchronous reads for a screen's first frame
+
+extension CraftNativeActions {
+    /// The JSON text `craft.storage` keeps under `key`, or nil. The same store
+    /// as the asynchronous Storage module, read without a bridge round trip.
+    static func storageJSON(forKey key: String) -> String? {
+        guard let key = validKey(key), let data = UserDefaults.standard.data(forKey: storagePrefix + key) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Stores JSON text under `key` (nil removes it). False for an invalid key
+    /// or text that is not JSON, which the asynchronous `get` could not read.
+    @discardableResult
+    static func setStorageJSON(_ json: String?, forKey key: String) -> Bool {
+        guard let key = validKey(key) else { return false }
+        guard let json else {
+            UserDefaults.standard.removeObject(forKey: storagePrefix + key)
+            return true
+        }
+        let data = Data(json.utf8)
+        guard (try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])) != nil else { return false }
+        UserDefaults.standard.set(data, forKey: storagePrefix + key)
+        return true
+    }
+
+    /// The Keychain item the web page's `craft.secureStorage` wrote under
+    /// `key`: a generic password whose account is the key, as CraftApp's
+    /// `secureStore` writes it. Nil when there is none.
+    static func webSecureValue(forKey key: String) -> String? {
+        guard let key = validKey(key) else { return nil }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+/// Last-known data for a screen's first frame: one JSON file per name in
+/// `Application Support/craft-snapshots/<name>.json`. A web page writes them
+/// (`snapshots.set` in the mobile API) and a native screen reads them
+/// synchronously before its first render, or writes its own.
+enum CraftSnapshots {
+    private static let queue = DispatchQueue(label: "dev.craft.snapshots", qos: .utility)
+    private static let lock = NSLock()
+    /// Writes not on disk yet, so a read right after a write sees it.
+    private static var pending: [String: String?] = [:]
+
+    static var directory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("craft-snapshots", isDirectory: true)
+    }
+
+    /// Letters, digits, `-`, `_` and `.`, not starting with a dot: a file
+    /// name, never a path.
+    static func isValidName(_ name: String) -> Bool {
+        !name.isEmpty && name.count <= 128 && !name.hasPrefix(".")
+            && name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)) }
+    }
+
+    static func url(for name: String) -> URL? {
+        guard isValidName(name) else { return nil }
+        return directory?.appendingPathComponent("\(name).json", isDirectory: false)
+    }
+
+    /// The snapshot's JSON text, or nil.
+    static func read(_ name: String) -> String? {
+        guard let url = url(for: name) else { return nil }
+        lock.lock()
+        let waiting = pending[name]
+        lock.unlock()
+        if let waiting { return waiting }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Replaces the snapshot with JSON text (nil deletes it) off the main
+    /// thread, atomically. `completion` runs on the main queue.
+    static func write(_ name: String, json: String?, completion: ((Bool) -> Void)? = nil) {
+        guard let url = url(for: name), let directory else {
+            DispatchQueue.main.async { completion?(false) }
+            return
+        }
+        if let json, (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) == nil {
+            DispatchQueue.main.async { completion?(false) }
+            return
+        }
+        lock.lock()
+        pending[name] = .some(json)
+        lock.unlock()
+        queue.async {
+            var ok = true
+            do {
+                if let json {
+                    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try Data(json.utf8).write(to: url, options: [.atomic])
+                } else if FileManager.default.fileExists(atPath: url.path) {
+                    try FileManager.default.removeItem(at: url)
+                }
+            } catch {
+                ok = false
+            }
+            lock.lock()
+            if let current = pending[name], current == json { pending.removeValue(forKey: name) }
+            lock.unlock()
+            DispatchQueue.main.async { completion?(ok) }
+        }
+    }
+}
+
 /// The Taptic Engine's generators, held for the life of the process.
 ///
 /// Each haptic used to make a fresh generator at the moment of the tap. A new

@@ -21,6 +21,9 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         private(set) var representedIdentity: String?
         private(set) var hostedView: UIView?
         var onRecycle: ((String) -> Void)?
+        /// The width (or, sideways, height) the list gives this row, so a row
+        /// is measured at the list's width rather than the layout's estimate.
+        var fittingExtent: CGFloat?
 
         override func prepareForReuse() {
             super.prepareForReuse()
@@ -63,24 +66,25 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             if let collectionView = ancestor as? UICollectionView,
                let flowLayout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout,
                flowLayout.scrollDirection == .horizontal {
-                let target = CGSize(
-                    width: UIView.layoutFittingCompressedSize.width,
-                    height: layoutAttributes.size.height
+                let height = fittingExtent ?? layoutAttributes.size.height
+                let measured = CraftNativeFlexLayout.measure(
+                    hostedView,
+                    width: nil,
+                    height: height,
+                    maxWidth: CraftNativeFlexLayout.unbounded,
+                    maxHeight: height
                 )
-                let measured = hostedView.systemLayoutSizeFitting(
-                    target,
-                    withHorizontalFittingPriority: .fittingSizeLevel,
-                    verticalFittingPriority: .required
-                )
-                attributes.size.width = max(1, measured.width)
+                attributes.size = CGSize(width: max(1, ceil(measured.width)), height: max(1, height))
             } else {
-                let target = CGSize(width: layoutAttributes.size.width, height: UIView.layoutFittingCompressedSize.height)
-                let measured = hostedView.systemLayoutSizeFitting(
-                    target,
-                    withHorizontalFittingPriority: .required,
-                    verticalFittingPriority: .fittingSizeLevel
+                let width = fittingExtent ?? layoutAttributes.size.width
+                let measured = CraftNativeFlexLayout.measure(
+                    hostedView,
+                    width: width,
+                    height: nil,
+                    maxWidth: width,
+                    maxHeight: CraftNativeFlexLayout.unbounded
                 )
-                attributes.size.height = max(1, measured.height)
+                attributes.size = CGSize(width: max(1, width), height: max(1, ceil(measured.height)))
             }
             return attributes
         }
@@ -151,12 +155,68 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
                   let renderItem = self.renderItem else { return UICollectionViewCell() }
             let view = renderItem(item.node, identity, cell.hostedView)
             cell.onRecycle = self.recycleItem
+            cell.fittingExtent = self.itemExtent(isChrome: item.isChrome)
             cell.host(view, identity: identity)
             return cell
         }
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// Called when a list that does not scroll changes height, so the
+    /// containers around it make room.
+    var onFittingHeightChanged: (() -> Void)?
+
+    override var contentSize: CGSize {
+        didSet {
+            guard !isScrollEnabled, abs(oldValue.height - contentSize.height) > 0.5 else { return }
+            invalidateIntrinsicContentSize()
+            onFittingHeightChanged?()
+        }
+    }
+
+    override var isScrollEnabled: Bool {
+        didSet {
+            guard isScrollEnabled != oldValue else { return }
+            alwaysBounceVertical = isScrollEnabled && flowLayout.scrollDirection == .vertical
+            onFittingHeightChanged?()
+        }
+    }
+
+    /// The height of every row at `width`: what a list that does not scroll
+    /// (`scrollEnabled={false}`) takes inside a scroll view or a column.
+    /// Rows not measured yet count at their estimate, and the list asks for
+    /// room again as they are.
+    func fittingHeight(width: CGFloat) -> CGFloat {
+        guard !isScrollEnabled else { return 0 }
+        if abs(bounds.width - width) > 0.5 { frame.size.width = width }
+        layoutIfNeeded()
+        let content = flowLayout.collectionViewContentSize.height
+        return max(0, ceil(content + contentInset.top + contentInset.bottom))
+    }
+
+    /// The width a row gets: the list's own width inside its content padding,
+    /// shared between columns for data rows.
+    private func itemExtent(isChrome: Bool) -> CGFloat {
+        if flowLayout.scrollDirection == .horizontal {
+            return max(1, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
+        }
+        let width = max(1, bounds.width - adjustedContentInset.left - adjustedContentInset.right)
+        let count = isChrome ? 1 : columns
+        let spacing = flowLayout.minimumInteritemSpacing * CGFloat(count - 1)
+        return max(1, (width - spacing) / CGFloat(count))
+    }
+
+    override func layoutSubviews() {
+        let estimate = flowLayout.scrollDirection == .horizontal
+            ? CGSize(width: 44, height: itemExtent(isChrome: true))
+            : CGSize(width: itemExtent(isChrome: false), height: 44)
+        if flowLayout.estimatedItemSize != estimate, bounds.width > 0 {
+            flowLayout.estimatedItemSize = estimate
+        }
+        super.layoutSubviews()
+        craftApplyCornerRadius()
+    }
 
     func setContentContainerStyle(_ raw: [String: Any]?) {
         func number(_ value: Any?) -> CGFloat? { (value as? NSNumber).map { CGFloat(truncating: $0) } }
@@ -179,9 +239,15 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         keyboardTapGesture.isEnabled = keyboardShouldPersistTaps != "always"
     }
 
+    private var refreshingProp = false
+
+    /// `onRefresh` and `refreshing`, controlled as in React Native: a pull
+    /// the screen does not answer with `refreshing` true ends at once.
     func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
         refreshHandler = handler
-        refreshControl = handler == nil ? nil : nativeRefreshControl
+        refreshingProp = refreshing
+        let control = handler == nil ? nil : nativeRefreshControl
+        if refreshControl !== control { refreshControl = control }
         if handler == nil || !refreshing {
             if nativeRefreshControl.isRefreshing { nativeRefreshControl.endRefreshing() }
         } else if !nativeRefreshControl.isRefreshing {
@@ -189,7 +255,13 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         }
     }
 
-    @objc private func refreshTriggered() { refreshHandler?() }
+    @objc private func refreshTriggered() {
+        refreshHandler?()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.refreshingProp, self.nativeRefreshControl.isRefreshing else { return }
+            self.nativeRefreshControl.endRefreshing()
+        }
+    }
 
     @objc private func keyboardTap() {
         guard keyboardShouldPersistTaps != "always" else { return }
@@ -379,11 +451,9 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         guard items.indices.contains(indexPath.item) else { return CGSize(width: bounds.width, height: 44) }
         let item = items[indexPath.item]
         if flowLayout.scrollDirection == .horizontal {
-            return CGSize(width: 44, height: max(1, bounds.height))
+            return CGSize(width: 44, height: itemExtent(isChrome: item.isChrome))
         }
-        let count = item.isChrome ? 1 : columns
-        let spacing = flowLayout.minimumInteritemSpacing * CGFloat(count - 1)
-        return CGSize(width: max(1, (bounds.width - spacing) / CGFloat(count)), height: 44)
+        return CGSize(width: itemExtent(isChrome: item.isChrome), height: 44)
     }
 
     private func evaluateEndReached() {
