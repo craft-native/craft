@@ -327,7 +327,13 @@ class NativeNavigationTest {
             }
             assertEquals("modal should become visible", View.VISIBLE, modal.visibility)
             assertEquals("Modal content", (awaitView(activity, "modal-content") as TextView).text.toString())
+            assertEquals("modal shown", (awaitView(activity, "modal-status") as TextView).text.toString())
             click(activity, "toggle-modal")
+            awaitText(activity, "modal-status", "modal dismissed")
+            click(activity, "toggle-modal")
+            awaitText(activity, "modal-status", "modal shown")
+            instrumentation.runOnMainSync { activity.onBackPressed() }
+            awaitText(activity, "modal-status", "modal requested")
             val justifiedText = awaitView(activity, "justified-text") as TextView
             assertEquals("justified text should use the Android inter-word mode", Layout.JUSTIFICATION_MODE_INTER_WORD, justifiedText.justificationMode)
             instrumentation.runOnMainSync { nativeSwitch.performClick() }
