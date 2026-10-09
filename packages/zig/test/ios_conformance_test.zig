@@ -195,6 +195,29 @@ fn collectCases(allocator: std.mem.Allocator, region: []const u8) !std.StringHas
     return set;
 }
 
+/// Every `if action == "name"` the dispatcher answers before its switch.
+///
+/// `__craftReady` is one: the page's signal that the bridge has announced
+/// itself, which `userContentController` handles and returns from before the
+/// call is offered to Zig. It is not a device API, so it is kept out of
+/// `collectSpecCases` and the migration ratchet, but it is handled, and the
+/// page-callable check below has to see that.
+fn collectInterceptedActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
+    var set = std.StringHashMap(void).init(allocator);
+    errdefer set.deinit();
+
+    const region = dispatcherRegion();
+    const needle = "if action == \"";
+    var search: usize = 0;
+    while (std.mem.indexOfPos(u8, region, search, needle)) |at| {
+        const name_start = at + needle.len;
+        const name_end = std.mem.indexOfScalarPos(u8, region, name_start, '"') orelse break;
+        try set.put(region[name_start..name_end], {});
+        search = name_end;
+    }
+    return set;
+}
+
 /// Every action the injected JavaScript posts, as a set.
 fn collectPostedActions(allocator: std.mem.Allocator) !std.StringHashMap(void) {
     var set = std.StringHashMap(void).init(allocator);
@@ -273,6 +296,15 @@ test "every action the page can call is one the spec handles" {
     // it would come back.
     var handled = try collectSpecCases(testing.allocator);
     defer handled.deinit();
+
+    // An action the dispatcher answers before the switch is handled too. It
+    // has to be a real `if action == "..."` inside the dispatcher, the same
+    // region the cases come from, so this is no more an allow-list than the
+    // case scan is.
+    var intercepted = try collectInterceptedActions(testing.allocator);
+    defer intercepted.deinit();
+    var intercepted_it = intercepted.keyIterator();
+    while (intercepted_it.next()) |name| try handled.put(name.*, {});
 
     var posted = try collectPostedActions(testing.allocator);
     defer posted.deinit();
