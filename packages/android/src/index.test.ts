@@ -258,6 +258,22 @@ describe('Craft Android builder', () => {
     finally { rmSync(root, { recursive: true, force: true }) }
   })
 
+  it('keeps native route teardown and missing-bundle fallback explicit', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-android-native-lifecycle-'))
+    await init({ name: 'NativeLifecycle', packageName: 'org.example.nativelifecycle', output, runtimeDir: null, config: { renderer: 'native' } })
+
+    const native = readFileSync(join(output, 'app/src/main/java/org/example/nativelifecycle/MainActivity.kt'), 'utf8')
+    expect(native).toContain('showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")')
+    expect(native).toContain('screen.capabilityTimeouts.values.forEach(capabilityHandler::removeCallbacks)')
+    expect(native).toContain('screen.pendingCapabilities.forEach(capabilities::cancel)')
+    expect(native).toContain('screen.close()')
+    expect(native).toContain('imageJobs.values.forEach { it.cancel(true) }')
+    expect(native).toContain('imageExecutor.shutdownNow()')
+    expect(native).toContain('capabilities.close()')
+    expect(native).not.toContain('import android.webkit.WebView')
+    expect(native).not.toContain('WebView(')
+  })
+
   it('generates a DayNight background resource for native screens', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-android-dark-background-'))
     await init({

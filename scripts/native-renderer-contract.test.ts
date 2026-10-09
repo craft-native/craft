@@ -177,6 +177,33 @@ describe('native renderer component contract', () => {
     expect(android).toContain('Missing native-screen.js')
   })
 
+  it('keeps native teardown isolated from the WebView fallback', () => {
+    // Native routes own their timers, image requests, capability requests, and
+    // observers. A route must release those resources when it disappears, but
+    // the fallback path remains a separate WebView host in the app shell.
+    for (const marker of [
+      'imageTasks.values.forEach { $0.cancel() }',
+      'pendingCapabilityDeadlines.values.forEach { $0.cancel() }',
+      'pendingTimers.values.forEach { $0.cancel() }',
+      'pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }',
+      'lifecycleObservers.forEach(NotificationCenter.default.removeObserver)',
+    ]) expect(ios, `${marker} missing from iOS teardown`).toContain(marker)
+
+    for (const marker of [
+      'screen.capabilityTimeouts.values.forEach(capabilityHandler::removeCallbacks)',
+      'screen.pendingCapabilities.forEach(capabilities::cancel)',
+      'screen.close()',
+      'imageJobs.values.forEach { it.cancel(true) }',
+      'imageExecutor.shutdownNow()',
+      'capabilities.close()',
+    ]) expect(android, `${marker} missing from Android teardown`).toContain(marker)
+
+    expect(ios).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with stx-native first.")')
+    expect(android).toContain('showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")')
+    expect(ios).not.toContain('WKWebView')
+    expect(android).not.toContain('WebView(')
+  })
+
   it('keeps responsive layout events aligned across hosts', () => {
     expect(ios).toContain('events["onLayout"]')
     expect(ios).toContain('lastLayoutFrames[id] != frame')

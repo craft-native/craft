@@ -235,6 +235,20 @@ describe('Craft iOS builder', () => {
     expect(existsSync(join(output, 'dist', 'stale.js'))).toBe(false)
   })
 
+  it('keeps native route teardown and missing-bundle fallback explicit', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-lifecycle-'))
+    await init({ runtimeDir: null, name: 'NativeLifecycle', output, config: { renderer: 'native' } })
+
+    const native = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(native).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with stx-native first.")')
+    expect(native).toContain('imageTasks.values.forEach { $0.cancel() }')
+    expect(native).toContain('pendingCapabilityDeadlines.values.forEach { $0.cancel() }')
+    expect(native).toContain('pendingTimers.values.forEach { $0.cancel() }')
+    expect(native).toContain('pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }')
+    expect(native).toContain('lifecycleObservers.forEach(NotificationCenter.default.removeObserver)')
+    expect(native).not.toContain('WKWebView')
+  })
+
   it('renders only metadata for enabled native capabilities', () => {
     const config = {
       appName: 'WildLoop',
