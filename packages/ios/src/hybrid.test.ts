@@ -185,7 +185,10 @@ describe('hybrid page script', () => {
     expect(page.routerCalls).toHaveLength(0)
     expect(page.posts.at(-1)).toEqual({ type: 'navigateNative', path: '/m/calendar?date=2026-10-09', replace: false })
     await page.window.stxRouter.navigate('/m/workout/9', 'replace')
-    expect(page.posts.at(-1)).toEqual({ type: 'navigateNative', path: '/m/workout/9', replace: true })
+    expect(page.posts.filter(m => m.type === 'navigateNative').at(-1)).toEqual({ type: 'navigateNative', path: '/m/workout/9', replace: true })
+    // A redirect also moves the page there, behind the native screen, so it
+    // is not left on the page it redirected away from (sign-in).
+    expect(page.routerCalls).toHaveLength(1)
   })
 
   it('wraps a router that existed before the script', async () => {

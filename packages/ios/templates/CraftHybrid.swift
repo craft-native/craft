@@ -402,12 +402,17 @@ final class CraftHybrid: NSObject {
         navigate = function () { return own.apply(router, arguments); };
         // A forward navigation to a native path is the shell's to show; the
         // page draws nothing. Back (pushState false), tab switches and the
-        // shell's own navigations go through untouched.
+        // shell's own navigations go through untouched. A redirect (replace),
+        // as after signing in, is the page leaving where it was: the shell
+        // shows the native screen and the page follows it there behind it,
+        // or it stayed on the sign-in page and the next screen pushed from it
+        // came up blank.
         router.navigate = router.navigateTo = function (url, pushState, force) {
           var path = local(url);
           if (path !== null && pushState !== false && pushState !== 'tab' && hostNav === null && match(path)) {
             var replace = pushState === 'replace' || !!(pushState && typeof pushState === 'object' && pushState.replace);
             post({ type: 'navigateNative', path: path, replace: replace });
+            if (replace) return own.apply(router, arguments);
             return Promise.resolve(false);
           }
           return own.apply(router, arguments);
