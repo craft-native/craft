@@ -531,6 +531,12 @@ final class NativeRenderUnitTests: XCTestCase {
 
     func testFlatListRefreshControlForwardsAndTracksControlledState() {
         let list = CraftNativeFlatList()
+        // A refresh control only begins refreshing inside a window.
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 320, height: 480))
+        list.frame = window.bounds
+        window.addSubview(list)
+        window.isHidden = false
+        defer { window.isHidden = true }
         var refreshCount = 0
         list.setRefreshHandler({ refreshCount += 1 }, refreshing: false)
 

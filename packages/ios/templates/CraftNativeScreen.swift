@@ -419,7 +419,7 @@ private final class CraftNativeModalView: UIView {
         addSubview(contentStack)
     }
 
-    required init(coder: NSCoder) { super.init(coder: coder) }
+    required init?(coder: NSCoder) { nil }
 
     func setVisible(_ visible: Bool, opacity: CGFloat, animationType: String?) {
         guard renderedVisible != visible || isHidden != !visible else { return }
@@ -1075,6 +1075,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 style,
                 default: .systemFont(ofSize: 16)
             )
+            // The plain title too, so `title(for:)` and accessibility read it.
+            if button.title(for: .normal) != transformedTitle { button.setTitle(transformedTitle, for: .normal) }
             button.setAttributedTitle(NSAttributedString(
                 string: transformedTitle,
                 attributes: buttonTitleAttributes(style, color: titleColor, font: font, forceUnderline: type == "Link")
@@ -1126,10 +1128,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if field.returnKeyType != desiredReturnKeyType { field.returnKeyType = desiredReturnKeyType }
             let desiredAutocorrection: UITextAutocorrectionType = props["autoCorrect"] as? Bool == false ? .no : .default
             if field.autocorrectionType != desiredAutocorrection { field.autocorrectionType = desiredAutocorrection }
-            let desiredCapitalization = capitalizationType(props["autoCapitalize"])
-            if field.autocapitalizationType != desiredCapitalization { field.autocapitalizationType = desiredCapitalization }
+            // Secure entry first: turning it on resets the capitalization.
             let desiredSecureEntry = props["secureTextEntry"] as? Bool == true
             if field.isSecureTextEntry != desiredSecureEntry { field.isSecureTextEntry = desiredSecureEntry }
+            let desiredCapitalization = capitalizationType(props["autoCapitalize"])
+            if field.autocapitalizationType != desiredCapitalization { field.autocapitalizationType = desiredCapitalization }
             let desiredEnabled = props["editable"] as? Bool != false
             if field.isEnabled != desiredEnabled { field.isEnabled = desiredEnabled }
             if let value = props["value"] as? String {
