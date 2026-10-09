@@ -30,6 +30,7 @@ import WidgetKit
 import Intents
 import WatchConnectivity
 import ActivityKit
+import SafariServices
 
 extension Notification.Name {
     static let craftPushToken = Notification.Name("craftPushToken")
@@ -969,6 +970,10 @@ struct CraftWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: webConfig)
         webView.navigationDelegate = context.coordinator
+        // alert(), confirm() and prompt() as the system's own alerts, and
+        // target=_blank and window.open somewhere they can actually open.
+        // Without a UI delegate WebKit drops all of them silently.
+        webView.uiDelegate = context.coordinator
         // Now, not when the first page finishes loading. Everything the
         // coordinator sends the page goes through this reference, and a
         // network change, a push token or a location fix that arrived before
@@ -2104,11 +2109,18 @@ struct CraftWebView: UIViewRepresentable {
                 decisionHandler(.cancel)
                 return
             }
+            // A link that opens a new window (target=_blank) has no frame to
+            // load into. It is allowed on, so WebKit asks the UI delegate's
+            // `createWebViewWith`, which decides where it goes.
+            if navigationAction.targetFrame == nil {
+                decisionHandler(.allow)
+                return
+            }
             if isTrustedURL(url) {
                 // A new main-frame document gets the bridge seeded from the
                 // ids handed out so far (#226), so the user scripts are
                 // rebuilt before it exists rather than once per web view.
-                if navigationAction.targetFrame?.isMainFrame != false {
+                if navigationAction.targetFrame?.isMainFrame == true {
                     installUserScripts(into: webView.configuration.userContentController)
                 }
                 decisionHandler(.allow)
@@ -2212,7 +2224,7 @@ struct CraftWebView: UIViewRepresentable {
             webView.load(config.request(for: remote))
         }
 
-        private func isTrustedURL(_ url: URL?) -> Bool {
+        fileprivate func isTrustedURL(_ url: URL?) -> Bool {
             guard let url = url else { return false }
             return isTrustedOrigin(scheme: url.scheme ?? "", host: url.host ?? "", port: url.port ?? 0)
         }
@@ -7429,6 +7441,72 @@ extension URL {
 //
 // The end of an utterance is what `craft.speech.speak()` waits for. Hopped to
 // main because every piece of speech state is touched there and nowhere else.
+// MARK: - The page's own windows and dialogs
+//
+// WebKit hands these to the UI delegate and, with none set, drops them: an
+// alert() that never showed, a confirm() that answered false without asking,
+// a target=_blank link that did nothing when tapped.
+extension CraftWebView.Coordinator: WKUIDelegate {
+    /// A dialog's title: none for the app's own page, which speaks as the app,
+    /// and the origin's host for anything embedded in it, so a frame cannot
+    /// pass its alert off as the app's.
+    private func dialogTitle(for frame: WKFrameInfo) -> String? {
+        trusts(frame.securityOrigin) ? nil : frame.securityOrigin.host
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+        let alert = UIAlertController(title: dialogTitle(for: frame), message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: CraftPresenter.systemString("OK"), style: .default) { _ in completionHandler() })
+        if !CraftPresenter.present(alert, from: webView) { completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+        let alert = UIAlertController(title: dialogTitle(for: frame), message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: CraftPresenter.systemString("Cancel"), style: .cancel) { _ in completionHandler(false) })
+        alert.addAction(UIAlertAction(title: CraftPresenter.systemString("OK"), style: .default) { _ in completionHandler(true) })
+        if !CraftPresenter.present(alert, from: webView) { completionHandler(false) }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+        let alert = UIAlertController(title: dialogTitle(for: frame), message: prompt, preferredStyle: .alert)
+        alert.addTextField { field in field.text = defaultText }
+        alert.addAction(UIAlertAction(title: CraftPresenter.systemString("Cancel"), style: .cancel) { _ in completionHandler(nil) })
+        alert.addAction(UIAlertAction(title: CraftPresenter.systemString("OK"), style: .default) { [weak alert] _ in
+            completionHandler(alert?.textFields?.first?.text ?? "")
+        })
+        if !CraftPresenter.present(alert, from: webView) { completionHandler(nil) }
+    }
+
+    /// target=_blank and window.open. The app's own pages open in this web
+    /// view, the way a native app pushes a screen rather than opening a
+    /// second app. Anywhere else opens in Safari's in-app view, over the app
+    /// and dismissed back to it, and a non-web link goes to whatever app
+    /// handles it. A second web view is never made: there would be nothing to
+    /// show it in.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard let url = navigationAction.request.url else { return nil }
+        if isTrustedURL(url) {
+            webView.load(navigationAction.request)
+        } else if url.scheme == "https" || url.scheme == "http" {
+            let safari = SFSafariViewController(url: url)
+            safari.dismissButtonStyle = .close
+            if !CraftPresenter.present(safari, from: webView) { UIApplication.shared.open(url) }
+        } else {
+            UIApplication.shared.open(url)
+        }
+        return nil
+    }
+
+    /// getUserMedia from the app's own page is granted without WebKit's own
+    /// per-page prompt: the app already holds (or will ask for) the camera
+    /// and microphone permission iOS itself shows, and asking twice for one
+    /// thing reads as a web page. Anything embedded still gets the prompt.
+    @available(iOS 15.0, *)
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(trusts(origin) && trusts(frame.securityOrigin) ? .grant : .prompt)
+    }
+}
+
 extension CraftWebView.Coordinator: AVSpeechSynthesizerDelegate {
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         DispatchQueue.main.async { self.speechDidEnd(utterance, spoken: true) }

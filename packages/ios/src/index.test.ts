@@ -811,6 +811,36 @@ describe('Craft iOS builder', () => {
     expect(swift).toContain('webView.load(config.request(for: remote))')
   })
 
+  it('shows the page\'s alerts natively and opens new windows where they can open', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-ui-delegate-'))
+    await init({ runtimeDir: null, name: 'Dialogs', bundleId: 'org.example.dialogs', output })
+    const swift = readFileSync(join(output, 'Sources', 'DialogsApp.swift'), 'utf8')
+    const ui = readFileSync(join(output, 'Sources', 'CraftNativeUI.swift'), 'utf8')
+
+    expect(swift).toContain('webView.uiDelegate = context.coordinator')
+    expect(swift).toContain('extension CraftWebView.Coordinator: WKUIDelegate {')
+    for (const panel of ['runJavaScriptAlertPanelWithMessage', 'runJavaScriptConfirmPanelWithMessage', 'runJavaScriptTextInputPanelWithPrompt'])
+      expect(swift).toContain(panel)
+    // Every panel answers even when nothing can present it, or the page's
+    // script would wait forever on a dialog no one can see.
+    expect(swift).toContain('if !CraftPresenter.present(alert, from: webView) { completionHandler() }')
+    expect(swift).toContain('if !CraftPresenter.present(alert, from: webView) { completionHandler(false) }')
+    expect(swift).toContain('if !CraftPresenter.present(alert, from: webView) { completionHandler(nil) }')
+
+    // target=_blank reaches createWebViewWith: the app's own pages load in
+    // place, anything else in Safari's in-app view.
+    const policy = swift.slice(swift.indexOf('decidePolicyFor navigationAction: WKNavigationAction'), swift.indexOf('private func isEmbeddableFrameURL('))
+    expect(policy.indexOf('if navigationAction.targetFrame == nil {')).toBeLessThan(policy.indexOf('if isTrustedURL(url) {'))
+    const create = swift.slice(swift.indexOf('createWebViewWith configuration: WKWebViewConfiguration'), swift.indexOf('requestMediaCapturePermissionFor origin'))
+    expect(create).toContain('webView.load(navigationAction.request)')
+    expect(create).toContain('SFSafariViewController(url: url)')
+    expect(create).toContain('return nil')
+    expect(swift).toContain('decisionHandler(trusts(origin) && trusts(frame.securityOrigin) ? .grant : .prompt)')
+
+    // Presented from whatever is on top, never from a root that is busy.
+    expect(ui).toContain('while let presented = top?.presentedViewController, !presented.isBeingDismissed {')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled
