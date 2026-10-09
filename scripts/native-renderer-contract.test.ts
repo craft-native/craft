@@ -8,6 +8,8 @@ const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeF
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
 const androidRefreshableFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeRefreshableFlatList.kt.template'), 'utf8')
+const androidNavigationTest = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeNavigationTest.kt'), 'utf8')
+const androidFlatListTest = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeFlatListTest.kt'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
@@ -598,6 +600,13 @@ describe('native renderer component contract', () => {
   it('releases replaced iOS row roots when a keyed identity changes type', () => {
     expect(ios).toContain('if let previous, previous.view !== next.view {')
     expect(ios).toContain('self.forgetHandlers(previous)')
+    expect(ios).toContain('for child in rootStack.arrangedSubviews where child !== next.view')
+    expect(ios).toContain('if next.view.superview !== rootStack { rootStack.addArrangedSubview(next.view) }')
+  })
+
+  it('waits for asynchronous Android native fixture updates before asserting', () => {
+    expect(androidFlatListTest).toContain('attach(list)\n            list.smoothScrollToPosition(99)')
+    expect(androidNavigationTest).toContain('awaitText(activity, "input-style-status", "input colors on")')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

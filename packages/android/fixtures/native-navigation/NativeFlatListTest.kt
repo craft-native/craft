@@ -116,6 +116,7 @@ class NativeFlatListTest {
         }
         awaitCount(list, 100)
         instrumentation.runOnMainSync {
+            attach(list)
             list.smoothScrollToPosition(99)
         }
         repeat(50) {

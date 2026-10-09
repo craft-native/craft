@@ -1754,8 +1754,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let next = reconcile(document, identity: "root", path: "root", previous: previous)
         if previous?.view !== next.view {
             if let old = previous { detach(old, from: rootStack) }
-            rootStack.addArrangedSubview(next.view)
         }
+        // A failed or interrupted reconciliation can leave an older root
+        // attached even though `renderedRoot` points at the latest tree. Keep
+        // the host single-rooted so accessibility queries and event routing
+        // never see stale copies of the native screen.
+        for child in rootStack.arrangedSubviews where child !== next.view {
+            rootStack.removeArrangedSubview(child)
+            child.removeFromSuperview()
+        }
+        if next.view.superview !== rootStack { rootStack.addArrangedSubview(next.view) }
         rootStack.setLayoutStyle(next.style, for: next.view)
         rootStack.invalidateMeasurements()
         renderedRoot = next
