@@ -539,6 +539,7 @@ describe('native renderer component contract', () => {
     expect(iosFlatList).toContain('UIRefreshControl')
     expect(iosFlatList).toContain('func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool)')
     expect(ios).toContain('events["onRefresh"]')
+    expect(ios).toContain('list.setRefreshHandler(nil, refreshing: false)')
     expect(android).toContain('CraftNativeRefreshableFlatList')
     expect(android).toContain('events.optString("onRefresh")')
     expect(androidRefreshableFlatList).toContain('SwipeRefreshLayout')

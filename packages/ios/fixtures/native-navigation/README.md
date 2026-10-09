@@ -3,7 +3,8 @@
 The three `.stx` screens and `stx-native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a keyboard-configured `TextInput`, `Picker`, submit counter, counter, and keyed `FlatList`; the list covers two-column recycling, header/footer/empty content, row moves, focused-input retention, `onEndReached`, and controlled pull-to-refresh. The native list unit fixture also verifies scroll, drag, momentum, and refresh-control callback forwarding. Returning home must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
 
 Keyed row replacement releases the previous native root before the new row type
-is hosted, so old event and image handlers cannot leak across reuse.
+is hosted, so old event, image, and pull-to-refresh handlers cannot leak across
+reuse.
 Returning to a retained route also reapplies native theme defaults before the
 controller appears, keeping dark-mode colors current after navigation.
 Keyboard frame changes update the controller's additional safe area, keeping the

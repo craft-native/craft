@@ -1538,6 +1538,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false) {
         if let list = node.view as? CraftNativeFlatList {
             let listKey = ObjectIdentifier(list)
+            list.setRefreshHandler(nil, refreshing: false)
             list.discardAll()
             flatListRows.removeValue(forKey: listKey)
             if let owner = node.protocolId { flatListOwners = flatListOwners.filter { $0.value != owner } }
