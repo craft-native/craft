@@ -707,6 +707,8 @@ class MainActivity : AppCompatActivity() {
         val imageLoadHandlers = mutableMapOf<ImageView, String>()
         val imageLoadEndHandlers = mutableMapOf<ImageView, String>()
         val imageErrorHandlers = mutableMapOf<ImageView, String>()
+        val pressActiveOpacities = mutableMapOf<View, Float>()
+        val pressBaseOpacities = mutableMapOf<View, Float>()
         val modalVisibility = mutableMapOf<View, Boolean>()
         val modalCloseHandlers = mutableMapOf<View, String>()
         val layoutHandlers = mutableMapOf<View, String>()
@@ -1286,7 +1288,8 @@ class MainActivity : AppCompatActivity() {
             }
             "TouchableOpacity", "TouchableHighlight", "Pressable" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
-                alpha = if (props.optBoolean("disabled", false)) 0.5f else 1f
+                screen.pressActiveOpacities[this] = props.optDouble("activeOpacity", 0.5).toFloat()
+                screen.pressBaseOpacities[this] = style.optDouble("opacity", 1.0).toFloat()
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
@@ -1485,14 +1488,39 @@ class MainActivity : AppCompatActivity() {
             if (handler.isNotBlank() && !disabled) {
                 screen.handlers[control] = handler
                 control.isClickable = true
-                control.setOnClickListener {
-                    val current = screen.handlers[control] ?: return@setOnClickListener
-                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                if (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable")) {
+                    control.setOnClickListener(null)
+                    control.setOnTouchListener { view, event ->
+                        when (event.actionMasked) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                val active = screen.pressActiveOpacities[view] ?: 0.5f
+                                val base = screen.pressBaseOpacities[view] ?: 1f
+                                view.alpha = base * active
+                                true
+                            }
+                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                view.alpha = screen.pressBaseOpacities[view] ?: 1f
+                                if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                                    val current = screen.handlers[view] ?: return@setOnTouchListener true
+                                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                                }
+                                true
+                            }
+                            else -> true
+                        }
+                    }
+                } else {
+                    control.setOnTouchListener(null)
+                    control.setOnClickListener {
+                        val current = screen.handlers[control] ?: return@setOnClickListener
+                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                    }
                 }
             } else {
                 screen.handlers.remove(control)
                 control.isClickable = false
                 control.setOnClickListener(null)
+                control.setOnTouchListener(null)
             }
             control.isEnabled = !disabled
         }
@@ -2162,6 +2190,8 @@ class MainActivity : AppCompatActivity() {
         screen.imageLoadHandlers.keys.removeAll(released)
         screen.imageLoadEndHandlers.keys.removeAll(released)
         screen.imageErrorHandlers.keys.removeAll(released)
+        screen.pressActiveOpacities.keys.removeAll(released)
+        screen.pressBaseOpacities.keys.removeAll(released)
         screen.modalVisibility.keys.removeAll(released)
         screen.modalCloseHandlers.keys.removeAll(released)
     }

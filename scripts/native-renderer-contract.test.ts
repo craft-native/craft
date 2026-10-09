@@ -133,9 +133,12 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps pressable container disabled behavior aligned across hosts', () => {
-    expect(ios).toContain('pressable.alpha = props["disabled"] as? Bool == true ? 0.5 : 1')
+    expect(ios).toContain('pressable.pressActiveOpacity = props["disabled"] as? Bool == true')
     expect(ios).toContain('let disabled = props["disabled"] as? Bool == true')
-    expect(android).toContain('alpha = if (props.optBoolean("disabled", false)) 0.5f else 1f')
+    expect(ios).toContain('pressable.pressBaseOpacity = number(style["opacity"]) ?? 1')
+    expect(ios).toContain('pressable.pressBaseOpacity * activeOpacity')
+    expect(android).toContain('screen.pressActiveOpacities[this] = props.optDouble("activeOpacity", 0.5).toFloat()')
+    expect(android).toContain('view.alpha = base * active')
     expect(android).toContain('if (handler.isNotBlank() && !disabled)')
     expect(guide).toContain('`Pressable`')
   })

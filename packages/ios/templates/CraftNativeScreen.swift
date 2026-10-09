@@ -85,6 +85,8 @@ private struct CraftNativeLayoutStyle {
 }
 
 private final class CraftNativeFlowView: UIStackView {
+    var pressActiveOpacity: CGFloat?
+    var pressBaseOpacity: CGFloat = 1
     var wrap = false { didSet { invalidateIntrinsicContentSize(); setNeedsLayout() } }
     var alignItems = "stretch" { didSet { alignment = alignmentValue; setNeedsLayout() } }
     var justifyContent = "flex-start" { didSet { distribution = distributionValue; setNeedsLayout() } }
@@ -1119,7 +1121,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             let pressable = result as! CraftNativeFlowView
             configureStack(pressable, style: style)
             reconcileChildren(children, in: pressable, parent: current, path: path, style: style)
-            pressable.alpha = props["disabled"] as? Bool == true ? 0.5 : 1
+            pressable.pressActiveOpacity = props["disabled"] as? Bool == true
+                ? nil : number(props["activeOpacity"]) ?? 0.5
+            pressable.pressBaseOpacity = number(style["opacity"]) ?? 1
         case "Switch":
             let toggle = result as! UISwitch
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
@@ -2153,6 +2157,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
+        if let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
+            UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in
+                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
+            }
+        }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
     }
 
