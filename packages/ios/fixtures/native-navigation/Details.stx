@@ -44,6 +44,7 @@ function replaceWithSummary() {
     <FlatList
       testID="people-list"
       keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
       contentContainerStyle={{"paddingTop":8}}
       data={people}
       keyExtractor={item.id}

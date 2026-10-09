@@ -249,6 +249,10 @@ view API. `pagingEnabled` snaps `ScrollView` content to viewport-sized pages on
 both hosts. `onScroll` reports
 `contentOffset`, `contentSize`, and `layoutMeasurement`; `onScrollBeginDrag`
 and `onScrollEndDrag` report the corresponding gesture boundaries.
+`keyboardShouldPersistTaps` accepts `"never"` (the default), `"always"`, or
+`"handled"`; it controls whether taps inside a scroll host dismiss the active
+keyboard, preserving taps on native controls for the handled mode. The same
+policy applies to `FlatList`, which inherits the scroll props.
 `onMomentumScrollBegin` and `onMomentumScrollEnd` report the native deceleration
 interval. `FlatList` forwards the same scroll, drag, and momentum callbacks from
 its virtualized collection or recycler host, including the same
