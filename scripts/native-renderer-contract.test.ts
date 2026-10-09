@@ -11,6 +11,8 @@ const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-nav
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
+const iosReadme = readFileSync(join(root, 'packages/ios/README.md'), 'utf8')
+const androidReadme = readFileSync(join(root, 'packages/android/README.md'), 'utf8')
 
 /** One host-neutral vocabulary, asserted against every generated renderer. */
 const COMPONENTS: Array<[string, string, string]> = [
@@ -32,6 +34,13 @@ describe('native renderer component contract', () => {
     for (const [name, iosMarker, androidMarker] of COMPONENTS) {
       expect(ios, `${name} missing from iOS renderer`).toContain(iosMarker)
       expect(android, `${name} missing from Android renderer`).toContain(androidMarker)
+    }
+  })
+
+  it('keeps platform README primitive inventories complete', () => {
+    for (const component of COMPONENTS.map(([name]) => `\`${name}\``)) {
+      expect(iosReadme, `${component} missing from iOS README`).toContain(component)
+      expect(androidReadme, `${component} missing from Android README`).toContain(component)
     }
   })
 

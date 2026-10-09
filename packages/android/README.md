@@ -96,11 +96,12 @@ stx-native compile ../screens --format bundle --output ../native-screen.js
 craft android build --native-bundle ../native-screen.js
 ```
 
-Native mode maps STX `View`, `SafeAreaView`, `Text`, `Button`, `TextInput`,
-`Image`, `ScrollView`, and `FlatList` to Android views. `Switch` supports
-state-aware `trackColor` and `thumbColor`, while `Slider` supports track/thumb
-tint props and `step` snapping. `Image` reports load lifecycle events and
-structured failures. `FlatList` uses
+Native mode maps STX `View`, `SafeAreaView`, `Text`, `Button`, `Link`,
+`TextInput`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`,
+and `FlatList` to Android views. `Switch` supports state-aware `trackColor`
+and `thumbColor`, while `Slider` supports track/thumb tint props and `step`
+snapping. `Image` reports load lifecycle events and structured failures.
+`FlatList` uses
 `RecyclerView`, stable IDs, and `DiffUtil` for keyed recycling, grids,
 horizontal and inverted layouts, list chrome, and end-reached pagination.
 Flex items support `flex`, `flexGrow`, `flexShrink`, and numeric `flexBasis` for
