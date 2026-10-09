@@ -306,10 +306,10 @@ class NativeNavigationTest {
             assertEquals("panel long pressed", (awaitView(activity, "long-press-status") as TextView).text.toString())
             click(activity, "toggle-image-tint")
             assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
-            val image = awaitView(activity, "native-image") as ImageView
-            assertTrue("image tint did not clear on style update", image.colorFilter == null)
-            val unsupported = awaitView(activity, "unsupported-image") as ImageView
-            assertEquals(1, unsupported.contentDescription.toString().split("Unsupported image source").size - 1)
+            val tintedImage = awaitView(activity, "native-image") as ImageView
+            assertTrue("image tint did not clear on style update", tintedImage.colorFilter == null)
+            val tintedUnsupported = awaitView(activity, "unsupported-image") as ImageView
+            assertEquals(1, tintedUnsupported.contentDescription.toString().split("Unsupported image source").size - 1)
             val styleToggle = awaitView(activity, "toggle-button-style") as Button
             var styleInfo: AccessibilityNodeInfo? = null
             instrumentation.runOnMainSync { styleInfo = styleToggle.createAccessibilityNodeInfo() }
