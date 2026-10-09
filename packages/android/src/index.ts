@@ -546,6 +546,7 @@ export async function init(options: InitOptions): Promise<void> {
   if (config.renderer === 'native') {
     const mutationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeMutation.kt.template'), 'utf-8')
     const flatListTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.kt.template'), 'utf-8')
+    const refreshableFlatListTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeRefreshableFlatList.kt.template'), 'utf-8')
     const capabilityTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeCapabilities.kt.template'), 'utf-8')
     const notificationTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftNativeNotificationReceiver.kt.template'), 'utf-8')
     writeFileSync(
@@ -555,6 +556,10 @@ export async function init(options: InitOptions): Promise<void> {
     writeFileSync(
       join(output, 'app/src/main/java', packagePath, 'CraftNativeFlatList.kt'),
       flatListTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
+    )
+    writeFileSync(
+      join(output, 'app/src/main/java', packagePath, 'CraftNativeRefreshableFlatList.kt'),
+      refreshableFlatListTemplate.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName),
     )
     writeFileSync(
       join(output, 'app/src/main/java', packagePath, 'CraftNativeCapabilities.kt'),
@@ -677,6 +682,9 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{GOOGLE_SERVICES_PLUGIN\}\}/g, hasGoogleServices ? '    id("com.google.gms.google-services")' : '')
     .replace(/\{\{FIREBASE_MESSAGING_DEPENDENCY\}\}/g, config.enablePushNotifications
       ? '    implementation("com.google.firebase:firebase-messaging:24.1.0")'
+      : '')
+    .replace(/\{\{REFRESH_LAYOUT_DEPENDENCY\}\}/g, config.renderer === 'native'
+      ? '    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")'
       : '')
     .replace(/\{\{HEALTH_CONNECT_DEPENDENCIES\}\}/g, config.enableHealthConnect
       ? `    implementation("androidx.health.connect:connect-client:1.1.0")

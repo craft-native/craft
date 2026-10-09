@@ -1,0 +1,28 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+
+/** Swipe-to-refresh host for a native FlatList. */
+internal class CraftNativeRefreshableFlatList(context: Context) : SwipeRefreshLayout(context) {
+    val list = CraftNativeFlatList(context)
+    private var refreshHandler: (() -> Unit)? = null
+
+    init {
+        addView(list, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        setOnRefreshListener { refreshHandler?.invoke() }
+        isEnabled = false
+    }
+
+    fun configureRefresh(handler: (() -> Unit)?, refreshing: Boolean) {
+        refreshHandler = handler
+        isEnabled = handler != null
+        isRefreshing = handler != null && refreshing
+        if (handler == null) isRefreshing = false
+    }
+
+    override fun onDetachedFromWindow() {
+        refreshHandler = null
+        super.onDetachedFromWindow()
+    }
+}
