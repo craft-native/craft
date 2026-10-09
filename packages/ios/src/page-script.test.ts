@@ -281,6 +281,40 @@ describe('the injected iOS page script', () => {
     })
   }
 
+  // Each kind reaches the generator UIKit has for it. notification() and
+  // selection() used to post impact weights ('heavy', 'soft'), so a success
+  // felt like a thud and a picker detent like a tap.
+  const kinds: [string, (craft: any) => Promise<unknown>, string][] = [
+    ['impact(\'rigid\')', craft => craft.haptics.impact('rigid'), 'rigid'],
+    ['impact(\'soft\')', craft => craft.haptics.impact('soft'), 'soft'],
+    ['impact()', craft => craft.haptics.impact(), 'medium'],
+    ['notification(\'error\')', craft => craft.haptics.notification('error'), 'error'],
+    ['notification(\'warning\')', craft => craft.haptics.notification('warning'), 'warning'],
+    ['notification()', craft => craft.haptics.notification(), 'success'],
+    ['selection()', craft => craft.haptics.selection(), 'selection'],
+  ]
+
+  for (const [name, call, style] of kinds) {
+    it(`plays haptics.${name} as the ${style} haptic`, async () => {
+      const page = loadPage()
+      const played = call(page.craft)
+      expect(page.last('haptic').style).toBe(style)
+      page.answer('haptic', true)
+      expect(await played).toBeUndefined()
+    })
+  }
+
+  it('warms a generator through haptics.prepare, quietly when haptics are off', async () => {
+    const page = loadPage()
+    const warmed = page.craft.haptics.prepare('selection')
+    expect(page.last('hapticPrepare')).toMatchObject({ kind: 'selection' })
+    page.refuse('hapticPrepare', 'Haptics is disabled', 'CAPABILITY_DISABLED')
+    expect(await warmed).toBeUndefined()
+
+    void page.craft.haptics.prepare()
+    expect(page.last('hapticPrepare').kind).toBeNull()
+  })
+
   // A notification tap on a cold launch is flushed the moment the bridge is
   // ready, and a page that wires its listener after its router hydrates was
   // not listening yet: "Try it" opened the home screen instead. Held the way

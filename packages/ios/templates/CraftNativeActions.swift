@@ -44,6 +44,10 @@ enum CraftNativeActions {
             guard config.enableHaptics else { return failure("CAPABILITY_DISABLED", "Haptics is disabled") }
             triggerHaptic(style: body["style"] as? String ?? "medium")
             return .success(true)
+        case "hapticPrepare":
+            guard config.enableHaptics else { return failure("CAPABILITY_DISABLED", "Haptics is disabled") }
+            CraftHaptics.prepare(body["kind"] as? String)
+            return .success(true)
         case "clipboardWrite":
             guard config.enableClipboard else { return failure("CAPABILITY_DISABLED", "Clipboard is disabled") }
             guard let text = body["text"] as? String else {
@@ -82,6 +86,12 @@ enum CraftNativeActions {
             sync = perform(action: "getDeviceInfo", body: [:], config: config)
         case ("Haptics", "impact"):
             sync = perform(action: "haptic", body: ["style": args.first ?? NSNull()], config: config)
+        case ("Haptics", "notification"):
+            sync = perform(action: "haptic", body: ["style": (args.first as? String) ?? "success"], config: config)
+        case ("Haptics", "selection"):
+            sync = perform(action: "haptic", body: ["style": "selection"], config: config)
+        case ("Haptics", "prepare"):
+            sync = perform(action: "hapticPrepare", body: ["kind": args.first ?? NSNull()], config: config)
         case ("Clipboard", "write"):
             sync = perform(action: "clipboardWrite", body: ["text": args.first ?? NSNull()], config: config)
         case ("Clipboard", "read"):
@@ -460,15 +470,7 @@ enum CraftNativeActions {
     }
 
     static func triggerHaptic(style: String) {
-        switch style {
-        case "light": UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        case "heavy": UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
-        case "success": UINotificationFeedbackGenerator().notificationOccurred(.success)
-        case "warning": UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        case "error": UINotificationFeedbackGenerator().notificationOccurred(.error)
-        case "selection": UISelectionFeedbackGenerator().selectionChanged()
-        default: UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        }
+        CraftHaptics.play(style)
     }
 
     static func currentAppState() -> String {
@@ -530,5 +532,91 @@ enum CraftNativeActions {
             "batteryLevel": device.batteryLevel,
             "batteryState": batteryState,
         ]
+    }
+}
+
+/// The Taptic Engine's generators, held for the life of the process.
+///
+/// Each haptic used to make a fresh generator at the moment of the tap. A new
+/// generator has to wake the engine before it can play, which is the tens of
+/// milliseconds between a finger landing and the feel that makes web haptics
+/// read as late. These are made once, prepared again after every use, and
+/// `prepare` lets a page warm one before a gesture it knows is coming (the
+/// start of a drag, a long press about to complete).
+///
+/// The three kinds are the three UIKit has, and they are not interchangeable:
+/// a notification is the success, warning or error pattern, a selection is the
+/// detent a picker plays, and an impact is a single tap at one of five weights.
+/// The page used to get impacts for all of them.
+///
+/// Main thread only, like every UIFeedbackGenerator. Every caller is.
+enum CraftHaptics {
+    private static var impacts: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [:]
+    private static var notifier: UINotificationFeedbackGenerator?
+    private static var selector: UISelectionFeedbackGenerator?
+
+    /// An impact weight by name, or nil for a name that is not one.
+    static func impactStyle(_ name: String) -> UIImpactFeedbackGenerator.FeedbackStyle? {
+        switch name {
+        case "light": return .light
+        case "medium": return .medium
+        case "heavy": return .heavy
+        case "soft": return .soft
+        case "rigid": return .rigid
+        default: return nil
+        }
+    }
+
+    /// Play one haptic: an impact weight, a notification type, or `selection`.
+    /// Anything else plays a medium impact, as an unknown style always has.
+    static func play(_ style: String) {
+        switch style {
+        case "success": notification().notificationOccurred(.success); notification().prepare()
+        case "warning": notification().notificationOccurred(.warning); notification().prepare()
+        case "error": notification().notificationOccurred(.error); notification().prepare()
+        case "selection": selection().selectionChanged(); selection().prepare()
+        default:
+            let generator = impact(impactStyle(style) ?? .medium)
+            generator.impactOccurred()
+            generator.prepare()
+        }
+    }
+
+    /// Warm a generator so the next haptic plays without the engine's wake-up
+    /// delay. `impact`, `notification` or `selection` for one kind, an impact
+    /// weight or notification type for that one, nothing for all of them.
+    /// UIKit keeps a prepared engine awake for a few seconds only.
+    static func prepare(_ kind: String?) {
+        switch kind {
+        case "impact": impact(.medium).prepare()
+        case "notification", "success", "warning", "error": notification().prepare()
+        case "selection": selection().prepare()
+        case let name? where impactStyle(name) != nil: impact(impactStyle(name)!).prepare()
+        default:
+            impact(.medium).prepare()
+            notification().prepare()
+            selection().prepare()
+        }
+    }
+
+    private static func impact(_ style: UIImpactFeedbackGenerator.FeedbackStyle) -> UIImpactFeedbackGenerator {
+        if let generator = impacts[style] { return generator }
+        let generator = UIImpactFeedbackGenerator(style: style)
+        impacts[style] = generator
+        return generator
+    }
+
+    private static func notification() -> UINotificationFeedbackGenerator {
+        if let notifier { return notifier }
+        let generator = UINotificationFeedbackGenerator()
+        notifier = generator
+        return generator
+    }
+
+    private static func selection() -> UISelectionFeedbackGenerator {
+        if let selector { return selector }
+        let generator = UISelectionFeedbackGenerator()
+        selector = generator
+        return generator
     }
 }

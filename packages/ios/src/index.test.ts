@@ -663,6 +663,30 @@ describe('Craft iOS builder', () => {
     expect(existsSync(join(output, 'WidgetExtension', 'WildLoopLiveActivity.swift'))).toBe(true)
   })
 
+  it('plays each haptic on the generator UIKit has for it, kept warm, and none on a tab tap', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-haptics-'))
+    await init({ runtimeDir: null, name: 'Haptics', bundleId: 'org.example.haptics', output })
+    const actions = readFileSync(join(output, 'Sources', 'CraftNativeActions.swift'), 'utf8')
+    const swift = readFileSync(join(output, 'Sources', 'HapticsApp.swift'), 'utf8')
+
+    // Notifications and selections on their own generators, every impact
+    // weight UIKit has, and the generators held rather than made per tap.
+    expect(actions).toContain('notification().notificationOccurred(.success)')
+    expect(actions).toContain('notification().notificationOccurred(.error)')
+    expect(actions).toContain('selection().selectionChanged()')
+    expect(actions).toContain('case "soft": return .soft')
+    expect(actions).toContain('case "rigid": return .rigid')
+    expect(actions).toContain('private static var impacts: [UIImpactFeedbackGenerator.FeedbackStyle: UIImpactFeedbackGenerator] = [:]')
+    expect(actions).not.toContain('UIImpactFeedbackGenerator(style: .light).impactOccurred()')
+    expect(actions).toContain('case "hapticPrepare":')
+    expect(actions).toContain('CraftHaptics.prepare(body["kind"] as? String)')
+
+    // UITabBar plays nothing when a tab is tapped, so the shell's bar does not.
+    const tap = swift.slice(swift.indexOf('func tap(_ tab: Tab) {'), swift.indexOf('func hideSplash()'))
+    expect(tap.length).toBeGreaterThan(0)
+    expect(tap).not.toContain('FeedbackGenerator')
+  })
+
   it('seeds each page load\'s callback ids above every id already handed out', async () => {
     // #226: the page's counter restarted at 0 on every injection, and native
     // recorded nothing about which load a call came from — so an answer owed

@@ -326,8 +326,10 @@ final class CraftChrome: ObservableObject {
     }
 
     /// A tap on a tab: the page navigates, and says which tab is current.
+    ///
+    /// No haptic. UITabBar plays none, and a tab bar that ticks on every tap is
+    /// one of the small things that gives a web shell away.
     func tap(_ tab: Tab) {
-        UISelectionFeedbackGenerator().selectionChanged()
         if tab.id != selected {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selected = tab.id }
         }
@@ -3742,12 +3744,19 @@ struct CraftWebView: UIViewRepresentable {
                         throw error;
                     });
                 }
+                // Each kind reaches the generator UIKit has for it: a
+                // notification plays the success, warning or error pattern
+                // and a selection the picker's detent. Both used to be
+                // impacts of some weight, which is not what either feels like.
                 craft.haptics = {
                     impact: function(style) { return hapticFeedback(craft.haptic(style || 'medium')); },
                     notification: function(type) {
-                        return hapticFeedback(craft.haptic(type === 'error' ? 'heavy' : type === 'warning' ? 'medium' : 'light'));
+                        return hapticFeedback(craft.haptic(type === 'error' || type === 'warning' ? type : 'success'));
                     },
-                    selection: function() { return hapticFeedback(craft.haptic('soft')); },
+                    selection: function() { return hapticFeedback(craft.haptic('selection')); },
+                    // Wakes the engine ahead of a haptic the page knows is
+                    // coming, so it plays on the frame it is asked for.
+                    prepare: function(kind) { return hapticFeedback(craft._invoke('hapticPrepare', {kind: kind || null})); },
                     vibrate: function(pattern) { return hapticFeedback(craft.vibrate(pattern || [])); }
                 };
                 craft.permissions = {
