@@ -1248,8 +1248,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
             updateAuxiliaryHandler(events["onMomentumScrollBegin"], in: &scrollMomentumBeginHandlers, for: scroll)
             updateAuxiliaryHandler(events["onMomentumScrollEnd"], in: &scrollMomentumEndHandlers, for: scroll)
-            configureStack(scroll.contentStack, style: style)
-            reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: style)
+            var contentStyle = style
+            if let override = props["contentContainerStyle"] as? [String: Any] {
+                contentStyle.merge(override) { _, next in next }
+            }
+            configureStack(scroll.contentStack, style: contentStyle)
+            reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: contentStyle)
         case "FlatList":
             let list = result as! CraftNativeFlatList
             reconcileFlatList(

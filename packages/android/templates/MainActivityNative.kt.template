@@ -1464,8 +1464,13 @@ class MainActivity : AppCompatActivity() {
                             ?.hideSoftInputFromWindow(nativeScroll.windowToken, 0)
                     },
                 )
-                configureContainer(content, style)
-                reconcileChildren(screen, content, children, path, next, style, previousControls)
+                val contentStyle = JSONObject(style.toString()).apply {
+                    props.optJSONObject("contentContainerStyle")?.let { override ->
+                        override.keys().forEach { key -> put(key, override.get(key)) }
+                    }
+                }
+                configureContainer(content, contentStyle)
+                reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)
             }
             "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
                 setKeyboardDismissMode(props.optString("keyboardDismissMode")) {

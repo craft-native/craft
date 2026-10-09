@@ -277,6 +277,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('in setOf("row", "row-reverse")')
   })
 
+  it('applies ScrollView content container styles on both hosts', () => {
+    expect(ios).toContain('var contentStyle = style')
+    expect(ios).toContain('props["contentContainerStyle"] as? [String: Any]')
+    expect(ios).toContain('reconcileChildren(children, in: scroll.contentStack, parent: current, path: path, style: contentStyle)')
+    expect(android).toContain('val contentStyle = JSONObject(style.toString()).apply')
+    expect(android).toContain('props.optJSONObject("contentContainerStyle")')
+    expect(android).toContain('reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)')
+  })
+
   it('applies the shared gap fallback on both flex axes', () => {
     expect(ios).toContain('stack.rowGap = number(style["rowGap"]) ?? gap')
     expect(ios).toContain('stack.columnGap = number(style["columnGap"]) ?? gap')
