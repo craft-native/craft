@@ -134,7 +134,16 @@ const dispatch_end = "func webView(";
 /// it is taken, and the audio-session claim and release around both; nothing
 /// in that list is new, it is simply not done yet. They fall through to the
 /// shim, which serves them.
-const max_not_yet_migrated: usize = 17;
+/// 32 when the spec gained the native-feel surface: dialogAlert,
+/// dialogConfirm, dialogActionSheet, contextMenuShow, browserOpen,
+/// symbolImage, statusBarSetStyle, chromeSetUnderPageColor,
+/// chromeSetKeyboardAccessory, refreshEnable, refreshDisable, refreshEnd,
+/// backgroundComplete, hapticPrepare and retryRemote. Each presents UIKit
+/// (alert controllers, menus, SFSafariViewController, the refresh control)
+/// or touches the web view's own chrome, so they went into Swift first, the
+/// same way as every action before them; they fall through to the shim, which
+/// serves them. Not a regression: no action left Zig.
+const max_not_yet_migrated: usize = 32;
 
 fn dispatcherRegion() []const u8 {
     // CraftApp.swift also contains chrome, console and bridge-relay handlers.

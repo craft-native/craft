@@ -56,7 +56,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         ) -> UICollectionViewLayoutAttributes {
             guard let hostedView = hostedView else { return layoutAttributes }
             let attributes = layoutAttributes.copy() as! UICollectionViewLayoutAttributes
-            if let collectionView,
+            // A cell has no collectionView property; the list is its nearest
+            // collection view ancestor.
+            var ancestor = superview
+            while let view = ancestor, !(view is UICollectionView) { ancestor = view.superview }
+            if let collectionView = ancestor as? UICollectionView,
                let flowLayout = collectionView.collectionViewLayout as? UICollectionViewFlowLayout,
                flowLayout.scrollDirection == .horizontal {
                 let target = CGSize(
@@ -102,6 +106,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var recycleItem: ((String) -> Void)?
     private var endReached: (() -> Void)?
     var onScrollEvent: ((UIScrollView) -> Void)?
+    /// Called as the visible rows move, for a screen that lays out around them.
+    var onLayoutChanged: (() -> Void)?
     var onScrollBeginDrag: ((UIScrollView) -> Void)?
     var onScrollEndDrag: ((UIScrollView) -> Void)?
     var onMomentumScrollBegin: ((UIScrollView) -> Void)?
@@ -260,6 +266,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         endReached = nil
         dataContentSignature = ""
         onScrollEvent = nil
+        onLayoutChanged = nil
         onScrollBeginDrag = nil
         onScrollEndDrag = nil
         onMomentumScrollBegin = nil

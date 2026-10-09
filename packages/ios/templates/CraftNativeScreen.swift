@@ -1543,7 +1543,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         view.layer.borderColor = (color(style["borderColor"]) ?? .clear).cgColor
         let elevation = max(0, number(style["elevation"]) ?? 0)
         view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOpacity = elevation > 0 ? min(0.28, 0.12 + elevation * 0.02) : 0
+        view.layer.shadowOpacity = elevation > 0 ? Float(min(0.28, 0.12 + elevation * 0.02)) : 0
         view.layer.shadowRadius = elevation * 0.5
         view.layer.shadowOffset = CGSize(width: 0, height: elevation * 0.25)
         view.clipsToBounds = style["overflow"] as? String == "hidden"
