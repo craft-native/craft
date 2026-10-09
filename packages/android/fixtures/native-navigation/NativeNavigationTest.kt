@@ -465,6 +465,7 @@ class NativeNavigationTest {
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
             val people = awaitView(activity, "people-list") as RecyclerView
             val peopleHeader = awaitView(activity, "people-header") as TextView
+            assertTrue("FlatList contentContainerStyle did not add top padding", peopleHeader.top >= people.top + (8 * density).toInt())
             val peopleLayouts = awaitView(activity, "people-layout-status") as TextView
             val initialRowLayouts = peopleLayouts.text.toString().substringAfterLast(": ").toInt()
             assertTrue("FlatList rows did not report layout", initialRowLayouts > 0)

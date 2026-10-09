@@ -288,7 +288,9 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["details-count"].label, "Count: 2")
         let people = app.collectionViews["people-list"]
         XCTAssertTrue(people.waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["people-header"].waitForExistence(timeout: 5))
+        let peopleHeader = app.staticTexts["people-header"]
+        XCTAssertTrue(peopleHeader.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(peopleHeader.frame.minY, people.frame.minY + 8, "FlatList contentContainerStyle did not add top padding")
         let peopleLayouts = app.staticTexts["people-layout-status"]
         XCTAssertTrue(peopleLayouts.waitForExistence(timeout: 5))
         let initialRowLayouts = Int(peopleLayouts.label.split(separator: ":").last ?? "0") ?? 0
