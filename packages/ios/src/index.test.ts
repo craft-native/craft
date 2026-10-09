@@ -1018,11 +1018,12 @@ describe('Craft iOS builder', () => {
     expect(plist).not.toContain('{{')
 
     expect(swift).toContain('didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler')
-    expect(swift).toContain('CraftBackgroundWork.shared.begin("craftSilentPush", detail: ["payload": CraftEventManager.pageData(userInfo)])')
+    expect(swift).toContain('let id = CraftBackgroundWork.shared.hold { ok in')
+    expect(swift).toContain('CraftEventManager.shared.sendToWeb("craftSilentPush", data: ["id": id, "payload": CraftEventManager.pageData(userInfo)])')
     expect(swift).toContain('static let deadline: TimeInterval = 25')
     expect(swift).toContain('CraftBackgroundWork.shared.registerRefresh(CraftConfig.bundled())')
     expect(swift).toContain('BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil)')
-    expect(swift).toContain('let id = begin("craftBackgroundRefresh", detail: [:])')
+    expect(swift).toContain('CraftEventManager.shared.sendToWeb("craftBackgroundRefresh", data: ["id": id])')
     expect(swift).toContain('task.setTaskCompleted(success: ok ?? false)')
     expect(swift).toContain('case "backgroundComplete":')
     // Universal links take the same road as custom schemes, scene or not.

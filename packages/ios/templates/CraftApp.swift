@@ -227,13 +227,14 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     /// `craft.background.complete(ok)`, or after 25 seconds, inside the 30 iOS
     /// allows.
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        CraftBackgroundWork.shared.begin("craftSilentPush", detail: ["payload": CraftEventManager.pageData(userInfo)]) { ok in
+        let id = CraftBackgroundWork.shared.hold { ok in
             switch ok {
             case true?: completionHandler(.newData)
             case false?: completionHandler(.failed)
             case nil: completionHandler(.noData)
             }
         }
+        CraftEventManager.shared.sendToWeb("craftSilentPush", data: ["id": id, "payload": CraftEventManager.pageData(userInfo)])
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -377,15 +378,15 @@ final class CraftBackgroundWork {
 
     private init() {}
 
-    /// Tell the page, and hold `finish` until it answers: true or false from
-    /// the page, nil when the deadline passed first.
-    @discardableResult
-    func begin(_ event: String, detail: [String: Any], finish: @escaping (Bool?) -> Void) -> String {
+    /// Hold `finish` until the page answers the event that carries the
+    /// returned id: true or false from the page, nil when the deadline passed
+    /// first. The caller sends that event, with the id in its detail, after
+    /// this returns. It names the event itself so every event the page can
+    /// hear is spelled at a `sendToWeb` call, where the conformance test reads
+    /// the vocabulary from.
+    func hold(_ finish: @escaping (Bool?) -> Void) -> String {
         let id = UUID().uuidString
         pending[id] = finish
-        var detail = detail
-        detail["id"] = id
-        CraftEventManager.shared.sendToWeb(event, data: detail)
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline) { [weak self] in self?.end(id, ok: nil) }
         return id
     }
@@ -441,12 +442,13 @@ final class CraftBackgroundWork {
 
     private func run(_ task: BGTask) {
         scheduleRefresh()
-        let id = begin("craftBackgroundRefresh", detail: [:]) { ok in
+        let id = hold { ok in
             task.setTaskCompleted(success: ok ?? false)
         }
         task.expirationHandler = {
             DispatchQueue.main.async { CraftBackgroundWork.shared.end(id, ok: false) }
         }
+        CraftEventManager.shared.sendToWeb("craftBackgroundRefresh", data: ["id": id])
     }
 }
 
