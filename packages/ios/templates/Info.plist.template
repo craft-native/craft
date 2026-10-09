@@ -46,6 +46,7 @@
 {{URL_TYPES}}
 {{APP_BOUND_DOMAINS}}
 {{BACKGROUND_MODES}}
+{{BACKGROUND_TASK_IDENTIFIERS}}
 {{LIVE_ACTIVITY_SUPPORT}}
     <key>NSAppTransportSecurity</key>
     <dict>

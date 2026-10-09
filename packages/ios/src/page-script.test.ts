@@ -521,6 +521,24 @@ describe('the appearance the page should match', () => {
   })
 })
 
+describe('craft.background', () => {
+  it('answers a background event with its id, or everything pending without one', async () => {
+    const page = loadPage()
+    const seen: unknown[] = []
+    page.craft.background.onSilentPush((detail: unknown) => seen.push(detail))
+    page.emit('craftSilentPush', { id: 'push-1', payload: { sync: 'workouts' } })
+    expect(seen).toEqual([{ id: 'push-1', payload: { sync: 'workouts' } }])
+
+    const done = page.craft.background.complete(true, 'push-1')
+    expect(page.last('backgroundComplete')).toMatchObject({ ok: true, id: 'push-1' })
+    page.answer('backgroundComplete', true)
+    expect(await done).toBe(true)
+
+    void page.craft.background.complete(false)
+    expect(page.last('backgroundComplete')).toMatchObject({ ok: false, id: null })
+  })
+})
+
 describe('the bridge user script', () => {
   // The guard Swift wraps the bridge in, so it installs only where the
   // message handlers would answer it.

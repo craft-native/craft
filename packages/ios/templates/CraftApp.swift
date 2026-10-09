@@ -195,6 +195,8 @@ struct CraftRecoveryBudget {
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        // Before launch finishes, which is the only time iOS accepts it.
+        CraftBackgroundWork.shared.registerRefresh(CraftConfig.bundled())
         if let shortcut = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
             CraftEventManager.shared.handleShortcut(shortcut)
             // Returning false tells UIKit the launch-time item was handled and
@@ -210,7 +212,28 @@ final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     }
 
     func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {
-        CraftEventManager.shared.handleSiriActivity(userActivity)
+        // A universal link takes the same road as a custom-scheme link. The
+        // scene's onContinueUserActivity is where they normally arrive; this
+        // is the road for a launch that does not go through a scene.
+        if userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL {
+            DeepLinkManager.shared.handleURL(url)
+            return true
+        }
+        return CraftEventManager.shared.handleSiriActivity(userActivity)
+    }
+
+    /// A push with `content-available`: the page gets `craftSilentPush` with
+    /// the payload, and iOS gets its answer when the page calls
+    /// `craft.background.complete(ok)`, or after 25 seconds, inside the 30 iOS
+    /// allows.
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        CraftBackgroundWork.shared.begin("craftSilentPush", detail: ["payload": CraftEventManager.pageData(userInfo)]) { ok in
+            switch ok {
+            case true?: completionHandler(.newData)
+            case false?: completionHandler(.failed)
+            case nil: completionHandler(.noData)
+            }
+        }
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
@@ -290,7 +313,7 @@ class CraftEventManager {
         sendToWeb("craftNotificationReceived", data: Self.pageData(userInfo))
     }
 
-    private static func pageData(_ userInfo: [AnyHashable: Any]) -> [String: Any] {
+    static func pageData(_ userInfo: [AnyHashable: Any]) -> [String: Any] {
         var data: [String: Any] = [:]
         for (key, value) in userInfo {
             guard let key = key as? String else { continue }
@@ -314,7 +337,8 @@ class CraftEventManager {
         return true
     }
 
-    private func sendToWeb(_ event: String, data: [String: Any]) {
+    /// Dispatch now if the page can hear it, or hold it until it can.
+    func sendToWeb(_ event: String, data: [String: Any]) {
         guard isReady, webView != nil else {
             pendingEvents.append((event, data))
             return
@@ -329,6 +353,99 @@ class CraftEventManager {
         let script = "window.dispatchEvent(new CustomEvent('\(event)', {detail: \(json)}));"
         DispatchQueue.main.async {
             webView.evaluateJavaScript(script, completionHandler: nil)
+        }
+    }
+}
+
+// MARK: - Background work
+
+/// The page's share of background time: a silent push (`craftSilentPush`) and
+/// iOS's scheduled app refresh (`craftBackgroundRefresh`). Each holds iOS's
+/// completion until the page calls `craft.background.complete(ok)` (with the
+/// event's `id`, or with none for everything pending), or for 25 seconds.
+///
+/// The page has to be alive to do the work: when iOS wakes an app it had
+/// suspended, it is; when it launches one it had ended, the event waits for
+/// the page like any other and the deadline answers iOS.
+final class CraftBackgroundWork {
+    static let shared = CraftBackgroundWork()
+    static let deadline: TimeInterval = 25
+
+    private var pending: [String: (Bool?) -> Void] = [:]
+    private var refreshIdentifier: String?
+    private var refreshInterval: TimeInterval = 15 * 60
+
+    private init() {}
+
+    /// Tell the page, and hold `finish` until it answers: true or false from
+    /// the page, nil when the deadline passed first.
+    @discardableResult
+    func begin(_ event: String, detail: [String: Any], finish: @escaping (Bool?) -> Void) -> String {
+        let id = UUID().uuidString
+        pending[id] = finish
+        var detail = detail
+        detail["id"] = id
+        CraftEventManager.shared.sendToWeb(event, data: detail)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.deadline) { [weak self] in self?.end(id, ok: nil) }
+        return id
+    }
+
+    /// `craft.background.complete(ok, id?)`.
+    func complete(id: String?, ok: Bool) {
+        if let id {
+            end(id, ok: ok)
+        } else {
+            for id in Array(pending.keys) { end(id, ok: ok) }
+        }
+    }
+
+    private func end(_ id: String, ok: Bool?) {
+        guard let finish = pending.removeValue(forKey: id) else { return }
+        finish(ok)
+    }
+
+    /// BGAppRefreshTask, when `backgroundRefresh.enabled`: registered at
+    /// launch, asked for again each time the app goes to the background and
+    /// after each run, no sooner than `minimumIntervalMinutes` (15 by
+    /// default). iOS decides when it actually runs.
+    func registerRefresh(_ config: CraftConfig) {
+        guard let refresh = config.backgroundRefresh, refresh.enabled else { return }
+        let identifier = refresh.identifier.flatMap { $0.isEmpty ? nil : $0 }
+            ?? "\(Bundle.main.bundleIdentifier ?? config.bundleId).refresh"
+        refreshIdentifier = identifier
+        refreshInterval = max(1, refresh.minimumIntervalMinutes ?? 15) * 60
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil) { task in
+            DispatchQueue.main.async { CraftBackgroundWork.shared.run(task) }
+        }
+        guard registered else {
+            print("Craft: background refresh \(identifier) could not be registered; is it in BGTaskSchedulerPermittedIdentifiers?")
+            return
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            CraftBackgroundWork.shared.scheduleRefresh()
+        }
+    }
+
+    func scheduleRefresh() {
+        guard let refreshIdentifier else { return }
+        let request = BGAppRefreshTaskRequest(identifier: refreshIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: refreshInterval)
+        do {
+            try BGTaskScheduler.shared.submit(request)
+        } catch {
+            // The simulator refuses every request; a device refuses one
+            // with Background App Refresh off.
+            print("Craft: background refresh not scheduled: \(error)")
+        }
+    }
+
+    private func run(_ task: BGTask) {
+        scheduleRefresh()
+        let id = begin("craftBackgroundRefresh", detail: [:]) { ok in
+            task.setTaskCompleted(success: ok ?? false)
+        }
+        task.expirationHandler = {
+            DispatchQueue.main.async { CraftBackgroundWork.shared.end(id, ok: false) }
         }
     }
 }
@@ -828,6 +945,14 @@ class AppState: ObservableObject {
 }
 
 extension CraftConfig {
+    /// craft.config.json from the app bundle, for code that runs before the
+    /// app's state exists (the app delegate at launch).
+    static func bundled() -> CraftConfig {
+        guard let url = Bundle.main.url(forResource: "craft.config", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else { return CraftConfig() }
+        return CraftConfig.load(from: data)
+    }
+
     /// The bundled config laid over the defaults, key by key.
     ///
     /// Decoded whole, one missing or mistyped key failed the entire file and
@@ -921,6 +1046,16 @@ struct CraftConfig: Codable {
     /// Pinch and double-tap zoom. Off unless set to false: an app's screens
     /// are laid out for the phone, and zooming one is a web page's tell.
     var disableZoom: Bool? = nil
+    /// iOS's scheduled app refresh, which fires `craftBackgroundRefresh`.
+    var backgroundRefresh: BackgroundRefresh? = nil
+
+    struct BackgroundRefresh: Codable {
+        var enabled: Bool = false
+        /// The BGTaskScheduler identifier; `<bundleId>.refresh` if unset.
+        var identifier: String? = nil
+        /// The soonest iOS may run it again, in minutes (15 if unset).
+        var minimumIntervalMinutes: Double? = nil
+    }
 }
 
 extension CraftConfig {
@@ -1662,6 +1797,11 @@ struct CraftWebView: UIViewRepresentable {
                 resolveCallback(callbackId, result: true)
             case "refreshEnd":
                 refreshControl.end()
+                resolveCallback(callbackId, result: true)
+            // The page has finished the work a craftSilentPush or
+            // craftBackgroundRefresh asked for.
+            case "backgroundComplete":
+                CraftBackgroundWork.shared.complete(id: body["id"] as? String, ok: body["ok"] as? Bool ?? true)
                 resolveCallback(callbackId, result: true)
             // The offline page's Retry button, and anything else that wants
             // the app's own page back after the bundled copy stood in.
@@ -4630,6 +4770,24 @@ struct CraftWebView: UIViewRepresentable {
                     enumerable: true,
                     get: function() { return window.__craftAppearance || null; }
                 });
+                // Background time: answer a craftSilentPush or a
+                // craftBackgroundRefresh once its work is done, with the
+                // event's id, or with none for everything pending.
+                craft.background = {
+                    complete: function(ok, id) {
+                        return settle(craft._invoke('backgroundComplete', {ok: ok !== false, id: id || null}), false);
+                    },
+                    onRefresh: function(callback) {
+                        var listener = function(e) { callback(e.detail || {}); };
+                        window.addEventListener('craftBackgroundRefresh', listener);
+                        return function() { window.removeEventListener('craftBackgroundRefresh', listener); };
+                    },
+                    onSilentPush: function(callback) {
+                        var listener = function(e) { callback(e.detail || {}); };
+                        window.addEventListener('craftSilentPush', listener);
+                        return function() { window.removeEventListener('craftSilentPush', listener); };
+                    }
+                };
                 craft.onAppearanceChange = function(callback) {
                     var listener = function(e) { callback(e.detail); };
                     window.addEventListener('craftAppearance', listener);

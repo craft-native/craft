@@ -100,7 +100,23 @@ export interface CraftConfig {
    * maps in iframes keep loading.
    */
   limitNavigationsToAppBoundDomains?: boolean
+  /**
+   * Universal links and shared web credentials
+   * (`com.apple.developer.associated-domains`). A bare host such as
+   * `hq.training` is written as `applinks:hq.training`; an entry with its own
+   * service (`webcredentials:`, `applinks:…?mode=developer`) is kept as given.
+   * A universal link reaches the page the way a custom-scheme link does, as
+   * `craftDeepLink`.
+   */
   associatedDomains?: string[]
+  /**
+   * iOS's scheduled background refresh (BGAppRefreshTask). When enabled the
+   * page gets `craftBackgroundRefresh` and answers with
+   * `craft.background.complete(ok)`. The identifier defaults to
+   * `<bundleId>.refresh` and is declared in BGTaskSchedulerPermittedIdentifiers,
+   * with the `fetch` background mode.
+   */
+  backgroundRefresh?: CraftBackgroundRefresh
   appGroups?: string[]
   appIconPath?: string
   /**
@@ -143,6 +159,14 @@ export interface CraftConfig {
   requestTimeoutSeconds?: number
   orientations?: Array<'portrait' | 'landscape-left' | 'landscape-right' | 'portrait-upside-down'>
   deviceFamilies?: Array<'iphone' | 'ipad'>
+}
+
+export interface CraftBackgroundRefresh {
+  enabled: boolean
+  /** The BGTaskScheduler identifier. Default `<bundleId>.refresh`. */
+  identifier?: string
+  /** The soonest iOS may run it again, in minutes. Default 15. */
+  minimumIntervalMinutes?: number
 }
 
 export interface CraftPrivacyDataType {
@@ -401,6 +425,7 @@ function plistArray(values: string[], indent = 2): string {
 
 export function renderBackgroundModes(config: CraftConfig): string {
   const modes = new Set<string>()
+  if (config.backgroundRefresh?.enabled) modes.add('fetch')
   if (config.enableBackgroundLocation) modes.add('location')
   if (config.enableBackgroundTasks) modes.add('processing')
   if (config.enablePushNotifications) modes.add('remote-notification')
@@ -409,10 +434,36 @@ export function renderBackgroundModes(config: CraftConfig): string {
   return `    <key>UIBackgroundModes</key>\n    <array>\n${plistArray([...modes])}\n    </array>`
 }
 
+/** The background refresh task's identifier, or null when it is off. */
+export function backgroundRefreshIdentifier(config: Pick<CraftConfig, 'backgroundRefresh' | 'bundleId'>): string | null {
+  if (!config.backgroundRefresh?.enabled) return null
+  return config.backgroundRefresh.identifier?.trim() || `${config.bundleId}.refresh`
+}
+
+/** BGTaskSchedulerPermittedIdentifiers: iOS runs no task it does not list. */
+export function renderBackgroundTaskIdentifiers(config: Pick<CraftConfig, 'backgroundRefresh' | 'bundleId'>): string {
+  const identifier = backgroundRefreshIdentifier(config)
+  if (!identifier) return ''
+  return `    <key>BGTaskSchedulerPermittedIdentifiers</key>\n    <array>\n${plistArray([identifier])}\n    </array>`
+}
+
+/**
+ * The associated-domains entitlement's entries. Each needs a service prefix,
+ * and a bare host (the easy thing to write) used to be signed as it was and
+ * then matched nothing, so universal links silently never opened the app.
+ */
+export function associatedDomainEntries(domains: string[] | undefined): string[] {
+  return [...new Set((domains ?? [])
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map(value => /^[a-z]+:/i.test(value) ? value : `applinks:${value}`))]
+}
+
 export function renderEntitlements(config: CraftConfig): string {
   const entries: string[] = []
-  if (config.associatedDomains?.length) {
-    entries.push(`    <key>com.apple.developer.associated-domains</key>\n    <array>\n${plistArray(config.associatedDomains)}\n    </array>`)
+  const associatedDomains = associatedDomainEntries(config.associatedDomains)
+  if (associatedDomains.length) {
+    entries.push(`    <key>com.apple.developer.associated-domains</key>\n    <array>\n${plistArray(associatedDomains)}\n    </array>`)
   }
   if (config.appGroups?.length) {
     entries.push(`    <key>com.apple.security.application-groups</key>\n    <array>\n${plistArray(config.appGroups)}\n    </array>`)
@@ -959,6 +1010,7 @@ export async function init(options: InitOptions): Promise<void> {
     .replace(/\{\{URL_TYPES\}\}/g, renderUrlTypes(config))
     .replace(/\{\{APP_BOUND_DOMAINS\}\}/g, renderAppBoundDomains(config))
     .replace(/\{\{BACKGROUND_MODES\}\}/g, renderBackgroundModes(config))
+    .replace(/\{\{BACKGROUND_TASK_IDENTIFIERS\}\}/g, renderBackgroundTaskIdentifiers(config))
     .replace(/\{\{LAUNCH_SCREEN\}\}/g, renderLaunchScreen(config))
     .replace(/\{\{NON_EXEMPT_ENCRYPTION\}\}/g, config.usesNonExemptEncryption ? 'true' : 'false')
     .replace(/\{\{LIVE_ACTIVITY_SUPPORT\}\}/g, config.enableLiveActivities

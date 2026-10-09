@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
 import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
 import {
+  associatedDomainEntries,
   build,
   init,
   installRuntime,
@@ -946,6 +947,47 @@ describe('Craft iOS builder', () => {
 
     // The budget check runs with the other template checks.
     expect(readFileSync(join(import.meta.dir, '..', 'scripts', 'compile-templates.ts'), 'utf8')).toContain('checkRecoveryBudget(workspace, run)')
+  })
+
+  it('gives the page background time for silent pushes and scheduled refreshes', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-background-'))
+    await init({ runtimeDir: null, name: 'Background', bundleId: 'training.hq.app', output, config: { enablePushNotifications: true, backgroundRefresh: { enabled: true, minimumIntervalMinutes: 30 } } })
+    const swift = readFileSync(join(output, 'Sources', 'BackgroundApp.swift'), 'utf8')
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+
+    expect(plist).toContain('<key>BGTaskSchedulerPermittedIdentifiers</key>\n    <array>\n        <string>training.hq.app.refresh</string>\n    </array>')
+    expect(plist).toContain('<string>fetch</string>')
+    expect(plist).toContain('<string>remote-notification</string>')
+    expect(plist).not.toContain('{{')
+
+    expect(swift).toContain('didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler')
+    expect(swift).toContain('CraftBackgroundWork.shared.begin("craftSilentPush", detail: ["payload": CraftEventManager.pageData(userInfo)])')
+    expect(swift).toContain('static let deadline: TimeInterval = 25')
+    expect(swift).toContain('CraftBackgroundWork.shared.registerRefresh(CraftConfig.bundled())')
+    expect(swift).toContain('BGTaskScheduler.shared.register(forTaskWithIdentifier: identifier, using: nil)')
+    expect(swift).toContain('let id = begin("craftBackgroundRefresh", detail: [:])')
+    expect(swift).toContain('task.setTaskCompleted(success: ok ?? false)')
+    expect(swift).toContain('case "backgroundComplete":')
+    // Universal links take the same road as custom schemes, scene or not.
+    expect(swift).toContain('.onContinueUserActivity(NSUserActivityTypeBrowsingWeb)')
+    expect(swift).toContain('if userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL {')
+
+    // Off, nothing is declared.
+    const plain = mkdtempSync(join(tmpdir(), 'craft-ios-background-off-'))
+    await init({ runtimeDir: null, name: 'Plain', bundleId: 'org.example.plain', output: plain })
+    const plainPlist = readFileSync(join(plain, 'Info.plist'), 'utf8')
+    expect(plainPlist).not.toContain('BGTaskSchedulerPermittedIdentifiers')
+    expect(plainPlist).not.toContain('<string>fetch</string>')
+  })
+
+  it('signs universal links with a service prefix, even when given a bare host', () => {
+    expect(associatedDomainEntries(['hq.training', 'applinks:hq.training', 'webcredentials:hq.training', ' applinks:dev.hq.training?mode=developer '])).toEqual([
+      'applinks:hq.training',
+      'webcredentials:hq.training',
+      'applinks:dev.hq.training?mode=developer',
+    ])
+    const entitlements = renderEntitlements({ appName: 'HQ', bundleId: 'training.hq.app', associatedDomains: ['hq.training'] })
+    expect(entitlements).toContain('<key>com.apple.developer.associated-domains</key>\n    <array>\n        <string>applinks:hq.training</string>\n    </array>')
   })
 
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
