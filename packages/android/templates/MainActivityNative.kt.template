@@ -488,6 +488,7 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     private var bounces = true
     private var alwaysBounceVertical = true
     private var alwaysBounceHorizontal = true
+    private var keyboardShouldPersistTaps = "never"
 
     init {
         vertical.isNestedScrollingEnabled = true
@@ -521,6 +522,10 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
         horizontal.isEnabled = value
     }
 
+    fun setKeyboardShouldPersistTaps(value: String?) {
+        keyboardShouldPersistTaps = value?.takeIf { it in setOf("always", "handled", "never") } ?: "never"
+    }
+
     fun setBounces(value: Boolean) {
         bounces = value
         applyBounceModes()
@@ -535,6 +540,25 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
     private fun applyBounceModes() {
         vertical.overScrollMode = if (bounces && alwaysBounceVertical) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
         horizontal.overScrollMode = if (bounces && alwaysBounceHorizontal) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
+    }
+
+    private fun tapTarget(view: View, x: Float, y: Float): View? {
+        if (x < 0 || y < 0 || x >= view.width || y >= view.height || view.visibility != View.VISIBLE) return null
+        if (view is ViewGroup) {
+            for (index in view.childCount - 1 downTo 0) {
+                val child = view.getChildAt(index)
+                tapTarget(child, x - child.left, y - child.top)?.let { return it }
+            }
+        }
+        return view
+    }
+
+    private fun shouldDismissKeyboard(scroller: View, event: android.view.MotionEvent): Boolean {
+        if (keyboardShouldPersistTaps == "always") return false
+        return when (keyboardShouldPersistTaps) {
+            "handled" -> (scroller as? ViewGroup)?.let { tapTarget(it, event.x, event.y)?.isClickable != true } ?: true
+            else -> true
+        }
     }
 
     fun setPagingEnabled(value: Boolean) {
@@ -609,6 +633,9 @@ private class CraftNativeScrollView(context: Context) : FrameLayout(context) {
                         }
                     }
                     android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        if (event.actionMasked == android.view.MotionEvent.ACTION_UP && shouldDismissKeyboard(scroller, event)) {
+                            dismissKeyboard?.invoke()
+                        }
                         onEndDrag?.invoke()
                         if (pagingEnabled) snapToPage(scroller)
                         if (moved && !momentumActive) {
@@ -1411,6 +1438,7 @@ class MainActivity : AppCompatActivity() {
                     props.optBoolean("showsHorizontalScrollIndicator", true),
                 )
                 setScrollEnabled(props.optBoolean("scrollEnabled", true))
+                setKeyboardShouldPersistTaps(props.optString("keyboardShouldPersistTaps", "never"))
                 setBounces(props.optBoolean("bounces", true))
                 setAlwaysBounce(
                     props.optBoolean("alwaysBounceVertical", !horizontal),
@@ -1473,6 +1501,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)
             }
             "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
+                setKeyboardShouldPersistTaps(props.optString("keyboardShouldPersistTaps", "never"))
                 setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)
                 setKeyboardDismissMode(props.optString("keyboardDismissMode")) {
                     (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)

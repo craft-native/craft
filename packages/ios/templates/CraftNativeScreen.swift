@@ -447,12 +447,18 @@ private final class CraftNativeModalView: UIView {
     }
 }
 
-private final class CraftNativeScrollView: UIScrollView {
+private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDelegate {
     let contentStack = CraftNativeFlowView()
     private var crossAxisConstraint: NSLayoutConstraint?
+    private let keyboardTapGesture = UITapGestureRecognizer()
+    private var keyboardShouldPersistTaps = "never"
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        keyboardTapGesture.cancelsTouchesInView = false
+        keyboardTapGesture.delegate = self
+        keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
+        addGestureRecognizer(keyboardTapGesture)
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -465,6 +471,29 @@ private final class CraftNativeScrollView: UIScrollView {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    func setKeyboardShouldPersistTaps(_ value: Any?) {
+        let requested = value as? String
+        keyboardShouldPersistTaps = ["always", "handled", "never"].contains(requested) ? requested! : "never"
+        keyboardTapGesture.isEnabled = keyboardShouldPersistTaps != "always"
+    }
+
+    @objc private func keyboardTap() {
+        guard keyboardShouldPersistTaps != "always" else { return }
+        if keyboardShouldPersistTaps == "handled" {
+            let point = keyboardTapGesture.location(in: self)
+            var hit = hitTest(point, with: nil)
+            while let view = hit, view !== self {
+                if view is UIControl || !(view.gestureRecognizers ?? []).isEmpty { return }
+                hit = view.superview
+            }
+        }
+        window?.endEditing(true)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
+    }
 
     func setAxis(_ axis: NSLayoutConstraint.Axis) {
         contentStack.axis = axis
@@ -1239,6 +1268,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.bounces = props["bounces"] as? Bool ?? true
             scroll.isPagingEnabled = props["pagingEnabled"] as? Bool ?? false
             scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
+            scroll.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])
             scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
             scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false
             scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? (direction == .vertical)
@@ -1419,6 +1449,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         flatListOwners = flatListOwners.filter { $0.value != owner }
         for child in children { registerFlatListOwnership(child, owner: owner) }
         list.bounces = props["bounces"] as? Bool ?? true
+        list.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])
         list.setContentContainerStyle(props["contentContainerStyle"] as? [String: Any])
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
         list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map { handler in

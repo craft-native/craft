@@ -12,7 +12,7 @@ private final class CraftNativeFlatListLayout: UICollectionViewFlowLayout {
 /// A keyed, recycling native list used by the stx-native FlatList primitive.
 /// The screen controller owns rendered row state; this view owns collection
 /// diffs, viewport state, and UICollectionView cell reuse.
-final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowLayout {
+final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
     typealias RenderItem = (_ node: [String: Any], _ identity: String, _ previous: UIView?) -> UIView
 
     private final class Cell: UICollectionViewCell {
@@ -119,6 +119,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var isApplyingSnapshot = false
     private var pendingApply: (() -> Void)?
     private var pendingThemeRefresh = false
+    private let keyboardTapGesture = UITapGestureRecognizer()
+    private var keyboardShouldPersistTaps = "never"
 
     init() {
         let layout = CraftNativeFlatListLayout()
@@ -130,6 +132,10 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         backgroundColor = .clear
         alwaysBounceVertical = true
         delegate = self
+        keyboardTapGesture.cancelsTouchesInView = false
+        keyboardTapGesture.delegate = self
+        keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
+        addGestureRecognizer(keyboardTapGesture)
         register(Cell.self, forCellWithReuseIdentifier: Cell.reuseIdentifier)
         diffableDataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: self) {
             [weak self] collectionView, indexPath, identity in
@@ -162,6 +168,29 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         )
         scrollIndicatorInsets = contentInset
         collectionViewLayout.invalidateLayout()
+    }
+
+    func setKeyboardShouldPersistTaps(_ value: Any?) {
+        let requested = value as? String
+        keyboardShouldPersistTaps = ["always", "handled", "never"].contains(requested) ? requested! : "never"
+        keyboardTapGesture.isEnabled = keyboardShouldPersistTaps != "always"
+    }
+
+    @objc private func keyboardTap() {
+        guard keyboardShouldPersistTaps != "always" else { return }
+        if keyboardShouldPersistTaps == "handled" {
+            let point = keyboardTapGesture.location(in: self)
+            var hit = hitTest(point, with: nil)
+            while let view = hit, view !== self {
+                if view is UIControl || !(view.gestureRecognizers ?? []).isEmpty { return }
+                hit = view.superview
+            }
+        }
+        window?.endEditing(true)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
     }
 
     var visibleItemIdentities: [String] {

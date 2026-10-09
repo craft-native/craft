@@ -477,8 +477,22 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
     expect(androidFlatList).toContain('android.view.MotionEvent.ACTION_MOVE')
     expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
+    expect(navigationHome).toContain('keyboardShouldPersistTaps="handled"')
+    expect(navigationDetails).toContain('keyboardShouldPersistTaps="handled"')
     expect(guide).toContain('both hosts, including keyboard and return-key traits on multiline inputs')
     expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above, accept')
+  })
+
+  it('keeps keyboard tap persistence aligned across scroll hosts', () => {
+    expect(ios).toContain('scroll.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])')
+    expect(ios).toContain('private var keyboardShouldPersistTaps = "never"')
+    expect(iosFlatList).toContain('func setKeyboardShouldPersistTaps(_ value: Any?)')
+    expect(ios).toContain('list.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])')
+    expect(android).toContain('setKeyboardShouldPersistTaps(props.optString("keyboardShouldPersistTaps", "never"))')
+    expect(android).toContain('"handled" -> (scroller as? ViewGroup)')
+    expect(androidFlatList).toContain('fun setKeyboardShouldPersistTaps(value: String?)')
+    expect(androidFlatList).toContain('shouldDismissKeyboard(event)')
+    expect(guide).toContain('keyboardShouldPersistTaps')
   })
 
   it('delivers ScrollView momentum callbacks on both hosts', () => {

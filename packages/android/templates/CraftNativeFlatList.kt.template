@@ -90,6 +90,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private var dataContentSignature = ""
     private var horizontal = false
     private var columns = 1
+    private var keyboardShouldPersistTaps = "never"
     private var submissionGeneration = 0
     private var isSubmittingList = false
     private var pendingThemeRefresh = false
@@ -161,7 +162,7 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     }
 
     fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit) {
-        if (mode !in setOf("on-drag", "interactive")) {
+        if (mode !in setOf("on-drag", "interactive") && keyboardShouldPersistTaps == "always") {
             setOnTouchListener(null)
             return
         }
@@ -173,9 +174,31 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
                     dismissed = true
                     dismissKeyboard()
                 }
+                android.view.MotionEvent.ACTION_UP -> if (shouldDismissKeyboard(event)) dismissKeyboard()
             }
             false
         }
+    }
+
+    fun setKeyboardShouldPersistTaps(value: String?) {
+        keyboardShouldPersistTaps = value?.takeIf { it in setOf("always", "handled", "never") } ?: "never"
+    }
+
+    private fun tapTarget(view: View, x: Float, y: Float): View? {
+        if (x < 0 || y < 0 || x >= view.width || y >= view.height || view.visibility != View.VISIBLE) return null
+        if (view is ViewGroup) {
+            for (index in view.childCount - 1 downTo 0) {
+                val child = view.getChildAt(index)
+                tapTarget(child, x - child.left, y - child.top)?.let { return it }
+            }
+        }
+        return view
+    }
+
+    private fun shouldDismissKeyboard(event: android.view.MotionEvent): Boolean {
+        if (keyboardShouldPersistTaps == "always") return false
+        if (keyboardShouldPersistTaps == "never") return true
+        return tapTarget(this, event.x, event.y)?.isClickable != true
     }
 
     fun setContentContainerStyle(style: JSONObject?, density: Float) {
