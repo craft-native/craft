@@ -35,6 +35,7 @@ bundle must be local at build time.
 | `Text` | `UILabel` | `TextView` |
 | `Button` | `UIButton` | `Button` |
 | `Link` | underlined `UIButton` | underlined clickable `TextView` |
+| `Pressable`, `TouchableOpacity`, `TouchableHighlight` | `CraftNativeFlowView` | `CraftNativeFlexLayout` |
 | `TextInput` | `UITextField` | `EditText` |
 | `Picker` | `UIPickerView` | `Spinner` |
 | `Modal` | `CraftNativeModalView` | `CraftNativeModalView` (`FrameLayout`) |
@@ -66,6 +67,9 @@ generated renderers, so a platform can’t silently lose a native primitive.
 delivered.
 `Button.color` and `Link.color` set the native action-label color;
 `style.color` remains the shared fallback when either prop is omitted.
+`Pressable`, `TouchableOpacity`, and `TouchableHighlight` are native flow
+containers with `onPress`/`onClick`, long-press, and disabled handling; disabled
+containers block both press and long-press callbacks on both hosts.
 `Picker` renders option children from `<select>`/`<option>` or the native
 primitive, accepts `value`/`selectedValue`, and sends the selected option's
 `value` plus `index` through `onValueChange` or `onChange`.

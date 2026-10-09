@@ -97,7 +97,7 @@ craft android build --native-bundle ../native-screen.js
 ```
 
 Native mode maps STX `View`, `SafeAreaView`, `Text`, `Button`, `Link`,
-`TextInput`, `Picker`, `Modal`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`,
+`Pressable`, `TouchableOpacity`, `TouchableHighlight`, `TextInput`, `Picker`, `Modal`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`,
 and `FlatList` to Android views. `Picker` renders `<select>`/`<option>` values
 with `onValueChange` or `onChange`. `Modal` is parent-scoped and supports
 `visible`, `transparent`, `animationType`, `onShow`, `onDismiss`, and
