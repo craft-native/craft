@@ -18,7 +18,7 @@ private func craftNativeGridColumnCount(_ value: Any?) -> Int {
     return max(1, tracks.count)
 }
 
-/// A WebView-free host for the first stx-native vertical slice. The bundled
+/// A WebView-free host for the first stx native vertical slice. The bundled
 /// JavaScript sends whole, compiled view trees to UIKit and receives control
 /// events and Craft API replies through JavaScriptCore.
 struct CraftNativeScreen: UIViewControllerRepresentable {
@@ -1400,7 +1400,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         guard let url = Bundle.main.url(forResource: "native-screen", withExtension: "js", subdirectory: "dist")
             ?? Bundle.main.url(forResource: "native-screen", withExtension: "js"),
             let script = try? String(contentsOf: url, encoding: .utf8) else {
-            showError("Missing dist/native-screen.js. Compile a .stx screen with stx-native first.")
+            showError("Missing dist/native-screen.js. Compile a .stx screen with `stx native compile` first.")
             return
         }
         jsContext.evaluateScript(script)
@@ -2133,7 +2133,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     private func explicitKey(_ node: [String: Any], props: [String: Any]) -> String? {
-        // The current stx-native compiler emits key in props; accept the IR
+        // The current stx native compiler emits key in props; accept the IR
         // field too so keyed children keep working when the compiler adopts it.
         [node["id"], node["key"], props["key"], props["testID"]]
             .compactMap { $0 as? String }

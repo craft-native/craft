@@ -6,7 +6,7 @@ import WebKit
 // MARK: - Hybrid: web plus native screens
 //
 // `renderer: "web"` with `nativeScreens` set: the app is its web page, except
-// for the paths the config names, which are stx-native screens drawn with
+// for the paths the config names, which are stx native screens drawn with
 // UIKit from `dist/native-screen.js`. Each tab keeps one UINavigationController
 // whose stack mixes native screens and web entries, and the one WKWebView
 // moves into whichever web entry is on screen. It is created at launch and

@@ -124,22 +124,23 @@ jobs:
       - name: Test native UIKit reconciliation
         run: bun packages/ios/scripts/test-native-render.ts
 
-      # The multi-screen fixture is compiled from real .stx sources. Pin its
-      # private compiler so this Craft job cannot silently change underneath us.
-      - name: Checkout stx-native compiler
+      # The multi-screen fixture is compiled from real .stx sources. Pin the
+      # stx compiler (`stx native compile`) so this job cannot silently change
+      # underneath us.
+      - name: Checkout stx compiler
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 6c1603f742750c767568037675a897b906414c36
-          path: .stx-native-compiler
+          ref: 5affa2bf4129fbef1751652be112d83690aab484
+          path: .stx-compiler
 
-      - name: Install stx-native compiler dependencies
-        working-directory: .stx-native-compiler
+      - name: Install stx compiler dependencies
+        working-directory: .stx-compiler
         run: bun install --frozen-lockfile
 
       - name: Test native multi-screen navigation
         env:
-          STX_NATIVE_CLI: ${{ github.workspace }}/.stx-native-compiler/packages/stx-native/src/cli/index.ts
+          STX_CLI: ${{ github.workspace }}/.stx-compiler/packages/stx/bin/cli.ts
         run: bun packages/ios/scripts/test-native-navigation.ts
 
       - name: Cache Zig artifacts
@@ -231,15 +232,15 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Checkout stx-native compiler for Android
+      - name: Checkout stx compiler for Android
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 6c1603f742750c767568037675a897b906414c36
-          path: .stx-native-compiler
+          ref: 5affa2bf4129fbef1751652be112d83690aab484
+          path: .stx-compiler
 
-      - name: Install Android stx-native compiler dependencies
-        working-directory: .stx-native-compiler
+      - name: Install Android stx compiler dependencies
+        working-directory: .stx-compiler
         run: bun install --frozen-lockfile
 
       - name: Cache Zig artifacts
@@ -303,7 +304,7 @@ jobs:
           script: |
             adb wait-for-device
             bun scripts/mobile-e2e.ts --platform android --android-runtime packages/zig/zig-out/android
-            STX_NATIVE_CLI="$GITHUB_WORKSPACE/.stx-native-compiler/packages/stx-native/src/cli/index.ts" bun packages/android/scripts/test-native-navigation.ts
+            STX_CLI="$GITHUB_WORKSPACE/.stx-compiler/packages/stx/bin/cli.ts" bun packages/android/scripts/test-native-navigation.ts
 
       - name: Upload Android evidence
         if: always() && steps.harness.conclusion != 'skipped'

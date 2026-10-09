@@ -704,7 +704,7 @@ private data class LayoutBounds(
     val height: Double,
 )
 
-/** WebView-free host for a compiled stx-native route bundle. */
+/** WebView-free host for a route bundle compiled by `stx native compile`. */
 class MainActivity : AppCompatActivity() {
     private class Screen(
         val route: String?,

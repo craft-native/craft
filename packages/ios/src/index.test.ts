@@ -249,7 +249,7 @@ describe('Craft iOS builder', () => {
     await init({ runtimeDir: null, name: 'NativeLifecycle', output, config: { renderer: 'native' } })
 
     const native = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
-    expect(native).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with stx-native first.")')
+    expect(native).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with `stx native compile` first.")')
     expect(native).toContain('imageTasks.values.forEach { $0.cancel() }')
     expect(native).toContain('pendingCapabilityDeadlines.values.forEach { $0.cancel() }')
     expect(native).toContain('pendingTimers.values.forEach { $0.cancel() }')

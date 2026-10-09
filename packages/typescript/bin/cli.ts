@@ -447,7 +447,7 @@ cli
 cli
   .command('ios build', 'Build iOS project')
   .option('--html-path <path>', 'Path to HTML file')
-  .option('--native-bundle <path>', 'JavaScript bundle compiled by stx-native')
+  .option('--native-bundle <path>', 'JavaScript bundle from `stx native compile`')
   .option('-d, --dev-server <url>', 'Development server URL')
   .option('-o, --output <dir>', 'iOS project directory', { default: './ios' })
   .option('-w, --watch', 'Watch for file changes and rebuild')
@@ -537,7 +537,7 @@ cli
 cli
   .command('android build', 'Build Android project')
   .option('--html-path <path>', 'Path to HTML file')
-  .option('--native-bundle <path>', 'JavaScript bundle compiled by stx-native')
+  .option('--native-bundle <path>', 'JavaScript bundle from `stx native compile`')
   .option('-d, --dev-server <url>', 'Development server URL')
   .option('-o, --output <dir>', 'Android project directory', { default: './android' })
   .option('--release', 'Build release APK')

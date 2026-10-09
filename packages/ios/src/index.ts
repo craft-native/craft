@@ -163,7 +163,7 @@ export interface CraftConfig {
   orientations?: Array<'portrait' | 'landscape-left' | 'landscape-right' | 'portrait-upside-down'>
   deviceFamilies?: Array<'iphone' | 'ipad'>
   /**
-   * Hybrid: app paths drawn as native stx-native screens instead of in the
+   * Hybrid: app paths drawn as native stx screens instead of in the
    * web view, each to the screen in the native bundle that draws it, e.g.
    * `{ "/m": "Today", "/m/calendar": "Calendar" }`. A segment may be a
    * parameter (`/m/workout/:id`) and the last one `*`. Needs `renderer: "web"`
@@ -171,7 +171,7 @@ export interface CraftConfig {
    * whose screen is missing or throws falls back to it.
    */
   nativeScreens?: Record<string, string>
-  /** Hybrid: the bundle `stx-native compile --format bundle` wrote, copied to `dist/native-screen.js`. */
+  /** Hybrid: the bundle `stx native compile --format bundle` wrote, copied to `dist/native-screen.js`. */
   nativeBundle?: string
   /**
    * The native tab bar, shown from the first frame, before the page loads.
@@ -371,7 +371,7 @@ export interface InitOptions {
 
 export interface BuildOptions {
   htmlPath?: string
-  /** JavaScript bundle emitted by `stx-native compile Screen.stx --format bundle`. */
+  /** JavaScript bundle emitted by `stx native compile Screen.stx --format bundle`. */
   nativeBundlePath?: string
   devServer?: string
   output: string
@@ -1304,7 +1304,7 @@ export async function init(options: InitOptions): Promise<void> {
   console.log('Next steps:')
   console.log(`  1. cd ${output}`)
   if (config.renderer === 'native') {
-    console.log('  2. Compile your screen: stx-native compile Screen.stx --format bundle --output screen.js')
+    console.log('  2. Compile your screen: stx native compile Screen.stx --format bundle --output screen.js')
     console.log('  3. Run: craft ios build --native-bundle screen.js')
   }
   else {
@@ -1343,7 +1343,7 @@ export async function build(options: BuildOptions): Promise<void> {
       if (resolve(nativeBundlePath) !== resolve(destination)) cpSync(nativeBundlePath, destination)
     }
     if (!existsSync(join(output, 'dist', 'native-screen.js'))) {
-      throw new Error('Native iOS mode needs dist/native-screen.js. Compile a .stx screen with stx-native first.')
+      throw new Error('Native iOS mode needs dist/native-screen.js. Compile a .stx screen with `stx native compile` first.')
     }
   }
   else if (nativeBundlePath && !isHybrid(config)) {

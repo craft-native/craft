@@ -259,7 +259,7 @@ describe('native renderer component contract', () => {
       'capabilities.close()',
     ]) expect(android, `${marker} missing from Android teardown`).toContain(marker)
 
-    expect(ios).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with stx-native first.")')
+    expect(ios).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with `stx native compile` first.")')
     expect(android).toContain('showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")')
     expect(ios).not.toContain('WKWebView')
     expect(android).not.toContain('WebView(')

@@ -11,11 +11,11 @@ existing web-rendered application.
 
 ## Build the same bundle for both platforms
 
-Configure routes in `stx-native.config.json`, then compile the directory that
-contains that file:
+Configure routes in `native.config.json`, then compile from the directory that
+contains that file with the stx CLI:
 
 ```bash
-stx-native compile --format bundle --output ./native-screen.js
+stx native compile --format bundle --output ./native-screen.js
 
 craft ios init MyApp --renderer native --output ./ios
 craft ios build --output ./ios --native-bundle ./native-screen.js
@@ -98,7 +98,7 @@ fall back to positional identity rather than attaching state to the wrong view.
 ## Incremental update protocol
 
 Generated native hosts advertise `mutationProtocolVersion: 1` on
-`globalThis.__stxNativeBridge`. A current `stx-native` bundle uses `MUTATE`
+`globalThis.__stxNativeBridge`. A current `stx native compile` bundle uses `MUTATE`
 batches when that value is present and continues to send the original
 whole-document `RENDER` message to older hosts. If a host rejects a mutation
 batch, the bundle resynchronizes with `RENDER`, so a bundle can run against
@@ -472,7 +472,7 @@ needed; browser-rendered apps continue using their existing web fallbacks.
 ### Network requests and timers
 
 JavaScriptCore has no `fetch` and no timers. The iOS host supplies both, and
-advertises `fetch` in `__stxNativeBridge.capabilities`; a current stx-native
+advertises `fetch` in `__stxNativeBridge.capabilities`; a current `stx native compile`
 bundle then installs a global `fetch` with the familiar subset:
 
 ```ts

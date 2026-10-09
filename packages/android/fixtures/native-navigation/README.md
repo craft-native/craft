@@ -30,7 +30,7 @@ accessibility services unless a label or value is explicitly supplied.
 Returning to a retained route reapplies native theme defaults before it becomes
 visible, so a dark-mode change while another route is open cannot leave stale
 colors behind.
-CI uses the pinned stx-native compiler at `6c1603f742`, which installs an
+CI uses the stx compiler (`stx native compile`) pinned at `5affa2bf41`, which installs an
 initial tree atomically before sending incremental keyed mutations.
 
 `--prepare-only` compiles the `.stx` bundle and generates the Android fixture

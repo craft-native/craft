@@ -5,7 +5,7 @@ This `.stx` screen exercises the UIKit + JavaScriptCore host without creating a 
 From the Craft repository, with a sibling stx checkout:
 
 ```bash
-bun ../stx/packages/stx-native/src/cli/index.ts compile packages/ios/fixtures/native-screen/Screen.stx --format bundle --output /tmp/craft-native-screen.js
+bun ../stx/packages/stx/bin/cli.ts native compile packages/ios/fixtures/native-screen/Screen.stx --format bundle --output /tmp/craft-native-screen.js
 craft ios init NativeSmoke --renderer native --output /tmp/craft-native-smoke
 craft ios build --output /tmp/craft-native-smoke --native-bundle /tmp/craft-native-screen.js
 craft ios run --output /tmp/craft-native-smoke --simulator

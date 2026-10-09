@@ -870,7 +870,7 @@ zipStorePath=wrapper/dists
   console.log('Next steps:')
   console.log(`  1. cd ${output}`)
   if (config.renderer === 'native') {
-    console.log('  2. Compile your screen: stx-native compile Screen.stx --format bundle --output screen.js')
+    console.log('  2. Compile your screen: stx native compile Screen.stx --format bundle --output screen.js')
     console.log('  3. Run: craft android build --native-bundle screen.js')
   }
   else {
@@ -903,7 +903,7 @@ export async function build(options: BuildOptions): Promise<void> {
     const destination = join(output, 'app/src/main/assets/native-screen.js')
     if (nativeBundlePath && resolve(nativeBundlePath) !== resolve(destination)) cpSync(nativeBundlePath, destination)
     if (!existsSync(destination)) {
-      throw new Error('Native Android mode needs app/src/main/assets/native-screen.js. Compile a .stx screen with stx-native first.')
+      throw new Error('Native Android mode needs app/src/main/assets/native-screen.js. Compile a .stx screen with `stx native compile` first.')
     }
   }
   else if (nativeBundlePath) {

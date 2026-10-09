@@ -5,7 +5,8 @@ import { bootSimulator, build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-navigation')
-const stxCli = process.env.STX_NATIVE_CLI || resolve(import.meta.dir, '../../../../stx/packages/stx-native/src/cli/index.ts')
+// The stx CLI (`stx native compile`), from a sibling stx checkout unless CI pins one.
+const stxCli = process.env.STX_CLI || resolve(import.meta.dir, '../../../../stx/packages/stx/bin/cli.ts')
 const workspace = mkdtempSync(join(tmpdir(), 'craft-native-navigation-'))
 const output = join(workspace, 'NativeNavigation')
 const bundle = join(workspace, 'routes.js')
@@ -35,12 +36,12 @@ function runXcodeTests(args: string[], cwd: string, resultBundle: string): void 
 
 function assertMutationBundle(path: string): void {
   const source = readFileSync(path, 'utf8')
-  if (!source.includes('mutationProtocolVersion') || !source.includes("send('MUTATE'"))
-    throw new Error('stx-native compiler did not emit the native mutation protocol')
+  if (!source.includes('mutationProtocolVersion') || !/["']MUTATE["']/.test(source))
+    throw new Error('stx native compile did not emit the native mutation protocol')
 }
 
 try {
-  run([process.execPath, stxCli, 'compile', '--format', 'bundle', '--output', bundle], fixture)
+  run([process.execPath, stxCli, 'native', 'compile', '--format', 'bundle', '--output', bundle], fixture)
   assertMutationBundle(bundle)
   await init({
     name: 'NativeNavigation',

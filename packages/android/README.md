@@ -87,12 +87,12 @@ craft android build --dev-server http://10.0.2.2:3456
 ```
 
 For a WebView-free app, initialize with `--renderer native` and give the build
-the same route bundle that `stx-native` produces for iOS:
+the same route bundle that `stx native compile` produces for iOS:
 
 ```bash
 craft android init MyApp --package com.example.myapp --renderer native
 cd android
-stx-native compile ../screens --format bundle --output ../native-screen.js
+stx native compile --config ../screens/native.config.json --format bundle --output ../native-screen.js
 craft android build --native-bundle ../native-screen.js
 ```
 

@@ -14,7 +14,7 @@ import kotlin.math.ceil
 
 internal typealias CraftNativeRenderItem = (node: JSONObject, identity: String, previous: View?) -> View
 
-/** A stable-key RecyclerView host for stx-native FlatList nodes. */
+/** A stable-key RecyclerView host for stx native FlatList nodes. */
 internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
     private data class Item(
         val identity: String,

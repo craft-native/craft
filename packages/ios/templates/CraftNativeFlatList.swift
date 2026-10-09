@@ -9,7 +9,7 @@ private final class CraftNativeFlatListLayout: UICollectionViewFlowLayout {
     }
 }
 
-/// A keyed, recycling native list used by the stx-native FlatList primitive.
+/// A keyed, recycling native list used by stx's native FlatList primitive.
 /// The screen controller owns rendered row state; this view owns collection
 /// diffs, viewport state, and UICollectionView cell reuse.
 final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {

@@ -53,7 +53,7 @@ Options:
   -t, --team-id <id>        Apple Developer Team ID
   --renderer <kind>         iOS renderer: web (default) or native
   --html-path <path>        Path to HTML file or directory
-  --native-bundle <path>    JavaScript bundle compiled by stx-native
+  --native-bundle <path>    JavaScript bundle from `stx native compile`
   -d, --dev-server <url>    Development server URL
   -o, --output <dir>        Output directory (default: ./ios)
   -s, --simulator           Run on simulator instead of device
