@@ -96,8 +96,11 @@ export interface CraftConfig {
   /**
    * Also refuse to load anything but the app-bound domains in the web view
    * (WKWebViewConfiguration.limitsNavigationsToAppBoundDomains). Off by
-   * default: links elsewhere already open in Safari, and embedded players and
-   * maps in iframes keep loading.
+   * default: links elsewhere already open in Safari. WebKit applies the limit
+   * to the main frame only, so embedded players and maps in cross-origin
+   * iframes (YouTube, Vimeo) keep loading with it on (checked in the iOS 26
+   * simulator); WebKit only declines to inject user scripts into them, which
+   * the bridge never does.
    */
   limitNavigationsToAppBoundDomains?: boolean
   /**

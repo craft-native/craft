@@ -775,6 +775,14 @@ describe('Craft iOS builder', () => {
 
     const swift = readFileSync(join(output, 'Sources', 'HQTrainingApp.swift'), 'utf8')
     expect(swift).toContain('case "retryRemote":')
+    // An app with app-bound domains cannot navigate to craft://app from its
+    // own page (WebKit ignores the load), so the offline page is loaded as a
+    // page of the remote origin instead; the fallback used to be blank there.
+    const bundled = swift.slice(swift.indexOf('private func loadBundledPage(in webView: WKWebView) {'), swift.indexOf('// MARK: - Lifecycle'))
+    expect(bundled).toContain('if Self.declaresAppBoundDomains,')
+    expect(bundled).toContain('webView.loadHTMLString(html, baseURL: remote)')
+    const fallback = swift.slice(swift.indexOf('private func loadBundledFallback(in webView: WKWebView) {'), swift.indexOf('private func returnFromBundledFallback('))
+    expect(fallback).toContain('loadBundledPage(in: webView)')
     expect(swift).toContain('private func retryRemote() {')
   })
 

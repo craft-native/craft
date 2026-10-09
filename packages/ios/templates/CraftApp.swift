@@ -1130,6 +1130,13 @@ final class BundledAssetSchemeHandler: NSObject, WKURLSchemeHandler {
         super.init()
     }
 
+    /// The bundled `index.html` as text, for a web view that cannot navigate
+    /// to `craft://app` (see `loadBundledPage`).
+    static func bundledIndexHTML() -> String? {
+        guard let root = findBundledRoot() else { return nil }
+        return try? String(contentsOf: root.appendingPathComponent("index.html"), encoding: .utf8)
+    }
+
     private static func findBundledRoot() -> URL? {
         let bundle = Bundle.main
         let directCandidates = [
@@ -2616,8 +2623,37 @@ struct CraftWebView: UIViewRepresentable {
         /// The bundled page (`dist/index.html`), which for an app whose page
         /// is remote is the offline page with its Retry.
         private func showOfflinePage(in webView: WKWebView) {
-            guard let bundledURL = URL(string: "craft://app/index.html") else { return }
             if config.devServerURL != nil { loadedBundledFallback = true }
+            loadBundledPage(in: webView)
+        }
+
+        /// Whether Info.plist declares WKAppBoundDomains.
+        private static let declaresAppBoundDomains: Bool = {
+            (Bundle.main.object(forInfoDictionaryKey: "WKAppBoundDomains") as? [String])?.isEmpty == false
+        }()
+
+        /// The bundled page, in place of the app's remote one.
+        ///
+        /// An app that declares app-bound domains cannot navigate from one of
+        /// them to `craft://app`: WebKit ignores the load ("attempting to
+        /// navigate away from an app-bound domain or navigate after using
+        /// restricted APIs"), whether or not navigations are limited to them,
+        /// because the bridge's scripts and message handlers count as those
+        /// APIs. The fallback then left a blank page where the offline page
+        /// should have been. So such an app gets the bundled index as a page
+        /// of the remote origin itself (`loadHTMLString` with the remote as
+        /// its base URL): an app-bound navigation, with the bridge, and a
+        /// Retry the message handlers trust. It must be self-contained, as the
+        /// generated offline page is; an app that bundles a whole site as its
+        /// fallback and declares app-bound domains gets only its index.
+        private func loadBundledPage(in webView: WKWebView) {
+            if Self.declaresAppBoundDomains,
+               let remote = config.devServerURL.flatMap(URL.init(string:)),
+               let html = BundledAssetSchemeHandler.bundledIndexHTML() {
+                webView.loadHTMLString(html, baseURL: remote)
+                return
+            }
+            guard let bundledURL = URL(string: "craft://app/index.html") else { return }
             webView.load(URLRequest(url: bundledURL))
         }
 
@@ -2702,11 +2738,9 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func loadBundledFallback(in webView: WKWebView) {
-            guard !loadedBundledFallback,
-                  config.devServerURL != nil,
-                  let bundledURL = URL(string: "craft://app/index.html") else { return }
+            guard !loadedBundledFallback, config.devServerURL != nil else { return }
             loadedBundledFallback = true
-            webView.load(URLRequest(url: bundledURL))
+            loadBundledPage(in: webView)
         }
 
         /// Leave the bundled copy for the remote origin again (#252).
