@@ -95,6 +95,8 @@ describe('Craft iOS builder', () => {
     expect(nativeSwift).toContain('case "Picker":')
     expect(nativeSwift).toContain('UIPickerViewDataSource, UIPickerViewDelegate')
     expect(nativeSwift).toContain('pickerOptions[pickerID] = options')
+    expect(nativeSwift).toContain('private final class CraftNativeModalView: UIView')
+    expect(nativeSwift).toContain('modal.isHidden = props["visible"] as? Bool != true')
     expect(nativeSwift).toContain('button.isEnabled = props["disabled"] as? Bool != true')
     expect(nativeSwift).toContain('let transformedTitle = transformedText(title, style: style)')
     expect(nativeSwift).toContain('private func transformedText(_ text: String, style: [String: Any])')
