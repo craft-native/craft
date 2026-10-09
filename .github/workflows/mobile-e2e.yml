@@ -126,12 +126,12 @@ jobs:
 
       # The multi-screen fixture is compiled from real .stx sources. Pin the
       # stx compiler (`stx native compile`) so this job cannot silently change
-      # underneath us.
+      # underneath us. This release also carries a Bun-compatible lockfile.
       - name: Checkout stx compiler
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 5affa2bf4129fbef1751652be112d83690aab484
+          ref: 6151b9e73c03107dc6ed778bd2b68ab769f41f85
           path: .stx-compiler
 
       - name: Install stx compiler dependencies
@@ -236,7 +236,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: stacksjs/stx
-          ref: 5affa2bf4129fbef1751652be112d83690aab484
+          ref: 6151b9e73c03107dc6ed778bd2b68ab769f41f85
           path: .stx-compiler
 
       - name: Install Android stx compiler dependencies

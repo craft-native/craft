@@ -14,7 +14,7 @@ change even though UIKit must replace the underlying control class. Keyed
 FlatList inputs retain their drafts when rows recycle off-screen and return.
 
 From the Craft repository, with the sibling stx checkout at or after
-`5affa2bf41` (where the compiler became `stx native compile`):
+`6151b9e73c` (where the compiler became `stx native compile`):
 
 ```bash
 bun packages/ios/scripts/test-native-navigation.ts
