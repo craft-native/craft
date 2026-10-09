@@ -81,11 +81,12 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
         let scroll = app.scrollViews["native-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+        let image = app.images["native-image"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(image.frame.minY, scroll.frame.minY + 12, "ScrollView contentContainerStyle did not add top padding")
         XCTAssertEqual(app.staticTexts["home-title"].label, "Home")
         XCTAssertTrue(app.buttons["disabled-button"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["disabled-button"].isEnabled)
-        let image = app.images["native-image"]
-        XCTAssertTrue(image.waitForExistence(timeout: 10))
         XCTAssertEqual(image.label, "Native pixel")
         XCTAssertTrue(app.staticTexts["image loaded"].waitForExistence(timeout: 5))
         image.tap()

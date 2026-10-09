@@ -395,6 +395,7 @@ class NativeNavigationTest {
             val image = awaitView(activity, "native-image")
             assertTrue("ScrollView did not render an Android ScrollView", containsType(scroll, ScrollView::class.java))
             val nativeScroller = findType(scroll, ScrollView::class.java)!!
+            assertTrue("ScrollView contentContainerStyle did not add top padding", image.top >= nativeScroller.top + (12 * density).toInt())
             assertScrolls(nativeScroller)
             assertTrue("Image did not render as ImageView", image is ImageView)
             assertTrue("Image data did not decode", (image as ImageView).drawable != null)
