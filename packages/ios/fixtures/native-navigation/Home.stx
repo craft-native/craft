@@ -37,6 +37,38 @@ let panelStyled = true
 let panelStyleStatus = ''
 let textWidthUnset = false
 
+function linkAccessibilityState() {
+  return { disabled: linkAccessibilityDisabled }
+}
+
+function panelAccessibilityState() {
+  return { disabled: panelAccessibilityDisabled }
+}
+
+function longPressAccessibilityState() {
+  return { disabled: longPressAccessibilityDisabled }
+}
+
+function buttonAccessibilityState() {
+  return { selected: buttonAccent }
+}
+
+function switchAccessibilityState() {
+  return { checked: switchValue }
+}
+
+function switchTrackColor() {
+  return { false: '#64748b', true: '#22c55e' }
+}
+
+function validImage() {
+  return { uri: validImageSource }
+}
+
+function currentImage() {
+  return { uri: imageSource }
+}
+
 function changeName(event) {
   name = event.text
 }
@@ -237,25 +269,25 @@ function openCapabilities() {
       <Text testID="flex-grow-first" style={{"width":40,"flexGrow":1}}>grow</Text>
       <Text testID="flex-grow-second" style={{"width":40}}>fixed</Text>
     </View>
-    <Link testID="native-link" accessibilityHint="Opens status" accessibilityValue="ready" accessibilityState={{"disabled":linkAccessibilityDisabled}} onPress={() => setStatus('link pressed')}>Open native link</Link>
+    <Link testID="native-link" accessibilityHint="Opens status" accessibilityValue="ready" accessibilityState={linkAccessibilityState()} onPress={() => setStatus('link pressed')}>Open native link</Link>
     <Text testID="native-link-status">{status}</Text>
     <Button testID="toggle-link-accessibility" onPress={toggleLinkAccessibility}>Toggle link accessibility</Button>
-    <View testID="native-panel" accessibilityState={{"disabled":panelAccessibilityDisabled}} onPress={pressPanel} style={{"height":24}}><Text>Native panel</Text></View>
+    <View testID="native-panel" accessibilityState={panelAccessibilityState()} onPress={pressPanel} style={{"height":24}}><Text>Native panel</Text></View>
     <Pressable testID="native-pressable" onPress={pressNativePressable} onPressIn={pressNativePressableIn} onPressOut={pressNativePressableOut} style={{"height":24}}><Text>Native pressable</Text></Pressable>
     <Text testID="pressable-lifecycle">Press lifecycle: {pressIns}/{pressOuts}</Text>
     <Pressable testID="disabled-pressable" disabled onPress={pressNativePressable} style={{"height":24}}><Text>Disabled pressable</Text></Pressable>
     <Button testID="toggle-panel-accessibility" onPress={togglePanelAccessibility}>Toggle panel accessibility</Button>
-    <View testID="long-press-panel" accessibilityState={{"disabled":longPressAccessibilityDisabled}} onLongPress={pressPanelLong} style={{"height":24}}><Text>Long press panel</Text></View>
+    <View testID="long-press-panel" accessibilityState={longPressAccessibilityState()} onLongPress={pressPanelLong} style={{"height":24}}><Text>Long press panel</Text></View>
     <Button testID="toggle-long-press-accessibility" onPress={toggleLongPressAccessibility}>Toggle long press accessibility</Button>
     <Text testID="long-press-status">{longPressStatus}</Text>
-    <Button testID="toggle-button-style" accessibilityState={{"selected":buttonAccent}} onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
+    <Button testID="toggle-button-style" accessibilityState={buttonAccessibilityState()} onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
     <Text testID="panel-style-status">{panelStyleStatus}</Text>
     <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : null,"borderWidth":panelStyled ? 2 : null,"borderColor":panelStyled ? "#abcdef" : null}} />
     <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
     <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
-    <Switch testID="native-switch" value={switchValue} accessibilityState={{"checked":switchValue}} trackColor={{"false":"#64748b","true":"#22c55e"}} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
+    <Switch testID="native-switch" value={switchValue} accessibilityState={switchAccessibilityState()} trackColor={switchTrackColor()} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Switch testID="nullable-switch" value={null} checked={true} />
     <select testID="native-picker" value={pickerValue} onChange={choosePicker}>
       <option value="one">One</option>
@@ -283,7 +315,7 @@ function openCapabilities() {
     <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={{"paddingTop":12}} style={{"height":72,"gap":4}}>
       <Image
         testID="native-image"
-        source={{"uri":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}}
+        source={validImage()}
         accessibilityLabel="Native pixel"
         accessibilityRole="image"
         onPress={tapImage}
@@ -297,7 +329,7 @@ function openCapabilities() {
       <Text testID="image-error-status">{imageErrorStatus}</Text>
       <Image
         testID="unsupported-image"
-        source={{"uri":imageSource}}
+        source={currentImage()}
         accessibilityLabel="Unsupported image"
         onLoad={imageLoaded}
         onLoadEnd={imageLoaded}
