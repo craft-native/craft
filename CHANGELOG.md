@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.126...v0.0.127)
+
+## 🐛 Bug Fixes
+
+- **ios**: the page's Back link at a native screen's entry goes back to it ([ac16c36](https://github.com/craft-native/craft/commit/ac16c36)) _(by Chris)_
+- **ios**: a redirect to a native path takes the page there too ([94571f4](https://github.com/craft-native/craft/commit/94571f4)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.125...v0.0.126)
 
 ## 🚀 Features
