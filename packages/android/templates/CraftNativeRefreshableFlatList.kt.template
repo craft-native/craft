@@ -23,6 +23,7 @@ internal class CraftNativeRefreshableFlatList(context: Context) : SwipeRefreshLa
 
     override fun onDetachedFromWindow() {
         refreshHandler = null
+        isRefreshing = false
         super.onDetachedFromWindow()
     }
 }

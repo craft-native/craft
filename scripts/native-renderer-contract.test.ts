@@ -543,6 +543,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('events.optString("onRefresh")')
     expect(androidRefreshableFlatList).toContain('SwipeRefreshLayout')
     expect(androidRefreshableFlatList).toContain('isRefreshing = handler != null && refreshing')
+    expect(androidRefreshableFlatList).toContain('isRefreshing = false')
     expect(guide).toContain('pull-to-refresh')
   })
 

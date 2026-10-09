@@ -83,6 +83,8 @@ describe('Craft Android builder', () => {
       expect(flatList).toContain('class CraftNativeFlatList(context: Context) : RecyclerView(context)')
       expect(refreshableFlatList).toContain('class CraftNativeRefreshableFlatList(context: Context) : SwipeRefreshLayout(context)')
       expect(readFileSync(join(native, 'app/build.gradle.kts'), 'utf8')).toContain('androidx.swiperefreshlayout:swiperefreshlayout:1.1.0')
+      expect(refreshableFlatList).toContain('override fun onDetachedFromWindow()')
+      expect(refreshableFlatList).toContain('isRefreshing = false')
       expect(flatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
       expect(nativeActivity).toContain('setKeyboardDismissMode(props.optString("keyboardDismissMode"))')
       expect(flatList).toContain('renderedLayout?.height ?: LayoutParams.WRAP_CONTENT')
