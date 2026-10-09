@@ -41,7 +41,7 @@
     <key>UIStatusBarStyle</key>
     <string>{{STATUS_BAR_STYLE}}</string>
     <key>UIViewControllerBasedStatusBarAppearance</key>
-    <false/>
+    <true/>
 {{USAGE_DESCRIPTIONS}}
 {{URL_TYPES}}
 {{APP_BOUND_DOMAINS}}

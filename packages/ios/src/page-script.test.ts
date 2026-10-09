@@ -512,6 +512,103 @@ describe('the bridge user script', () => {
   })
 })
 
+describe('the native UI the page can drive', () => {
+  it('confirms through the system alert and answers a boolean', async () => {
+    const page = loadPage()
+    const confirmed = page.craft.dialog.confirm({ title: 'Delete workout?', message: 'This cannot be undone.', confirmLabel: 'Delete', destructive: true })
+    expect(page.last('dialogConfirm')).toMatchObject({ title: 'Delete workout?', confirmLabel: 'Delete', destructive: true })
+    page.answer('dialogConfirm', true)
+    expect(await confirmed).toBe(true)
+  })
+
+  it('settles every call with what nothing-happened means when native fails', async () => {
+    const page = loadPage()
+    const calls: [string, Promise<unknown>, unknown][] = [
+      ['dialogConfirm', page.craft.dialog.confirm('Sure?'), false],
+      ['dialogActionSheet', page.craft.dialog.actionSheet({ actions: [{ id: 'a', title: 'A' }] }), null],
+      ['contextMenuShow', page.craft.contextMenu.show({ items: [{ id: 'a', title: 'A' }], anchor: { x: 1, y: 2, width: 3, height: 4 } }), null],
+      ['browserOpen', page.craft.browser.open('https://example.com'), { cancelled: true }],
+      ['symbolImage', page.craft.symbols.image('heart.fill'), null],
+      ['statusBarSetStyle', page.craft.statusBar.setStyle('light'), false],
+      ['chromeSetUnderPageColor', page.craft.chrome.setUnderPageColor('#000'), false],
+      ['refreshEnable', page.craft.refresh.enable(), false],
+    ]
+    for (const [action] of calls) page.refuse(action, 'Native API call failed', 'NATIVE_CALL_FAILED')
+    for (const [, call, fallback] of calls) expect(await call).toEqual(fallback)
+
+    const alerted = page.craft.dialog.alert('Saved')
+    expect(page.last('dialogAlert')).toMatchObject({ title: 'Saved' })
+    page.refuse('dialogAlert', 'Native API call failed', 'NATIVE_CALL_FAILED')
+    expect(await alerted).toBeUndefined()
+  })
+
+  it('does not time out a dialog, a menu or the browser a person is still reading', () => {
+    const page = loadPage()
+    const pending: number[] = []
+    const realSetTimeout = globalThis.setTimeout
+    globalThis.setTimeout = ((fn: () => void, ms?: number) => { if (ms === 30000) pending.push(ms); return realSetTimeout(() => {}, 0) }) as typeof setTimeout
+    try {
+      void page.craft.dialog.alert('Hi')
+      void page.craft.dialog.confirm('Sure?')
+      void page.craft.dialog.actionSheet({ actions: [] })
+      void page.craft.contextMenu.show({ items: [] })
+      void page.craft.browser.open('https://example.com', { mode: 'auth', callbackScheme: 'hqtraining' })
+    }
+    finally {
+      globalThis.setTimeout = realSetTimeout
+    }
+    expect(pending).toEqual([])
+    expect(page.last('browserOpen')).toMatchObject({ url: 'https://example.com', mode: 'auth', callbackScheme: 'hqtraining' })
+  })
+
+  it('reads an element anchor as its viewport rect and answers the chosen id', async () => {
+    const page = loadPage()
+    const element = { getBoundingClientRect: () => ({ left: 10, top: 20, width: 30, height: 40 }) }
+    const chosen = page.craft.dialog.actionSheet({
+      title: 'Workout',
+      anchor: element,
+      actions: [{ id: 'edit', title: 'Edit' }, { id: 'delete', title: 'Delete', style: 'destructive' }, { id: 'cancel', title: 'Cancel', style: 'cancel' }],
+    })
+    expect(page.last('dialogActionSheet').anchor).toEqual({ x: 10, y: 20, width: 30, height: 40 })
+    expect(page.last('dialogActionSheet').actions).toEqual([
+      { id: 'edit', title: 'Edit', style: 'default' },
+      { id: 'delete', title: 'Delete', style: 'destructive' },
+      { id: 'cancel', title: 'Cancel', style: 'cancel' },
+    ])
+    page.answer('dialogActionSheet', 'delete')
+    expect(await chosen).toBe('delete')
+
+    const menu = page.craft.contextMenu.show({ items: [{ id: 'dup', title: 'Duplicate', symbol: 'plus.square.on.square' }], anchor: element })
+    expect(page.last('contextMenuShow').items).toEqual([{ id: 'dup', title: 'Duplicate', symbol: 'plus.square.on.square', destructive: false, disabled: false }])
+    page.answer('contextMenuShow', null)
+    expect(await menu).toBeNull()
+  })
+
+  it('draws a symbol once per size and colour', async () => {
+    const page = loadPage()
+    const first = page.craft.symbols.image('heart.fill', { pointSize: 22, weight: 'semibold', color: '#ff0000' })
+    const again = page.craft.symbols.image('heart.fill', { pointSize: 22, weight: 'semibold', color: '#ff0000' })
+    expect(page.count('symbolImage')).toBe(1)
+    page.answer('symbolImage', 'data:image/png;base64,AAAA')
+    expect(await first).toBe('data:image/png;base64,AAAA')
+    expect(await again).toBe('data:image/png;base64,AAAA')
+    void page.craft.symbols.image('heart.fill', { pointSize: 28 })
+    expect(page.count('symbolImage')).toBe(2)
+  })
+
+  it('narrows the status bar style and the keyboard bar to what native takes', () => {
+    const page = loadPage()
+    void page.craft.statusBar.setStyle('purple')
+    expect(page.last('statusBarSetStyle').style).toBe('default')
+    void page.craft.statusBar.setStyle('light')
+    expect(page.last('statusBarSetStyle').style).toBe('light')
+    void page.craft.chrome.setKeyboardAccessory(false)
+    expect(page.last('chromeSetKeyboardAccessory').visible).toBe(false)
+    void page.craft.refresh.enable({ tintColor: '#22c55e' })
+    expect(page.last('refreshEnable').tintColor).toBe('#22c55e')
+  })
+})
+
 describe('craft.db', () => {
   // Native has handled dbExecute/dbQuery for a long time; the page had no way
   // to reach them, so localDatabase did nothing on iOS while Android worked.

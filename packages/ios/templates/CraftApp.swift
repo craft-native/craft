@@ -1051,6 +1051,13 @@ struct CraftWebView: UIViewRepresentable {
         private var loadedBundledFallback = false
         /// Whether the current document's bridge has announced itself.
         private var documentReady = false
+        /// Whether WebKit's bar above the keyboard shows (`keyboardAccessory`,
+        /// then `craft.chrome.setKeyboardAccessory`).
+        private var keyboardAccessoryVisible = false
+        /// The native pull-to-refresh, when the page has asked for it.
+        private lazy var refreshControl = CraftRefreshControl { [weak self] in
+            self?.sendToWeb("craftRefresh", data: [:])
+        }
 
         /// The highest `cb_<n>` this process has seen the page hand out.
         ///
@@ -1391,6 +1398,52 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     rejectCallback(callbackId, error: "Settings URL is unavailable")
                 }
+            // MARK: Native UI: dialogs, menus, the in-app browser, chrome.
+            // None of these is gated: they are the system's own UI, and need
+            // no permission or entitlement.
+            case "dialogAlert":
+                CraftDialogs.alert(body, from: webView) { [weak self] in self?.resolveCallback(callbackId, result: NSNull()) }
+            case "dialogConfirm":
+                CraftDialogs.confirm(body, from: webView) { [weak self] confirmed in self?.resolveCallback(callbackId, result: confirmed) }
+            case "dialogActionSheet":
+                CraftDialogs.actionSheet(body, from: webView) { [weak self] id in self?.resolveCallback(callbackId, result: id ?? NSNull()) }
+            case "contextMenuShow":
+                guard let webView else { resolveCallback(callbackId, result: NSNull()); return }
+                CraftContextMenu.show(body, in: webView) { [weak self] id in self?.resolveCallback(callbackId, result: id ?? NSNull()) }
+            case "browserOpen":
+                guard let address = body["url"] as? String, let url = URL(string: address) else {
+                    rejectCallback(callbackId, error: "browser.open needs a URL it can parse", code: "INVALID_ARGUMENT")
+                    return
+                }
+                CraftBrowser.shared.open(url, mode: body["mode"] as? String ?? "safari", callbackScheme: body["callbackScheme"] as? String, from: webView) { [weak self] answer in
+                    self?.resolveCallback(callbackId, result: answer)
+                }
+            case "symbolImage":
+                resolveCallback(callbackId, result: CraftSymbols.image(named: body["name"] as? String ?? "", options: body) ?? NSNull())
+            case "statusBarSetStyle":
+                resolveCallback(callbackId, result: CraftStatusBar.setStyle(body["style"] as? String ?? "default"))
+            case "chromeSetUnderPageColor":
+                // What shows past the page's edges when it rubber-bands.
+                if #available(iOS 15.0, *), let webView, let css = body["color"] as? String, let color = UIColor(css: css) {
+                    webView.underPageBackgroundColor = color
+                    resolveCallback(callbackId, result: true)
+                } else {
+                    resolveCallback(callbackId, result: false)
+                }
+            case "chromeSetKeyboardAccessory":
+                let visible = body["visible"] as? Bool ?? true
+                keyboardAccessoryVisible = visible
+                resolveCallback(callbackId, result: webView.map { CraftKeyboardAccessory.setVisible(visible, in: $0) } ?? false)
+            case "refreshEnable":
+                guard let webView else { resolveCallback(callbackId, result: false); return }
+                refreshControl.enable(on: webView.scrollView, tint: (body["tintColor"] as? String).flatMap { UIColor(css: $0) })
+                resolveCallback(callbackId, result: true)
+            case "refreshDisable":
+                refreshControl.disable()
+                resolveCallback(callbackId, result: true)
+            case "refreshEnd":
+                refreshControl.end()
+                resolveCallback(callbackId, result: true)
             // The offline page's Retry button, and anything else that wants
             // the app's own page back after the bundled copy stood in.
             case "retryRemote":
@@ -2086,8 +2139,11 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-            // A new document: the old one's ready no longer counts.
+            // A new document: the old one's ready no longer counts, and the
+            // pull-to-refresh it asked for goes with it, or a pull would spin
+            // waiting on a page that does not know it has one.
             documentReady = false
+            refreshControl.disable()
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -3893,7 +3949,12 @@ struct CraftWebView: UIViewRepresentable {
                 var personFacing = {
                     requestHealthAuthorization: true,
                     requestPermission: true,
-                    signInWithApple: true
+                    signInWithApple: true,
+                    dialogAlert: true,
+                    dialogConfirm: true,
+                    dialogActionSheet: true,
+                    contextMenuShow: true,
+                    browserOpen: true
                 };
                 craft._invoke = function(action, payload) {
                     var self = craft;
@@ -4112,6 +4173,116 @@ struct CraftWebView: UIViewRepresentable {
                 }
             })(window.craft);
 
+            // The system's own UI, driven by the page: dialogs, a menu at a
+            // point, the in-app browser and web sign-in, SF Symbols, and the
+            // chrome around the page (status bar, under-page colour, keyboard
+            // bar, pull to refresh).
+            //
+            // Every call settles, and none throws: a failure answers with
+            // what "nothing happened" means for that call (null, false, a
+            // cancelled browser), the way the same calls answer in a browser.
+            (function installNativeUI(craft) {
+                function settle(answer, fallback) {
+                    return answer.then(function(value) {
+                        return value === undefined || value === null ? fallback : value;
+                    }, function(error) {
+                        if (craft._debug) console.warn('[Craft]', error && error.message);
+                        return fallback;
+                    });
+                }
+                function options(value) {
+                    return typeof value === 'string' ? {title: value} : Object.assign({}, value || {});
+                }
+                // A rect, or an element (or anything with
+                // getBoundingClientRect), in the viewport's CSS pixels.
+                function rect(anchor) {
+                    if (!anchor) return null;
+                    if (typeof anchor.getBoundingClientRect === 'function') anchor = anchor.getBoundingClientRect();
+                    var x = Number(anchor.x != null ? anchor.x : anchor.left);
+                    var y = Number(anchor.y != null ? anchor.y : anchor.top);
+                    if (!isFinite(x) || !isFinite(y)) return null;
+                    return {x: x, y: y, width: Number(anchor.width) || 0, height: Number(anchor.height) || 0};
+                }
+                craft.dialog = {
+                    alert: function(value) {
+                        return settle(craft._invoke('dialogAlert', options(value)), null).then(function() {});
+                    },
+                    confirm: function(value) {
+                        return settle(craft._invoke('dialogConfirm', options(value)), false).then(function(confirmed) { return confirmed === true; });
+                    },
+                    actionSheet: function(value) {
+                        var payload = options(value);
+                        payload.anchor = rect(payload.anchor);
+                        payload.actions = (payload.actions || []).map(function(action) {
+                            return {id: String(action.id), title: String(action.title), style: action.style || 'default'};
+                        });
+                        return settle(craft._invoke('dialogActionSheet', payload), null);
+                    }
+                };
+                craft.contextMenu = {
+                    show: function(value) {
+                        var payload = Object.assign({}, value || {});
+                        payload.anchor = rect(payload.anchor);
+                        payload.items = (payload.items || []).map(function(item) {
+                            return {id: String(item.id), title: String(item.title), symbol: item.symbol || null, destructive: item.destructive === true, disabled: item.disabled === true};
+                        });
+                        return settle(craft._invoke('contextMenuShow', payload), null);
+                    }
+                };
+                craft.browser = {
+                    open: function(url, value) {
+                        value = value || {};
+                        return settle(craft._invoke('browserOpen', {
+                            url: String(url),
+                            mode: value.mode === 'auth' ? 'auth' : 'safari',
+                            callbackScheme: value.callbackScheme || null
+                        }), {cancelled: true});
+                    }
+                };
+                // The same symbol at the same size is drawn once per page.
+                var symbolCache = {};
+                craft.symbols = {
+                    image: function(name, value) {
+                        value = value || {};
+                        var payload = {name: String(name), pointSize: value.pointSize, weight: value.weight, color: value.color, scale: value.scale};
+                        var key = JSON.stringify(payload);
+                        if (!symbolCache[key]) {
+                            symbolCache[key] = settle(craft._invoke('symbolImage', payload), null).then(function(image) {
+                                if (image === null) delete symbolCache[key];
+                                return image;
+                            });
+                        }
+                        return symbolCache[key];
+                    }
+                };
+                craft.statusBar = {
+                    setStyle: function(style) {
+                        return settle(craft._invoke('statusBarSetStyle', {style: style === 'light' || style === 'dark' ? style : 'default'}), false);
+                    }
+                };
+                craft.chrome = {
+                    setUnderPageColor: function(color) {
+                        return settle(craft._invoke('chromeSetUnderPageColor', {color: String(color)}), false);
+                    },
+                    setKeyboardAccessory: function(visible) {
+                        return settle(craft._invoke('chromeSetKeyboardAccessory', {visible: visible !== false}), false);
+                    }
+                };
+                craft.refresh = {
+                    enable: function(value) {
+                        return settle(craft._invoke('refreshEnable', {tintColor: (value && value.tintColor) || null}), false);
+                    },
+                    disable: function() { return settle(craft._invoke('refreshDisable'), false); },
+                    end: function() { return settle(craft._invoke('refreshEnd'), false); },
+                    // A pull of the native control; returns the unsubscribe.
+                    onRefresh: function(callback) {
+                        var listener = function() { callback(); };
+                        window.addEventListener('craftRefresh', listener);
+                        return function() { window.removeEventListener('craftRefresh', listener); };
+                    }
+                };
+            })(window.craft);
+
             // The reply route for actions the Zig runtime serves.
             //
             // Zig owns one wire format and calls these two functions by name;
@@ -4294,8 +4465,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Share
         private func share(options: [String: Any], callbackId: String?) {
-            guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                  let rootVC = windowScene.windows.first?.rootViewController else {
+            guard CraftPresenter.topViewController() != nil else {
                 rejectCallback(callbackId, error: "Unable to present the share sheet")
                 return
             }
@@ -4321,7 +4491,11 @@ struct CraftWebView: UIViewRepresentable {
                     self.resolveCallback(callbackId, result: completed)
                 }
             }
-            rootVC.present(activityVC, animated: true)
+            // On iPad the sheet is a popover, and one with no anchor is an
+            // exception rather than a sheet: it points at `anchor` when the
+            // page gives one (the button's rect), the middle of the screen
+            // when it does not.
+            CraftPresenter.present(activityVC, from: webView, anchor: CraftPresenter.rect(options["anchor"]))
         }
 
         // MARK: - Camera & Photo Library
@@ -4331,8 +4505,7 @@ struct CraftWebView: UIViewRepresentable {
                     self.rejectCallback(self.pendingCallbackId, error: "Camera not available")
                     return
                 }
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else { return }
+                guard let rootVC = CraftPresenter.topViewController() else { return }
 
                 let picker = UIImagePickerController()
                 picker.sourceType = .camera
@@ -4343,8 +4516,7 @@ struct CraftWebView: UIViewRepresentable {
 
         private func pickImage() {
             DispatchQueue.main.async {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else { return }
+                guard let rootVC = CraftPresenter.topViewController() else { return }
 
                 let picker = UIImagePickerController()
                 picker.sourceType = .photoLibrary
@@ -5565,8 +5737,7 @@ struct CraftWebView: UIViewRepresentable {
         // MARK: - QR/Barcode Scanner
         private func scanQRCode(callbackId: String?) {
             DispatchQueue.main.async {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else { return }
+                guard let rootVC = CraftPresenter.topViewController() else { return }
 
                 if #available(iOS 16.0, *) {
                     let scannerVC = DataScannerViewController(
@@ -5588,8 +5759,7 @@ struct CraftWebView: UIViewRepresentable {
         // MARK: - File Picker
         private func pickFile(types: [String]?, callbackId: String?) {
             DispatchQueue.main.async {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else { return }
+                guard let rootVC = CraftPresenter.topViewController() else { return }
 
                 var allowedTypes: [UTType] = [.item]
                 if let types = types {
@@ -5733,8 +5903,7 @@ struct CraftWebView: UIViewRepresentable {
                     return
                 }
 
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else { return }
+                guard let rootVC = CraftPresenter.topViewController() else { return }
 
                 let picker = UIImagePickerController()
                 picker.sourceType = .camera
@@ -6493,8 +6662,7 @@ struct CraftWebView: UIViewRepresentable {
 
         private func openPDF(source: String, page: Int, callbackId: String?) {
             DispatchQueue.main.async {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else {
+                guard let rootVC = CraftPresenter.topViewController() else {
                     self.rejectCallback(callbackId, error: "No root view controller")
                     return
                 }
@@ -6571,8 +6739,7 @@ struct CraftWebView: UIViewRepresentable {
         // MARK: - Contacts Picker
         private func pickContact(multiple: Bool, callbackId: String?) {
             DispatchQueue.main.async {
-                guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                      let rootVC = windowScene.windows.first?.rootViewController else {
+                guard let rootVC = CraftPresenter.topViewController() else {
                     self.rejectCallback(callbackId, error: "No root view controller")
                     return
                 }

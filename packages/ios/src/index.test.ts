@@ -841,6 +841,33 @@ describe('Craft iOS builder', () => {
     expect(ui).toContain('while let presented = top?.presentedViewController, !presented.isBeingDismissed {')
   })
 
+  it('serves the native UI actions and lets the status bar follow the page', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-ui-'))
+    await init({ runtimeDir: null, name: 'NativeUI', bundleId: 'org.example.nativeui', output, config: { enableShare: true } })
+    const swift = readFileSync(join(output, 'Sources', 'NativeUIApp.swift'), 'utf8')
+    const ui = readFileSync(join(output, 'Sources', 'CraftNativeUI.swift'), 'utf8')
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+
+    for (const action of ['dialogAlert', 'dialogConfirm', 'dialogActionSheet', 'contextMenuShow', 'browserOpen', 'symbolImage', 'statusBarSetStyle', 'chromeSetUnderPageColor', 'chromeSetKeyboardAccessory', 'refreshEnable', 'refreshDisable', 'refreshEnd'])
+      expect(swift).toContain(`case "${action}":`)
+    expect(ui).toContain('UIEditMenuInteraction(delegate: self)')
+    expect(ui).toContain('interaction.presentEditMenu(with: configuration)')
+    expect(ui).toContain('ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme)')
+    expect(ui).toContain('session.prefersEphemeralWebBrowserSession = false')
+    expect(ui).toContain('UIImage.SymbolConfiguration(pointSize: max(1, pointSize), weight: weight, scale: scale)')
+    expect(ui).toContain('scrollView.refreshControl = control')
+    expect(swift).toContain('webView.underPageBackgroundColor = color')
+    expect(swift).toContain('self?.sendToWeb("craftRefresh", data: [:])')
+
+    // View-controller based, so the page's style and the system sheets' own both apply.
+    expect(plist).toContain('<key>UIViewControllerBasedStatusBarAppearance</key>\n    <true/>')
+
+    // The share sheet presents from whatever is on top, anchored for iPad,
+    // and nothing presents from the first window's root any more.
+    expect(swift).toContain('CraftPresenter.present(activityVC, from: webView, anchor: CraftPresenter.rect(options["anchor"]))')
+    expect(swift).not.toContain('windows.first?.rootViewController')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled
