@@ -1,5 +1,224 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.123...v0.0.124)
+
+## 🚀 Features
+
+- **mobile**: type and wrap the new iOS native APIs ([e3e8238](https://github.com/craft-native/craft/commit/e3e8238)) _(by Chris)_
+- **ios**: give the page background time for silent pushes and refreshes ([973a4bb](https://github.com/craft-native/craft/commit/973a4bb)) _(by Chris)_
+- **ios**: recover a dead page on a budget and keep the person's place ([9cd0009](https://github.com/craft-native/craft/commit/9cd0009)) _(by Chris)_
+- **ios**: tell the page the text size and motion settings ([9405cb8](https://github.com/craft-native/craft/commit/9405cb8)) _(by Chris)_
+- **ios**: make the web view feel like an app ([4d05272](https://github.com/craft-native/craft/commit/4d05272)) _(by Chris)_
+- **ios**: drive native dialogs, menus, browser and chrome from the page ([eec4665](https://github.com/craft-native/craft/commit/eec4665)) _(by Chris)_
+- **ios**: give the web view a UI delegate ([e5437df](https://github.com/craft-native/craft/commit/e5437df)) _(by Chris)_
+- **ios**: cap the splash at first paint and replace the placeholder with an offline page ([b68b860](https://github.com/craft-native/craft/commit/b68b860)) _(by Chris)_
+- **ios**: install the bridge at document start ([f86041b](https://github.com/craft-native/craft/commit/f86041b)) _(by Chris)_
+- **ios**: play each haptic on its own generator, kept warm ([290e063](https://github.com/craft-native/craft/commit/290e063)) _(by Chris)_
+- **android**: honor configured appearance ([a9ea34c](https://github.com/craft-native/craft/commit/a9ea34c)) _(by glennmichael123)_
+- **native**: forward flat list scroll events ([26e2e2e](https://github.com/craft-native/craft/commit/26e2e2e)) _(by glennmichael123)_
+- **native**: expose scroll momentum events ([9263ae2](https://github.com/craft-native/craft/commit/9263ae2)) _(by glennmichael123)_
+- **native**: support scroll view paging ([674c202](https://github.com/craft-native/craft/commit/674c202)) _(by glennmichael123)_
+- **native**: expose image alt accessibility ([b6ae17b](https://github.com/craft-native/craft/commit/b6ae17b)) _(by glennmichael123)_
+- **native**: align scroll bounce behavior ([f300e4c](https://github.com/craft-native/craft/commit/f300e4c)) _(by glennmichael123)_
+- **native**: support text input defaults ([bcdecb6](https://github.com/craft-native/craft/commit/bcdecb6)) _(by glennmichael123)_
+- **native**: support text truncation props ([05ece0f](https://github.com/craft-native/craft/commit/05ece0f)) _(by glennmichael123)_
+- **native**: support long press handlers ([088ed61](https://github.com/craft-native/craft/commit/088ed61)) _(by glennmichael123)_
+- **native**: dismiss keyboard from flat lists ([94aad0c](https://github.com/craft-native/craft/commit/94aad0c)) _(by glennmichael123)_
+- **native**: support scroll keyboard dismissal ([987d0dd](https://github.com/craft-native/craft/commit/987d0dd)) _(by glennmichael123)_
+- **native**: make safe area containers explicit ([11a7079](https://github.com/craft-native/craft/commit/11a7079)) _(by glennmichael123)_
+- **native**: distribute flex layout space ([9e9086c](https://github.com/craft-native/craft/commit/9e9086c)) _(by glennmichael123)_
+- **native**: add image lifecycle events ([0447a2a](https://github.com/craft-native/craft/commit/0447a2a)) _(by glennmichael123)_
+- **native**: style multiline text inputs ([40de4b8](https://github.com/craft-native/craft/commit/40de4b8)) _(by glennmichael123)_
+- **native**: add multiline text input parity ([fb2e33a](https://github.com/craft-native/craft/commit/fb2e33a)) _(by glennmichael123)_
+- **native**: align text input limits and colors ([1b7bc33](https://github.com/craft-native/craft/commit/1b7bc33)) _(by glennmichael123)_
+- **native**: support switch tint props ([0f6508b](https://github.com/craft-native/craft/commit/0f6508b)) _(by glennmichael123)_
+- **native**: complete slider control parity ([216be42](https://github.com/craft-native/craft/commit/216be42)) _(by glennmichael123)_
+- **native**: add activity indicator controls ([84af916](https://github.com/craft-native/craft/commit/84af916)) _(by glennmichael123)_
+- **native**: emit responsive layout measurements ([aed1222](https://github.com/craft-native/craft/commit/aed1222)) _(by glennmichael123)_
+- **native**: add native slider controls ([495c3c2](https://github.com/craft-native/craft/commit/495c3c2)) _(by glennmichael123)_
+- **native**: support Android night backgrounds ([2bd1f4e](https://github.com/craft-native/craft/commit/2bd1f4e)) _(by glennmichael123)_
+- **native**: add native switch controls ([d0bb7ea](https://github.com/craft-native/craft/commit/d0bb7ea)) _(by glennmichael123)_
+- **native**: add native link controls ([238032b](https://github.com/craft-native/craft/commit/238032b)) _(by glennmichael123)_
+- **native**: add cross-platform grid layout ([b738cf7](https://github.com/craft-native/craft/commit/b738cf7)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: compile the native list and screen again, and record the new Swift actions ([53d5b57](https://github.com/craft-native/craft/commit/53d5b57)) _(by Chris)_
+- **ios**: show the offline page in apps with app-bound domains ([a4b425d](https://github.com/craft-native/craft/commit/a4b425d)) _(by Chris)_
+- **ios**: open the system context menu and pin the viewport first ([75d3873](https://github.com/craft-native/craft/commit/75d3873)) _(by Chris)_
+- **ios**: preserve image resize mode fallbacks ([992846e](https://github.com/craft-native/craft/commit/992846e)) _(by glennmichael123)_
+- **android**: support justified text alignment ([72e522b](https://github.com/craft-native/craft/commit/72e522b)) _(by glennmichael123)_
+- **ios**: align capitalize text transform ([1f1e46b](https://github.com/craft-native/craft/commit/1f1e46b)) _(by glennmichael123)_
+- **native**: align default text metrics ([0b1d8ba](https://github.com/craft-native/craft/commit/0b1d8ba)) _(by glennmichael123)_
+- **ios**: include text in input focus events ([5cc633f](https://github.com/craft-native/craft/commit/5cc633f)) _(by glennmichael123)_
+- **android**: normalize nullable layout styles ([c31d28a](https://github.com/craft-native/craft/commit/c31d28a)) _(by glennmichael123)_
+- **android**: align scroll bounce axes ([b1ae725](https://github.com/craft-native/craft/commit/b1ae725)) _(by glennmichael123)_
+- **android**: honor null list thresholds ([1cb28d8](https://github.com/craft-native/craft/commit/1cb28d8)) _(by glennmichael123)_
+- **android**: preserve nullable control props ([00db3d9](https://github.com/craft-native/craft/commit/00db3d9)) _(by glennmichael123)_
+- **android**: clear null backgrounds ([6631715](https://github.com/craft-native/craft/commit/6631715)) _(by glennmichael123)_
+- **android**: honor link color props ([3b89b3e](https://github.com/craft-native/craft/commit/3b89b3e)) _(by glennmichael123)_
+- **android**: preserve optional grid tracks ([2fa2e89](https://github.com/craft-native/craft/commit/2fa2e89)) _(by glennmichael123)_
+- **android**: keep null dimensions intrinsic ([a60730c](https://github.com/craft-native/craft/commit/a60730c)) _(by glennmichael123)_
+- **android**: preserve null layout values ([72d88d9](https://github.com/craft-native/craft/commit/72d88d9)) _(by glennmichael123)_
+- **android**: snap initial slider values ([b100368](https://github.com/craft-native/craft/commit/b100368)) _(by glennmichael123)_
+- **android**: refresh FlatList holder sizing ([66b17d7](https://github.com/craft-native/craft/commit/66b17d7)) _(by glennmichael123)_
+- **android**: clear recycled input identities ([bdf9429](https://github.com/craft-native/craft/commit/bdf9429)) _(by glennmichael123)_
+- **native**: preserve Android image accessibility labels ([39abc83](https://github.com/craft-native/craft/commit/39abc83)) _(by glennmichael123)_
+- **native**: snap Android sliders to steps ([f882361](https://github.com/craft-native/craft/commit/f882361)) _(by glennmichael123)_
+- **native**: align TextInput keyboard types ([59d9f3c](https://github.com/craft-native/craft/commit/59d9f3c)) _(by glennmichael123)_
+- **native**: clear recycled input suppression ([7fcd9b3](https://github.com/craft-native/craft/commit/7fcd9b3)) _(by glennmichael123)_
+- **native**: suppress controlled Android input events ([ad37240](https://github.com/craft-native/craft/commit/ad37240)) _(by glennmichael123)_
+- **native**: align iOS event alias fallback ([e746bc9](https://github.com/craft-native/craft/commit/e746bc9)) _(by glennmichael123)_
+- **native**: filter blank iOS list handlers ([b131e59](https://github.com/craft-native/craft/commit/b131e59)) _(by glennmichael123)_
+- **native**: normalize iOS control handlers ([827f599](https://github.com/craft-native/craft/commit/827f599)) _(by glennmichael123)_
+- **native**: ignore blank iOS press handlers ([3ad5f5f](https://github.com/craft-native/craft/commit/3ad5f5f)) _(by glennmichael123)_
+- **native**: preserve Android text accessibility ([389631a](https://github.com/craft-native/craft/commit/389631a)) _(by glennmichael123)_
+- **native**: disable long press accessibility ([a92dacc](https://github.com/craft-native/craft/commit/a92dacc)) _(by glennmichael123)_
+- **native**: enable iOS long press views ([73807fe](https://github.com/craft-native/craft/commit/73807fe)) _(by glennmichael123)_
+- **native**: preserve Android input selection ([3bb1209](https://github.com/craft-native/craft/commit/3bb1209)) _(by glennmichael123)_
+- **native**: retain recycled iOS input drafts ([456daaa](https://github.com/craft-native/craft/commit/456daaa)) _(by glennmichael123)_
+- **native**: preserve iOS input drafts ([1106dc7](https://github.com/craft-native/craft/commit/1106dc7)) _(by glennmichael123)_
+- **native**: refresh retained iOS themes ([588dd9a](https://github.com/craft-native/craft/commit/588dd9a)) _(by glennmichael123)_
+- **native**: refresh retained route themes ([3f7fa57](https://github.com/craft-native/craft/commit/3f7fa57)) _(by glennmichael123)_
+- **native**: release replaced list rows ([963f9b2](https://github.com/craft-native/craft/commit/963f9b2)) _(by glennmichael123)_
+- **native**: guard nullable input reuse ([ebce391](https://github.com/craft-native/craft/commit/ebce391)) _(by glennmichael123)_
+- **native**: recreate changed text inputs ([9f59ed5](https://github.com/craft-native/craft/commit/9f59ed5)) _(by glennmichael123)_
+- **native**: recreate changed action controls ([397b437](https://github.com/craft-native/craft/commit/397b437)) _(by glennmichael123)_
+- **native**: defer list theme refreshes ([148ffea](https://github.com/craft-native/craft/commit/148ffea)) _(by glennmichael123)_
+- **native**: report recycled row layouts ([deab9a7](https://github.com/craft-native/craft/commit/deab9a7)) _(by glennmichael123)_
+- **native**: emit android flatlist layouts ([d6876b3](https://github.com/craft-native/craft/commit/d6876b3)) _(by glennmichael123)_
+- **native**: report flatlist row layouts ([4410370](https://github.com/craft-native/craft/commit/4410370)) _(by glennmichael123)_
+- **native**: refresh virtualized row themes ([2ff9221](https://github.com/craft-native/craft/commit/2ff9221)) _(by glennmichael123)_
+- **native**: clamp flex sizes to bounds ([d6a8e2b](https://github.com/craft-native/craft/commit/d6a8e2b)) _(by glennmichael123)_
+- **native**: deduplicate android image errors ([05936b9](https://github.com/craft-native/craft/commit/05936b9)) _(by glennmichael123)_
+- **native**: restore generic accessibility pressables ([dad50cc](https://github.com/craft-native/craft/commit/dad50cc)) _(by glennmichael123)_
+- **native**: align ios image error accessibility ([e2064cc](https://github.com/craft-native/craft/commit/e2064cc)) _(by glennmichael123)_
+- **native**: preserve ios image errors ([9d2bc25](https://github.com/craft-native/craft/commit/9d2bc25)) _(by glennmichael123)_
+- **native**: reset list pagination signatures ([778d70a](https://github.com/craft-native/craft/commit/778d70a)) _(by glennmichael123)_
+- **native**: separate text input end editing ([3d71390](https://github.com/craft-native/craft/commit/3d71390)) _(by glennmichael123)_
+- **native**: apply bounce settings to lists ([851377a](https://github.com/craft-native/craft/commit/851377a)) _(by glennmichael123)_
+- **native**: honor button color props ([64d62dc](https://github.com/craft-native/craft/commit/64d62dc)) _(by glennmichael123)_
+- **native**: align activity indicators ([9806f8f](https://github.com/craft-native/craft/commit/9806f8f)) _(by glennmichael123)_
+- **native**: report android disabled controls ([e1af975](https://github.com/craft-native/craft/commit/e1af975)) _(by glennmichael123)_
+- **native**: preserve android autofocus state ([95b66a8](https://github.com/craft-native/craft/commit/95b66a8)) _(by glennmichael123)_
+- **native**: align multiline input traits ([546f8ea](https://github.com/craft-native/craft/commit/546f8ea)) _(by glennmichael123)_
+- **native**: submit multiline ios inputs ([aaf714a](https://github.com/craft-native/craft/commit/aaf714a)) _(by glennmichael123)_
+- **native**: disable ios press targets accessibly ([413b230](https://github.com/craft-native/craft/commit/413b230)) _(by glennmichael123)_
+- **native**: honor accessibility disabled state ([af36cd7](https://github.com/craft-native/craft/commit/af36cd7)) _(by glennmichael123)_
+- **native**: enable ios generic press targets ([f9a021d](https://github.com/craft-native/craft/commit/f9a021d)) _(by glennmichael123)_
+- **native**: expose android accessibility hints ([d77eeb2](https://github.com/craft-native/craft/commit/d77eeb2)) _(by glennmichael123)_
+- **native**: preserve text input accessibility values ([7faa070](https://github.com/craft-native/craft/commit/7faa070)) _(by glennmichael123)_
+- **native**: reset accessibility metadata ([0a7d4e8](https://github.com/craft-native/craft/commit/0a7d4e8)) _(by glennmichael123)_
+- **native**: align ios input text styles ([86bac31](https://github.com/craft-native/craft/commit/86bac31)) _(by glennmichael123)_
+- **native**: align ios action text styles ([22b05e4](https://github.com/craft-native/craft/commit/22b05e4)) _(by glennmichael123)_
+- **native**: map elevation to ios shadows ([07a0618](https://github.com/craft-native/craft/commit/07a0618)) _(by glennmichael123)_
+- **native**: align android margin placement ([cdb21b7](https://github.com/craft-native/craft/commit/cdb21b7)) _(by glennmichael123)_
+- **native**: align ios margins with android layout ([1ab0b91](https://github.com/craft-native/craft/commit/1ab0b91)) _(by glennmichael123)_
+- **native**: refresh android input theme defaults ([2829230](https://github.com/craft-native/craft/commit/2829230)) _(by glennmichael123)_
+- **native**: restore android default backgrounds ([16d62c1](https://github.com/craft-native/craft/commit/16d62c1)) _(by glennmichael123)_
+- **native**: apply text transforms to ios actions ([4c13676](https://github.com/craft-native/craft/commit/4c13676)) _(by glennmichael123)_
+- **native**: honor reverse flex scroll direction ([ff0d46b](https://github.com/craft-native/craft/commit/ff0d46b)) _(by glennmichael123)_
+- **native**: measure horizontal list rows intrinsically ([fabb09d](https://github.com/craft-native/craft/commit/fabb09d)) _(by glennmichael123)_
+- **native**: equalize intrinsic grid tracks ([98ab0c0](https://github.com/craft-native/craft/commit/98ab0c0)) _(by glennmichael123)_
+- **native**: align wrapped flex gaps ([2cb0fb9](https://github.com/craft-native/craft/commit/2cb0fb9)) _(by glennmichael123)_
+- **native**: refresh ios trait controls ([cc462c1](https://github.com/craft-native/craft/commit/cc462c1)) _(by glennmichael123)_
+- **native**: refresh android theme changes ([6f01d2b](https://github.com/craft-native/craft/commit/6f01d2b)) _(by glennmichael123)_
+- **native**: reset input theme colors ([f1c6417](https://github.com/craft-native/craft/commit/f1c6417)) _(by glennmichael123)_
+- **native**: reset dynamic control styles ([e84e270](https://github.com/craft-native/craft/commit/e84e270)) _(by glennmichael123)_
+- **native**: align text input styling ([6d62c01](https://github.com/craft-native/craft/commit/6d62c01)) _(by glennmichael123)_
+- **native**: size horizontal list rows ([4a600cf](https://github.com/craft-native/craft/commit/4a600cf)) _(by glennmichael123)_
+- **native**: align button text styling ([58ac63a](https://github.com/craft-native/craft/commit/58ac63a)) _(by glennmichael123)_
+- **native**: apply image tint parity ([94bb42b](https://github.com/craft-native/craft/commit/94bb42b)) _(by glennmichael123)_
+- **native**: preserve reverse scroll direction ([db7ad5b](https://github.com/craft-native/craft/commit/db7ad5b)) _(by glennmichael123)_
+- **native**: align intrinsic grid measurement ([a5f0b5f](https://github.com/craft-native/craft/commit/a5f0b5f)) _(by glennmichael123)_
+- **native**: honor disabled button props ([14d2e2a](https://github.com/craft-native/craft/commit/14d2e2a)) _(by glennmichael123)_
+- **native**: compile Android grid rows ([07a2f31](https://github.com/craft-native/craft/commit/07a2f31)) _(by glennmichael123)_
+- **native**: apply Android safe area insets ([02f8ed8](https://github.com/craft-native/craft/commit/02f8ed8)) _(by glennmichael123)_
+- **native**: refresh iOS appearance traits ([6c18727](https://github.com/craft-native/craft/commit/6c18727)) _(by glennmichael123)_
+- **ios**: place mobile test targets before schemes ([ae3e333](https://github.com/craft-native/craft/commit/ae3e333)) _(by glennmichael123)_
+- **ios**: type tab bar layout events ([40e8655](https://github.com/craft-native/craft/commit/40e8655)) _(by glennmichael123)_
+- **ios**: gate liquid glass by compiler version ([b9d6c20](https://github.com/craft-native/craft/commit/b9d6c20)) _(by glennmichael123)_
+- **ios**: include native fixtures in test schemes ([0a3ae87](https://github.com/craft-native/craft/commit/0a3ae87)) _(by glennmichael123)_
+- **ios**: keep native test targets out of schemes ([88e8b0b](https://github.com/craft-native/craft/commit/88e8b0b)) _(by glennmichael123)_
+- **ios**: anchor conformance dispatcher scan ([9db1324](https://github.com/craft-native/craft/commit/9db1324)) _(by glennmichael123)_
+
+## ♻️ Code Refactoring
+
+- **native**: centralize theme refresh ([8111b70](https://github.com/craft-native/craft/commit/8111b70)) _(by glennmichael123)_
+
+## 📚 Documentation
+
+- **native**: describe appearance parity ([f975cc8](https://github.com/craft-native/craft/commit/f975cc8)) _(by glennmichael123)_
+- **native**: document virtualized row layouts ([d29ccce](https://github.com/craft-native/craft/commit/d29ccce)) _(by glennmichael123)_
+- **native**: align renderer contract ([42919cd](https://github.com/craft-native/craft/commit/42919cd)) _(by glennmichael123)_
+- **native**: exercise scroll keyboard dismissal ([442180a](https://github.com/craft-native/craft/commit/442180a)) _(by glennmichael123)_
+- **native**: document flex space distribution ([233a94a](https://github.com/craft-native/craft/commit/233a94a)) _(by glennmichael123)_
+- **native**: document image lifecycle events ([2a92d8a](https://github.com/craft-native/craft/commit/2a92d8a)) _(by glennmichael123)_
+- **native**: document multiline text inputs ([411520c](https://github.com/craft-native/craft/commit/411520c)) _(by glennmichael123)_
+- **native**: document text input styling ([6fa836a](https://github.com/craft-native/craft/commit/6fa836a)) _(by glennmichael123)_
+- **native**: document switch and slider styling ([ef24805](https://github.com/craft-native/craft/commit/ef24805)) _(by glennmichael123)_
+- **native**: document activity indicators ([52cba23](https://github.com/craft-native/craft/commit/52cba23)) _(by glennmichael123)_
+- **native**: document layout measurement events ([f15d5d6](https://github.com/craft-native/craft/commit/f15d5d6)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **native**: cover justified text fixtures ([19b7aa1](https://github.com/craft-native/craft/commit/19b7aa1)) _(by glennmichael123)_
+- **native**: cover text input focus payloads ([082ce5c](https://github.com/craft-native/craft/commit/082ce5c)) _(by glennmichael123)_
+- **native**: cover null intrinsic dimensions ([b9df4d6](https://github.com/craft-native/craft/commit/b9df4d6)) _(by glennmichael123)_
+- **native**: cover image source recovery ([ca10e93](https://github.com/craft-native/craft/commit/ca10e93)) _(by glennmichael123)_
+- **ios**: support fixture preparation without simulators ([922586f](https://github.com/craft-native/craft/commit/922586f)) _(by glennmichael123)_
+- **native**: cover accessibility parity ([9bb4ee6](https://github.com/craft-native/craft/commit/9bb4ee6)) _(by glennmichael123)_
+- **native**: cover input mode transitions ([44ec43c](https://github.com/craft-native/craft/commit/44ec43c)) _(by glennmichael123)_
+- **native**: stabilize recycled row assertions ([41b3cc7](https://github.com/craft-native/craft/commit/41b3cc7)) _(by glennmichael123)_
+- **native**: keep image errors stable ([3ca42aa](https://github.com/craft-native/craft/commit/3ca42aa)) _(by glennmichael123)_
+- **native**: cover pressable accessibility recovery ([5f51173](https://github.com/craft-native/craft/commit/5f51173)) _(by glennmichael123)_
+- **native**: cover input keyboard traits ([ede8176](https://github.com/craft-native/craft/commit/ede8176)) _(by glennmichael123)_
+- **native**: cover secure text inputs ([0797ff3](https://github.com/craft-native/craft/commit/0797ff3)) _(by glennmichael123)_
+- **native**: cover read only text inputs ([802f15c](https://github.com/craft-native/craft/commit/802f15c)) _(by glennmichael123)_
+- **native**: cover text input focus events ([9e26cbd](https://github.com/craft-native/craft/commit/9e26cbd)) _(by glennmichael123)_
+- **native**: cover list header accessibility ([39627ca](https://github.com/craft-native/craft/commit/39627ca)) _(by glennmichael123)_
+- **native**: cover image error events ([85d0533](https://github.com/craft-native/craft/commit/85d0533)) _(by glennmichael123)_
+- **native**: cover activity indicator props ([7f7ccbf](https://github.com/craft-native/craft/commit/7f7ccbf)) _(by glennmichael123)_
+- **native**: cover slider completion events ([abbaa9c](https://github.com/craft-native/craft/commit/abbaa9c)) _(by glennmichael123)_
+- **native**: cover selected accessibility state ([362b8f7](https://github.com/craft-native/craft/commit/362b8f7)) _(by glennmichael123)_
+- **native**: cover checked accessibility state ([7c556d3](https://github.com/craft-native/craft/commit/7c556d3)) _(by glennmichael123)_
+- **native**: cover accessibility metadata ([378df59](https://github.com/craft-native/craft/commit/378df59)) _(by glennmichael123)_
+- **native**: cover multiline input callbacks ([b70f1e9](https://github.com/craft-native/craft/commit/b70f1e9)) _(by glennmichael123)_
+- **native**: cover text input default values ([7c87608](https://github.com/craft-native/craft/commit/7c87608)) _(by glennmichael123)_
+- **native**: cover text input end editing ([8dadca3](https://github.com/craft-native/craft/commit/8dadca3)) _(by glennmichael123)_
+- **native**: exercise flat list scroll callbacks ([9e4a42d](https://github.com/craft-native/craft/commit/9e4a42d)) _(by glennmichael123)_
+- **native**: cover flat list scroll events ([864b5fd](https://github.com/craft-native/craft/commit/864b5fd)) _(by glennmichael123)_
+- **native**: cover multiline submit events ([8290796](https://github.com/craft-native/craft/commit/8290796)) _(by glennmichael123)_
+- **native**: cover flat list keyboard dismissal ([329dbb0](https://github.com/craft-native/craft/commit/329dbb0)) _(by glennmichael123)_
+- **native**: cover accessibility disabled fixtures ([ebd68a9](https://github.com/craft-native/craft/commit/ebd68a9)) _(by glennmichael123)_
+- **native**: cover image source parity ([008c6d1](https://github.com/craft-native/craft/commit/008c6d1)) _(by glennmichael123)_
+- **native**: cover vertical list sizing ([72fa287](https://github.com/craft-native/craft/commit/72fa287)) _(by glennmichael123)_
+- **native**: cover absolute trailing insets ([4e1d689](https://github.com/craft-native/craft/commit/4e1d689)) _(by glennmichael123)_
+- **native**: cover dynamic style resets ([8f56315](https://github.com/craft-native/craft/commit/8f56315)) _(by glennmichael123)_
+- **native**: cover responsive layout updates ([c6d854a](https://github.com/craft-native/craft/commit/c6d854a)) _(by glennmichael123)_
+- **native**: cover reversible input styles ([1f44980](https://github.com/craft-native/craft/commit/1f44980)) _(by glennmichael123)_
+- **native**: cover dynamic image and button styles ([f84a62d](https://github.com/craft-native/craft/commit/f84a62d)) _(by glennmichael123)_
+- **native**: cover flex growth ([bbafe63](https://github.com/craft-native/craft/commit/bbafe63)) _(by glennmichael123)_
+- **native**: cover image lifecycle events ([dd07b1c](https://github.com/craft-native/craft/commit/dd07b1c)) _(by glennmichael123)_
+- **native**: cover multiline input styling ([06414bb](https://github.com/craft-native/craft/commit/06414bb)) _(by glennmichael123)_
+- **native**: cover multiline text inputs ([d075643](https://github.com/craft-native/craft/commit/d075643)) _(by glennmichael123)_
+- **native**: cover text input styling ([0720f98](https://github.com/craft-native/craft/commit/0720f98)) _(by glennmichael123)_
+- **native**: cover switch tint props ([8ed0acf](https://github.com/craft-native/craft/commit/8ed0acf)) _(by glennmichael123)_
+- **native**: cover slider step behavior ([997707d](https://github.com/craft-native/craft/commit/997707d)) _(by glennmichael123)_
+- **native**: cover disabled button state ([50e5fe8](https://github.com/craft-native/craft/commit/50e5fe8)) _(by glennmichael123)_
+- **native**: cover activity indicator controls ([3263542](https://github.com/craft-native/craft/commit/3263542)) _(by glennmichael123)_
+- **native**: cover responsive layout events ([cfb8388](https://github.com/craft-native/craft/commit/cfb8388)) _(by glennmichael123)_
+- **native**: cover native slider controls ([ef7ced1](https://github.com/craft-native/craft/commit/ef7ced1)) _(by glennmichael123)_
+- **native**: enforce shared renderer contract ([ac76b0c](https://github.com/craft-native/craft/commit/ac76b0c)) _(by glennmichael123)_
+- **native**: cover native switch controls ([938ade8](https://github.com/craft-native/craft/commit/938ade8)) _(by glennmichael123)_
+- **native**: cover native link controls ([184264c](https://github.com/craft-native/craft/commit/184264c)) _(by glennmichael123)_
+- **native**: cover cross-platform grid layout ([4eb1b9b](https://github.com/craft-native/craft/commit/4eb1b9b)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.122...v0.0.123)
 
 ## 🚀 Features
