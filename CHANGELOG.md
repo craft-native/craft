@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.125...v0.0.126)
+
+## 🚀 Features
+
+- **ios**: sticky headers and scroll targets for native scroll views ([743d616](https://github.com/craft-native/craft/commit/743d616)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios**: a hybrid tab's native root keeps the bar it asked for, and native screens get setInterval ([ef950cb](https://github.com/craft-native/craft/commit/ef950cb)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.124...v0.0.125)
 
 ## 🚀 Features
