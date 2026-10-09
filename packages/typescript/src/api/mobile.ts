@@ -338,6 +338,20 @@ export const haptics = {
   },
 
   /**
+   * Warm the haptic engine ahead of a haptic the page knows is coming (the
+   * start of a drag, a long press about to complete), so it plays on the frame
+   * it is asked for. `impact`, `notification` or `selection` for one kind, an
+   * impact style or notification type for that one, nothing for all. iOS keeps
+   * a prepared engine awake for a few seconds. A no-op elsewhere.
+   */
+  async prepare(kind?: HapticStyle | HapticNotificationType | 'impact' | 'notification' | 'selection'): Promise<void> {
+    const craft = getCraftMobile()
+    if (typeof window !== 'undefined' && craft?.haptics?.prepare) {
+      try { await craft.haptics.prepare(kind) } catch {}
+    }
+  },
+
+  /**
    * Vibrate with a custom pattern.
    *
    * @param pattern - Array of durations in ms [vibrate, pause, vibrate, ...]
@@ -1173,6 +1187,22 @@ export const lifecycle = {
     }
     document.addEventListener('visibilitychange', handler)
     return () => document.removeEventListener('visibilitychange', handler)
+  },
+
+  /**
+   * The app came back to the foreground (`craftResume`), with how long it was
+   * away. A page can refresh what may have gone stale. iOS shell only.
+   */
+  onResume(callback: (event: { backgroundedMs: number }) => void): () => void {
+    return onCraftEvent('craftResume', detail => callback({ backgroundedMs: Number(detail.backgroundedMs) || 0 }))
+  },
+
+  /**
+   * iOS is short of memory (`craftMemoryWarning`): drop caches, or the page's
+   * content process may be ended. iOS shell only.
+   */
+  onMemoryWarning(callback: () => void): () => void {
+    return onCraftEvent('craftMemoryWarning', () => callback())
   }
 }
 
@@ -1594,12 +1624,286 @@ export const tabBar = {
  * The launch splash, which the shell holds over the page until the page says
  * it is ready, so the app goes from its launch screen to content with no blank
  * page in between. Call `hide()` once the first screen has painted. The shell
- * hides it anyway a moment after the page finishes loading, and after ten
- * seconds at most.
+ * hides it anyway once the page's first contentful paint is on screen, and
+ * after `splashMaxSeconds` (three by default) at most.
  */
 export const splash = {
   hide(): boolean {
     return postChrome({ type: 'ready' })
+  },
+}
+
+// ============================================================================
+// Native UI: dialogs, menus, the in-app browser, symbols, and chrome (iOS)
+// ============================================================================
+
+/** A rect in the viewport's CSS pixels. */
+export interface NativeRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** Where a popover, sheet or menu points: a rect, or an element to point at. */
+export type NativeAnchor = NativeRect | { getBoundingClientRect(): { left: number, top: number, width: number, height: number } }
+
+export interface DialogAlertOptions {
+  title: string
+  message?: string
+  /** The button. The system's own "OK" if unset. */
+  okLabel?: string
+}
+
+export interface DialogConfirmOptions {
+  title: string
+  message?: string
+  /** The confirming button. The system's own "OK" if unset. */
+  confirmLabel?: string
+  /** The system's own "Cancel" if unset. */
+  cancelLabel?: string
+  /** Paints the confirming button red, as iOS does for a delete. */
+  destructive?: boolean
+}
+
+export interface ActionSheetAction {
+  id: string
+  title: string
+  /** `cancel` answers `null` whatever its id. */
+  style?: 'default' | 'destructive' | 'cancel'
+}
+
+export interface ActionSheetOptions {
+  title?: string
+  message?: string
+  actions: ActionSheetAction[]
+  /** Where the sheet points on iPad (and, from iOS 26, on iPhone). */
+  anchor?: NativeAnchor
+}
+
+export interface ContextMenuItem {
+  id: string
+  title: string
+  /** An SF Symbol name, such as `trash`. */
+  symbol?: string
+  destructive?: boolean
+  disabled?: boolean
+}
+
+export interface ContextMenuOptions {
+  items: ContextMenuItem[]
+  anchor: NativeAnchor
+  title?: string
+}
+
+export interface BrowserOpenOptions {
+  /** `safari`: SFSafariViewController in the app. `auth`: the system's web sign-in sheet. */
+  mode?: 'safari' | 'auth'
+  /** For `auth`: the URL scheme the provider redirects back to. */
+  callbackScheme?: string
+}
+
+export interface BrowserOpenResult {
+  /** For `auth`: the callback URL the provider redirected to. */
+  url?: string
+  cancelled: boolean
+  error?: string
+}
+
+export type SymbolWeight = 'ultraLight' | 'thin' | 'light' | 'regular' | 'medium' | 'semibold' | 'bold' | 'heavy' | 'black'
+
+export interface SymbolImageOptions {
+  /** Default 17. */
+  pointSize?: number
+  weight?: SymbolWeight
+  /** A CSS colour. The label colour if unset. */
+  color?: string
+  scale?: 'small' | 'medium' | 'large'
+}
+
+export type StatusBarStyle = 'default' | 'light' | 'dark'
+
+/** The reading and motion settings the page should match. */
+export interface NativeAppearance {
+  /** The Dynamic Type size, as UIKit names it: `large` is the default. */
+  contentSizeCategory: string
+  /** Body text's scale from its default size; also `--craft-font-scale` on the root element. */
+  fontScale: number
+  reduceMotion: boolean
+  reduceTransparency: boolean
+  colorScheme: 'light' | 'dark'
+}
+
+/** A `craftSilentPush` or `craftBackgroundRefresh`. */
+export interface BackgroundWorkEvent {
+  /** Pass to `background.complete` to answer this one. */
+  id?: string
+  /** The push's payload, for a silent push. */
+  payload?: Record<string, unknown>
+}
+
+/**
+ * Call a `window.craft` namespace method if the shell has it, settling with
+ * `fallback` when it does not, when it fails, or when it answers nothing. The
+ * new native UI never throws at a page: on the web every call resolves.
+ */
+async function callNative<T>(namespace: string, method: string, args: unknown[], fallback: T): Promise<T> {
+  const target = getCraftRoot()?.[namespace]
+  if (!target || typeof target[method] !== 'function') return fallback
+  try {
+    const value = await target[method](...args)
+    return value === undefined || value === null ? fallback : value as T
+  }
+  catch {
+    return fallback
+  }
+}
+
+function hasNative(namespace: string): boolean {
+  return Boolean(getCraftRoot()?.[namespace])
+}
+
+/**
+ * The system's alert, confirmation and action sheet. Off the iOS shell every
+ * call resolves without showing anything (`confirm` with false, `actionSheet`
+ * with null), so check `isAvailable()` to draw a web fallback.
+ */
+export const dialog = {
+  isAvailable(): boolean {
+    return hasNative('dialog')
+  },
+  async alert(options: DialogAlertOptions | string): Promise<void> {
+    await callNative('dialog', 'alert', [options], undefined)
+  },
+  confirm(options: DialogConfirmOptions | string): Promise<boolean> {
+    return callNative('dialog', 'confirm', [options], false)
+  },
+  /** The chosen action's id, or null when dismissed. */
+  actionSheet(options: ActionSheetOptions): Promise<string | null> {
+    return callNative<string | null>('dialog', 'actionSheet', [options], null)
+  },
+}
+
+/**
+ * The system's context menu, anchored at a rect or element: the list with SF
+ * Symbols a long press shows (iOS 17.4 and later; the edit menu, then an
+ * action sheet, before). The chosen item's id, or null when dismissed.
+ */
+export const contextMenu = {
+  isAvailable(): boolean {
+    return hasNative('contextMenu')
+  },
+  show(options: ContextMenuOptions): Promise<string | null> {
+    return callNative<string | null>('contextMenu', 'show', [options], null)
+  },
+}
+
+/**
+ * A page elsewhere without leaving the app: SFSafariViewController, or for
+ * `mode: 'auth'` the system's web sign-in sheet, which answers with the
+ * callback URL. On the web, `safari` opens a new tab and `auth` cannot catch
+ * the callback, so it answers cancelled.
+ */
+export const browser = {
+  isAvailable(): boolean {
+    return hasNative('browser')
+  },
+  async open(url: string, options: BrowserOpenOptions = {}): Promise<BrowserOpenResult> {
+    if (hasNative('browser')) return callNative<BrowserOpenResult>('browser', 'open', [url, options], { cancelled: true })
+    if (options.mode !== 'auth' && typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(url, '_blank', 'noopener')
+      return { cancelled: false }
+    }
+    return { cancelled: true }
+  },
+}
+
+/** An SF Symbol rasterised to a PNG data URL, or null where there are none. */
+export const symbols = {
+  image(name: string, options: SymbolImageOptions = {}): Promise<string | null> {
+    return callNative<string | null>('symbols', 'image', [name, options], null)
+  },
+}
+
+/** The status bar's text: light, dark, or the system's choice for the app's appearance. */
+export const statusBar = {
+  setStyle(style: StatusBarStyle): Promise<boolean> {
+    return callNative('statusBar', 'setStyle', [style], false)
+  },
+}
+
+/** The shell's chrome around the page. */
+export const chrome = {
+  /** What shows past the page's edges when it rubber-bands (iOS 15). */
+  setUnderPageColor(color: string): Promise<boolean> {
+    return callNative('chrome', 'setUnderPageColor', [color], false)
+  },
+  /** WebKit's bar above the keyboard (previous, next, Done). Hidden by default. */
+  setKeyboardAccessory(visible: boolean): Promise<boolean> {
+    return callNative('chrome', 'setKeyboardAccessory', [visible], false)
+  },
+}
+
+/**
+ * The system's pull-to-refresh on the page's scroll view. A pull fires
+ * `onRefresh`; call `end()` once the new content is in. It is removed when the
+ * document changes, so a page enables it for itself.
+ */
+export const refresh = {
+  isAvailable(): boolean {
+    return hasNative('refresh')
+  },
+  enable(options: { tintColor?: string } = {}): Promise<boolean> {
+    return callNative('refresh', 'enable', [options], false)
+  },
+  disable(): Promise<boolean> {
+    return callNative('refresh', 'disable', [], false)
+  },
+  end(): Promise<boolean> {
+    return callNative('refresh', 'end', [], false)
+  },
+  onRefresh(callback: () => void): () => void {
+    return onCraftEvent('craftRefresh', () => callback())
+  },
+}
+
+/**
+ * Background time on iOS: a silent push (`content-available`) and the
+ * scheduled refresh (`backgroundRefresh.enabled` in the Craft config). Each
+ * waits for `complete(ok)` from the page, or 25 seconds.
+ */
+export const background = {
+  complete(ok = true, id?: string): Promise<boolean> {
+    return callNative('background', 'complete', [ok, id], false)
+  },
+  onRefresh(callback: (event: BackgroundWorkEvent) => void): () => void {
+    return onCraftEvent('craftBackgroundRefresh', detail => callback(detail as BackgroundWorkEvent))
+  },
+  onSilentPush(callback: (event: BackgroundWorkEvent) => void): () => void {
+    return onCraftEvent('craftSilentPush', detail => callback(detail as BackgroundWorkEvent))
+  },
+}
+
+/**
+ * Text size, Reduce Motion, Reduce Transparency and Light or Dark. In the iOS
+ * shell from the native settings (Dynamic Type included, which a web page
+ * cannot otherwise see); elsewhere from the media queries a browser has.
+ */
+export const appearance = {
+  get(): NativeAppearance | null {
+    const native = getCraftRoot()?.appearance
+    if (native) return native as NativeAppearance
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null
+    return {
+      contentSizeCategory: 'large',
+      fontScale: 1,
+      reduceMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      reduceTransparency: window.matchMedia('(prefers-reduced-transparency: reduce)').matches,
+      colorScheme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    }
+  },
+  onChange(callback: (appearance: NativeAppearance) => void): () => void {
+    return onCraftEvent('craftAppearance', detail => callback(detail as unknown as NativeAppearance))
   },
 }
 
@@ -1926,6 +2230,7 @@ interface CraftMobileBridge {
     impact(style: HapticStyle): Promise<void>
     notification(type: HapticNotificationType): Promise<void>
     selection(): Promise<void>
+    prepare?(kind?: string): Promise<void>
     vibrate(pattern: number[]): Promise<void>
   }
   permissions?: {
@@ -2032,6 +2337,15 @@ const mobile: {
   watchConnectivity: typeof watchConnectivity
   tabBar: typeof tabBar
   splash: typeof splash
+  dialog: typeof dialog
+  contextMenu: typeof contextMenu
+  browser: typeof browser
+  symbols: typeof symbols
+  statusBar: typeof statusBar
+  chrome: typeof chrome
+  refresh: typeof refresh
+  background: typeof background
+  appearance: typeof appearance
 } = {
   device: device,
   haptics: haptics,
@@ -2054,6 +2368,15 @@ const mobile: {
   watchConnectivity: watchConnectivity,
   tabBar: tabBar,
   splash: splash,
+  dialog: dialog,
+  contextMenu: contextMenu,
+  browser: browser,
+  symbols: symbols,
+  statusBar: statusBar,
+  chrome: chrome,
+  refresh: refresh,
+  background: background,
+  appearance: appearance,
 }
 
 export default mobile

@@ -628,3 +628,82 @@ describe('Mobile native chrome', () => {
     }
   })
 })
+
+describe('Mobile native UI', () => {
+  const withWindow = async (window: Record<string, unknown> | undefined, run: () => Promise<void> | void) => {
+    const previous = (globalThis as any).window
+    ;(globalThis as any).window = window
+    try { await run() }
+    finally { (globalThis as any).window = previous }
+  }
+
+  it('resolves every call without the shell, never throwing', async () => {
+    await withWindow({}, async () => {
+      const { dialog, contextMenu, symbols, statusBar, chrome, refresh, background } = await import('../api/mobile')
+      expect(dialog.isAvailable()).toBe(false)
+      expect(await dialog.alert('Saved')).toBeUndefined()
+      expect(await dialog.confirm({ title: 'Delete?' })).toBe(false)
+      expect(await dialog.actionSheet({ actions: [{ id: 'a', title: 'A' }] })).toBeNull()
+      expect(await contextMenu.show({ items: [{ id: 'a', title: 'A' }], anchor: { x: 0, y: 0, width: 1, height: 1 } })).toBeNull()
+      expect(await symbols.image('heart.fill')).toBeNull()
+      expect(await statusBar.setStyle('light')).toBe(false)
+      expect(await chrome.setUnderPageColor('#000')).toBe(false)
+      expect(await chrome.setKeyboardAccessory(true)).toBe(false)
+      expect(await refresh.enable()).toBe(false)
+      expect(await background.complete(true)).toBe(false)
+    })
+  })
+
+  it('hands calls to the shell and settles a failure with the fallback', async () => {
+    const calls: unknown[][] = []
+    const craft = {
+      dialog: {
+        confirm: async (...args: unknown[]) => { calls.push(['confirm', ...args]); return true },
+        actionSheet: async () => { throw new Error('native failed') },
+      },
+      browser: { open: async (...args: unknown[]) => { calls.push(['open', ...args]); return { url: 'hqtraining://done?code=1', cancelled: false } } },
+      haptics: { prepare: async (...args: unknown[]) => { calls.push(['prepare', ...args]) } },
+    }
+    await withWindow({ craft }, async () => {
+      const { dialog, browser, haptics } = await import('../api/mobile')
+      expect(dialog.isAvailable()).toBe(true)
+      expect(await dialog.confirm({ title: 'Delete?', destructive: true })).toBe(true)
+      expect(await dialog.actionSheet({ actions: [] })).toBeNull()
+      expect(await browser.open('https://auth.example.com', { mode: 'auth', callbackScheme: 'hqtraining' }))
+        .toEqual({ url: 'hqtraining://done?code=1', cancelled: false })
+      await haptics.prepare('selection')
+    })
+    expect(calls).toEqual([
+      ['confirm', { title: 'Delete?', destructive: true }],
+      ['open', 'https://auth.example.com', { mode: 'auth', callbackScheme: 'hqtraining' }],
+      ['prepare', 'selection'],
+    ])
+  })
+
+  it('opens a tab for the in-app browser on the web, and cannot sign in there', async () => {
+    const opened: unknown[] = []
+    await withWindow({ open: (...args: unknown[]) => { opened.push(args) } }, async () => {
+      const { browser } = await import('../api/mobile')
+      expect(await browser.open('https://example.com')).toEqual({ cancelled: false })
+      expect(await browser.open('https://example.com', { mode: 'auth' })).toEqual({ cancelled: true })
+    })
+    expect(opened).toEqual([['https://example.com', '_blank', 'noopener']])
+  })
+
+  it('reads the shell\'s appearance, and the media queries without it', async () => {
+    const native = { contentSizeCategory: 'extraLarge', fontScale: 1.118, reduceMotion: true, reduceTransparency: false, colorScheme: 'dark' }
+    await withWindow({ craft: { appearance: native } }, async () => {
+      const { appearance } = await import('../api/mobile')
+      expect(appearance.get()).toEqual(native as any)
+    })
+    await withWindow({ matchMedia: (query: string) => ({ matches: query.includes('dark') }) }, async () => {
+      const { appearance } = await import('../api/mobile')
+      expect(appearance.get()).toEqual({ contentSizeCategory: 'large', fontScale: 1, reduceMotion: false, reduceTransparency: false, colorScheme: 'dark' })
+    })
+  })
+
+  it('lists the new namespaces on the default export', () => {
+    for (const name of ['dialog', 'contextMenu', 'browser', 'symbols', 'statusBar', 'chrome', 'refresh', 'background', 'appearance'])
+      expect(typeof (mobile as any)[name]).toBe('object')
+  })
+})

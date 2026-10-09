@@ -211,12 +211,64 @@ development environment and Release builds use the production environment.
 The generated entitlements select the correct value from the active Xcode
 build configuration automatically.
 
+### Launch, offline and the feel of the web view
+
+```json
+{
+  "splashMaxSeconds": 3,
+  "requestTimeoutSeconds": 10,
+  "allowsLinkPreview": false,
+  "keyboardAccessory": false,
+  "disableZoom": true,
+  "associatedDomains": ["hq.training"],
+  "backgroundRefresh": { "enabled": true, "minimumIntervalMinutes": 30 }
+}
+```
+
+- `splashMaxSeconds` (default 3): the splash stays until the page calls
+  `splash.hide()` or its first contentful paint is on screen, and never longer
+  than this.
+- `requestTimeoutSeconds` (default 10): how long the app's own page may take
+  before the load counts as unreachable and the bundled page stands in.
+- The bundled page `init` writes (`dist/index.html`, until your web assets
+  replace it) is an offline page in the app's colours, light and dark, whose
+  Retry loads the remote page again. An app whose page has a service worker
+  normally opens from it offline; this shows on a first launch without one or
+  after a hard failure. With `appBoundDomains` it is loaded as a page of the
+  remote origin, because WebKit refuses to navigate from an app-bound domain
+  to `craft://app`.
+- `allowsLinkPreview` (default false): Safari's press-and-hold link previews.
+- `keyboardAccessory` (default false): WebKit's previous/next/Done bar above
+  the keyboard. Change it at runtime with `craft.chrome.setKeyboardAccessory`.
+- `disableZoom` (default true): no pinch or double-tap zoom, and the page's
+  viewport pinned at scale 1.
+- `associatedDomains`: universal links. A bare host is signed as
+  `applinks:<host>`; a universal link reaches the page as `craftDeepLink`, like
+  a custom-scheme link.
+- `backgroundRefresh`: a BGAppRefreshTask (`<bundleId>.refresh` unless
+  `identifier` is set), declared in `BGTaskSchedulerPermittedIdentifiers` with
+  the `fetch` background mode, scheduled no sooner than
+  `minimumIntervalMinutes` (default 15). It fires `craftBackgroundRefresh`.
+
+The web view also: shows `alert`, `confirm` and `prompt` as system alerts;
+opens `target=_blank` and `window.open` for the app's own origins in place and
+anything else in `SFSafariViewController`; grants `getUserMedia` to the app's
+own origin without WebKit's extra prompt; dismisses the keyboard with a drag;
+allows picture in picture; ends its user agent with `Craft/<version>
+<AppName>/<version>`; brings a page whose content process died back under the
+splash, on the page it was showing, at most three times a minute before
+showing the offline page; and saves its `interactionState` when the app goes to
+the background, so a launch after iOS ended the app returns to the same screen
+(same build only).
+
 ## JavaScript Bridge
 
 Once Craft is initialized, the `window.craft` object is available:
 
 ```javascript
-// Wait for Craft to be ready
+// window.craft is installed at document start, before the page's own scripts,
+// so it can be used at once. craftReady still fires, once, when the document
+// has been parsed, for pages that wait for it.
 window.addEventListener('craftReady', (e) => {
   console.log('Platform:', e.detail.platform); // 'ios'
   console.log('Capabilities:', e.detail.capabilities);
@@ -607,6 +659,64 @@ window.craft.watch.onReachabilityChange((status) => {
   console.log('Watch reachable:', status.reachable);
 });
 ```
+
+### Native UI, appearance and background (iOS)
+
+Every call below returns a promise that settles and never throws: a failure
+answers with what "nothing happened" means for it. `craft-native/mobile`
+exports the same calls typed (`dialog`, `contextMenu`, `browser`, `symbols`,
+`statusBar`, `chrome`, `refresh`, `background`, `appearance`), resolving
+outside the shell too.
+
+```javascript
+// Haptics by kind, each on UIKit's own generator, kept warm.
+await craft.haptics.impact('rigid');          // light, medium, heavy, soft, rigid
+await craft.haptics.notification('success');  // success, warning, error
+await craft.haptics.selection();
+await craft.haptics.prepare('selection');     // before a gesture that will play one
+
+// System dialogs. An anchor is a rect in CSS pixels or an element.
+await craft.dialog.alert({ title: 'Saved' });
+const ok = await craft.dialog.confirm({ title: 'Delete workout?', confirmLabel: 'Delete', destructive: true });
+const choice = await craft.dialog.actionSheet({
+  title: 'Workout',
+  anchor: button,
+  actions: [{ id: 'edit', title: 'Edit' }, { id: 'delete', title: 'Delete', style: 'destructive' }],
+}); // the id, or null when dismissed
+
+// The system context menu (iOS 17.4+; the edit menu, then an action sheet, before).
+const picked = await craft.contextMenu.show({
+  anchor: row,
+  items: [{ id: 'duplicate', title: 'Duplicate', symbol: 'plus.square.on.square' }, { id: 'delete', title: 'Delete', symbol: 'trash', destructive: true }],
+});
+
+// SFSafariViewController, or the system web sign-in sheet.
+await craft.browser.open('https://example.com');
+const { url, cancelled } = await craft.browser.open(authorizeURL, { mode: 'auth', callbackScheme: 'hqtraining' });
+
+// An SF Symbol as a PNG data URL.
+img.src = await craft.symbols.image('heart.fill', { pointSize: 22, weight: 'semibold', color: '#e11d48' });
+
+// Chrome around the page.
+await craft.statusBar.setStyle('light');           // default, light, dark
+await craft.chrome.setUnderPageColor('#020617');    // shown past the page's edges
+await craft.chrome.setKeyboardAccessory(true);
+
+// Native pull to refresh.
+await craft.refresh.enable({ tintColor: '#22c55e' });
+craft.refresh.onRefresh(async () => { await reload(); craft.refresh.end(); });
+```
+
+Events on `window`:
+
+| Event | Detail | When |
+| --- | --- | --- |
+| `craftAppearance` | `{ contentSizeCategory, fontScale, reduceMotion, reduceTransparency, colorScheme }` | with `craftReady`, and whenever Dynamic Type, Reduce Motion, Reduce Transparency or Light/Dark changes. The root element also carries `--craft-font-scale`, `data-craft-reduce-motion`, `data-craft-reduce-transparency` and `data-craft-content-size` from the first byte; `craft.appearance` reads the current values. |
+| `craftResume` | `{ backgroundedMs }` | the app returned to the foreground |
+| `craftMemoryWarning` | `{}` | iOS is short of memory |
+| `craftSilentPush` | `{ id, payload }` | a `content-available` push; answer with `craft.background.complete(ok, id)` within 25 s |
+| `craftBackgroundRefresh` | `{ id }` | the scheduled refresh ran; answer the same way |
+| `craftRefresh` | `{}` | the native pull-to-refresh was pulled |
 
 ## CLI Reference
 

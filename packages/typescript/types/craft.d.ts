@@ -958,11 +958,137 @@ export interface CraftBridge {
      */
     onStatusChange(callback: (status: OTAStatus) => void): void;
   };
+
+  // ==================== Native UI (iOS) ====================
+  // Every call settles and none throws: a failure answers with what "nothing
+  // happened" means for it (null, false, a cancelled browser).
+
+  /** True once the bridge has announced itself (`craftReady`). */
+  ready?: boolean;
+
+  /** Haptics by kind, each on the generator UIKit has for it. */
+  haptics?: {
+    impact(style?: 'light' | 'medium' | 'heavy' | 'soft' | 'rigid'): Promise<void>;
+    notification(type?: 'success' | 'warning' | 'error'): Promise<void>;
+    selection(): Promise<void>;
+    /** Warm the engine ahead of a haptic that is coming. */
+    prepare(kind?: string | null): Promise<void>;
+    vibrate(pattern?: number[]): Promise<void>;
+  };
+
+  /** The system's alert, confirmation and action sheet. */
+  dialog?: {
+    alert(options: CraftDialogAlertOptions | string): Promise<void>;
+    confirm(options: CraftDialogConfirmOptions | string): Promise<boolean>;
+    /** The chosen action's id, or null when dismissed. */
+    actionSheet(options: CraftActionSheetOptions): Promise<string | null>;
+  };
+
+  /** The system's context menu at a rect: the chosen item's id, or null. */
+  contextMenu?: {
+    show(options: CraftContextMenuOptions): Promise<string | null>;
+  };
+
+  /** SFSafariViewController, or ASWebAuthenticationSession for `auth`. */
+  browser?: {
+    open(url: string, options?: { mode?: 'safari' | 'auth'; callbackScheme?: string }): Promise<{ url?: string; cancelled: boolean; error?: string }>;
+  };
+
+  /** An SF Symbol as a PNG data URL. */
+  symbols?: {
+    image(name: string, options?: CraftSymbolImageOptions): Promise<string | null>;
+  };
+
+  statusBar?: {
+    setStyle(style: 'default' | 'light' | 'dark'): Promise<boolean>;
+  };
+
+  chrome?: {
+    /** What shows past the page's edges when it rubber-bands. */
+    setUnderPageColor(color: string): Promise<boolean>;
+    /** WebKit's bar above the keyboard. */
+    setKeyboardAccessory(visible: boolean): Promise<boolean>;
+  };
+
+  /** UIRefreshControl on the web view's scroll view; a pull fires `craftRefresh`. */
+  refresh?: {
+    enable(options?: { tintColor?: string }): Promise<boolean>;
+    disable(): Promise<boolean>;
+    end(): Promise<boolean>;
+    onRefresh(callback: () => void): () => void;
+  };
+
+  /** Answer a `craftSilentPush` or `craftBackgroundRefresh`, by id or all pending. */
+  background?: {
+    complete(ok?: boolean, id?: string): Promise<boolean>;
+    onRefresh(callback: (detail: CraftBackgroundWorkDetail) => void): () => void;
+    onSilentPush(callback: (detail: CraftBackgroundWorkDetail) => void): () => void;
+  };
+
+  /** Text size, Reduce Motion, Reduce Transparency, Light or Dark, as last reported. */
+  readonly appearance?: CraftAppearance | null;
+  onAppearanceChange?(callback: (appearance: CraftAppearance) => void): () => void;
+}
+
+// ==================== Native UI types (iOS) ====================
+
+/** A rect in the viewport's CSS pixels, or an element to take one from. */
+export type CraftAnchor = { x: number; y: number; width: number; height: number } | Element;
+
+export interface CraftDialogAlertOptions {
+  title: string;
+  message?: string;
+  okLabel?: string;
+}
+
+export interface CraftDialogConfirmOptions {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** Paints the confirming button red. */
+  destructive?: boolean;
+}
+
+export interface CraftActionSheetOptions {
+  title?: string;
+  message?: string;
+  actions: Array<{ id: string; title: string; style?: 'default' | 'destructive' | 'cancel' }>;
+  anchor?: CraftAnchor;
+}
+
+export interface CraftContextMenuOptions {
+  items: Array<{ id: string; title: string; symbol?: string; destructive?: boolean; disabled?: boolean }>;
+  anchor: CraftAnchor;
+  title?: string;
+}
+
+export interface CraftSymbolImageOptions {
+  pointSize?: number;
+  weight?: 'ultraLight' | 'thin' | 'light' | 'regular' | 'medium' | 'semibold' | 'bold' | 'heavy' | 'black';
+  /** A CSS colour. */
+  color?: string;
+  scale?: 'small' | 'medium' | 'large';
+}
+
+export interface CraftAppearance {
+  contentSizeCategory: string;
+  /** Also `--craft-font-scale` on the root element. */
+  fontScale: number;
+  /** Also `data-craft-reduce-motion` on the root element. */
+  reduceMotion: boolean;
+  reduceTransparency: boolean;
+  colorScheme: 'light' | 'dark';
+}
+
+export interface CraftBackgroundWorkDetail {
+  id?: string;
+  payload?: Record<string, unknown>;
 }
 
 // ==================== Type Definitions ====================
 
-export type HapticStyle = 'light' | 'medium' | 'heavy' | 'success' | 'warning' | 'error' | 'selection';
+export type HapticStyle = 'light' | 'medium' | 'heavy' | 'soft' | 'rigid' | 'success' | 'warning' | 'error' | 'selection';
 
 export interface CraftError {
   /** Error message */
@@ -1663,6 +1789,21 @@ export interface CraftDeepLinkEvent extends CustomEvent {
   detail: DeepLinkData;
 }
 
+/** At start (with craftReady) and whenever the reading or motion settings change. iOS. */
+export interface CraftAppearanceEvent extends CustomEvent {
+  detail: CraftAppearance;
+}
+
+/** The app came back to the foreground. iOS. */
+export interface CraftResumeEvent extends CustomEvent {
+  detail: { backgroundedMs: number };
+}
+
+/** A content-available push, or iOS's scheduled refresh: answer with `craft.background.complete`. iOS. */
+export interface CraftBackgroundWorkEvent extends CustomEvent {
+  detail: CraftBackgroundWorkDetail;
+}
+
 /** The native tab bar's current height in CSS pixels. iOS. */
 export interface CraftTabBarLayoutEvent extends CustomEvent {
   detail: {
@@ -1700,6 +1841,12 @@ declare global {
     craftShortcut: CraftShortcutEvent;
     craftSiriShortcut: CraftSiriShortcutEvent;
     craftTabBarLayout: CraftTabBarLayoutEvent;
+    craftAppearance: CraftAppearanceEvent;
+    craftResume: CraftResumeEvent;
+    craftMemoryWarning: CustomEvent<Record<string, never>>;
+    craftSilentPush: CraftBackgroundWorkEvent;
+    craftBackgroundRefresh: CraftBackgroundWorkEvent;
+    craftRefresh: CustomEvent<Record<string, never>>;
   }
 }
 
