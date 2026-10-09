@@ -868,6 +868,26 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain('windows.first?.rootViewController')
   })
 
+  it('makes the web view feel like the app: no previews, no zoom, no keyboard bar, an app user agent', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-feel-'))
+    await init({ runtimeDir: null, name: 'HQ.training', bundleId: 'training.hq.app', output })
+    const swift = readFileSync(join(output, 'Sources', 'HQTrainingApp.swift'), 'utf8')
+    const version = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf8')).version
+
+    expect(swift).toContain('webView.allowsLinkPreview = config.allowsLinkPreview ?? false')
+    expect(swift).toContain('webView.scrollView.keyboardDismissMode = .interactive')
+    expect(swift).toContain('if config.disableZoom != false {')
+    expect(swift).toContain('webView.scrollView.pinchGestureRecognizer?.isEnabled = false')
+    expect(swift).toContain('controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))')
+    expect(swift).toContain('private lazy var keyboardAccessoryVisible = config.keyboardAccessory ?? false')
+    expect(swift).toContain('if !keyboardAccessoryVisible { CraftKeyboardAccessory.setVisible(false, in: webView) }')
+    expect(swift).toContain('webConfig.allowsPictureInPictureMediaPlayback = true')
+    expect(swift).toContain('webConfig.applicationNameForUserAgent = config.applicationNameForUserAgent(after: webConfig.applicationNameForUserAgent)')
+    // The generator fills in its own version.
+    expect(swift).toContain(`"Craft/${version}"`)
+    expect(swift).not.toContain('{{CRAFT_VERSION}}')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled

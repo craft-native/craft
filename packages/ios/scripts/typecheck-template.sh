@@ -16,7 +16,7 @@ TPL="$ROOT/packages/ios/templates"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-sed 's/{{BUNDLE_ID}}/app.craft.typecheck/g' "$TPL/CraftApp.swift" > "$TMP/CraftApp.swift"
+sed 's/{{BUNDLE_ID}}/app.craft.typecheck/g; s/{{CRAFT_VERSION}}/0.0.0/g' "$TPL/CraftApp.swift" > "$TMP/CraftApp.swift"
 
 SDK="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 swiftc -typecheck -parse-as-library \

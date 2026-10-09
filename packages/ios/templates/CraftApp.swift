@@ -767,6 +767,15 @@ struct CraftConfig: Codable {
     /// How long the app's own page may take to answer before the load counts
     /// as unreachable and the bundled copy stands in.
     var requestTimeoutSeconds: Double = 10
+    /// Press-and-hold on a link shows its preview, as in Safari. Off unless
+    /// asked for: no native app previews its own buttons.
+    var allowsLinkPreview: Bool? = nil
+    /// WebKit's bar above the keyboard (previous, next, Done). Hidden unless
+    /// asked for; `craft.chrome.setKeyboardAccessory` changes it at runtime.
+    var keyboardAccessory: Bool? = nil
+    /// Pinch and double-tap zoom. Off unless set to false: an app's screens
+    /// are laid out for the phone, and zooming one is a web page's tell.
+    var disableZoom: Bool? = nil
 }
 
 extension CraftConfig {
@@ -779,6 +788,40 @@ extension CraftConfig {
         default: return darkMode ? .dark : .light
         }
     }
+
+    /// What the web view adds to its user agent: WebKit's own token, then
+    /// `Craft/<version>` and `<AppName>/<version>`, so the app's server can
+    /// tell the app from Safari, and which build is asking.
+    func applicationNameForUserAgent(after base: String?) -> String {
+        let name = String(appName.unicodeScalars.filter { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0)) })
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        return [base ?? "", "Craft/{{CRAFT_VERSION}}", "\(name.isEmpty ? "App" : name)/\(version)"]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// Pins the page's viewport at its own width: no pinch, no double-tap
+    /// zoom. Run once the document is parsed, so it rewrites the page's own
+    /// viewport tag rather than racing it.
+    static let viewportScript = """
+    (function() {
+        function pin() {
+            var meta = document.querySelector('meta[name="viewport"]');
+            var content = meta ? (meta.getAttribute('content') || '') : 'width=device-width, initial-scale=1';
+            content = content.split(',').map(function(part) { return part.trim(); }).filter(function(part) {
+                return part && !/^(maximum-scale|minimum-scale|user-scalable)\\s*=/i.test(part);
+            }).concat(['minimum-scale=1', 'maximum-scale=1', 'user-scalable=no']).join(', ');
+            if (!meta) {
+                meta = document.createElement('meta');
+                meta.setAttribute('name', 'viewport');
+                (document.head || document.documentElement).appendChild(meta);
+            }
+            meta.setAttribute('content', content);
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pin);
+        else pin();
+    })();
+    """
 
     /// A request for the app's own page, given up on after
     /// `requestTimeoutSeconds`. URLRequest's default is sixty seconds, and a
@@ -940,7 +983,9 @@ struct CraftWebView: UIViewRepresentable {
         let webConfig = WKWebViewConfiguration()
         webConfig.defaultWebpagePreferences.allowsContentJavaScript = true
         webConfig.allowsInlineMediaPlayback = true
+        webConfig.allowsPictureInPictureMediaPlayback = true
         webConfig.mediaTypesRequiringUserActionForPlayback = []
+        webConfig.applicationNameForUserAgent = config.applicationNameForUserAgent(after: webConfig.applicationNameForUserAgent)
         webConfig.setURLSchemeHandler(BundledAssetSchemeHandler(), forURLScheme: "craft")
         // The app's own domains (WKAppBoundDomains in Info.plist) get what an
         // iOS web view reserves for them, service workers among them, so a
@@ -980,6 +1025,16 @@ struct CraftWebView: UIViewRepresentable {
         // the first didFinish used to be dropped on a nil.
         coordinator.attach(webView)
         webView.isOpaque = false
+        // The feel of an app rather than a page: no link previews on
+        // press-and-hold, the keyboard follows a drag down as it does in
+        // Messages, and the page stays at its own scale.
+        webView.allowsLinkPreview = config.allowsLinkPreview ?? false
+        webView.scrollView.keyboardDismissMode = .interactive
+        if config.disableZoom != false {
+            webView.scrollView.minimumZoomScale = 1
+            webView.scrollView.maximumZoomScale = 1
+            webView.scrollView.pinchGestureRecognizer?.isEnabled = false
+        }
         // An edge swipe goes back (and forward) through the page's history,
         // pushState entries included, the way every iOS app's stack does.
         webView.allowsBackForwardNavigationGestures = config.swipeNavigation ?? false
@@ -1053,7 +1108,7 @@ struct CraftWebView: UIViewRepresentable {
         private var documentReady = false
         /// Whether WebKit's bar above the keyboard shows (`keyboardAccessory`,
         /// then `craft.chrome.setKeyboardAccessory`).
-        private var keyboardAccessoryVisible = false
+        private lazy var keyboardAccessoryVisible = config.keyboardAccessory ?? false
         /// The native pull-to-refresh, when the page has asked for it.
         private lazy var refreshControl = CraftRefreshControl { [weak self] in
             self?.sendToWeb("craftRefresh", data: [:])
@@ -2144,6 +2199,9 @@ struct CraftWebView: UIViewRepresentable {
             // waiting on a page that does not know it has one.
             documentReady = false
             refreshControl.disable()
+            // Kept across documents and after the content process restarts.
+            if !keyboardAccessoryVisible { CraftKeyboardAccessory.setVisible(false, in: webView) }
+            if config.disableZoom != false { webView.scrollView.pinchGestureRecognizer?.isEnabled = false }
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -2339,6 +2397,7 @@ struct CraftWebView: UIViewRepresentable {
         /// Hand the coordinator the web view it serves, as soon as it exists.
         func attach(_ webView: WKWebView) {
             self.webView = webView
+            if !keyboardAccessoryVisible { CraftKeyboardAccessory.setVisible(false, in: webView) }
         }
 
         /// Every script the page gets before its own first byte runs, in order.
@@ -2364,6 +2423,9 @@ struct CraftWebView: UIViewRepresentable {
             controller.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             #endif
             controller.addUserScript(WKUserScript(source: CraftChrome.paintScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            if config.disableZoom != false {
+                controller.addUserScript(WKUserScript(source: CraftConfig.viewportScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            }
             controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
 

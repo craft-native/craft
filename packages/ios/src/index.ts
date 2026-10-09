@@ -10,6 +10,16 @@ import { $ } from 'bun'
 
 const TEMPLATES_DIR = join(dirname(import.meta.dir), 'templates')
 
+/** This package's version, which the app names in its user agent (`Craft/<version>`). */
+const CRAFT_VERSION: string = (() => {
+  try {
+    return JSON.parse(readFileSync(join(dirname(import.meta.dir), 'package.json'), 'utf8')).version ?? '0.0.0'
+  }
+  catch {
+    return '0.0.0'
+  }
+})()
+
 export type CraftAppearance = 'light' | 'dark' | 'system'
 
 export interface CraftConfig {
@@ -111,6 +121,16 @@ export interface CraftConfig {
    */
   usesNonExemptEncryption?: boolean
   privacy?: CraftPrivacyManifest
+  /** Press-and-hold link previews, as in Safari. Default false. */
+  allowsLinkPreview?: boolean
+  /**
+   * WebKit's bar above the keyboard for a form field (previous, next, Done),
+   * which no native app's keyboard has. Default false: hidden. A page can
+   * change it with `craft.chrome.setKeyboardAccessory()`.
+   */
+  keyboardAccessory?: boolean
+  /** Pinch and double-tap zoom off, and the page's viewport pinned at scale 1. Default true. */
+  disableZoom?: boolean
   /**
    * The longest the launch splash stays up, in seconds, when the page neither
    * hides it (`splash.hide()`) nor paints. Default 3.
@@ -917,6 +937,7 @@ export async function init(options: InitOptions): Promise<void> {
   const swiftSource = swiftTemplate
     .replace(/CraftApp/g, `${name}App`)
     .replace(/\{\{BUNDLE_ID\}\}/g, finalBundleId)
+    .replace(/\{\{CRAFT_VERSION\}\}/g, CRAFT_VERSION)
   writeFileSync(join(output, 'Sources', `${name}App.swift`), swiftSource)
   cpSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), join(output, 'Sources', 'CraftNativeScreen.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.swift'), join(output, 'Sources', 'CraftNativeFlatList.swift'))

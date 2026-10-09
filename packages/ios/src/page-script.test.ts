@@ -609,6 +609,45 @@ describe('the native UI the page can drive', () => {
   })
 })
 
+describe('the viewport pin', () => {
+  // Swift's multi-line string, as the page receives it.
+  const start = template.indexOf('static let viewportScript = """')
+  const body = template.slice(template.indexOf('\n', start) + 1, template.indexOf('\n    """', start)).replace(/\\\\/g, '\\')
+  const pin = (content: string | null) => {
+    let meta: Record<string, any> | null = null
+    if (content !== null) {
+      const attributes: Record<string, string> = { name: 'viewport', content }
+      meta = { getAttribute: (key: string) => attributes[key] ?? null, setAttribute: (key: string, value: string) => { attributes[key] = value } }
+    }
+    const appended: any[] = []
+    const document = {
+      readyState: 'interactive',
+      querySelector: () => meta,
+      createElement: () => {
+        const attributes: Record<string, string> = {}
+        return { getAttribute: (key: string) => attributes[key] ?? null, setAttribute: (key: string, value: string) => { attributes[key] = value } }
+      },
+      head: { appendChild: (node: any) => appended.push(node) },
+      addEventListener() {},
+    }
+    // eslint-disable-next-line no-new-func
+    new Function('document', body)(document)
+    return (meta ?? appended[0]).getAttribute('content')
+  }
+
+  it('keeps the page\'s own width and pins its scale', () => {
+    expect(pin('width=device-width, initial-scale=1, viewport-fit=cover')).toBe('width=device-width, initial-scale=1, viewport-fit=cover, minimum-scale=1, maximum-scale=1, user-scalable=no')
+  })
+
+  it('overrides a page that allowed zooming', () => {
+    expect(pin('width=device-width, maximum-scale=5, user-scalable=yes')).toBe('width=device-width, minimum-scale=1, maximum-scale=1, user-scalable=no')
+  })
+
+  it('adds a viewport to a page without one', () => {
+    expect(pin(null)).toBe('width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no')
+  })
+})
+
 describe('craft.db', () => {
   // Native has handled dbExecute/dbQuery for a long time; the page had no way
   // to reach them, so localDatabase did nothing on iOS while Android worked.
