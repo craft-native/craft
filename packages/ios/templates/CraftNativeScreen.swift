@@ -482,7 +482,7 @@ private final class CraftNativeTextView: UITextView {
     }
 }
 
-final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate {
+final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate, UITextFieldDelegate, UITextViewDelegate, UIPickerViewDataSource, UIPickerViewDelegate {
     private final class RenderedNode {
         let identity: String
         let type: String
@@ -521,6 +521,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var scrollMomentumEndHandlers: [ObjectIdentifier: String] = [:]
     private var sliderCompleteHandlers: [ObjectIdentifier: String] = [:]
     private var sliderSteps: [ObjectIdentifier: Float] = [:]
+    private var pickerOptions: [ObjectIdentifier: [(value: String, label: String)]] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
@@ -1025,6 +1026,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if props["autoFocus"] as? Bool == true, !field.isFirstResponder {
                 DispatchQueue.main.async { _ = field.becomeFirstResponder() }
             }
+        case "Picker":
+            let picker = result as! UIPickerView
+            let options = children.compactMap { child -> (value: String, label: String)? in
+                guard let node = child as? [String: Any], node["type"] as? String == "Text" else { return nil }
+                let optionProps = node["props"] as? [String: Any] ?? [:]
+                let label = (node["children"] as? [Any] ?? []).compactMap { $0 as? String }.joined()
+                guard !label.isEmpty else { return nil }
+                return (value: optionProps["value"] as? String ?? label, label: label)
+            }
+            let pickerID = ObjectIdentifier(picker)
+            pickerOptions[pickerID] = options
+            picker.reloadAllComponents()
+            if let selected = (props["selectedValue"] as? String) ?? (props["value"] as? String),
+               let row = options.firstIndex(where: { $0.value == selected }) {
+                picker.selectRow(row, inComponent: 0, animated: false)
+            } else if !options.isEmpty {
+                picker.selectRow(0, inComponent: 0, animated: false)
+            }
+            picker.isUserInteractionEnabled = props["disabled"] as? Bool != true
+            updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: picker)
         case "Switch":
             let toggle = result as! UISwitch
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
@@ -1132,7 +1153,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
         updateLongPressHandler(events["onLongPress"], for: result)
-        if type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
+        if type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
             updatePressHandler(nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
         }
         applyAccessibility(props, type: type, to: result)
@@ -1162,6 +1183,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             field.addTarget(self, action: #selector(textBlurred(_:)), for: .editingDidEnd)
             field.addTarget(self, action: #selector(textSubmitted(_:)), for: .editingDidEndOnExit)
             return field
+        case "Picker":
+            let picker = UIPickerView()
+            picker.dataSource = self
+            picker.delegate = self
+            return picker
         case "Switch":
             let toggle = UISwitch()
             toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
@@ -1351,6 +1377,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         scrollMomentumEndHandlers.removeValue(forKey: id)
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
+        pickerOptions.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
@@ -1854,7 +1881,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             view.accessibilityValue = nil
         }
         let role = props["accessibilityRole"] as? String
-        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput", "Switch", "Slider"].contains(type))
+        view.isAccessibilityElement = role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Image", "TextInput", "Picker", "Switch", "Slider"].contains(type))
         var traits: UIAccessibilityTraits = []
         switch role ?? type.lowercased() {
         case "button": traits.insert(.button)
@@ -1980,6 +2007,27 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     @objc private func sliderFinished(_ sender: UISlider) {
         guard let handler = sliderCompleteHandlers[ObjectIdentifier(sender)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": snappedSliderValue(sender.value, for: sender)]])
+    }
+
+    func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+
+    func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int {
+        pickerOptions[ObjectIdentifier(pickerView)]?.count ?? 0
+    }
+
+    func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
+        guard let options = pickerOptions[ObjectIdentifier(pickerView)], options.indices.contains(row) else { return nil }
+        return options[row].label
+    }
+
+    func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
+        guard let options = pickerOptions[ObjectIdentifier(pickerView)], options.indices.contains(row),
+              let handler = handlers[ObjectIdentifier(pickerView)] else { return }
+        let option = options[row]
+        send(type: "EVENT", payload: [
+            "handlerName": handler,
+            "nativeEvent": ["value": option.value, "index": row],
+        ])
     }
 
     @objc private func textFocused(_ sender: UITextField) {

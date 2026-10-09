@@ -23,6 +23,7 @@ const COMPONENTS: Array<[string, string, string]> = [
   ['Switch', 'case "Switch":', '"Switch" ->'],
   ['Slider', 'case "Slider":', '"Slider" ->'],
   ['TextInput', 'case "TextInput":', '"TextInput" ->'],
+  ['Picker', 'case "Picker":', '"Picker" ->'],
   ['ActivityIndicator', 'case "ActivityIndicator":', '"ActivityIndicator" ->'],
   ['Image', 'case "Image":', '"Image" ->'],
   ['ScrollView', 'case "ScrollView":', '"ScrollView" ->'],
@@ -395,7 +396,7 @@ describe('native renderer component contract', () => {
   })
 
   it('restores generic Android pressables when accessibility disabled clears', () => {
-    expect(android).toContain('if (type !in setOf("Button", "Link", "TextInput", "Switch", "Slider", "ActivityIndicator")) {\n            view.isEnabled = !disabled')
+    expect(android).toContain('if (type !in setOf("Button", "Link", "TextInput", "Picker", "Switch", "Slider", "ActivityIndicator")) {\n            view.isEnabled = !disabled')
   })
 
   it('dismisses the keyboard from native scroll containers on drag', () => {

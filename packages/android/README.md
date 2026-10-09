@@ -97,8 +97,9 @@ craft android build --native-bundle ../native-screen.js
 ```
 
 Native mode maps STX `View`, `SafeAreaView`, `Text`, `Button`, `Link`,
-`TextInput`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`,
-and `FlatList` to Android views. `Switch` supports state-aware `trackColor`
+`TextInput`, `Picker`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`,
+and `FlatList` to Android views. `Picker` renders `<select>`/`<option>` values
+with `onValueChange` or `onChange`. `Switch` supports state-aware `trackColor`
 and `thumbColor`, while `Slider` supports track/thumb tint props and `step`
 snapping. `Image` reports load lifecycle events and structured failures.
 `FlatList` uses

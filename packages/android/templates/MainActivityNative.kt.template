@@ -33,6 +33,8 @@ import android.text.InputType
 import android.text.Layout
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -41,6 +43,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
+import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -1169,6 +1172,37 @@ class MainActivity : AppCompatActivity() {
                     override fun afterTextChanged(s: Editable?) {}
                 })
             }
+            "Picker" -> (previous as? Spinner ?: Spinner(this)).apply {
+                val options = (0 until children.length()).mapNotNull { index ->
+                    val option = children.optJSONObject(index) ?: return@mapNotNull null
+                    if (option.optString("type") != "Text") return@mapNotNull null
+                    val label = (option.optJSONArray("children") ?: JSONArray()).let { text ->
+                        (0 until text.length()).joinToString("") { text.optString(it) }
+                    }
+                    if (label.isBlank()) return@mapNotNull null
+                    val optionProps = option.optJSONObject("props")
+                    val value = optionProps?.optString("value").takeIf { !it.isNullOrBlank() } ?: label
+                    value to label
+                }
+                adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_item, options.map { it.second }).also {
+                    it.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+                }
+                val requested = props.optString("selectedValue").ifBlank { props.optString("value") }
+                val selected = options.indexOfFirst { it.first == requested }.takeIf { it >= 0 } ?: 0
+                isEnabled = !props.optBoolean("disabled", false)
+                val handler = events.optString("onValueChange").ifBlank { events.optString("onChange") }
+                if (handler.isNotBlank()) screen.handlers[this] = handler else screen.handlers.remove(this)
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        val current = screen.handlers[this@apply] ?: return
+                        val option = options.getOrNull(position) ?: return
+                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()
+                            .put("value", option.first).put("index", position)))
+                    }
+                }
+                setSelection(selected, false)
+            }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
                 setOnCheckedChangeListener(null)
                 val requestedValue = props.opt("value")
@@ -1359,7 +1393,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
-        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
+        if (type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
             if (handler.isNotBlank()) {
                 screen.handlers[control] = handler
@@ -1751,7 +1785,7 @@ class MainActivity : AppCompatActivity() {
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")
         val disabled = state?.optBoolean("disabled", false) == true
-        if (type !in setOf("Button", "Link", "TextInput", "Switch", "Slider", "ActivityIndicator")) {
+        if (type !in setOf("Button", "Link", "TextInput", "Picker", "Switch", "Slider", "ActivityIndicator")) {
             view.isEnabled = !disabled
         } else if (disabled) {
             view.isEnabled = false
