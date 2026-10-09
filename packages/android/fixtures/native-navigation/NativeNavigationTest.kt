@@ -260,6 +260,14 @@ class NativeNavigationTest {
             assertTrue("clearing accessibilityState.disabled should restore a generic pressable", panel.isEnabled)
             instrumentation.runOnMainSync { panel.performClick() }
             assertEquals("panel pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val pressable = awaitView(activity, "native-pressable")
+            assertTrue("native Pressable should be a container", pressable is ViewGroup)
+            instrumentation.runOnMainSync { pressable.performClick() }
+            assertEquals("pressable pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            val disabledPressable = awaitView(activity, "disabled-pressable")
+            assertFalse("disabled Pressable should be disabled", disabledPressable.isEnabled)
+            instrumentation.runOnMainSync { disabledPressable.performClick() }
+            assertEquals("pressable pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val longPressPanel = awaitView(activity, "long-press-panel")
             assertTrue("generic onLongPress view was not long-clickable", longPressPanel.performLongClick())
             assertEquals("panel long pressed", (awaitView(activity, "long-press-status") as TextView).text.toString())
