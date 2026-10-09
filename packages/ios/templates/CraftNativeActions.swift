@@ -6,6 +6,11 @@ import UIKit
 import UserNotifications
 
 let craftNativeCapabilityProtocolVersion = 1
+/// URLSession's own request timeout, matching the bridge's 30-second deadline.
+let craftNativeFetchTimeoutSeconds: TimeInterval = 30
+/// A response body larger than this rejects with RESPONSE_TOO_LARGE rather
+/// than being copied into JavaScriptCore as one string.
+let craftNativeFetchMaxResponseBytes = 8 * 1024 * 1024
 
 struct CraftNativeActionError: Error {
     let code: String
@@ -21,12 +26,19 @@ enum CraftNativeActions {
     private static let cancellationLock = NSLock()
     private static var cancelledRequests = Set<String>()
     private static var biometricContexts = [String: LAContext]()
+    private static var fetchTasks = [String: URLSessionDataTask]()
+    private static let fetchSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = craftNativeFetchTimeoutSeconds
+        configuration.timeoutIntervalForResource = craftNativeFetchTimeoutSeconds
+        return URLSession(configuration: configuration)
+    }()
     private static var initialDeepLinkClaimed = false
     private static var database: OpaquePointer?
     private static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func capabilities(config: CraftConfig) -> [String] {
-        var values = ["device", "clipboard", "haptics", "storage", "lifecycle"]
+        var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch"]
         if config.enableBiometric { values.append("biometric") }
         if config.enableSecureStorage { values.append("secureStorage") }
         if config.enableLocalDatabase { values.append("database") }
@@ -115,6 +127,9 @@ enum CraftNativeActions {
             }
             authenticate(requestToken: requestToken, args: args, completion: completion)
             return
+        case ("Network", "fetch"):
+            fetch(requestToken: requestToken, args: args, completion: completion)
+            return
         case ("Lifecycle", "getState"):
             sync = .success(currentAppState())
         case ("DeepLinks", "getInitialURL"):
@@ -147,8 +162,91 @@ enum CraftNativeActions {
         cancellationLock.lock()
         cancelledRequests.insert(requestToken)
         let context = biometricContexts.removeValue(forKey: requestToken)
+        let task = fetchTasks.removeValue(forKey: requestToken)
         cancellationLock.unlock()
         context?.invalidate()
+        task?.cancel()
+    }
+
+    /// `fetch` for native screens: one URLSession data task per request, keyed
+    /// by the request token so the bridge deadline, `API_CANCEL` and route
+    /// teardown all cancel the transfer. Bodies are UTF-8 text both ways.
+    private static func fetch(
+        requestToken: String,
+        args: [Any],
+        completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+    ) {
+        guard let options = args.first as? [String: Any],
+              let address = options["url"] as? String,
+              let url = URL(string: address),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
+              url.host?.isEmpty == false else {
+            complete(requestToken, failure("INVALID_ARGUMENT", "fetch needs an absolute http or https URL"), completion)
+            return
+        }
+        let method = ((options["method"] as? String) ?? "GET").uppercased()
+        guard !method.isEmpty, method.allSatisfy({ $0.isLetter && $0.isASCII }) else {
+            complete(requestToken, failure("INVALID_ARGUMENT", "fetch method must be an HTTP token"), completion)
+            return
+        }
+        var request = URLRequest(url: url, timeoutInterval: craftNativeFetchTimeoutSeconds)
+        request.httpMethod = method
+        if let headers = options["headers"] as? [String: Any] {
+            for (name, value) in headers {
+                guard let value = value as? String else {
+                    complete(requestToken, failure("INVALID_ARGUMENT", "fetch header values must be strings"), completion)
+                    return
+                }
+                request.setValue(value, forHTTPHeaderField: name)
+            }
+        }
+        if let body = options["body"] as? String {
+            guard method != "GET", method != "HEAD" else {
+                complete(requestToken, failure("INVALID_ARGUMENT", "A GET or HEAD request cannot have a body"), completion)
+                return
+            }
+            request.httpBody = Data(body.utf8)
+        } else if let body = options["body"], !(body is NSNull) {
+            complete(requestToken, failure("INVALID_ARGUMENT", "fetch body must be a string"), completion)
+            return
+        }
+
+        let task = fetchSession.dataTask(with: request) { data, response, error in
+            cancellationLock.lock()
+            fetchTasks.removeValue(forKey: requestToken)
+            cancellationLock.unlock()
+            if let error = error {
+                let code = (error as? URLError)?.code == .timedOut ? "TIMEOUT" : "NETWORK_ERROR"
+                complete(requestToken, failure(code, error.localizedDescription), completion)
+                return
+            }
+            guard let http = response as? HTTPURLResponse else {
+                complete(requestToken, failure("NETWORK_ERROR", "fetch received a response that is not HTTP"), completion)
+                return
+            }
+            let body = data ?? Data()
+            guard body.count <= craftNativeFetchMaxResponseBytes else {
+                complete(requestToken, failure("RESPONSE_TOO_LARGE", "fetch responses are limited to \(craftNativeFetchMaxResponseBytes) bytes"), completion)
+                return
+            }
+            var headers: [String: String] = [:]
+            for (name, value) in http.allHeaderFields {
+                headers[String(describing: name).lowercased()] = String(describing: value)
+            }
+            complete(requestToken, .success([
+                "url": http.url?.absoluteString ?? address,
+                "status": http.statusCode,
+                "statusText": HTTPURLResponse.localizedString(forStatusCode: http.statusCode),
+                "headers": headers,
+                "redirected": http.url.map { $0 != url } ?? false,
+                "body": String(decoding: body, as: UTF8.self),
+            ]), completion)
+        }
+        cancellationLock.lock()
+        let alreadyCancelled = cancelledRequests.contains(requestToken)
+        if !alreadyCancelled { fetchTasks[requestToken] = task }
+        cancellationLock.unlock()
+        if !alreadyCancelled { task.resume() }
     }
 
     private static func claimInitialDeepLink() -> URL? {

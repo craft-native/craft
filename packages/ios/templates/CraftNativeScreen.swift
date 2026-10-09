@@ -541,6 +541,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private let capabilityScope = UUID().uuidString
     private var pendingCapabilityRequests = Set<String>()
     private var pendingCapabilityDeadlines: [String: DispatchWorkItem] = [:]
+    private var pendingTimers: [Int: DispatchWorkItem] = [:]
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var deepLinkListener: UUID?
 
@@ -558,6 +559,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     deinit {
         imageTasks.values.forEach { $0.cancel() }
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
+        pendingTimers.values.forEach { $0.cancel() }
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
         lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
         if let deepLinkListener = deepLinkListener { DeepLinkManager.shared.removeNativeListener(deepLinkListener) }
@@ -626,6 +628,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             self?.receive(json)
         }
         jsContext.setObject(postMessage, forKeyedSubscript: "craftNativePostMessage" as NSString)
+        // JavaScriptCore has no timers of its own. The callbacks stay in
+        // JavaScript; native only owns the main-queue deadline, so route
+        // teardown cancels every pending timer with the controller.
+        let scheduleTimer: @convention(block) (Int, Double) -> Void = { [weak self] id, delay in
+            guard let self = self else { return }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self = self, self.pendingTimers.removeValue(forKey: id) != nil else { return }
+                self.jsContext.objectForKeyedSubscript("__craftNativeFireTimer")?.call(withArguments: [id])
+            }
+            self.pendingTimers[id] = work
+            let milliseconds = delay.isFinite ? Int(min(max(delay, 0), 2_147_483_647)) : 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: work)
+        }
+        let cancelTimer: @convention(block) (Int) -> Void = { [weak self] id in
+            self?.pendingTimers.removeValue(forKey: id)?.cancel()
+        }
+        jsContext.setObject(scheduleTimer, forKeyedSubscript: "craftNativeScheduleTimer" as NSString)
+        jsContext.setObject(cancelTimer, forKeyedSubscript: "craftNativeCancelTimer" as NSString)
         let capabilities = CraftNativeActions.capabilities(config: config)
         let capabilityData = try? JSONSerialization.data(withJSONObject: capabilities)
         let capabilityJSON = capabilityData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
@@ -644,6 +664,30 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             globalThis.console = {
                 log: function() {}, warn: function() {}, error: function() {}
             };
+            if (typeof globalThis.setTimeout !== 'function') {
+                (function() {
+                    var timers = new Map();
+                    var nextTimer = 0;
+                    globalThis.setTimeout = function(callback, delay) {
+                        var args = Array.prototype.slice.call(arguments, 2);
+                        var id = ++nextTimer;
+                        timers.set(id, function() {
+                            if (typeof callback === 'function') callback.apply(undefined, args);
+                        });
+                        craftNativeScheduleTimer(id, Number(delay) || 0);
+                        return id;
+                    };
+                    globalThis.clearTimeout = function(id) {
+                        if (timers.delete(id)) craftNativeCancelTimer(id);
+                    };
+                    globalThis.__craftNativeFireTimer = function(id) {
+                        var callback = timers.get(id);
+                        if (!callback) return;
+                        timers.delete(id);
+                        callback();
+                    };
+                })();
+            }
         """)
     }
 

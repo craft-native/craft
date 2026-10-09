@@ -444,6 +444,38 @@ screen, keep the existing `craft-native/mobile` calls and use the nested
 capability methods only where persistence or native lifecycle behavior is
 needed; browser-rendered apps continue using their existing web fallbacks.
 
+### Network requests and timers
+
+JavaScriptCore has no `fetch` and no timers. The iOS host supplies both, and
+advertises `fetch` in `__stxNativeBridge.capabilities`; a current stx-native
+bundle then installs a global `fetch` with the familiar subset:
+
+```ts
+const response = await fetch('https://api.example.com/today', {
+  method: 'POST', // default GET
+  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ days: 7 }), // a string, or omitted
+})
+if (response.ok) today = await response.json() // or await response.text()
+response.status // also statusText, url, redirected, headers.get(name)
+```
+
+Each call is one `Network.fetch` capability request served by a `URLSession`
+data task, so it shares the 30-second deadline, `API_CANCEL`, and route
+teardown cancellation of the other capabilities: a closed screen cancels its
+transfers. Only absolute `http` and `https` URLs are accepted (plain HTTP still
+needs an App Transport Security exception, as the template has for
+`localhost`); bodies are UTF-8 text both ways, a `GET` or `HEAD` with a body is
+rejected, and a response larger than 8 MB rejects with `RESPONSE_TOO_LARGE`.
+Transport failures reject with a `TypeError` whose `code` is `NETWORK_ERROR` or
+`TIMEOUT`; HTTP error statuses resolve normally with `ok: false`. Streaming
+bodies, `AbortSignal`, `FormData`, and binary bodies are not part of the
+subset. Cookies use the app's shared `HTTPCookieStorage`.
+
+`setTimeout` and `clearTimeout` are installed when the context lacks them. The
+callbacks stay in JavaScript, the deadline runs on the main queue, and route
+teardown cancels every pending timer.
+
 ## Verification
 
 The repository exercises the same compiled multi-route fixture on both
