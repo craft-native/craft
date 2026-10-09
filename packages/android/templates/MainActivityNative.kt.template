@@ -1284,6 +1284,11 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+            "TouchableOpacity", "TouchableHighlight", "Pressable" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
+                configureContainer(this, style)
+                alpha = if (props.optBoolean("disabled", false)) 0.5f else 1f
+                reconcileChildren(screen, this, children, path, next, style, previousControls)
+            }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
                 setOnCheckedChangeListener(null)
                 val requestedValue = props.opt("value")
@@ -1476,7 +1481,8 @@ class MainActivity : AppCompatActivity() {
         }
         if (type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
-            if (handler.isNotBlank()) {
+            val disabled = props.optBoolean("disabled", false)
+            if (handler.isNotBlank() && !disabled) {
                 screen.handlers[control] = handler
                 control.isClickable = true
                 control.setOnClickListener {
@@ -1488,8 +1494,9 @@ class MainActivity : AppCompatActivity() {
                 control.isClickable = false
                 control.setOnClickListener(null)
             }
+            control.isEnabled = !disabled
         }
-        val longPressHandler = events.optString("onLongPress")
+        val longPressHandler = events.optString("onLongPress").takeUnless { props.optBoolean("disabled", false) }
         if (longPressHandler.isNotBlank()) {
             screen.longPressHandlers[control] = longPressHandler
             control.setOnLongClickListener {

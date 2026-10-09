@@ -1115,6 +1115,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
             configureStack(modal.contentStack, style: style)
             reconcileChildren(children, in: modal.contentStack, parent: current, path: path, style: style)
+        case "TouchableOpacity", "TouchableHighlight", "Pressable":
+            let pressable = result as! CraftNativeFlowView
+            configureStack(pressable, style: style)
+            reconcileChildren(children, in: pressable, parent: current, path: path, style: style)
+            pressable.alpha = props["disabled"] as? Bool == true ? 0.5 : 1
         case "Switch":
             let toggle = result as! UISwitch
             toggle.isOn = props["value"] as? Bool ?? props["checked"] as? Bool ?? false
@@ -1221,9 +1226,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             configureStack(stack, style: style)
             reconcileChildren(children, in: stack, parent: current, path: path, style: style)
         }
-        updateLongPressHandler(events["onLongPress"], for: result)
+        updateLongPressHandler(props["disabled"] as? Bool == true ? nil : events["onLongPress"], for: result)
         if type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
-            updatePressHandler(nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
+            let disabled = props["disabled"] as? Bool == true
+            updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
+            if disabled { result.isUserInteractionEnabled = false }
         }
         applyAccessibility(props, type: type, to: result)
         return current
@@ -1277,6 +1284,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "FlatList":
             return CraftNativeFlatList()
         case "View", "SafeAreaView":
+            return CraftNativeFlowView()
+        case "TouchableOpacity", "TouchableHighlight", "Pressable":
             return CraftNativeFlowView()
         default:
             return CraftNativeFlowView()

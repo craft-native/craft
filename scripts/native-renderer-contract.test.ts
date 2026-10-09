@@ -20,6 +20,9 @@ const COMPONENTS: Array<[string, string, string]> = [
   ['Text', 'case "Text":', '"Text" ->'],
   ['Button', 'case "Button", "Link":', '"Button" ->'],
   ['Link', 'case "Button", "Link":', '"Link" ->'],
+  ['TouchableOpacity', 'case "TouchableOpacity", "TouchableHighlight", "Pressable":', '"TouchableOpacity", "TouchableHighlight", "Pressable" ->'],
+  ['TouchableHighlight', 'case "TouchableOpacity", "TouchableHighlight", "Pressable":', '"TouchableOpacity", "TouchableHighlight", "Pressable" ->'],
+  ['Pressable', 'case "TouchableOpacity", "TouchableHighlight", "Pressable":', '"TouchableOpacity", "TouchableHighlight", "Pressable" ->'],
   ['Switch', 'case "Switch":', '"Switch" ->'],
   ['Slider', 'case "Slider":', '"Slider" ->'],
   ['TextInput', 'case "TextInput":', '"TextInput" ->'],
@@ -127,6 +130,14 @@ describe('native renderer component contract', () => {
     expect(android).toContain('events.optString("onShow")')
     expect(android).toContain('if (child is CraftNativeModalView)')
     expect(android).toContain('entry.view.bringToFront()')
+  })
+
+  it('keeps pressable container disabled behavior aligned across hosts', () => {
+    expect(ios).toContain('pressable.alpha = props["disabled"] as? Bool == true ? 0.5 : 1')
+    expect(ios).toContain('let disabled = props["disabled"] as? Bool == true')
+    expect(android).toContain('alpha = if (props.optBoolean("disabled", false)) 0.5f else 1f')
+    expect(android).toContain('if (handler.isNotBlank() && !disabled)')
+    expect(guide).toContain('`Pressable`')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {
