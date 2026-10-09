@@ -19,6 +19,7 @@ const COMPONENTS: Array<[string, string, string]> = [
   ['Button', 'case "Button", "Link":', '"Button" ->'],
   ['Link', 'case "Button", "Link":', '"Link" ->'],
   ['Switch', 'case "Switch":', '"Switch" ->'],
+  ['Slider', 'case "Slider":', '"Slider" ->'],
   ['TextInput', 'case "TextInput":', '"TextInput" ->'],
   ['ActivityIndicator', 'case "ActivityIndicator":', '"ActivityIndicator" ->'],
   ['Image', 'case "Image":', '"Image" ->'],
@@ -75,6 +76,15 @@ describe('native renderer component contract', () => {
     expect(android).toContain('Layout.JUSTIFICATION_MODE_INTER_WORD')
     expect(android).toContain('Layout.JUSTIFICATION_MODE_NONE')
     expect(navigationHome).toContain('testID="justified-text"')
+  })
+
+  it('keeps native slider controls and completion events aligned', () => {
+    expect(ios).toContain('slider.value = snappedSliderValue(value, for: slider)')
+    expect(ios).toContain('events["onSlidingComplete"]')
+    expect(android).toContain('val requested = props.optDouble("value", minimum)')
+    expect(android).toContain('if (seekBar.progress != snappedProgress)')
+    expect(android).toContain('onSlidingComplete')
+    expect(guide).toContain('`Slider` accepts `minimumTrackTintColor`')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {

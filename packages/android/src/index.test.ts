@@ -139,6 +139,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('"ActivityIndicator" ->')
       expect(nativeActivity).toContain('indeterminateTintList')
       expect(nativeActivity).toContain('isEnabled = !props.optBoolean("disabled", false)')
+      expect(nativeActivity).toContain('"Slider" -> (previous as? SeekBar ?: SeekBar(this))')
       expect(nativeActivity).toContain('onSlidingComplete')
       expect(nativeActivity).toContain('progressTintList')
       expect(nativeActivity).toContain('roundToInt()')
