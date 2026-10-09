@@ -563,6 +563,29 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('layoutGrid(flow,')
   })
 
+  it('keeps native scroll views\' sticky headers stuck and scrolls to a target', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-sticky-'))
+    await init({ runtimeDir: null, name: 'NativeSticky', bundleId: 'org.example.native-sticky', output, config: { renderer: 'native' } })
+    const source = readFileSync(join(output, 'Sources', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain('scroll.setStickyHeaderIndices(props["stickyHeaderIndices"])')
+    expect(source).toContain('scroll.setScrollTarget(props["scrollTarget"])')
+    // Headers follow the scroll on every layout pass, over the content.
+    expect(source).toContain('updateStickyHeaders()')
+    expect(source).toContain('let visibleTop = contentOffset.y + adjustedContentInset.top')
+    expect(source).toContain('contentStack.bringSubviewToFront(header)')
+    // A target lands below the header that would cover it, and a repeated
+    // target scrolls only when its key changes.
+    expect(source).toContain('stickyHeight(above: rect.minY)')
+    expect(source).toContain('guard key != scrollTargetKey else { return }')
+    // A target created by the same render is retried until it is laid out.
+    expect(source).toContain('pendingScrollTarget = (target.id, target.animated, target.attempts + 1)')
+    // A transformed child is placed without its (undefined) frame.
+    expect(source).toContain('if child.transform.isIdentity {')
+    expect(source).toContain('if child.center != center { child.center = center }')
+    // Snapping never takes a pixel off a label, which would truncate it.
+    expect(source).toContain('snapped.size = CraftNativeFlexLayout.ceiled(frame.size, scale: scale, atLeast: snapped.size)')
+  })
+
   it('applies image tinting to every native image source', async () => {
     const output = mkdtempSync(join(tmpdir(), 'craft-ios-native-image-tint-'))
     await init({ runtimeDir: null, name: 'NativeImageTint', bundleId: 'org.example.native-image-tint', output, config: { renderer: 'native' } })

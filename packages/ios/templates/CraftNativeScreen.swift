@@ -213,6 +213,14 @@ enum CraftNativeFlexLayout {
         }
     }
 
+    /// A size rounded up to whole pixels, never below `atLeast`.
+    static func ceiled(_ size: CGSize, scale: CGFloat, atLeast floor: CGSize) -> CGSize {
+        let scale = max(1, scale)
+        // Less a hair, so a size already on the pixel grid stays put.
+        func up(_ value: CGFloat) -> CGFloat { (value * scale - 0.001).rounded(.up) / scale }
+        return CGSize(width: max(floor.width, up(size.width)), height: max(floor.height, up(size.height)))
+    }
+
     /// A frame snapped to the screen's pixels edge by edge, so neighbours
     /// neither overlap nor leave a hairline between them.
     static func snapped(_ rect: CGRect, scale: CGFloat) -> CGRect {
@@ -358,8 +366,23 @@ private final class CraftNativeFlowView: UIStackView {
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let result = layout(width: bounds.width, height: bounds.height, maxWidth: bounds.width, maxHeight: bounds.height, place: true)
         for (child, frame) in result.frames {
-            let snapped = CraftNativeFlexLayout.snapped(frame, scale: scale)
-            if child.frame != snapped { child.frame = snapped }
+            var snapped = CraftNativeFlexLayout.snapped(frame, scale: scale)
+            // Snapping each edge can take a pixel off a label (15.83…33.83
+            // becomes 16…33.67), and a label a pixel narrower than its text
+            // truncates it ("13" drew as "…"). Text keeps its whole size.
+            if child is UILabel {
+                snapped.size = CraftNativeFlexLayout.ceiled(frame.size, scale: scale, atLeast: snapped.size)
+            }
+            if child.transform.isIdentity {
+                if child.frame != snapped { child.frame = snapped }
+            } else {
+                // A transformed child (a sticky header, a scaled spinner) is
+                // placed by bounds and center: its frame is undefined then.
+                let size = CGRect(origin: child.bounds.origin, size: snapped.size)
+                let center = CGPoint(x: snapped.midX, y: snapped.midY)
+                if child.bounds != size { child.bounds = size }
+                if child.center != center { child.center = center }
+            }
             child.craftApplyCornerRadius()
         }
     }
@@ -832,18 +855,144 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     override func layoutSubviews() {
         super.layoutSubviews()
         craftApplyCornerRadius()
-        guard contentNeedsLayout || laidOutSize != bounds.size else { return }
-        contentNeedsLayout = false
-        laidOutSize = bounds.size
-        var size = contentFitting(width: bounds.width, height: bounds.height)
-        if isVertical {
-            size.width = max(0, bounds.width - adjustedContentInset.left - adjustedContentInset.right)
-        } else {
-            size.height = max(0, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
+        if contentNeedsLayout || laidOutSize != bounds.size {
+            contentNeedsLayout = false
+            laidOutSize = bounds.size
+            var size = contentFitting(width: bounds.width, height: bounds.height)
+            if isVertical {
+                size.width = max(0, bounds.width - adjustedContentInset.left - adjustedContentInset.right)
+            } else {
+                size.height = max(0, bounds.height - adjustedContentInset.top - adjustedContentInset.bottom)
+            }
+            let frame = CGRect(origin: .zero, size: size)
+            if contentStack.frame != frame { contentStack.frame = frame }
+            if contentSize != size { contentSize = size }
         }
-        let frame = CGRect(origin: .zero, size: size)
-        if contentStack.frame != frame { contentStack.frame = frame }
-        if contentSize != size { contentSize = size }
+        // A scroll view lays out on every frame of a scroll: the sticky
+        // headers follow it here, over content placed by this same pass.
+        if !stickyIndices.isEmpty || pendingScrollTarget != nil { contentStack.layoutIfNeeded() }
+        updateStickyHeaders()
+        scrollToPendingTarget()
+    }
+
+    // MARK: Sticky headers
+
+    private var stickyIndices: [Int] = []
+    private var stickyViews: [UIView] = []
+
+    /// `stickyHeaderIndices`, as in React Native: the content's children at
+    /// these indices stay at the top of the visible area once scrolled to,
+    /// each pushed up by the next. Vertical scroll views only.
+    func setStickyHeaderIndices(_ value: Any?) {
+        let next = Array(Set(((value as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.intValue }.filter { $0 >= 0 })).sorted()
+        guard next != stickyIndices else { return }
+        stickyIndices = next
+        setNeedsLayout()
+    }
+
+    /// Where a header sits in the content when it is not stuck.
+    private func naturalTop(_ view: UIView) -> CGFloat {
+        view.center.y - view.bounds.height / 2
+    }
+
+    private func updateStickyHeaders() {
+        let children = contentStack.arrangedSubviews
+        let headers = isVertical ? stickyIndices.compactMap { $0 < children.count ? children[$0] : nil }.filter { !$0.isHidden } : []
+        for view in stickyViews where !headers.contains(where: { $0 === view }) {
+            view.transform = .identity
+            view.layer.zPosition = 0
+        }
+        stickyViews = headers
+        guard !headers.isEmpty else { return }
+        let visibleTop = contentOffset.y + adjustedContentInset.top
+        for (index, header) in headers.enumerated() {
+            let natural = naturalTop(header)
+            var top = max(natural, visibleTop)
+            if index + 1 < headers.count {
+                top = max(natural, min(top, naturalTop(headers[index + 1]) - header.bounds.height))
+            }
+            let shift = CGAffineTransform(translationX: 0, y: top - natural)
+            if header.transform != shift { header.transform = shift }
+            // Above the content it covers, for drawing and for touches.
+            header.layer.zPosition = 1
+            if contentStack.subviews.last !== header { contentStack.bringSubviewToFront(header) }
+        }
+    }
+
+    /// The height a stuck header covers above a point of the content.
+    private func stickyHeight(above y: CGFloat) -> CGFloat {
+        stickyViews.last(where: { naturalTop($0) <= y })?.bounds.height ?? 0
+    }
+
+    // MARK: Scroll targets
+
+    private var scrollTargetKey: String?
+    private var pendingScrollTarget: (id: String, animated: Bool, attempts: Int)?
+
+    /// `scrollTarget`: `"<testID>"` or `{ id, animated?, key? }`. When it
+    /// changes, the content scrolls so the view with that `testID` sits at
+    /// the top of the visible area, below any sticky header. A new `key`
+    /// scrolls to the same view again; `null` forgets the last target.
+    func setScrollTarget(_ value: Any?) {
+        var id: String?
+        var animated = true
+        if let text = value as? String {
+            id = text
+        } else if let target = value as? [String: Any] {
+            id = target["id"] as? String
+            animated = target["animated"] as? Bool ?? true
+        }
+        guard let id, !id.isEmpty else {
+            scrollTargetKey = nil
+            pendingScrollTarget = nil
+            return
+        }
+        let key: String
+        if let object = value as? [String: Any],
+           let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) {
+            key = String(decoding: data, as: UTF8.self)
+        } else {
+            key = id
+        }
+        guard key != scrollTargetKey else { return }
+        scrollTargetKey = key
+        pendingScrollTarget = (id, animated, 0)
+        setNeedsLayout()
+    }
+
+    private func descendant(withIdentifier id: String, in view: UIView) -> UIView? {
+        for child in view.subviews {
+            if child.accessibilityIdentifier == id { return child }
+            if let match = descendant(withIdentifier: id, in: child) { return match }
+        }
+        return nil
+    }
+
+    private func scrollToPendingTarget() {
+        guard let target = pendingScrollTarget, bounds.height > 0 else { return }
+        pendingScrollTarget = nil
+        let view = descendant(withIdentifier: target.id, in: contentStack)
+        // A target the same render created may not be in place yet (this pass
+        // can run while the render is applied): try again on the next passes.
+        guard let view, view.bounds.size != .zero else {
+            if target.attempts < 3 {
+                pendingScrollTarget = (target.id, target.animated, target.attempts + 1)
+                DispatchQueue.main.async { [weak self] in self?.setNeedsLayout() }
+            }
+            return
+        }
+        let rect = view.convert(view.bounds, to: contentStack)
+        if isVertical {
+            let lowest = -adjustedContentInset.top
+            let highest = max(lowest, contentSize.height + adjustedContentInset.bottom - bounds.height)
+            let y = min(highest, max(lowest, rect.minY - adjustedContentInset.top - stickyHeight(above: rect.minY)))
+            setContentOffset(CGPoint(x: contentOffset.x, y: y), animated: target.animated)
+        } else {
+            let lowest = -adjustedContentInset.left
+            let highest = max(lowest, contentSize.width + adjustedContentInset.right - bounds.width)
+            let x = min(highest, max(lowest, rect.minX - adjustedContentInset.left))
+            setContentOffset(CGPoint(x: x, y: contentOffset.y), animated: target.animated)
+        }
     }
 
     override func adjustedContentInsetDidChange() {
@@ -2036,6 +2185,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.showsHorizontalScrollIndicator = props["showsHorizontalScrollIndicator"] as? Bool != false
             scroll.alwaysBounceVertical = props["alwaysBounceVertical"] as? Bool ?? (direction == .vertical)
             scroll.alwaysBounceHorizontal = props["alwaysBounceHorizontal"] as? Bool ?? (direction == .horizontal)
+            scroll.setStickyHeaderIndices(props["stickyHeaderIndices"])
+            scroll.setScrollTarget(props["scrollTarget"])
             updateAuxiliaryHandler(events["onScroll"], in: &scrollHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollBeginDrag"], in: &scrollBeginHandlers, for: scroll)
             updateAuxiliaryHandler(events["onScrollEndDrag"], in: &scrollEndHandlers, for: scroll)
