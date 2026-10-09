@@ -12,7 +12,9 @@ import {
   orderSimulators,
   pngHasAlpha,
   productName,
+  readableTextOn,
   renderAppearance,
+  renderOfflinePage,
   renderBackgroundModes,
   renderEntitlements,
   renderOrientations,
@@ -736,6 +738,79 @@ describe('Craft iOS builder', () => {
     expect(ready).toContain('CraftEventManager.shared.setReady()')
   })
 
+  it('bundles an offline page in the app\'s colours, with a Retry that asks the shell', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-offline-'))
+    await init({ runtimeDir: null, name: 'HQ.training', bundleId: 'training.hq.app', output, config: { backgroundColor: '#f8fafc', backgroundColorDark: '#020617' } })
+    const page = readFileSync(join(output, 'dist', 'index.html'), 'utf8')
+
+    expect(page).toContain("<h1>You're offline</h1>")
+    expect(page).toContain('HQ.training could not reach the internet')
+    // Light and dark, each with text that reads on it. The old placeholder
+    // was white text whatever the background, invisible on a light app.
+    expect(page).toContain(':root { --background: #f8fafc; --text: #0f172a; }')
+    expect(page).toContain('@media (prefers-color-scheme: dark)')
+    expect(page).toContain(':root { --background: #020617; --text: #f8fafc; }')
+    expect(page).toContain('font: -apple-system-body')
+    // No debug output in front of the person using the app.
+    expect(page).not.toContain('Built with Craft')
+    expect(page).not.toContain('bridge')
+    expect(page).not.toContain('console.')
+
+    // Retry posts straight to the native handler, which reloads the remote.
+    const script = page.slice(page.indexOf('<script>') + 8, page.indexOf('</script>'))
+    const posts: unknown[] = []
+    const listeners: Record<string, () => void> = {}
+    const button = { disabled: false, textContent: 'Retry', addEventListener: (type: string, listener: () => void) => { listeners[type] = listener } }
+    // eslint-disable-next-line no-new-func
+    new Function('window', 'document', 'location', 'setTimeout', script)(
+      { webkit: { messageHandlers: { craft: { postMessage: (message: unknown) => posts.push(message) } } }, addEventListener() {} },
+      { getElementById: () => button },
+      { reload() { throw new Error('reloaded the bundled page instead of asking for the remote') } },
+      () => 0,
+    )
+    listeners.click!()
+    expect(posts).toEqual([{ action: 'retryRemote' }])
+    expect(button.disabled).toBe(true)
+
+    const swift = readFileSync(join(output, 'Sources', 'HQTrainingApp.swift'), 'utf8')
+    expect(swift).toContain('case "retryRemote":')
+    expect(swift).toContain('private func retryRemote() {')
+  })
+
+  it('picks offline-page text that reads on the background', () => {
+    expect(readableTextOn('#ffffff')).toBe('#0f172a')
+    expect(readableTextOn('#0b1712')).toBe('#f8fafc')
+    expect(readableTextOn('#fff')).toBe('#0f172a')
+    expect(readableTextOn('not a colour')).toBe('#0f172a')
+    // An unreadable dark colour falls back to the light one.
+    expect(renderOfflinePage({ appName: 'A & B', backgroundColor: '#ffffff', backgroundColorDark: 'oops' }))
+      .toContain('@media (prefers-color-scheme: dark) {\n      :root { --background: #ffffff; --text: #0f172a; }')
+    expect(renderOfflinePage({ appName: 'A & B', backgroundColor: '#ffffff' })).toContain('<title>A &amp; B</title>')
+  })
+
+  it('keeps the splash until the page is ready or has painted, for splashMaxSeconds at most, and times out a dead load', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-launch-'))
+    await init({ runtimeDir: null, name: 'Launch', bundleId: 'org.example.launch', output, config: { splashMaxSeconds: 2, requestTimeoutSeconds: 8 } })
+    const swift = readFileSync(join(output, 'Sources', 'LaunchApp.swift'), 'utf8')
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+
+    expect(config.splashMaxSeconds).toBe(2)
+    expect(config.requestTimeoutSeconds).toBe(8)
+    expect(swift).toContain('var splashMaxSeconds: Double = 3')
+    expect(swift).toContain('var requestTimeoutSeconds: Double = 10')
+    // The ten-second cap in CraftChrome's init is gone; the configured one is armed with the web view.
+    expect(swift).not.toContain('DispatchQueue.main.asyncAfter(deadline: .now() + 10)')
+    expect(swift).toContain('CraftChrome.shared.holdSplash(atMost: config.splashMaxSeconds)')
+    // First contentful paint hides it too.
+    expect(swift).toContain("if (entry.name === 'first-contentful-paint') { send(); observer.disconnect(); }")
+    expect(swift).toContain('controller.addUserScript(WKUserScript(source: CraftChrome.paintScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))')
+    expect(swift).toContain('case "painted":')
+    // Every load of the app's own page carries the timeout.
+    expect(swift).toContain('URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: max(1, requestTimeoutSeconds))')
+    expect(swift).toContain('webView.load(config.request(for: url))')
+    expect(swift).toContain('webView.load(config.request(for: remote))')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled
@@ -827,7 +902,7 @@ describe('Craft iOS builder', () => {
     expect(recovery.length).toBeGreaterThan(0)
     expect(recovery.length).toBeLessThan(swift.length / 2)
     expect(recovery).toContain('loadedBundledFallback = false')
-    expect(recovery).toContain('webView.load(URLRequest(url: remote))')
+    expect(recovery).toContain('webView.load(config.request(for: remote))')
     expect(swift).toContain('name: UIApplication.willEnterForegroundNotification')
 
     // And the network trigger retries on a transition only. Retrying whenever

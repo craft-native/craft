@@ -279,10 +279,19 @@ final class CraftChrome: ObservableObject {
     /// What the tab bar covers at the bottom of the screen, in points.
     private var occupied: CGFloat = 0
     private var pendingHide: DispatchWorkItem?
+    private var splashDeadline: DispatchWorkItem?
 
-    private init() {
-        // However the page behaves, the splash never outstays ten seconds.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.hideSplash() }
+    private init() {}
+
+    /// However the page behaves, the splash is gone after `seconds`
+    /// (`splashMaxSeconds`, three by default). It used to be ten: a page that
+    /// never painted held a logo on screen for ten seconds, which reads as a
+    /// hang rather than a launch.
+    func holdSplash(atMost seconds: Double) {
+        splashDeadline?.cancel()
+        let deadline = DispatchWorkItem { [weak self] in self?.hideSplash() }
+        splashDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0.5, seconds), execute: deadline)
     }
 
     func handle(_ body: [String: Any]) {
@@ -320,6 +329,11 @@ final class CraftChrome: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: hide)
         case "ready":
             hideSplash()
+        case "painted":
+            // The page's first contentful paint, two frames on: something of
+            // the page is on screen, so the launch screen has done its job
+            // even if the page never says `ready`.
+            hideSplash()
         default:
             break
         }
@@ -337,9 +351,34 @@ final class CraftChrome: ObservableObject {
     }
 
     func hideSplash() {
+        splashDeadline?.cancel()
+        splashDeadline = nil
         guard splashVisible else { return }
         withAnimation(.easeOut(duration: 0.28)) { splashVisible = false }
     }
+
+    /// The paint half of "until the page is ready or has painted": tells the
+    /// shell once the document's first contentful paint is on screen.
+    static let paintScript = """
+    (function() {
+        try {
+            var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craftChrome;
+            if (!handler || typeof PerformanceObserver !== 'function') return;
+            var sent = false;
+            var send = function() {
+                if (sent) return;
+                sent = true;
+                requestAnimationFrame(function() { requestAnimationFrame(function() { handler.postMessage({type: 'painted'}); }); });
+            };
+            var observer = new PerformanceObserver(function(list) {
+                list.getEntries().forEach(function(entry) {
+                    if (entry.name === 'first-contentful-paint') { send(); observer.disconnect(); }
+                });
+            });
+            observer.observe({type: 'paint', buffered: true});
+        } catch (e) {}
+    })();
+    """
 
     /// A page that loaded and never said it was ready still gets shown.
     func pageFinished() {
@@ -721,6 +760,12 @@ struct CraftConfig: Codable {
     var enableMLKit: Bool = false
     var devServerURL: String? = nil
     var trustedOrigins: [String] = []
+    /// The longest the launch splash stays up when the page neither says it is
+    /// ready nor paints.
+    var splashMaxSeconds: Double = 3
+    /// How long the app's own page may take to answer before the load counts
+    /// as unreachable and the bundled copy stands in.
+    var requestTimeoutSeconds: Double = 10
 }
 
 extension CraftConfig {
@@ -732,6 +777,14 @@ extension CraftConfig {
         case "dark": return .dark
         default: return darkMode ? .dark : .light
         }
+    }
+
+    /// A request for the app's own page, given up on after
+    /// `requestTimeoutSeconds`. URLRequest's default is sixty seconds, and a
+    /// first launch on a dead connection sat on the splash and then a blank
+    /// page for that long before the offline page could show.
+    func request(for url: URL) -> URLRequest {
+        URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: max(1, requestTimeoutSeconds))
     }
 
     /// The webview's background, resolved per trait so a Dark Mode switch
@@ -940,6 +993,7 @@ struct CraftWebView: UIViewRepresentable {
         DeepLinkManager.shared.setWebView(webView)
         CraftEventManager.shared.setWebView(webView)
         CraftChrome.shared.webView = webView
+        CraftChrome.shared.holdSplash(atMost: config.splashMaxSeconds)
 
         // Parse background color
         let bgColor = config.resolvedBackgroundColor
@@ -950,7 +1004,7 @@ struct CraftWebView: UIViewRepresentable {
         if let devURL = config.devServerURL, !devURL.isEmpty {
             // Development mode - connect to server
             if let url = URL(string: devURL) {
-                webView.load(URLRequest(url: url))
+                webView.load(config.request(for: url))
             }
         } else if let bundledURL = URL(string: "craft://app/index.html") {
             // A route-aware local origin keeps root-relative STX assets and
@@ -1332,6 +1386,11 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     rejectCallback(callbackId, error: "Settings URL is unavailable")
                 }
+            // The offline page's Retry button, and anything else that wants
+            // the app's own page back after the bundled copy stood in.
+            case "retryRemote":
+                retryRemote()
+                resolveCallback(callbackId, result: true)
             case "log":
                 if let msg = body["message"] as? String {
                     print("[Craft Web] \(msg)")
@@ -2131,11 +2190,26 @@ struct CraftWebView: UIViewRepresentable {
                   let remote = config.devServerURL.flatMap(URL.init(string:)) else { return }
             loadedBundledFallback = false
             print("Craft: \(reason); loading \(remote) again instead of the bundled copy")
-            webView.load(URLRequest(url: remote))
+            webView.load(config.request(for: remote))
         }
 
         @objc private func appWillEnterForeground(_ notification: Notification) {
             returnFromBundledFallback(because: "the app returned to the foreground")
+        }
+
+        /// Load the app's own page again, now, because someone asked.
+        ///
+        /// Unlike `returnFromBundledFallback` it does not wait for a trigger
+        /// and works from any page. If the remote is still out of reach the
+        /// load fails as unreachable and the bundled copy comes back.
+        private func retryRemote() {
+            guard let webView else { return }
+            guard let remote = config.devServerURL.flatMap(URL.init(string:)) else {
+                webView.reload()
+                return
+            }
+            loadedBundledFallback = false
+            webView.load(config.request(for: remote))
         }
 
         private func isTrustedURL(_ url: URL?) -> Bool {
@@ -2221,6 +2295,7 @@ struct CraftWebView: UIViewRepresentable {
             #if DEBUG
             controller.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             #endif
+            controller.addUserScript(WKUserScript(source: CraftChrome.paintScript, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
 

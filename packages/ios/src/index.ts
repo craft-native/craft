@@ -111,6 +111,16 @@ export interface CraftConfig {
    */
   usesNonExemptEncryption?: boolean
   privacy?: CraftPrivacyManifest
+  /**
+   * The longest the launch splash stays up, in seconds, when the page neither
+   * hides it (`splash.hide()`) nor paints. Default 3.
+   */
+  splashMaxSeconds?: number
+  /**
+   * How long the app's own page may take to answer, in seconds, before the
+   * load counts as unreachable and the bundled page stands in. Default 10.
+   */
+  requestTimeoutSeconds?: number
   orientations?: Array<'portrait' | 'landscape-left' | 'landscape-right' | 'portrait-upside-down'>
   deviceFamilies?: Array<'iphone' | 'ipad'>
 }
@@ -575,6 +585,120 @@ export function renderLaunchScreen(config: Pick<CraftConfig, 'splashImagePath'>)
   return `        <key>UIColorName</key>\n        <string>LaunchBackground</string>${image}`
 }
 
+/** `#rgb` or `#rrggbb` as 0-255 channels, or null for anything else. */
+function hexChannels(hex: string | undefined): [number, number, number] | null {
+  const value = hex?.trim().replace(/^#/, '') ?? ''
+  const full = value.length === 3 ? [...value].map(digit => digit + digit).join('') : value.slice(0, 6)
+  if (!/^[0-9a-f]{6}$/i.test(full)) return null
+  return [0, 2, 4].map(index => Number.parseInt(full.slice(index, index + 2), 16)) as [number, number, number]
+}
+
+/** Near-black or near-white, whichever reads on `background` (WCAG relative luminance). */
+export function readableTextOn(background: string | undefined): string {
+  const channels = hexChannels(background)
+  if (!channels) return '#0f172a'
+  const [r, g, b] = channels.map((channel) => {
+    const c = channel / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  const luminance = 0.2126 * r! + 0.7152 * g! + 0.0722 * b!
+  return luminance > 0.4 ? '#0f172a' : '#f8fafc'
+}
+
+/**
+ * The page the app shows when its own page cannot be reached: the generated
+ * `dist/index.html` until the app's web assets replace it.
+ *
+ * An app whose page has a service worker normally opens from it offline, so
+ * this only shows on a first launch without one, or when the remote fails
+ * hard. It used to be a placeholder that said "Built with Craft iOS" in white
+ * on whatever the background was (invisible on a light one) with a bridge
+ * status line under it: debug output, in front of the person using the app.
+ *
+ * Now it says what happened in the app's own colours, light and dark, sized
+ * with Dynamic Type, and Retry asks the shell to load the app's page again.
+ * The shell also goes back to the app's page by itself when the connection
+ * returns, so the page does not retry on `online` as well.
+ */
+export function renderOfflinePage(config: Pick<CraftConfig, 'appName' | 'backgroundColor' | 'backgroundColorDark'>): string {
+  const light = hexChannels(config.backgroundColor) ? config.backgroundColor! : '#ffffff'
+  const dark = hexChannels(config.backgroundColorDark) ? config.backgroundColorDark! : light
+  const name = xmlEscape(config.appName)
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="color-scheme" content="light dark">
+  <title>${name}</title>
+  <style>
+    :root { --background: ${light}; --text: ${readableTextOn(light)}; }
+    @media (prefers-color-scheme: dark) {
+      :root { --background: ${dark}; --text: ${readableTextOn(dark)}; }
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font: -apple-system-body;
+      font-family: -apple-system, system-ui, sans-serif;
+      background: var(--background);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: calc(env(safe-area-inset-top) + 24px) calc(env(safe-area-inset-right) + 32px) calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 32px);
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    main { max-width: 22rem; }
+    .app { font: -apple-system-subheadline; font-weight: 600; opacity: 0.6; margin-bottom: 0.5rem; }
+    h1 { font: -apple-system-title1; font-weight: 700; margin-bottom: 0.75rem; }
+    p { opacity: 0.72; line-height: 1.4; }
+    button {
+      font: -apple-system-headline;
+      margin-top: 1.75rem;
+      min-width: 9rem;
+      min-height: 44px;
+      padding: 0.75rem 1.75rem;
+      border: 0;
+      border-radius: 999px;
+      background: var(--text);
+      color: var(--background);
+      cursor: pointer;
+    }
+    button:active { opacity: 0.7; }
+    button:disabled { opacity: 0.5; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="app">${name}</div>
+    <h1>You're offline</h1>
+    <p>${name} could not reach the internet. Check your connection, then try again.</p>
+    <button id="retry" type="button">Retry</button>
+  </main>
+  <script>
+    (function () {
+      var button = document.getElementById('retry');
+      function retry() {
+        button.disabled = true;
+        button.textContent = 'Retrying';
+        var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.craft;
+        if (handler) handler.postMessage({ action: 'retryRemote' });
+        else location.reload();
+        // Still here a while later means the page is still out of reach.
+        setTimeout(function () { button.disabled = false; button.textContent = 'Retry'; }, 12000);
+      }
+      button.addEventListener('click', retry);
+    })();
+  </script>
+</body>
+</html>
+`
+}
+
 /** Replace the bundled web application atomically so removed assets cannot linger. */
 export function syncWebAssets(source: string, output: string): void {
   const sourcePath = resolve(source)
@@ -929,47 +1053,9 @@ export async function init(options: InitOptions): Promise<void> {
     writeFileSync(join(output, 'WatchExtension', 'Watch.entitlements'), renderWatchEntitlements(config))
   }
 
-  // Create placeholder index.html
-  const placeholderHtml = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="viewport-fit=cover, width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>${xmlEscape(displayName)}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, system-ui, sans-serif;
-      background: ${config.backgroundColor};
-      color: white;
-      min-height: 100vh;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-    }
-    .container { text-align: center; padding: 2rem; }
-    h1 { font-size: 2.5rem; margin-bottom: 1rem; }
-    p { opacity: 0.7; }
-    .ready { color: #4ade80; font-size: 0.9rem; margin-top: 2rem; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>⚡ ${xmlEscape(displayName)}</h1>
-    <p>Built with Craft iOS</p>
-    <p class="ready" id="status">Waiting for Craft bridge...</p>
-  </div>
-  <script>
-    window.addEventListener('craftReady', (e) => {
-      document.getElementById('status').textContent = \`✓ Craft bridge ready (platform: \${e.detail.platform})\`;
-      console.log('Craft capabilities:', e.detail.capabilities);
-    });
-  </script>
-</body>
-</html>`
-
-  writeFileSync(join(output, 'dist', 'index.html'), placeholderHtml)
+  // The bundled page, until the app's own web assets replace it: what shows
+  // when the app's remote page cannot be reached.
+  writeFileSync(join(output, 'dist', 'index.html'), renderOfflinePage(config))
 
   console.log('✅ Project initialized')
   console.log('')
