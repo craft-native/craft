@@ -149,6 +149,21 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
 
     required init?(coder: NSCoder) { nil }
 
+    func setContentContainerStyle(_ raw: [String: Any]?) {
+        func number(_ value: Any?) -> CGFloat? { (value as? NSNumber).map { CGFloat(truncating: $0) } }
+        let padding = number(raw?["padding"]) ?? 0
+        let horizontal = number(raw?["paddingHorizontal"]) ?? padding
+        let vertical = number(raw?["paddingVertical"]) ?? padding
+        contentInset = UIEdgeInsets(
+            top: number(raw?["paddingTop"]) ?? vertical,
+            left: number(raw?["paddingLeft"]) ?? horizontal,
+            bottom: number(raw?["paddingBottom"]) ?? vertical,
+            right: number(raw?["paddingRight"]) ?? horizontal
+        )
+        scrollIndicatorInsets = contentInset
+        collectionViewLayout.invalidateLayout()
+    }
+
     var visibleItemIdentities: [String] {
         indexPathsForVisibleItems
             .sorted { $0.item < $1.item }

@@ -178,6 +178,20 @@ internal class CraftNativeFlatList(context: Context) : RecyclerView(context) {
         }
     }
 
+    fun setContentContainerStyle(style: JSONObject?, density: Float) {
+        val padding = (style?.optDouble("padding", 0.0) ?: 0.0) * density
+        val horizontal = (style?.optDouble("paddingHorizontal", padding / density) ?: (padding / density)) * density
+        val vertical = (style?.optDouble("paddingVertical", padding / density) ?: (padding / density)) * density
+        setPadding(
+            ((style?.optDouble("paddingLeft", horizontal / density) ?: (horizontal / density)) * density).toInt(),
+            ((style?.optDouble("paddingTop", vertical / density) ?: (vertical / density)) * density).toInt(),
+            ((style?.optDouble("paddingRight", horizontal / density) ?: (horizontal / density)) * density).toInt(),
+            ((style?.optDouble("paddingBottom", vertical / density) ?: (vertical / density)) * density).toInt(),
+        )
+        clipToPadding = true
+        requestLayout()
+    }
+
     fun apply(
         nodes: List<JSONObject>,
         horizontal: Boolean,

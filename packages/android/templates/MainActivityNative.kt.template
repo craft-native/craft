@@ -1473,6 +1473,7 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)
             }
             "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
+                setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)
                 setKeyboardDismissMode(props.optString("keyboardDismissMode")) {
                     (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                         ?.hideSoftInputFromWindow(windowToken, 0)

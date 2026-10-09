@@ -286,6 +286,13 @@ describe('native renderer component contract', () => {
     expect(android).toContain('reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)')
   })
 
+  it('applies FlatList content container padding on both hosts', () => {
+    expect(iosFlatList).toContain('func setContentContainerStyle(_ raw: [String: Any]?)')
+    expect(ios).toContain('list.setContentContainerStyle(props["contentContainerStyle"] as? [String: Any])')
+    expect(androidFlatList).toContain('fun setContentContainerStyle(style: JSONObject?, density: Float)')
+    expect(android).toContain('setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)')
+  })
+
   it('applies the shared gap fallback on both flex axes', () => {
     expect(ios).toContain('stack.rowGap = number(style["rowGap"]) ?? gap')
     expect(ios).toContain('stack.columnGap = number(style["columnGap"]) ?? gap')

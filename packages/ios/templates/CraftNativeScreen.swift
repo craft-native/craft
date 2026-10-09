@@ -1419,6 +1419,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         flatListOwners = flatListOwners.filter { $0.value != owner }
         for child in children { registerFlatListOwnership(child, owner: owner) }
         list.bounces = props["bounces"] as? Bool ?? true
+        list.setContentContainerStyle(props["contentContainerStyle"] as? [String: Any])
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
         list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }
