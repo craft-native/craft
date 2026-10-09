@@ -268,6 +268,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('WindowInsetsCompat.Type.systemBars()')
     expect(android).toContain('view.requestLayout()')
     expect(android).toContain('view.post { screens.lastOrNull()?.takeIf { it.active }?.let(::emitLayoutEvents) }')
+    expect(ios).toContain('UIResponder.keyboardWillChangeFrameNotification')
+    expect(ios).toContain('self.additionalSafeAreaInsets.bottom = inset')
   })
 
   it('keeps reverse row scroll containers horizontal on both hosts', () => {

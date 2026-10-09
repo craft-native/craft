@@ -597,6 +597,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var pendingTimers: [Int: DispatchWorkItem] = [:]
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var deepLinkListener: UUID?
+    private var keyboardSafeAreaInset: CGFloat = 0
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -768,12 +769,46 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         observe(UIApplication.didBecomeActiveNotification, state: "active")
         observe(UIApplication.willResignActiveNotification, state: "inactive")
         observe(UIApplication.didEnterBackgroundNotification, state: "background")
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillChangeFrameNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.applyKeyboardSafeArea(notification)
+        })
+        lifecycleObservers.append(NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillHideNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            self?.applyKeyboardSafeArea(notification, hidden: true)
+        })
         sendAppState(CraftNativeActions.currentAppState())
         deepLinkListener = DeepLinkManager.shared.addNativeListener { [weak self] url, initial in
             guard let self = self, self.navigationController?.topViewController === self else { return }
             var payload = CraftNativeActions.deepLinkData(url)
             payload["initial"] = initial
             self.send(type: "DEEP_LINK", payload: payload)
+        }
+    }
+
+    private func applyKeyboardSafeArea(_ notification: Notification, hidden: Bool = false) {
+        let inset: CGFloat
+        if hidden {
+            inset = 0
+        } else if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            let keyboardFrame = view.convert(frame.cgRectValue, from: nil)
+            inset = max(0, view.bounds.intersection(keyboardFrame).height - view.safeAreaInsets.bottom)
+        } else {
+            return
+        }
+        guard abs(inset - keyboardSafeAreaInset) > 0.5 else { return }
+        keyboardSafeAreaInset = inset
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curve = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 7
+        UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: UInt(curve << 16))) {
+            self.additionalSafeAreaInsets.bottom = inset
+            self.view.layoutIfNeeded()
         }
     }
 
