@@ -1402,7 +1402,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         } else if handler == nil, let recognizer = tapRecognizers.removeValue(forKey: id) {
             view.removeGestureRecognizer(recognizer)
         }
-        if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }
+        // A container keeps receiving touches without a handler of its own,
+        // or every control inside it (and the screen root) would be dead.
+        if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }
     }
 
     private func updateLongPressHandler(_ handler: String?, for view: UIView) {
@@ -1420,7 +1422,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let recognizer = longPressRecognizers.removeValue(forKey: id) {
                 view.removeGestureRecognizer(recognizer)
             }
-            if !(view is UIScrollView) { view.isUserInteractionEnabled = handlers[id] != nil }
+            if !(view is UIScrollView) { view.isUserInteractionEnabled = handlers[id] != nil || view is CraftNativeFlowView }
         }
     }
 

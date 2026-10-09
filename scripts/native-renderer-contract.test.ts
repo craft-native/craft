@@ -303,7 +303,7 @@ describe('native renderer component contract', () => {
   })
 
   it('keeps generic pressable views interactive without disabling scroll containers', () => {
-    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil }')
+    expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }')
     expect(ios).toContain('if let handler, !handler.isEmpty { handlers[id] = handler }')
     expect(ios).toContain('let handler = handler?.isEmpty == false ? handler : nil')
     expect(ios).toContain('list.onMomentumScrollEnd = nonEmptyHandler(events["onMomentumScrollEnd"]).map')
@@ -327,7 +327,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('screen.longPressHandlers.keys.removeAll(released)')
     expect(guide).toContain('`onLongPress`')
     expect(ios).toContain('if !(view is UIScrollView) { view.isUserInteractionEnabled = true }')
-    expect(ios).toContain('view.isUserInteractionEnabled = handlers[id] != nil')
+    expect(ios).toContain('view.isUserInteractionEnabled = handlers[id] != nil || view is CraftNativeFlowView')
   })
 
   it('lets accessibility disabled state disable controls without re-enabling them', () => {
