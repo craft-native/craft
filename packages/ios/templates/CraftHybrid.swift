@@ -446,6 +446,16 @@ final class CraftHybrid: NSObject {
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
         if (!link) return;
+        // The bar's Back (data-native-back). Its href is only where to go
+        // without history, often a native path like the calendar; at the
+        // entry a native screen opened, Back is that screen.
+        if (link.hasAttribute('data-native-back')) {
+          if (!atBase()) return;
+          event.preventDefault();
+          event.stopPropagation();
+          post({ type: 'back' });
+          return;
+        }
         if ((link.target && link.target !== '_self') || link.hasAttribute('download') || link.hasAttribute('data-native-tab')
           || link.getAttribute('data-stx-nav') === 'tab' || link.hasAttribute('data-craft-web')) return;
         var path = local(link.href);

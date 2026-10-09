@@ -288,6 +288,24 @@ describe('hybrid page script', () => {
     expect(page.historyCalls).toEqual(['back', 'back'])
   })
 
+  it('takes the bar\'s Back link at that entry as Back, not as a tap on its fallback path', async () => {
+    const page = loadPage()
+    const back = { href: 'http://localhost:3100/m/calendar', target: '', hasAttribute: (name: string) => name === 'data-native-back', getAttribute: () => null }
+    const click = () => {
+      const event = { defaultPrevented: false, button: 0, target: { closest: () => back }, prevented: false, stopped: false, preventDefault() { this.prevented = true }, stopPropagation() { this.stopped = true } }
+      page.fire('click', event)
+      return event
+    }
+    // A tab's own web root: the page handles its Back.
+    expect(click().prevented).toBe(false)
+    expect(page.posts.filter(m => m.type === 'navigateNative')).toHaveLength(0)
+    await page.window.__craftHybrid.navigate('/m/workout/42')
+    page.window.__craftHybrid.setBase(1)
+    expect(click().prevented).toBe(true)
+    expect(page.posts.at(-1)).toEqual({ type: 'back' })
+    expect(page.posts.filter(m => m.type === 'navigateNative')).toHaveLength(0)
+  })
+
   it('keeps the router from taking the edge swipe at that entry', async () => {
     const page = loadPage()
     const touch = (x: number) => {
