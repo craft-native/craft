@@ -140,8 +140,19 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('pressable.pressBaseOpacity * activeOpacity')
     expect(android).toContain('screen.pressActiveOpacities[this] = props.optDouble("activeOpacity", 0.5).toFloat()')
     expect(android).toContain('view.alpha = base * active')
-    expect(android).toContain('if (handler.isNotBlank() && !disabled)')
+    expect(android).toContain('if ((handler.isNotBlank() || (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable") && hasPressLifecycle)) && !disabled)')
     expect(guide).toContain('`Pressable`')
+  })
+
+  it('delivers Pressable press-in and press-out callbacks on both hosts', () => {
+    expect(ios).toContain('events["onPressIn"]')
+    expect(ios).toContain('events["onPressOut"]')
+    expect(ios).toContain('private func updatePressFeedback')
+    expect(ios).toContain('viewPressFeedback')
+    expect(android).toContain('val pressInHandler = events.optString("onPressIn")')
+    expect(android).toContain('val pressOutHandler = events.optString("onPressOut")')
+    expect(android).toContain('screen.pressInHandlers[view]')
+    expect(android).toContain('screen.pressOutHandlers[view]')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {

@@ -718,6 +718,8 @@ class MainActivity : AppCompatActivity() {
         val suppressedTextChanges = mutableSetOf<EditText>()
         val controls = mutableMapOf<String, View>()
         val handlers = mutableMapOf<View, String>()
+        val pressInHandlers = mutableMapOf<View, String>()
+        val pressOutHandlers = mutableMapOf<View, String>()
         val longPressHandlers = mutableMapOf<View, String>()
         val scrollHandlers = mutableMapOf<View, String>()
         val scrollBeginHandlers = mutableMapOf<View, String>()
@@ -1519,11 +1521,16 @@ class MainActivity : AppCompatActivity() {
                 reconcileChildren(screen, this, children, path, next, style, previousControls)
             }
         }
+        val pressInHandler = events.optString("onPressIn").takeIf { it.isNotBlank() }
+        val pressOutHandler = events.optString("onPressOut").takeIf { it.isNotBlank() }
+        if (pressInHandler != null) screen.pressInHandlers[control] = pressInHandler else screen.pressInHandlers.remove(control)
+        if (pressOutHandler != null) screen.pressOutHandlers[control] = pressOutHandler else screen.pressOutHandlers.remove(control)
         if (type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator") {
             val handler = events.optString("onPress").ifBlank { events.optString("onClick") }
             val disabled = props.optBoolean("disabled", false)
-            if (handler.isNotBlank() && !disabled) {
-                screen.handlers[control] = handler
+            val hasPressLifecycle = pressInHandler != null || pressOutHandler != null
+            if ((handler.isNotBlank() || (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable") && hasPressLifecycle)) && !disabled) {
+                if (handler.isNotBlank()) screen.handlers[control] = handler else screen.handlers.remove(control)
                 control.isClickable = true
                 if (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable")) {
                     control.setOnClickListener(null)
@@ -1533,10 +1540,16 @@ class MainActivity : AppCompatActivity() {
                                 val active = screen.pressActiveOpacities[view] ?: 0.5f
                                 val base = screen.pressBaseOpacities[view] ?: 1f
                                 view.alpha = base * active
+                                screen.pressInHandlers[view]?.let { current ->
+                                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                                }
                                 true
                             }
                             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
                                 view.alpha = screen.pressBaseOpacities[view] ?: 1f
+                                screen.pressOutHandlers[view]?.let { current ->
+                                    send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                                }
                                 if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
                                     val current = screen.handlers[view] ?: return@setOnTouchListener true
                                     send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
@@ -2209,6 +2222,8 @@ class MainActivity : AppCompatActivity() {
         }
         released.forEach(defaultBackgrounds::remove)
         screen.handlers.keys.removeAll(released)
+        screen.pressInHandlers.keys.removeAll(released)
+        screen.pressOutHandlers.keys.removeAll(released)
         screen.longPressHandlers.keys.removeAll(released)
         screen.layoutHandlers.keys.removeAll(released)
         screen.lastLayoutBounds.keys.removeAll(released)
@@ -2241,6 +2256,8 @@ class MainActivity : AppCompatActivity() {
         releaseViewState(screen, retainedViews(screen).toList())
         screen.controls.clear()
         screen.handlers.clear()
+        screen.pressInHandlers.clear()
+        screen.pressOutHandlers.clear()
         screen.layoutHandlers.clear()
         screen.lastLayoutBounds.clear()
         screen.scrollHandlers.clear()

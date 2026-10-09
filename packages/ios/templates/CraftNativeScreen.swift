@@ -586,6 +586,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private let jsContext = JSContext()!
     private let rootStack = CraftNativeFlowView()
     private var handlers: [ObjectIdentifier: String] = [:]
+    private var pressInHandlers: [ObjectIdentifier: String] = [:]
+    private var pressOutHandlers: [ObjectIdentifier: String] = [:]
     private var focusHandlers: [ObjectIdentifier: String] = [:]
     private var blurHandlers: [ObjectIdentifier: String] = [:]
     private var endEditingHandlers: [ObjectIdentifier: String] = [:]
@@ -607,6 +609,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
     private var longPressRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
+    private var pressFeedbackRecognizers: [ObjectIdentifier: UILongPressGestureRecognizer] = [:]
     private var imageSources: [ObjectIdentifier: String] = [:]
     private var imageTasks: [ObjectIdentifier: URLSessionDataTask] = [:]
     private var imageErrors: [ObjectIdentifier: String] = [:]
@@ -1303,6 +1306,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         if type != "Button" && type != "Link" && type != "TextInput" && type != "Picker" && type != "Modal" && type != "Switch" && type != "Slider" && type != "ActivityIndicator" {
             let disabled = props["disabled"] as? Bool == true
             updatePressHandler(disabled ? nil : nonEmptyHandler(events["onPress"]) ?? nonEmptyHandler(events["onClick"]), for: result)
+            updatePressFeedback(
+                disabled ? nil : nonEmptyHandler(events["onPressIn"]),
+                disabled ? nil : nonEmptyHandler(events["onPressOut"]),
+                for: result
+            )
             if disabled { result.isUserInteractionEnabled = false }
         }
         applyAccessibility(props, type: type, to: result)
@@ -1533,6 +1541,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         let id = ObjectIdentifier(node.view)
         handlers.removeValue(forKey: id)
+        pressInHandlers.removeValue(forKey: id)
+        pressOutHandlers.removeValue(forKey: id)
         layoutHandlers.removeValue(forKey: id)
         lastLayoutFrames.removeValue(forKey: id)
         focusHandlers.removeValue(forKey: id)
@@ -1556,6 +1566,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             node.view.removeGestureRecognizer(recognizer)
         }
         if let recognizer = longPressRecognizers.removeValue(forKey: id) {
+            node.view.removeGestureRecognizer(recognizer)
+        }
+        if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }
         imageSources.removeValue(forKey: id)
@@ -1650,6 +1663,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // A container keeps receiving touches without a handler of its own,
         // or every control inside it (and the screen root) would be dead.
         if !(view is UIScrollView) { view.isUserInteractionEnabled = handler != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }
+    }
+
+    private func updatePressFeedback(_ pressIn: String?, _ pressOut: String?, for view: UIView) {
+        let id = ObjectIdentifier(view)
+        if let pressIn, !pressIn.isEmpty { pressInHandlers[id] = pressIn } else { pressInHandlers.removeValue(forKey: id) }
+        if let pressOut, !pressOut.isEmpty { pressOutHandlers[id] = pressOut } else { pressOutHandlers.removeValue(forKey: id) }
+        guard pressInHandlers[id] != nil || pressOutHandlers[id] != nil else {
+            if let recognizer = pressFeedbackRecognizers.removeValue(forKey: id) { view.removeGestureRecognizer(recognizer) }
+            if !(view is UIScrollView) { view.isUserInteractionEnabled = handlers[id] != nil || longPressHandlers[id] != nil || view is CraftNativeFlowView }
+            return
+        }
+        if pressFeedbackRecognizers[id] == nil {
+            let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(viewPressFeedback(_:)))
+            recognizer.minimumPressDuration = 0
+            recognizer.allowableMovement = 10
+            recognizer.cancelsTouchesInView = false
+            pressFeedbackRecognizers[id] = recognizer
+            view.addGestureRecognizer(recognizer)
+        }
+        if !(view is UIScrollView) { view.isUserInteractionEnabled = true }
     }
 
     private func updateLongPressHandler(_ handler: String?, for view: UIView) {
@@ -2228,12 +2261,31 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     @objc private func viewPressed(_ sender: UITapGestureRecognizer) {
         guard let view = sender.view, let handler = handlers[ObjectIdentifier(view)] else { return }
-        if let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
+        let id = ObjectIdentifier(view)
+        if pressInHandlers[id] == nil, pressOutHandlers[id] == nil,
+           let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
             UIView.animate(withDuration: 0.1, animations: { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }) { _ in
                 UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity }
             }
         }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]])
+    }
+
+    @objc private func viewPressFeedback(_ sender: UILongPressGestureRecognizer) {
+        guard let view = sender.view else { return }
+        let id = ObjectIdentifier(view)
+        switch sender.state {
+        case .began:
+            if let pressable = view as? CraftNativeFlowView, let activeOpacity = pressable.pressActiveOpacity {
+                UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity * activeOpacity }
+            }
+            if let handler = pressInHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        case .ended, .cancelled, .failed:
+            if let pressable = view as? CraftNativeFlowView { UIView.animate(withDuration: 0.1) { pressable.alpha = pressable.pressBaseOpacity } }
+            if let handler = pressOutHandlers[id] { send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        default:
+            break
+        }
     }
 
     @objc private func viewLongPressed(_ sender: UILongPressGestureRecognizer) {
