@@ -154,6 +154,44 @@ enum CraftLoadFailure {
     }
 }
 
+/// How many times a dead web content process is brought back before the
+/// shell stops and shows the offline page instead.
+///
+/// The port of `webview_recovery.zig`'s budget. Reloading on every crash is
+/// the whole fix for a white screen, and reloading unconditionally is the
+/// whole problem: a page that reliably kills its renderer (out of memory, a
+/// bad WebGL context) would be reloaded into the same crash forever. The
+/// budget is a rate, not a lifetime count: an app that loses its renderer
+/// once a day is healthy, so a crash more than `resetAfter` after the last
+/// one starts a new burst with its budget back.
+///
+/// Foundation only, and given the clock, so `scripts/recovery-budget.ts`
+/// can compile and run it on its own.
+struct CraftRecoveryBudget {
+    enum Action: Equatable {
+        case reload
+        case giveUp
+    }
+
+    var maxAttempts = 3
+    var resetAfter: TimeInterval = 60
+    private(set) var attempts = 0
+    private(set) var lastCrash: TimeInterval?
+
+    mutating func onCrash(at now: TimeInterval) -> Action {
+        let sameBurst = lastCrash.map { now - $0 < resetAfter } ?? false
+        attempts = sameBurst ? attempts + 1 : 1
+        lastCrash = now
+        return attempts <= maxAttempts ? .reload : .giveUp
+    }
+
+    /// Someone asked for the page again (Retry): a fresh budget.
+    mutating func reset() {
+        attempts = 0
+        lastCrash = nil
+    }
+}
+
 final class CraftAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         UNUserNotificationCenter.current().delegate = self
@@ -437,6 +475,13 @@ final class CraftChrome: ObservableObject {
     /// its tab rather than springing there, as UIKit's own controls do.
     static func motion(_ animation: Animation) -> Animation? {
         UIAccessibility.isReduceMotionEnabled ? nil : animation
+    }
+
+    /// The splash again, over a page that is being rebuilt (the web content
+    /// process died), rather than the white flash of a reload.
+    func showSplash(atMost seconds: Double) {
+        withAnimation(nil) { splashVisible = true }
+        holdSplash(atMost: seconds)
     }
 
     func hideSplash() {
@@ -1160,8 +1205,12 @@ struct CraftWebView: UIViewRepresentable {
         webView.backgroundColor = bgColor
         webView.scrollView.backgroundColor = bgColor
 
-        // Load content
-        if let devURL = config.devServerURL, !devURL.isEmpty {
+        // Load content: where the person was when the app was last put away,
+        // if iOS has since ended it, or the app's start page.
+        if coordinator.restoreInteractionState(into: webView) {
+            // Restored: WebKit loads the page that was on screen, with its
+            // history behind it for the back gesture.
+        } else if let devURL = config.devServerURL, !devURL.isEmpty {
             // Development mode - connect to server
             if let url = URL(string: devURL) {
                 webView.load(config.request(for: url))
@@ -1206,6 +1255,16 @@ struct CraftWebView: UIViewRepresentable {
         private var loadedBundledFallback = false
         /// Whether the current document's bridge has announced itself.
         private var documentReady = false
+        /// Reloads after the content process dies, budgeted per burst.
+        private var recoveryBudget = CraftRecoveryBudget()
+        /// The content process died in the background; bring it back when the
+        /// app is on screen again rather than spending the work unseen.
+        private var recoverOnForeground = false
+        /// The last page the app's own origin finished, for a recovery that
+        /// finds the web view with no URL.
+        private var lastPageURL: URL?
+        /// When the app last went to the background, for `craftResume`.
+        private var backgroundedAt: Date?
         /// Whether WebKit's bar above the keyboard shows (`keyboardAccessory`,
         /// then `craft.chrome.setKeyboardAccessory`).
         private lazy var keyboardAccessoryVisible = config.keyboardAccessory ?? false
@@ -1337,6 +1396,8 @@ struct CraftWebView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushToken(_:)), name: .craftPushToken, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(receivePushRegistrationError(_:)), name: .craftPushRegistrationError, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground(_:)), name: UIApplication.didEnterBackgroundNotification, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(appDidReceiveMemoryWarning(_:)), name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
             for name in [UIContentSizeCategory.didChangeNotification, UIAccessibility.reduceMotionStatusDidChangeNotification, UIAccessibility.reduceTransparencyStatusDidChangeNotification, .craftColorSchemeChanged] {
                 NotificationCenter.default.addObserver(self, selector: #selector(appearanceChanged(_:)), name: name, object: nil)
             }
@@ -2311,6 +2372,7 @@ struct CraftWebView: UIViewRepresentable {
             CraftChrome.shared.pageFinished()
             CraftChrome.shared.publishLayout()
             guard isTrustedURL(webView.url) else { return }
+            if !loadedBundledFallback { lastPageURL = webView.url }
             // The bridge is a document-start user script, so it is normally
             // here long before this. A document that came without it is given
             // it now, the way every page used to be, so no page is ever worse
@@ -2369,8 +2431,111 @@ struct CraftWebView: UIViewRepresentable {
             }
         }
 
+        /// WebKit's content process died: out of memory, usually, often while
+        /// the app was in the background. The view does not error; it goes
+        /// white and stays white. It used to be reloaded on the spot, every
+        /// time, into whatever crash killed it.
+        ///
+        /// Now the reload waits until the app is on screen, shows the splash
+        /// rather than a white page while the page rebuilds, comes back on
+        /// the page that was showing, and is budgeted: past three crashes a
+        /// minute (`CraftRecoveryBudget`) the offline page shows instead,
+        /// whose Retry starts afresh.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            webView.reload()
+            documentReady = false
+            CraftEventManager.shared.setLoading()
+            DeepLinkManager.shared.setLoading()
+            guard UIApplication.shared.applicationState != .background else {
+                recoverOnForeground = true
+                return
+            }
+            recoverFromTerminatedContent(webView)
+        }
+
+        private func recoverFromTerminatedContent(_ webView: WKWebView) {
+            recoverOnForeground = false
+            switch recoveryBudget.onCrash(at: ProcessInfo.processInfo.systemUptime) {
+            case .reload:
+                CraftChrome.shared.showSplash(atMost: config.splashMaxSeconds)
+                installUserScripts(into: webView.configuration.userContentController)
+                if webView.url == nil, let lastURL = lastPageURL {
+                    webView.load(config.request(for: lastURL))
+                } else {
+                    // The current history item, pushState entries included,
+                    // with the back stack still behind it.
+                    webView.reload()
+                }
+            case .giveUp:
+                print("Craft: the page's content process died \(recoveryBudget.attempts) times in a minute; showing the offline page")
+                CraftChrome.shared.hideSplash()
+                showOfflinePage(in: webView)
+            }
+        }
+
+        /// The bundled page (`dist/index.html`), which for an app whose page
+        /// is remote is the offline page with its Retry.
+        private func showOfflinePage(in webView: WKWebView) {
+            guard let bundledURL = URL(string: "craft://app/index.html") else { return }
+            if config.devServerURL != nil { loadedBundledFallback = true }
+            webView.load(URLRequest(url: bundledURL))
+        }
+
+        // MARK: - Lifecycle
+
+        @objc private func appDidEnterBackground(_ notification: Notification) {
+            backgroundedAt = Date()
+            saveInteractionState()
+        }
+
+        @objc private func appDidReceiveMemoryWarning(_ notification: Notification) {
+            sendToWeb("craftMemoryWarning", data: [:])
+        }
+
+        /// Where the person was, kept so a launch after iOS ended the app in
+        /// the background comes back to the same screen, as native apps do.
+        /// WKWebView's `interactionState` (iOS 15) is its back-forward list
+        /// with the current page and scroll position, as opaque data.
+        ///
+        /// Not saved for the offline page or anything outside the app's own
+        /// origins, and only restored into the same build: a new build may
+        /// have moved the screen it pointed at.
+        private static var interactionStateFile: URL? {
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("craft-interaction-state.data")
+        }
+        private static let interactionStateBuildKey = "craft.interactionState.build"
+
+        private static var currentBuild: String {
+            let info = Bundle.main.infoDictionary
+            return "\(info?["CFBundleShortVersionString"] as? String ?? "")+\(info?["CFBundleVersion"] as? String ?? "")"
+        }
+
+        private func saveInteractionState() {
+            guard #available(iOS 15.0, *), let webView, let file = Self.interactionStateFile else { return }
+            guard isTrustedURL(webView.url), !loadedBundledFallback,
+                  let state = webView.interactionState as? Data else {
+                try? FileManager.default.removeItem(at: file)
+                return
+            }
+            do {
+                try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try state.write(to: file, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                UserDefaults.standard.set(Self.currentBuild, forKey: Self.interactionStateBuildKey)
+            } catch {
+                print("Craft: could not keep the page's place: \(error)")
+            }
+        }
+
+        /// True when a saved place was handed to the web view to load.
+        func restoreInteractionState(into webView: WKWebView) -> Bool {
+            guard #available(iOS 15.0, *), let file = Self.interactionStateFile,
+                  UserDefaults.standard.string(forKey: Self.interactionStateBuildKey) == Self.currentBuild,
+                  let state = try? Data(contentsOf: file) else { return false }
+            // Used once: if the restored page is what brings the app down,
+            // the next launch starts clean rather than looping on it.
+            try? FileManager.default.removeItem(at: file)
+            webView.interactionState = state
+            return true
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -2423,6 +2588,16 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         @objc private func appWillEnterForeground(_ notification: Notification) {
+            if recoverOnForeground, let webView {
+                // The page is about to be rebuilt; there is no one to resume.
+                backgroundedAt = nil
+                recoverFromTerminatedContent(webView)
+                return
+            }
+            if let backgroundedAt {
+                self.backgroundedAt = nil
+                sendToWeb("craftResume", data: ["backgroundedMs": Int(Date().timeIntervalSince(backgroundedAt) * 1000)])
+            }
             returnFromBundledFallback(because: "the app returned to the foreground")
         }
 
@@ -2433,6 +2608,7 @@ struct CraftWebView: UIViewRepresentable {
         /// load fails as unreachable and the bundled copy comes back.
         private func retryRemote() {
             guard let webView else { return }
+            recoveryBudget.reset()
             guard let remote = config.devServerURL.flatMap(URL.init(string:)) else {
                 webView.reload()
                 return

@@ -913,6 +913,41 @@ describe('Craft iOS builder', () => {
     expect(swift).not.toContain('withAnimation(.spring(')
   })
 
+  it('brings a dead page back on a budget, where the person left it, and tells the page about resumes and memory', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-recovery-'))
+    await init({ runtimeDir: null, name: 'Recovery', bundleId: 'org.example.recovery', output })
+    const swift = readFileSync(join(output, 'Sources', 'RecoveryApp.swift'), 'utf8')
+
+    // Budgeted (scripts/recovery-budget.ts runs the struct), deferred while
+    // in the background, under the splash, and the offline page past it.
+    expect(swift).toContain('struct CraftRecoveryBudget {')
+    const terminated = swift.slice(swift.indexOf('func webViewWebContentProcessDidTerminate('), swift.indexOf('private func showOfflinePage(in webView: WKWebView)'))
+    expect(terminated).toContain('recoverOnForeground = true')
+    expect(terminated).toContain('switch recoveryBudget.onCrash(at: ProcessInfo.processInfo.systemUptime) {')
+    expect(terminated).toContain('CraftChrome.shared.showSplash(atMost: config.splashMaxSeconds)')
+    expect(terminated).toContain('webView.load(config.request(for: lastURL))')
+    expect(terminated).toContain('showOfflinePage(in: webView)')
+    expect(swift).not.toMatch(/webViewWebContentProcessDidTerminate\(_ webView: WKWebView\) \{\n\s+webView\.reload\(\)\n\s+\}/)
+    // Retry starts a new budget.
+    const retry = swift.slice(swift.indexOf('private func retryRemote() {'), swift.indexOf('fileprivate func isTrustedURL('))
+    expect(retry).toContain('recoveryBudget.reset()')
+
+    // The page's place survives iOS ending the app, once, in the same build.
+    expect(swift).toContain('let state = webView.interactionState as? Data')
+    expect(swift).toContain('webView.interactionState = state')
+    expect(swift).toContain('if coordinator.restoreInteractionState(into: webView) {')
+    expect(swift).toContain('UserDefaults.standard.string(forKey: Self.interactionStateBuildKey) == Self.currentBuild')
+
+    // Resume and memory, as the contract names them.
+    expect(swift).toContain('sendToWeb("craftResume", data: ["backgroundedMs": Int(Date().timeIntervalSince(backgroundedAt) * 1000)])')
+    expect(swift).toContain('sendToWeb("craftMemoryWarning", data: [:])')
+    expect(swift).toContain('name: UIApplication.didReceiveMemoryWarningNotification')
+    expect(swift).toContain('name: UIApplication.didEnterBackgroundNotification')
+
+    // The budget check runs with the other template checks.
+    expect(readFileSync(join(import.meta.dir, '..', 'scripts', 'compile-templates.ts'), 'utf8')).toContain('checkRecoveryBudget(workspace, run)')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled

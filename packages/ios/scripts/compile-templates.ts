@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { Glob } from 'bun'
 import { bootSimulator, init, pickSimulator, type CraftConfig } from '../src/index'
 import { checkLoadFailureClassifier } from './load-failure'
+import { checkRecoveryBudget } from './recovery-budget'
 import { watchCompanionProblems } from './watch-bundle'
 
 interface CompileFixture {
@@ -181,6 +182,7 @@ function buildTarget(output: string, projectName: string, targetName: string, sd
 
 try {
   checkLoadFailureClassifier(workspace, run)
+  checkRecoveryBudget(workspace, run)
 
   for (const fixture of fixtures) {
     const output = join(workspace, fixture.name)
