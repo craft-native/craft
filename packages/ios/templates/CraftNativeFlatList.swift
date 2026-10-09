@@ -119,6 +119,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var isApplyingSnapshot = false
     private var pendingApply: (() -> Void)?
     private var pendingThemeRefresh = false
+    private let nativeRefreshControl = UIRefreshControl()
+    private var refreshHandler: (() -> Void)?
     private let keyboardTapGesture = UITapGestureRecognizer()
     private var keyboardShouldPersistTaps = "never"
 
@@ -137,6 +139,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
         addGestureRecognizer(keyboardTapGesture)
         register(Cell.self, forCellWithReuseIdentifier: Cell.reuseIdentifier)
+        nativeRefreshControl.addTarget(self, action: #selector(refreshTriggered), for: .valueChanged)
         diffableDataSource = UICollectionViewDiffableDataSource<Int, String>(collectionView: self) {
             [weak self] collectionView, indexPath, identity in
             guard let self = self,
@@ -175,6 +178,18 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         keyboardShouldPersistTaps = ["always", "handled", "never"].contains(requested) ? requested! : "never"
         keyboardTapGesture.isEnabled = keyboardShouldPersistTaps != "always"
     }
+
+    func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool) {
+        refreshHandler = handler
+        refreshControl = handler == nil ? nil : nativeRefreshControl
+        if handler == nil || !refreshing {
+            if nativeRefreshControl.isRefreshing { nativeRefreshControl.endRefreshing() }
+        } else if !nativeRefreshControl.isRefreshing {
+            nativeRefreshControl.beginRefreshing()
+        }
+    }
+
+    @objc private func refreshTriggered() { refreshHandler?() }
 
     @objc private func keyboardTap() {
         guard keyboardShouldPersistTaps != "always" else { return }

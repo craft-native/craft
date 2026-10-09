@@ -7,6 +7,7 @@ const ios = readFileSync(join(root, 'packages/ios/templates/CraftNativeScreen.sw
 const iosFlatList = readFileSync(join(root, 'packages/ios/templates/CraftNativeFlatList.swift'), 'utf8')
 const android = readFileSync(join(root, 'packages/android/templates/MainActivityNative.kt.template'), 'utf8')
 const androidFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeFlatList.kt.template'), 'utf8')
+const androidRefreshableFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeRefreshableFlatList.kt.template'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
@@ -533,6 +534,17 @@ describe('native renderer component contract', () => {
     expect(navigationDetails).toContain('threshold={0.8}')
   })
 
+  it('keeps FlatList pull-to-refresh aligned across hosts', () => {
+    expect(iosFlatList).toContain('UIRefreshControl')
+    expect(iosFlatList).toContain('func setRefreshHandler(_ handler: (() -> Void)?, refreshing: Bool)')
+    expect(ios).toContain('events["onRefresh"]')
+    expect(android).toContain('CraftNativeRefreshableFlatList')
+    expect(android).toContain('events.optString("onRefresh")')
+    expect(androidRefreshableFlatList).toContain('SwipeRefreshLayout')
+    expect(androidRefreshableFlatList).toContain('isRefreshing = handler != null && refreshing')
+    expect(guide).toContain('pull-to-refresh')
+  })
+
   it('emits onLayout for virtualized rows on both hosts', () => {
     expect(ios).toContain('flatListRows[ObjectIdentifier(list)]?.values.forEach { emitLayoutEvents(for: $0) }')
     expect(android).toContain('private fun emitLayoutEvents(screen: Screen, view: View)')
@@ -625,7 +637,8 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('private var pendingThemeRefresh = false')
     expect(androidFlatList).toContain('if (isSubmittingList)')
     expect(androidFlatList).toContain('if (pendingThemeRefresh)')
-    expect(android).toContain('filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }')
+    expect(android).toContain('is CraftNativeRefreshableFlatList -> it.list')
+    expect(android).toContain('is CraftNativeFlatList -> it')
   })
 
   it('keeps scroll bounce behavior aligned across hosts', () => {

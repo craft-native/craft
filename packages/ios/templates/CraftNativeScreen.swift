@@ -1459,6 +1459,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         list.bounces = props["bounces"] as? Bool ?? true
         list.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])
         list.setContentContainerStyle(props["contentContainerStyle"] as? [String: Any])
+        list.setRefreshHandler(nonEmptyHandler(events["onRefresh"]).map { [weak self] handler in
+            { self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+        }, refreshing: props["refreshing"] as? Bool == true)
         list.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
         list.onScrollEvent = nonEmptyHandler(events["onScroll"]).map { handler in
             { [weak self] scrollView in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": self?.scrollEvent(scrollView) ?? [:]]) }

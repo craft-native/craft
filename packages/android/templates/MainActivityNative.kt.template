@@ -996,7 +996,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshScreenTheme(screen: Screen) {
         screen.mutations.node("root")?.let { renderCommitted(screen, it) }
-        screen.controls.values.filterIsInstance<CraftNativeFlatList>().forEach { it.refreshThemeDefaults() }
+        screen.controls.values.mapNotNull {
+            when (it) {
+                is CraftNativeRefreshableFlatList -> it.list
+                is CraftNativeFlatList -> it
+                else -> null
+            }
+        }.forEach { it.refreshThemeDefaults() }
     }
 
     private fun refreshThemeDefaults() {
@@ -1502,15 +1508,19 @@ class MainActivity : AppCompatActivity() {
                 configureContainer(content, contentStyle)
                 reconcileChildren(screen, content, children, path, next, contentStyle, previousControls)
             }
-            "FlatList" -> (previous as? CraftNativeFlatList ?: CraftNativeFlatList(this)).apply {
-                setKeyboardShouldPersistTaps(props.optString("keyboardShouldPersistTaps", "never"))
-                setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)
-                setKeyboardDismissMode(props.optString("keyboardDismissMode")) {
+            "FlatList" -> (previous as? CraftNativeRefreshableFlatList ?: CraftNativeRefreshableFlatList(this)).apply {
+                val nativeList = list
+                configureRefresh(events.optString("onRefresh").takeIf { it.isNotBlank() }?.let { handler ->
+                    { send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject())) }
+                }, props.optBoolean("refreshing", false))
+                nativeList.setKeyboardShouldPersistTaps(props.optString("keyboardShouldPersistTaps", "never"))
+                nativeList.setContentContainerStyle(props.optJSONObject("contentContainerStyle"), resources.displayMetrics.density)
+                nativeList.setKeyboardDismissMode(props.optString("keyboardDismissMode")) {
                     (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
                         ?.hideSoftInputFromWindow(windowToken, 0)
                 }
-                overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
-                reconcileFlatList(screen, this, children, path, protocolId ?: path, props, events)
+                nativeList.overScrollMode = if (props.optBoolean("bounces", true)) View.OVER_SCROLL_ALWAYS else View.OVER_SCROLL_NEVER
+                reconcileFlatList(screen, nativeList, children, path, protocolId ?: path, props, events)
             }
             "View", "SafeAreaView" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
                 configureContainer(this, style)
@@ -2198,19 +2208,30 @@ class MainActivity : AppCompatActivity() {
         screen.flatListRows.values.forEach { rows -> rows.values.forEach { addAll(it.values) } }
     }
 
+    private fun releaseFlatList(
+        screen: Screen,
+        list: CraftNativeFlatList,
+        preservingInputDrafts: Boolean,
+    ) {
+        val owner = screen.flatListOwnerByView.remove(list)
+        list.discardAll()
+        screen.flatListRows.remove(list)?.values?.forEach {
+            releaseViewState(screen, it.values, preservingInputDrafts)
+        }
+        if (owner != null) screen.flatListOwners.entries.removeAll { it.value == owner }
+    }
+
     private fun releaseViewState(
         screen: Screen,
         views: Collection<View>,
         preservingInputDrafts: Boolean = false,
     ) {
         val released = views.toSet()
-        released.filterIsInstance<CraftNativeFlatList>().forEach { list ->
-            val owner = screen.flatListOwnerByView.remove(list)
-            list.discardAll()
-            screen.flatListRows.remove(list)?.values?.forEach {
-                releaseViewState(screen, it.values, preservingInputDrafts)
-            }
-            if (owner != null) screen.flatListOwners.entries.removeAll { it.value == owner }
+        released.filterIsInstance<CraftNativeRefreshableFlatList>().forEach {
+            releaseFlatList(screen, it.list, preservingInputDrafts)
+        }
+        released.filterIsInstance<CraftNativeFlatList>().forEach {
+            releaseFlatList(screen, it, preservingInputDrafts)
         }
         releaseImages(released)
         released.filterIsInstance<EditText>().forEach {
