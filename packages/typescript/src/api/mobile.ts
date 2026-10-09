@@ -1634,6 +1634,105 @@ export const splash = {
 }
 
 // ============================================================================
+// Hybrid apps: native screens beside the page (iOS)
+// ============================================================================
+
+/**
+ * The shell's hybrid channel, present only in an app that mixes native
+ * screens into its page (`nativeScreens` in craft.config.json).
+ */
+function hybridHandler(): ChromeHandler | null {
+  if (typeof window === 'undefined') return null
+  const handler = (window as any).webkit?.messageHandlers?.craftHybrid
+  return handler && typeof handler.postMessage === 'function' ? handler : null
+}
+
+function postHybrid(message: Record<string, unknown>): boolean {
+  const handler = hybridHandler()
+  if (!handler) return false
+  try {
+    handler.postMessage(message)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+/** Letters, digits, `.`, `_` and `-`, not starting with a dot: the names the shell accepts. */
+export function isSnapshotName(name: string): boolean {
+  return typeof name === 'string' && /^[A-Za-z0-9_-][\w.-]{0,127}$/.test(name)
+}
+
+/**
+ * Data the page keeps for its native screens. A native screen reads a
+ * snapshot synchronously before its first frame (`craft.snapshots.get(name)`),
+ * so it opens on the last data the page saw instead of an empty skeleton.
+ * Write one whenever the page has fresh data a native screen shows.
+ *
+ * Each is `Application Support/craft-snapshots/<name>.json` in the app.
+ * Outside a hybrid app every call is a no-op answering false.
+ */
+export const snapshots = {
+  isAvailable(): boolean {
+    return hybridHandler() !== null
+  },
+  /** Keep `value` (anything JSON can hold) as `name`. Answers whether it was handed to the shell. */
+  set(name: string, value: unknown): boolean {
+    if (!isSnapshotName(name)) throw new TypeError(`Snapshot names are letters, digits, ".", "_" and "-": ${String(name)}`)
+    const json = JSON.stringify(value)
+    if (json === undefined) throw new TypeError(`Snapshot ${name} is not JSON`)
+    return postHybrid({ type: 'snapshotSet', name, json })
+  },
+  remove(name: string): boolean {
+    if (!isSnapshotName(name)) return false
+    return postHybrid({ type: 'snapshotRemove', name })
+  },
+  /** Every snapshot, as on signing out. */
+  clear(): boolean {
+    return postHybrid({ type: 'snapshotClear' })
+  },
+}
+
+interface HybridPageScript {
+  match: (url: string) => { path: string, screen: string, params: Record<string, string> } | null
+}
+
+function hybridPage(): HybridPageScript | undefined {
+  if (typeof window === 'undefined') return undefined
+  const page = (window as any).__craftHybrid
+  return page && typeof page.match === 'function' ? page : undefined
+}
+
+/**
+ * Navigation between the page and the app's native screens.
+ *
+ * The shell already hands the stx router's navigations to native paths to
+ * the native screens, and Back at the entry a native screen opened goes back
+ * to it, so most pages need none of this. It is for code that navigates
+ * without the router.
+ */
+export const hybrid = {
+  /** Whether this page runs inside a hybrid app. */
+  isActive(): boolean {
+    return hybridHandler() !== null
+  },
+  /** The native screen `path` opens, or null when it is the page's. */
+  nativeScreenFor(path: string): { path: string, screen: string, params: Record<string, string> } | null {
+    return hybridPage()?.match(path) ?? null
+  },
+  /** Open `path` as the shell would: a tab, a native screen, or the page pushed. */
+  open(path: string): boolean {
+    if (typeof path !== 'string' || !path.startsWith('/')) throw new TypeError(`hybrid.open needs an app path: ${String(path)}`)
+    return postHybrid({ type: 'open', path })
+  },
+  /** Back to the native screen under this page, when there is one. */
+  back(): boolean {
+    return postHybrid({ type: 'back' })
+  },
+}
+
+// ============================================================================
 // Native UI: dialogs, menus, the in-app browser, symbols, and chrome (iOS)
 // ============================================================================
 
@@ -2337,6 +2436,8 @@ const mobile: {
   watchConnectivity: typeof watchConnectivity
   tabBar: typeof tabBar
   splash: typeof splash
+  snapshots: typeof snapshots
+  hybrid: typeof hybrid
   dialog: typeof dialog
   contextMenu: typeof contextMenu
   browser: typeof browser
@@ -2368,6 +2469,8 @@ const mobile: {
   watchConnectivity: watchConnectivity,
   tabBar: tabBar,
   splash: splash,
+  snapshots: snapshots,
+  hybrid: hybrid,
   dialog: dialog,
   contextMenu: contextMenu,
   browser: browser,
