@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 
 // The script CraftApp.swift injects into every page, run here against a fake
 // native side. The E2E suite runs it on a simulator too, but with one config
@@ -31,6 +31,32 @@ function pageScript(seed = SEEDED_AT): string {
 }
 
 interface Post { action: string, callbackId?: string, [key: string]: unknown }
+
+/**
+ * Every timer a loaded page started, cleared when its test ends.
+ *
+ * A call a test leaves unanswered (`void page.craft.haptics.prepare()`) keeps
+ * the bridge's 30-second timeout running. When it fires the promise rejects
+ * with nobody listening, and Bun charges that to whichever test is running
+ * then, in another file if the suite has moved on: on a slow CI runner the
+ * hybrid page script failed with "Craft bridge timed out: hapticPrepare".
+ * The page's timers go through the global at call time, so a test that
+ * swaps `globalThis.setTimeout` still sees them.
+ */
+const pageTimers = new Set<ReturnType<typeof setTimeout>>()
+const pageSetTimeout = (handler: () => void, ms?: number) => {
+  const timer = globalThis.setTimeout(handler, ms)
+  pageTimers.add(timer)
+  return timer
+}
+const pageClearTimeout = (timer: ReturnType<typeof setTimeout>) => {
+  pageTimers.delete(timer)
+  globalThis.clearTimeout(timer)
+}
+afterEach(() => {
+  for (const timer of pageTimers) globalThis.clearTimeout(timer)
+  pageTimers.clear()
+})
 
 type Listener = (event: { type: string, detail: unknown }) => void
 
@@ -67,12 +93,14 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
   const quiet = { log() {}, warn() {}, error() {} }
   beforeInject?.(page)
   // eslint-disable-next-line no-new-func
-  new Function('window', 'document', 'navigator', 'CustomEvent', 'console', pageScript(seed))(
+  new Function('window', 'document', 'navigator', 'CustomEvent', 'console', 'setTimeout', 'clearTimeout', pageScript(seed))(
     page,
     document,
     {},
     CustomEvent,
     quiet,
+    pageSetTimeout,
+    pageClearTimeout,
   )
 
   const craft = page.craft
