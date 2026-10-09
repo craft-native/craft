@@ -399,6 +399,8 @@ private final class CraftNativeFlowView: UIStackView {
 private final class CraftNativeModalView: UIView {
     let contentStack = CraftNativeFlowView()
     private let blocker = UIView()
+    private var renderedVisible = false
+    var onRequestClose: (() -> Void)?
 
     var transparent = false {
         didSet { blocker.backgroundColor = transparent ? .clear : UIColor.black.withAlphaComponent(0.32) }
@@ -409,12 +411,32 @@ private final class CraftNativeModalView: UIView {
         isUserInteractionEnabled = true
         blocker.isUserInteractionEnabled = true
         blocker.backgroundColor = UIColor.black.withAlphaComponent(0.32)
+        blocker.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(blockerTapped)))
         addSubview(blocker)
         contentStack.backgroundColor = .clear
         addSubview(contentStack)
     }
 
     required init(coder: NSCoder) { super.init(coder: coder) }
+
+    func setVisible(_ visible: Bool, opacity: CGFloat, animationType: String?) {
+        guard renderedVisible != visible || isHidden != !visible else { return }
+        renderedVisible = visible
+        guard visible else {
+            isHidden = true
+            alpha = 0
+            return
+        }
+        isHidden = false
+        if animationType == "none" {
+            alpha = opacity
+        } else {
+            alpha = 0
+            UIView.animate(withDuration: animationType == "slide" ? 0.24 : 0.18) { self.alpha = opacity }
+        }
+    }
+
+    @objc private func blockerTapped() { onRequestClose?() }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -549,6 +571,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private var sliderCompleteHandlers: [ObjectIdentifier: String] = [:]
     private var sliderSteps: [ObjectIdentifier: Float] = [:]
     private var pickerOptions: [ObjectIdentifier: [(value: String, label: String)]] = [:]
+    private var modalVisibility: [ObjectIdentifier: Bool] = [:]
     private var layoutHandlers: [ObjectIdentifier: String] = [:]
     private var lastLayoutFrames: [ObjectIdentifier: CGRect] = [:]
     private var tapRecognizers: [ObjectIdentifier: UITapGestureRecognizer] = [:]
@@ -1076,7 +1099,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "Modal":
             let modal = result as! CraftNativeModalView
             modal.transparent = props["transparent"] as? Bool == true
-            modal.isHidden = props["visible"] as? Bool != true
+            let visible = props["visible"] as? Bool == true
+            let modalID = ObjectIdentifier(modal)
+            let wasVisible = modalVisibility[modalID]
+            modalVisibility[modalID] = visible
+            modal.setVisible(visible, opacity: number(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)
+            modal.onRequestClose = nonEmptyHandler(events["onRequestClose"]).map { handler in
+                { [weak self] in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": [:]]) }
+            }
+            if wasVisible != visible, visible || wasVisible == true {
+                let lifecycleHandler = visible ? events["onShow"] : events["onDismiss"]
+                if let lifecycleHandler = nonEmptyHandler(lifecycleHandler) {
+                    send(type: "EVENT", payload: ["handlerName": lifecycleHandler, "nativeEvent": [:]])
+                }
+            }
             configureStack(modal.contentStack, style: style)
             reconcileChildren(children, in: modal.contentStack, parent: current, path: path, style: style)
         case "Switch":
@@ -1413,6 +1449,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         sliderCompleteHandlers.removeValue(forKey: id)
         sliderSteps.removeValue(forKey: id)
         pickerOptions.removeValue(forKey: id)
+        modalVisibility.removeValue(forKey: id)
         if let recognizer = tapRecognizers.removeValue(forKey: id) {
             node.view.removeGestureRecognizer(recognizer)
         }

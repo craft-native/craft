@@ -107,16 +107,22 @@ describe('native renderer component contract', () => {
     expect(android).toContain('.put("value", option.first).put("index", position)')
     expect(navigationHome).toContain('<select testID="native-picker"')
     expect(navigationHome).toContain('<option value="one">One</option>')
+    expect(navigationHome).toContain('onRequestClose={modalRequested}')
+    expect(navigationHome).toContain('onShow={modalShown}')
     expect(guide).toContain('| `Picker` | `UIPickerView` | `Spinner` |')
   })
 
   it('keeps Modal visibility and parent blocking aligned across hosts', () => {
     expect(ios).toContain('private final class CraftNativeModalView: UIView')
-    expect(ios).toContain('modal.isHidden = props["visible"] as? Bool != true')
+    expect(ios).toContain('modal.setVisible(visible, opacity: number(style["opacity"]) ?? 1, animationType: props["animationType"] as? String)')
     expect(ios).toContain('modal.transparent = props["transparent"] as? Bool == true')
+    expect(ios).toContain('events["onShow"]')
+    expect(ios).toContain('modal.onRequestClose =')
     expect(android).toContain('private class CraftNativeModalView(context: Context) : FrameLayout(context)')
-    expect(android).toContain('visibility = if (props.optBoolean("visible", false)) View.VISIBLE else View.GONE')
+    expect(android).toContain('setVisible(visible, style.optDouble("opacity", 1.0).toFloat(), props.optString("animationType").ifBlank { null })')
     expect(android).toContain('blocker.setOnTouchListener { _, _ -> true }')
+    expect(android).toContain('screen.modalCloseHandlers[modal.key]')
+    expect(android).toContain('events.optString("onShow")')
   })
 
   it('keeps TextInput text styles aligned across hosts', () => {

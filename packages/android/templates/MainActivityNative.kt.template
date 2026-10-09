@@ -611,6 +611,8 @@ private class CraftNativeFlexSpacer(context: Context) : View(context)
 private class CraftNativeModalView(context: Context) : FrameLayout(context) {
     val content = CraftNativeFlexLayout(context)
     private val blocker = View(context)
+    private var renderedVisible = false
+    var onRequestClose: (() -> Unit)? = null
 
     var transparent: Boolean = false
         set(value) {
@@ -625,6 +627,24 @@ private class CraftNativeModalView(context: Context) : FrameLayout(context) {
         blocker.setBackgroundColor(Color.argb(82, 0, 0, 0))
         addView(blocker, LayoutParams(-1, -1))
         addView(content, LayoutParams(-1, -1))
+    }
+
+    fun setVisible(visible: Boolean, opacity: Float, animationType: String?) {
+        if (renderedVisible == visible && visibility == if (visible) View.VISIBLE else View.GONE) return
+        renderedVisible = visible
+        if (!visible) {
+            animate().cancel()
+            alpha = 0f
+            visibility = View.GONE
+            return
+        }
+        visibility = View.VISIBLE
+        if (animationType == "none") {
+            alpha = opacity
+        } else {
+            alpha = 0f
+            animate().alpha(opacity).setDuration(if (animationType == "slide") 240L else 180L).start()
+        }
     }
 }
 
@@ -665,6 +685,8 @@ class MainActivity : AppCompatActivity() {
         val imageLoadHandlers = mutableMapOf<ImageView, String>()
         val imageLoadEndHandlers = mutableMapOf<ImageView, String>()
         val imageErrorHandlers = mutableMapOf<ImageView, String>()
+        val modalVisibility = mutableMapOf<View, Boolean>()
+        val modalCloseHandlers = mutableMapOf<View, String>()
         val layoutHandlers = mutableMapOf<View, String>()
         val lastLayoutBounds = mutableMapOf<View, LayoutBounds>()
         val flatListRows = mutableMapOf<CraftNativeFlatList, MutableMap<String, MutableMap<String, View>>>()
@@ -1227,7 +1249,18 @@ class MainActivity : AppCompatActivity() {
                 transparent = props.optBoolean("transparent", false)
                 content.configure(style, resources.displayMetrics.density)
                 reconcileChildren(screen, content, children, path, next, style, previousControls)
-                visibility = if (props.optBoolean("visible", false)) View.VISIBLE else View.GONE
+                val visible = props.optBoolean("visible", false)
+                val wasVisible = screen.modalVisibility[this]
+                screen.modalVisibility[this] = visible
+                val requestClose = events.optString("onRequestClose")
+                if (requestClose.isNotBlank()) screen.modalCloseHandlers[this] = requestClose else screen.modalCloseHandlers.remove(this)
+                setVisible(visible, style.optDouble("opacity", 1.0).toFloat(), props.optString("animationType").ifBlank { null })
+                if (wasVisible != visible && (visible || wasVisible == true)) {
+                    val lifecycleHandler = if (visible) events.optString("onShow") else events.optString("onDismiss")
+                    if (lifecycleHandler.isNotBlank()) {
+                        send(screen, "EVENT", JSONObject().put("handlerName", lifecycleHandler).put("nativeEvent", JSONObject()))
+                    }
+                }
             }
             "Switch" -> (previous as? Switch ?: Switch(this)).apply {
                 setOnCheckedChangeListener(null)
@@ -2100,6 +2133,8 @@ class MainActivity : AppCompatActivity() {
         screen.imageLoadHandlers.keys.removeAll(released)
         screen.imageLoadEndHandlers.keys.removeAll(released)
         screen.imageErrorHandlers.keys.removeAll(released)
+        screen.modalVisibility.keys.removeAll(released)
+        screen.modalCloseHandlers.keys.removeAll(released)
     }
 
     private fun closeScreen(screen: Screen) {
@@ -2134,7 +2169,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     @Deprecated("Uses the activity back callback for native route navigation")
-    override fun onBackPressed() = back()
+    override fun onBackPressed() {
+        val screen = screens.lastOrNull() ?: return back()
+        val modal = screen.modalVisibility.entries.lastOrNull { (view, visible) -> visible && view.visibility == View.VISIBLE }
+        if (modal != null) {
+            screen.modalCloseHandlers[modal.key]?.let { handler ->
+                send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject()))
+            }
+            return
+        }
+        back()
+    }
 
     private fun showError(message: String) {
         root.removeAllViews()
