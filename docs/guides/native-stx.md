@@ -256,8 +256,10 @@ policy applies to `FlatList`, which inherits the scroll props.
 `onMomentumScrollBegin` and `onMomentumScrollEnd` report the native deceleration
 interval. `FlatList` forwards the same scroll, drag, and momentum callbacks from
 its virtualized collection or recycler host, including the same
-`contentOffset`, `contentSize`, and `layoutMeasurement` payload. Refresh controls remain outside
-this versioned contract. Use
+`contentOffset`, `contentSize`, and `layoutMeasurement` payload. `FlatList` now
+accepts `onRefresh` and controlled
+`refreshing`; pull-to-refresh is backed by UIKit's `UIRefreshControl` on iOS and
+AndroidX `SwipeRefreshLayout` on Android. Use
 `ScrollView` for bounded content and `FlatList` for data sets that need
 recycling.
 

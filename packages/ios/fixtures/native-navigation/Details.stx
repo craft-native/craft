@@ -4,6 +4,7 @@ let count = globalThis.craft.route.params.count
 let people = Array.from({ length: 40 }, (_, index) => ({ id: `person-${index}`, name: `Person ${index}` }))
 let listEvents = 0
 let rowLayouts = 0
+let peopleRefreshing = false
 
 function captureRowLayout() {
   rowLayouts += 1
@@ -25,6 +26,14 @@ function loadMorePeople() {
   const index = people.length
   people = [...people, { id: `person-${index}`, name: `Person ${index}` }]
   listEvents += 1
+}
+
+function refreshPeople() {
+  peopleRefreshing = true
+  setTimeout(() => {
+    peopleRefreshing = false
+    listEvents += 1
+  }, 50)
 }
 
 function goBack() {
@@ -51,6 +60,8 @@ function replaceWithSummary() {
       numColumns={2}
       onEndReached={loadMorePeople}
       onEndReachedThreshold={null}
+      onRefresh={refreshPeople}
+      refreshing={peopleRefreshing}
       threshold={0.8}
       style={{"height":160}}
     >

@@ -28,7 +28,6 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.recyclerview.widget.RecyclerView
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -471,7 +470,12 @@ class NativeNavigationTest {
             click(activity, "open-details")
             assertEquals("Details for Ada", (awaitView(activity, "details-title") as TextView).text.toString())
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
-            val people = awaitView(activity, "people-list") as RecyclerView
+            val peopleHost = awaitView(activity, "people-list") as CraftNativeRefreshableFlatList
+            val people = peopleHost.list
+            assertTrue("FlatList refresh host did not enable pull-to-refresh", peopleHost.isEnabled)
+            instrumentation.runOnMainSync { peopleHost.isRefreshing = true }
+            assertTrue("FlatList refresh host did not enter refreshing state", peopleHost.isRefreshing)
+            instrumentation.runOnMainSync { peopleHost.isRefreshing = false }
             val peopleHeader = awaitView(activity, "people-header") as TextView
             assertTrue("FlatList contentContainerStyle did not add top padding", peopleHeader.top >= people.top + (8 * density).toInt())
             val peopleLayouts = awaitView(activity, "people-layout-status") as TextView
