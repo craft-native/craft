@@ -239,6 +239,8 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('if (layout.getChildAt(index) !== childView)')
       expect(nativeActivity).toContain('val modal = screen.modalVisibility.entries.lastOrNull')
       expect(nativeActivity).toContain('override fun onBackPressed()')
+      expect(nativeActivity).toContain('view.requestLayout()')
+      expect(nativeActivity).toContain('view.post { screens.lastOrNull()?.takeIf { it.active }?.let(::emitLayoutEvents) }')
       expect(nativeActivity).not.toContain('import android.webkit.WebView')
       expect(nativeActivity).not.toContain('WebView(')
       expect(nativeLayout).toContain('native_root')

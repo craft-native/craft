@@ -764,6 +764,8 @@ class MainActivity : AppCompatActivity() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val safe = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+            view.requestLayout()
+            view.post { screens.lastOrNull()?.takeIf { it.active }?.let(::emitLayoutEvents) }
             insets
         }
         ViewCompat.requestApplyInsets(root)
