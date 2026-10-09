@@ -900,25 +900,27 @@ struct CraftWebView: UIViewRepresentable {
         let contentController = WKUserContentController()
         contentController.add(context.coordinator, name: "craft")
         // The tab bar and the splash, outside the bridge's action dispatch:
-        // they are the screen's, not a device API, and the page needs them
-        // before the bridge is installed.
+        // they are the screen's, not a device API.
         let coordinator = context.coordinator
         contentController.add(CraftChromeRelay(trusts: { [weak coordinator] origin in coordinator?.trusts(origin) ?? false }), name: "craftChrome")
-        // From the first byte, so the page's CSS knows before it paints that
-        // the shell draws the tab bar, and does not draw its own for a frame.
-        contentController.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('data-craft-chrome','ios')", injectionTime: .atDocumentStart, forMainFrameOnly: true))
-        webConfig.userContentController = contentController
         #if DEBUG
         // The page's errors and console, in the device log, so a debug build
         // can be diagnosed from `log stream` or `simctl spawn … log show`
         // without attaching Safari. A separate handler, outside the bridge's
         // action dispatch. Never in a release build.
         contentController.add(PageConsoleRelay(), name: "craftLog")
-        contentController.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         #endif
+        // The bridge and everything else the page gets from the first byte.
+        coordinator.installUserScripts(into: contentController)
+        webConfig.userContentController = contentController
 
         let webView = WKWebView(frame: .zero, configuration: webConfig)
         webView.navigationDelegate = context.coordinator
+        // Now, not when the first page finishes loading. Everything the
+        // coordinator sends the page goes through this reference, and a
+        // network change, a push token or a location fix that arrived before
+        // the first didFinish used to be dropped on a nil.
+        coordinator.attach(webView)
         webView.isOpaque = false
         // An edge swipe goes back (and forward) through the page's history,
         // pushState entries included, the way every iOS app's stack does.
@@ -988,6 +990,8 @@ struct CraftWebView: UIViewRepresentable {
         private var pendingCallbackId: String?
         private var pendingPushCallbackId: String?
         private var loadedBundledFallback = false
+        /// Whether the current document's bridge has announced itself.
+        private var documentReady = false
 
         /// The highest `cb_<n>` this process has seen the page hand out.
         ///
@@ -1174,6 +1178,13 @@ struct CraftWebView: UIViewRepresentable {
             }
             guard let body = message.body as? [String: Any],
                   let action = body["action"] as? String else { return }
+
+            // The page's own signal that the bridge has announced itself, not
+            // a device API: it is never offered to Zig and nothing answers it.
+            if action == "__craftReady" {
+                pageBecameReady()
+                return
+            }
 
             let callbackId = body["callbackId"] as? String
             // Before Zig is offered the call, because the seed has to cover
@@ -2010,12 +2021,23 @@ struct CraftWebView: UIViewRepresentable {
             DeepLinkManager.shared.setLoading()
         }
 
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            // A new document: the old one's ready no longer counts.
+            documentReady = false
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            self.webView = webView
             CraftChrome.shared.pageFinished()
             CraftChrome.shared.publishLayout()
             guard isTrustedURL(webView.url) else { return }
-            injectNativeBridge()
+            // The bridge is a document-start user script, so it is normally
+            // here long before this. A document that came without it is given
+            // it now, the way every page used to be, so no page is ever worse
+            // off than before the user script.
+            webView.evaluateJavaScript("!!(window.craft && window.craft._callbacks && window.craft.platform === 'ios')") { [weak self, weak webView] installed, _ in
+                guard let self, let webView, (installed as? Bool) != true else { return }
+                webView.evaluateJavaScript(self.bridgeScript(), completionHandler: nil)
+            }
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -2024,6 +2046,12 @@ struct CraftWebView: UIViewRepresentable {
                 return
             }
             if isTrustedURL(url) {
+                // A new main-frame document gets the bridge seeded from the
+                // ids handed out so far (#226), so the user scripts are
+                // rebuilt before it exists rather than once per web view.
+                if navigationAction.targetFrame?.isMainFrame != false {
+                    installUserScripts(into: webView.configuration.userContentController)
+                }
                 decisionHandler(.allow)
                 return
             }
@@ -2058,6 +2086,13 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            // The navigation never replaced the page, so the page that was
+            // ready still is. Without this, events stayed queued for the rest
+            // of its life after one cancelled tap.
+            if documentReady {
+                DeepLinkManager.shared.setReady()
+                CraftEventManager.shared.setReady()
+            }
             fallBackIfUnreachable(webView, after: error)
         }
 
@@ -2077,9 +2112,6 @@ struct CraftWebView: UIViewRepresentable {
                   config.devServerURL != nil,
                   let bundledURL = URL(string: "craft://app/index.html") else { return }
             loadedBundledFallback = true
-            // Kept for the way back: `returnFromBundledFallback` has no view of
-            // its own to reload.
-            self.webView = webView
             webView.load(URLRequest(url: bundledURL))
         }
 
@@ -2162,7 +2194,72 @@ struct CraftWebView: UIViewRepresentable {
             if drawn > highestCallbackId { highestCallbackId = drawn }
         }
 
-        private func injectNativeBridge() {
+        /// Hand the coordinator the web view it serves, as soon as it exists.
+        func attach(_ webView: WKWebView) {
+            self.webView = webView
+        }
+
+        /// Every script the page gets before its own first byte runs, in order.
+        ///
+        /// The bridge used to be evaluated in `didFinish`: after every image,
+        /// font and script of the page had loaded, on every navigation, as
+        /// some 1800 lines of fresh source each time. A page could not reach
+        /// `window.craft` while it was starting, which is when it most wants
+        /// to, and everything native tried to tell it before then was lost.
+        /// As document-start user scripts it exists before any of the page's
+        /// own code, and WebKit installs it for each document itself.
+        ///
+        /// Called at creation and again before each main-frame navigation,
+        /// because the bridge carries the callback seed (#226) and a seed
+        /// fixed at creation would repeat ids across reloads.
+        func installUserScripts(into controller: WKUserContentController) {
+            controller.removeAllUserScripts()
+            // From the first byte, so the page's CSS knows before it paints
+            // that the shell draws the tab bar, and does not draw its own for
+            // a frame.
+            controller.addUserScript(WKUserScript(source: "document.documentElement.setAttribute('data-craft-chrome','ios')", injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            #if DEBUG
+            controller.addUserScript(WKUserScript(source: PageConsoleRelay.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            #endif
+            controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+
+        /// The page announced the bridge (`craftReady`): from here it can be
+        /// told things. Whatever arrived while it could not be is delivered now.
+        private func pageBecameReady() {
+            documentReady = true
+            DeepLinkManager.shared.setReady()
+            CraftEventManager.shared.setReady()
+        }
+
+        /// The origins the bridge script installs itself in, as the page
+        /// spells them (`location.protocol + '//' + location.host`). The same
+        /// set `isTrustedOrigin` answers for; the message handlers still check
+        /// every message, so this only keeps the bridge out of pages that
+        /// could not use it.
+        private func trustedPageOrigins() -> [String] {
+            var origins = config.trustedOrigins
+            if let devServerURL = config.devServerURL,
+               let components = URLComponents(string: devServerURL),
+               let host = components.host,
+               let scheme = components.scheme {
+                let defaultPort = scheme == "https" ? 443 : 80
+                let port = components.port ?? defaultPort
+                origins.append("\(scheme)://\(host)\(port == defaultPort ? "" : ":\(port)")")
+            }
+            return origins.compactMap { origin in
+                guard let url = URL(string: origin), let scheme = url.scheme, let host = url.host else { return nil }
+                guard scheme == "https" || (scheme == "http" && ["localhost", "127.0.0.1", "::1"].contains(host)) else { return nil }
+                let defaultPort = scheme == "https" ? 443 : 80
+                let port = url.port ?? defaultPort
+                let shownHost = host.contains(":") ? "[\(host)]" : host
+                return "\(scheme)://\(shownHost)\(port == defaultPort ? "" : ":\(port)")"
+            }
+        }
+
+        /// The bridge, as the source the page runs. Only in a trusted page:
+        /// the check is the first thing it does.
+        func bridgeScript() -> String {
             let laContext = LAContext()
             var biometricAvailable = false
             if laContext.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
@@ -3949,15 +4046,36 @@ struct CraftWebView: UIViewRepresentable {
                 window.craft._rejectCallback('cb_' + ctx.id, ctx.message, ctx.code);
             };
 
-            // Dispatch ready event
-            window.dispatchEvent(new CustomEvent('craftReady', {detail: window.craft}));
-            console.log('Craft iOS bridge initialized');
+            // craftReady, once per document, at the first moment a page can
+            // be listening for it.
+            //
+            // The bridge itself exists from the document's first byte, before
+            // any of the page's scripts, so a page that checks window.craft
+            // finds it at once. An event fired then would reach nobody, and
+            // pages written for the old injection only listen. So it fires
+            // when the document has been parsed: every parser-inserted
+            // script, module and deferred script has run by then and could
+            // have subscribed, and it is still well before the load event
+            // (images and all) it used to wait for. Native hears of it here
+            // too, and only then delivers what it was holding.
+            (function announceReady(craft) {
+                function ready() {
+                    if (craft.ready) return;
+                    craft.ready = true;
+                    window.dispatchEvent(new CustomEvent('craftReady', {detail: craft}));
+                    try { window.webkit.messageHandlers.craft.postMessage({action: '__craftReady'}); } catch (e) {}
+                }
+                if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
+                else ready();
+            })(window.craft);
             """
-            webView?.evaluateJavaScript(script)
-
-            // Mark DeepLinkManager as ready
-            DeepLinkManager.shared.setReady()
-            CraftEventManager.shared.setReady()
+            let trusted = (try? JSONSerialization.data(withJSONObject: trustedPageOrigins()))
+                .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+            return """
+            if ((location.protocol === 'craft:' && location.host === 'app') || location.protocol === 'file:' || \(trusted).indexOf(location.protocol + '//' + location.host) !== -1) {
+            \(script)
+            }
+            """
         }
 
         // MARK: - Callback Helpers

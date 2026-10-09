@@ -39,7 +39,7 @@ type Listener = (event: { type: string, detail: unknown }) => void
  * didFinish injects the bridge. `seed` is what Swift interpolates as the id
  * to count up from — its own high-water mark across loads (#226).
  */
-function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEEDED_AT) {
+function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEEDED_AT, document: Record<string, any> = { addEventListener() {}, readyState: 'complete' }) {
   const posts: Post[] = []
   const listeners: Record<string, Listener[]> = {}
   const page: Record<string, any> = {
@@ -69,7 +69,7 @@ function loadPage(beforeInject?: (page: Record<string, any>) => void, seed = SEE
   // eslint-disable-next-line no-new-func
   new Function('window', 'document', 'navigator', 'CustomEvent', 'console', pageScript(seed))(
     page,
-    { addEventListener() {}, readyState: 'complete' },
+    document,
     {},
     CustomEvent,
     quiet,
@@ -445,6 +445,70 @@ describe('the injected iOS page script', () => {
 
     expect(seen).toEqual([])
     expect(page.last('getInitialURL').callbackId).toMatch(/^cb_\d+$/)
+  })
+})
+
+describe('when the bridge announces itself', () => {
+  // The bridge is a document-start user script now, so it runs before any of
+  // the page's own code. craftReady still has to reach pages written for the
+  // old after-load injection, which only listen for it.
+  it('waits for the document to be parsed, then fires craftReady once and tells native', () => {
+    const contentLoaded: Array<() => void> = []
+    const document = {
+      readyState: 'loading',
+      addEventListener: (type: string, listener: () => void) => {
+        if (type === 'DOMContentLoaded') contentLoaded.push(listener)
+      },
+    }
+    let readyEvents = 0
+    const page = loadPage((window) => {
+      window.addEventListener('craftReady', () => { readyEvents++ })
+    }, SEEDED_AT, document)
+
+    // There at once, for a page that checks rather than listens.
+    expect(page.craft.platform).toBe('ios')
+    expect(page.craft.ready).toBeUndefined()
+    expect(readyEvents).toBe(0)
+    expect(page.count('__craftReady')).toBe(0)
+
+    for (const listener of contentLoaded) listener()
+    expect(readyEvents).toBe(1)
+    expect(page.craft.ready).toBe(true)
+    expect(page.count('__craftReady')).toBe(1)
+
+    // A second DOMContentLoaded (or a late re-run of the hook) is not a second ready.
+    for (const listener of contentLoaded) listener()
+    expect(readyEvents).toBe(1)
+    expect(page.count('__craftReady')).toBe(1)
+  })
+
+  it('announces at once when it is installed into a document already parsed', () => {
+    let readyEvents = 0
+    const page = loadPage((window) => {
+      window.addEventListener('craftReady', () => { readyEvents++ })
+    })
+    expect(readyEvents).toBe(1)
+    expect(page.count('__craftReady')).toBe(1)
+  })
+})
+
+describe('the bridge user script', () => {
+  // The guard Swift wraps the bridge in, so it installs only where the
+  // message handlers would answer it.
+  const line = template.split('\n').find(text => text.includes("if ((location.protocol === 'craft:' && location.host === 'app')"))
+  if (!line) throw new Error('CraftApp.swift no longer guards the bridge user script by origin')
+  const condition = line.trim().replace(/^if \(/, '').replace(/\) \{$/, '')
+  const installs = (protocol: string, host: string) =>
+    // eslint-disable-next-line no-new-func
+    new Function('location', `return ${condition.replace('\\(trusted)', JSON.stringify(['https://hq.training', 'http://localhost:3000']))}`)({ protocol, host })
+
+  it('installs in the app\'s own origins and nowhere else', () => {
+    expect(installs('craft:', 'app')).toBe(true)
+    expect(installs('https:', 'hq.training')).toBe(true)
+    expect(installs('http:', 'localhost:3000')).toBe(true)
+    expect(installs('https:', 'evil.example')).toBe(false)
+    expect(installs('https:', 'hq.training.evil.example')).toBe(false)
+    expect(installs('about:', '')).toBe(false)
   })
 })
 

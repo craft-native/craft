@@ -708,6 +708,34 @@ describe('Craft iOS builder', () => {
       .toBeLessThan(swift.indexOf('if CraftZigRuntime.offer('))
   })
 
+  it('installs the bridge at document start, with the coordinator wired before the first load', async () => {
+    const output = mkdtempSync(join(tmpdir(), 'craft-ios-bridge-timing-'))
+    await init({ runtimeDir: null, name: 'Timing', bundleId: 'org.example.timing', output })
+    const swift = readFileSync(join(output, 'Sources', 'TimingApp.swift'), 'utf8')
+
+    // A user script, once per document, rather than ~1800 lines evaluated
+    // after every load.
+    expect(swift).toContain('controller.addUserScript(WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true))')
+    // Rebuilt before each main-frame navigation, so the seed (#226) moves on.
+    const policy = swift.slice(swift.indexOf('decidePolicyFor navigationAction: WKNavigationAction'), swift.indexOf('private func isEmbeddableFrameURL('))
+    expect(policy).toContain('installUserScripts(into: webView.configuration.userContentController)')
+
+    // The coordinator has its web view from creation, not from didFinish.
+    const make = swift.slice(swift.indexOf('func makeUIView(context: Context) -> WKWebView {'), swift.indexOf('func updateUIView('))
+    expect(make.indexOf('coordinator.attach(webView)')).toBeGreaterThan(-1)
+    expect(make.indexOf('coordinator.attach(webView)')).toBeLessThan(make.indexOf('webView.load('))
+    const finish = swift.slice(swift.indexOf('func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {'), swift.indexOf('func webView(_ webView: WKWebView, decidePolicyFor'))
+    expect(finish).not.toContain('self.webView = webView')
+    // Kept only as the fallback for a document that came without it.
+    expect(finish).toContain('webView.evaluateJavaScript(self.bridgeScript(), completionHandler: nil)')
+
+    // Native delivers held links and events when the page announces itself.
+    expect(swift).toContain('if action == "__craftReady" {')
+    const ready = swift.slice(swift.indexOf('private func pageBecameReady() {'), swift.indexOf('private func trustedPageOrigins()'))
+    expect(ready).toContain('DeepLinkManager.shared.setReady()')
+    expect(ready).toContain('CraftEventManager.shared.setReady()')
+  })
+
   it('gives every Swift-only call that waits on a framework callback a deadline', async () => {
     // #224: each of these is answered only by Swift, on both runtimes, and
     // only by a framework callback no person is waiting on. Nothing settled
