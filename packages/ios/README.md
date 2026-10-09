@@ -64,7 +64,9 @@ Build native iOS apps with web technologies using Craft.
 
 The iOS support is built into the main `craft` CLI:
 
-`Modal` renders a parent-scoped blocking layer in native mode. `FlatList` item roots receive the same `onLayout` callback as ordinary native
+`Modal` renders a parent-scoped blocking layer in native mode, with `visible`,
+`transparent`, `animationType`, `onShow`, `onDismiss`, and `onRequestClose`
+support. `FlatList` item roots receive the same `onLayout` callback as ordinary native
 views when rows are materialized or recycled.
 
 ```bash
