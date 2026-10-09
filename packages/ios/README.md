@@ -112,6 +112,9 @@ In Xcode:
 
 ### Experimental WebView-free screen
 
+Keyboard frame changes update the native controller's additional safe area, so
+focused inputs and responsive `onLayout` measurements move with the keyboard.
+
 The opt-in `native` renderer hosts compiled `.stx` screens in JavaScriptCore and renders their `View`, `SafeAreaView`, `Text`, `Button`, `Link`, `TextInput`, `Picker`, `Switch`, `Slider`, `ActivityIndicator`, `Image`, `ScrollView`, and recycling `FlatList` nodes as UIKit controls. `FlatList` uses `UICollectionView` with stable keyed rows, incremental diffs, grids, horizontal and inverted layouts, list chrome, and end-reached pagination. Native views support `onLayout` callbacks with point-based frame measurements that refresh after safe-area or orientation changes. Flex items support `flex`, `flexGrow`, `flexShrink`, and numeric `flexBasis` for main-axis space distribution. Native screens also expose the versioned capability bridge: JSON storage and SQLite survive relaunch, lifecycle and deep-link events are scoped to the top route, and local notifications use `UNUserNotificationCenter`. Enable each capability in `craft.config.json`; disabled calls preserve Craft's `CAPABILITY_DISABLED` rejection code and every request has deterministic timeout/cancellation behavior. The default remains `web`; existing iOS apps are unchanged. `Picker` renders `<select>`/`<option>` values with `onValueChange` or `onChange`; `Switch` supports state-aware `trackColor`, `thumbColor`, and iOS `ios_backgroundColor`; `Slider` supports track/thumb tint props and `step` snapping; `Image` reports load lifecycle events and structured failures. The portable component, capability, list, style, image-source, event, accessibility, and reconciliation behavior is specified in the [Native STX guide](../../docs/guides/native-stx.md).
 
 ```bash

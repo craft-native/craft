@@ -224,6 +224,9 @@ responsive-size changes). The callback receives
 `{ layout: { x, y, width, height } }`, measured in the view's parent coordinate
 space. Values are points on iOS and density-independent units on Android;
 removing a node removes its pending layout callback as well.
+On iOS, keyboard frame changes are folded into the controller's additional safe
+area while a native input is focused, so the same measurement contract updates
+as the keyboard animates and returns to the original inset when it hides.
 
 ## Images and scrolling
 
