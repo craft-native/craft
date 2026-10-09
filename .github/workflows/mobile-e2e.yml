@@ -136,7 +136,10 @@ jobs:
 
       - name: Install stx compiler dependencies
         working-directory: .stx-compiler
-        run: bun install --frozen-lockfile
+        # Pantry ships Bun 1.3.14, which cannot frozen-install the pinned stx
+        # lockfile. Resolve the unchanged external manifest without rewriting
+        # its checkout; Craft's own install remains frozen above.
+        run: bun install --no-save
 
       - name: Test native multi-screen navigation
         env:
@@ -241,7 +244,8 @@ jobs:
 
       - name: Install Android stx compiler dependencies
         working-directory: .stx-compiler
-        run: bun install --frozen-lockfile
+        # Keep this external compiler install aligned with the iOS job.
+        run: bun install --no-save
 
       - name: Cache Zig artifacts
         uses: actions/cache@v5

@@ -23,8 +23,10 @@ bun packages/ios/scripts/test-native-navigation.ts
 The script verifies that the compiler emitted mutation-protocol support,
 generates a temporary iOS app, boots an available simulator, and runs
 `NativeNavigationUITests.swift`. CI pins the stx compiler commit and
-runs the same script on iOS and Android. The pinned compiler sends the initial
-tree as one atomic render, then uses keyed mutations for later updates.
+runs the same script on iOS and Android. Its external checkout is installed
+with `bun install --no-save` because Pantry's Bun 1.3.14 cannot frozen-install
+the pinned lockfile. The pinned compiler sends the initial tree as one atomic
+render, then uses keyed mutations for later updates.
 
 `--prepare-only` compiles the `.stx` bundle and generates the Xcode fixture
 without requiring an installed or bootable simulator. Set

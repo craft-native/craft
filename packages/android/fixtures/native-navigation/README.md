@@ -30,8 +30,10 @@ accessibility services unless a label or value is explicitly supplied.
 Returning to a retained route reapplies native theme defaults before it becomes
 visible, so a dark-mode change while another route is open cannot leave stale
 colors behind.
-CI uses the stx compiler (`stx native compile`) pinned at `6151b9e73c`, which installs an
-initial tree atomically before sending incremental keyed mutations.
+CI uses the stx compiler (`stx native compile`) pinned at `6151b9e73c`. Its
+external checkout uses `bun install --no-save` because Pantry's Bun 1.3.14
+cannot frozen-install the pinned lockfile; the compiler installs an initial
+tree atomically before sending incremental keyed mutations.
 
 `--prepare-only` compiles the `.stx` bundle and generates the Android fixture
 without needing an emulator. Set `CRAFT_KEEP_ANDROID_NATIVE_PROJECT=1` to keep
