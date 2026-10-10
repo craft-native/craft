@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.127...v0.0.128)
+
+## 🚀 Features
+
+- **ios**: a native screen's bar button can be a picture, drawn round like an account button ([8219337](https://github.com/craft-native/craft/commit/8219337)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.126...v0.0.127)
 
 ## 🐛 Bug Fixes
