@@ -6,7 +6,9 @@ The three `.stx` screens and `native.config.json` exercise a native push with pa
 navigation gate. It uses ordinary stx signals to verify route parameters,
 retained home state, fresh state for every pushed details screen, explicit and
 UIKit back behavior, replace stack semantics, and `onDestroy` after both pop
-and replace. Run only that acceptance path with:
+and replace. The Home route declares its stateful code in `<script client>`,
+which is required for the native compiler to provide `state` and route
+lifecycle helpers. Run only that acceptance path with:
 
 ```bash
 CRAFT_NATIVE_NAVIGATION_TEST=testSharedRuntimePushBackReplaceLifecycleAndStateIsolation bun packages/ios/scripts/test-native-navigation.ts

@@ -601,6 +601,17 @@ describe('native renderer component contract', () => {
     expect(iosNavigationScript).toContain("console.log('iOS native navigation fixture prepared')")
   })
 
+  it('proves shared-runtime keyed rows through the maintained iOS host', () => {
+    expect(navigationHome).toContain('<View :for="row in navigationRows" :key="row.id"')
+    expect(navigationHome).toContain('<TextInput placeholder="Draft" />')
+    expect(navigationHome).toContain('@click="selectNavigationRow(row.id)"')
+    expect(iosNavigationTest).toContain('testSharedRuntimeKeyedForPreservesNativeRowState')
+    expect(iosNavigationTest).toContain('let beaInput = app.textFields.element(boundBy: 1)')
+    expect(iosNavigationTest).toContain('app.textFields.firstMatch.typeText("!")')
+    expect(iosNavigationTest).toContain('value as? String, "draft!"')
+    expect(iosNavigationTest).toContain('keyed reconciliation replaced the list scroll host')
+  })
+
   it('retains keyed iOS input drafts while FlatList rows recycle', () => {
     expect(ios).toContain('self.forgetHandlers(row, preservingInputDrafts: true)')
     expect(ios).toContain('private func forgetHandlers(_ node: RenderedNode, preservingInputDrafts: Bool = false)')

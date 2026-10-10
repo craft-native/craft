@@ -124,6 +124,34 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertEqual(homeState.label, "Home state: Ada/2")
     }
 
+    func testSharedRuntimeKeyedForPreservesNativeRowState() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertFalse(app.webViews.firstMatch.exists, "keyed native list created a WebView")
+
+        let scroll = app.scrollViews["keyed-list-scroll"]
+        let status = app.staticTexts["keyed-list-status"]
+        let beaInput = app.textFields.element(boundBy: 1)
+        XCTAssertTrue(scroll.waitForExistence(timeout: 15))
+        XCTAssertTrue(beaInput.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Ada row"].exists)
+        XCTAssertTrue(app.staticTexts["Bea row"].exists)
+
+        beaInput.tap()
+        beaInput.typeText("draft")
+        app.buttons["keyed-list-reorder"].tap()
+
+        XCTAssertTrue(app.staticTexts["Bea row updated"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Cy row"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Ada row"].exists)
+        XCTAssertEqual(app.textFields.firstMatch.value as? String, "draft")
+        app.textFields.firstMatch.typeText("!")
+        XCTAssertEqual(app.textFields.firstMatch.value as? String, "draft!")
+        app.buttons.matching(NSPredicate(format: "label == %@", "Select row")).firstMatch.tap()
+        XCTAssertTrue(waitForLabel(status, "Selected: b"))
+        XCTAssertTrue(scroll.exists, "keyed reconciliation replaced the list scroll host")
+    }
+
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
         app.launch()

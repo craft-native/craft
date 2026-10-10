@@ -39,6 +39,11 @@ let textWidthUnset = false
 const navigationName = state('Ada')
 const navigationCount = state(0)
 const navigationLifecycle = state('Lifecycle pending')
+const navigationRows = state([
+  { id: 'a', label: 'Ada row' },
+  { id: 'b', label: 'Bea row' },
+])
+const navigationRowSelection = state('none')
 
 onMount(function() {
   globalThis.craft.storage.remove('native-navigation-details-destroyed')
@@ -46,6 +51,17 @@ onMount(function() {
 
 function incrementNavigation() {
   navigationCount.update(function(value) { return value + 1 })
+}
+
+function reorderNavigationRows() {
+  navigationRows.set([
+    { id: 'b', label: 'Bea row updated' },
+    { id: 'c', label: 'Cy row' },
+  ])
+}
+
+function selectNavigationRow(id) {
+  navigationRowSelection.set(id)
 }
 
 async function verifyNavigationLifecycle() {
@@ -272,6 +288,15 @@ function openCapabilities() {
     <Button testID="navigation-open-details" @click="openDetails()">Open navigation details</Button>
     <Button testID="navigation-check-lifecycle" @click="verifyNavigationLifecycle()">Check details lifecycle</Button>
     <Text testID="navigation-lifecycle" :text="navigationLifecycle()" />
+    <Text testID="keyed-list-status" :text="'Selected: ' + navigationRowSelection()" />
+    <ScrollView testID="keyed-list-scroll" style={{"height":164}}>
+      <View :for="row in navigationRows" :key="row.id" style={{"height":76}}>
+        <Text :text="row.label" />
+        <TextInput placeholder="Draft" />
+        <Button @click="selectNavigationRow(row.id)">Select row</Button>
+      </View>
+    </ScrollView>
+    <Button testID="keyed-list-reorder" @click="reorderNavigationRows()">Reorder rows</Button>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
     <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
