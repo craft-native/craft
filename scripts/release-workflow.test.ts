@@ -32,7 +32,7 @@ test('mobile device jobs use the same pinned stx compiler', () => {
 test('mobile device jobs preserve runner diagnostics when the harness fails', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
   for (const [jobName, evidenceDir, expectedCommand] of [
-    ['ios-simulator', 'ios-simulator/diagnostics', 'xcrun simctl'],
+    ['ios-simulator', 'ios-simulator/diagnostics', 'timeout 20s xcrun simctl'],
     ['android-emulator', 'android-emulator/diagnostics', 'timeout 20s adb logcat'],
   ] as const) {
     const job = workflow.jobs[jobName]

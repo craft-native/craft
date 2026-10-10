@@ -184,9 +184,9 @@ jobs:
             echo "harness=${{ steps.harness.conclusion }}"
             echo "runner=$(uname -a)"
             echo
-            xcrun simctl list devices || true
+            timeout 20s xcrun simctl list devices || true
           } > "$evidence_dir/simulator.txt" 2>&1
-          xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
+          timeout 20s xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
           {
             find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
               \( -name '*NativeNavigation*' -o -name '*Craft*' \) -print 2>/dev/null || true
