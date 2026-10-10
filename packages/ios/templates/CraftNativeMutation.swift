@@ -195,9 +195,9 @@ final class CraftNativeMutationDocument {
         if let unknown = patch.keys.sorted().first(where: { !allowed.contains($0) }) {
             throw CraftNativeMutationFailure("INVALID_PATCH", "unsupported patch field \(unknown)")
         }
-        if patch.keys.contains("props") { node.props = dictionary(patch["props"]) }
-        if patch.keys.contains("style") { node.style = dictionary(patch["style"]) }
-        if patch.keys.contains("events") { node.events = dictionary(patch["events"]) }
+        if patch.keys.contains("props") { mergePatch(patch["props"], into: &node.props) }
+        if patch.keys.contains("style") { mergePatch(patch["style"], into: &node.style) }
+        if patch.keys.contains("events") { mergePatch(patch["events"], into: &node.events) }
         if patch.keys.contains("children") || patch.keys.contains("text") {
             node.text = try textChildren(patch["children"] ?? patch["text"])
         }
@@ -350,6 +350,13 @@ final class CraftNativeMutationDocument {
 
     private func dictionary(_ value: Any?) -> [String: Any] {
         value as? [String: Any] ?? [:]
+    }
+
+    private func mergePatch(_ value: Any?, into target: inout [String: Any]) {
+        for (key, next) in dictionary(value) {
+            if next is NSNull { target.removeValue(forKey: key) }
+            else { target[key] = next }
+        }
     }
 
     private func integer(_ value: Any?) -> Int? {

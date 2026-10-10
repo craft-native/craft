@@ -185,9 +185,9 @@ class CraftNativeMutationDocument {
         val allowed = setOf("props", "style", "events", "children", "text")
         val unknown = patch.keys().asSequence().filter { it !in allowed }.sorted().firstOrNull()
         if (unknown != null) fail("INVALID_PATCH", "unsupported patch field $unknown")
-        if (patch.has("props")) node.props = dictionary(patch.opt("props"))
-        if (patch.has("style")) node.style = dictionary(patch.opt("style"))
-        if (patch.has("events")) node.events = dictionary(patch.opt("events"))
+        if (patch.has("props")) mergePatch(node.props, patch.opt("props"))
+        if (patch.has("style")) mergePatch(node.style, patch.opt("style"))
+        if (patch.has("events")) mergePatch(node.events, patch.opt("events"))
         if (patch.has("children") || patch.has("text")) {
             node.text = textChildren(if (patch.has("children")) patch.opt("children") else patch.opt("text"))
         }
@@ -321,6 +321,15 @@ class CraftNativeMutationDocument {
 
     private fun dictionary(value: Any?): JSONObject =
         if (value is JSONObject) JSONObject(value.toString()) else JSONObject()
+
+    private fun mergePatch(target: JSONObject, value: Any?) {
+        val patch = value as? JSONObject ?: return
+        patch.keys().forEach { key ->
+            val next = patch.opt(key)
+            if (next == null || next == JSONObject.NULL) target.remove(key)
+            else target.put(key, next)
+        }
+    }
 
     private fun strictInteger(value: Any?): Int? {
         if (value !is Number) return null

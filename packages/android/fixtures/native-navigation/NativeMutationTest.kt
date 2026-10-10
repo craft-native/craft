@@ -25,11 +25,11 @@ class NativeMutationTest {
             [
               {"op":"createNode","id":"root","root":true,"node":{"type":"View"}},
               {"op":"createNode","id":"first","node":{"type":"Text","children":["First"]}},
-              {"op":"createNode","id":"second","node":{"type":"Text","children":["Second"]}},
+              {"op":"createNode","id":"second","node":{"type":"Text","props":{"testID":"second","accessibilityLabel":"Before"},"style":{"color":"#ff0000"},"events":{"onLongPress":"held"},"children":["Second"]}},
               {"op":"insertChild","parentId":"root","childId":"first","index":0},
               {"op":"insertChild","parentId":"root","childId":"second","index":1},
               {"op":"moveChild","parentId":"root","childId":"second","index":0},
-              {"op":"updateNode","id":"second","patch":{"children":["Updated"],"props":{"testID":"second"}}}
+              {"op":"updateNode","id":"second","patch":{"children":["Updated"],"props":{"accessibilityLabel":"After"},"style":{"fontSize":18},"events":{"onPress":"pressed"}}}
             ]
         """.trimIndent()))
         assertEquals(1, result.revision)
@@ -38,8 +38,14 @@ class NativeMutationTest {
         assertEquals(true, result.requiresFullRender)
         val rendered = requireNotNull(result.document)
         assertEquals("second", rendered.getJSONArray("children").getJSONObject(0).getString("id"))
-        assertEquals("Updated", rendered.getJSONArray("children").getJSONObject(0)
-            .getJSONArray("children").getString(0))
+        val updated = rendered.getJSONArray("children").getJSONObject(0)
+        assertEquals("Updated", updated.getJSONArray("children").getString(0))
+        assertEquals("second", updated.getJSONObject("props").getString("testID"))
+        assertEquals("After", updated.getJSONObject("props").getString("accessibilityLabel"))
+        assertEquals("#ff0000", updated.getJSONObject("style").getString("color"))
+        assertEquals(18, updated.getJSONObject("style").getInt("fontSize"))
+        assertEquals("held", updated.getJSONObject("events").getString("onLongPress"))
+        assertEquals("pressed", updated.getJSONObject("events").getString("onPress"))
 
         val removed = document.apply(batch(2, """
             [{"op":"removeNode","id":"root"}]

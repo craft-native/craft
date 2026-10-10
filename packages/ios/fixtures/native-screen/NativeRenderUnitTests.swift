@@ -316,6 +316,7 @@ final class NativeRenderUnitTests: XCTestCase {
             ]],
             ["op": "createNode", "id": "label-node", "node": [
                 "type": "Text", "props": ["testID": "label", "accessibilityLabel": "Before"],
+                "style": ["color": "#ff0000"],
                 "children": ["Before"]
             ]],
             ["op": "insertChild", "parentId": "scroll-node", "childId": "label-node", "index": 0],
@@ -334,7 +335,8 @@ final class NativeRenderUnitTests: XCTestCase {
         let update = try controller.applyMutation(batch(2, [
             ["op": "updateNode", "id": "label-node", "patch": [
                 "children": ["After"],
-                "props": ["testID": "label", "accessibilityLabel": "After"],
+                "props": ["accessibilityLabel": "After"],
+                "style": ["fontSize": 18],
                 "events": ["onPress": "pressed"],
             ]],
         ]))
@@ -350,6 +352,8 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(scroll.contentOffset.y, 17)
         XCTAssertEqual(label.text, "After")
         XCTAssertEqual(label.accessibilityLabel, "After")
+        XCTAssertEqual(label.textColor, UIColor.red)
+        XCTAssertEqual(label.font.pointSize, 18)
 
         let move = try controller.applyMutation(batch(3, [
             ["op": "moveChild", "parentId": "root-node", "childId": "scroll-node", "index": 0],
