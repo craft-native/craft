@@ -2,6 +2,16 @@
 
 The three `.stx` screens and `native.config.json` exercise a native push with parameters, an in-app back action, UIKit's back button and edge-swipe, and replace. Home owns a keyboard-configured `TextInput`, `Picker`, submit counter, counter, and keyed `FlatList`; the list covers two-column recycling, header/footer/empty content, row moves, focused-input retention, `onEndReached`, and controlled pull-to-refresh. The native list unit fixture also verifies scroll, drag, momentum, and refresh-control callback forwarding. Returning home must reveal the same values, not a freshly compiled screen. The simulator test also checks that the app exposes no WebView.
 
+`testSharedRuntimePushBackReplaceLifecycleAndStateIsolation` is the focused
+navigation gate. It uses ordinary stx signals to verify route parameters,
+retained home state, fresh state for every pushed details screen, explicit and
+UIKit back behavior, replace stack semantics, and `onDestroy` after both pop
+and replace. Run only that acceptance path with:
+
+```bash
+CRAFT_NATIVE_NAVIGATION_TEST=testSharedRuntimePushBackReplaceLifecycleAndStateIsolation bun packages/ios/scripts/test-native-navigation.ts
+```
+
 Keyed row replacement releases the previous native root before the new row type
 is hosted, so old event, image, and pull-to-refresh handlers cannot leak across
 reuse.
