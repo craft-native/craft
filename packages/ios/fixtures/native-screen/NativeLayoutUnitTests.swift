@@ -27,6 +27,19 @@ final class NativeLayoutUnitTests: XCTestCase {
         }
     }
 
+    private func waitForJavaScript(
+        _ controller: CraftNativeScreenController,
+        _ expression: String,
+        timeout: TimeInterval = 2
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if controller.evaluateScript(expression)?.toBool() == true { return true }
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        } while Date() < deadline
+        return false
+    }
+
     private func find(_ key: String, below view: UIView) -> UIView? {
         if view.accessibilityIdentifier == key { return view }
         for child in view.subviews {
@@ -250,7 +263,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         controller.evaluateScript("craft.snapshots.set('layout-test', { at: 'now', rows: [1, 2] }).then(function() { globalThis.snapshotWritten = true })")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { written.fulfill() }
         wait(for: [written], timeout: 2)
-        XCTAssertTrue(controller.evaluateScript("globalThis.snapshotWritten === true")?.toBool() == true)
+        XCTAssertTrue(waitForJavaScript(controller, "globalThis.snapshotWritten === true"))
         XCTAssertEqual(controller.evaluateScript("craft.snapshots.get('layout-test').rows.length")?.toInt32(), 2)
         let file = try XCTUnwrap(CraftSnapshots.url(for: "layout-test"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))

@@ -280,8 +280,11 @@ class NativeNavigationTest {
             val pressable = awaitView(activity, "native-pressable")
             assertTrue("native Pressable should be a container", pressable is ViewGroup)
             instrumentation.runOnMainSync {
-                val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 1f, 1f, 0)
-                val up = MotionEvent.obtain(0, 1, MotionEvent.ACTION_UP, 1f, 1f, 0)
+                val downTime = SystemClock.uptimeMillis()
+                val x = pressable.width / 2f
+                val y = pressable.height / 2f
+                val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+                val up = MotionEvent.obtain(downTime, downTime + 32, MotionEvent.ACTION_UP, x, y, 0)
                 pressable.dispatchTouchEvent(down)
                 pressable.dispatchTouchEvent(up)
                 down.recycle()

@@ -14,6 +14,7 @@ const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-nav
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
 const iosNativeUnitTests = readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeRenderUnitTests.swift'), 'utf8')
+const iosLayoutUnitTests = readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeLayoutUnitTests.swift'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
 const iosReadme = readFileSync(join(root, 'packages/ios/README.md'), 'utf8')
 const androidReadme = readFileSync(join(root, 'packages/android/README.md'), 'utf8')
@@ -612,6 +613,8 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "link pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "pressable pressed")')
+    expect(androidNavigationTest).toContain('SystemClock.uptimeMillis()')
+    expect(iosLayoutUnitTests).toContain('private func waitForJavaScript(')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {
