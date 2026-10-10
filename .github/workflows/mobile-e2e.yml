@@ -180,13 +180,26 @@ jobs:
         run: |
           evidence_dir="artifacts/mobile-e2e/ios-simulator/diagnostics"
           mkdir -p "$evidence_dir"
+          run_bounded() {
+            local seconds="$1"
+            shift
+            "$@" &
+            local command_pid=$!
+            ( sleep "$seconds"; kill "$command_pid" 2>/dev/null || true ) &
+            local watchdog_pid=$!
+            local status=0
+            if wait "$command_pid"; then status=0; else status=$?; fi
+            kill "$watchdog_pid" 2>/dev/null || true
+            wait "$watchdog_pid" 2>/dev/null || true
+            return "$status"
+          }
           {
             echo "harness=${{ steps.harness.conclusion }}"
             echo "runner=$(uname -a)"
             echo
-            timeout 20s xcrun simctl list devices || true
+            run_bounded 20 xcrun simctl list devices || true
           } > "$evidence_dir/simulator.txt" 2>&1
-          timeout 20s xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
+          run_bounded 20 xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
           {
             find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
               \( -name '*NativeNavigation*' -o -name '*Craft*' \) -print 2>/dev/null || true
@@ -333,13 +346,26 @@ jobs:
         run: |
           evidence_dir="artifacts/mobile-e2e/android-emulator/diagnostics"
           mkdir -p "$evidence_dir"
+          run_bounded() {
+            local seconds="$1"
+            shift
+            "$@" &
+            local command_pid=$!
+            ( sleep "$seconds"; kill "$command_pid" 2>/dev/null || true ) &
+            local watchdog_pid=$!
+            local status=0
+            if wait "$command_pid"; then status=0; else status=$?; fi
+            kill "$watchdog_pid" 2>/dev/null || true
+            wait "$watchdog_pid" 2>/dev/null || true
+            return "$status"
+          }
           {
             echo "harness=${{ steps.harness.conclusion }}"
             echo "runner=$(uname -a)"
             echo
-            timeout 20s adb devices -l || true
+            run_bounded 20 adb devices -l || true
           } > "$evidence_dir/adb.txt" 2>&1
-          timeout 20s adb logcat -d -v threadtime > "$evidence_dir/logcat.txt" 2>&1 || true
+          run_bounded 20 adb logcat -d -v threadtime > "$evidence_dir/logcat.txt" 2>&1 || true
           {
             pgrep -af 'emulator|qemu' || true
             echo
