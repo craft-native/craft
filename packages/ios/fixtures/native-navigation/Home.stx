@@ -252,6 +252,34 @@ function openCapabilities() {
     <Text testID="home-title">Home</Text>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
+    <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={{"paddingTop":12}} style={{"height":72,"gap":4}}>
+      <Image
+        testID="native-image"
+        source={validImage()}
+        accessibilityLabel="Native pixel"
+        accessibilityRole="image"
+        onPress={tapImage}
+        onLoadStart={imageLoadStart}
+        onLoad={imageLoaded}
+        onLoadEnd={imageLoaded}
+        style={{"width":24,"height":24,"resizeMode":"cover","tintColor":imageTinted ? "#2563eb" : undefined}}
+      />
+      <Text testID="native-caption">Image taps: {imageTaps}</Text>
+      <Text testID="image-status">{imageStatus}</Text>
+      <Text testID="image-error-status">{imageErrorStatus}</Text>
+      <Image
+        testID="unsupported-image"
+        source={currentImage()}
+        accessibilityLabel="Unsupported image"
+        onLoad={imageLoaded}
+        onLoadEnd={imageLoaded}
+        onError={imageFailed}
+        style={{"width":16,"height":16}}
+      />
+      <Button testID="toggle-image-source" onPress={toggleImageSource}>Toggle image source</Button>
+      <View style={{"height":120}} />
+      <Text testID="scroll-end">End of native scroll content</Text>
+    </ScrollView>
     <View
       testID="styled-row"
       style={{"flexDirection":"row-reverse","alignItems":"center","justifyContent":"center","gap":6,"paddingHorizontal":10,"paddingVertical":5,"width":240,"height":64,"backgroundColor":"#123456","opacity":0.75,"borderWidth":2,"borderColor":"#abcdef","borderRadius":7,"overflow":"hidden"}}
@@ -312,34 +340,6 @@ function openCapabilities() {
     </View>
     <Text testID="layout-status">{layoutWidth > 0 ? `Layout width: ${layoutWidth}` : 'layout pending'}</Text>
     <Button testID="toggle-layout-width" onPress={toggleLayoutWidth}>Toggle layout width</Button>
-    <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={{"paddingTop":12}} style={{"height":72,"gap":4}}>
-      <Image
-        testID="native-image"
-        source={validImage()}
-        accessibilityLabel="Native pixel"
-        accessibilityRole="image"
-        onPress={tapImage}
-        onLoadStart={imageLoadStart}
-        onLoad={imageLoaded}
-        onLoadEnd={imageLoaded}
-        style={{"width":24,"height":24,"resizeMode":"cover","tintColor":imageTinted ? "#2563eb" : undefined}}
-      />
-      <Text testID="native-caption">Image taps: {imageTaps}</Text>
-      <Text testID="image-status">{imageStatus}</Text>
-      <Text testID="image-error-status">{imageErrorStatus}</Text>
-      <Image
-        testID="unsupported-image"
-        source={currentImage()}
-        accessibilityLabel="Unsupported image"
-        onLoad={imageLoaded}
-        onLoadEnd={imageLoaded}
-        onError={imageFailed}
-        style={{"width":16,"height":16}}
-      />
-      <Button testID="toggle-image-source" onPress={toggleImageSource}>Toggle image source</Button>
-      <View style={{"height":120}} />
-      <Text testID="scroll-end">End of native scroll content</Text>
-    </ScrollView>
     <Button testID="toggle-input-colors" onPress={toggleInputColors}>Toggle input colors</Button>
     <Text testID="input-style-status">{inputStyleStatus}</Text>
     <Button testID="toggle-name-mode" onPress={toggleNameMode}>Toggle name mode</Button>

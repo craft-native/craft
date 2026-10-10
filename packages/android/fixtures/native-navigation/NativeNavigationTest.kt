@@ -265,10 +265,10 @@ class NativeNavigationTest {
             awaitText(activity, "native-link-status", "link accessibility enabled")
             assertTrue("clearing accessibilityState.disabled should restore the link", link.isEnabled)
             instrumentation.runOnMainSync { link.performClick() }
-            assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            awaitText(activity, "native-link-status", "link pressed")
             val panel = awaitView(activity, "native-panel")
             instrumentation.runOnMainSync { panel.performClick() }
-            assertEquals("panel pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            awaitText(activity, "native-link-status", "panel pressed")
             click(activity, "toggle-panel-accessibility")
             awaitText(activity, "native-link-status", "panel accessibility disabled")
             assertFalse("accessibilityState.disabled should disable a generic pressable", panel.isEnabled)
@@ -276,7 +276,7 @@ class NativeNavigationTest {
             awaitText(activity, "native-link-status", "panel accessibility enabled")
             assertTrue("clearing accessibilityState.disabled should restore a generic pressable", panel.isEnabled)
             instrumentation.runOnMainSync { panel.performClick() }
-            assertEquals("panel pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            awaitText(activity, "native-link-status", "panel pressed")
             val pressable = awaitView(activity, "native-pressable")
             assertTrue("native Pressable should be a container", pressable is ViewGroup)
             instrumentation.runOnMainSync {

@@ -609,6 +609,7 @@ describe('native renderer component contract', () => {
     expect(androidFlatListTest).toContain('ActivityScenario.launch(MainActivity::class.java)')
     expect(androidNavigationTest).toContain('awaitText(activity, "input-style-status", "input colors on")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "link pressed")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {
