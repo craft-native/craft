@@ -279,6 +279,8 @@ class NativeNavigationTest {
             awaitText(activity, "native-link-status", "panel pressed")
             val pressable = awaitView(activity, "native-pressable")
             assertTrue("native Pressable should be a container", pressable is ViewGroup)
+            instrumentation.runOnMainSync { pressable.performClick() }
+            awaitText(activity, "native-link-status", "pressable pressed")
             instrumentation.runOnMainSync {
                 val downTime = SystemClock.uptimeMillis()
                 val x = pressable.width / 2f
@@ -290,7 +292,6 @@ class NativeNavigationTest {
                 down.recycle()
                 up.recycle()
             }
-            awaitText(activity, "native-link-status", "pressable pressed")
             awaitText(activity, "pressable-lifecycle", "Press lifecycle: 1/1")
             val disabledPressable = awaitView(activity, "disabled-pressable")
             assertFalse("disabled Pressable should be disabled", disabledPressable.isEnabled)

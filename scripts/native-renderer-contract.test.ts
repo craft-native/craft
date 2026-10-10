@@ -614,7 +614,8 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "pressable pressed")')
     expect(androidNavigationTest).toContain('SystemClock.uptimeMillis()')
-    expect(iosLayoutUnitTests).toContain('private func waitForJavaScript(')
+    expect(android).toContain('control.setOnClickListener {')
+    expect(iosLayoutUnitTests).toContain('private func waitForSnapshot(')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

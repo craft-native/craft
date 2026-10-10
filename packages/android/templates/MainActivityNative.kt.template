@@ -1543,7 +1543,10 @@ class MainActivity : AppCompatActivity() {
                 if (handler.isNotBlank()) screen.handlers[control] = handler else screen.handlers.remove(control)
                 control.isClickable = true
                 if (type in setOf("TouchableOpacity", "TouchableHighlight", "Pressable")) {
-                    control.setOnClickListener(null)
+                    control.setOnClickListener {
+                        val current = screen.handlers[it] ?: return@setOnClickListener
+                        send(screen, "EVENT", JSONObject().put("handlerName", current).put("nativeEvent", JSONObject()))
+                    }
                     control.setOnTouchListener { view, event ->
                         when (event.actionMasked) {
                             android.view.MotionEvent.ACTION_DOWN -> {

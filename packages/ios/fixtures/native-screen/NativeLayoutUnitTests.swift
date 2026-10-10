@@ -27,14 +27,13 @@ final class NativeLayoutUnitTests: XCTestCase {
         }
     }
 
-    private func waitForJavaScript(
-        _ controller: CraftNativeScreenController,
-        _ expression: String,
+    private func waitForSnapshot(
+        _ name: String,
         timeout: TimeInterval = 2
     ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if controller.evaluateScript(expression)?.toBool() == true { return true }
+            if CraftSnapshots.read(name) != nil { return true }
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         } while Date() < deadline
         return false
@@ -259,11 +258,8 @@ final class NativeLayoutUnitTests: XCTestCase {
         controller.evaluateScript("craft.storage.setSync('layout.test', null)")
         XCTAssertTrue(controller.evaluateScript("craft.storage.getSync('layout.test') === null")?.toBool() == true)
 
-        let written = expectation(description: "snapshot written")
-        controller.evaluateScript("craft.snapshots.set('layout-test', { at: 'now', rows: [1, 2] }).then(function() { globalThis.snapshotWritten = true })")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { written.fulfill() }
-        wait(for: [written], timeout: 2)
-        XCTAssertTrue(waitForJavaScript(controller, "globalThis.snapshotWritten === true"))
+        controller.evaluateScript("craft.snapshots.set('layout-test', { at: 'now', rows: [1, 2] })")
+        XCTAssertTrue(waitForSnapshot("layout-test"))
         XCTAssertEqual(controller.evaluateScript("craft.snapshots.get('layout-test').rows.length")?.toInt32(), 2)
         let file = try XCTUnwrap(CraftSnapshots.url(for: "layout-test"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
