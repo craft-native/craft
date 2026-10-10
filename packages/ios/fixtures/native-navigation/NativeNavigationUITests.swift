@@ -75,6 +75,55 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(waitForLabel(status, "Secure storage roundtrip"), "found \(status.label)")
     }
 
+    func testSharedRuntimePushBackReplaceLifecycleAndStateIsolation() throws {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
+
+        let homeState = app.staticTexts["navigation-home-state"]
+        XCTAssertTrue(homeState.waitForExistence(timeout: 15))
+        XCTAssertEqual(homeState.label, "Home state: Ada/0")
+        app.buttons["navigation-increment"].tap()
+        app.buttons["navigation-increment"].tap()
+        XCTAssertTrue(waitForLabel(homeState, "Home state: Ada/2"))
+
+        app.buttons["navigation-open-details"].tap()
+        let detailsTitle = app.staticTexts["details-title"]
+        let detailsCount = app.staticTexts["details-count"]
+        XCTAssertTrue(detailsTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(detailsTitle.label, "Details for Ada")
+        XCTAssertEqual(detailsCount.label, "Count: 2")
+        app.buttons["details-increment"].tap()
+        XCTAssertTrue(waitForLabel(detailsCount, "Count: 3"))
+        app.buttons["details-back"].tap()
+
+        XCTAssertTrue(homeState.waitForExistence(timeout: 10))
+        XCTAssertEqual(homeState.label, "Home state: Ada/2")
+        app.buttons["navigation-check-lifecycle"].tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["navigation-lifecycle"], "Disposed Ada/3"))
+
+        app.buttons["navigation-open-details"].tap()
+        XCTAssertTrue(detailsTitle.waitForExistence(timeout: 10))
+        XCTAssertEqual(detailsCount.label, "Count: 2", "a pushed screen reused stale detail state")
+        app.buttons["open-summary"].tap()
+        XCTAssertTrue(app.staticTexts["summary-title"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["summary-title"].label, "Summary for Ada")
+        XCTAssertEqual(app.staticTexts["summary-count"].label, "Count: 2")
+        app.buttons["summary-back"].tap()
+
+        XCTAssertTrue(homeState.waitForExistence(timeout: 10), "replace left details on the stack")
+        XCTAssertEqual(homeState.label, "Home state: Ada/2")
+        app.buttons["navigation-check-lifecycle"].tap()
+        XCTAssertTrue(waitForLabel(app.staticTexts["navigation-lifecycle"], "Disposed Ada/2"))
+
+        app.buttons["navigation-open-details"].tap()
+        XCTAssertTrue(detailsTitle.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars.buttons.firstMatch.waitForExistence(timeout: 5))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(homeState.waitForExistence(timeout: 10))
+        XCTAssertEqual(homeState.label, "Home state: Ada/2")
+    }
+
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
         app.launch()
@@ -109,10 +158,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(styleToggle.isSelected)
         let panelStyleToggle = app.buttons["toggle-panel-style"]
         XCTAssertTrue(panelStyleToggle.waitForExistence(timeout: 5))
-        for _ in 0..<3 where !panelStyleToggle.isHittable {
-            rootScroll.swipeUp()
-        }
-        XCTAssertTrue(panelStyleToggle.isHittable, "native root ScrollView did not reveal the panel style toggle")
+        XCTAssertTrue(panelStyleToggle.isHittable, "panel style toggle should remain visible near the top of the native fixture")
         panelStyleToggle.tap()
         XCTAssertTrue(app.staticTexts["panel style off"].waitForExistence(timeout: 5))
         panelStyleToggle.tap()
