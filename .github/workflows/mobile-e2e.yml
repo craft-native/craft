@@ -337,9 +337,9 @@ jobs:
             echo "harness=${{ steps.harness.conclusion }}"
             echo "runner=$(uname -a)"
             echo
-            adb devices -l || true
+            timeout 20s adb devices -l || true
           } > "$evidence_dir/adb.txt" 2>&1
-          adb logcat -d -v threadtime > "$evidence_dir/logcat.txt" 2>&1 || true
+          timeout 20s adb logcat -d -v threadtime > "$evidence_dir/logcat.txt" 2>&1 || true
           {
             pgrep -af 'emulator|qemu' || true
             echo
