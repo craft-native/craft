@@ -253,6 +253,8 @@ function openCapabilities() {
     <Text testID="home-title">Home</Text>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
+    <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
+    <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
     <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={{"paddingTop":12}} style={{"height":72,"gap":4}}>
       <Image
         testID="native-image"
@@ -314,8 +316,6 @@ function openCapabilities() {
     <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
     <Text testID="panel-style-status">{panelStyleStatus}</Text>
     <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : null,"borderWidth":panelStyled ? 2 : null,"borderColor":panelStyled ? "#abcdef" : null}} />
-    <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
-    <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
     <Switch testID="native-switch" value={switchValue} accessibilityState={switchAccessibilityState()} trackColor={switchTrackColor()} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Switch testID="nullable-switch" value={null} checked={true} />
     <select testID="native-picker" value={pickerValue} onChange={choosePicker}>
