@@ -1662,7 +1662,36 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             item.accessibilityLabel = id
         }
         if let tint = (spec["color"] as? String).flatMap({ UIColor(hex: $0) }) { item.tintColor = tint }
+        // `image`: a picture (an https URL, the account's own photo), drawn
+        // round as iOS draws an account button. The symbol or title shows
+        // until it has loaded, and stays if it cannot be.
+        if let source = spec["image"] as? String, let url = URL(string: source), url.scheme == "https" {
+            loadBarImage(url) { [weak item] image in
+                guard let item, let image else { return }
+                let size = CGSize(width: 32, height: 32)
+                let round = UIGraphicsImageRenderer(size: size).image { _ in
+                    UIBezierPath(ovalIn: CGRect(origin: .zero, size: size)).addClip()
+                    let scale = max(size.width / image.size.width, size.height / image.size.height)
+                    let drawn = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                    image.draw(in: CGRect(x: (size.width - drawn.width) / 2, y: (size.height - drawn.height) / 2, width: drawn.width, height: drawn.height))
+                }
+                item.title = nil
+                item.image = round.withRenderingMode(.alwaysOriginal)
+            }
+        }
         return item
+    }
+
+    /// A bar picture, kept for the app's life so each screen does not fetch it again.
+    private static let barImages = NSCache<NSURL, UIImage>()
+
+    private func loadBarImage(_ url: URL, _ done: @escaping (UIImage?) -> Void) {
+        if let cached = Self.barImages.object(forKey: url as NSURL) { done(cached); return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            let image = data.flatMap(UIImage.init(data:))
+            if let image { Self.barImages.setObject(image, forKey: url as NSURL) }
+            DispatchQueue.main.async { done(image) }
+        }.resume()
     }
 
     /// The first vertical scroll view of the screen drives the bar: a large
