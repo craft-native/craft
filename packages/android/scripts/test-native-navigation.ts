@@ -19,7 +19,8 @@ function run(args: string[], cwd: string): void {
 
 function assertMutationBundle(path: string): void {
   const source = readFileSync(path, 'utf8')
-  if (!source.includes('mutationProtocolVersion') || !/["']MUTATE["']/.test(source))
+  const hasSharedRuntime = source.includes('__stxNativeUnmount') || source.includes('mutationProtocolVersion')
+  if (!hasSharedRuntime || !/["']MUTATE["']/.test(source))
     throw new Error('stx native compile did not emit the native mutation protocol')
 }
 

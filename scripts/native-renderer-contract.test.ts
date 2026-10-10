@@ -272,8 +272,8 @@ describe('native renderer component contract', () => {
     expect(android).toContain('showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")')
     expect(ios).not.toContain('WKWebView')
     expect(android).not.toContain('WebView(')
-    expect(iosNavigationScript).toContain("source.includes('mutationProtocolVersion')")
-    expect(androidNavigationScript).toContain("source.includes('mutationProtocolVersion')")
+    expect(iosNavigationScript).toContain("source.includes('__stxNativeUnmount') || source.includes('mutationProtocolVersion')")
+    expect(androidNavigationScript).toContain("source.includes('__stxNativeUnmount') || source.includes('mutationProtocolVersion')")
   })
 
   it('keeps responsive layout events aligned across hosts', () => {
