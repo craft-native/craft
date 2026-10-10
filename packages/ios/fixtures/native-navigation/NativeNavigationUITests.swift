@@ -107,10 +107,15 @@ final class NativeNavigationUITests: XCTestCase {
         styleToggle.tap()
         XCTAssertTrue(app.staticTexts["button style accented"].waitForExistence(timeout: 5))
         XCTAssertTrue(styleToggle.isSelected)
-        XCTAssertTrue(app.buttons["toggle-panel-style"].waitForExistence(timeout: 5))
-        app.buttons["toggle-panel-style"].tap()
+        let panelStyleToggle = app.buttons["toggle-panel-style"]
+        XCTAssertTrue(panelStyleToggle.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !panelStyleToggle.isHittable {
+            rootScroll.swipeUp()
+        }
+        XCTAssertTrue(panelStyleToggle.isHittable, "native root ScrollView did not reveal the panel style toggle")
+        panelStyleToggle.tap()
         XCTAssertTrue(app.staticTexts["panel style off"].waitForExistence(timeout: 5))
-        app.buttons["toggle-panel-style"].tap()
+        panelStyleToggle.tap()
         XCTAssertTrue(app.staticTexts["panel style on"].waitForExistence(timeout: 5))
         let nullWidthText = app.staticTexts["null-width-text"]
         XCTAssertTrue(nullWidthText.waitForExistence(timeout: 5))

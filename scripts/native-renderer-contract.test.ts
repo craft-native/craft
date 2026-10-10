@@ -10,9 +10,11 @@ const androidFlatList = readFileSync(join(root, 'packages/android/templates/Craf
 const androidRefreshableFlatList = readFileSync(join(root, 'packages/android/templates/CraftNativeRefreshableFlatList.kt.template'), 'utf8')
 const androidNavigationTest = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeNavigationTest.kt'), 'utf8')
 const androidFlatListTest = readFileSync(join(root, 'packages/android/fixtures/native-navigation/NativeFlatListTest.kt'), 'utf8')
+const iosNavigationTest = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/NativeNavigationUITests.swift'), 'utf8')
 const navigationHome = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Home.stx'), 'utf8')
 const navigationDetails = readFileSync(join(root, 'packages/ios/fixtures/native-navigation/Details.stx'), 'utf8')
 const iosNavigationScript = readFileSync(join(root, 'packages/ios/scripts/test-native-navigation.ts'), 'utf8')
+const androidNavigationScript = readFileSync(join(root, 'packages/android/scripts/test-native-navigation.ts'), 'utf8')
 const iosNativeUnitTests = readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeRenderUnitTests.swift'), 'utf8')
 const iosLayoutUnitTests = readFileSync(join(root, 'packages/ios/fixtures/native-screen/NativeLayoutUnitTests.swift'), 'utf8')
 const guide = readFileSync(join(root, 'docs/guides/native-stx.md'), 'utf8')
@@ -251,6 +253,8 @@ describe('native renderer component contract', () => {
       'pendingTimers.values.forEach { $0.cancel() }',
       'pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }',
       'lifecycleObservers.forEach(NotificationCenter.default.removeObserver)',
+      'jsContext.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])',
+      'navigationController?.viewControllers.contains(where: { $0 === self }) == false',
     ]) expect(ios, `${marker} missing from iOS teardown`).toContain(marker)
 
     for (const marker of [
@@ -260,12 +264,16 @@ describe('native renderer component contract', () => {
       'imageJobs.values.forEach { it.cancel(true) }',
       'imageExecutor.shutdownNow()',
       'capabilities.close()',
+      'globalThis.__stxNativeUnmount && globalThis.__stxNativeUnmount()',
+      'teardown.addListener',
     ]) expect(android, `${marker} missing from Android teardown`).toContain(marker)
 
     expect(ios).toContain('showError("Missing dist/native-screen.js. Compile a .stx screen with `stx native compile` first.")')
     expect(android).toContain('showError("Missing native-screen.js. Build with --native-bundle after compiling STX.")')
     expect(ios).not.toContain('WKWebView')
     expect(android).not.toContain('WebView(')
+    expect(iosNavigationScript).toContain("source.includes('__stxNativeUnmount')")
+    expect(androidNavigationScript).toContain("source.includes('__stxNativeUnmount')")
   })
 
   it('keeps responsive layout events aligned across hosts', () => {
@@ -615,7 +623,11 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "pressable pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "long-press-status", "panel long pressed")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "long-press-status", "long press disabled")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "long-press-status", "long press enabled")')
     expect(androidNavigationTest).toContain('SystemClock.uptimeMillis()')
+    expect(iosNavigationTest).toContain('for _ in 0..<3 where !panelStyleToggle.isHittable')
+    expect(iosNavigationTest).toContain('native root ScrollView did not reveal the panel style toggle')
     expect(android).toContain('control.setOnClickListener {')
     expect(android).toContain('val disabled = props.optBoolean("disabled", false) || state?.optBoolean("disabled", false) == true')
     expect(iosLayoutUnitTests).toContain('private func waitForSnapshotFile(')
