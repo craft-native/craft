@@ -1870,6 +1870,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if type == "NAVIGATE" {
                 navigation.pushViewController(next, animated: true)
             } else {
+                disposeRuntime()
                 navigation.setViewControllers(Array(navigation.viewControllers.dropLast()) + [next], animated: true)
             }
         case "NAVIGATION_SET_OPTIONS":

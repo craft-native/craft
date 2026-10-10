@@ -255,6 +255,7 @@ describe('native renderer component contract', () => {
       'lifecycleObservers.forEach(NotificationCenter.default.removeObserver)',
       'jsContext.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])',
       'navigationController?.viewControllers.contains(where: { $0 === self }) == false',
+      'disposeRuntime()\n                navigation.setViewControllers',
     ]) expect(ios, `${marker} missing from iOS teardown`).toContain(marker)
 
     for (const marker of [
