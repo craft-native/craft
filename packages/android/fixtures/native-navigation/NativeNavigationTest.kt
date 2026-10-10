@@ -257,7 +257,7 @@ class NativeNavigationTest {
             assertTrue(link.contentDescription.toString().contains("ready"))
             assertEquals("Opens status", link.tooltipText)
             instrumentation.runOnMainSync { link.performClick() }
-            assertEquals("link pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
+            awaitText(activity, "native-link-status", "link pressed")
             click(activity, "toggle-link-accessibility")
             awaitText(activity, "native-link-status", "link accessibility disabled")
             assertTrue("accessibilityState.disabled should disable the link", !link.isEnabled)

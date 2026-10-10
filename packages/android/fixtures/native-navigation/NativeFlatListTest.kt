@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.atomic.AtomicInteger
 import org.json.JSONArray
@@ -48,6 +49,19 @@ class NativeFlatListTest {
         val height = View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY)
         list.measure(width, height)
         list.layout(0, 0, 320, 480)
+    }
+
+    private fun launchHost(): Pair<ActivityScenario<MainActivity>, CraftNativeFlatList> {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        lateinit var list: CraftNativeFlatList
+        scenario.onActivity { activity ->
+            val host = FrameLayout(activity)
+            activity.setContentView(host)
+            list = CraftNativeFlatList(activity)
+            host.addView(list)
+            attach(list)
+        }
+        return scenario to list
     }
 
     private fun renderer(context: Context, renders: AtomicInteger): CraftNativeRenderItem =
@@ -100,32 +114,34 @@ class NativeFlatListTest {
 
     @Test
     fun forwardsScrollAndMomentumCallbacks() {
-        val context = instrumentation.targetContext
-        lateinit var list: CraftNativeFlatList
+        val (scenario, list) = launchHost()
+        val context = list.context
         val scrollCount = AtomicInteger()
         val momentumBeginCount = AtomicInteger()
         val momentumEndCount = AtomicInteger()
         val rows = (0 until 100).map(::row)
-        instrumentation.runOnMainSync {
-            list = CraftNativeFlatList(context)
-            attach(list)
-            list.onScrollEvent = { scrollCount.incrementAndGet() }
-            list.onMomentumScrollBegin = { momentumBeginCount.incrementAndGet() }
-            list.onMomentumScrollEnd = { momentumEndCount.incrementAndGet() }
-            list.apply(rows, false, 1, false, 0.1, renderer(context, AtomicInteger()), { _ -> }, null)
+        try {
+            instrumentation.runOnMainSync {
+                list.onScrollEvent = { scrollCount.incrementAndGet() }
+                list.onMomentumScrollBegin = { momentumBeginCount.incrementAndGet() }
+                list.onMomentumScrollEnd = { momentumEndCount.incrementAndGet() }
+                list.apply(rows, false, 1, false, 0.1, renderer(context, AtomicInteger()), { _ -> }, null)
+            }
+            awaitCount(list, 100)
+            instrumentation.runOnMainSync {
+                attach(list)
+                list.smoothScrollToPosition(99)
+            }
+            repeat(50) {
+                if (momentumEndCount.get() > 0) return@repeat
+                SystemClock.sleep(50)
+            }
+            assertTrue("RecyclerView did not emit scroll callbacks", scrollCount.get() > 0)
+            assertEquals(1, momentumBeginCount.get())
+            assertEquals(1, momentumEndCount.get())
+        } finally {
+            scenario.close()
         }
-        awaitCount(list, 100)
-        instrumentation.runOnMainSync {
-            attach(list)
-            list.smoothScrollToPosition(99)
-        }
-        repeat(50) {
-            if (momentumEndCount.get() > 0) return@repeat
-            SystemClock.sleep(50)
-        }
-        assertTrue("RecyclerView did not emit scroll callbacks", scrollCount.get() > 0)
-        assertEquals(1, momentumBeginCount.get())
-        assertEquals(1, momentumEndCount.get())
     }
 
     @Test

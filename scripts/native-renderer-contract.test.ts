@@ -605,8 +605,10 @@ describe('native renderer component contract', () => {
   })
 
   it('waits for asynchronous Android native fixture updates before asserting', () => {
-    expect(androidFlatListTest).toContain('attach(list)\n            list.smoothScrollToPosition(99)')
+    expect(androidFlatListTest).toContain('list.smoothScrollToPosition(99)')
+    expect(androidFlatListTest).toContain('ActivityScenario.launch(MainActivity::class.java)')
     expect(androidNavigationTest).toContain('awaitText(activity, "input-style-status", "input colors on")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "link pressed")')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {
