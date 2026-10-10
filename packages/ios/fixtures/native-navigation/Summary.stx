@@ -1,5 +1,6 @@
-<script>
-let name = globalThis.craft.route.params.name
+<script client>
+const name = state(String(globalThis.craft.route.params.name ?? ''))
+const count = state(Number(globalThis.craft.route.params.count ?? 0))
 
 function goBack() {
   globalThis.craft.navigation.back()
@@ -8,7 +9,8 @@ function goBack() {
 
 <template>
   <View class="p-4">
-    <Text testID="summary-title">Summary for {name}</Text>
-    <Button testID="summary-back" onPress={goBack}>Back to home</Button>
+    <Text testID="summary-title" :text="'Summary for ' + name()" />
+    <Text testID="summary-count" :text="'Count: ' + count()" />
+    <Button testID="summary-back" @click="goBack()">Back to home</Button>
   </View>
 </template>

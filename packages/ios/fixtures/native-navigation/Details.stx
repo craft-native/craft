@@ -1,6 +1,6 @@
-<script>
-let name = globalThis.craft.route.params.name
-let count = globalThis.craft.route.params.count
+<script client>
+const name = state(String(globalThis.craft.route.params.name ?? ''))
+const count = state(Number(globalThis.craft.route.params.count ?? 0))
 let people = Array.from({ length: 40 }, (_, index) => ({ id: `person-${index}`, name: `Person ${index}` }))
 let listEvents = 0
 let rowLayouts = 0
@@ -41,14 +41,23 @@ function goBack() {
 }
 
 function replaceWithSummary() {
-  globalThis.craft.navigation.replace('summary', { name, count })
+  globalThis.craft.navigation.replace('summary', { name: name(), count: count() })
 }
+
+function incrementDetails() {
+  count.update(function(value) { return value + 1 })
+}
+
+onDestroy(function() {
+  globalThis.craft.storage.set('native-navigation-details-destroyed', `${name()}/${count()}`)
+})
 </script>
 
 <template>
   <View class="p-4">
-    <Text testID="details-title">Details for {name}</Text>
-    <Text testID="details-count">Count: {count}</Text>
+    <Text testID="details-title" :text="'Details for ' + name()" />
+    <Text testID="details-count" :text="'Count: ' + count()" />
+    <Button testID="details-increment" @click="incrementDetails()">Increment details state</Button>
     <Text testID="people-count">People: {people.length}; events: {listEvents}</Text>
     <FlatList
       testID="people-list"
@@ -77,7 +86,7 @@ function replaceWithSummary() {
     <Text testID="people-layout-status">Rows laid out: {rowLayouts}</Text>
     <Button testID="shuffle-people" onPress={shufflePeople}>Shuffle people</Button>
     <Button testID="clear-people" onPress={clearPeople}>Clear people</Button>
-    <Button testID="details-back" onPress={goBack}>Back in app</Button>
-    <Button testID="open-summary" onPress={replaceWithSummary}>Show summary</Button>
+    <Button testID="details-back" @click="goBack()">Back in app</Button>
+    <Button testID="open-summary" @click="replaceWithSummary()">Show summary</Button>
   </View>
 </template>

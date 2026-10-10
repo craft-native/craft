@@ -36,6 +36,22 @@ let nameMultiline = false
 let panelStyled = true
 let panelStyleStatus = ''
 let textWidthUnset = false
+const navigationName = state('Ada')
+const navigationCount = state(0)
+const navigationLifecycle = state('Lifecycle pending')
+
+onMount(function() {
+  globalThis.craft.storage.remove('native-navigation-details-destroyed')
+})
+
+function incrementNavigation() {
+  navigationCount.update(function(value) { return value + 1 })
+}
+
+async function verifyNavigationLifecycle() {
+  const marker = await globalThis.craft.storage.get('native-navigation-details-destroyed')
+  navigationLifecycle.set(marker ? `Disposed ${marker}` : 'Lifecycle pending')
+}
 
 function linkAccessibilityState() {
   return { disabled: linkAccessibilityDisabled }
@@ -239,7 +255,7 @@ function toggleLayoutWidth() {
 }
 
 function openDetails() {
-  globalThis.craft.navigation.push('details', { name, count })
+  globalThis.craft.navigation.push('details', { name: navigationName(), count: navigationCount() })
 }
 
 function openCapabilities() {
@@ -251,10 +267,18 @@ function openCapabilities() {
   <SafeAreaView class="p-4">
     <ScrollView testID="native-root-scroll" style={{"flex":1}}>
     <Text testID="home-title">Home</Text>
+    <Text testID="navigation-home-state" :text="'Home state: ' + navigationName() + '/' + navigationCount()" />
+    <Button testID="navigation-increment" @click="incrementNavigation()">Increment navigation state</Button>
+    <Button testID="navigation-open-details" @click="openDetails()">Open navigation details</Button>
+    <Button testID="navigation-check-lifecycle" @click="verifyNavigationLifecycle()">Check details lifecycle</Button>
+    <Text testID="navigation-lifecycle" :text="navigationLifecycle()" />
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
     <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
     <Button testID="toggle-null-width" onPress={toggleTextWidth}>Toggle null width</Button>
+    <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
+    <Text testID="panel-style-status">{panelStyleStatus}</Text>
+    <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : null,"borderWidth":panelStyled ? 2 : null,"borderColor":panelStyled ? "#abcdef" : null}} />
     <ScrollView testID="native-scroll" keyboardDismissMode="on-drag" keyboardShouldPersistTaps="handled" contentContainerStyle={{"paddingTop":12}} style={{"height":72,"gap":4}}>
       <Image
         testID="native-image"
@@ -313,9 +337,6 @@ function openCapabilities() {
     <Text testID="long-press-status">{longPressStatus}</Text>
     <Button testID="toggle-button-style" accessibilityState={buttonAccessibilityState()} onPress={toggleButtonAccent} style={{"color":buttonAccent ? "#ef4444" : "#22c55e","fontSize":buttonAccent ? 22 : 16}}>Toggle button style</Button>
     <Button testID="toggle-image-tint" onPress={toggleImageTint}>Toggle image tint</Button>
-    <Button testID="toggle-panel-style" onPress={togglePanelStyle}>Toggle panel style</Button>
-    <Text testID="panel-style-status">{panelStyleStatus}</Text>
-    <View testID="dynamic-style-box" style={{"width":120,"height":24,"backgroundColor":panelStyled ? "#334455" : null,"borderWidth":panelStyled ? 2 : null,"borderColor":panelStyled ? "#abcdef" : null}} />
     <Switch testID="native-switch" value={switchValue} accessibilityState={switchAccessibilityState()} trackColor={switchTrackColor()} thumbColor="#ffffff" ios_backgroundColor="#475569" onValueChange={toggleSwitch} />
     <Switch testID="nullable-switch" value={null} checked={true} />
     <select testID="native-picker" value={pickerValue} onChange={choosePicker}>
