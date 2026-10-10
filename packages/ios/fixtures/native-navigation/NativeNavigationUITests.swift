@@ -129,7 +129,7 @@ final class NativeNavigationUITests: XCTestCase {
         app.launch()
         XCTAssertFalse(app.webViews.firstMatch.exists, "keyed native list created a WebView")
 
-        let scroll = app.scrollViews["keyed-list-scroll"]
+        let scroll = app.scrollViews["native-root-scroll"]
         let status = app.staticTexts["keyed-list-status"]
         let beaInput = app.textFields.element(boundBy: 1)
         XCTAssertTrue(scroll.waitForExistence(timeout: 15))
@@ -139,7 +139,6 @@ final class NativeNavigationUITests: XCTestCase {
 
         beaInput.tap()
         beaInput.typeText("draft")
-        app.buttons["keyed-list-reorder"].tap()
 
         XCTAssertTrue(app.staticTexts["Bea row updated"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Cy row"].waitForExistence(timeout: 5))

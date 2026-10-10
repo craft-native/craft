@@ -603,7 +603,7 @@ describe('native renderer component contract', () => {
 
   it('proves shared-runtime keyed rows through the maintained iOS host', () => {
     expect(navigationHome).toContain('<View :for="row in navigationRows" :key="row.id"')
-    expect(navigationHome).toContain('<TextInput placeholder="Draft" />')
+    expect(navigationHome).toContain('@input="updateNavigationDraft(row.id, $event)"')
     expect(navigationHome).toContain('@click="selectNavigationRow(row.id)"')
     expect(iosNavigationTest).toContain('testSharedRuntimeKeyedForPreservesNativeRowState')
     expect(iosNavigationTest).toContain('let beaInput = app.textFields.element(boundBy: 1)')

@@ -44,6 +44,7 @@ const navigationRows = state([
   { id: 'b', label: 'Bea row' },
 ])
 const navigationRowSelection = state('none')
+let navigationRowsReordered = false
 
 onMount(function() {
   globalThis.craft.storage.remove('native-navigation-details-destroyed')
@@ -62,6 +63,13 @@ function reorderNavigationRows() {
 
 function selectNavigationRow(id) {
   navigationRowSelection.set(id)
+}
+
+function updateNavigationDraft(id, event) {
+  if (id === 'b' && event.text === 'draft' && !navigationRowsReordered) {
+    navigationRowsReordered = true
+    reorderNavigationRows()
+  }
 }
 
 async function verifyNavigationLifecycle() {
@@ -283,20 +291,18 @@ function openCapabilities() {
   <SafeAreaView class="p-4">
     <ScrollView testID="native-root-scroll" style={{"flex":1}}>
     <Text testID="home-title">Home</Text>
+    <Text testID="keyed-list-status" :text="'Selected: ' + navigationRowSelection()" />
+    <View :for="row in navigationRows" :key="row.id" style={{"height":52,"flexDirection":"row","gap":4}}>
+      <Text :text="row.label" style={{"width":100}} />
+      <TextInput placeholder="Draft" style={{"width":100}} @input="updateNavigationDraft(row.id, $event)" />
+      <Button @click="selectNavigationRow(row.id)">Select row</Button>
+    </View>
+    <Button testID="keyed-list-reorder" @click="reorderNavigationRows()">Reorder rows</Button>
     <Text testID="navigation-home-state" :text="'Home state: ' + navigationName() + '/' + navigationCount()" />
     <Button testID="navigation-increment" @click="incrementNavigation()">Increment navigation state</Button>
     <Button testID="navigation-open-details" @click="openDetails()">Open navigation details</Button>
     <Button testID="navigation-check-lifecycle" @click="verifyNavigationLifecycle()">Check details lifecycle</Button>
     <Text testID="navigation-lifecycle" :text="navigationLifecycle()" />
-    <Text testID="keyed-list-status" :text="'Selected: ' + navigationRowSelection()" />
-    <ScrollView testID="keyed-list-scroll" style={{"height":164}}>
-      <View :for="row in navigationRows" :key="row.id" style={{"height":76}}>
-        <Text :text="row.label" />
-        <TextInput placeholder="Draft" />
-        <Button @click="selectNavigationRow(row.id)">Select row</Button>
-      </View>
-    </ScrollView>
-    <Button testID="keyed-list-reorder" @click="reorderNavigationRows()">Reorder rows</Button>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
     <Text testID="null-width-text" style={{"width":textWidthUnset ? null : 160,"alignSelf":"flex-start"}}>intrinsic</Text>
