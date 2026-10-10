@@ -1318,14 +1318,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         emitLayoutEvents()
     }
 
+    private static func safeJavaScriptString(_ value: JSValue?) -> String? {
+        guard let value, !value.isUndefined, !value.isNull, value.isString else { return nil }
+        return value.toString()
+    }
+
     private func setupJavaScript() {
         if let routeName = routeName {
             jsContext.setObject(routeName, forKeyedSubscript: "__stxNativeRoute" as NSString)
         }
         jsContext.setObject(routeParams as NSDictionary, forKeyedSubscript: "__stxNativeParams" as NSString)
         jsContext.exceptionHandler = { [weak self] context, exception in
-            let message = exception?.toString() ?? "unknown"
-            let stack = exception?.objectForKeyedSubscript("stack")?.toString() ?? ""
+            // Never stringify an arbitrary JS object here. JavaScriptCore can
+            // re-enter this handler while coercing an exception whose
+            // `toString` is broken, turning a page error into a native crash.
+            let message = Self.safeJavaScriptString(exception?.objectForKeyedSubscript("message"))
+                ?? Self.safeJavaScriptString(exception)
+                ?? "unknown"
+            let stack = Self.safeJavaScriptString(exception?.objectForKeyedSubscript("stack")) ?? ""
             CraftNativeConsole.write("error", category: self?.screenName(in: context) ?? "screen", message: stack.isEmpty || stack == "undefined" ? "Uncaught \(message)" : "Uncaught \(message)\n\(stack)")
             self?.hybridFailed(message)
         }
