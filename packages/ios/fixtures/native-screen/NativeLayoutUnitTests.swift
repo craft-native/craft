@@ -27,13 +27,14 @@ final class NativeLayoutUnitTests: XCTestCase {
         }
     }
 
-    private func waitForSnapshot(
+    private func waitForSnapshotFile(
         _ name: String,
         timeout: TimeInterval = 2
     ) -> Bool {
+        guard let file = CraftSnapshots.url(for: name) else { return false }
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            if CraftSnapshots.read(name) != nil { return true }
+            if FileManager.default.fileExists(atPath: file.path) { return true }
             RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
         } while Date() < deadline
         return false
@@ -259,7 +260,7 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertTrue(controller.evaluateScript("craft.storage.getSync('layout.test') === null")?.toBool() == true)
 
         controller.evaluateScript("craft.snapshots.set('layout-test', { at: 'now', rows: [1, 2] })")
-        XCTAssertTrue(waitForSnapshot("layout-test"))
+        XCTAssertTrue(waitForSnapshotFile("layout-test"))
         XCTAssertEqual(controller.evaluateScript("craft.snapshots.get('layout-test').rows.length")?.toInt32(), 2)
         let file = try XCTUnwrap(CraftSnapshots.url(for: "layout-test"))
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))

@@ -1964,7 +1964,7 @@ class MainActivity : AppCompatActivity() {
         view.tooltipText = props.optString("accessibilityHint").takeIf { it.isNotBlank() }
         val role = props.optString("accessibilityRole").ifBlank { type.lowercase() }
         val state = props.optJSONObject("accessibilityState")
-        val disabled = state?.optBoolean("disabled", false) == true
+        val disabled = props.optBoolean("disabled", false) || state?.optBoolean("disabled", false) == true
         if (type !in setOf("Button", "Link", "TextInput", "Picker", "Modal", "Switch", "Slider", "ActivityIndicator")) {
             view.isEnabled = !disabled
         } else if (disabled) {
