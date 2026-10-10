@@ -1235,6 +1235,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// could not be drawn, and of `craft.navigation.open(path)`.
     weak var hybridEvents: CraftHybridScreenEvents?
     private var hybridRendered = false
+    private var runtimeDisposed = false
 
     init(config: CraftConfig, routeName: String? = nil, routeParams: [String: Any] = [:]) {
         self.config = config
@@ -1248,6 +1249,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     deinit {
+        disposeRuntime()
         imageTasks.values.forEach { $0.cancel() }
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
         pendingTimers.values.forEach { $0.cancel() }
@@ -1295,6 +1297,19 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             navigationController?.setNavigationBarHidden(false, animated: animated)
         }
         refreshTraitDefaults()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if isMovingFromParent || navigationController?.viewControllers.contains(where: { $0 === self }) == false {
+            disposeRuntime()
+        }
+    }
+
+    private func disposeRuntime() {
+        guard !runtimeDisposed else { return }
+        runtimeDisposed = true
+        jsContext.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: [])
     }
 
     private func refreshTraitDefaults() {

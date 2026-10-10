@@ -752,9 +752,25 @@ class MainActivity : AppCompatActivity() {
         var active = true
 
         fun close() {
+            if (!active) return
             active = false
-            port?.close()
-            isolate.close()
+            val finish = {
+                port?.close()
+                isolate.close()
+            }
+            val teardown = runCatching {
+                isolate.evaluateJavaScriptAsync(
+                    "globalThis.__stxNativeUnmount && globalThis.__stxNativeUnmount()"
+                )
+            }.getOrNull()
+            if (teardown == null) {
+                finish()
+                return
+            }
+            teardown.addListener({
+                runCatching { teardown.get() }
+                finish()
+            }, java.util.concurrent.Executor { command -> command.run() })
         }
     }
 
