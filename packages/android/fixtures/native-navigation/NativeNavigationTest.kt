@@ -287,8 +287,8 @@ class NativeNavigationTest {
                 down.recycle()
                 up.recycle()
             }
-            assertEquals("pressable pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
-            assertEquals("Press lifecycle: 1/1", (awaitView(activity, "pressable-lifecycle") as TextView).text.toString())
+            awaitText(activity, "native-link-status", "pressable pressed")
+            awaitText(activity, "pressable-lifecycle", "Press lifecycle: 1/1")
             val disabledPressable = awaitView(activity, "disabled-pressable")
             assertFalse("disabled Pressable should be disabled", disabledPressable.isEnabled)
             instrumentation.runOnMainSync { disabledPressable.performClick() }

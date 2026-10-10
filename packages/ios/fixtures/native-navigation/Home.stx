@@ -249,6 +249,7 @@ function openCapabilities() {
 
 <template>
   <SafeAreaView class="p-4">
+    <ScrollView testID="native-root-scroll" style={{"flex":1}}>
     <Text testID="home-title">Home</Text>
     <Button testID="open-capabilities" onPress={openCapabilities}>Open capabilities</Button>
     <Button testID="disabled-button" disabled>Disabled</Button>
@@ -359,5 +360,6 @@ function openCapabilities() {
     <Button testID="increment" onPress={increment}>Increment</Button>
     <Text testID="count">Count: {count}</Text>
     <Button testID="open-details" onPress={openDetails}>Open details</Button>
+    </ScrollView>
   </SafeAreaView>
 </template>

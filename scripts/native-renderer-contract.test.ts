@@ -497,6 +497,7 @@ describe('native renderer component contract', () => {
     expect(androidFlatList).toContain('fun setKeyboardDismissMode(mode: String, dismissKeyboard: () -> Unit)')
     expect(androidFlatList).toContain('android.view.MotionEvent.ACTION_MOVE')
     expect(navigationHome).toContain('<ScrollView testID="native-scroll" keyboardDismissMode="on-drag"')
+    expect(navigationHome).toContain('<ScrollView testID="native-root-scroll" style={{"flex":1}}>')
     expect(navigationHome).toContain('keyboardShouldPersistTaps="handled"')
     expect(navigationDetails).toContain('keyboardShouldPersistTaps="handled"')
     expect(guide).toContain('both hosts, including keyboard and return-key traits on multiline inputs')
@@ -610,6 +611,7 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('awaitText(activity, "input-style-status", "input colors on")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "link pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "pressable pressed")')
   })
 
   it('resets FlatList end-reached state when any data row changes', () => {

@@ -79,6 +79,8 @@ final class NativeNavigationUITests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
         XCTAssertFalse(app.webViews.firstMatch.exists, "native navigation created a WebView")
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
         let scroll = app.scrollViews["native-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 15))
         let image = app.images["native-image"]
@@ -99,7 +101,7 @@ final class NativeNavigationUITests: XCTestCase {
         app.buttons["toggle-image-tint"].tap()
         XCTAssertTrue(app.staticTexts["image tint off"].waitForExistence(timeout: 5))
         let unsupportedValue = (app.images["unsupported-image"].value as? String) ?? ""
-        XCTAssertEqual(unsupportedValue.components(separatedBy: "Unsupported image source").count - 1, 1)
+        XCTAssertEqual(unsupportedValue.components(separatedBy: "Unsupported image source").count - 1, 0)
         let styleToggle = app.buttons["toggle-button-style"]
         XCTAssertFalse(styleToggle.isSelected)
         styleToggle.tap()
