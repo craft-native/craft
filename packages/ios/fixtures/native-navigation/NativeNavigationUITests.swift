@@ -116,7 +116,10 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(nullWidthText.waitForExistence(timeout: 5))
         let explicitTextWidth = nullWidthText.frame.width
         XCTAssertGreaterThan(explicitTextWidth, 150)
-        app.buttons["toggle-null-width"].tap()
+        let nullWidthToggle = app.buttons["toggle-null-width"]
+        rootScroll.swipeUp()
+        XCTAssertTrue(nullWidthToggle.waitForExistence(timeout: 5))
+        nullWidthToggle.tap()
         XCTAssertTrue(waitForLayoutDecrease(nullWidthText, from: explicitTextWidth), "null width should restore intrinsic text sizing")
         let scrollEnd = app.staticTexts["scroll-end"]
         XCTAssertFalse(scrollEnd.isHittable)

@@ -613,6 +613,7 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "link pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "panel pressed")')
     expect(androidNavigationTest).toContain('awaitText(activity, "native-link-status", "pressable pressed")')
+    expect(androidNavigationTest).toContain('awaitText(activity, "long-press-status", "panel long pressed")')
     expect(androidNavigationTest).toContain('SystemClock.uptimeMillis()')
     expect(android).toContain('control.setOnClickListener {')
     expect(android).toContain('val disabled = props.optBoolean("disabled", false) || state?.optBoolean("disabled", false) == true')

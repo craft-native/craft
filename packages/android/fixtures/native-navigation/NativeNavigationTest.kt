@@ -299,7 +299,7 @@ class NativeNavigationTest {
             assertEquals("pressable pressed", (awaitView(activity, "native-link-status") as TextView).text.toString())
             val longPressPanel = awaitView(activity, "long-press-panel")
             assertTrue("generic onLongPress view was not long-clickable", longPressPanel.performLongClick())
-            assertEquals("panel long pressed", (awaitView(activity, "long-press-status") as TextView).text.toString())
+            awaitText(activity, "long-press-status", "panel long pressed")
             click(activity, "toggle-long-press-accessibility")
             assertEquals("long press disabled", (awaitView(activity, "long-press-status") as TextView).text.toString())
             assertTrue("disabled long-press view remained enabled", !longPressPanel.isEnabled)
@@ -307,7 +307,7 @@ class NativeNavigationTest {
             click(activity, "toggle-long-press-accessibility")
             assertEquals("long press enabled", (awaitView(activity, "long-press-status") as TextView).text.toString())
             assertTrue("re-enabled long-press view did not accept a click", longPressPanel.performLongClick())
-            assertEquals("panel long pressed", (awaitView(activity, "long-press-status") as TextView).text.toString())
+            awaitText(activity, "long-press-status", "panel long pressed")
             click(activity, "toggle-image-tint")
             assertEquals("image tint off", (awaitView(activity, "image-status") as TextView).text.toString())
             val tintedImage = awaitView(activity, "native-image") as ImageView
