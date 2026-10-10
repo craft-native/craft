@@ -20,6 +20,10 @@ scroller rather than the native wrapper, so nested scroll offsets come from the
 platform control that actually moves. The FlatList assertion also requires row
 layout events to increase after recycled rows are materialized, rather than
 assuming a fixed callback count.
+
+The navigation section also verifies the shared runtime lifecycle: a pushed
+details screen gets fresh state, `onDestroy` runs after the Android Back path,
+and replacement disposes the outgoing screen before the new route is opened.
 The native form coverage also keeps a keyed input's draft while changing its
 single-line/multiline mode, recreating the incompatible platform control, and
 the iOS fixture runs the same mode-transition and recycled-row assertions.

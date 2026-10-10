@@ -492,6 +492,8 @@ class NativeNavigationTest {
             click(activity, "open-details")
             assertEquals("Details for Ada", (awaitView(activity, "details-title") as TextView).text.toString())
             assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
+            click(activity, "details-increment")
+            awaitText(activity, "details-count", "Count: 3")
             val peopleHost = awaitView(activity, "people-list") as CraftNativeRefreshableFlatList
             val people = peopleHost.list
             assertTrue("FlatList refresh host did not enable pull-to-refresh", peopleHost.isEnabled)
@@ -530,9 +532,12 @@ class NativeNavigationTest {
             assertSame("Returning rebuilt the home input", name, awaitView(activity, "name-input"))
             assertEquals("Ada", (name as EditText).text.toString())
             assertEquals("Count: 2", (awaitView(activity, "count") as TextView).text.toString())
+            click(activity, "navigation-check-lifecycle")
+            awaitText(activity, "navigation-lifecycle", "Disposed Ada/3")
 
             click(activity, "open-details")
             awaitView(activity, "details-title")
+            assertEquals("Count: 2", (awaitView(activity, "details-count") as TextView).text.toString())
             click(activity, "details-back")
             assertSame(name, awaitView(activity, "name-input"))
 
@@ -543,6 +548,8 @@ class NativeNavigationTest {
             assertNoWebView(activity)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             assertSame("Replace kept details on the stack", name, awaitView(activity, "name-input"))
+            click(activity, "navigation-check-lifecycle")
+            awaitText(activity, "navigation-lifecycle", "Disposed Ada/2")
         }
         finally {
             instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
