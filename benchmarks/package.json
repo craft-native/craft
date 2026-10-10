@@ -14,7 +14,7 @@
     "bench:load": "bun run binary-load-ab.ts"
   },
   "dependencies": {
-    "mitata": "^1.0.10"
+    "mitata": "^1.0.34"
   },
   "devDependencies": {
     "@types/bun": "latest"
