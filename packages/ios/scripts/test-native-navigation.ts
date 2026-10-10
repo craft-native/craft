@@ -36,8 +36,8 @@ function runXcodeTests(args: string[], cwd: string, resultBundle: string): void 
 
 function assertMutationBundle(path: string): void {
   const source = readFileSync(path, 'utf8')
-  if (!source.includes('__stxNativeUnmount') || !/["']MUTATE["']/.test(source))
-    throw new Error('stx native compile did not emit the shared mutation/lifecycle runtime')
+  if (!source.includes('mutationProtocolVersion') || !/["']MUTATE["']/.test(source))
+    throw new Error('stx native compile did not emit the native mutation protocol')
 }
 
 try {
