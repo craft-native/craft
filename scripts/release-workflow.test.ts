@@ -29,6 +29,24 @@ test('mobile device jobs use the same pinned stx compiler', () => {
     expect((step.with as Record<string, string>).ref).toBe(stxCompilerCommit)
 })
 
+test('mobile device jobs preserve runner diagnostics when the harness fails', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  for (const [jobName, evidenceDir, expectedCommand] of [
+    ['ios-simulator', 'ios-simulator/diagnostics', 'xcrun simctl'],
+    ['android-emulator', 'android-emulator/diagnostics', 'adb logcat'],
+  ] as const) {
+    const job = workflow.jobs[jobName]
+    const diagnostics = job.steps?.find(step => step.name?.startsWith('Collect '))
+    expect(diagnostics?.if, `${jobName} diagnostics must run after any harness outcome`).toBe('always()')
+    expect(diagnostics?.run).toContain(evidenceDir)
+    expect(diagnostics?.run).toContain(expectedCommand)
+
+    const upload = job.steps?.find(step => step.name?.startsWith('Upload '))
+    expect(upload?.if, `${jobName} evidence must upload after a failure`).toBe('always()')
+    expect((upload?.with as Record<string, string>)?.path).toContain(`artifacts/mobile-e2e/${evidenceDir.split('/')[0]}/**`)
+  }
+})
+
 test('workflow setup uses a known Pantry CLI instead of resolving latest', () => {
   for (const file of ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'benchmarks.yml', 'binary-size.yml', 'native-lifecycle.yml']) {
     const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/', file), 'utf8')) as { jobs: Record<string, Job> }

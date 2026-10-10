@@ -174,12 +174,29 @@ jobs:
         id: harness
         run: bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib
 
+      - name: Collect iOS simulator diagnostics
+        id: diagnostics
+        if: always()
+        run: |
+          evidence_dir="artifacts/mobile-e2e/ios-simulator/diagnostics"
+          mkdir -p "$evidence_dir"
+          {
+            echo "harness=${{ steps.harness.conclusion }}"
+            echo "runner=$(uname -a)"
+            echo
+            xcrun simctl list devices || true
+          } > "$evidence_dir/simulator.txt" 2>&1
+          xcrun simctl spawn booted log show --last 10m --style compact > "$evidence_dir/system.log" 2>&1 || true
+          {
+            find "$HOME/Library/Logs/DiagnosticReports" -maxdepth 1 -type f \
+              \( -name '*NativeNavigation*' -o -name '*Craft*' \) -print 2>/dev/null || true
+          } > "$evidence_dir/crash-reports.txt"
+          while IFS= read -r report; do
+            cp "$report" "$evidence_dir/$(basename "$report")" || true
+          done < "$evidence_dir/crash-reports.txt"
+
       - name: Upload iOS evidence
-        # Not a bare `always()`: when an earlier step fails the harness never
-        # runs, the evidence directory is never created, and `if-no-files-found:
-        # error` would then add a "No files were found" error on top of the real
-        # one. Skipped-means-skipped; ran-and-produced-nothing still fails.
-        if: always() && steps.harness.conclusion != 'skipped'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mobile-e2e-ios
@@ -310,8 +327,27 @@ jobs:
             bun scripts/mobile-e2e.ts --platform android --android-runtime packages/zig/zig-out/android
             STX_CLI="$GITHUB_WORKSPACE/.stx-compiler/packages/stx/bin/cli.ts" bun packages/android/scripts/test-native-navigation.ts
 
+      - name: Collect Android emulator diagnostics
+        id: diagnostics
+        if: always()
+        run: |
+          evidence_dir="artifacts/mobile-e2e/android-emulator/diagnostics"
+          mkdir -p "$evidence_dir"
+          {
+            echo "harness=${{ steps.harness.conclusion }}"
+            echo "runner=$(uname -a)"
+            echo
+            adb devices -l || true
+          } > "$evidence_dir/adb.txt" 2>&1
+          adb logcat -d -v threadtime > "$evidence_dir/logcat.txt" 2>&1 || true
+          {
+            pgrep -af 'emulator|qemu' || true
+            echo
+            ps aux | grep -E '[e]mulator|[q]emu' || true
+          } > "$evidence_dir/processes.txt"
+
       - name: Upload Android evidence
-        if: always() && steps.harness.conclusion != 'skipped'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mobile-e2e-android
