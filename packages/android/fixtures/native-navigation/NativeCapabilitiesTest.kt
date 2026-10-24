@@ -125,6 +125,8 @@ class NativeCapabilitiesTest {
             val restored = call(reopened, "Storage", "get", JSONArray().put("draft")).data as JSONObject
             assertEquals(1, restored.getInt("generation"))
             assertFalse("A closed host must not acknowledge a checkpoint", answered.get())
+            assertEquals("HOST_CLOSED", call(capabilities, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 3))).code)
+            assertEquals(1, (call(reopened, "Storage", "get", JSONArray().put("draft")).data as JSONObject).getInt("generation"))
         } finally { capabilities.close(); reopened.close(); base.deleteSharedPreferences(name) }
     }
 

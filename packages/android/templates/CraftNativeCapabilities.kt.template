@@ -37,6 +37,7 @@ import java.net.URLConnection
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -86,6 +87,7 @@ internal class CraftNativeCapabilities(
     private val databaseExecutor = Executors.newSingleThreadExecutor()
     private val networkExecutor = Executors.newCachedThreadPool()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    private val closed = AtomicBoolean(false)
     private val fetchConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private val fileRoot by lazy { File(context.cacheDir, "craft-files").apply { mkdirs() } }
     private var pendingFilePick: PendingFilePick? = null
@@ -135,6 +137,10 @@ internal class CraftNativeCapabilities(
         args: JSONArray,
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
+        if (closed.get()) {
+            mainHandler.post { completion(failure("HOST_CLOSED", "The native capability host is closed")) }
+            return
+        }
         cancelled.remove(requestToken)
         if (version != CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION) {
             complete(requestToken, failure("UNSUPPORTED_VERSION", "Unsupported native capability protocol version"), completion)
@@ -150,7 +156,7 @@ internal class CraftNativeCapabilities(
                 else bluetooth.perform(method, args) { complete(requestToken, it, completion) }
             }
             "Storage" -> mainHandler.post {
-                if (cancelled.remove(requestToken)) return@post
+                if (cancelled.remove(requestToken) || closed.get()) return@post
                 val answer = runCatching { storage(method, args) }
                     .getOrElse { failure("STORAGE_ERROR", it.message ?: "Storage operation failed") }
                 complete(requestToken, answer, completion)
@@ -200,6 +206,8 @@ internal class CraftNativeCapabilities(
     }
 
     fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        cancelled.clear()
         if (config.optBoolean("enableBluetooth")) bluetooth.disconnect()
         databaseExecutor.shutdownNow()
         networkExecutor.shutdownNow()
@@ -654,9 +662,9 @@ internal class CraftNativeCapabilities(
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            if (!cancelled.remove(requestToken)) completion(result)
+            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
         } else mainHandler.post {
-            if (!cancelled.remove(requestToken)) completion(result)
+            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
         }
     }
 
