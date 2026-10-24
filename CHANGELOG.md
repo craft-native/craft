@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.337...v0.0.338)
+
+## 🐛 Bug Fixes
+
+- **ci**: register the Vulkan driver for elevated Windows acceptance ([58a0d6c](https://github.com/craft-native/craft/commit/58a0d6c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.336...v0.0.337)
 
 ## 🧪 Tests
