@@ -1288,6 +1288,9 @@ Storage operation cancelled before it starts leaves the saved value unchanged
 and sends no completion. Cancelling an operation that has already started cannot
 undo its atomic commit. Android host disposal also stops queued storage work and
 pending completions; new calls to that closed host reject with `HOST_CLOSED`.
+iOS screen disposal cancels pending requests before controller deallocation and
+rejects later requests from that closed runtime. Flush a final checkpoint before
+disposing its screen or host.
 Individual storage operations are atomic. A sequence of reads and writes is not
 a transaction: use `setIfAbsent` or `compareAndSet` when sessions can compete for
 the same checkpoint, and handle a `false` result as a conflict.

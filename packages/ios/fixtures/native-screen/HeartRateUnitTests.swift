@@ -476,6 +476,9 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         let restored = try await call("get", [key]) as? [String: Any]
         XCTAssertEqual(restored?["generation"] as? Int, 1)
         withExtendedLifetime(controller) {}
+        controller.evaluateScript("craftNativePostMessage(JSON.stringify(\(json)))")
+        let afterClose = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(afterClose?["generation"] as? Int, 1, "A closed retained context cannot start another storage request")
     }
 
     func testPublicStorageCapabilityRoutesAtomicCheckpointsAndDeletion() async throws {

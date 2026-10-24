@@ -5998,6 +5998,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func disposeRuntime() {
         guard !runtimeDisposed else { return }
         runtimeDisposed = true
+        pendingCapabilityDeadlines.values.forEach { $0.cancel() }
+        pendingCapabilityDeadlines.removeAll()
+        pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
+        pendingCapabilityRequests.removeAll()
         if let owner = voiceRecordingOwner {
             voiceRecordingOwner = nil
             CraftVoiceRecording.shared.perform(method: "cancel", args: [owner]) { _ in }
@@ -7613,6 +7617,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 navigationController?.popToRootViewController(animated: true)
             }
         case "API_REQUEST":
+            guard !runtimeDisposed else { return }
             guard let id = message["id"] as? String else { return }
             let args = payload["args"] as? [Any] ?? []
             let requestToken = "\(capabilityScope)/\(id)"
@@ -7682,7 +7687,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "API_CANCEL":
             guard let id = payload["requestId"] as? String else { return }
             let requestToken = "\(capabilityScope)/\(id)"
-            pendingCapabilityRequests.remove(requestToken)
+            guard pendingCapabilityRequests.remove(requestToken) != nil else { return }
             pendingCapabilityDeadlines.removeValue(forKey: requestToken)?.cancel()
             screenRequestCancellers.removeValue(forKey: requestToken)?()
             CraftNativeActions.cancel(requestToken: requestToken)
