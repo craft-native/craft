@@ -1,5 +1,35 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.330...v0.0.331)
+
+## 🚀 Features
+
+- present shared Vulkan frames on owned Win32 windows ([7fb8a24](https://github.com/craft-native/craft/commit/7fb8a24)) _(by Chris)_
+- own native Windows command trees with Job Objects ([ff375b0](https://github.com/craft-native/craft/commit/ff375b0)) _(by Chris)_
+- present native Xlib frames with bounded Vulkan ownership ([e08f9d4](https://github.com/craft-native/craft/commit/e08f9d4)) _(by Chris)_
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve foreground chrome during background tab updates ([fcbab7f](https://github.com/craft-native/craft/commit/fcbab7f)) _(by Chris Breuer)_
+- retain native fixture state until every command confirms disposal ([6035c11](https://github.com/craft-native/craft/commit/6035c11)) _(by Chris)_
+- support caller-owned native graphics consumers ([cadec95](https://github.com/craft-native/craft/commit/cadec95)) _(by Chris)_
+- isolate GPU runtime dependencies and update clock calls ([34f9e2f](https://github.com/craft-native/craft/commit/34f9e2f)) _(by Chris)_
+
+## 🧪 Tests
+
+- capture native Win32 frames with pinned Vulkan sources ([67f3245](https://github.com/craft-native/craft/commit/67f3245)) _(by Chris)_
+- verify Vulkan pixels in an owned native Xlib window ([de9437f](https://github.com/craft-native/craft/commit/de9437f)) _(by Chris)_
+
+## 🤖 Continuous Integration
+
+- require native Win32 Vulkan display and ownership checks ([5d8c4c2](https://github.com/craft-native/craft/commit/5d8c4c2)) _(by Chris)_
+- require native Linux Vulkan presentation evidence ([32573e8](https://github.com/craft-native/craft/commit/32573e8)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.329...v0.0.330)
 
 ## 🧪 Tests
