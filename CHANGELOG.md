@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.334...v0.0.335)
+
+## 🐛 Bug Fixes
+
+- **packaging**: expose native host window appearance options ([9fa520b](https://github.com/craft-native/craft/commit/9fa520b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.333...v0.0.334)
 
 ## 🐛 Bug Fixes
