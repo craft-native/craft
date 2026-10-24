@@ -1,5 +1,25 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.331...v0.0.332)
+
+## 🚀 Features
+
+- **packaging**: run sandboxed server apps under the public native host ([8a62555](https://github.com/craft-native/craft/commit/8a62555)) _(by Chris Breuer)_
+- **macos**: publish a public-only Craft runtime for App Store apps ([49fcb0b](https://github.com/craft-native/craft/commit/49fcb0b)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- use native Win32 waits in Vulkan acceptance host ([a63d755](https://github.com/craft-native/craft/commit/a63d755)) _(by Chris)_
+
+## 🧹 Chores
+
+- **deps**: upgrade Bumpx to preserve ignored dependency caches ([1b47783](https://github.com/craft-native/craft/commit/1b47783)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.330...v0.0.331)
 
 ## 🚀 Features
