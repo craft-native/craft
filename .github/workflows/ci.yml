@@ -691,6 +691,9 @@ jobs:
       - name: Test host-neutral native renderer contract
         run: bun test ./scripts/native-renderer-contract.test.ts
 
+      - name: Test native Windows C++ toolchain discovery
+        run: bun test ./scripts/native/windows-vulkan-driver.test.ts
+
       - name: Test multi-window event delivery policy
         run: bun test ./scripts/multi-window-event-policy.test.ts
 

@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 import type { NativeWindowsCommandResult } from './windows-command'
 
 export const windowsVulkanDriverSources = {
@@ -9,6 +9,23 @@ export const windowsVulkanDriverSources = {
 } as const
 
 type Run = (name: string, args: string[], timeoutMs: number, captureOutput?: boolean) => Promise<NativeWindowsCommandResult>
+
+/** Match the installed C++ toolchain to a generator this CMake actually supports. */
+export function visualStudioGenerator(capabilities: unknown, instances: unknown): { args: string[], installationVersion: string } {
+  const available = capabilities as { generators?: { name?: string, platformSupport?: boolean }[] }
+  const installed = instances as { installationPath?: string, installationVersion?: string }[]
+  if (!Array.isArray(available?.generators) || !Array.isArray(installed) || installed.length !== 1)
+    throw new Error('CMake capabilities and one installed Visual Studio C++ instance are required')
+  const instance = installed[0]!
+  if (typeof instance.installationPath !== 'string' || !win32.isAbsolute(instance.installationPath)
+    || typeof instance.installationVersion !== 'string' || !/^\d+\.\d/.test(instance.installationVersion))
+    throw new Error('Visual Studio discovery returned an invalid native C++ installation')
+  const major = instance.installationVersion.split('.')[0]
+  const generator = available.generators.find(value => value.platformSupport === true && value.name?.startsWith(`Visual Studio ${major} `))
+  if (!generator?.name) throw new Error(`CMake does not support the installed Visual Studio ${major} toolchain`)
+  return { args: ['-G', generator.name, '-A', 'x64', `-DCMAKE_GENERATOR_INSTANCE=${instance.installationPath}`], installationVersion: instance.installationVersion }
+}
+
 export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
   if (process.platform !== 'win32') throw new Error('The native Windows Vulkan test driver must be built on Windows')
   const root = join(workspace, 'native-vulkan-dependencies')
@@ -17,6 +34,12 @@ export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
   if (!cmake || !git) throw new Error('The Windows native fixture requires CMake, Git and Visual Studio C++ build tools')
   const cmakeIdentity = await run('cmake-identity', [cmake, '--version'], 10_000, true)
   const gitIdentity = await run('git-identity', [git, '--version'], 10_000, true)
+  const programFiles = process.env['ProgramFiles(x86)']
+  if (!programFiles) throw new Error('Windows must declare its Visual Studio installer directory')
+  const vswhere = join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+  const capabilities = await run('cmake-capabilities', [cmake, '-E', 'capabilities'], 10_000, true)
+  const instances = await run('visual-studio-identity', [vswhere, '-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-format', 'json', '-utf8'], 10_000, true)
+  const visualStudio = visualStudioGenerator(JSON.parse(capabilities.stdout), JSON.parse(instances.stdout.replace(/^\uFEFF/, '')))
   for (const [name, source] of Object.entries(windowsVulkanDriverSources)) {
     const path = join(root, name)
     await run(`${name}-init`, [git, 'init', path], 10_000)
@@ -29,7 +52,7 @@ export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
   const headersBuild = join(root, 'headers-build'), headersInstall = join(root, 'headers-install')
   const loaderBuild = join(root, 'loader-build'), loaderInstall = join(root, 'loader-install')
   const swiftshaderBuild = join(root, 'swiftshader-build')
-  const generator = ['-G', 'Visual Studio 17 2022', '-A', 'x64']
+  const generator = visualStudio.args
   await run('configure-vulkan-headers', [cmake, '-S', join(root, 'headers'), '-B', headersBuild, ...generator, `-DCMAKE_INSTALL_PREFIX=${headersInstall}`], 60_000)
   await run('install-vulkan-headers', [cmake, '--install', headersBuild, '--config', 'Release'], 60_000)
   // Build the upstream loader and CPU ICD unchanged. No renamed ICD pretending
@@ -56,5 +79,5 @@ export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
     }
     files.push({ path, bytes: bytes.length, sha256: Bun.SHA256.hash(bytes, 'hex') })
   }
-  return { loader, manifest, driver, files, sources: windowsVulkanDriverSources, cmake: { path: cmake, version: cmakeIdentity.stdout.trim() }, git: { path: git, version: gitIdentity.stdout.trim() }, softwareVulkanDriver: true }
+  return { loader, manifest, driver, files, sources: windowsVulkanDriverSources, cmake: { path: cmake, version: cmakeIdentity.stdout.trim() }, visualStudio, git: { path: git, version: gitIdentity.stdout.trim() }, softwareVulkanDriver: true }
 }

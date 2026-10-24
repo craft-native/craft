@@ -59,7 +59,7 @@
     "changelog": "bun x logsmith --verbose",
     "changelog:preview": "bun scripts/changelog-preview.ts",
     "changelog:generate": "bun scripts/generate-release-changelog.ts",
-    "test:release": "bun test ./scripts/managed-git.test.ts ./scripts/changelog-preview.test.ts ./scripts/release-workflow.test.ts ./scripts/release-manifest.test.ts ./scripts/verify-sbom.test.ts ./scripts/release-version.test.ts ./scripts/zig.test.ts ./scripts/native-renderer-contract.test.ts",
+    "test:release": "bun test ./scripts/managed-git.test.ts ./scripts/changelog-preview.test.ts ./scripts/release-workflow.test.ts ./scripts/release-manifest.test.ts ./scripts/verify-sbom.test.ts ./scripts/release-version.test.ts ./scripts/zig.test.ts ./scripts/native-renderer-contract.test.ts ./scripts/native/windows-vulkan-driver.test.ts",
     "release": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx prompt --recursive --commit --tag --push --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\"",
     "release:patch": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx patch --recursive --commit --tag --push --yes --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\"",
     "release:version": "bun scripts/release-version.ts --preflight && bun x --bun @stacksjs/bumpx --recursive --commit --tag --push --yes --no-changelog --execute \"bun scripts/release-version.ts --pending && bun scripts/generate-release-changelog.ts && git add CHANGELOG.md\""
