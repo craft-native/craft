@@ -39,6 +39,9 @@ static NSDictionary *testSnapshot(pid_t agent, double boundary, BOOL rtl, BOOL p
     (void)agent; (void)boundary; (void)rtl; (void)protectedOnly; (void)display;
     if (retainedSelectionReads) {
         retainedSelectionReads--;
+        // Model slow native snapshot replies so this case cannot accidentally
+        // pass merely because both reads fit inside the old 350 ms sleep.
+        [NSThread sleepForTimeInterval:0.2];
         return @{@"anonymous:1234": @1, @"right": @1};
     }
     return snapshot;
@@ -408,6 +411,14 @@ static TestAssertion *begin(void) {
 static void drain(void) {
     CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.35, false);
 }
+static void settleActivation(void) {
+    // Observe the lifecycle result rather than assuming main-queue work has
+    // finished after a short sleep on a loaded native runner. The production
+    // verification deadline remains two seconds, including a failed selection.
+    NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 3.0;
+    while (busy && NSProcessInfo.processInfo.systemUptime < deadline)
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
+}
 static NSDictionary *state(void) {
     const char *json = craft_menubar_visibility_state();
     return [NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:json] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
@@ -570,7 +581,7 @@ int main(int argc, char *argv[]) {
             @{@"right": @1}, CGRectInfinite, [NSSet setWithObject:@1234]);
         TestAssertion *visibleSelection = created.lastObject;
         visibleSelection.completion(nil);
-        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.5, false);
+        settleActivation();
         assert(visibleSelection.invalidated && !assertion && !busy && [failure isEqual:@"visibilityMismatch"]);
         snapshot = @{@"right": @1, @"system": @1};
 
@@ -581,7 +592,9 @@ int main(int argc, char *argv[]) {
         activate(@[], @[@"own.app"], 1, 0, ++generation, 1, 100, NO,
             @{@"right": @1}, CGRectInfinite, [NSSet setWithObject:@1234]);
         TestAssertion *settling = created.lastObject;
-        settling.completion(nil); drain();
+        settling.completion(nil);
+        assert(busy && !assertion && retainedSelectionReads == 2);
+        settleActivation();
         assert(assertion == settling && !busy && !settling.invalidated && !retainedSelectionReads);
         craft_menubar_visibility_expand();
 

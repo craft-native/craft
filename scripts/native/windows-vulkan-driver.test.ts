@@ -10,7 +10,7 @@ test('native Vulkan driver configuration uses the installed C++ instance and its
   for (const [major, year] of [[17, 2022], [18, 2026]]) {
     const path = `C:\\Program Files\\Microsoft Visual Studio\\${year}\\Enterprise`
     const result = visualStudioGenerator(capabilities, [{ installationPath: path, installationVersion: `${major}.1.2` }])
-    expect(result.args).toEqual(['-G', `Visual Studio ${major} ${year}`, '-A', 'x64', `-DCMAKE_GENERATOR_INSTANCE=${path}`])
+    expect(result.args).toEqual(['-G', `Visual Studio ${major} ${year}`, '-A', 'x64', '-T', 'host=x64', `-DCMAKE_GENERATOR_INSTANCE=${path}`])
     expect(result.installationVersion).toBe(`${major}.1.2`)
   }
 })

@@ -15,7 +15,7 @@ test('Metal compilation and each XCTest suite get independent deadlines and sepa
     expect(step.args[step.args.indexOf('-destination') + 1]).toBe('platform=iOS Simulator,id=owned-simulator')
     expect(step.args[step.args.indexOf('-derivedDataPath') + 1]).toBe('/owned/DerivedData')
     expect(step.args[step.args.indexOf('-parallel-testing-enabled') + 1]).toBe('NO')
-    expect(step.timeoutMs).toBe(300_000)
+    expect(step.timeoutMs).toBe(step === build ? 300_000 : 600_000)
   }
 })
 

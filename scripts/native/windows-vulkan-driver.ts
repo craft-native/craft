@@ -23,7 +23,7 @@ export function visualStudioGenerator(capabilities: unknown, instances: unknown)
   const major = instance.installationVersion.split('.')[0]
   const generator = available.generators.find(value => value.platformSupport === true && value.name?.startsWith(`Visual Studio ${major} `))
   if (!generator?.name) throw new Error(`CMake does not support the installed Visual Studio ${major} toolchain`)
-  return { args: ['-G', generator.name, '-A', 'x64', `-DCMAKE_GENERATOR_INSTANCE=${instance.installationPath}`], installationVersion: instance.installationVersion }
+  return { args: ['-G', generator.name, '-A', 'x64', '-T', 'host=x64', `-DCMAKE_GENERATOR_INSTANCE=${instance.installationPath}`], installationVersion: instance.installationVersion }
 }
 
 export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
@@ -61,7 +61,9 @@ export async function buildWindowsVulkanDriver(workspace: string, run: Run) {
   await run('build-vulkan-loader', [cmake, '--build', loaderBuild, '--config', 'Release', '--target', 'vulkan', '--parallel', '2'], 300_000)
   await run('install-vulkan-loader', [cmake, '--install', loaderBuild, '--config', 'Release'], 60_000)
   await run('configure-swiftshader', [cmake, '-S', join(root, 'swiftshader'), '-B', swiftshaderBuild, ...generator, '-DSWIFTSHADER_BUILD_TESTS=OFF'], 120_000)
-  await run('build-swiftshader', [cmake, '--build', swiftshaderBuild, '--config', 'Release', '--target', 'vk_swiftshader', '--parallel', '2'], 1_200_000)
+  // A cold MSVC build also compiles SwiftShader's LLVM backend. Keep compilation
+  // separate from rendering deadlines; the pinned build is still required in full.
+  await run('build-swiftshader', [cmake, '--build', swiftshaderBuild, '--config', 'Release', '--target', 'vk_swiftshader', '--parallel', '2'], 1_800_000)
   const loader = join(loaderInstall, 'bin', 'vulkan-1.dll')
   const manifest = join(swiftshaderBuild, 'Windows', 'vk_swiftshader_icd.json')
   const record = JSON.parse(await readFile(manifest, 'utf8')) as { file_format_version?: string, ICD?: { library_path?: string } }
