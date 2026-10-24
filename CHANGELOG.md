@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.336...v0.0.337)
+
+## 🧪 Tests
+
+- **release**: bound process integration checks independently ([a174472](https://github.com/craft-native/craft/commit/a174472)) _(by Chris Breuer)_
+- **menubar**: await native activation state instead of a fixed sleep ([29df4e0](https://github.com/craft-native/craft/commit/29df4e0)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.335...v0.0.336)
 
 ## 🐛 Bug Fixes
