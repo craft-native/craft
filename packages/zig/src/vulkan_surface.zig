@@ -218,8 +218,12 @@ const VulkanSurface = struct {
         try validateWindow(window);
         var self: VulkanSurface = .{ .config = config, .owner = std.Thread.getCurrentId() };
         errdefer self.destroyInitial();
+        var stage: []const u8 = "load Vulkan loader";
+        errdefer std.debug.print("Craft Vulkan initialization failed at {s}\n", .{stage});
         self.library = try Loader.open();
+        stage = "load global entry points";
         self.global = try GlobalFns.load(&self.library.?);
+        stage = "enumerate instance extensions";
         var extensions: [256]vk.VkExtensionProperties = undefined;
         var count: u32 = extensions.len;
         try result(self.global.vkEnumerateInstanceExtensionProperties(null, &count, &extensions));
@@ -228,10 +232,12 @@ const VulkanSurface = struct {
         const platform_extension = if (builtin.os.tag == .windows) vk.VK_KHR_WIN32_SURFACE_EXTENSION_NAME else vk.VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
         const required = [_][*c]const u8{ vk.VK_KHR_SURFACE_EXTENSION_NAME, platform_extension, vk.VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME };
         for (required, 0..) |name, index| {
+            stage = std.mem.span(name);
             if (!hasExtension(extensions[0..count], std.mem.span(name))) return error.Unavailable;
             names[index] = name;
         }
         var name_count: u32 = required.len;
+        stage = "require surface maintenance extension";
         self.khr_maintenance = hasExtension(extensions[0..count], vk.VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
         self.ext_maintenance = hasExtension(extensions[0..count], vk.VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME);
         if (!self.khr_maintenance and !self.ext_maintenance) return error.Unavailable;
@@ -250,14 +256,19 @@ const VulkanSurface = struct {
         instance_info.pApplicationInfo = &app;
         instance_info.enabledExtensionCount = name_count;
         instance_info.ppEnabledExtensionNames = &names;
+        stage = "create instance";
         try result(self.global.vkCreateInstance(&instance_info, null, &self.instance));
+        stage = "load instance and device entry points";
         self.functions = try loadInstance(InstanceFns, self.global.vkGetInstanceProcAddr, self.instance);
         self.platform_functions = try loadInstance(PlatformFns, self.global.vkGetInstanceProcAddr, self.instance);
         // Resolve all device operations before creating a device, so every
         // successfully created object always has its destruction operation.
         self.device_functions = try loadInstance(DeviceFns, self.global.vkGetInstanceProcAddr, self.instance);
+        stage = "create native surface";
         try self.createNativeSurface(window);
+        stage = "select presentation device with maintenance fences";
         try self.selectDevice();
+        stage = "create swapchain";
         try self.createSwapchain(config.width, config.height);
         return self;
     }

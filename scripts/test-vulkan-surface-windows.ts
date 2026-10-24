@@ -73,7 +73,7 @@ try {
   const bundledLoader = join(dirname(executable), 'vulkan-1.dll')
   await copyFile(driver.loader, bundledLoader)
   if (Bun.SHA256.hash(await readFile(bundledLoader), 'hex') !== Bun.SHA256.hash(await readFile(driver.loader), 'hex')) throw new Error('Bundled original Vulkan loader bytes changed')
-  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, { ...process.env, VK_DRIVER_FILES: driver.manifest })
+  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, { ...process.env, VK_DRIVER_FILES: driver.manifest, VK_LOADER_DEBUG: 'error,warn,driver' })
   const log = await readFile(join(evidence, 'verify-displayed-vulkan-frames.log'), 'utf8')
   const record = log.split(/\r?\n/).map(line => { try { return JSON.parse(line) } catch { return null } }).find(value => value?.status === 'passed')
   if (!record || record.nativeSessions !== 2 || record.actualGpuFrames !== 128 || record.nativeInputEvents !== 2 || record.nativeCaptures !== 4 || record.fullDisplayedPixelsMatched !== true || record.webViewUsed !== false || record.disposed !== true) throw new Error('The native Win32 consumer did not complete its full acceptance matrix')
