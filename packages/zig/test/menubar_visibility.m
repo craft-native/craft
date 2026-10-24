@@ -34,8 +34,13 @@ static BOOL snapshotItems(AXUIElementRef node, NSUInteger depth, BOOL root, doub
 static BOOL throwOnActivation;
 static NSMutableArray *created;
 static NSDictionary *snapshot = nil;
+static NSUInteger retainedSelectionReads;
 static NSDictionary *testSnapshot(pid_t agent, double boundary, BOOL rtl, BOOL protectedOnly, CGRect display) {
     (void)agent; (void)boundary; (void)rtl; (void)protectedOnly; (void)display;
+    if (retainedSelectionReads) {
+        retainedSelectionReads--;
+        return @{@"anonymous:1234": @1, @"right": @1};
+    }
     return snapshot;
 }
 
@@ -192,6 +197,55 @@ static void verifyRecreatedAnonymousItems(void) {
     readAttribute = attribute;
     nodeAttributes = nil;
 }
+static void verifyNativeHostedGeometry(void) {
+    nodeAttributes = [NSMutableDictionary dictionary];
+    CGPoint stale = CGPointMake(20, 0);
+    CGSize size = CGSizeMake(24, 24);
+    // App extras are stale on the primary display; its authoritative native
+    // slot is on the second display to the LEFT of that display's arrow.
+    id extra = testNode(@{(__bridge NSString *)kAXRoleAttribute: (__bridge NSString *)kAXMenuBarItemRole,
+        (__bridge NSString *)kAXPositionAttribute: CFBridgingRelease(AXValueCreate(kAXValueCGPointType, &stale)),
+        (__bridge NSString *)kAXSizeAttribute: CFBridgingRelease(AXValueCreate(kAXValueCGSizeType, &size)), @"testOwner": @1234});
+    id extras = testNode(@{(__bridge NSString *)kAXRoleAttribute: (__bridge NSString *)kAXMenuBarRole,
+        (__bridge NSString *)kAXChildrenAttribute: @[extra]});
+    id remote = testNode(@{(__bridge NSString *)kAXRoleAttribute: (__bridge NSString *)kAXApplicationRole,
+        @"AXExtrasMenuBar": extras, @"testOwner": @1234});
+    CGPoint displayed = CGPointMake(1200, 0);
+    id host = testNode(@{(__bridge NSString *)kAXPositionAttribute: CFBridgingRelease(AXValueCreate(kAXValueCGPointType, &displayed)),
+        (__bridge NSString *)kAXSizeAttribute: CFBridgingRelease(AXValueCreate(kAXValueCGSizeType, &size)),
+        (__bridge NSString *)kAXChildrenAttribute: @[remote], @"testOwner": @99});
+    readAttribute = testAttribute; readOwner = testOwner;
+    for (BOOL readable = NO; ; readable = YES) {
+        NSMutableDictionary *remoteAttributes = [nodeAttributes[[NSValue valueWithPointer:(__bridge void *)remote]] mutableCopy];
+        if (!readable) [remoteAttributes removeObjectForKey:@"AXExtrasMenuBar"];
+        else remoteAttributes[@"AXExtrasMenuBar"] = extras;
+        nodeAttributes[[NSValue valueWithPointer:(__bridge void *)remote]] = remoteAttributes;
+        NSMutableDictionary *owners = [NSMutableDictionary dictionary], *items = [NSMutableDictionary dictionary];
+        NSUInteger remaining = 256;
+        assert(collectSnapshotItems((__bridge AXUIElementRef)host, 8, NO, 1300, NO, YES, 99,
+            CGRectMake(1000, 0, 1000, 800), items, owners, nil, &remaining));
+        assert(owners[@1234] && ![owners[@1234] boolValue] && !items.count);
+        // The same remote application on the visible side must remain visible,
+        // including when stale app coordinates would place it in the group.
+        remaining = 256; [owners removeAllObjects];
+        assert(collectSnapshotItems((__bridge AXUIElementRef)host, 8, NO, 1100, NO, YES, 99,
+            CGRectMake(1000, 0, 1000, 800), items, owners, nil, &remaining));
+        assert([owners[@1234] boolValue] && [items[@"anonymous:1234"] unsignedIntegerValue] == 1);
+        if (readable) break;
+    }
+    // Native button proxies use the displayed slot too; stale child geometry
+    // must not duplicate or move an icon to a different display.
+    NSMutableDictionary *hostAttributes = [nodeAttributes[[NSValue valueWithPointer:(__bridge void *)host]] mutableCopy];
+    hostAttributes[(__bridge NSString *)kAXChildrenAttribute] = @[extra];
+    nodeAttributes[[NSValue valueWithPointer:(__bridge void *)host]] = hostAttributes;
+    NSMutableDictionary *owners = [NSMutableDictionary dictionary], *items = [NSMutableDictionary dictionary];
+    NSUInteger remaining = 256;
+    assert(collectSnapshotItems((__bridge AXUIElementRef)host, 8, NO, 1300, NO, YES, 99,
+        CGRectMake(1000, 0, 1000, 800), items, owners, nil, &remaining));
+    assert(owners[@1234] && ![owners[@1234] boolValue]);
+    readOwner = AXUIElementGetPid; readAttribute = attribute; nodeAttributes = nil;
+}
+
 static void verifyButtonBoundary(void) {
     [NSApplication sharedApplication];
     NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(100, 100, 200, 24)
@@ -348,7 +402,7 @@ static void verifyStatusItemScope(void) {
 
 static TestAssertion *begin(void) {
     busy = YES;
-    activate(@[@0, @1], @[@"own.app"], 2, 0, ++generation, 1, 100, NO, @{@"right": @1}, CGRectInfinite);
+    activate(@[@0, @1], @[@"own.app"], 2, 0, ++generation, 1, 100, NO, @{@"right": @1}, CGRectInfinite, [NSSet set]);
     return created.lastObject;
 }
 static void drain(void) {
@@ -369,6 +423,7 @@ int main(int argc, char *argv[]) {
         verifySystemGrouping();
         verifyRecreatedAnonymousItems();
         verifyStatusItemScope();
+        verifyNativeHostedGeometry();
         (void)available(); // Resolve once before substituting the test classes.
         configurationClass = TestConfiguration.class;
         assertionClass = TestAssertion.class;
@@ -379,6 +434,17 @@ int main(int argc, char *argv[]) {
         assert(!preservesItems(@{@"right": @2}, snapshot));
         assert(!preservesItems(@{@"missing": @1}, snapshot));
         assert(!preservesItems(nil, snapshot));
+        assert(hidesSelectedOwners(@{@"anonymous:1234": @1}, [NSSet setWithObject:@5678]));
+        assert(!hidesSelectedOwners(@{@"anonymous:1234": @1}, [NSSet setWithObject:@1234]));
+        assert(!hidesSelectedOwners(@{@"item:1234:stable": @1}, [NSSet setWithObject:@1234]));
+        assert(hidesSelectedOwners(@{@"anonymous:1234": @0}, [NSSet setWithObject:@1234]));
+        TestRunningApplication *selectedApp = [TestRunningApplication new];
+        selectedApp.bundleIdentifier = @"selected.app"; selectedApp.processIdentifier = 1234;
+        assert([selectedOwners((id)@[selectedApp], @{@"selected.app": @NO}, @{}, @[]) containsObject:@1234]);
+        assert(!selectedOwners((id)@[selectedApp], @{@"selected.app": @YES}, @{}, @[]).count);
+        assert(!selectedOwners((id)@[selectedApp], @{@"selected.app": @NO},
+            @{@"selected.app": @[@"selected.app", @"shared.runtime"]}, @[@"shared.runtime"]).count);
+
         // A helper's sealed identifier differs from its app/LaunchServices ID.
         // It must stay allowed even when its icon sits in the hidden section.
         NSString *signedIdentity = @"dev.craft.visibility.fixture.runtime";
@@ -452,7 +518,7 @@ int main(int argc, char *argv[]) {
         assert(hidden == 2 && ![sharedHidden containsObject:@"shared.first"] && ![sharedHidden containsObject:@"shared.second"]);
 
         busy = YES;
-        activate(@[@0, @1], ownIdentifiers(), 0, 0, ++generation, 1, 100, NO, snapshot, CGRectInfinite);
+        activate(@[@0, @1], ownIdentifiers(), 0, 0, ++generation, 1, 100, NO, snapshot, CGRectInfinite, [NSSet set]);
         assert(!busy && !assertion && created.count == 0 && [failure isEqual:@"emptyGroup"]);
 
         TestAssertion *first = begin();
@@ -464,7 +530,7 @@ int main(int argc, char *argv[]) {
         assert(first.invalidated && !assertion && !busy && hiddenAppCount == 0);
 
         busy = YES;
-        activate(@[@1, @2], ownIdentifiers(), 0, 1, ++generation, 1, 100, NO, snapshot, CGRectInfinite);
+        activate(@[@1, @2], ownIdentifiers(), 0, 1, ++generation, 1, 100, NO, snapshot, CGRectInfinite, [NSSet set]);
         TestAssertion *systemOnly = created.lastObject;
         systemOnly.completion(nil); drain();
         assert(assertion == systemOnly && !busy && hiddenAppCount == 0 && hiddenSystemItemCount == 1);
@@ -496,6 +562,28 @@ int main(int argc, char *argv[]) {
         assert([state()[@"error"] isEqual:@"permissionRequired"]);
         assert(current.invalidated && !assertion && !busy);
         trusted = true;
+
+        // Native success alone is insufficient: a selected app must disappear.
+        snapshot = @{@"anonymous:1234": @1, @"right": @1};
+        busy = YES;
+        activate(@[], @[@"own.app"], 1, 0, ++generation, 1, 100, NO,
+            @{@"right": @1}, CGRectInfinite, [NSSet setWithObject:@1234]);
+        TestAssertion *visibleSelection = created.lastObject;
+        visibleSelection.completion(nil);
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.5, false);
+        assert(visibleSelection.invalidated && !assertion && !busy && [failure isEqual:@"visibilityMismatch"]);
+        snapshot = @{@"right": @1, @"system": @1};
+
+        // A completed assertion can precede the native layout update. Keep
+        // waiting for actual disappearance instead of accepting stale success.
+        snapshot = @{@"right": @1, @"system": @1};
+        retainedSelectionReads = 2; busy = YES;
+        activate(@[], @[@"own.app"], 1, 0, ++generation, 1, 100, NO,
+            @{@"right": @1}, CGRectInfinite, [NSSet setWithObject:@1234]);
+        TestAssertion *settling = created.lastObject;
+        settling.completion(nil); drain();
+        assert(assertion == settling && !busy && !settling.invalidated && !retainedSelectionReads);
+        craft_menubar_visibility_expand();
 
         TestAssertion *failed = begin();
         failed.completion([NSError errorWithDomain:@"test" code:1 userInfo:nil]); drain();

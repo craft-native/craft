@@ -268,8 +268,22 @@ static AXError (*readOwner)(AXUIElementRef, pid_t *) = AXUIElementGetPid;
 // A private allow-list can silently omit an allowed app (notably a mismatched
 // helper bundle), or suppress a system indicator. System preservation is an
 // explicit consumer policy; unselected application icons are always protected.
-static BOOL collectSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL root, double boundary, BOOL rtl,
-    BOOL protectedOnly, pid_t agent, CGRect display, NSMutableDictionary *items, NSMutableDictionary *owners, NSMutableDictionary *systemSections, NSUInteger *remaining) {
+static CGRect itemFrame(AXUIElementRef node) {
+    id position = readAttribute(node, kAXPositionAttribute), size = readAttribute(node, kAXSizeAttribute);
+    CGPoint point = CGPointZero;
+    CGSize dimensions = CGSizeZero;
+    if (!position || !size || CFGetTypeID((__bridge CFTypeRef)position) != AXValueGetTypeID()
+        || CFGetTypeID((__bridge CFTypeRef)size) != AXValueGetTypeID()
+        || !AXValueGetValue((__bridge AXValueRef)position, kAXValueCGPointType, &point)
+        || !AXValueGetValue((__bridge AXValueRef)size, kAXValueCGSizeType, &dimensions)
+        || !isfinite(point.x) || !isfinite(point.y) || !isfinite(dimensions.width)
+        || !isfinite(dimensions.height) || dimensions.width <= 0 || dimensions.height <= 0 || dimensions.height > 64)
+        return CGRectNull;
+    return (CGRect){point, dimensions};
+}
+
+static BOOL collectHostedSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL root, double boundary, BOOL rtl,
+    BOOL protectedOnly, pid_t agent, CGRect display, CGRect hostedFrame, NSMutableDictionary *items, NSMutableDictionary *owners, NSMutableDictionary *systemSections, NSUInteger *remaining) {
     if (!depth || !*remaining) return NO;
     (*remaining)--;
     AXUIElementSetMessagingTimeout(node, 0.1);
@@ -277,10 +291,11 @@ static BOOL collectSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL roo
     // MenuBarAgent's remote app nodes expose the entire app, including its
     // windows and application menus. Only its extras belong to this bar.
     // Walking a webview here can exhaust the budget or count unrelated buttons.
-    if (!root && [role isEqual:(__bridge NSString *)kAXApplicationRole]) {
+    const BOOL remoteApplication = !root && [role isEqual:(__bridge NSString *)kAXApplicationRole];
+    if (remoteApplication && CGRectIsNull(hostedFrame)) {
         id extras = readAttribute(node, CFSTR("AXExtrasMenuBar"));
         if (extras && CFGetTypeID((__bridge CFTypeRef)extras) == AXUIElementGetTypeID())
-            return collectSnapshotItems((__bridge AXUIElementRef)extras, depth - 1, NO, boundary, rtl, protectedOnly, agent, display, items, owners, systemSections, remaining);
+            return collectHostedSnapshotItems((__bridge AXUIElementRef)extras, depth - 1, NO, boundary, rtl, protectedOnly, agent, display, CGRectNull, items, owners, systemSections, remaining);
         // Keep an unreadable remote app protected by its native presence.
         // Its ordinary window controls cannot stand in for a status item.
         pid_t owner = 0;
@@ -297,16 +312,12 @@ static BOOL collectSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL roo
     // MenuBarClientCore can suppress Apple modules even when allowed. Consumers
     // may explicitly accept that behavior without disabling app verification.
     if (system || [role isEqual:(__bridge NSString *)kAXButtonRole]
-        || [role isEqual:(__bridge NSString *)kAXMenuBarItemRole]) {
-        id position = readAttribute(node, kAXPositionAttribute), size = readAttribute(node, kAXSizeAttribute);
-        CGPoint point = CGPointZero;
-        CGSize dimensions = CGSizeZero;
-        if (position && size && CFGetTypeID((__bridge CFTypeRef)position) == AXValueGetTypeID()
-            && CFGetTypeID((__bridge CFTypeRef)size) == AXValueGetTypeID()
-            && AXValueGetValue((__bridge AXValueRef)position, kAXValueCGPointType, &point)
-            && AXValueGetValue((__bridge AXValueRef)size, kAXValueCGSizeType, &dimensions)
-            && isfinite(point.x) && dimensions.width > 0 && dimensions.height > 0 && dimensions.height <= 64) {
-            double middle = point.x + dimensions.width / 2;
+        || [role isEqual:(__bridge NSString *)kAXMenuBarItemRole] || remoteApplication) {
+        const CGRect frame = CGRectIsNull(hostedFrame) ? itemFrame(node) : hostedFrame;
+        if (!CGRectIsNull(frame)) {
+            CGPoint point = frame.origin;
+            CGSize dimensions = frame.size;
+            double middle = CGRectGetMidX(frame);
             // MenuBarAgent exposes controls from every connected display. A
             // copy on another screen cannot override this arrow's selection.
             if (!CGRectContainsPoint(display, CGPointMake(middle, point.y + dimensions.height / 2))) return YES;
@@ -350,14 +361,29 @@ static BOOL collectSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL roo
             return YES;
         }
     }
+    // MenuBarAgent's roleless slot is the displayed status item's geometry.
+    // Remote apps can report AXExtrasMenuBar coordinates from a different
+    // display or from before a reorder. Carry the native slot to its owner,
+    // counting that slot once instead of traversing every app-owned extra.
+    CGRect childFrame = hostedFrame;
+    if (CGRectIsNull(childFrame) && !role.length && agent > 0) {
+        pid_t host = 0;
+        if (readOwner(node, &host) == kAXErrorSuccess && host == agent)
+            childFrame = itemFrame(node);
+    }
     id children = readAttribute(node, kAXChildrenAttribute);
     if ([children isKindOfClass:NSArray.class]) {
         for (id child in children) {
             if (CFGetTypeID((__bridge CFTypeRef)child) == AXUIElementGetTypeID()
-                && !collectSnapshotItems((__bridge AXUIElementRef)child, depth - 1, NO, boundary, rtl, protectedOnly, agent, display, items, owners, systemSections, remaining)) return NO;
+                && !collectHostedSnapshotItems((__bridge AXUIElementRef)child, depth - 1, NO, boundary, rtl, protectedOnly, agent, display, childFrame, items, owners, systemSections, remaining)) return NO;
         }
     }
     return YES;
+}
+
+static BOOL collectSnapshotItems(AXUIElementRef node, NSUInteger depth, BOOL root, double boundary, BOOL rtl,
+    BOOL protectedOnly, pid_t agent, CGRect display, NSMutableDictionary *items, NSMutableDictionary *owners, NSMutableDictionary *systemSections, NSUInteger *remaining) {
+    return collectHostedSnapshotItems(node, depth, root, boundary, rtl, protectedOnly, agent, display, CGRectNull, items, owners, systemSections, remaining);
 }
 
 static NSDictionary *barLayout(pid_t agent, double boundary, BOOL rtl, BOOL protectedOnly, CGRect display) {
@@ -390,8 +416,69 @@ static BOOL preservesItems(NSDictionary *expected, NSDictionary *actual) {
     return YES;
 }
 
+static NSSet<NSNumber *> *selectedOwners(NSArray<NSRunningApplication *> *apps, NSDictionary *sections,
+    NSDictionary *identities, NSArray *allowed) {
+    NSMutableSet *selected = [NSMutableSet set];
+    NSSet *visibleIdentities = [NSSet setWithArray:allowed];
+    for (NSRunningApplication *app in apps) {
+        NSString *bundle = app.bundleIdentifier;
+        if (!bundle.length || !sections[bundle] || [sections[bundle] boolValue]) continue;
+        NSArray *aliases = identities[bundle] ?: @[bundle];
+        if (![visibleIdentities intersectsSet:[NSSet setWithArray:aliases]])
+            [selected addObject:@(app.processIdentifier)];
+    }
+    return selected;
+}
+
+static BOOL hidesSelectedOwners(NSDictionary *actual, NSSet<NSNumber *> *selected) {
+    for (NSString *key in actual) {
+        NSArray *identity = [key componentsSeparatedByString:@":"];
+        if (identity.count < 2) continue;
+        NSNumber *owner = @([identity[1] intValue]);
+        if ([selected containsObject:owner] && [actual[key] unsignedIntegerValue] > 0) {
+            NSLog(@"Craft menu bar: selected owner %@ remains visible", owner);
+            return NO;
+        }
+    }
+    return YES;
+}
+
+static void verifyActivation(id<CraftVisibilityAssertion> pending, NSUInteger ticket, pid_t agent, double boundary,
+    BOOL rtl, NSDictionary *protectedItems, CGRect display, NSSet<NSNumber *> *selected,
+    NSUInteger hidden, NSUInteger systemHidden, NSTimeInterval deadline) {
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSDictionary *actual = readBarSnapshot(agent, boundary, rtl, NO, display);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ticket != generation) { invalidate(pending); return; }
+            if (!AXIsProcessTrusted()) return fail(@"permissionRequired");
+            if (!preservesItems(protectedItems, actual)) return fail(@"visibilityMismatch");
+            if (!hidesSelectedOwners(actual, selected)) {
+                // Native activation completes before MenuBarAgent necessarily
+                // publishes its new layout. Wait for the observed result, with
+                // a bounded deadline; never report success while a target stays.
+                if (NSProcessInfo.processInfo.systemUptime >= deadline) return fail(@"visibilityMismatch");
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                    if (ticket == generation) verifyActivation(pending, ticket, agent, boundary, rtl, protectedItems,
+                        display, selected, hidden, systemHidden, deadline);
+                });
+                return;
+            }
+            assertion = pending;
+            pendingAssertion = nil;
+            busy = NO;
+            hiddenAppCount = hidden;
+            hiddenSystemItemCount = systemHidden;
+            if (operationStarted > 0)
+                NSLog(@"Craft menu bar: grouped %lu apps and %lu system controls at x=%.1f in %.3fs",
+                    (unsigned long)hidden, (unsigned long)systemHidden, boundary,
+                    NSProcessInfo.processInfo.systemUptime - operationStarted);
+            notify();
+        });
+    });
+}
+
 static void activate(NSArray *systemItems, NSArray *allowed, NSUInteger hidden, NSUInteger systemHidden, NSUInteger ticket,
-    pid_t agent, double boundary, BOOL rtl, NSDictionary *protectedItems, CGRect display) {
+    pid_t agent, double boundary, BOOL rtl, NSDictionary *protectedItems, CGRect display, NSSet<NSNumber *> *selected) {
     // Assessment mode can suppress system indicators even with all apps allowed.
     // Never activate a global restriction when there is no selected app to hide.
     if (!hidden && !systemHidden) return fail(@"emptyGroup");
@@ -410,24 +497,8 @@ static void activate(NSArray *systemItems, NSArray *allowed, NSUInteger hidden, 
                     NSLog(@"Craft menu bar activation: %@", error);
                     return fail(@"activationFailed");
                 }
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 200 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-                    NSDictionary *actual = readBarSnapshot(agent, boundary, rtl, NO, display);
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        if (ticket != generation) { invalidate(pending); return; }
-                        if (!AXIsProcessTrusted()) return fail(@"permissionRequired");
-                        if (!preservesItems(protectedItems, actual)) return fail(@"visibilityMismatch");
-                        assertion = pending;
-                        pendingAssertion = nil;
-                        busy = NO;
-                        hiddenAppCount = hidden;
-                        hiddenSystemItemCount = systemHidden;
-                        if (operationStarted > 0)
-                            NSLog(@"Craft menu bar: grouped %lu apps and %lu system controls at x=%.1f in %.3fs",
-                                (unsigned long)hidden, (unsigned long)systemHidden, boundary,
-                                NSProcessInfo.processInfo.systemUptime - operationStarted);
-                        notify();
-                    });
-                });
+                verifyActivation(pending, ticket, agent, boundary, rtl, protectedItems, display, selected,
+                    hidden, systemHidden, NSProcessInfo.processInfo.systemUptime + 2.0);
             });
         }];
     } @catch (NSException *exception) {
@@ -493,7 +564,8 @@ void craft_menubar_visibility_collapse(void) {
                 NSArray *allowed = allowedBundles(bundles, sections, identities, ownBundles, &hidden);
                 NSUInteger systemHidden = 0;
                 NSArray *systemItems = allowedSystemItems(layout[@"system"], &systemHidden);
-                activate(systemItems, allowed, hidden, systemHidden, ticket, agent, boundary, rtl, protectedItems, display);
+                activate(systemItems, allowed, hidden, systemHidden, ticket, agent, boundary, rtl, protectedItems, display,
+                    selectedOwners(apps, sections, identities, allowed));
             });
         }
     });
