@@ -150,6 +150,7 @@ internal class CraftNativeCapabilities(
                 else bluetooth.perform(method, args) { complete(requestToken, it, completion) }
             }
             "Storage" -> mainHandler.post {
+                if (cancelled.remove(requestToken)) return@post
                 val answer = runCatching { storage(method, args) }
                     .getOrElse { failure("STORAGE_ERROR", it.message ?: "Storage operation failed") }
                 complete(requestToken, answer, completion)

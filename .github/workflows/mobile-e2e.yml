@@ -752,7 +752,13 @@ jobs:
           files = list(Path('artifacts/android-navigation').rglob('TEST-*.xml'))
           cases = [case for file in files for case in ET.parse(file).iter('testcase')]
           selection = os.environ.get('CRAFT_ANDROID_TEST_CLASS', '')
-          expected = sum(path.read_text().count('@Test') for path in Path('packages/android/fixtures/native-navigation').glob('*.kt')) if os.environ['CRAFT_ANDROID_NATIVE_SUITE'] == 'full' else len([item for item in selection.split(',') if item.strip()])
+          suite = os.environ['CRAFT_ANDROID_NATIVE_SUITE']
+          if suite == 'full':
+              expected = sum(path.read_text().count('@Test') for path in Path('packages/android/fixtures/native-navigation').glob('*.kt'))
+          elif suite == 'capabilities':
+              expected = Path('packages/android/fixtures/native-navigation/NativeCapabilitiesTest.kt').read_text().count('@Test')
+          else:
+              expected = len([item for item in selection.split(',') if item.strip()])
           assert expected > 0, 'The selected Android suite is empty'
           assert len(cases) == expected, f'Expected {expected} tests, got {len(cases)}'
           assert not any(case.find(tag) is not None for case in cases for tag in ['failure', 'error', 'skipped'])
