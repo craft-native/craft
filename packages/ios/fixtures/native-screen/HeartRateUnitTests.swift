@@ -1,4 +1,5 @@
 import CryptoKit
+import UIKit
 import XCTest
 @testable import NativeRender
 
@@ -441,6 +442,39 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         let restored = try await call("get", [key]) as? [String: Any]
         XCTAssertEqual(restored?["generation"] as? Int, 1)
         XCTAssertFalse(answered, "Cancelled requests must not acknowledge a checkpoint")
+    }
+
+    func testDisposedRetainedScreenCannotCommitItsQueuedCheckpoint() async throws {
+        let key = "checkpoint-screen-close-" + UUID().uuidString
+        defer { try? CraftPersistentStorage.set(key, data: nil, prefix: "craft.native.storage.") }
+        func call(_ method: String, _ args: [Any]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: method, args: args, config: CraftConfig()) { result in
+                    switch result {
+                    case .success(let value): continuation.resume(returning: value)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+        _ = try await call("set", [key, ["generation": 1]])
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        let message: [String: Any] = ["type": "API_REQUEST", "id": UUID().uuidString, "payload": ["version": craftNativeCapabilityProtocolVersion, "module": "Storage", "method": "set", "args": [key, ["generation": 2]]]]
+        let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: message), encoding: .utf8))
+        controller.evaluateScript("craftNativePostMessage(JSON.stringify(\(json)))")
+        if CraftNativeScriptThread.isBackground {
+            // The script's request reaches main before this disappearance,
+            // while the request's own queued write comes after it.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { controller.viewDidDisappear(false); continuation.resume() }
+            }
+        } else {
+            controller.viewDidDisappear(false)
+        }
+        let restored = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(restored?["generation"] as? Int, 1)
+        withExtendedLifetime(controller) {}
     }
 
     func testPublicStorageCapabilityRoutesAtomicCheckpointsAndDeletion() async throws {
