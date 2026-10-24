@@ -62,7 +62,7 @@ try {
   await run('extract-public-source', [tar, '-xzf', archive, '-C', join(workspace, 'package')], 60_000)
   for (const file of ['build.zig', 'build.zig.zon']) await copyFile(join(fixture, file), join(workspace, file))
   await cp(join(fixture, 'src'), join(workspace, 'src'), { recursive: true })
-  await run('compile-native-public-consumer', [zig.path, 'build', '-Doptimize=ReleaseSafe', '--summary', 'all'], 300_000)
+  await run('compile-native-public-consumer', [zig.path, 'build', '-Doptimize=ReleaseSafe', '--summary', 'all', '--verbose'], 300_000)
   const executable = join(workspace, 'zig-out/bin/vulkan-surface-consumer.exe')
   proof.nativeExecutableSha256 = Bun.SHA256.hash(await readFile(executable), 'hex')
   const driver = await buildWindowsVulkanDriver(workspace, run)

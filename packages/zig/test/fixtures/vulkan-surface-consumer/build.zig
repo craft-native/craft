@@ -15,7 +15,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
-        .link_libcpp = true,
+        // Win32 uses native clocks and waits; only the Xlib host uses libc++.
+        .link_libcpp = target.result.os.tag != .windows,
     }) });
     host.root_module.addCSourceFile(.{ .file = b.path(if (target.result.os.tag == .windows) "src/host-win32.cpp" else "src/host.cpp"), .flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti" } });
     host.root_module.linkLibrary(fixture);

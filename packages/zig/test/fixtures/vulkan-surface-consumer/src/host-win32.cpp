@@ -2,10 +2,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <chrono>
-#include <cstdint>
-#include <cstdio>
-#include <thread>
+#include <stdint.h>
+#include <stdio.h>
 
 extern "C" {
 void *craft_vulkan_create(void *, uintptr_t, uint32_t, uint32_t);
@@ -45,15 +43,15 @@ static void pump() {
     }
 }
 static bool dimensions(HWND window, unsigned width, unsigned height) {
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    const auto deadline = GetTickCount64() + 3000;
     do {
         pump();
         RECT rect{};
         if (closed || !IsWindow(window)) return false;
         if (GetClientRect(window, &rect) && unsigned(rect.right) == width && unsigned(rect.bottom) == height &&
             IsWindowVisible(window) && !IsIconic(window)) return true;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (std::chrono::steady_clock::now() < deadline);
+        Sleep(10);
+    } while (GetTickCount64() < deadline);
     return false;
 }
 static bool resize_client(HWND window, unsigned width, unsigned height) {
@@ -87,7 +85,7 @@ static bool capture_matches(HWND window, const uint32_t *expected, unsigned widt
     HGDIOBJ previous = SelectObject(memory, bitmap);
     bool matched = false;
     if (previous && previous != HGDI_ERROR) {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        const auto deadline = GetTickCount64() + 3000;
         do {
             pump();
             POINT origin{};
@@ -99,21 +97,21 @@ static bool capture_matches(HWND window, const uint32_t *expected, unsigned widt
                     if ((captured[index] & 0x00ffffff) != (expected[index] & 0x00ffffff)) { matched = false; break; }
                 }
                 if (matched && file_name) {
-                    FILE *file = std::fopen(file_name, "wb");
+                    FILE *file = fopen(file_name, "wb");
                     if (!file) { matched = false; break; }
-                    matched = std::fprintf(file, "P6\n%u %u\n255\n", width, height) > 0;
+                    matched = fprintf(file, "P6\n%u %u\n255\n", width, height) > 0;
                     for (size_t index = 0; index < size_t(width) * height && matched; ++index) {
                         const uint32_t value = captured[index];
                         const unsigned char rgb[]{static_cast<unsigned char>(value >> 16), static_cast<unsigned char>(value >> 8), static_cast<unsigned char>(value)};
-                        matched = std::fwrite(rgb, 1, 3, file) == 3;
+                        matched = fwrite(rgb, 1, 3, file) == 3;
                     }
-                    if (std::fclose(file)) matched = false;
+                    if (fclose(file)) matched = false;
                     break;
                 }
                 if (matched) break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        } while (std::chrono::steady_clock::now() < deadline);
+            Sleep(10);
+        } while (GetTickCount64() < deadline);
         SelectObject(memory, previous);
     }
     DeleteObject(bitmap);
@@ -135,18 +133,18 @@ static bool click(HWND window, int x, int y) {
     events[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
     input_x = input_y = -1;
     if (SendInput(2, events, sizeof(INPUT)) != 2) return false;
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    const auto deadline = GetTickCount64() + 3000;
     do {
         pump();
         if (input_x >= 0) return input_x == x && input_y == y;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    } while (!closed && std::chrono::steady_clock::now() < deadline);
+        Sleep(10);
+    } while (!closed && GetTickCount64() < deadline);
     return false;
 }
 
 int main() {
     if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
-        std::fprintf(stderr, "Cannot establish physical native window coordinates: %lu\n", GetLastError());
+        fprintf(stderr, "Cannot establish physical native window coordinates: %lu\n", GetLastError());
         return 1;
     }
     HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -168,7 +166,7 @@ int main() {
         if (!resize_client(window, width, height)) { DestroyWindow(window); success = false; break; }
         void *context = craft_vulkan_create(instance, reinterpret_cast<uintptr_t>(window), width, height);
         if (!context) {
-            std::fprintf(stderr, "Native Win32 Vulkan init: %s\n", craft_vulkan_error());
+            fprintf(stderr, "Native Win32 Vulkan init: %s\n", craft_vulkan_error());
             DestroyWindow(window); success = false; break;
         }
         for (unsigned frame = 0; frame <= 60 && success; ++frame) {
@@ -195,11 +193,11 @@ int main() {
             success = click(window, 40, 30) && !craft_vulkan_draw(context, 66, input_x, input_y);
             if (success) { ++total_frames; success = capture_matches(window, craft_vulkan_pixels(context), width, height, repetition ? nullptr : "input.ppm"); }
         }
-        if (!success) std::fprintf(stderr, "Native Win32 frame/lifecycle check: %s, OS error %lu\n", craft_vulkan_error(), GetLastError());
+        if (!success) fprintf(stderr, "Native Win32 frame/lifecycle check: %s, OS error %lu\n", craft_vulkan_error(), GetLastError());
         if (craft_vulkan_dispose(context)) {
             // Retain the view and context until process exit when presentation
             // still owns work. A failed disposal cannot become a success.
-            std::fprintf(stderr, "Native Vulkan resources retained: %s\n", craft_vulkan_error());
+            fprintf(stderr, "Native Vulkan resources retained: %s\n", craft_vulkan_error());
             success = false;
             break;
         }
@@ -208,7 +206,7 @@ int main() {
     }
     if (success && sessions == 2 && input_events == 2 && total_frames == 128) {
         UnregisterClassW(name, instance);
-        std::printf("{\"status\":\"passed\",\"nativeSessions\":2,\"actualGpuFrames\":128,\"nativeInputEvents\":2,\"nativeCaptures\":4,\"fullDisplayedPixelsMatched\":true,\"webViewUsed\":false,\"disposed\":true}\n");
+        printf("{\"status\":\"passed\",\"nativeSessions\":2,\"actualGpuFrames\":128,\"nativeInputEvents\":2,\"nativeCaptures\":4,\"fullDisplayedPixelsMatched\":true,\"webViewUsed\":false,\"disposed\":true}\n");
         return 0;
     }
     return 1;
