@@ -5,6 +5,7 @@
  * across all platforms (macOS, Windows, Linux)
  */
 
+import type { WindowOptions } from './types.js'
 import { spawn, spawnSync } from 'child_process'
 import { createHash } from 'crypto'
 import {
@@ -240,14 +241,10 @@ export interface PackageConfig {
     /** Window settings for Craft's sandboxed App Store UI host. The compiled
      * binary becomes its inherited backend and implements the bundle protocol.
      */
-    nativeWindow?: {
-      width?: number
-      height?: number
-      headless?: boolean
-      systemTray?: boolean
-      keepRunning?: boolean
-      hideDockIcon?: boolean
-    }
+    nativeWindow?: Pick<WindowOptions,
+      'width' | 'height' | 'x' | 'y' | 'headless' | 'systemTray' | 'keepRunning'
+      | 'hideDockIcon' | 'titlebarHidden' | 'frameless' | 'transparent'
+      | 'alwaysOnTop' | 'resizable' | 'darkMode' | 'trayPopover'>
 
     /**
      * Extra executables copied into `Contents/MacOS/` beside the app binary.

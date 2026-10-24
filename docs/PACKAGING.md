@@ -600,6 +600,13 @@ Configure the main window with `macos.nativeWindow`. Craft owns the main app
 identity, sandbox UI services and `SMAppService`; backend code must not spawn
 another UI process or install a LaunchAgent.
 
+`nativeWindow` shares Craft's public window option types, including appearance
+and behavior. For a compact dark preferences window, set `titlebarHidden: true`,
+`darkMode: true`, `resizable: false` and `alwaysOnTop: true`, alongside the
+desired dimensions and tray/headless options. These settings are written into
+the native bundle configuration, so the Store host needs no application-level
+window setup code.
+
 Packaging fails if the public runtime is absent or identifies itself as a direct
 build. App Store apps must also omit external self-updaters and use the Mac App
 Store for updates. Direct builds continue to use their identified native agent.
