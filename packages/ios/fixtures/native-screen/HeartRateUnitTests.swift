@@ -418,6 +418,31 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         XCTAssertTrue("89ab".contains(Array(first)[19]))
     }
 
+    @MainActor
+    func testCancelledQueuedStorageWritePreservesThePreviousCheckpoint() async throws {
+        let key = "checkpoint-cancel-" + UUID().uuidString
+        defer { try? CraftPersistentStorage.set(key, data: nil, prefix: "craft.native.storage.") }
+        func call(_ method: String, _ args: [Any]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: method, args: args, config: CraftConfig()) { result in
+                    switch result {
+                    case .success(let value): continuation.resume(returning: value)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+        _ = try await call("set", [key, ["generation": 1]])
+        let token = UUID().uuidString
+        var answered = false
+        // Both calls execute on main before its queued storage write can run.
+        CraftNativeActions.perform(requestToken: token, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: "set", args: [key, ["generation": 2]], config: CraftConfig()) { _ in answered = true }
+        CraftNativeActions.cancel(requestToken: token)
+        let restored = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(restored?["generation"] as? Int, 1)
+        XCTAssertFalse(answered, "Cancelled requests must not acknowledge a checkpoint")
+    }
+
     func testPublicStorageCapabilityRoutesAtomicCheckpointsAndDeletion() async throws {
         let key = "checkpoint-wire-" + UUID().uuidString
         defer { try? CraftPersistentStorage.set(key, data: nil, prefix: "craft.native.storage.") }
