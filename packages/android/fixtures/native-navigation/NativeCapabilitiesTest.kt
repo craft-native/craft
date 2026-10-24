@@ -104,6 +104,31 @@ class NativeCapabilitiesTest {
     }
 
     @Test
+    fun closingTheNativeHostCancelsItsQueuedCheckpointWrite() {
+        val base = instrumentation.targetContext
+        val name = "checkpoint-close-${UUID.randomUUID()}"
+        val values = base.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
+        val context = object : android.content.ContextWrapper(base) {
+            override fun getSharedPreferences(key: String, mode: Int) =
+                if (key == "craft-native-storage") values else super.getSharedPreferences(key, mode)
+        }
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val reopened = CraftNativeCapabilities(context, JSONObject())
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        try {
+            assertEquals(true, call(capabilities, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 1))).data)
+            instrumentation.runOnMainSync {
+                capabilities.perform(UUID.randomUUID().toString(), CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 2))) { answered.set(true) }
+                capabilities.close()
+            }
+            instrumentation.waitForIdleSync()
+            val restored = call(reopened, "Storage", "get", JSONArray().put("draft")).data as JSONObject
+            assertEquals(1, restored.getInt("generation"))
+            assertFalse("A closed host must not acknowledge a checkpoint", answered.get())
+        } finally { capabilities.close(); reopened.close(); base.deleteSharedPreferences(name) }
+    }
+
+    @Test
     fun conditionalCheckpointCannotResurrectDeletedDataOrOverwriteFeedback() {
         val base = instrumentation.targetContext
         val name = "cas-test-${UUID.randomUUID()}"
