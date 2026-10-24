@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.332...v0.0.333)
+
+## 🐛 Bug Fixes
+
+- **ci**: discover the installed Visual Studio C++ generator ([9b23a61](https://github.com/craft-native/craft/commit/9b23a61)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.331...v0.0.332)
 
 ## 🚀 Features
