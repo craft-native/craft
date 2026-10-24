@@ -460,6 +460,7 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         _ = try await call("set", [key, ["generation": 1]])
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
+        XCTAssertEqual(controller.evaluateScript("typeof craftNativePostMessage")?.toString(), "function")
         let message: [String: Any] = ["type": "API_REQUEST", "id": UUID().uuidString, "payload": ["version": craftNativeCapabilityProtocolVersion, "module": "Storage", "method": "set", "args": [key, ["generation": 2]]]]
         let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: message), encoding: .utf8))
         controller.evaluateScript("craftNativePostMessage(JSON.stringify(\(json)))")

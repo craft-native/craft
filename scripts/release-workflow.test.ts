@@ -212,12 +212,13 @@ test('native iOS suites and protocol checks have independent required jobs', () 
     expect(workflow.jobs[name].env?.DEVELOPER_DIR).toBe('/Applications/Xcode_26.2.app/Contents/Developer')
 })
 
-test('hybrid diagnostics isolate their fixture while complete release scopes retain every required leg', () => {
+test('focused native diagnostics retain their service gates and complete releases retain every required leg', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as {
     on: { workflow_dispatch: { inputs: { scope: { options: string[] } } } }
     jobs: Record<string, Job>
   }
   expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-hybrid')
+  expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-checkpoints')
   const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation']
   const evaluate = (expression: string | undefined, scope: string, outcomes: Record<string, string> = {}) => expression === undefined || runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\bneeds\.([\w-]+)\.result/g, 'needs["$1"].result'), {
     inputs: { scope },
@@ -235,12 +236,15 @@ test('hybrid diagnostics isolate their fixture while complete release scopes ret
     }
     expect(evaluate(reject, scope)).toBe(false)
   }
-  expect(legs.filter(name => evaluate(workflow.jobs[name].if, 'ios-hybrid'))).toEqual(['harness', 'ios-hybrid'])
-  const skipped = Object.fromEntries(legs.filter(name => name !== 'harness' && name !== 'ios-hybrid').map(name => [name, 'skipped']))
-  expect(evaluate(reject, 'ios-hybrid', skipped)).toBe(false)
-  for (const name of ['harness', 'ios-hybrid']) {
-    expect(evaluate(reject, 'ios-hybrid', { ...skipped, [name]: 'failure' })).toBe(true)
-    expect(evaluate(reject, 'ios-hybrid', { ...skipped, [name]: 'skipped' })).toBe(true)
+  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native']]) {
+    const selected = ['harness', service]
+    expect(legs.filter(name => evaluate(workflow.jobs[name].if, scope))).toEqual(selected)
+    const skipped = Object.fromEntries(legs.filter(name => !selected.includes(name)).map(name => [name, 'skipped']))
+    expect(evaluate(reject, scope, skipped)).toBe(false)
+    for (const name of selected) {
+      expect(evaluate(reject, scope, { ...skipped, [name]: 'failure' })).toBe(true)
+      expect(evaluate(reject, scope, { ...skipped, [name]: 'skipped' })).toBe(true)
+    }
   }
 })
 
@@ -257,6 +261,9 @@ test('navigation shards retain both complete XCTest targets and focused selectio
     expect(evaluate(expression, scope)).toEqual(['uikit', 'navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
   expect(evaluate(expression, 'ios-navigation')).toEqual(['navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
   expect(evaluate(expression, 'ios-render')).toEqual(['uikit'])
+  expect(evaluate(expression, 'ios-checkpoints')).toEqual(['uikit'])
+  const uikit = native.steps!.find(step => step.name === 'Test native UIKit reconciliation')!
+  expect(evaluate(uikit.env!.CRAFT_ONLY_TESTING, 'ios-checkpoints')).toBe('NativeRenderUnitTests/PersistentRecordingCheckpointUnitTests')
   const focused = 'NativeNavigationUITests/NativeNavigationUITests/testMultilineInputKeepsKeyboardFocusWhenTapped'
   expect(evaluate(expression, 'ios-navigation', focused)).toEqual(['navigation'])
   expect(evaluate(navigation!.env!.CRAFT_ONLY_TESTING, 'all', '', 'navigation-unit')).toBe('NativeNavigationUnitTests')
