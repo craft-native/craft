@@ -6919,10 +6919,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         // The app script has no screen, so no bar and no tab bar to change.
         guard !isAppScript else { return }
+        // Prepared tabs have a window and a top controller too. Keep their
+        // options, but only the focused screen may change the shared chrome.
         if options.keys.contains("tabAccessory") {
             tabAccessory = options["tabAccessory"] as? [String: Any]
             tabAccessoryDeclared = true
-            if navigationController?.topViewController === self, view.window != nil {
+            if navigationController?.topViewController === self, isShownOnScreen {
                 CraftChrome.shared.updateTabAccessory(tabAccessory, owner: self)
             }
         }
@@ -6941,7 +6943,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let hidden = options["tabBarHidden"] as? Bool {
             tabBarHidden = hidden
-            if navigationController?.topViewController === self, view.window != nil {
+            if navigationController?.topViewController === self, isShownOnScreen {
                 CraftChrome.shared.setHiddenByScreen(hidden)
             }
         }

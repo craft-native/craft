@@ -774,6 +774,29 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertNil(CraftChrome.shared.tabAccessory)
     }
 
+    func testPreparedTabOptionsCannotReplaceVisibleScreenChrome() async throws {
+        await displayWait("the Third tab is prepared") { [self] in stack("/third") != nil }
+        let home = try XCTUnwrap(stack("/"))
+        let visible = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        visible.evaluateScript("craft.navigation.setOptions({tabBarHidden:true,tabAccessory:{path:'/capabilities',title:'Visible controls',symbol:'bolt'}})")
+        await displayWait("the visible screen owns the hidden bar and accessory") {
+            CraftChrome.shared.hiddenByScreen && CraftChrome.shared.tabAccessory?.id == "/capabilities"
+        }
+        let background = try XCTUnwrap(stack("/third"))
+        XCTAssertTrue(background.view.isHidden)
+        let prepared = try XCTUnwrap(background.topViewController as? CraftNativeScreenController)
+        prepared.evaluateScript("craft.navigation.setOptions({title:'Prepared update delivered',tabBarHidden:false,tabAccessory:null})")
+        await displayWait("the background screen received its late options") {
+            prepared.navigationItem.title == "Prepared update delivered"
+        }
+        XCTAssertTrue(CraftChrome.shared.hiddenByScreen, "a late background update cannot reveal the foreground screen's tab bar")
+        XCTAssertEqual(CraftChrome.shared.tabAccessory?.id, "/capabilities", "the visible screen keeps its accessory")
+        _ = shell.tabTapped("/third", reselect: false)
+        await settle()
+        XCTAssertFalse(CraftChrome.shared.hiddenByScreen, "the prepared options apply when that screen becomes visible")
+        XCTAssertNil(CraftChrome.shared.tabAccessory)
+    }
+
     func testNativePushKeepsItsAccessoryAfterTabPreparation() async throws {
         await displayWait("the Third tab is prepared") { [self] in stack("/third") != nil }
         let home = try XCTUnwrap(stack("/"))
