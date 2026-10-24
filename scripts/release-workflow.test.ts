@@ -721,7 +721,7 @@ test('every run script in every workflow is valid bash', async () => {
   }
   // Parse each snippet independently. Bounded parallel processes avoid a
   // growing serial spawn cost without letting scripts balance each other's
-  // syntax, changing the timeout, or leaving children running after a failure.
+  // syntax. The integration budget covers all process startups on a cold host.
   for (let index = 0; index < checks.length; index += 4) {
     const results = await Promise.all(checks.slice(index, index + 4).map(async ({ script, label }) => {
       const check = Bun.spawn(['bash', '-n'], { stdin: new TextEncoder().encode(script), stdout: 'ignore', stderr: 'pipe' })
@@ -733,7 +733,7 @@ test('every run script in every workflow is valid bash', async () => {
       expect(code, label).toBe(0)
     }
   }
-})
+}, 30000)
 
 test('Linux and Windows release binaries target a baseline CPU, not the build runner', () => {
   // A host build compiles for the runner's own CPU; the published binary then

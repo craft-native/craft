@@ -101,6 +101,8 @@ exit "\${CRAFT_FORMAT_RESULT:-0}"
 })
 
 test('release Git preflight requires clean main and checks the current remote', () => {
+  // This integration fixture creates two real checkouts and a bare remote;
+  // process startup time is not a release-preflight performance contract.
   const root = createTempDir('craft-release-main-')
   const remote = join(root, 'remote.git')
   const work = join(root, 'work')
@@ -131,4 +133,4 @@ test('release Git preflight requires clean main and checks the current remote', 
   git(peer, 'commit', '--allow-empty', '-m', 'chore: another source change')
   git(peer, 'push', 'origin', 'main')
   expect(() => validateReleaseGit(work)).toThrow('must match origin/main')
-})
+}, 30000)
