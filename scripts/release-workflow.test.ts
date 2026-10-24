@@ -33,6 +33,19 @@ test('release rehearsals include the actual host-neutral native CI contract', ()
   expect(manifest.scripts['test:release'].split(/\s+/)).toContain(invocation![1])
 })
 
+test('Win32 Vulkan publication requires native command ownership and displayed scene acceptance', () => {
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job & { 'runs-on'?: string, 'continue-on-error'?: boolean }> }
+  const job = ci.jobs['windows-native-vulkan']
+  expect(job['runs-on']).toBe('windows-2025')
+  expect(job['continue-on-error']).not.toBe(true)
+  expect(steps(job)).toContain('zig cc -target x86_64-windows-gnu -O2 -municode scripts/native/windows-command-owner.c')
+  expect(steps(job)).toContain('bun test ./scripts/native/windows-command.test.ts')
+  expect(steps(job)).toContain('bun scripts/test-vulkan-surface-windows.ts --owner')
+  expect(needs(ci.jobs['publish-commit'])).toContain('windows-native-vulkan')
+  const evidence = job.steps?.find(step => step.name === 'Retain native Win32 Vulkan display evidence')
+  expect(evidence?.if).toBe('always()')
+})
+
 test('the Vulkan ABI matrix requires managed Git on every platform and still runs the exact compiler probe', () => {
   const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as any
   const job = ci.jobs['vulkan-abi']

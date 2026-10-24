@@ -389,6 +389,58 @@ jobs:
           $version = bun -p "require('./package.json').version"
           bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft.exe $version
 
+  windows-native-vulkan:
+    if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup the pinned native toolchain
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        with:
+          version: '0.11.120'
+
+      - name: Compile the first-party Windows Job Object owner
+        shell: pwsh
+        run: |
+          if ((zig version).Trim() -ne '0.18.0-dev.146+35accc06e') { throw 'Unexpected native compiler' }
+          $owner = Join-Path $env:RUNNER_TEMP 'craft-native-windows-owner.exe'
+          zig cc -target x86_64-windows-gnu -O2 -municode scripts/native/windows-command-owner.c -o $owner
+          if ($LASTEXITCODE -ne 0) { throw 'Native command owner compilation failed' }
+          "CRAFT_NATIVE_WINDOWS_COMMAND_OWNER=$owner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify the declared native Git provider
+        shell: pwsh
+        run: bun scripts/managed-git.ts --verify
+
+      - name: Verify actual native command ownership
+        shell: pwsh
+        run: |
+          bun test ./scripts/native/windows-command.test.ts 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-windows-command-tests.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Native command ownership verification failed' }
+
+      - name: Verify displayed Win32 Vulkan scene frames
+        shell: pwsh
+        run: bun scripts/test-vulkan-surface-windows.ts --owner "$env:CRAFT_NATIVE_WINDOWS_COMMAND_OWNER" --output artifacts/native-vulkan-windows
+
+      - name: Retain native Win32 Vulkan display evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-vulkan-surface
+          path: artifacts/native-vulkan-windows
+          if-no-files-found: error
+
+      - name: Retain original Windows command ownership results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-command-ownership
+          path: ${{ runner.temp }}/native-windows-command-tests.log
+          if-no-files-found: error
+
   typescript-sdk:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
@@ -748,7 +800,7 @@ jobs:
 
   publish-commit:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
-    needs: [android-sdk-emulator, zig-core, windows-multi-window, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
+    needs: [android-sdk-emulator, zig-core, windows-multi-window, windows-native-vulkan, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:
