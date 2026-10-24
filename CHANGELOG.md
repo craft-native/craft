@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.333...v0.0.334)
+
+## 🐛 Bug Fixes
+
+- **menubar**: verify hidden owners using displayed native slots ([efdd014](https://github.com/craft-native/craft/commit/efdd014)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.332...v0.0.333)
 
 ## 🐛 Bug Fixes
