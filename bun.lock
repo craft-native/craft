@@ -6,7 +6,7 @@
       "name": "craft",
       "devDependencies": {
         "@stacksjs/buddy": "0.72.56",
-        "@stacksjs/bumpx": "^0.2.26",
+        "@stacksjs/bumpx": "^0.2.27",
         "@stacksjs/bunpress": "^0.2.13",
         "@stacksjs/env": "^0.72.50",
         "better-dx": "^0.2.38",
@@ -284,7 +284,7 @@
 
     "@stacksjs/build": ["@stacksjs/build@0.72.56", "", { "dependencies": { "bun-plugin-dtsx": "^0.11.10" } }, "sha512-mYbEAFXJNzjzaqt94sqEP22w7Vp+31nS8D0Y2tShUe4abDiWjg+AYRlLLt/tXMJLaJURwMc+w9wZ/GX6vHVUAA=="],
 
-    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.2.26", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "@stacksjs/logsmith": "^0.2.6", "bunfig": "^0.15.6" }, "bin": { "bumpx": "./dist/bin/cli.js" } }, "sha512-fgoQd9bZf8u/7qY5kL2rJiHsP5wv03xu3MVb7/9c0aitTNbUu9+u/3Vk/eNUz/sKPiIuZFA0erE76Ca6nD8y/g=="],
+    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.2.27", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "@stacksjs/logsmith": "^0.2.6", "bunfig": "^0.15.6" }, "bin": { "bumpx": "./dist/bin/cli.js" } }, "sha512-LOaqknhToQDIey7UwfG9BPZ2CQfK1TfA/mZxpPnxoPKfzTvVWaudKatpw/R3J4+8WuR0V08/olV28lBxI9S7cg=="],
 
     "@stacksjs/bun-router": ["@stacksjs/bun-router@0.1.0", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "ts-rate-limiter": "^0.4.2" }, "bin": { "bun-router": "./dist/cli.js", "router": "./bin/cli.ts" } }, "sha512-LV7RbL9x8/EGTIuFMKoFf9TpSLIwcE13f8BdYHLaltx1emHDm9TSzEIItzLJnOWypFo7vyAtC1CogmSFmMcUpg=="],
 
