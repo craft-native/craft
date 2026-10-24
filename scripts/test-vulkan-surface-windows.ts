@@ -29,13 +29,14 @@ const proof: Record<string, unknown> = {
   compiler: zig, commandOwner: { path: owner, sha256: Bun.SHA256.hash(await readFile(owner), 'hex') }, startedAt: new Date().toISOString(), commands: [],
 }
 let failure: unknown, disposed = true
+let driverRegistration: { executable: string, key: string, manifest: string } | undefined
 async function save(): Promise<void> { await writeFile(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
-async function run(name: string, args: string[], timeoutMs: number, captureOutput = false, env?: NodeJS.ProcessEnv) {
+async function run(name: string, args: string[], timeoutMs: number, captureOutput = false, env?: NodeJS.ProcessEnv, cleanup = false) {
   proof.currentStep = name
   await save()
   const logPath = join(evidence, `${name}.log`), earlierDisposed = disposed
   disposed = false
-  const result = await nativeWindowsCommand(owner, args, { cwd: workspace, timeoutMs, logPath: captureOutput ? undefined : logPath, signal: interruption.signal, env })
+  const result = await nativeWindowsCommand(owner, args, { cwd: workspace, timeoutMs, logPath: captureOutput ? undefined : logPath, signal: cleanup ? undefined : interruption.signal, env })
   disposed = earlierDisposed && result.jobDisposed
   if (captureOutput) await writeFile(logPath, result.stdout + result.stderr, { flag: 'wx', mode: 0o600 })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, code: result.code, processId: result.processId, timedOut: result.timedOut, cancelled: result.cancelled, jobDisposed: result.jobDisposed, osError: result.osError, logPath })
@@ -68,12 +69,18 @@ try {
   const driver = await buildWindowsVulkanDriver(workspace, run)
   proof.testDriver = driver
   // The normal Vulkan loader is bundled beside this owned test executable.
-  // VK_DRIVER_FILES explicitly selects the original, source-built CPU ICD;
-  // this is software Vulkan acceptance and makes no hardware-GPU claim.
+  // Elevated Windows processes ignore VK_DRIVER_FILES. Install the original
+  // source-built CPU ICD through Khronos's documented registry discovery, and
+  // remove only this workspace's unique manifest value before disposing it.
+  // This is software Vulkan acceptance and makes no hardware-GPU claim.
   const bundledLoader = join(dirname(executable), 'vulkan-1.dll')
   await copyFile(driver.loader, bundledLoader)
   if (Bun.SHA256.hash(await readFile(bundledLoader), 'hex') !== Bun.SHA256.hash(await readFile(driver.loader), 'hex')) throw new Error('Bundled original Vulkan loader bytes changed')
-  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, { ...process.env, VK_DRIVER_FILES: driver.manifest, VK_LOADER_DEBUG: 'error,warn,driver' })
+  const registration = { executable: join(system, 'System32/reg.exe'), key: 'HKLM\\SOFTWARE\\Khronos\\Vulkan\\Drivers', manifest: driver.manifest }
+  await run('register-source-built-vulkan-driver', [registration.executable, 'add', registration.key, '/v', registration.manifest, '/t', 'REG_DWORD', '/d', '0', '/reg:64'], 10_000)
+  driverRegistration = registration
+  proof.driverRegistration = { ...registration, disposed: false }
+  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, { ...process.env, VK_LOADER_DEBUG: 'error,warn,driver' })
   const log = await readFile(join(evidence, 'verify-displayed-vulkan-frames.log'), 'utf8')
   const record = log.split(/\r?\n/).map(line => { try { return JSON.parse(line) } catch { return null } }).find(value => value?.status === 'passed')
   if (!record || record.nativeSessions !== 2 || record.actualGpuFrames !== 128 || record.nativeInputEvents !== 2 || record.nativeCaptures !== 4 || record.fullDisplayedPixelsMatched !== true || record.webViewUsed !== false || record.disposed !== true) throw new Error('The native Win32 consumer did not complete its full acceptance matrix')
@@ -92,6 +99,14 @@ try {
 }
 catch (error) { failure = error; proof.status = 'failed'; proof.error = String(error) }
 finally {
+  if (driverRegistration) {
+    const registration = driverRegistration
+    try {
+      await run('unregister-source-built-vulkan-driver', [registration.executable, 'delete', registration.key, '/v', registration.manifest, '/f', '/reg:64'], 10_000, false, undefined, true)
+      proof.driverRegistration = { ...registration, disposed: true }
+    }
+    catch (error) { failure ??= error; proof.status = 'failed'; proof.driverRegistrationCleanupError = String(error); disposed = false }
+  }
   if (disposed) {
     try { await rm(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
     catch (error) { failure ??= error; proof.status = 'failed'; proof.workspaceCleanupError = String(error) }
