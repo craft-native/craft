@@ -10,6 +10,17 @@ export const windowsVulkanDriverSources = {
 
 type Run = (name: string, args: string[], timeoutMs: number, captureOutput?: boolean) => Promise<NativeWindowsCommandResult>
 
+export const windowsVulkanDriverRegistryKey = 'HKEY_LOCAL_MACHINE\\SOFTWARE\\Khronos\\Vulkan\\Drivers'
+
+/** The pinned loader reports every actual vkCreateDevice driver, including elevated discovery. */
+export function verifyWindowsVulkanDriverSelection(log: string, expectedDriver: string): { name: string, driver: string }[] {
+  if (!win32.isAbsolute(expectedDriver)) throw new Error('Expected an absolute original Windows Vulkan driver')
+  const devices = [...log.matchAll(/Using "([^"]+)" with driver: "([^"]+)"/g)].map(match => ({ name: match[1]!, driver: match[2]! }))
+  if (devices.length < 2 || devices.some(device => win32.normalize(device.driver).toLowerCase() !== win32.normalize(expectedDriver).toLowerCase()))
+    throw new Error('Both native sessions must use the original source-built software Vulkan driver')
+  return devices
+}
+
 /** Match the installed C++ toolchain to a generator this CMake actually supports. */
 export function visualStudioGenerator(capabilities: unknown, instances: unknown): { args: string[], installationVersion: string } {
   const available = capabilities as { generators?: { name?: string, platformSupport?: boolean }[] }

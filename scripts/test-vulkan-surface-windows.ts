@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { nativeWindowsCommand } from './native/windows-command'
-import { buildWindowsVulkanDriver } from './native/windows-vulkan-driver'
+import { buildWindowsVulkanDriver, verifyWindowsVulkanDriverSelection, windowsVulkanDriverRegistryKey } from './native/windows-vulkan-driver'
 import { tempDirPrefix } from '../packages/typescript/src/temp-dir'
 import { resolveZig } from './zig'
 
@@ -29,13 +29,14 @@ const proof: Record<string, unknown> = {
   compiler: zig, commandOwner: { path: owner, sha256: Bun.SHA256.hash(await readFile(owner), 'hex') }, startedAt: new Date().toISOString(), commands: [],
 }
 let failure: unknown, disposed = true
+let registration: { executable: string, manifest: string, key: string, registered: boolean, disposed: boolean } | undefined
 async function save(): Promise<void> { await writeFile(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
-async function run(name: string, args: string[], timeoutMs: number, captureOutput = false, env?: NodeJS.ProcessEnv) {
+async function run(name: string, args: string[], timeoutMs: number, captureOutput = false, env?: NodeJS.ProcessEnv, cleanup = false) {
   proof.currentStep = name
   await save()
   const logPath = join(evidence, `${name}.log`), earlierDisposed = disposed
   disposed = false
-  const result = await nativeWindowsCommand(owner, args, { cwd: workspace, timeoutMs, logPath: captureOutput ? undefined : logPath, signal: interruption.signal, env })
+  const result = await nativeWindowsCommand(owner, args, { cwd: workspace, timeoutMs, logPath: captureOutput ? undefined : logPath, signal: cleanup ? undefined : interruption.signal, env })
   disposed = earlierDisposed && result.jobDisposed
   if (captureOutput) await writeFile(logPath, result.stdout + result.stderr, { flag: 'wx', mode: 0o600 })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, code: result.code, processId: result.processId, timedOut: result.timedOut, cancelled: result.cancelled, jobDisposed: result.jobDisposed, osError: result.osError, logPath })
@@ -68,16 +69,23 @@ try {
   const driver = await buildWindowsVulkanDriver(workspace, run)
   proof.testDriver = driver
   // The normal Vulkan loader is bundled beside this owned test executable.
-  // VK_DRIVER_FILES explicitly selects the original, source-built CPU ICD;
-  // this is software Vulkan acceptance and makes no hardware-GPU claim.
+  // Elevated Windows loaders ignore driver-path environment overrides. Install
+  // this owned original ICD through normal 64-bit driver registration instead.
   const bundledLoader = join(dirname(executable), 'vulkan-1.dll')
   await copyFile(driver.loader, bundledLoader)
   if (Bun.SHA256.hash(await readFile(bundledLoader), 'hex') !== Bun.SHA256.hash(await readFile(driver.loader), 'hex')) throw new Error('Bundled original Vulkan loader bytes changed')
-  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, { ...process.env, VK_DRIVER_FILES: driver.manifest, VK_LOADER_DEBUG: 'error,warn,driver' })
+  registration = { executable: join(system, 'System32/reg.exe'), manifest: driver.manifest, key: windowsVulkanDriverRegistryKey, registered: false, disposed: false }
+  proof.driverRegistration = registration
+  await run('register-original-vulkan-driver', [registration.executable, 'add', registration.key, '/v', registration.manifest, '/t', 'REG_DWORD', '/d', '0', '/reg:64'], 10_000)
+  registration.registered = true
+  const nativeEnvironment: NodeJS.ProcessEnv = { ...process.env, VK_LOADER_DEBUG: 'error,warn,driver' }
+  for (const name of ['VK_DRIVER_FILES', 'VK_ICD_FILENAMES', 'VK_ADD_DRIVER_FILES', 'VK_LOADER_DRIVERS_SELECT', 'VK_LOADER_DRIVERS_DISABLE']) delete nativeEnvironment[name]
+  await run('verify-displayed-vulkan-frames', [executable], 120_000, false, nativeEnvironment)
   const log = await readFile(join(evidence, 'verify-displayed-vulkan-frames.log'), 'utf8')
   const record = log.split(/\r?\n/).map(line => { try { return JSON.parse(line) } catch { return null } }).find(value => value?.status === 'passed')
   if (!record || record.nativeSessions !== 2 || record.actualGpuFrames !== 128 || record.nativeInputEvents !== 2 || record.nativeCaptures !== 4 || record.fullDisplayedPixelsMatched !== true || record.webViewUsed !== false || record.disposed !== true) throw new Error('The native Win32 consumer did not complete its full acceptance matrix')
   proof.native = record
+  proof.selectedDevices = verifyWindowsVulkanDriverSelection(log, driver.driver)
   const frames: unknown[] = []
   for (const name of ['initial', 'resized', 'resumed', 'input']) {
     const bytes = await readFile(join(workspace, `${name}.ppm`))
@@ -92,11 +100,20 @@ try {
 }
 catch (error) { failure = error; proof.status = 'failed'; proof.error = String(error) }
 finally {
-  if (disposed) {
+  if (registration) {
+    const previousStep = proof.currentStep
+    try {
+      await run('unregister-original-vulkan-driver', [registration.executable, 'delete', registration.key, '/v', registration.manifest, '/f', '/reg:64'], 10_000, false, undefined, true)
+      registration.disposed = true
+    }
+    catch (error) { failure ??= error; proof.status = 'failed'; proof.registryCleanupError = String(error) }
+    proof.currentStep = previousStep
+  }
+  if (disposed && (!registration || registration.disposed)) {
     try { await rm(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
     catch (error) { failure ??= error; proof.status = 'failed'; proof.workspaceCleanupError = String(error) }
   }
-  else { proof.workspaceRetained = workspace; failure ??= new Error('A native Windows job did not acknowledge disposal'); proof.status = 'failed' }
+  else { proof.workspaceRetained = workspace; failure ??= new Error('A native Windows job or driver registration did not acknowledge disposal'); proof.status = 'failed' }
   proof.commandJobsDisposed = disposed
   if (interruption.signal.aborted) { failure ??= interruption.signal.reason; proof.status = 'failed'; proof.error = String(failure) }
   proof.finishedAt = new Date().toISOString()
