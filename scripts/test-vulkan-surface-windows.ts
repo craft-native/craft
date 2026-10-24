@@ -71,6 +71,7 @@ try {
   // The normal Vulkan loader is bundled beside this owned test executable.
   // Elevated Windows loaders ignore driver-path environment overrides. Install
   // this owned original ICD through normal 64-bit driver registration instead.
+  // This verifies software Vulkan, without making a hardware-GPU claim.
   const bundledLoader = join(dirname(executable), 'vulkan-1.dll')
   await copyFile(driver.loader, bundledLoader)
   if (Bun.SHA256.hash(await readFile(bundledLoader), 'hex') !== Bun.SHA256.hash(await readFile(driver.loader), 'hex')) throw new Error('Bundled original Vulkan loader bytes changed')
