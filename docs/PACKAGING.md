@@ -580,3 +580,26 @@ See full type definitions in `src/package.ts`.
 ---
 
 For questions or issues, visit: <https://github.com/home-lang/craft/issues>
+
+### Public API runtime for the Mac App Store
+
+Pantry's macOS Craft archives include `craft` for direct distribution and
+`craft-app-store` for sandboxed apps. The latter is compiled with
+`-Dprivate-apis=false`: private status-item visibility code is excluded from the
+binary, rather than disabled at runtime. `--distribution` reports the variant.
+macOS provides no supported API for hiding other apps' menu bar items, so that
+capability reports unavailable in the public runtime.
+
+For a server-backed app, pass the resolved Pantry provider as
+`macos.nativeRuntimePath` together with `appStore: true`. Packaging selects and
+validates its adjacent public runtime, makes Craft the main UI executable, and
+embeds `binaryPath` as the sandbox-inheriting `craft-backend`. The backend must
+implement the authenticated bundle protocol: print one loopback URL with a
+`?session=` token, then keep its stdin open until the native host exits.
+Configure the main window with `macos.nativeWindow`. Craft owns the main app
+identity, sandbox UI services and `SMAppService`; backend code must not spawn
+another UI process or install a LaunchAgent.
+
+Packaging fails if the public runtime is absent or identifies itself as a direct
+build. App Store apps must also omit external self-updaters and use the Mac App
+Store for updates. Direct builds continue to use their identified native agent.

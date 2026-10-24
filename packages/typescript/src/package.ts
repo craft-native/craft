@@ -5,7 +5,7 @@
  * across all platforms (macOS, Windows, Linux)
  */
 
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { createHash } from 'crypto'
 import {
   chmodSync,
@@ -23,7 +23,7 @@ import {
   writeFileSync,
 } from 'fs'
 import { homedir } from 'os'
-import { basename, join, resolve } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import { deflateRawSync } from 'zlib'
 import { createTempDir, removeTempDir } from './temp-dir.js'
 
@@ -237,6 +237,18 @@ export interface PackageConfig {
      */
     nativeRuntimePath?: string
 
+    /** Window settings for Craft's sandboxed App Store UI host. The compiled
+     * binary becomes its inherited backend and implements the bundle protocol.
+     */
+    nativeWindow?: {
+      width?: number
+      height?: number
+      headless?: boolean
+      systemTray?: boolean
+      keepRunning?: boolean
+      hideDockIcon?: boolean
+    }
+
     /**
      * Extra executables copied into `Contents/MacOS/` beside the app binary.
      *
@@ -381,6 +393,21 @@ export async function packageApp(config: PackageConfig): Promise<PackageResult[]
   return results
 }
 
+/** Select the public-only runtime shipped beside Pantry's direct runtime.
+ * App Store packaging fails closed if an older provider has no public build.
+ */
+export function macOSAppStoreRuntimePath(providerPath: string): string {
+  const runtime = basename(providerPath) === 'craft-app-store'
+    ? providerPath
+    : join(dirname(providerPath), 'craft-app-store')
+  if (!existsSync(runtime))
+    throw new Error('App Store packaging requires Pantry’s craft-app-store runtime. Upgrade Craft with Pantry before building.')
+  const probe = spawnSync(runtime, ['--distribution'], { encoding: 'utf8', timeout: 10_000 })
+  if (probe.status !== 0 || probe.stdout.trim() !== 'app-store')
+    throw new Error('App Store packaging refused a runtime that includes private platform APIs.')
+  return runtime
+}
+
 /**
  * Package for macOS (DMG + PKG)
  */
@@ -395,6 +422,16 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
 
   if (opts.appStore && (!opts.entitlements || !opts.provisioningProfile))
     return [{ success: false, platform: 'macos', format: 'app', error: 'App Store packaging requires macos.entitlements and macos.provisioningProfile' }]
+
+  let nativeRuntimePath = opts.nativeRuntimePath
+  if (opts.appStore && nativeRuntimePath) {
+    try {
+      nativeRuntimePath = macOSAppStoreRuntimePath(nativeRuntimePath)
+    }
+    catch (error) {
+      return [{ success: false, platform: 'macos', format: 'app', error: (error as Error).message }]
+    }
+  }
 
   // Create app bundle
   const appBundlePath = join(outDir, `${name}.app`)
@@ -413,7 +450,9 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
     iconPath: config.iconPath,
     provisioningProfile: opts.provisioningProfile,
     additionalExecutables: opts.additionalExecutables,
-    nativeRuntimePath: opts.nativeRuntimePath,
+    nativeRuntimePath,
+    nativeHost: opts.appStore === true && Boolean(nativeRuntimePath),
+    nativeWindow: opts.nativeWindow,
     outputPath: appBundlePath,
   })
 
@@ -999,6 +1038,8 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
   /** Extra executables copied beside the app binary in `Contents/MacOS/` */
   additionalExecutables?: string[]
   nativeRuntimePath?: string
+  nativeHost?: boolean
+  nativeWindow?: NonNullable<PackageConfig['macos']>['nativeWindow']
   outputPath: string
 }): { success: boolean; error?: string } {
   try {
@@ -1011,7 +1052,7 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
     mkdirSync(join(contents, 'Resources'), { recursive: true })
 
     // Copy binary
-    copyFileSync(binaryPath, join(macOS, name))
+    copyFileSync(opts.nativeHost ? opts.nativeRuntimePath! : binaryPath, join(macOS, name))
 
     // Make executable
     chmodSync(join(macOS, name), 0o755)
@@ -1026,7 +1067,16 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
       chmodSync(destination, 0o755)
     }
 
-    if (opts.nativeRuntimePath) {
+    if (opts.nativeHost) {
+      const backend = join(macOS, 'craft-backend')
+      copyFileSync(binaryPath, backend)
+      chmodSync(backend, 0o755)
+      writeFileSync(join(contents, 'Resources', 'craft.json'), `${JSON.stringify({
+        title: name, appName: name, ...opts.nativeWindow,
+        backend: { executable: 'craft-backend' },
+      }, null, 2)}\n`)
+    }
+    else if (opts.nativeRuntimePath) {
       const helper = macOSRuntimeExecutablePath(outputPath)
       const helperContents = resolve(helper, '..', '..')
       mkdirSync(join(helperContents, 'MacOS'), { recursive: true })
