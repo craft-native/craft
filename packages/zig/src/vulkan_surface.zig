@@ -1,12 +1,13 @@
 //! Presentation of the shared CPU frame on an owned native Vulkan window.
-//! The Xlib adapter is implemented first. Other adapters remain unavailable.
+//! Xlib and Win32 adapters share the same frame and resource ownership rules.
+//! The Android adapter remains unavailable.
 //! The caller serializes calls on the creating thread and keeps its window alive
 //! until deinit succeeds. A timeout retains resources; retry disposal later.
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan_api.zig");
 
-pub const supported = builtin.os.tag == .linux and builtin.abi != .android and @sizeOf(usize) == 8;
+pub const supported = (builtin.os.tag == .windows or (builtin.os.tag == .linux and builtin.abi != .android)) and @sizeOf(usize) == 8 and builtin.cpu.arch.endian() == .little;
 pub const Error = error{ Unavailable, MissingEntryPoint, EnumerationLimit, InvalidWindow, InvalidSize, InvalidConfig, BufferLimitExceeded, AllocationFailed, WrongThread, Disposed, Suspended, InvalidFrame, DrawableUnavailable, OutOfDate, SurfaceLost, DeviceLost, GPUFailed, GPUTimeout, NoFrame };
 pub const NativeWindow = union(enum) {
     xlib: struct { display: ?*anyopaque, window: usize },
@@ -77,7 +78,8 @@ fn hasExtension(properties: []const vk.VkExtensionProperties, name: []const u8) 
     return false;
 }
 // This compiler snapshot has no Windows std.DynLib adapter. Keep loader
-// ownership here, using only the system DLL directory on Windows.
+// ownership here. Windows accepts the system loader or an application-bundled
+// Vulkan loader, excluding the current directory and arbitrary PATH entries.
 const Loader = struct {
     handle: if (builtin.os.tag == .windows) ?*anyopaque else std.DynLib,
     extern "kernel32" fn LoadLibraryExA([*:0]const u8, ?*anyopaque, u32) callconv(.winapi) ?*anyopaque;
@@ -85,8 +87,8 @@ const Loader = struct {
     extern "kernel32" fn FreeLibrary(?*anyopaque) callconv(.winapi) i32;
     fn open() Error!Loader {
         if (builtin.os.tag == .windows) {
-            const system_directory: u32 = 0x00000800;
-            return .{ .handle = LoadLibraryExA("vulkan-1.dll", null, system_directory) orelse return error.Unavailable };
+            const trusted_directories: u32 = 0x00000800 | 0x00000200;
+            return .{ .handle = LoadLibraryExA("vulkan-1.dll", null, trusted_directories) orelse return error.Unavailable };
         }
         return .{ .handle = std.DynLib.open(if (builtin.abi == .android) "libvulkan.so" else "libvulkan.so.1") catch return error.Unavailable };
     }
@@ -119,11 +121,15 @@ const InstanceFns = struct {
     vkGetPhysicalDeviceMemoryProperties: vk.PFN_vkGetPhysicalDeviceMemoryProperties,
     vkEnumerateDeviceExtensionProperties: vk.PFN_vkEnumerateDeviceExtensionProperties,
     vkCreateDevice: vk.PFN_vkCreateDevice,
-    vkCreateXlibSurfaceKHR: vk.PFN_vkCreateXlibSurfaceKHR,
     vkDestroySurfaceKHR: vk.PFN_vkDestroySurfaceKHR,
     vkGetPhysicalDeviceSurfaceSupportKHR: vk.PFN_vkGetPhysicalDeviceSurfaceSupportKHR,
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR: vk.PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR,
     vkGetPhysicalDeviceSurfaceFormatsKHR: vk.PFN_vkGetPhysicalDeviceSurfaceFormatsKHR,
+};
+const PlatformFns = if (builtin.os.tag == .windows) struct {
+    vkCreateWin32SurfaceKHR: vk.PFN_vkCreateWin32SurfaceKHR,
+} else struct {
+    vkCreateXlibSurfaceKHR: vk.PFN_vkCreateXlibSurfaceKHR,
 };
 const DeviceFns = struct {
     vkDestroyDevice: vk.PFN_vkDestroyDevice,
@@ -171,6 +177,7 @@ const VulkanSurface = struct {
     library: ?Loader = null,
     global: GlobalFns = undefined,
     functions: InstanceFns = undefined,
+    platform_functions: PlatformFns = undefined,
     device_functions: DeviceFns = undefined,
     instance: vk.VkInstance = null,
     surface: vk.VkSurfaceKHR = null,
@@ -208,11 +215,7 @@ const VulkanSurface = struct {
     pub fn init(window: NativeWindow, config: Config) Error!VulkanSurface {
         _ = try Layout.init(config.width, config.height, config.max_buffer_bytes);
         if (config.command_timeout_ms == 0 or config.command_timeout_ms > 5000) return error.InvalidConfig;
-        const xlib = switch (window) {
-            .xlib => |value| value,
-            else => return error.Unavailable,
-        };
-        if (xlib.display == null or xlib.window == 0) return error.InvalidWindow;
+        try validateWindow(window);
         var self: VulkanSurface = .{ .config = config, .owner = std.Thread.getCurrentId() };
         errdefer self.destroyInitial();
         self.library = try Loader.open();
@@ -222,7 +225,8 @@ const VulkanSurface = struct {
         try result(self.global.vkEnumerateInstanceExtensionProperties(null, &count, &extensions));
         if (count > extensions.len) return error.EnumerationLimit;
         var names: [5][*c]const u8 = undefined;
-        const required = [_][*c]const u8{ vk.VK_KHR_SURFACE_EXTENSION_NAME, vk.VK_KHR_XLIB_SURFACE_EXTENSION_NAME, vk.VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME };
+        const platform_extension = if (builtin.os.tag == .windows) vk.VK_KHR_WIN32_SURFACE_EXTENSION_NAME else vk.VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+        const required = [_][*c]const u8{ vk.VK_KHR_SURFACE_EXTENSION_NAME, platform_extension, vk.VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME };
         for (required, 0..) |name, index| {
             if (!hasExtension(extensions[0..count], std.mem.span(name))) return error.Unavailable;
             names[index] = name;
@@ -248,16 +252,44 @@ const VulkanSurface = struct {
         instance_info.ppEnabledExtensionNames = &names;
         try result(self.global.vkCreateInstance(&instance_info, null, &self.instance));
         self.functions = try loadInstance(InstanceFns, self.global.vkGetInstanceProcAddr, self.instance);
+        self.platform_functions = try loadInstance(PlatformFns, self.global.vkGetInstanceProcAddr, self.instance);
         // Resolve all device operations before creating a device, so every
         // successfully created object always has its destruction operation.
         self.device_functions = try loadInstance(DeviceFns, self.global.vkGetInstanceProcAddr, self.instance);
-        var surface_info = info(vk.VkXlibSurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR);
-        surface_info.dpy = @ptrCast(xlib.display);
-        surface_info.window = @intCast(xlib.window);
-        try result(self.functions.vkCreateXlibSurfaceKHR(self.instance, &surface_info, null, &self.surface));
+        try self.createNativeSurface(window);
         try self.selectDevice();
         try self.createSwapchain(config.width, config.height);
         return self;
+    }
+
+    fn validateWindow(window: NativeWindow) Error!void {
+        if (builtin.os.tag == .windows) {
+            const native = switch (window) {
+                .win32 => |value| value,
+                else => return error.Unavailable,
+            };
+            if (native.instance == null or native.window == null) return error.InvalidWindow;
+        } else {
+            const native = switch (window) {
+                .xlib => |value| value,
+                else => return error.Unavailable,
+            };
+            if (native.display == null or native.window == 0) return error.InvalidWindow;
+        }
+    }
+
+    fn createNativeSurface(self: *VulkanSurface, window: NativeWindow) Error!void {
+        if (builtin.os.tag == .windows) {
+            var native = info(vk.VkWin32SurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR);
+            native.hinstance = window.win32.instance;
+            native.hwnd = window.win32.window;
+            try result(self.platform_functions.vkCreateWin32SurfaceKHR(self.instance, &native, null, &self.surface));
+        } else {
+            var native = info(vk.VkXlibSurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR);
+            native.dpy = @ptrCast(window.xlib.display);
+            native.window = @intCast(window.xlib.window);
+            try result(self.platform_functions.vkCreateXlibSurfaceKHR(self.instance, &native, null, &self.surface));
+        }
     }
 
     fn selectDevice(self: *VulkanSurface) Error!void {
@@ -715,6 +747,7 @@ test "invalid frames and suspension do not touch queues or the last retained fra
 test "invalid native configuration fails before opening a driver" {
     try std.testing.expectError(error.InvalidSize, VulkanSurface.init(.{ .xlib = .{ .display = null, .window = 0 } }, .{ .width = 0, .height = 1 }));
     try std.testing.expectError(error.InvalidConfig, VulkanSurface.init(.{ .xlib = .{ .display = null, .window = 0 } }, .{ .width = 1, .height = 1, .command_timeout_ms = 0 }));
-    try std.testing.expectError(error.InvalidWindow, VulkanSurface.init(.{ .xlib = .{ .display = null, .window = 0 } }, .{ .width = 1, .height = 1 }));
+    const invalid: NativeWindow = if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = null, .window = null } } else .{ .xlib = .{ .display = null, .window = 0 } };
+    try std.testing.expectError(error.InvalidWindow, VulkanSurface.init(invalid, .{ .width = 1, .height = 1 }));
     try std.testing.expectError(error.Unavailable, VulkanSurface.init(.{ .android = null }, .{ .width = 1, .height = 1 }));
 }

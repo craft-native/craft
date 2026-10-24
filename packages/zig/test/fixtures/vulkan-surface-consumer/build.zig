@@ -17,10 +17,15 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
         .link_libcpp = true,
     }) });
-    host.root_module.addCSourceFile(.{ .file = b.path("src/host.cpp"), .flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti" } });
+    host.root_module.addCSourceFile(.{ .file = b.path(if (target.result.os.tag == .windows) "src/host-win32.cpp" else "src/host.cpp"), .flags = &.{ "-std=c++17", "-fno-exceptions", "-fno-rtti" } });
     host.root_module.linkLibrary(fixture);
-    host.root_module.linkSystemLibrary("X11", .{});
-    host.root_module.linkSystemLibrary("Xtst", .{});
-    host.root_module.linkSystemLibrary("dl", .{});
+    if (target.result.os.tag == .windows) {
+        host.root_module.linkSystemLibrary("user32", .{});
+        host.root_module.linkSystemLibrary("gdi32", .{});
+    } else {
+        host.root_module.linkSystemLibrary("X11", .{});
+        host.root_module.linkSystemLibrary("Xtst", .{});
+        host.root_module.linkSystemLibrary("dl", .{});
+    }
     b.installArtifact(host);
 }

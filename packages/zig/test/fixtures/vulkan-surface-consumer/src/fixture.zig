@@ -1,5 +1,6 @@
 //! Test-only C transport. All drawing and presentation use Craft's public module.
 const std = @import("std");
+const builtin = @import("builtin");
 const craft = @import("craft");
 const graphics = craft.graphics;
 const scene = graphics.scene;
@@ -32,7 +33,8 @@ export fn craft_vulkan_create(display: ?*anyopaque, window: usize, width: u32, h
         _ = failed(err);
         return null;
     };
-    const surface = native.Surface.init(.{ .xlib = .{ .display = display, .window = window } }, .{ .width = width, .height = height }) catch |err| {
+    const native_window: native.NativeWindow = if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = display, .window = if (window == 0) null else @ptrFromInt(window) } } else .{ .xlib = .{ .display = display, .window = window } };
+    const surface = native.Surface.init(native_window, .{ .width = width, .height = height }) catch |err| {
         allocator.free(pixels);
         var owned = canvas;
         owned.deinit();

@@ -39,8 +39,25 @@ unavailable when replacement cannot be created. Retry resize or dispose; do not
 continue as though the old swapchain still exists. Timeout disposal retains all
 resources until its pending acquisition, render and presentation fences finish.
 
+The Win32 host uses the same public C transport and graphics implementation.
+It creates real DPI-aware windows, captures their actually displayed client
+rectangles from the desktop, resizes and hides/resumes them, then receives
+native cursor/button input. It never repaints an expected frame into the window
+or asks a synthetic print handler to produce a capture. Windows command trees
+belong to a native Job Object before their primary threads start. Timeout,
+cancellation, parent death and normal completion all require complete disposal.
+
+The Windows CI job builds an unchanged, pinned Khronos Vulkan loader and Google
+SwiftShader CPU ICD. The genuine loader is bundled beside the owned fixture;
+`VK_DRIVER_FILES` explicitly selects the source-built ICD. This proves software
+Vulkan presentation on Win32 and does not claim physical GPU acceleration.
+Loader and driver are separate original build outputs; the ICD is never
+renamed to impersonate the loader. Production accepts the normal system or
+application-bundled Vulkan loader and does not search the current directory.
+
 This source change is under development. Local ownership tests and cross
 compilation do not prove Linux native execution. Actual retained window output
 and complete source/release acceptance are required before publication claims.
-Windows and Android adapters and their native captures remain unfinished. The
-fixture does not establish full native game rendering or Gold Edition fidelity.
+The Win32 adapter and its native acceptance are under development; cross
+compilation alone does not prove Windows execution. Android remains unavailable.
+The fixture does not establish full native game rendering or Gold Edition fidelity.
