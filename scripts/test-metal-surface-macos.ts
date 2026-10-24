@@ -2,13 +2,14 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { nativeFixtureBuildTimeoutMs, nativeFixtureCommand } from '../packages/ios/scripts/native-fixture-command'
+import { NativeFixtureCommandScope, nativeFixtureBuildTimeoutMs } from '../packages/ios/scripts/native-fixture-command'
 import { tempDirPrefix } from '../packages/typescript/src/temp-dir'
 import { resolveZig } from './zig'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { xcodegen: { type: 'string' }, output: { type: 'string' } } })
 if (process.platform !== 'darwin' || !values.xcodegen || !isAbsolute(values.xcodegen))
   throw new Error('Use macOS with --xcodegen <absolute managed executable> [--output <evidence directory>]')
+const commandScope = new NativeFixtureCommandScope()
 const root = resolve(import.meta.dir, '..')
 const source = join(root, 'packages/ios/fixtures/metal-surface')
 const zig = resolveZig(root)
@@ -25,7 +26,7 @@ const proof: Record<string, unknown> = { purpose: 'native AppKit Metal displayed
 let failure: unknown
 function save(): void { writeFileSync(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
 async function capture(args: string[], cleanup = false): Promise<string> {
-  const result = await nativeFixtureCommand(args, { cwd: workspace, timeoutMs: 30_000, signal: cleanup ? undefined : interruption.signal })
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs: 30_000, signal: cleanup ? undefined : interruption.signal })
   ;(proof.commands as unknown[]).push({ args, ...result })
   save()
   if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`Command failed (${result.code}): ${args[0]}: ${result.stderr}`)
@@ -35,7 +36,7 @@ async function run(name: string, args: string[], timeoutMs: number): Promise<voi
   const log = join(evidence, `${name}.log`)
   proof.currentStep = name
   save()
-  const result = await nativeFixtureCommand(args, { cwd: workspace, timeoutMs, logPath: log, signal: interruption.signal })
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs, logPath: log, signal: interruption.signal })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, ...result, log })
   save()
   if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`${name} failed (${result.code}); see ${log}`)
@@ -45,7 +46,7 @@ async function run(name: string, args: string[], timeoutMs: number): Promise<voi
 // Restrict cleanup to this unique generated project's executable paths.
 async function ownedApplications(): Promise<number[]> {
   const pattern = `${workspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/DerivedData/Build/Products/.*\\.app/Contents/MacOS/`
-  const result = await nativeFixtureCommand(['pgrep', '-f', pattern], { cwd: workspace, timeoutMs: 10_000 })
+  const result = await commandScope.run(['pgrep', '-f', pattern], { cwd: workspace, timeoutMs: 10_000 })
   if (result.timedOut || result.cancelled || ![0, 1].includes(result.code)) throw new Error('Cannot inspect owned native application disposal')
   if (result.code === 1) return []
   const pids = result.stdout.trim().split(/\s+/)
@@ -55,7 +56,7 @@ async function ownedApplications(): Promise<number[]> {
 async function disposeApplications(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
     for (const pid of await ownedApplications()) {
-      const inspection = await nativeFixtureCommand(['ps', '-p', String(pid), '-o', 'comm='], { cwd: workspace, timeoutMs: 10_000 })
+      const inspection = await commandScope.run(['ps', '-p', String(pid), '-o', 'comm='], { cwd: workspace, timeoutMs: 10_000 })
       // The app can finish between the PID inventory and identity inspection.
       if (inspection.code === 1 && !inspection.timedOut && !inspection.cancelled) continue
       if (inspection.code !== 0 || inspection.timedOut || inspection.cancelled) throw new Error('Cannot verify the owned application executable')
@@ -159,11 +160,17 @@ catch (error) { failure = error; proof.status = 'failed'; proof.error = String(e
 finally {
   try { await disposeApplications(); proof.applicationsDisposed = true }
   catch (error) { failure ??= error; proof.status = 'failed'; proof.cleanupError = String(error) }
-  if (proof.applicationsDisposed) {
+  if (proof.applicationsDisposed && commandScope.allDisposed) {
     try { rmSync(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
     catch (error) { failure ??= error; proof.status = 'failed'; proof.workspaceCleanupError = String(error) }
   }
   else { proof.workspaceRetained = workspace }
+  proof.commandGroupsDisposed = commandScope.allDisposed
+  if (!commandScope.allDisposed) {
+    failure ??= new Error('A native command did not acknowledge complete process-group disposal')
+    proof.status = 'failed'
+    proof.error = String(failure)
+  }
   if (interruption.signal.aborted) {
     failure ??= interruption.signal.reason
     proof.status = 'failed'

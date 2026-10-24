@@ -2,20 +2,21 @@ import { cp, copyFile, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 
 import { tmpdir } from 'node:os'
 import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
-import { nativeFixtureCommand } from '../packages/ios/scripts/native-fixture-command'
+import { NativeFixtureCommandScope } from '../packages/ios/scripts/native-fixture-command'
 import { tempDirPrefix } from '../packages/typescript/src/temp-dir'
 import { resolveZig } from './zig'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { output: { type: 'string' } } })
 if (process.platform !== 'linux') throw new Error('Native Vulkan display acceptance requires Linux with X11, XTest and a Vulkan1.1 presentation driver.')
+const commandScope = new NativeFixtureCommandScope()
 const root = resolve(import.meta.dir, '..')
 const source = join(root, 'packages/zig')
 const fixture = join(source, 'test/fixtures/vulkan-surface-consumer')
 const zig = resolveZig(root)
 if (zig.overridden) throw new Error('Native Vulkan acceptance requires the pinned compiler')
 // Capture source state before creating the evidence output itself.
-const identity = await nativeFixtureCommand(['git', '-C', root, 'rev-parse', 'HEAD'], { cwd: root, timeoutMs: 10_000 })
-const status = await nativeFixtureCommand(['git', '-C', root, 'status', '--porcelain', '--untracked-files=all'], { cwd: root, timeoutMs: 10_000 })
+const identity = await commandScope.run(['git', '-C', root, 'rev-parse', 'HEAD'], { cwd: root, timeoutMs: 10_000 })
+const status = await commandScope.run(['git', '-C', root, 'status', '--porcelain', '--untracked-files=all'], { cwd: root, timeoutMs: 10_000 })
 if ([identity, status].some(result => result.code !== 0 || result.timedOut || result.cancelled || !result.groupDisposed)) throw new Error('Cannot establish native fixture source identity')
 const output = resolve(values.output ?? join(root, 'artifacts/native-vulkan-linux'))
 await mkdir(output, { recursive: true })
@@ -26,14 +27,12 @@ const onSignal = () => interruption.abort(new Error('Native Vulkan acceptance in
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, onSignal)
 const proof: Record<string, unknown> = { purpose: 'Native Xlib Vulkan displayed scene and GPU readback', source: identity.stdout.trim(), sourceDirty: status.stdout.trim().length > 0, sourceStatus: status.stdout, compiler: zig, startedAt: new Date().toISOString(), commands: [] }
 let failure: unknown
-let disposed = true
 async function save(): Promise<void> { await writeFile(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
 async function run(name: string, args: string[], timeoutMs: number): Promise<void> {
   proof.currentStep = name
   await save()
   const logPath = join(evidence, `${name}.log`)
-  const result = await nativeFixtureCommand(args, { cwd: workspace, timeoutMs, logPath, signal: interruption.signal })
-  disposed &&= result.groupDisposed
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs, logPath, signal: interruption.signal })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, ...result, logPath })
   await save()
   if (result.code !== 0 || result.timedOut || result.cancelled || !result.groupDisposed) throw new Error(`${name} failed (${result.code}); see ${logPath}`)
@@ -75,16 +74,16 @@ try {
 }
 catch (error) { failure = error; proof.status = 'failed'; proof.error = String(error) }
 finally {
-  if (disposed) {
+  if (commandScope.allDisposed) {
     try { await rm(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
     catch (error) { failure ??= error; proof.status = 'failed'; proof.workspaceCleanupError = String(error) }
   }
   else { proof.workspaceRetained = workspace; failure ??= new Error('A native command group could not be disposed'); proof.status = 'failed' }
-  proof.commandGroupsDisposed = disposed
+  proof.commandGroupsDisposed = commandScope.allDisposed
   if (interruption.signal.aborted) { failure ??= interruption.signal.reason; proof.status = 'failed'; proof.error = String(failure) }
   proof.finishedAt = new Date().toISOString()
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.off(signal, onSignal)
   await save()
 }
-console.log(JSON.stringify({ status: proof.status, evidence, commandGroupsDisposed: disposed }))
+console.log(JSON.stringify({ status: proof.status, evidence, commandGroupsDisposed: commandScope.allDisposed }))
 if (failure) throw failure

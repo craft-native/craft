@@ -4,12 +4,13 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { resolveZig } from '../../../scripts/zig'
 import { tempDirPrefix } from '../../typescript/src/temp-dir'
-import { nativeFixtureCommand } from './native-fixture-command'
+import { NativeFixtureCommandScope } from './native-fixture-command'
 import { metalXCTestSteps, verifyMetalXCTestSummaries } from './metal-xctest-steps'
 
 const { values } = parseArgs({ args: process.argv.slice(2), strict: true, options: { runtime: { type: 'string' }, xcodegen: { type: 'string' }, output: { type: 'string' } } })
 if (process.platform !== 'darwin' || !values.runtime || !values.xcodegen || !isAbsolute(values.xcodegen))
   throw new Error('Use macOS with --runtime <installed iOS runtime identifier> --xcodegen <absolute managed executable> [--output <evidence directory>]')
+const commandScope = new NativeFixtureCommandScope()
 const root = resolve(import.meta.dir, '../../..')
 const source = join(root, 'packages/ios/fixtures/metal-surface')
 const zig = resolveZig(root)
@@ -30,7 +31,7 @@ let failure: unknown
 function save(): void { writeFileSync(join(evidence, 'verification.json'), `${JSON.stringify(proof, null, 2)}\n`) }
 async function capture(args: string[], options: { allowFailure?: boolean, cleanup?: boolean, timeoutMs?: number } = {}): Promise<string> {
   const timeoutMs = options.timeoutMs ?? 30_000
-  const result = await nativeFixtureCommand(args, { cwd: workspace, timeoutMs, signal: options.cleanup ? undefined : interruption.signal })
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs, signal: options.cleanup ? undefined : interruption.signal })
   const { code, stdout, stderr } = result
   ;(proof.commands as unknown[]).push({ args, timeoutMs, ...result })
   save()
@@ -42,7 +43,7 @@ async function run(name: string, args: string[], timeoutMs: number): Promise<voi
   const startedAt = new Date().toISOString()
   proof.currentStep = name
   save()
-  const result = await nativeFixtureCommand(args, { cwd: workspace, timeoutMs, logPath: log, signal: interruption.signal })
+  const result = await commandScope.run(args, { cwd: workspace, timeoutMs, logPath: log, signal: interruption.signal })
   ;(proof.commands as unknown[]).push({ name, args, timeoutMs, ...result, startedAt, finishedAt: new Date().toISOString(), log })
   save()
   if (result.code !== 0 || result.timedOut || result.cancelled) throw new Error(`${name} failed (${result.code}); see ${log}`)
@@ -163,21 +164,33 @@ schemes:
 catch (error) { failure = error; proof.status = 'failed'; proof.error = String(error) }
 finally {
   const cleanupErrors: string[] = []
-  if (simulator) {
+  if (simulator && commandScope.allDisposed) {
     // Failure to retain a cleanup log must not prevent the next owned cleanup.
     try { await capture(['xcrun', 'simctl', 'shutdown', simulator], { allowFailure: true, cleanup: true }) }
     catch (error) { cleanupErrors.push(String(error)) }
-    try { await capture(['xcrun', 'simctl', 'delete', simulator], { cleanup: true }) }
-    catch (error) { cleanupErrors.push(String(error)) }
-    try {
-      const remaining = JSON.parse(await capture(['xcrun', 'simctl', 'list', 'devices', simulator, '--json'], { cleanup: true })).devices as Record<string, { udid: string }[]>
-      if (Object.values(remaining).flat().some(device => device.udid === simulator)) throw new Error('The owned simulator remained registered after deletion')
-      proof.simulatorDisposed = true
+    if (commandScope.allDisposed) {
+      try { await capture(['xcrun', 'simctl', 'delete', simulator], { cleanup: true }) }
+      catch (error) { cleanupErrors.push(String(error)) }
     }
+    if (commandScope.allDisposed) {
+      try {
+        const remaining = JSON.parse(await capture(['xcrun', 'simctl', 'list', 'devices', simulator, '--json'], { cleanup: true })).devices as Record<string, { udid: string }[]>
+        if (Object.values(remaining).flat().some(device => device.udid === simulator)) throw new Error('The owned simulator remained registered after deletion')
+        proof.simulatorDisposed = true
+      }
+      catch (error) { cleanupErrors.push(String(error)) }
+    }
+  }
+  if (!commandScope.allDisposed) {
+    cleanupErrors.push('A native command did not acknowledge complete process-group disposal')
+    if (simulator && !proof.simulatorDisposed) proof.simulatorRetained = simulator
+  }
+  if (commandScope.allDisposed && (!simulator || proof.simulatorDisposed)) {
+    try { rmSync(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
     catch (error) { cleanupErrors.push(String(error)) }
   }
-  try { rmSync(workspace, { recursive: true, force: true }); proof.workspaceDisposed = true }
-  catch (error) { cleanupErrors.push(String(error)) }
+  else { proof.workspaceRetained = workspace }
+  proof.commandGroupsDisposed = commandScope.allDisposed
   if (cleanupErrors.length) {
     failure ??= new Error(cleanupErrors.join('; '))
     proof.status = 'failed'

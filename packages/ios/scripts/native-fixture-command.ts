@@ -10,6 +10,19 @@ export interface NativeFixtureCommandOptions {
   signal?: AbortSignal
 }
 
+/** A later successful cleanup cannot erase an earlier missing disposal ACK. */
+export class NativeFixtureCommandScope {
+  private outstanding = 0
+  get allDisposed(): boolean { return this.outstanding === 0 }
+
+  async run(args: string[], options: NativeFixtureCommandOptions): ReturnType<typeof nativeFixtureCommand> {
+    this.outstanding++
+    const result = await nativeFixtureCommand(args, options)
+    this.outstanding--
+    return result
+  }
+}
+
 function groupExists(pid: number): boolean {
   try { process.kill(-pid, 0); return true }
   catch (error) {
