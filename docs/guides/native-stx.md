@@ -1283,7 +1283,16 @@ if (craft.capabilities.badge) {
 }
 ```
 
-Storage is JSON-serializable and survives process termination. SQLite is stored
+Storage is JSON-serializable and survives process termination. A queued native
+Storage operation cancelled before it starts leaves the saved value unchanged
+and sends no completion. Cancelling an operation that has already started cannot
+undo its atomic commit. Android host disposal also stops queued storage work and
+pending completions; new calls to that closed host reject with `HOST_CLOSED`.
+Individual storage operations are atomic. A sequence of reads and writes is not
+a transaction: use `setIfAbsent` or `compareAndSet` when sessions can compete for
+the same checkpoint, and handle a `false` result as a conflict.
+
+SQLite is stored
 in the app's persistent data directory and supports typed string, number,
 boolean, and null parameters. `execute` resolves to `{ rowsAffected,
 lastInsertId }`; transaction methods resolve to `true` on success. Local

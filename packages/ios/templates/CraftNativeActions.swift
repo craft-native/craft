@@ -203,7 +203,13 @@ enum CraftNativeActions {
         case ("Clipboard", "read"):
             sync = perform(action: "clipboardRead", body: [:], config: config)
         case ("Storage", _):
-            DispatchQueue.main.async { complete(requestToken, storage(method: method, args: args), completion) }
+            DispatchQueue.main.async {
+                cancellationLock.lock()
+                let cancelled = cancelledRequests.remove(requestToken) != nil
+                cancellationLock.unlock()
+                guard !cancelled else { return }
+                complete(requestToken, storage(method: method, args: args), completion)
+            }
             return
         case ("SecureStorage", _):
             guard config.enableSecureStorage else {
