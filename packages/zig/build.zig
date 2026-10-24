@@ -1,5 +1,8 @@
 const std = @import("std");
 
+// One distribution choice applies to every executable and host-test module.
+var private_apis_enabled: bool = true;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -63,6 +66,8 @@ pub fn build(b: *std.Build) void {
     // Create build options module for version
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version_option);
+    private_apis_enabled = b.option(bool, "private-apis", "Include private platform APIs (disable for App Store distribution)") orelse true;
+    build_options.addOption(bool, "private_apis", private_apis_enabled);
 
     // Craft's own JavaScript runtime, distinct from the page's: the page runs
     // on WebKit's JSC inside the WebContent process, which craft does not own.
@@ -3183,7 +3188,10 @@ fn linkMenuBarVisibility(b: *std.Build, module: *std.Build.Module) void {
     // itself is resolved at runtime and is never a linked dependency.
     module.addCSourceFile(.{
         .file = b.path("src/menubar_visibility.m"),
-        .flags = &.{ "-fobjc-arc", "-fblocks" },
+        .flags = if (private_apis_enabled)
+            &.{ "-fobjc-arc", "-fblocks" }
+        else
+            &.{ "-fobjc-arc", "-fblocks", "-DCRAFT_PUBLIC_APIS_ONLY=1" },
     });
 }
 

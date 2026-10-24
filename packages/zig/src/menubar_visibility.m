@@ -2,6 +2,21 @@
 // Dwarves Foundation. See third-party/hidden-bar-LICENSE. Native code belongs in
 // Craft so consumers need no platform sources or private-framework knowledge.
 #import "menubar_visibility.h"
+#if CRAFT_PUBLIC_APIS_ONLY
+// macOS has no public API for suppressing another application's status items.
+// Exclude the private implementation entirely from the App Store runtime.
+bool craft_menubar_visibility_available(void) { return false; }
+void craft_menubar_visibility_init(void *item, void (*callback)(void), bool preserve_system_items) { (void)item; (void)callback; (void)preserve_system_items; }
+void craft_menubar_visibility_request_permission(void) {}
+void craft_menubar_visibility_collapse(void) {}
+void craft_menubar_visibility_expand(void) {}
+void craft_menubar_visibility_cleanup(void) {}
+bool craft_menubar_visibility_collapsed(void) { return false; }
+bool craft_menubar_visibility_busy(void) { return false; }
+const char *craft_menubar_visibility_state(void) {
+    return "{\"backend\":\"nativeVisibility\",\"initialized\":false,\"collapsed\":false,\"separatorHidden\":false,\"available\":false,\"authorized\":false,\"busy\":false,\"hiddenAppCount\":0,\"hiddenSystemItemCount\":0,\"preserveSystemItems\":false,\"markerWidth\":0,\"error\":\"unavailable\"}";
+}
+#else
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <Security/Security.h>
@@ -522,3 +537,4 @@ const char *craft_menubar_visibility_state(void) {
     serialized = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
     return serialized.UTF8String;
 }
+#endif
