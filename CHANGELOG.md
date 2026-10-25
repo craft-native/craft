@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.349...v0.0.350)
+
+## 🐛 Bug Fixes
+
+- keep native dialogs pending until the user responds ([9c2c568](https://github.com/craft-native/craft/commit/9c2c568)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.348...v0.0.349)
 
 ## 🚀 Features
