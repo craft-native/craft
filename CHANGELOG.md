@@ -1,5 +1,43 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.340...v0.0.341)
+
+## 🐛 Bug Fixes
+
+- close synchronous storage with its native screen ([05635c6](https://github.com/craft-native/craft/commit/05635c6)) _(by Chris)_
+- record native teardown markers before their bridge closes ([78ad3b5](https://github.com/craft-native/craft/commit/78ad3b5)) _(by Chris)_
+- register the original Windows Vulkan test driver ([d412bb0](https://github.com/craft-native/craft/commit/d412bb0)) _(by Chris Breuer)_
+- cancel native requests when retained screens dispose ([604c518](https://github.com/craft-native/craft/commit/604c518)) _(by Chris Breuer)_
+- cancel queued iOS storage before it commits ([3ffde4f](https://github.com/craft-native/craft/commit/3ffde4f)) _(by Chris Breuer)_
+- stop queued storage work when the native host closes ([0a775b5](https://github.com/craft-native/craft/commit/0a775b5)) _(by Chris Breuer)_
+- cancel queued Android storage before it commits ([6142858](https://github.com/craft-native/craft/commit/6142858)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- require guarded storage in the iOS unmount contract ([447e6ed](https://github.com/craft-native/craft/commit/447e6ed)) _(by Chris)_
+- verify native teardown and cancellation on both Android APIs ([a630c96](https://github.com/craft-native/craft/commit/a630c96)) _(by Chris)_
+- isolate native preference domains across parallel executables ([d626732](https://github.com/craft-native/craft/commit/d626732)) _(by Chris Breuer)_
+- reject synchronous checkpoint writes after native screen disposal ([120b13b](https://github.com/craft-native/craft/commit/120b13b)) _(by Chris Breuer)_
+- retain the closed screen through late request verification ([c54b3de](https://github.com/craft-native/craft/commit/c54b3de)) _(by Chris Breuer)_
+- focus native checkpoint diagnostics while preserving release gates ([a43484f](https://github.com/craft-native/craft/commit/a43484f)) _(by Chris Breuer)_
+- keep queued checkpoints unchanged when native screens close ([34c8527](https://github.com/craft-native/craft/commit/34c8527)) _(by Chris Breuer)_
+- preserve checkpoints after native host disposal ([39c272f](https://github.com/craft-native/craft/commit/39c272f)) _(by Chris Breuer)_
+- exercise queued storage cancellation on Android ([cd92cfb](https://github.com/craft-native/craft/commit/cd92cfb)) _(by Chris Breuer)_
+- preserve checkpoints when queued native storage is cancelled ([a617378](https://github.com/craft-native/craft/commit/a617378)) _(by Chris Breuer)_
+
+## 🧹 Chores
+
+- integrate current Craft 340 release metadata ([6fdd8eb](https://github.com/craft-native/craft/commit/6fdd8eb)) _(by Chris)_
+- integrate current Craft Store runtime fixes ([4bbe926](https://github.com/craft-native/craft/commit/4bbe926)) _(by Chris)_
+- integrate upstream Craft 339 before native verification ([6fab4a1](https://github.com/craft-native/craft/commit/6fab4a1)) _(by Chris)_
+- integrate upstream Craft 338 and native driver registration ([0344e57](https://github.com/craft-native/craft/commit/0344e57)) _(by Chris Breuer)_
+- integrate current Craft source changes ([e1c7171](https://github.com/craft-native/craft/commit/e1c7171)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris_
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.339...v0.0.340)
 
 ## 🐛 Bug Fixes
