@@ -777,3 +777,16 @@ test('every descendant of a reused suite has explicit, fail-closed status gating
       expect(job.if, `${name} must reject a failed ${parent}`).toContain(`needs.${parent}.result == 'success'`)
   }
 })
+
+
+test('macOS publishes, signs and verifies both webview distribution variants from the tagged source', () => {
+  const commands = steps(release.jobs.pantry)
+  expect(commands).toContain('-Djs-runtime=false -Dprivate-apis="$PRIVATE_APIS"')
+  for (const name of ['craft-webview', 'craft-webview-app-store']) {
+    expect(commands).toContain(`packages/zig/zig-out/bin/${name}`)
+    expect(commands).toContain(`packages/zig/zig-out/cross/darwin-x64/${name}`)
+  }
+  expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview:arm64-webview"')
+  expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview-app-store:arm64-webview-app-store"')
+  expect(steps(release.jobs['verify-macos-downloads'])).toContain('for RUNTIME in craft craft-app-store craft-webview craft-webview-app-store')
+})

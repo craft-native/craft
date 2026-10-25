@@ -88,6 +88,8 @@ pub fn build(b: *std.Build) void {
         "Craft's first-party JavaScript runtime on zig-js (default true; false saves ~6.5MB)",
     ) orelse true;
 
+    build_options.addOption(bool, "js_runtime", js_runtime_enabled);
+
     const js_backend_module = blk: {
         if (js_runtime_enabled) {
             const js_dep = b.dependency("zig_js", .{ .target = target, .optimize = optimize });

@@ -185,6 +185,20 @@ jobs:
           zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dprivate-apis=false -Dtarget="$ARM64_TARGET" -Dmacos-sdk="$SDK_PATH"
           cp zig-out/bin/craft "$RUNNER_TEMP/craft-app-store"
 
+          # Webview-only apps keep the OS webview and native bridge, without
+          # embedding Craft's separate scripting engine alongside a backend.
+          for ARCH in x64 arm64; do
+            if [ "$ARCH" = x64 ]; then TARGET="$X64_TARGET"; else TARGET="$ARM64_TARGET"; fi
+            for DISTRIBUTION in direct app-store; do
+              PRIVATE_APIS=true
+              NAME=craft-webview
+              if [ "$DISTRIBUTION" = app-store ]; then PRIVATE_APIS=false; NAME=craft-webview-app-store; fi
+              zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Djs-runtime=false -Dprivate-apis="$PRIVATE_APIS" -Dtarget="$TARGET" -Dcpu=baseline -Dmacos-sdk="$SDK_PATH"
+              if [ "$ARCH" = x64 ]; then DEST=zig-out/cross/darwin-x64; else DEST="$RUNNER_TEMP"; fi
+              cp zig-out/bin/craft "$DEST/$NAME"
+            done
+          done
+
           # Restore native ARM64 binary. `zig-out/bin` is cleared first because
           # the publish step zips that directory whole and unfiltered, so
           # anything a cross build left in it ships to users under the host's
@@ -196,9 +210,16 @@ jobs:
           rm -rf zig-out/bin
           zig build -Doptimize=ReleaseSafe -Dversion="$VERSION" -Dtarget="$ARM64_TARGET" -Dmacos-sdk="$SDK_PATH"
           cp "$RUNNER_TEMP/craft-app-store" zig-out/bin/craft-app-store
+          cp "$RUNNER_TEMP/craft-webview" zig-out/bin/craft-webview
+          cp "$RUNNER_TEMP/craft-webview-app-store" zig-out/bin/craft-webview-app-store
+          test "$(zig-out/bin/craft-webview --runtime-profile)" = webview
+          test "$(zig-out/bin/craft-webview-app-store --runtime-profile)" = webview
+          test "$(zig-out/bin/craft --runtime-profile)" = full
+          test "$(zig-out/bin/craft-webview --distribution)" = direct
+          test "$(zig-out/bin/craft-webview-app-store --distribution)" = app-store
           test "$(zig-out/bin/craft-app-store --distribution)" = app-store
           test "$(zig-out/bin/craft --distribution)" = direct
-          if strings zig-out/bin/craft-app-store zig-out/cross/darwin-x64/craft-app-store | grep -E 'MBAssessmentMode|MenuBarClientCore|developerExtrasEnabled|javaScriptCanAccessClipboard|drawsBackground'; then
+          if strings zig-out/bin/craft-app-store zig-out/cross/darwin-x64/craft-app-store zig-out/bin/craft-webview-app-store zig-out/cross/darwin-x64/craft-webview-app-store | grep -E 'MBAssessmentMode|MenuBarClientCore|developerExtrasEnabled|javaScriptCanAccessClipboard|drawsBackground'; then
             echo '::error::App Store runtime contains private platform APIs'
             exit 1
           fi
@@ -379,6 +400,10 @@ jobs:
           echo "Using entitlements: $ENTITLEMENTS"
           for binary in \
             packages/zig/zig-out/bin/craft \
+            packages/zig/zig-out/bin/craft-webview \
+            packages/zig/zig-out/bin/craft-webview-app-store \
+            packages/zig/zig-out/cross/darwin-x64/craft-webview \
+            packages/zig/zig-out/cross/darwin-x64/craft-webview-app-store \
             packages/zig/zig-out/bin/craft-app-store \
             packages/zig/zig-out/cross/darwin-x64/craft-app-store \
             packages/zig/zig-out/cross/darwin-x64/craft; do
@@ -394,7 +419,13 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           bun test ./scripts/macos-release.test.ts
+          packages/zig/zig-out/bin/craft-webview --benchmark | grep -Fx ready
+          packages/zig/zig-out/bin/craft-webview-app-store --benchmark | grep -Fx ready
           bun scripts/verify-macos-release.ts packages/zig/zig-out/bin/craft "$VERSION"
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/bin/craft-webview "$VERSION"
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/bin/craft-webview-app-store "$VERSION"
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/cross/darwin-x64/craft-webview "$VERSION" --no-execute
+          bun scripts/verify-macos-release.ts packages/zig/zig-out/cross/darwin-x64/craft-webview-app-store "$VERSION" --no-execute
           bun scripts/verify-macos-release.ts packages/zig/zig-out/cross/darwin-x64/craft "$VERSION" --no-execute
 
       - name: Notarize macOS binaries
@@ -402,6 +433,10 @@ jobs:
         run: |
           set -euo pipefail
           for tuple in \
+            "packages/zig/zig-out/bin/craft-webview:arm64-webview" \
+            "packages/zig/zig-out/cross/darwin-x64/craft-webview:x64-webview" \
+            "packages/zig/zig-out/bin/craft-webview-app-store:arm64-webview-app-store" \
+            "packages/zig/zig-out/cross/darwin-x64/craft-webview-app-store:x64-webview-app-store" \
             "packages/zig/zig-out/bin/craft:arm64" \
             "packages/zig/zig-out/cross/darwin-x64/craft:x64"; do
             IFS=: read -r binary architecture <<< "$tuple"
@@ -643,7 +678,11 @@ jobs:
           DOWNLOAD_DIR=$(mktemp -d)
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "craft-$PLATFORM.zip" --dir "$DOWNLOAD_DIR"
           ditto -x -k "$DOWNLOAD_DIR/craft-$PLATFORM.zip" "$DOWNLOAD_DIR/extracted"
-          bun scripts/verify-macos-release.ts "$DOWNLOAD_DIR/extracted/craft" "${TAG#v}"
+          for RUNTIME in craft craft-app-store craft-webview craft-webview-app-store; do
+            bun scripts/verify-macos-release.ts "$DOWNLOAD_DIR/extracted/$RUNTIME" "${TAG#v}"
+          done
+          test "$("$DOWNLOAD_DIR/extracted/craft-webview" --runtime-profile)" = webview
+          test "$("$DOWNLOAD_DIR/extracted/craft-webview-app-store" --distribution)" = app-store
 
   verify-desktop-downloads:
     name: verify downloaded ${{ matrix.platform.name }}
