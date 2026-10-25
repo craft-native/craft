@@ -534,7 +534,21 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
   // Create DMG
   if (opts.dmg !== false) {
     const outputPath = join(outDir, `${name}-${version}.dmg`)
-    const dmgResult = await createDMG({ appBundlePath, outputPath, volumeName: name })
+    let dmgResult = await createDMG({ appBundlePath, outputPath, volumeName: name })
+    // The disk image is its own distribution artifact. Its signature must be
+    // present before notarization so Gatekeeper can assess the downloaded
+    // container independently of the signed application inside it.
+    if (dmgResult.success && opts.signIdentity) {
+      const signed = await runTool('codesign', codesignArguments({
+        path: outputPath, identity: opts.signIdentity, keychain: opts.signingKeychain,
+        hardenedRuntime: false, deep: false,
+      }))
+      const verified = signed.success
+        ? await runTool('codesign', ['--verify', '--strict', outputPath])
+        : signed
+      if (!verified.success)
+        dmgResult = { success: false, error: verified.error }
+    }
     results.push({
       success: dmgResult.success,
       platform: 'macos',

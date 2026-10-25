@@ -490,6 +490,23 @@ it('preserves the resources and metadata of a prebuilt macOS app', async () => {
   finally { removeTempDir(root) }
 })
 
+it.skipIf(process.platform !== 'darwin')('signs the actual disk image container as well as the application', async () => {
+  const root = createTempDir('signed-dmg')
+  try {
+    const results = await packageApp({
+      name: 'SignedImage', version: '1.0.0', bundleId: 'dev.craft.signed-dmg',
+      binaryPath: '/usr/bin/true', outDir: root, platforms: ['macos'],
+      macos: { dmg: true, signIdentity: '-' },
+    })
+    expect(results.every(result => result.success), JSON.stringify(results)).toBe(true)
+    const image = results.find(result => result.format === 'dmg')!.outputPath!
+    expect(Bun.spawnSync(['codesign', '--verify', '--strict', image]).exitCode).toBe(0)
+    expect(Bun.spawnSync(['codesign', '-dv', image]).stderr.toString()).toContain('Signature=adhoc')
+    expect(Bun.spawnSync(['codesign', '--verify', '--deep', '--strict', results[0].outputPath!]).exitCode).toBe(0)
+  }
+  finally { removeTempDir(root) }
+}, 30000)
+
 it.skipIf(process.platform !== 'darwin')('packages and signs a native GUI agent with its own executable identity', async () => {
   const root = createTempDir('native-agent-package')
   try {
