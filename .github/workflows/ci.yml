@@ -254,6 +254,10 @@ jobs:
         if: runner.os == 'macOS'
         run: bun test ./scripts/macos-release.test.ts
 
+      - name: Verify AppKit component layout and controls
+        if: runner.os == 'macOS'
+        run: bun test ./packages/macos/src/renderer.test.ts
+
       - name: Verify WebKit inspection and distribution capabilities natively
         if: runner.os == 'macOS'
         run: |

@@ -58,41 +58,75 @@ final class CraftMacFlow: NSView {
         let top = dimension(style["paddingTop"], base: size.height) ?? dimension(style["paddingVertical"], base: size.height) ?? padding
         let bottom = dimension(style["paddingBottom"], base: size.height) ?? dimension(style["paddingVertical"], base: size.height) ?? padding
         let inner = CGSize(width: max(0, size.width - left - right), height: max(0, size.height - top - bottom))
-        let visible = boxes.filter { !$0.isHidden && $0.kind != "Modal" }
+        let visible = boxes.filter { !$0.isHidden && $0.kind != "Modal" && $0.layoutStyle["position"] as? String != "absolute" }
         let gap = dimension(style["gap"], base: inner.width) ?? 0
-        let sizes = visible.map { $0.measure(width: inner.width) }
+        let sizes = visible.map { box in
+            let alignment = box.layoutStyle["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
+            return box.measure(width: inner.width, stretch: !horizontal && alignment == "stretch")
+        }
         let items = visible.enumerated().map { index, box -> CraftMacFlex.Item in
             let main = horizontal ? sizes[index].width : sizes[index].height
-            let basis = dimension(box.style["flexBasis"], base: horizontal ? inner.width : inner.height) ?? main
-            let grow = number(box.style["flexGrow"]) ?? number(box.style["flex"]) ?? 0
-            let shrink = number(box.style["flexShrink"]) ?? (grow > 0 ? 1 : 0)
-            let minimum = dimension(box.style[horizontal ? "minWidth" : "minHeight"], base: horizontal ? inner.width : inner.height)
-            let maximum = dimension(box.style[horizontal ? "maxWidth" : "maxHeight"], base: horizontal ? inner.width : inner.height)
-            return .init(basis: Float(basis), grow: Float(grow), shrink: Float(shrink), min: minimum.map(Float.init) ?? .nan, max: maximum.map(Float.init) ?? .nan, start: 0, end: 0)
+            let layout = box.layoutStyle
+            let grow = number(layout["flexGrow"]) ?? number(layout["flex"]) ?? 0
+            let basis = dimension(layout["flexBasis"], base: horizontal ? inner.width : inner.height) ?? (number(layout["flex"]) != nil ? 0 : main)
+            let shrink = number(layout["flexShrink"]) ?? (grow > 0 ? 1 : 0)
+            let minimum = dimension(layout[horizontal ? "minWidth" : "minHeight"], base: horizontal ? inner.width : inner.height)
+            let maximum = dimension(layout[horizontal ? "maxWidth" : "maxHeight"], base: horizontal ? inner.width : inner.height)
+            let margin = number(layout["margin"]) ?? 0
+            let start = number(layout[horizontal ? "marginLeft" : "marginTop"]) ?? number(layout[horizontal ? "marginHorizontal" : "marginVertical"]) ?? margin
+            let end = number(layout[horizontal ? "marginRight" : "marginBottom"]) ?? number(layout[horizontal ? "marginHorizontal" : "marginVertical"]) ?? margin
+            return .init(basis: Float(basis), grow: Float(grow), shrink: Float(shrink), min: minimum.map(Float.init) ?? .nan, max: maximum.map(Float.init) ?? .nan, start: Float(start), end: Float(end))
         }
         let frames = CraftMacFlex.layout(items, available: horizontal ? inner.width : inner.height, gap: gap, justify: style["justifyContent"] as? String ?? "flex-start")
         for (index, box) in visible.enumerated() {
             let crossAvailable = horizontal ? inner.height : inner.width
-            let crossExplicit = dimension(box.style[horizontal ? "height" : "width"], base: crossAvailable)
-            let alignment = box.style["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
-            let cross = min(crossAvailable, crossExplicit ?? (alignment == "stretch" ? crossAvailable : (horizontal ? sizes[index].height : sizes[index].width)))
+            let crossExplicit = dimension(box.layoutStyle[horizontal ? "height" : "width"], base: crossAvailable)
+            let alignment = box.layoutStyle["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
+            let measured = horizontal ? box.measure(width: frames[index].0, stretch: true) : sizes[index]
+            let cross = min(crossAvailable, crossExplicit ?? (alignment == "stretch" ? crossAvailable : (horizontal ? measured.height : measured.width)))
             let offset = alignment == "center" ? (crossAvailable - cross) / 2 : alignment == "flex-end" ? crossAvailable - cross : 0
             box.frame = horizontal ? CGRect(x: left + frames[index].1, y: top + offset, width: frames[index].0, height: cross)
                 : CGRect(x: left + offset, y: top + frames[index].1, width: cross, height: frames[index].0)
             box.layoutSubtreeIfNeeded()
         }
+        for box in boxes where !box.isHidden && box.layoutStyle["position"] as? String == "absolute" {
+            let measured = box.measure(width: size.width)
+            let leading = dimension(box.layoutStyle["left"], base: size.width), trailing = dimension(box.layoutStyle["right"], base: size.width)
+            let above = dimension(box.layoutStyle["top"], base: size.height), below = dimension(box.layoutStyle["bottom"], base: size.height)
+            let width = dimension(box.layoutStyle["width"], base: size.width) ?? (leading != nil && trailing != nil ? max(0, size.width - leading! - trailing!) : measured.width)
+            let height = dimension(box.layoutStyle["height"], base: size.height) ?? (above != nil && below != nil ? max(0, size.height - above! - below!) : measured.height)
+            box.frame = CGRect(x: (leading ?? (trailing.map { size.width - $0 - width } ?? 0)), y: (above ?? (below.map { size.height - $0 - height } ?? 0)), width: width, height: height)
+            box.layoutSubtreeIfNeeded()
+        }
     }
-    func fitting(width: CGFloat) -> CGSize {
+    func fitting(width: CGFloat, stretchChildren: Bool = true) -> CGSize {
         let padding = number(style["padding"]) ?? 0
         let horizontalPadding = (number(style["paddingLeft"]) ?? number(style["paddingHorizontal"]) ?? padding) + (number(style["paddingRight"]) ?? number(style["paddingHorizontal"]) ?? padding)
         let verticalPadding = (number(style["paddingTop"]) ?? number(style["paddingVertical"]) ?? padding) + (number(style["paddingBottom"]) ?? number(style["paddingVertical"]) ?? padding)
-        let visible = boxes.filter { !$0.isHidden && $0.kind != "Modal" }
-        let sizes = visible.map { $0.measure(width: max(0, width - horizontalPadding)) }
+        let visible = boxes.filter { !$0.isHidden && $0.kind != "Modal" && $0.layoutStyle["position"] as? String != "absolute" }
+        let available = max(0, width - horizontalPadding)
+        var sizes = visible.map { box in
+            let alignment = box.layoutStyle["alignSelf"] as? String ?? style["alignItems"] as? String ?? "stretch"
+            return box.measure(width: available, stretch: stretchChildren && style["flexDirection"] as? String != "row" && alignment == "stretch")
+        }
         let gaps = CGFloat(max(0, sizes.count - 1)) * (number(style["gap"]) ?? 0)
         if style["flexDirection"] as? String == "row" {
+            let items = visible.enumerated().map { index, box -> CraftMacFlex.Item in
+                let layout = box.layoutStyle
+                let grow = number(layout["flexGrow"]) ?? number(layout["flex"]) ?? 0
+                let basis = dimension(layout["flexBasis"], base: available) ?? (number(layout["flex"]) != nil ? 0 : sizes[index].width)
+                return .init(basis: Float(basis), grow: Float(grow), shrink: Float(number(layout["flexShrink"]) ?? (grow > 0 ? 1 : 0)), min: dimension(layout["minWidth"], base: available).map(Float.init) ?? .nan, max: dimension(layout["maxWidth"], base: available).map(Float.init) ?? .nan, start: 0, end: 0)
+            }
+            let frames = CraftMacFlex.layout(items, available: available, gap: number(style["gap"]) ?? 0, justify: "flex-start")
+            sizes = visible.enumerated().map { index, box in box.measure(width: frames[index].0, stretch: stretchChildren) }
             return CGSize(width: sizes.reduce(0) { $0 + $1.width } + horizontalPadding + gaps, height: (sizes.map(\.height).max() ?? 0) + verticalPadding)
         }
-        return CGSize(width: (sizes.map(\.width).max() ?? 0) + horizontalPadding, height: sizes.reduce(0) { $0 + $1.height } + verticalPadding + gaps)
+        let margins = visible.reduce(CGFloat(0)) { total, box in
+            let layout = box.layoutStyle
+            let margin = number(layout["marginVertical"]) ?? number(layout["margin"]) ?? 0
+            return total + (number(layout["marginTop"]) ?? margin) + (number(layout["marginBottom"]) ?? margin)
+        }
+        return CGSize(width: (sizes.map(\.width).max() ?? 0) + horizontalPadding, height: sizes.reduce(0) { $0 + $1.height } + verticalPadding + gaps + margins)
     }
 }
 
@@ -134,12 +168,23 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     var imageSource = ""
     var scrollKey = ""
     var modal: NSPanel?
+    var material: NSVisualEffectView?
+    var edgeBorders: [String: CALayer] = [:]
+    var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 ? flow?.boxes.first : nil }
+    var layoutStyle: [String: Any] {
+        guard let child = componentRoot else { return style }
+        let keys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
+        var result = style
+        for key in keys where result[key] == nil { result[key] = child.layoutStyle[key] }
+        return result
+    }
     override var isFlipped: Bool { true }
 
     init(id: String, kind: String, renderer: CraftMacRenderer) {
         self.id = id; self.kind = kind; self.renderer = renderer
         super.init(frame: .zero)
         wantsLayer = true
+        clipsToBounds = true
         setAccessibilityElement(false)
         switch kind {
         case "Text":
@@ -171,7 +216,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             let text = NSTextField(labelWithString: "Unsupported native control: \(kind)"); control = text
             renderer.runtime.errors.append("Unsupported native control: \(kind)")
         }
-        if let control { addSubview(control) }
+        if let control { control.clipsToBounds = true; addSubview(control) }
     }
     required init?(coder: NSCoder) { fatalError("Native controls are created from STX") }
 
@@ -186,6 +231,22 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         }
         layer?.cornerRadius = number(style["borderRadius"]) ?? 0
         layer?.borderWidth = number(style["borderWidth"]) ?? 0
+        // AppKit views may draw their entire visibleRect, which can extend
+        // through adjacent panes on newer macOS releases. Native controls
+        // stay inside their authored boxes unless overflow is explicit.
+        clipsToBounds = style["overflow"] as? String != "visible"
+        if let container = control as? CraftMacFlow { container.clipsToBounds = clipsToBounds }
+        layer?.masksToBounds = clipsToBounds || (number(style["borderRadius"]) ?? 0) > 0
+        for edge in ["Top", "Right", "Bottom", "Left"] {
+            let border = edgeBorders[edge] ?? CALayer()
+            if edgeBorders[edge] == nil { edgeBorders[edge] = border; layer?.addSublayer(border) }
+            border.backgroundColor = CraftMacColor.parse(style["borderColor"], fallback: .separatorColor).cgColor
+            border.isHidden = (number(style["border\(edge)Width"]) ?? 0) <= 0
+        }
+        if let name = props["material"] as? String {
+            if material == nil { let effect = NSVisualEffectView(); effect.blendingMode = .behindWindow; effect.state = .followsWindowActiveState; addSubview(effect, positioned: .below, relativeTo: control); material = effect }
+            material?.material = name == "sidebar" ? .sidebar : .headerView
+        } else { material?.removeFromSuperview(); material = nil }
         alphaValue = number(style["opacity"]) ?? 1
         let identifier = props["testID"] as? String ?? props["testId"] as? String ?? props["accessibilityIdentifier"] as? String ?? id
         control?.setAccessibilityIdentifier(identifier)
@@ -204,12 +265,18 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             text.lineBreakMode = text.maximumNumberOfLines == 1 ? .byTruncatingTail : .byWordWrapping
         }
         if let button = control as? NSButton {
-            button.title = props["title"] as? String ?? nativeText(node)
+            let title = props["title"] as? String ?? nativeText(node)
+            button.title = props["iconOnly"] as? Bool == true ? "" : title
+            button.setAccessibilityLabel(label ?? title)
             button.font = font
+            button.alignment = style["textAlign"] as? String == "left" ? .left : style["textAlign"] as? String == "right" ? .right : .center
             button.isEnabled = props["disabled"] as? Bool != true
             if kind == "Switch" || kind == "Checkbox" { button.state = (props["value"] as? Bool ?? props["checked"] as? Bool ?? false) ? .on : .off }
             button.bezelStyle = props["variant"] as? String == "toolbar" ? .texturedRounded : .rounded
+            button.isBordered = !["toolbar", "ghost"].contains(props["variant"] as? String ?? "")
+            button.contentTintColor = CraftMacColor.parse(style["color"], fallback: .controlAccentColor)
             if let symbol = props["symbol"] as? String { button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: button.title); button.imagePosition = button.title.isEmpty ? .imageOnly : .imageLeading }
+            if button.image != nil { button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: number(style["fontSize"]) ?? 16, weight: .regular) }
             if props["variant"] as? String == "primary" { button.bezelColor = .controlAccentColor }
             if props["variant"] as? String == "danger" { button.contentTintColor = .systemRed }
         }
@@ -261,6 +328,12 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         }
         let value = props["value"] as? String ?? ""
         if let text = (control as? NSScrollView)?.documentView as? NSTextView {
+            if let scroll = control as? NSScrollView {
+                let bordered = props["bordered"] as? Bool ?? true
+                scroll.borderType = bordered ? .bezelBorder : .noBorder
+                scroll.drawsBackground = bordered
+                text.drawsBackground = bordered
+            }
             if text.string != value { text.string = value }
             text.isEditable = props["disabled"] as? Bool != true; text.font = font
             if let editor = text as? CraftMacTextView { editor.placeholder = props["placeholder"] as? String ?? ""; editor.needsDisplay = true }
@@ -270,6 +343,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
             if field.stringValue != value { field.stringValue = value }
             field.placeholderString = props["placeholder"] as? String
             field.font = font; field.isEnabled = props["disabled"] as? Bool != true
+            if let bordered = props["bordered"] as? Bool { field.isBordered = bordered; field.drawsBackground = bordered }
             field.setAccessibilityIdentifier(props["testID"] as? String ?? props["testId"] as? String ?? id)
         }
     }
@@ -289,26 +363,35 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         }; imageTask?.resume()
     }
 
-    func measure(width: CGFloat) -> CGSize {
+    var textPadding: NSEdgeInsets {
+        let all = number(style["padding"]) ?? 0
+        let horizontal = number(style["paddingHorizontal"]) ?? all
+        let vertical = number(style["paddingVertical"]) ?? all
+        return NSEdgeInsets(top: number(style["paddingTop"]) ?? vertical, left: number(style["paddingLeft"]) ?? horizontal, bottom: number(style["paddingBottom"]) ?? vertical, right: number(style["paddingRight"]) ?? horizontal)
+    }
+    func measure(width: CGFloat, stretch: Bool = false) -> CGSize {
         if isHidden { return .zero }
+        if let child = componentRoot { return child.measure(width: width, stretch: stretch) }
         let specifiedWidth = dimension(style["width"], base: width)
         let limit = min(specifiedWidth ?? width, dimension(style["maxWidth"], base: width) ?? width)
         var size = CGSize(width: limit, height: 0)
         if let text = control as? NSTextField, kind == "Text" {
-            let rect = (text.stringValue as NSString).boundingRect(with: CGSize(width: max(1, limit - 6), height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font ?? NSFont.systemFont(ofSize: 13)])
-            size = CGSize(width: min(limit, ceil(rect.width) + 6), height: max(18, ceil(rect.height) + 2))
+            let rect = (text.stringValue as NSString).boundingRect(with: CGSize(width: max(1, limit - 6 - textPadding.left - textPadding.right), height: 1_000_000), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font ?? NSFont.systemFont(ofSize: 13)])
+            size = CGSize(width: min(limit, ceil(rect.width) + 6 + textPadding.left + textPadding.right), height: max(18, ceil(rect.height) + 2))
+            if text.maximumNumberOfLines > 0 { size.height = min(size.height, ceil((text.font?.ascender ?? 13) - (text.font?.descender ?? -3) + (text.font?.leading ?? 0)) * CGFloat(text.maximumNumberOfLines) + 2) }
             if text.maximumNumberOfLines == 1 { size.height = max(18, (text.font?.pointSize ?? 13) + 5) }
+            size.height += textPadding.top + textPadding.bottom
         } else if kind == "ScrollView" || kind == "FlatList" || kind == "Sidebar" { size = CGSize(width: limit, height: 100) }
         else if kind == "Icon" { size = CGSize(width: 18, height: 18) }
         else if kind == "Image" || kind == "Video" { size = CGSize(width: limit, height: 160) }
         else if kind == "TextInput" { size = CGSize(width: limit, height: props["multiline"] as? Bool == true ? 48 : 28) }
         else if let control = control as? NSControl { size = control.intrinsicContentSize; size.width = max(24, size.width); size.height = max(26, size.height) }
-        else if let flow { size = flow.fitting(width: limit) }
-        size.width = specifiedWidth ?? min(limit, size.width)
+        else if let flow { size = flow.fitting(width: limit, stretchChildren: false) }
+        size.width = specifiedWidth ?? (flow != nil && stretch ? limit : min(limit, size.width))
         if let maximum = dimension(style["maxWidth"], base: width) { size.width = min(size.width, maximum) }
         // A naturally sized column can be narrower than its measurement limit.
         // Measure its wrapped children again at the width it will actually get.
-        if let flow, style["flexDirection"] as? String != "row" {
+        if let flow, !(control is NSScrollView), style["flexDirection"] as? String != "row" {
             size.height = flow.fitting(width: size.width).height
         }
         size.height = dimension(style["height"], base: 1000) ?? size.height
@@ -318,9 +401,27 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
         return size
     }
     override func layout() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         super.layout()
-        control?.frame = bounds
-        if let scroll = control as? NSScrollView {
+        layer?.cornerRadius = min(number(style["borderRadius"]) ?? 0, min(bounds.width, bounds.height) / 2)
+        if kind == "Text" {
+            let padding = textPadding
+            control?.frame = CGRect(x: padding.left, y: padding.top, width: max(0, bounds.width - padding.left - padding.right), height: max(0, bounds.height - padding.top - padding.bottom))
+        } else { control?.frame = bounds }
+        material?.frame = bounds
+        for (edge, border) in edgeBorders {
+            let thickness = number(style["border\(edge)Width"]) ?? 0
+            switch edge {
+            case "Top": border.frame = CGRect(x: 0, y: 0, width: bounds.width, height: thickness)
+            case "Bottom": border.frame = CGRect(x: 0, y: bounds.height - thickness, width: bounds.width, height: thickness)
+            case "Left": border.frame = CGRect(x: 0, y: 0, width: thickness, height: bounds.height)
+            default: border.frame = CGRect(x: bounds.width - thickness, y: 0, width: thickness, height: bounds.height)
+            }
+        }
+        if let child = componentRoot {
+            child.frame = bounds; child.layoutSubtreeIfNeeded()
+        } else if let scroll = control as? NSScrollView {
             if let flow {
                 let width = scroll.contentSize.width
                 flow.frame = CGRect(x: 0, y: 0, width: width, height: max(scroll.contentSize.height, flow.fitting(width: width).height))
@@ -364,8 +465,8 @@ final class CraftMacSidebarRow: NSTableRowView {
 }
 
 final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineViewDelegate {
-    final class Item { let id: String; let label: String; let icon: String; let badge: String; let children: [Item]
-        init(_ raw: [String: Any]) { id = raw["id"] as? String ?? ""; label = raw["label"] as? String ?? raw["header"] as? String ?? ""; icon = raw["icon"] as? String ?? ""; badge = raw["badge"].map { $0 is NSNull ? "" : String(describing: $0) } ?? ""; children = (raw["items"] as? [[String: Any]] ?? []).map(Item.init) }
+    final class Item { let id: String; let label: String; let icon: String; let badge: String; let color: NSColor; let children: [Item]
+        init(_ raw: [String: Any]) { id = raw["id"] as? String ?? ""; label = raw["label"] as? String ?? raw["header"] as? String ?? ""; icon = raw["icon"] as? String ?? ""; badge = raw["badge"].map { $0 is NSNull ? "" : String(describing: $0) } ?? ""; color = CraftMacColor.parse(raw["color"], fallback: .controlAccentColor); children = (raw["items"] as? [[String: Any]] ?? []).map(Item.init) }
     }
     weak var box: CraftMacBox?
     let outline = NSOutlineView()
@@ -375,7 +476,7 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
         self.box = box; super.init(frame: .zero)
         hasVerticalScroller = true; drawsBackground = false
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("label")); outline.addTableColumn(column); outline.outlineTableColumn = column
-        outline.headerView = nil; outline.style = .plain; outline.backgroundColor = .windowBackgroundColor
+        outline.headerView = nil; outline.style = .plain; outline.backgroundColor = .clear
         outline.rowSizeStyle = .default; outline.indentationPerLevel = 0
         outline.dataSource = self; outline.delegate = self; outline.autoresizesOutlineColumn = true; documentView = outline
     }
@@ -402,12 +503,14 @@ final class CraftMacSidebar: NSScrollView, NSOutlineViewDataSource, NSOutlineVie
     }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let item = item as! Item
-        let cell = NSTableCellView(); let label = NSTextField(labelWithString: item.label + (item.badge.isEmpty ? "" : "  \(item.badge)"))
+        let cell = NSTableCellView(); let label = NSTextField(labelWithString: item.label)
         label.font = NSFont.systemFont(ofSize: 13); label.lineBreakMode = .byTruncatingTail; cell.textField = label; cell.addSubview(label)
         if !item.children.isEmpty { label.font = NSFont.systemFont(ofSize: 11, weight: .semibold); label.textColor = .secondaryLabelColor }
         label.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: item.icon.isEmpty ? 4 : 27), label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
-        if !item.icon.isEmpty { let image = NSImageView(image: NSImage(systemSymbolName: item.icon, accessibilityDescription: nil) ?? NSImage()); image.frame = CGRect(x: 4, y: 7, width: 18, height: 18); cell.imageView = image; cell.addSubview(image) }
+        let badge = NSTextField(labelWithString: item.badge); badge.font = NSFont.systemFont(ofSize: 11); badge.textColor = .secondaryLabelColor
+        badge.translatesAutoresizingMaskIntoConstraints = false; badge.setContentHuggingPriority(.required, for: .horizontal); cell.addSubview(badge)
+        NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: item.icon.isEmpty ? 16 : 39), label.trailingAnchor.constraint(lessThanOrEqualTo: badge.leadingAnchor, constant: -8), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), badge.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -16), badge.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+        if !item.icon.isEmpty { let image = NSImageView(image: NSImage(systemSymbolName: item.icon, accessibilityDescription: nil) ?? NSImage()); image.contentTintColor = item.color; image.frame = CGRect(x: 16, y: 8, width: 16, height: 16); cell.imageView = image; cell.addSubview(image) }
         cell.setAccessibilityIdentifier(item.id); cell.setAccessibilityLabel(item.label)
         return cell
     }
@@ -426,6 +529,8 @@ final class CraftMacRenderer {
     var sheets: [String: NSPanel] = [:]
     init(runtime: CraftMacRuntime) { self.runtime = runtime }
     func render(_ document: [String: Any]) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         var retained = Set<String>()
         var scrolls: [(CraftMacBox, CGPoint, Bool)] = []
         for box in boxes.values { if let scroll = box.control as? NSScrollView, box.kind != "Sidebar" {
@@ -473,7 +578,8 @@ final class CraftMacRenderer {
             guard let scroll = box.control as? NSScrollView, box.kind != "TextInput" else { continue }
             let key = box.props["scrollKey"] as? String ?? ""
             let changed = key != box.scrollKey; box.scrollKey = key
-            let y = (bottom || changed) && box.props["autoScrollBottom"] as? Bool == true ? max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentSize.height) : origin.y
+            let maximum = max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentSize.height)
+            let y = (bottom || changed) && box.props["autoScrollBottom"] as? Bool == true ? maximum : min(maximum, max(0, origin.y))
             scroll.contentView.scroll(to: CGPoint(x: origin.x, y: y)); scroll.reflectScrolledClipView(scroll.contentView)
         }
         root.needsLayout = true
