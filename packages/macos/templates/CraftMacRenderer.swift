@@ -45,12 +45,20 @@ enum CraftMacFlex {
 final class CraftMacFlow: NSView {
     var boxes: [CraftMacBox] = []
     var style: [String: Any] = [:]
+    var componentScope = false
     override var isFlipped: Bool { true }
     override func layout() {
         super.layout()
         layoutBoxes(in: bounds.size)
     }
     func layoutBoxes(in size: CGSize) {
+        // AppKit can lay out this inner flow after its owning box. Component
+        // scopes must preserve the root's allocation on that later pass too.
+        if componentScope, boxes.count == 1, boxes[0].kind != "Modal", boxes[0].superview === self {
+            boxes[0].frame = CGRect(origin: .zero, size: size)
+            boxes[0].layoutSubtreeIfNeeded()
+            return
+        }
         let horizontal = style["flexDirection"] as? String == "row"
         let padding = dimension(style["padding"], base: size.width) ?? 0
         let left = dimension(style["paddingLeft"], base: size.width) ?? dimension(style["paddingHorizontal"], base: size.width) ?? padding
@@ -170,7 +178,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
     var modal: NSPanel?
     var material: NSVisualEffectView?
     var edgeBorders: [String: CALayer] = [:]
-    var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 ? flow?.boxes.first : nil }
+    var componentRoot: CraftMacBox? { props["data-stx-component-wrapper"] != nil && flow?.boxes.count == 1 && flow?.boxes.first?.kind != "Modal" ? flow?.boxes.first : nil }
     var layoutStyle: [String: Any] {
         guard let child = componentRoot else { return style }
         let keys = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "flex", "flexGrow", "flexShrink", "flexBasis", "alignSelf", "position", "left", "right", "top", "bottom", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft", "marginHorizontal", "marginVertical"]
@@ -222,6 +230,7 @@ final class CraftMacBox: NSView, NSTextFieldDelegate, NSTextViewDelegate {
 
     func configure(_ node: [String: Any]) {
         props = node["props"] as? [String: Any] ?? [:]
+        flow?.componentScope = props["data-stx-component-wrapper"] != nil
         style = node["style"] as? [String: Any] ?? [:]
         events = node["events"] as? [String: String] ?? [:]
         isHidden = style["display"] as? String == "none" || props["hidden"] as? Bool == true

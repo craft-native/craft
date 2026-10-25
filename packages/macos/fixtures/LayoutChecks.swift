@@ -28,7 +28,13 @@ final class CraftMacRuntime {
         renderer.render(node("root", "View", ["flexGrow": 1], [node("header", "View", ["height": 40]), scoped, node("footer", "View", ["height": 30])]))
         require(abs(renderer.boxes["scope"]!.frame.height - 230) < 1, "A component scope lost its root's flex space")
         require(abs(renderer.boxes["fill"]!.frame.height - 230) < 1, "The native control did not fill its component scope")
+        renderer.boxes["scope"]!.control!.layout()
+        require(abs(renderer.boxes["fill"]!.frame.height - 230) < 1, "A deferred AppKit flow pass shrank the component root")
         require(renderer.boxes["scope"]!.clipsToBounds && renderer.boxes["fill"]!.control!.clipsToBounds, "A native pane can paint into its neighbor")
+        let sidebarScope = node("sidebarScope", "View", [:], [node("sidebarRoot", "View", ["width": 120], [node("sidebar", "ScrollView", ["flexGrow": 1]), node("settings", "View", ["height": 30])])], props: ["data-stx-component-wrapper": true])
+        renderer.render(node("root", "View", ["flexGrow": 1, "flexDirection": "row"], [sidebarScope]))
+        renderer.boxes["sidebarScope"]!.control!.layout()
+        require(abs(renderer.boxes["sidebarRoot"]!.frame.height - 300) < 1, "A deferred AppKit pass shrank a stretched component root")
         renderer.render(node("root", "View", ["flexGrow": 1], [node("overlay", "View", ["overflow": "visible"]), node("viewport", "ScrollView", ["overflow": "visible"])]))
         require(!renderer.boxes["overlay"]!.clipsToBounds && !renderer.boxes["overlay"]!.control!.clipsToBounds, "Explicit overflow was clipped by the inner flow")
         require(renderer.boxes["viewport"]!.control!.clipsToBounds, "A scroll viewport stopped clipping its content")
@@ -65,6 +71,14 @@ final class CraftMacRuntime {
         scroll.contentView.scroll(to: CGPoint(x: 0, y: 800))
         renderer.render(list(1))
         require(scroll.contentView.bounds.origin.y == 0, "Filtering a list left its rows above the viewport")
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 320, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = renderer.root; renderer.window = window
+        let sheetScope = node("sheetScope", "View", [:], [node("sheet", "Modal", ["height": 200], props: ["visible": true])], props: ["data-stx-component-wrapper": true])
+        renderer.render(node("root", "View", ["flexGrow": 1], [sheetScope]))
+        renderer.boxes["sheetScope"]!.control!.layout()
+        require(renderer.boxes["sheet"]!.frame.size == CGSize(width: 480, height: 200), "A deferred component pass resized sheet-owned content")
+        if let panel = renderer.sheets["sheet"] { window.endSheet(panel); panel.close() }
+        window.close()
         require(runtime.errors.isEmpty, "The renderer reported an unsupported control")
         print("PASS native component sizing, text limits, overlays, borders, toolbar actions and filtered scrolling")
     }
