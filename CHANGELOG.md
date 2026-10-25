@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.343...v0.0.344)
+
+## 🐛 Bug Fixes
+
+- stop native journeys when setup hooks fail ([5e59da2](https://github.com/craft-native/craft/commit/5e59da2)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.342...v0.0.343)
 
 ## 🐛 Bug Fixes
