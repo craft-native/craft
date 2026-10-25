@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.341...v0.0.342)
+
+## 🐛 Bug Fixes
+
+- preserve native tab return parameters ([266f31a](https://github.com/craft-native/craft/commit/266f31a)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.340...v0.0.341)
 
 ## 🐛 Bug Fixes
