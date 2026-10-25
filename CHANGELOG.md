@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.347...v0.0.348)
+
+## 🐛 Bug Fixes
+
+- retain stretched component roots during deferred AppKit layout ([0b7c829](https://github.com/craft-native/craft/commit/0b7c829)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.346...v0.0.347)
 
 ## 🚀 Features
