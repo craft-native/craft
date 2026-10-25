@@ -659,7 +659,7 @@ export class CraftApp {
    * {@link craftBinaryNotFoundMessage}.
    */
   private async findCraftBinary(): Promise<string> {
-    return resolveCraftBinary(this.config.craftPath)
+    return resolveCraftBinary(this.config.craftPath, this.config.runtimeProfile)
   }
 }
 

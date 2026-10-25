@@ -649,6 +649,9 @@ export interface AppConfig {
    */
   craftPath?: string
 
+  /** macOS webview apps may omit the separate headless scripting engine. */
+  runtimeProfile?: 'full' | 'webview'
+
   /**
    * Suppress all non-error output from the native binary.
    * When true, the binary runs with --quiet and stdio is piped.
