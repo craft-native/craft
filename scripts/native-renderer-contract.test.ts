@@ -2407,6 +2407,17 @@ describe('native renderer component contract', () => {
     expect(iosReadme).toContain('enablePasskeys: true')
   })
 
+  it('exposes network paths and forwards changes to native screens on both mobile hosts', () => {
+    expect(iosActions).toContain('values.append("network")')
+    expect(iosActions).toContain('case ("Network", "getStatus"):')
+    expect(iosActions).toContain('CraftWebServices.perform(action: "getNetworkStatus", body: [:])')
+    expect(readFileSync(join(root, 'packages/ios/templates/CraftApp.swift'), 'utf8')).toContain('static let forwardedEvents: Set<String> = ["craftNetworkChange"')
+    expect(androidCapabilities).toContain('put("network")')
+    expect(androidCapabilities).toContain('method == "getStatus"')
+    expect(androidCapabilities).toContain('registerDefaultNetworkCallback(networkWatch)')
+    expect(androidCapabilities).toContain('unregisterNetworkCallback(networkWatch)')
+  })
+
   it('keeps native iOS badges permission-free and capability-advertised', () => {
     expect(iosActions).toContain('var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "dialog", "speech", "audio", "eventStream", "linking", "badge", "animation", "viewFocus", "viewMeasure", "viewReparent", "viewNonModalPresentation", "nativePlatformControls"]')
     expect(iosActions).toContain('case ("Badge", "set"):')

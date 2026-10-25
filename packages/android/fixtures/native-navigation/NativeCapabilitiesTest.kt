@@ -19,6 +19,28 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesTest {
+    @Test
+    fun networkStatusIsAvailableWithoutAWebViewAndClosesCleanly() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        try {
+            assertTrue(capabilities.names().toString().contains("\"network\""))
+            val done = CountDownLatch(1)
+            var answer: CraftNativeCapabilityResult? = null
+            capabilities.perform("network-status", 1, "Network", "getStatus", JSONArray()) { result ->
+                answer = result
+                done.countDown()
+            }
+            assertTrue("network status did not settle", done.await(5, TimeUnit.SECONDS))
+            assertNull(answer?.code)
+            val status = answer?.data as JSONObject
+            assertTrue(status.get("isConnected") is Boolean)
+            assertTrue(setOf("none", "unknown", "wifi", "cellular", "ethernet").contains(status.getString("type")))
+        } finally {
+            capabilities.close()
+        }
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test

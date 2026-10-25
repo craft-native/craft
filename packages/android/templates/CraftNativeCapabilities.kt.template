@@ -16,6 +16,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.provider.MediaStore
 import android.util.Base64
 import androidx.core.content.ContextCompat
@@ -111,13 +114,38 @@ internal class CraftNativeCapabilities(
         val videoLimit: Long = 0,
     )
 
+    private val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val networkWatch = object : ConnectivityManager.NetworkCallback() {
+        private fun changed() {
+            if (!closed.get()) CraftNativeHub.broadcast("CRAFT_EVENT", JSONObject().put("event", "craftNetworkChange").put("detail", networkStatus()))
+        }
+        override fun onAvailable(network: Network) = changed()
+        override fun onLost(network: Network) = changed()
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed()
+    }
+
+    private fun networkStatus(): JSONObject {
+        val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+        val connected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val type = when {
+            !connected -> "none"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "cellular"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "ethernet"
+            else -> "unknown"
+        }
+        return JSONObject().put("isConnected", connected).put("type", type)
+    }
+
     init {
+        connectivity.registerDefaultNetworkCallback(networkWatch)
         restoreNotifications()
         sweepFiles()
     }
 
     fun names(): JSONArray = JSONArray().apply {
         listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files").forEach(::put)
+        put("network")
         put("storageCompareAndSet")
         put("storageSetIfAbsent")
         put("crypto")
@@ -179,7 +207,9 @@ internal class CraftNativeCapabilities(
             "DeepLinks" -> complete(requestToken, deepLinks(method), completion)
             "Notifications" -> notifications(requestToken, method, args, completion)
             "Network" -> {
-                if (method != "fetch") {
+                if (method == "getStatus") {
+                    complete(requestToken, success(networkStatus()), completion)
+                } else if (method != "fetch") {
                     complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Network method"), completion)
                 } else networkExecutor.execute {
                     complete(requestToken, fetch(requestToken, args), completion)
@@ -207,6 +237,7 @@ internal class CraftNativeCapabilities(
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        runCatching { connectivity.unregisterNetworkCallback(networkWatch) }
         cancelled.clear()
         if (config.optBoolean("enableBluetooth")) bluetooth.disconnect()
         databaseExecutor.shutdownNow()
