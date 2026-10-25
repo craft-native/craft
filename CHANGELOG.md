@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.344...v0.0.345)
+
+## 🐛 Bug Fixes
+
+- expire Android voice captures independently of uploads ([4f6c0ca](https://github.com/craft-native/craft/commit/4f6c0ca)) _(by Chris Breuer)_
+- erase interrupted native voice captures promptly ([e23c92f](https://github.com/craft-native/craft/commit/e23c92f)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.343...v0.0.344)
 
 ## 🐛 Bug Fixes
