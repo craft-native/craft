@@ -749,6 +749,31 @@ final class NativeNavigationUnitTests: XCTestCase {
         }
     }
 
+    func testOpeningNativeTabsDeliversQueryAndPropsToRetainedRoots() async throws {
+        _ = shell.tabTapped("/details", reselect: false)
+        await renderFrames()
+        let details = try XCTUnwrap(stack("/details"))
+        let root = try XCTUnwrap(details.viewControllers.first as? CraftNativeScreenController)
+        _ = shell.tabTapped("/", reselect: false)
+        shell.open("/details?subscription=7", props: ["source": "checkout"])
+        await renderFrames()
+        XCTAssertEqual(CraftChrome.shared.selected, "/details")
+        XCTAssertTrue(details.viewControllers.first === root)
+        XCTAssertEqual(root.routeParams["subscription"] as? String, "7")
+        XCTAssertEqual(root.routeProps["source"] as? String, "checkout")
+
+        shell.open("/details?subscription=8")
+        await renderFrames()
+        XCTAssertTrue(details.viewControllers.first === root)
+        XCTAssertEqual(root.routeParams["subscription"] as? String, "8")
+        XCTAssertTrue(root.routeProps.isEmpty)
+
+        shell.open("/details", props: ["source": "billing"])
+        await renderFrames()
+        XCTAssertNil(root.routeParams["subscription"])
+        XCTAssertEqual(root.routeProps["source"] as? String, "billing")
+    }
+
     func testTabAccessoryRoutePushesAndRestoresTheSelectedNativeStack() async throws {
         shell.open("/linked-details")
         let home = try XCTUnwrap(stack("/"))

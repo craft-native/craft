@@ -1796,12 +1796,18 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
                 hybrid.openOutside(raw)
                 return
             }
-            open(CraftHybridRoutes.appPath(of: url))
+            open(CraftHybridRoutes.appPath(of: url), props: props)
             return
         }
         guard let path = CraftHybridRoutes.normalize(raw) else { return }
         if let tab = hybrid.tabIds.first(where: { CraftHybridRoutes.normalize($0) == path }) {
-            selectTabAsIfTapped(tab)
+            if hybrid.routes.match(raw) != nil, URLComponents(string: raw)?.query != nil || !props.isEmpty {
+                // A checkout/auth return targets the retained tab with new
+                // parameters. Selecting alone would discard that handoff.
+                showNative(path: raw, replace: false, props: props)
+            } else {
+                selectTabAsIfTapped(tab)
+            }
             return
         }
         if hybrid.routes.match(raw) != nil {
