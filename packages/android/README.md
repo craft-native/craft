@@ -302,6 +302,13 @@ builds its multipart body natively from text fields and those owned files, so
 image bytes do not cross the Android JavaScript bridge as base64. The browser
 renderer keeps using the ordinary web `File`/`FormData` implementations. Owned
 files survive Activity recreation and stale cache entries are swept after a day.
+Voice capture uses a separate temporary namespace. With `enableAudioRecording`,
+`craft.audioRecording` produces an owned M4A descriptor for multipart uploads.
+Cancellation and backgrounding erase both active and stopped captures. The next
+native launch removes files left by an interrupted process, including the earlier
+recorder's M4A files, without clearing picked files or downloads. Preparing another
+screen in the same process preserves the current screen's recording.
+
 `files.download` resolves a non-2xx response as `{ ok: false, status, body }`
 instead of turning the server's response into a transport error.
 

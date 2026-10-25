@@ -85,6 +85,7 @@ internal class CraftNativeServices(
 {{NATIVE_WALLET_FIELDS}}
 
     init {
+        prepareVoiceFiles(context, config.optBoolean("enableAudioRecording"))
         if (config.optBoolean("enableGeolocation") || config.optBoolean("enableBackgroundLocation")) {
             // Native screens must also hear a recording started by the page.
             // Keep this process sink independent from the page's listener.
@@ -629,7 +630,7 @@ internal class CraftNativeServices(
     private var voiceFile: File? = null
     private var pendingVoicePermission: ((Boolean) -> Unit)? = null
 
-    fun pauseVoice() { if (voiceRecorder != null) cancelVoice() }
+    fun pauseVoice() { if (voiceRecorder != null || voiceFile != null) cancelVoice() }
     private fun cancelVoice() {
         voiceOwner = null
         val recorder = voiceRecorder
@@ -676,7 +677,7 @@ internal class CraftNativeServices(
             if (voiceOwner != key) { done(failure("RECORDING_CANCELLED", "Recording was cancelled")); return@start }
             if (!allowed) { cancelVoice(); done(failure("PERMISSION_DENIED", "Microphone permission was refused")); return@start }
             try {
-                val folder = File(context.cacheDir, "craft-files/" + UUID.randomUUID()).apply { mkdirs() }
+                val folder = File(context.cacheDir, "craft-files/voice-recordings/" + UUID.randomUUID()).apply { mkdirs() }
                 val file = File(folder, "voice-feedback.m4a")
                 voiceFile = file
                 @Suppress("DEPRECATION")
@@ -816,6 +817,38 @@ internal class CraftNativeServices(
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
 
     companion object {
+        private var voiceFilesPrepared = false
+        private var legacyVoiceFilesPrepared = false
+
+        @Synchronized
+        private fun prepareVoiceFiles(context: Context, includeLegacy: Boolean) {
+            val root = File(context.cacheDir, "craft-files")
+            if (!voiceFilesPrepared) {
+                discardAbandonedVoiceFiles(root, false)
+                voiceFilesPrepared = true
+            }
+            if (includeLegacy && !legacyVoiceFilesPrepared) {
+                discardAbandonedVoiceFiles(root)
+                legacyVoiceFilesPrepared = true
+            }
+        }
+
+        internal fun discardAbandonedVoiceFiles(root: File, includeLegacy: Boolean = true) {
+            val base = root.canonicalFile
+            val voice = File(base, "voice-recordings")
+            for (scope in if (includeLegacy) listOf(base, voice) else listOf(voice)) {
+                if (scope.canonicalFile != scope.absoluteFile) continue
+                for (folder in scope.listFiles().orEmpty()) {
+                    val owned = runCatching { UUID.fromString(folder.name).toString().equals(folder.name, ignoreCase = true) }.getOrDefault(false)
+                    if (!owned || folder.canonicalFile != folder.absoluteFile) continue
+                    val file = File(folder, "voice-feedback.m4a")
+                    if (!file.isFile || file.canonicalFile != file.absoluteFile) continue
+                    file.delete()
+                    if (folder.listFiles()?.isEmpty() == true) folder.delete()
+                }
+            }
+        }
+
         const val PUSH_PERMISSION_REQUEST = 4207
         const val LOCATION_PERMISSION_REQUEST = 4208
     }

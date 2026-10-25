@@ -630,7 +630,10 @@ internal class CraftNativeCapabilities(
     private fun sweepFiles() {
         val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
         fileRoot.listFiles()?.forEach { file ->
-            if (file.lastModified() < cutoff) file.deleteRecursively()
+            // Voice captures have a separate launch lifetime; sweep only
+            // generic per-file UUID folders here.
+            val owned = runCatching { UUID.fromString(file.name).toString().equals(file.name, ignoreCase = true) }.getOrDefault(false)
+            if (owned && file.lastModified() < cutoff) file.deleteRecursively()
         }
     }
 
