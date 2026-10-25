@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.346...v0.0.347)
+
+## 🚀 Features
+
+- configure native window chrome and inspect visible layout ([388f266](https://github.com/craft-native/craft/commit/388f266)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- preserve native component layout and drawing bounds ([443875d](https://github.com/craft-native/craft/commit/443875d)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.345...v0.0.346)
 
 ## 🐛 Bug Fixes
