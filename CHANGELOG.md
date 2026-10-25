@@ -1,5 +1,21 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.339...v0.0.340)
+
+## 🐛 Bug Fixes
+
+- **packaging**: reject private API markers in Store providers ([1fe5672](https://github.com/craft-native/craft/commit/1fe5672)) _(by Chris Breuer)_
+- **macos**: enforce public WebKit capabilities in Store runtimes ([a92d89e](https://github.com/craft-native/craft/commit/a92d89e)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- **sdk**: budget the isolated compiler integration explicitly ([7cb3695](https://github.com/craft-native/craft/commit/7cb3695)) _(by Chris Breuer)_
+- **macos**: verify WebKit rendering across distribution variants ([b4ac284](https://github.com/craft-native/craft/commit/b4ac284)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.338...v0.0.339)
 
 ## 🐛 Bug Fixes
