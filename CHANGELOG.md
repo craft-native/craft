@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.345...v0.0.346)
+
+## 🐛 Bug Fixes
+
+- **mobile**: deliver network status and changes to native screens ([d600c3b](https://github.com/craft-native/craft/commit/d600c3b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.344...v0.0.345)
 
 ## 🐛 Bug Fixes

@@ -1,6 +1,6 @@
 {
   "name": "create-craft",
-  "version": "0.0.345",
+  "version": "0.0.346",
   "private": false,
   "type": "module",
   "description": "Scaffold a new Craft desktop app project",
