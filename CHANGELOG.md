@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.342...v0.0.343)
+
+## 🐛 Bug Fixes
+
+- keep native voice startup responsive and cancellable ([08d840d](https://github.com/craft-native/craft/commit/08d840d)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.341...v0.0.342)
 
 ## 🐛 Bug Fixes
