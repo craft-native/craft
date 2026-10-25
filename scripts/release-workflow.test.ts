@@ -280,6 +280,20 @@ test('navigation shards retain both complete XCTest targets and focused selectio
   expect(workflow.jobs['mobile-summary'].steps?.find(step => step.name === 'Fail if any leg failed')?.if).toContain('needs.ios-native.result')
 })
 
+test('native teardown diagnostics require both Android APIs and keep queued cancellation coverage', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const job = workflow.jobs['android-navigation']!
+  const api = (job.strategy!.matrix as unknown as Record<string, string>)['api-level']!
+  const evaluate = (expression: string, scope: string, android_suite: string) => runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { inputs: { scope, android_suite }, fromJSON: JSON.parse }, { timeout: 100 })
+  expect(evaluate(api, 'android-navigation', 'teardown')).toEqual([34, 35])
+  expect(evaluate(job.env!.CRAFT_ANDROID_TEST_CLASS!, 'android-navigation', 'teardown')).toBe('dev.craft.navigationtest.NativeCapabilitiesTest,dev.craft.navigationtest.NativeNavigationTest#nativeTeardownRecordsSynchronousStorageBeforeReturning')
+  for (const scope of ['', 'all']) {
+    expect(evaluate(api, scope, '')).toEqual([34, 35])
+    expect(evaluate(job.env!.CRAFT_ANDROID_TEST_CLASS!, scope, '')).toBe('')
+    expect(evaluate(job.env!.CRAFT_ANDROID_NATIVE_SUITE!, scope, '')).toBe('full')
+  }
+})
+
 test('mobile device jobs preserve runner diagnostics when the harness fails', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
   for (const [jobName, evidenceDir, expectedCommand] of [

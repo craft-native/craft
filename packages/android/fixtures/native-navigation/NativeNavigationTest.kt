@@ -992,6 +992,33 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun nativeTeardownRecordsSynchronousStorageBeforeReturning() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            val retained = awaitText(activity, "navigation-home-state", "Home state: Ada/0")
+            for (increments in 1..2) {
+                click(activity, "navigation-open-details")
+                awaitText(activity, "details-count", "Count: 0")
+                repeat(increments) { click(activity, "details-increment") }
+                awaitText(activity, "details-count", "Count: $increments")
+                if (increments == 1) click(activity, "details-back")
+                else instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                assertSame(retained, awaitText(activity, "navigation-home-state", "Home state: Ada/0"))
+                click(activity, "navigation-check-lifecycle")
+                awaitText(activity, "navigation-lifecycle", "Disposed Ada/$increments")
+                assertNoWebView(activity)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun compiledBundleRendersNavigatesAndRetainsNativeControls() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
