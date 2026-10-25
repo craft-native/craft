@@ -18,12 +18,16 @@ final class CraftMacScene: NSObject, NSWindowDelegate {
         super.init()
         runtime.scene = self; renderer.window = window
         window.title = options["title"] as? String ?? application.appName
+        if (options["titlebarStyle"] as? String ?? application.titlebarStyle) == "transparent" {
+            window.titlebarAppearsTransparent = true
+            window.titleVisibility = .hidden
+        }
         window.minSize = CGSize(width: number(options["minWidth"]) ?? 640, height: number(options["minHeight"]) ?? 400)
         window.isReleasedWhenClosed = false
         renderer.root.autoresizingMask = [.width, .height]
         window.contentView = renderer.root
         window.delegate = self; window.center()
-        if name == "main" { window.setFrameAutosaveName("\(application.appName)NativeMain") }
+        if name == "main" && application.testDirectory == nil { window.setFrameAutosaveName("\(application.appName)NativeMain") }
         window.makeKeyAndOrderFront(nil)
         runtime.load(application.bundle)
     }
@@ -49,6 +53,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     var appName = "Craft"
     var bundle = ""
     var initialRoute = "Main"
+    var titlebarStyle = "standard"
+    var mainWindowOptions: [String: Any] = [:]
     var network: CraftMacNetwork!
     var scenes: [String: CraftMacScene] = [:]
     var panels: [NSWindow] = []
@@ -73,7 +79,7 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200 else {
                     let alert = NSAlert(); alert.messageText = "Could not connect to the app"; alert.informativeText = error?.localizedDescription ?? "The local agent did not issue a native session."; alert.runModal(); NSApp.terminate(nil); return
                 }
-                self.open(name: "main", route: self.initialRoute, options: ["title": self.appName])
+                self.open(name: "main", route: self.initialRoute, options: self.mainWindowOptions.merging(["title": self.appName]) { _, new in new })
                 self.startTestDriver()
             }
         }.resume()
@@ -91,6 +97,8 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
     }
     func broadcast(_ id: String) { for scene in scenes.values { scene.runtime.send("CRAFT_EVENT", ["event": "craftDesktopCommand", "detail": ["id": id]]) } }
     func appearanceChanged() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         let scheme = CraftMacColor.isDark ? "dark" : "light"
         for scene in scenes.values {
             scene.runtime.context.evaluateScript("__stxNativeBridge.colorScheme = '\(scheme)';")
@@ -266,6 +274,11 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         let scene = scenes[action["window"] as? String ?? "main"]
         guard let scene else { return ["ok": false, "error": "Window not found"] }
         if kind == "close" { scene.window.performClose(nil); return ["ok": true] }
+        if kind == "resize", let width = number(action["width"]), let height = number(action["height"]), width.isFinite, height.isFinite {
+            scene.window.setContentSize(CGSize(width: max(scene.window.minSize.width, width), height: max(scene.window.minSize.height, height)))
+            scene.renderer.root.layoutSubtreeIfNeeded()
+            return ["ok": true]
+        }
         if kind == "screenshot" {
             guard let directory = testDirectory, let view = scene.window.contentView?.superview,
                   let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return ["ok": false, "error": "Window cannot be rendered"] }
@@ -305,9 +318,15 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         let windows: [[String: Any]] = scenes.values.map { scene in
             let nodes: [[String: Any]] = scene.renderer.boxes.values.map { box in
                 var node: [String: Any] = ["id": box.props["testID"] as? String ?? box.props["testId"] as? String ?? box.id, "type": box.kind,
-                    "nativeClass": box.control.map { String(describing: type(of: $0)) } ?? "NSView", "visible": !box.isHidden && box.window?.isVisible == true && box.frame.width > 0 && box.frame.height > 0,
+                    "nativeClass": box.control.map { String(describing: type(of: $0)) } ?? "NSView", "visible": !box.isHiddenOrHasHiddenAncestor && box.window?.isVisible == true && !box.visibleRect.isEmpty,
                     "frame": [box.frame.minX, box.frame.minY, box.frame.width, box.frame.height]]
                 if let field = box.control as? NSTextField { node["value"] = field.stringValue }
+                if let field = box.control as? NSTextField { node["fontSize"] = field.font?.pointSize; node["lines"] = field.maximumNumberOfLines }
+                let frame = box.convert(box.bounds, to: scene.renderer.root)
+                node["windowFrame"] = [frame.minX, frame.minY, frame.width, frame.height]
+                node["style"] = box.style
+                node["hiddenAncestor"] = box.isHiddenOrHasHiddenAncestor
+                node["visibleRect"] = [box.visibleRect.minX, box.visibleRect.minY, box.visibleRect.width, box.visibleRect.height]
                 if let text = (box.control as? NSScrollView)?.documentView as? NSTextView { node["value"] = text.string; node["editorClass"] = NSStringFromClass(type(of: text)) }
                 if let button = box.control as? NSButton { node["label"] = button.title; node["enabled"] = button.isEnabled }
                 if let picker = box.control as? NSPopUpButton { node["value"] = picker.selectedItem?.representedObject ?? "" }
@@ -333,6 +352,10 @@ final class CraftMacApplication: NSObject, NSApplicationDelegate, UNUserNotifica
         application.bundle = try String(contentsOfFile: bundlePath, encoding: .utf8)
         application.appName = argument("--title", fallback: "Craft")
         application.initialRoute = argument("--route", fallback: "Main")
+        application.titlebarStyle = argument("--titlebar-style", fallback: "standard")
+        for (flag, key) in [("--width", "width"), ("--height", "height"), ("--min-width", "minWidth"), ("--min-height", "minHeight")] {
+            if let value = Double(argument(flag)), value.isFinite, value > 0 { application.mainWindowOptions[key] = value }
+        }
         application.network = CraftMacNetwork(base: api)
         let testDirectory = argument("--test-dir")
         if !testDirectory.isEmpty { application.testDirectory = URL(fileURLWithPath: testDirectory, isDirectory: true) }
