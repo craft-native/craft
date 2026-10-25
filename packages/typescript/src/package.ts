@@ -399,6 +399,10 @@ export function macOSAppStoreRuntimePath(providerPath: string): string {
     : join(dirname(providerPath), 'craft-app-store')
   if (!existsSync(runtime))
     throw new Error('App Store packaging requires Pantry’s craft-app-store runtime. Upgrade Craft with Pantry before building.')
+  const bytes = readFileSync(runtime)
+  const privateMarkers = ['MenuBarClientCore', 'MBAssessmentMode', 'developerExtrasEnabled', 'javaScriptCanAccessClipboard', 'drawsBackground']
+  if (privateMarkers.some(marker => bytes.includes(Buffer.from(marker))))
+    throw new Error('App Store packaging refused a runtime that includes private platform APIs.')
   const probe = spawnSync(runtime, ['--distribution'], { encoding: 'utf8', timeout: 10_000 })
   if (probe.status !== 0 || probe.stdout.trim() !== 'app-store')
     throw new Error('App Store packaging refused a runtime that includes private platform APIs.')

@@ -20,3 +20,13 @@ test('App Store packaging refuses missing, direct and unresponsive native provid
   expect(macOSAppStoreRuntimePath(direct)).toBe(store)
   expect(macOSAppStoreRuntimePath(store)).toBe(store)
 })
+
+test.each(['MenuBarClientCore', 'MBAssessmentMode', 'developerExtrasEnabled', 'javaScriptCanAccessClipboard', 'drawsBackground'])(
+  'App Store packaging rejects a provider containing %s even when its distribution flag claims public APIs', (marker) => {
+    const directory = createTempDir('craft-store-private-provider-')
+    const runtime = join(directory, 'craft-app-store')
+    writeFileSync(runtime, `#!${process.execPath}\nconsole.log('app-store')\n// ${marker}\n`)
+    chmodSync(runtime, 0o755)
+    expect(() => macOSAppStoreRuntimePath(runtime)).toThrow('private platform APIs')
+  },
+)

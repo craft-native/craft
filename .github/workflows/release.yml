@@ -198,8 +198,8 @@ jobs:
           cp "$RUNNER_TEMP/craft-app-store" zig-out/bin/craft-app-store
           test "$(zig-out/bin/craft-app-store --distribution)" = app-store
           test "$(zig-out/bin/craft --distribution)" = direct
-          if strings zig-out/bin/craft-app-store zig-out/cross/darwin-x64/craft-app-store | grep -E 'MBAssessmentMode|MenuBarClientCore'; then
-            echo '::error::App Store runtime contains the private visibility backend'
+          if strings zig-out/bin/craft-app-store zig-out/cross/darwin-x64/craft-app-store | grep -E 'MBAssessmentMode|MenuBarClientCore|developerExtrasEnabled|javaScriptCanAccessClipboard|drawsBackground'; then
+            echo '::error::App Store runtime contains private platform APIs'
             exit 1
           fi
 
