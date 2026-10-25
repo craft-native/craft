@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.350...v0.0.351)
+
+## 🐛 Bug Fixes
+
+- sign disk image containers before notarization ([901c984](https://github.com/craft-native/craft/commit/901c984)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.349...v0.0.350)
 
 ## 🐛 Bug Fixes
