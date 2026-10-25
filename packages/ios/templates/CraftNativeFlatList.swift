@@ -202,6 +202,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var dataItemCount = 0
     private var columns = 1
     private var isApplyingSnapshot = false
+    private var snapshotNeedsReset = false
     private var pendingApply: (() -> Void)?
     private var pendingThemeRefresh = false
     private let nativeRefreshControl = UIRefreshControl()
@@ -511,11 +512,12 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         if inverted { next.reverse() }
         // Reapplying an identical keyed tree during a timer or badge update
         // must not reconfigure cells, invalidate self-sizing, or reset a drag.
-        if !layoutChanged, next.count == items.count,
+        if !snapshotNeedsReset, !layoutChanged, next.count == items.count,
            zip(next, items).allSatisfy({ $0.identity == $1.identity && $0.signature == $1.signature }) {
             finishApplyingSnapshot()
             return
         }
+        snapshotNeedsReset = false
         dataItemCount = 0
         dataOrdinals = next.map { item in
             if !item.isChrome { dataItemCount += 1 }
@@ -575,6 +577,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     }
 
     func discardAll() {
+        snapshotNeedsReset = true
         visibleCells.compactMap { $0 as? Cell }.forEach { $0.releaseHostedView() }
         itemsByIdentity.keys.forEach { recycleItem?($0) }
         items = []

@@ -1717,6 +1717,11 @@ final class NativeRenderUnitTests: XCTestCase {
         for _ in 0..<5 { apply() }
         XCTAssertEqual(renders, before, "an unrelated screen update must not rebuild cells or interrupt scrolling")
         XCTAssertEqual(list.contentOffset, offset)
+        list.discardAll()
+        list.apply(nodes: [], horizontal: false, columns: 1, inverted: false, endReachedThreshold: 0.1, renderItem: render, recycleItem: { _ in }, removeItem: { _ in }, endReached: nil)
+        list.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 0, "a recycled list rebound empty must clear its old UIKit snapshot")
     }
 
     /// A screen keeps one view per row, so a second cell UIKit prepares for a
