@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.348...v0.0.349)
+
+## 🚀 Features
+
+- expose the webview runtime profile in the SDK ([aef9c7a](https://github.com/craft-native/craft/commit/aef9c7a)) _(by Chris Breuer)_
+- publish compact macOS webview runtime profiles ([329d465](https://github.com/craft-native/craft/commit/329d465)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- select public runtimes for prebuilt App Store bundles ([7e452ff](https://github.com/craft-native/craft/commit/7e452ff)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.347...v0.0.348)
 
 ## 🐛 Bug Fixes
