@@ -1692,6 +1692,38 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertLessThan(rendered.count, 100)
     }
 
+    func testFlatListDoesNotPrepareDuplicateRowsOrReapplyUnchangedSnapshots() {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        XCTAssertFalse(list.isPrefetchingEnabled, "a keyed row owns one native view; speculative cells must not take it")
+        let rows: [[String: Any]] = (0..<200).map { ["id": "row-\($0)", "type": "Text", "children": ["Row \($0)"]] }
+        var renders = 0
+        let render: CraftNativeFlatList.RenderItem = { node, _, previous in
+            renders += 1
+            let label = (previous as? UILabel) ?? UILabel()
+            label.text = (node["children"] as? [String])?.first
+            return label
+        }
+        func apply() {
+            list.apply(nodes: rows, horizontal: false, columns: 1, inverted: false, endReachedThreshold: 0.1, renderItem: render, recycleItem: { _ in }, removeItem: { _ in }, endReached: nil)
+            list.layoutIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        apply()
+        list.contentOffset = CGPoint(x: 0, y: 180)
+        list.layoutIfNeeded()
+        let before = renders
+        let offset = list.contentOffset
+        for _ in 0..<5 { apply() }
+        XCTAssertEqual(renders, before, "an unrelated screen update must not rebuild cells or interrupt scrolling")
+        XCTAssertEqual(list.contentOffset, offset)
+        list.discardAll()
+        list.apply(nodes: [], horizontal: false, columns: 1, inverted: false, endReachedThreshold: 0.1, renderItem: render, recycleItem: { _ in }, removeItem: { _ in }, endReached: nil)
+        list.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 0, "a recycled list rebound empty must clear its old UIKit snapshot")
+    }
+
     /// A screen keeps one view per row, so a second cell UIKit prepares for a
     /// row on screen (a prefetch, an update) takes that view from the cell
     /// showing it. That cell stayed on screen at the row's height with nothing

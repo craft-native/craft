@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.338...v0.0.339)
+
+## 🐛 Bug Fixes
+
+- clear stale native rows when recycled lists rebind empty ([a3f82dd](https://github.com/craft-native/craft/commit/a3f82dd)) _(by Chris Breuer)_
+- keep native list rows visible and avoid redundant layout work ([bbfd559](https://github.com/craft-native/craft/commit/bbfd559)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.337...v0.0.338)
 
 ## 🐛 Bug Fixes
