@@ -15,6 +15,45 @@ import UIKit
 
 private let craftNativeCapabilityTimeoutMilliseconds = 30_000
 
+/// A retained JavaScript context must lose synchronous storage access when
+/// its screen closes. Only the actual synchronous unmount callback may finish
+/// its cleanup; queued script work runs after that allowance ends.
+private final class CraftNativeStorageLifetime {
+    private let lock = NSLock()
+    private var closed = false
+    private var unmounting = false
+
+    func close() {
+        lock.lock()
+        closed = true
+        lock.unlock()
+    }
+
+    func unmount(_ work: () -> Void) {
+        lock.lock()
+        unmounting = true
+        lock.unlock()
+        defer {
+            lock.lock()
+            unmounting = false
+            lock.unlock()
+        }
+        work()
+    }
+
+    func access<T>(closedValue: T, _ work: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed || unmounting else {
+            if let context = JSContext.current() {
+                context.exception = JSValue(newErrorFromMessage: "SCREEN_CLOSED: The native screen is closed", in: context)
+            }
+            return closedValue
+        }
+        return work()
+    }
+}
+
 /// Foundation's `NSNumber(0/1) is Bool` is true even for JSON numbers.
 /// Check the Core Foundation identity so real booleans stay invalid numeric
 /// props while zero lengths, flex factors and opacity 1 remain numbers.
@@ -5751,6 +5790,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     weak var hybridEvents: CraftHybridScreenEvents?
     private var hybridRendered = false
     private var runtimeDisposed = false
+    private let storageLifetime = CraftNativeStorageLifetime()
     /// The app script (`nativeApp`, CraftHybrid.swift): a bundle route with
     /// no screen, loaded once and never shown, that runs for the app's life.
     /// It hears every `APP_STATE` and the app's events (`CRAFT_EVENT`), no
@@ -5998,6 +6038,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func disposeRuntime() {
         guard !runtimeDisposed else { return }
         runtimeDisposed = true
+        storageLifetime.close()
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
         pendingCapabilityDeadlines.removeAll()
         pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
@@ -6011,7 +6052,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         disposeRenderedTree()
         let context = jsContext
         let route = routeName ?? "screen"
-        CraftNativeScriptThread.run(label: "unmount \(route)") { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }
+        let storageLifetime = self.storageLifetime
+        CraftNativeScriptThread.run(label: "unmount \(route)") {
+            storageLifetime.unmount { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }
+        }
         audio.close()
         sounds.close()
         streams.close()
@@ -6473,17 +6517,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let log: @convention(block) (String, String, String) -> Void = { level, category, message in
             CraftNativeConsole.write(level, category: category, message: message)
         }
+        let storageLifetime = self.storageLifetime
         let storageGet: @convention(block) (String) -> String? = { key in
-            do { return try CraftNativeActions.storageJSON(forKey: key) }
-            catch {
-                if let context = JSContext.current() {
-                    context.exception = JSValue(newErrorFromMessage: "STORAGE_ERROR: Unable to read stored value", in: context)
+            storageLifetime.access(closedValue: nil) {
+                do { return try CraftNativeActions.storageJSON(forKey: key) }
+                catch {
+                    if let context = JSContext.current() {
+                        context.exception = JSValue(newErrorFromMessage: "STORAGE_ERROR: Unable to read stored value", in: context)
+                    }
+                    return nil
                 }
-                return nil
             }
         }
         let storageSet: @convention(block) (String, JSValue) -> Bool = { key, value in
-            CraftNativeActions.setStorageJSON(value.isNull || value.isUndefined ? nil : value.toString(), forKey: key)
+            storageLifetime.access(closedValue: false) {
+                CraftNativeActions.setStorageJSON(value.isNull || value.isUndefined ? nil : value.toString(), forKey: key)
+            }
         }
         let snapshotGet: @convention(block) (String) -> String? = { name in
             CraftSnapshots.read(name)

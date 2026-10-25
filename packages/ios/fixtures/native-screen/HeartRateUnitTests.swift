@@ -480,6 +480,8 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         XCTAssertEqual(afterClose?["generation"] as? Int, 1, "A closed retained context cannot start another storage request")
         let syncResult = controller.evaluateScript("(function() { try { craft.storage.setSync((\(json)).payload.args[0], { generation: 3 }); return 'accepted'; } catch (error) { return 'closed'; } })()")?.toString()
         XCTAssertEqual(syncResult, "closed", "The synchronous storage API also belongs to the native screen lifetime")
+        let syncReadResult = controller.evaluateScript("(function() { try { craft.storage.getSync((\(json)).payload.args[0]); return 'accepted'; } catch (error) { return 'closed'; } })()")?.toString()
+        XCTAssertEqual(syncReadResult, "closed", "A closed screen cannot read synchronous storage either")
         let afterSyncClose = try await call("get", [key]) as? [String: Any]
         XCTAssertEqual(afterSyncClose?["generation"] as? Int, 1, "A closed synchronous host must preserve the checkpoint")
         withExtendedLifetime(controller) {}
