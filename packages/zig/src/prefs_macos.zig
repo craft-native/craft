@@ -352,17 +352,27 @@ extern "c" fn _NSGetExecutablePath(buf: [*]u8, bufsize: *u32) c_int;
 // domain and remove every key they create. That is what `Domain.named` is for.
 
 const testing = std.testing;
-const test_domain = "dev.craft.prefs.selftest";
+fn scratchBackend() !Backend {
+    // This module is reached by several test executables running in parallel.
+    // Each test owns its domain, including the foreign AppKit key below.
+    var nonce: [16]u8 = undefined;
+    testing.io.random(&nonce);
+    const suffix = std.fmt.bytesToHex(nonce, .lower);
+    const name = try std.fmt.allocPrint(testing.allocator, "dev.craft.prefs.selftest.{s}", .{suffix});
+    return Backend.init(.{ .named = name });
+}
 
-fn scratchBackend() Backend {
-    return Backend.init(.{ .named = test_domain });
+fn releaseScratchBackend(native: *Backend) void {
+    const name = native.domain.named;
+    native.deinit();
+    testing.allocator.free(name);
 }
 
 test "a value keeps its type through the preferences daemon" {
     if (comptime !is_macos) return error.SkipZigTest;
 
-    var native = scratchBackend();
-    defer native.deinit();
+    var native = try scratchBackend();
+    defer releaseScratchBackend(&native);
     const store = prefs.Store{ .backend = native.backend() };
     defer _ = store.clear(testing.allocator) catch {};
 
@@ -397,8 +407,8 @@ test "a value keeps its type through the preferences daemon" {
 test "delete removes the key, and reports whether it was there" {
     if (comptime !is_macos) return error.SkipZigTest;
 
-    var native = scratchBackend();
-    defer native.deinit();
+    var native = try scratchBackend();
+    defer releaseScratchBackend(&native);
     const store = prefs.Store{ .backend = native.backend() };
     defer _ = store.clear(testing.allocator) catch {};
 
@@ -411,8 +421,8 @@ test "delete removes the key, and reports whether it was there" {
 test "keys and clear see only craft's own keys in a shared domain" {
     if (comptime !is_macos) return error.SkipZigTest;
 
-    var native = scratchBackend();
-    defer native.deinit();
+    var native = try scratchBackend();
+    defer releaseScratchBackend(&native);
     const store = prefs.Store{ .backend = native.backend() };
     defer _ = store.clear(testing.allocator) catch {};
 
@@ -441,8 +451,8 @@ test "keys and clear see only craft's own keys in a shared domain" {
 test "a value craft cannot represent is reported, not coerced" {
     if (comptime !is_macos) return error.SkipZigTest;
 
-    var native = scratchBackend();
-    defer native.deinit();
+    var native = try scratchBackend();
+    defer releaseScratchBackend(&native);
 
     // An array, which only something outside craft could have written.
     const key = cfString(prefs.prefix ++ "foreign").?;
@@ -453,7 +463,7 @@ test "a value craft cannot represent is reported, not coerced" {
     const array = CFArrayCreate(null, &values, 1, null);
     defer CFRelease(array);
 
-    const domain = cfString(test_domain).?;
+    const domain = cfString(native.domain.named).?;
     defer CFRelease(domain);
     CFPreferencesSetValue(key, array, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
     defer CFPreferencesSetValue(key, null, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost);
