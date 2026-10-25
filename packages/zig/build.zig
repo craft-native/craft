@@ -235,6 +235,30 @@ pub fn build(b: *std.Build) void {
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
+    const public_webkit_step = b.step("test:webkit-public", "Verify native WebKit rendering and distribution API boundaries");
+    if (target_os == .macos) {
+        const public_webkit_test = b.addExecutable(.{
+            .name = "craft-public-webkit-test",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/webkit_preferences_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "js_backend", .module = js_backend_module },
+                    .{ .name = "build_options", .module = build_options.createModule() },
+                },
+            }),
+        });
+        public_webkit_test.root_module.addCSourceFile(.{
+            .file = b.path("src/webkit_preferences_test.m"),
+            .flags = &.{ "-fobjc-arc", "-fblocks" },
+        });
+        linkPlatformLibraries(b, public_webkit_test.root_module, target_os, macos_sdk);
+        public_webkit_step.dependOn(&b.addRunArtifact(public_webkit_test).step);
+    } else {
+        public_webkit_step.dependOn(&b.addFail("test:webkit-public requires macOS").step);
+    }
+
     // Individual test files with proper imports
     // Create module for each source file
     const api_module = b.createModule(.{

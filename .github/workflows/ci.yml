@@ -254,6 +254,12 @@ jobs:
         if: runner.os == 'macOS'
         run: bun test ./scripts/macos-release.test.ts
 
+      - name: Verify WebKit inspection and distribution capabilities natively
+        if: runner.os == 'macOS'
+        run: |
+          bun scripts/zig.ts --core --versioned build test:webkit-public -Djs-runtime=false -Dprivate-apis=false
+          bun scripts/zig.ts --core --versioned build test:webkit-public -Djs-runtime=false
+
       - name: Check binary size
         if: runner.os == 'Linux'
         run: |
