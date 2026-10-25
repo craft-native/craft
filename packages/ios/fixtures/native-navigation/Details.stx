@@ -71,7 +71,7 @@ function incrementDetails() {
   count.update(value => value + 1)
 }
 
-onDestroy(() => globalThis.craft.storage.set('native-navigation-details-destroyed', `${name}/${count()}`))
+onDestroy(() => globalThis.craft.storage.setSync('native-navigation-details-destroyed', `${name}/${count()}`))
 
 globalThis.craft.navigation.setOptions({
   title: 'Details',

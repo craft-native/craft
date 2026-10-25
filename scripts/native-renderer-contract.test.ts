@@ -2079,7 +2079,8 @@ describe('native renderer component contract', () => {
       'CraftNativeScriptThread.run { timers.pending.values.forEach { $0.cancel() } }',
       'pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }',
       'lifecycleObservers.forEach(NotificationCenter.default.removeObserver)',
-      'CraftNativeScriptThread.run(label: "unmount \\(route)") { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }',
+      'CraftNativeScriptThread.run(label: "unmount \\(route)") {',
+      'storageLifetime.unmount { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }',
       'let inStack = navigationController?.viewControllers.contains(where: { $0 === self }) ?? false',
       'if !inStack {',
     ]) expect(ios, `${marker} missing from iOS teardown`).toContain(marker)
@@ -3491,7 +3492,7 @@ describe('native renderer component contract', () => {
     expect(navigationHome).toContain('const navigationRows = state([')
     expect(navigationHome).toContain('navigationRows.set([')
     expect(navigationDetails).toContain('const people = state(')
-    expect(navigationDetails).toContain('onDestroy(() => globalThis.craft.storage.set(')
+    expect(navigationDetails).toContain('onDestroy(() => globalThis.craft.storage.setSync(')
     expect(navigationHome).toContain('<View :for="row in navigationRows" :key="row.id"')
       expect(navigationHome).toContain(":testID=\"'navigation-input-' + row.id\"")
     expect(navigationHome).toContain('@input="updateNavigationDraft(row.id, $event)"')
