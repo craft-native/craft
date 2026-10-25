@@ -29,6 +29,19 @@ decoration. Resuming does not replay it. Available on both native renderers.
 - **Audio Recording** - AVAudioRecorder with compressed output
 - **Video Recording** - UIImagePickerController video capture
 
+### Native voice capture
+
+With `enableAudioRecording`, the native renderer exposes
+`craft.audioRecording.start(owner, { maxSeconds })`, `stop(owner)` and
+`cancel(owner)`. Use a fresh UUID owner and at most 300 seconds. Stop returns
+an owned temporary M4A descriptor with its MIME type, size and duration for
+`craft.files` multipart uploads. Cancel and backgrounding erase the recording.
+
+Permission is answered on the main thread. Recorder startup, stopping and
+file inspection run on a serial audio queue. Startup has a 15-second deadline
+after permission is granted; cancellation or timeout prevents a delayed encoder
+from publishing a recording. A startup failure leaves the interface responsive.
+
 ### Device Access
 
 - **Camera & Gallery** - Take photos or pick from gallery

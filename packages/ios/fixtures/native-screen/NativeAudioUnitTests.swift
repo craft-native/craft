@@ -7,6 +7,105 @@ import XCTest
 /// samples the engine would play.
 @MainActor
 final class NativeAudioUnitTests: XCTestCase {
+    private final class VoiceRecorder: CraftVoiceRecorder {
+        private let lock = NSLock()
+        private var records = 0
+        private var stops = 0
+        var recordCount: Int { lock.withLock { records } }
+        var stopCount: Int { lock.withLock { stops } }
+        func record(forDuration duration: TimeInterval) -> Bool { lock.withLock { records += 1 }; return true }
+        func stop() { lock.withLock { stops += 1 } }
+    }
+
+    func testBlockedVoiceStartupKeepsMainResponsiveAndCancellationPreventsRecording() async {
+        let entered = expectation(description: "encoder started on audio queue")
+        let startFinished = expectation(description: "start cancelled immediately")
+        let cancelled = expectation(description: "cancel acknowledged")
+        let drained = expectation(description: "audio queue cleaned")
+        let release = DispatchSemaphore(value: 0)
+        let queue = DispatchQueue(label: "voice-cancellation-test")
+        let recorder = VoiceRecorder()
+        let service = CraftVoiceRecording(audioQueue: queue, permission: { $0(true) }, makeRecorder: { file in
+            XCTAssertFalse(Thread.isMainThread)
+            try Data([1, 2, 3]).write(to: file)
+            entered.fulfill()
+            release.wait()
+            return recorder
+        }, deactivate: {})
+        let key = UUID().uuidString
+        service.perform(method: "start", args: [key]) { result in
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "RECORDING_CANCELLED") }
+            else { XCTFail("cancelled startup must not succeed") }
+            startFinished.fulfill()
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        // Reaching this main-actor continuation while the factory is held is
+        // the responsiveness regression, not a longer microphone deadline.
+        XCTAssertTrue(Thread.isMainThread)
+        service.perform(method: "cancel", args: [key]) { _ in cancelled.fulfill() }
+        await fulfillment(of: [cancelled, startFinished], timeout: 2)
+        release.signal()
+        queue.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertEqual(recorder.recordCount, 0)
+        XCTAssertGreaterThanOrEqual(recorder.stopCount, 1)
+    }
+
+    func testVoiceStartupTimeoutSettlesOnceAndErasesTheLateRecorder() async {
+        let entered = expectation(description: "encoder started")
+        let timedOut = expectation(description: "bounded startup")
+        let drained = expectation(description: "late encoder cleaned")
+        let release = DispatchSemaphore(value: 0)
+        let queue = DispatchQueue(label: "voice-timeout-test")
+        let recorder = VoiceRecorder()
+        var completions = 0
+        var recordingFile: URL?
+        let service = CraftVoiceRecording(audioQueue: queue, startupTimeout: 0.05, permission: { $0(true) }, makeRecorder: { file in
+            recordingFile = file
+            try Data([1, 2, 3]).write(to: file)
+            entered.fulfill()
+            release.wait()
+            return recorder
+        }, deactivate: {})
+        service.perform(method: "start", args: [UUID().uuidString]) { result in
+            completions += 1
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "RECORDING_TIMEOUT") }
+            else { XCTFail("blocked startup must time out") }
+            timedOut.fulfill()
+        }
+        await fulfillment(of: [entered, timedOut], timeout: 2)
+        release.signal()
+        queue.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertEqual(completions, 1)
+        XCTAssertEqual(recorder.recordCount, 0)
+        XCTAssertFalse(recordingFile.map { FileManager.default.fileExists(atPath: $0.path) } ?? true)
+    }
+
+    func testCancelledPermissionAnswerCannotStartVoiceRecording() async {
+        let asked = expectation(description: "permission requested")
+        let cancelled = expectation(description: "pending permission cancelled")
+        let completed = expectation(description: "start settled")
+        var answer: ((Bool) -> Void)?
+        let service = CraftVoiceRecording(permission: { answer = $0; asked.fulfill() }, makeRecorder: { _ in
+            XCTFail("late permission must never construct a recorder")
+            return VoiceRecorder()
+        }, deactivate: {})
+        let key = UUID().uuidString
+        service.perform(method: "start", args: [key]) { result in
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "RECORDING_CANCELLED") }
+            else { XCTFail("cancelled permission must fail") }
+            completed.fulfill()
+        }
+        await fulfillment(of: [asked], timeout: 2)
+        service.perform(method: "cancel", args: [key]) { _ in cancelled.fulfill() }
+        await fulfillment(of: [cancelled, completed], timeout: 2)
+        answer?(true)
+        let lateAnswer = expectation(description: "late permission processed")
+        DispatchQueue.main.async { lateAnswer.fulfill() }
+        await fulfillment(of: [lateAnswer], timeout: 2)
+    }
+
     private let rate = 48_000.0
     private var audio: CraftWebAudio!
     private var script: JSContext!
