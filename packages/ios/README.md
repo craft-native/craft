@@ -40,7 +40,11 @@ an owned temporary M4A descriptor with its MIME type, size and duration for
 Permission is answered on the main thread. Recorder startup, stopping and
 file inspection run on a serial audio queue. Startup has a 15-second deadline
 after permission is granted; cancellation or timeout prevents a delayed encoder
-from publishing a recording. A startup failure leaves the interface responsive.
+from publishing a recording. A startup failure leaves the interface responsive. Deletion runs independently of
+encoder work, so a stalled encoder cannot retain a cancelled capture. Voice files
+use their own temporary namespace and are erased on the next native launch after
+an interruption or process termination, including the earlier recorder's M4A files.
+Picked files and downloads retain their separate lifetime.
 
 ### Device Access
 

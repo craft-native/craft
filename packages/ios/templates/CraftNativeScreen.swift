@@ -5804,6 +5804,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         self.routeProps = routeProps
         self.isAppScript = isAppScript
         super.init(nibName: nil, bundle: nil)
+        CraftVoiceRecording.prepareForLaunch(includeLegacy: config.enableAudioRecording)
     }
 
     required init?(coder: NSCoder) {

@@ -25,8 +25,10 @@ final class NativeAudioUnitTests: XCTestCase {
         let release = DispatchSemaphore(value: 0)
         let queue = DispatchQueue(label: "voice-cancellation-test")
         let recorder = VoiceRecorder()
+        var recordingFile: URL?
         let service = CraftVoiceRecording(audioQueue: queue, permission: { $0(true) }, makeRecorder: { file in
             XCTAssertFalse(Thread.isMainThread)
+            recordingFile = file
             try Data([1, 2, 3]).write(to: file)
             entered.fulfill()
             release.wait()
@@ -44,6 +46,10 @@ final class NativeAudioUnitTests: XCTestCase {
         XCTAssertTrue(Thread.isMainThread)
         service.perform(method: "cancel", args: [key]) { _ in cancelled.fulfill() }
         await fulfillment(of: [cancelled, startFinished], timeout: 2)
+        let erased = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            recordingFile.map { !FileManager.default.fileExists(atPath: $0.path) } ?? false
+        }, object: nil)
+        await fulfillment(of: [erased], timeout: 2)
         release.signal()
         queue.async { drained.fulfill() }
         await fulfillment(of: [drained], timeout: 2)
@@ -104,6 +110,37 @@ final class NativeAudioUnitTests: XCTestCase {
         let lateAnswer = expectation(description: "late permission processed")
         DispatchQueue.main.async { lateAnswer.fulfill() }
         await fulfillment(of: [lateAnswer], timeout: 2)
+    }
+
+    func testAbandonedVoiceFilesAreErasedWithoutFollowingLinksOrRemovingOtherFiles() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("voice-cleanup-\(UUID().uuidString)", isDirectory: true)
+        let outside = fm.temporaryDirectory.appendingPathComponent("voice-outside-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root); try? fm.removeItem(at: outside) }
+        let legacyFolder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let voiceFolder = root.appendingPathComponent("voice-recordings/\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+        try fm.createDirectory(at: voiceFolder, withIntermediateDirectories: true)
+        let legacy = legacyFolder.appendingPathComponent("voice-feedback.m4a")
+        let voice = voiceFolder.appendingPathComponent("voice-feedback.m4a")
+        let unrelated = legacyFolder.appendingPathComponent("route.gpx")
+        let protected = outside.appendingPathComponent("voice-feedback.m4a")
+        for file in [legacy, voice, unrelated, protected] { try Data([1, 2, 3]).write(to: file) }
+        try fm.createSymbolicLink(at: root.appendingPathComponent(UUID().uuidString), withDestinationURL: outside)
+        let linkedFolder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: linkedFolder, withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: linkedFolder.appendingPathComponent("voice-feedback.m4a"), withDestinationURL: protected)
+        CraftVoiceRecording.discardAbandonedRecordings(in: root, includeLegacy: false)
+        XCTAssertTrue(fm.fileExists(atPath: legacy.path))
+        XCTAssertFalse(fm.fileExists(atPath: voice.path))
+        CraftVoiceRecording.discardAbandonedRecordings(in: root)
+        XCTAssertFalse(fm.fileExists(atPath: legacy.path))
+        XCTAssertFalse(fm.fileExists(atPath: voice.path))
+        XCTAssertTrue(fm.fileExists(atPath: unrelated.path))
+        XCTAssertTrue(fm.fileExists(atPath: protected.path))
+        XCTAssertTrue(fm.fileExists(atPath: linkedFolder.appendingPathComponent("voice-feedback.m4a").path))
     }
 
     private let rate = 48_000.0

@@ -13,6 +13,54 @@ extension AVAudioRecorder: CraftVoiceRecorder {}
 /// is starting, so a late permission/encoder answer cannot resurrect it.
 final class CraftVoiceRecording {
     static let shared = CraftVoiceRecording()
+    private static let fileQueue = DispatchQueue(label: "craft.voice-recording-files", qos: .utility)
+    private static let launchCleanup: Void = discardAbandonedRecordings(includeLegacy: false)
+    private static let legacyCleanup: Void = discardAbandonedRecordings()
+    private static let folderName = "voice-recordings"
+
+    /// Temporary voice files have a launch lifetime, unlike picked files and
+    /// downloads. Run once across all screens, without touching audio hardware.
+    static func prepareForLaunch(includeLegacy: Bool = true) {
+        _ = launchCleanup
+        if includeLegacy { _ = legacyCleanup }
+    }
+
+    static func discardAbandonedRecordings(in root: URL = CraftNativeFiles.root, includeLegacy: Bool = true) {
+        let fm = FileManager.default
+        // Also migrate the recorder's earlier UUID folders at craft-files' root.
+        let voice = root.appendingPathComponent(folderName, isDirectory: true)
+        for scope in includeLegacy ? [root, voice] : [voice] {
+            guard (try? scope.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true else { continue }
+            let folders = (try? fm.contentsOfDirectory(at: scope, includingPropertiesForKeys: [.isSymbolicLinkKey])) ?? []
+            for folder in folders {
+                guard UUID(uuidString: folder.lastPathComponent) != nil,
+                      (try? folder.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true else { continue }
+                let file = folder.appendingPathComponent("voice-feedback.m4a")
+                let values = try? file.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+                guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+                try? fm.removeItem(at: file)
+                if (try? fm.contentsOfDirectory(atPath: folder.path).isEmpty) == true { try? fm.removeItem(at: folder) }
+            }
+        }
+    }
+
+    private static func newRecordingFile() throws -> URL {
+        prepareForLaunch()
+        let root = CraftNativeFiles.root.appendingPathComponent(folderName, isDirectory: true)
+        guard (try? root.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink != true else { throw CocoaError(.fileWriteNoPermission) }
+        let folder = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("voice-feedback.m4a")
+        do {
+            // An owned placeholder lets cancellation erase the path even when
+            // AVFoundation has not finished constructing its recorder yet.
+            try Data().write(to: file)
+            return file
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+    }
     private final class Session {
         let key: String
         var file: URL?
@@ -53,6 +101,7 @@ final class CraftVoiceRecording {
              return try AVAudioRecorder(url: file, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
          },
          deactivate: @escaping () -> Void = { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }) {
+        Self.prepareForLaunch()
         self.audioQueue = audioQueue
         self.startupTimeout = startupTimeout
         self.permission = permission
@@ -75,6 +124,10 @@ final class CraftVoiceRecording {
         current = nil
         session.invalidate()
         session.finish(.failure(error))
+        if let file = session.file {
+            // A stalled encoder must not hold deletion behind its audio queue.
+            Self.fileQueue.async { CraftNativeFiles.remove(file.path) }
+        }
         audioQueue.async { self.erase(session) }
     }
 
@@ -132,7 +185,7 @@ final class CraftVoiceRecording {
                     return
                 }
                 guard allowed else { self.clear(CraftNativeActionError(code: "PERMISSION_DENIED", message: "Microphone permission was refused")); return }
-                do { session.file = try CraftNativeFiles.newFile(named: "voice-feedback.m4a") }
+                do { session.file = try Self.newRecordingFile() }
                 catch { self.clear(CraftNativeActionError(code: "RECORDING_FAILED", message: "The recording file could not be created")); return }
                 guard let file = session.file else { return }
                 let deadline = DispatchWorkItem { [weak host = self] in

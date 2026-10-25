@@ -94,6 +94,9 @@ enum CraftNativeFiles {
         let dayAgo = Date().addingTimeInterval(-86_400)
         let folders = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? []
         for folder in folders {
+            // Only generic per-file folders: private voice captures have their
+            // own launch lifetime and must not be swept during a live recording.
+            guard UUID(uuidString: folder.lastPathComponent) != nil else { continue }
             let created = (try? folder.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
             if created < dayAgo { try? fm.removeItem(at: folder) }
         }
