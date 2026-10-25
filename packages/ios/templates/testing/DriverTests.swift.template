@@ -64,7 +64,10 @@ final class DriverTests: XCTestCase {
     func get(_ path: String, timeout: Double = 15) -> Data? {
         var result: Data?
         let done = expectation(description: path)
-        URLSession.shared.dataTask(with: URL(string: control + path)!) { data, _, _ in result = data; done.fulfill() }.resume()
+        URLSession.shared.dataTask(with: URL(string: control + path)!) { data, response, error in
+            if error == nil, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) { result = data }
+            done.fulfill()
+        }.resume()
         wait(for: [done], timeout: timeout)
         return result
     }
@@ -332,7 +335,10 @@ final class DriverTests: XCTestCase {
         case "net": _ = get("/\(arg)"); note("net \(arg)")
         case "delay": _ = get("/delay?ms=\(arg)"); note("delay \(arg)ms")
         case "exec":
-            let out = get("/exec?name=\(arg)", timeout: 180).flatMap { String(data: $0, encoding: .utf8) } ?? "no answer"
+            guard let data = get("/exec?name=\(arg)", timeout: 180), let out = String(data: data, encoding: .utf8) else {
+                check(false, "exec \(arg): hook failed or returned no successful response")
+                return
+            }
             note("exec \(arg): \(out.trimmingCharacters(in: .whitespacesAndNewlines))")
         case "openurl":
             if let url = URL(string: arg) {

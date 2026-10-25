@@ -81,6 +81,19 @@ describe('package-owned iOS shells', () => {
     expect(driver).toMatch(/host\.launch\(\)\s+host\.buttons\["craft-driver-open-universal-link"\]\.tap\(\)\s+let opened = app\.wait\(for: \.runningForeground, timeout: 75\)/)
   })
 
+  it('stops a journey when a control-server hook fails', () => {
+    const output = folder()
+    initSimulatorDriver({ output, bundleId: 'org.example.app' })
+    const source = readFileSync(join(output, 'UITests/DriverTests.swift'), 'utf8')
+    expect(source).toContain('(200..<300).contains(response.statusCode)')
+    expect(source).toContain('if error == nil, let response = response as? HTTPURLResponse')
+    const hook = source.slice(source.indexOf('case "exec":'), source.indexOf('case "openurl":'))
+    expect(hook).toContain('guard let data = get(')
+    expect(hook).toContain('check(false, "exec ')
+    expect(hook).not.toContain('?? "no answer"')
+    expect(source).toContain('continueAfterFailure = false')
+  })
+
   it('serializes typed journeys and rejects extra wire commands and invalid coordinates', () => {
     expect(serializeSimulatorSteps([
       { command: 'launch' }, { command: 'field', index: 0, text: 'demo@example.org' },

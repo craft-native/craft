@@ -1355,3 +1355,5 @@ when available. `monospace`/`ui-monospace`, `serif`/`ui-serif` and
 `sans-serif`/`ui-sans-serif`/`system-ui` select platform fonts, retaining requested
 weight, italic style and system text scaling. A missing custom face falls through
 to the next family rather than silently replacing a requested mono font with sans.
+
+The simulator driver requires a successful HTTP response from each control-server `exec` hook. A failed or unavailable hook fails XCTest and stops the journey before its next command.
