@@ -3186,12 +3186,17 @@ fn linkMenuBarVisibility(b: *std.Build, module: *std.Build.Module) void {
     module.linkFramework("Security", .{});
     // Objective-C owns blocks and exception boundaries. The private framework
     // itself is resolved at runtime and is never a linked dependency.
+    const flags: []const []const u8 = if (private_apis_enabled)
+        &.{ "-fobjc-arc", "-fblocks" }
+    else
+        &.{ "-fobjc-arc", "-fblocks", "-DCRAFT_PUBLIC_APIS_ONLY=1" };
     module.addCSourceFile(.{
         .file = b.path("src/menubar_visibility.m"),
-        .flags = if (private_apis_enabled)
-            &.{ "-fobjc-arc", "-fblocks" }
-        else
-            &.{ "-fobjc-arc", "-fblocks", "-DCRAFT_PUBLIC_APIS_ONLY=1" },
+        .flags = flags,
+    });
+    module.addCSourceFile(.{
+        .file = b.path("src/webkit_preferences.m"),
+        .flags = flags,
     });
 }
 

@@ -590,6 +590,13 @@ binary, rather than disabled at runtime. `--distribution` reports the variant.
 macOS provides no supported API for hiding other apps' menu bar items, so that
 capability reports unavailable in the public runtime.
 
+The public runtime also excludes private WebKit preference keys. Developer
+inspection uses WebKit's public `isInspectable` API. Transparent web content
+and web material backdrops remain direct-distribution capabilities: the public
+runtime rejects explicit transparency requests and uses opaque content for
+ordinary windows, including windows with a hidden titlebar. Native AppKit
+sidebars remain available without requiring transparent web content.
+
 For a server-backed app, pass the resolved Pantry provider as
 `macos.nativeRuntimePath` together with `appStore: true`. Packaging selects and
 validates its adjacent public runtime, makes Craft the main UI executable, and
@@ -607,6 +614,7 @@ desired dimensions and tray/headless options. These settings are written into
 the native bundle configuration, so the Store host needs no application-level
 window setup code.
 
-Packaging fails if the public runtime is absent or identifies itself as a direct
-build. App Store apps must also omit external self-updaters and use the Mac App
-Store for updates. Direct builds continue to use their identified native agent.
+Packaging fails if the public runtime is absent, identifies itself as a direct
+build, or contains known private API markers. App Store apps must also omit
+external self-updaters and use the Mac App Store for updates. Direct builds
+continue to use their identified native agent.

@@ -325,25 +325,23 @@ fn makeViewLayerTransparent(view: objc.id) void {
     }
 }
 
-fn makeWebViewTransparent(webview: objc.id) void {
+extern "c" fn craft_webview_supports_transparency() c_int;
+extern "c" fn craft_webview_make_transparent(view: objc.id) c_int;
+
+pub fn supportsTransparentWebContent() bool {
+    return craft_webview_supports_transparency() != 0;
+}
+
+fn validateWebContentStyle(style: WindowStyle) !void {
+    if ((style.transparent or style.hasWebMaterial()) and !supportsTransparentWebContent())
+        return error.UnsupportedWebViewTransparency;
+}
+
+fn makeWebViewTransparent(webview: objc.id) !void {
     if (webview == null) return;
-
-    _ = msgSend1(webview, "setOpaque:", @as(c_int, 0));
-
-    const NSNumber = getClass("NSNumber");
-    const drawsBackgroundKey = createNSString("drawsBackground");
-    const noValue = msgSend1(NSNumber, "numberWithBool:", @as(c_int, 0));
-    msgSendVoid2(webview, "setValue:forKey:", noValue, drawsBackgroundKey);
+    if (craft_webview_make_transparent(webview) == 0) return error.UnsupportedWebViewTransparency;
+    msgSendVoid1(webview, "setUnderPageBackgroundColor:", msgSend0(getClass("NSColor"), "clearColor"));
     makeViewLayerTransparent(webview);
-
-    const canAccessScrollView = msgSend1(webview, "respondsToSelector:", sel("scrollView"));
-    if (@intFromPtr(canAccessScrollView) != 0) {
-        const scrollView = msgSend0(webview, "scrollView");
-        if (scrollView == null) return;
-
-        _ = msgSend1(scrollView, "setDrawsBackground:", @as(c_int, 0));
-        _ = msgSend1(scrollView, "setBackgroundColor:", msgSend0(getClass("NSColor"), "clearColor"));
-    }
 }
 
 fn createAppearance(name: []const u8) objc.id {
@@ -828,12 +826,8 @@ fn applyFrameAutosave(window: objc.id, name: []const u8) void {
 
 /// Make a webview inspectable from Safari's Develop menu.
 ///
-/// `developerExtrasEnabled` alone stopped being enough at macOS 13.3, which
-/// introduced `isInspectable` defaulting to **NO**. Measured on 26.3.1: a
-/// webview with `developerExtrasEnabled = YES` and nothing else reports
-/// `isInspectable = 0`, so craft's `--dev-tools` has been setting a preference
-/// with no effect for the whole of that range — while a comment in the View
-/// menu asserted the opposite.
+/// WebKit's public `isInspectable` property opts each view into inspection.
+/// It defaults to NO; no private preference keys are needed.
 ///
 /// Guarded by `respondsToSelector:` rather than a version check: the selector
 /// is absent before 13.3 and sending it unguarded would raise
@@ -863,10 +857,10 @@ pub fn createWindowWithURL(title: []const u8, width: u32, height: u32, url: []co
 }
 
 pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?[]const u8, url: ?[]const u8, style: WindowStyle) !objc.id {
+    try validateWebContentStyle(style);
     // Get classes (skip unnecessary lookups in benchmark mode)
     const NSWindow = getClass("NSWindow");
     const NSString = getClass("NSString");
-    const WKWebView = getClass("WKWebView");
     const WKPreferences = if (!style.benchmark) getClass("WKPreferences") else null;
     const WKWebViewConfiguration = getClass("WKWebViewConfiguration");
     const WKUserContentController = if (!style.benchmark) getClass("WKUserContentController") else null;
@@ -1025,8 +1019,8 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // visible effect on a plain window was to shove the title left against the
     // window buttons, where macOS puts a toolbar's title and nobody else's. The
     // sidebar windows that do build a toolbar set their own style.
-    const wants_translucent_surface = style.transparent or style.titlebar_hidden or
-        style.native_sidebar or style.hasWebMaterial();
+    const wants_translucent_surface = supportsTransparentWebContent() and
+        (style.transparent or style.titlebar_hidden or style.native_sidebar or style.hasWebMaterial());
 
     if (!style.benchmark and wants_translucent_surface) {
         _ = msgSend1(window, "setOpaque:", @as(c_int, 0)); // NO — something shows through
@@ -1048,22 +1042,6 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
         // Enable JavaScript explicitly (should be enabled by default, but let's be explicit)
         msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
         enableElementFullscreen(prefs);
-
-        // Enable developer extras (DevTools) only when requested
-        if (style.dev_tools) {
-            const key_str = createNSString("developerExtrasEnabled");
-            const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
-            defer msgSendVoid0(value_obj, "release");
-            msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
-        }
-
-        // Enable clipboard access only when dev tools / full features are enabled
-        if (style.dev_tools) {
-            const clipboard_key = createNSString("javaScriptCanAccessClipboard");
-            const clipboard_value = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
-            defer msgSendVoid0(clipboard_value, "release");
-            msgSendVoid2(prefs, "setValue:forKey:", clipboard_value, clipboard_key);
-        }
 
         _ = msgSend1(config, "setPreferences:", prefs);
 
@@ -1148,13 +1126,13 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     startup_timing.mark(.webview_config_built);
 
     // Create WKWebView with configuration
+    const WKWebView = getClass("WKWebView");
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", frame, config);
     // Once installed below, the window/view hierarchy owns the webview. Keep
     // this creator retain only until construction finishes (or fails).
     defer msgSendVoid0(webview, "release");
-    // `developerExtrasEnabled` above is necessary and, since macOS 13.3, not
-    // sufficient. See `setWebViewInspectable`.
+    // Inspection is an explicit per-view choice through WebKit's public API.
     if (style.dev_tools) setWebViewInspectable(webview);
     startup_timing.mark(.webview_created);
     // Start the load before any cosmetic setup.
@@ -1192,7 +1170,7 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
     // Cosmetic and lazily-needed setup, now overlapping the fetch.
     if (!style.benchmark and wants_translucent_surface) {
         makeWindowTranslucent(window);
-        makeWebViewTransparent(webview);
+        try makeWebViewTransparent(webview);
     }
 
     // Install the native file-drop hook so JS gets real filesystem paths.
@@ -2321,6 +2299,7 @@ pub fn createWindowWithSidebar(
     sidebar_config_json: ?[]const u8,
     style: WindowStyle,
 ) !objc.id {
+    try validateWebContentStyle(style);
     const NSApplication = getClass("NSApplication");
     const NSWindow = getClass("NSWindow");
     const NSString = getClass("NSString");
@@ -2551,11 +2530,6 @@ pub fn createWindowWithSidebar(
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
     enableElementFullscreen(prefs);
 
-    // Enable developer extras
-    const key_str = createNSString("developerExtrasEnabled");
-    const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
-    defer msgSendVoid0(value_obj, "release");
-    msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
     _ = msgSend1(config, "setPreferences:", prefs);
 
     // Set up user content controller
@@ -2579,8 +2553,11 @@ pub fn createWindowWithSidebar(
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", contentFrame, config);
     defer msgSendVoid0(webview, "release");
-    makeWindowTranslucent(window);
-    makeWebViewTransparent(webview);
+    if (style.dev_tools) setWebViewInspectable(webview);
+    if (supportsTransparentWebContent()) {
+        makeWindowTranslucent(window);
+        try makeWebViewTransparent(webview);
+    }
 
     // Setup UI delegate
     setupUIDelegate(webview) catch |err| {
@@ -3513,6 +3490,7 @@ pub fn createWindowWithSidebarURL(
     sidebar_config: ?[]const u8,
     style: WindowStyle,
 ) !objc.id {
+    try validateWebContentStyle(style);
     // Import the necessary classes
     const NSApplication = getClass("NSApplication");
     const NSWindow = getClass("NSWindow");
@@ -3649,10 +3627,6 @@ pub fn createWindowWithSidebarURL(
     msgSendVoid1(prefs, "setJavaScriptEnabled:", true);
     enableElementFullscreen(prefs);
 
-    const key_str = createNSString("developerExtrasEnabled");
-    const value_obj = msgSend1(msgSend0(getClass("NSNumber"), "alloc"), "initWithBool:", true);
-    defer msgSendVoid0(value_obj, "release");
-    msgSendVoid2(prefs, "setValue:forKey:", value_obj, key_str);
     _ = msgSend1(config, "setPreferences:", prefs);
 
     const userContentController = msgSend0(msgSend0(WKUserContentController, "alloc"), "init");
@@ -3676,9 +3650,12 @@ pub fn createWindowWithSidebarURL(
     const webview_alloc = msgSend0(WKWebView, "alloc");
     const webview = msgSend2(webview_alloc, "initWithFrame:configuration:", contentFrame, config);
     defer msgSendVoid0(webview, "release");
-    makeWindowTranslucent(window);
+    if (style.dev_tools) setWebViewInspectable(webview);
+    if (supportsTransparentWebContent()) {
+        makeWindowTranslucent(window);
+        try makeWebViewTransparent(webview);
+    }
     makeViewLayerTransparent(mainContainer);
-    makeWebViewTransparent(webview);
 
     setupUIDelegate(webview) catch |err| {
         if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
@@ -8377,10 +8354,8 @@ const edit_menu_items = [_]DefaultItem{
 
 /// Reload and Force Reload land on the focused WKWebView, which implements
 /// `reload:` and `reloadFromOrigin:` as action selectors. Dev consoles stay
-/// reachable by right-click when `dev_tools` is enabled — which needs both
-/// `developerExtrasEnabled` *and* `setInspectable:` since macOS 13.3. This
-/// comment used to claim the webview set the latter; nothing did, and the
-/// string appeared nowhere else in the repository.
+/// reachable through Safari's Develop menu when `dev_tools` enables the
+/// view's public `isInspectable` property.
 const view_menu_items = [_]DefaultItem{
     .{ .title = "Reload", .selector = menuRole("reload"), .key = "r" },
     .{ .title = "Force Reload", .selector = menuRole("forceReload"), .key = "r", .extra_modifiers = modifier_shift },
