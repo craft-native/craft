@@ -989,3 +989,20 @@ Made with 💙
 [npm-version-href]: https://npmjs.com/package/craft-native
 [github-actions-src]: https://img.shields.io/github/actions/workflow/status/home-lang/craft/ci.yml?style=flat-square&branch=main
 [github-actions-href]: https://github.com/home-lang/craft/actions?query=workflow%3Aci
+
+
+### macOS runtime profiles
+
+Pantry's macOS archives provide `craft` (the full runtime) and `craft-webview`
+(the native webview, bridge and bundled-backend host without the separate ZigJS
+scripting engine). Webview applications with a Bun backend can use
+`craft-webview` to avoid embedding an unused scripting engine. Page JavaScript
+continues to run in the OS webview. Headless Craft scripts require `craft`.
+`--runtime-profile` reports `full` or `webview`.
+
+Each has a public API only App Store companion: `craft-app-store` and
+`craft-webview-app-store`. Set `macos.nativeRuntimePath` to the installed direct
+runtime when packaging a prebuilt Craft bundle for the App Store. The SDK
+replaces its main executable with the matching store companion before signing;
+it refuses a missing companion or private platform APIs. All variants are built
+from the tagged source, signed and verified by the release pipeline.

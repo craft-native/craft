@@ -394,9 +394,9 @@ export async function packageApp(config: PackageConfig): Promise<PackageResult[]
  * App Store packaging fails closed if an older provider has no public build.
  */
 export function macOSAppStoreRuntimePath(providerPath: string): string {
-  const runtime = basename(providerPath) === 'craft-app-store'
-    ? providerPath
-    : join(dirname(providerPath), 'craft-app-store')
+  const providerName = basename(providerPath)
+  const storeName = providerName.startsWith('craft-webview') ? 'craft-webview-app-store' : 'craft-app-store'
+  const runtime = providerName === storeName ? providerPath : join(dirname(providerPath), storeName)
   if (!existsSync(runtime))
     throw new Error('App Store packaging requires Pantry’s craft-app-store runtime. Upgrade Craft with Pantry before building.')
   const bytes = readFileSync(runtime)
@@ -470,6 +470,17 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
   // Apply distribution metadata to complete prebuilt bundles too, before signing.
   try {
     const contents = join(appBundlePath, 'Contents')
+    if (opts.appStore && opts.appBundlePath && existsSync(join(contents, 'Resources', 'craft.json'))) {
+      if (!nativeRuntimePath)
+        throw new Error('App Store packaging of a prebuilt Craft bundle requires macos.nativeRuntimePath from Pantry.')
+      const plist = join(contents, 'Info.plist')
+      const executable = spawnSync('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', plist], { encoding: 'utf8' })
+      const name = executable.stdout.trim()
+      if (executable.status !== 0 || !name || basename(name) !== name || name === '.' || name === '..')
+        throw new Error('Prebuilt Craft bundle has an invalid CFBundleExecutable')
+      copyFileSync(nativeRuntimePath, join(contents, 'MacOS', name))
+      chmodSync(join(contents, 'MacOS', name), 0o755)
+    }
     if (opts.provisioningProfile) {
       const profile = join(contents, 'embedded.provisionprofile')
       copyFileSync(opts.provisioningProfile, profile)
