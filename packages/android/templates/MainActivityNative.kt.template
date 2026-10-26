@@ -212,6 +212,24 @@ private data class CraftNativeLength(
     }
 }
 
+/** A screen root owns its viewport unless the document explicitly sizes it.
+ * Keep this parent constraint out of the protocol document, and apply it to
+ * targeted style updates too. An unstyled fragment with flex children would
+ * otherwise measure at their zero flex bases and collapse the entire screen. */
+internal fun craftNativeScreenRootStyle(style: JSONObject): JSONObject {
+    val rootStyle = JSONObject()
+    val keys = style.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        rootStyle.put(key, style.opt(key))
+    }
+    if (rootStyle.isNull("height")) {
+        if (rootStyle.isNull("flex")) rootStyle.put("flex", 1)
+        rootStyle.put("height", "100%")
+    }
+    return rootStyle
+}
+
 private data class CraftNativeLayoutStyle(
     val width: CraftNativeLength? = null,
     val height: CraftNativeLength? = null,
@@ -1132,14 +1150,23 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         invalidateMeasurements()
     }
 
+    private var viewportChild: View? = null
+
+    fun setViewportChild(view: View?) {
+        viewportChild = view
+        invalidateMeasurements()
+    }
+
     fun setChildStyle(view: View, style: JSONObject, density: Float) {
-        styles[view] = CraftNativeLayoutStyle.from(style, density)
+        val effective = if (view === viewportChild) craftNativeScreenRootStyle(style) else style
+        styles[view] = CraftNativeLayoutStyle.from(effective, density)
         invalidateMeasurements()
         invalidateMeasurementAncestors(parent)
     }
 
     override fun onViewRemoved(child: View) {
         val parentBeforeRemoval = parent
+        if (child === viewportChild) viewportChild = null
         styles.remove(child)
         super.onViewRemoved(child)
         invalidateMeasurements()
@@ -5434,6 +5461,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.clear()
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(retainedViews(screen))
+        screen.view.setViewportChild(tree)
         screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)
         promoteModalOverlays(screen)
         updateSafeAreaViews()

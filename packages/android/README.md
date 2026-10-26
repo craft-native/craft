@@ -234,6 +234,9 @@ pagination; the maintained native protocol does not serialize `data`/`renderItem
 callbacks.
 Flex items support `flex`, `flexGrow`, `flexShrink`, and numeric or percentage
 `flexBasis` for main-axis space distribution while preserving gaps and margins.
+The screen's document root fills its viewport unless it declares a height,
+matching iOS. This also applies after reactive style updates remove an explicit
+height. Ordinary child containers keep their authored flex and intrinsic sizing.
 Shared transforms, z-order, view shadows, text shadows, per-edge border
 styles, and linear gradients are applied with the same style keys as the iOS
 renderer. Android `elevation` remains an additional native shadow input.
