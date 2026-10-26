@@ -134,5 +134,11 @@ continues to run the complete fixture. `CRAFT_ANDROID_TEST_CLASS` accepts Gradle
 class/method instrumentation selector when diagnosing a specific case.
 
 For the complete Android fixture without starting unrelated iOS jobs, dispatch
-`scope=android-navigation` with `android_suite=full`. The gate requires all 28
-native tests, with no failures or skips; the default focused suite requires six.
+`scope=android-navigation` with `android_suite=full`. The gate counts every
+declared fixture test and requires zero failures and skips. Focused runs check
+their selected methods against the workflow's declared count.
+
+Android 15 system-bar screenshots wait for a focused window's measured
+navigation insets after startup or an appearance change. Finding a rendered
+protocol view alone does not establish that the first inset dispatch finished.
+The pixel and button-contrast assertions still require a visible system bar.

@@ -344,12 +344,27 @@ class NativeNavigationTest {
             // Appearance flags alone cannot establish contrast on Android 15.
             // Check the actual protected surface and every native button.
             val authored = color ?: throw AssertionError("missing screen background")
-            val tappable = ViewCompat.getRootWindowInsets(activity.window.decorView)
-                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.tappableElement())?.bottom ?: 0
+            // Finding a protocol view and receiving window focus both precede
+            // the first inset dispatch after an activity or appearance change.
+            // Wait for that actual system measurement before taking pixels.
+            var measured: androidx.core.view.WindowInsetsCompat? = null
+            for (attempt in 0 until 50) {
+                instrumentation.runOnMainSync {
+                    val next = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                    if (activity.hasWindowFocus() && next?.getInsets(
+                            androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom?.let { it > 0 } == true) {
+                        measured = next
+                    }
+                }
+                if (measured != null) break
+                SystemClock.sleep(100)
+            }
+            val insets = measured ?: throw AssertionError(
+                "navigation-bar screenshot coverage requires a visible system bar after window layout")
+            val tappable = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.tappableElement()).bottom
             val buttonNavigation = tappable > 0
             var expected = authored
-            val inset = ViewCompat.getRootWindowInsets(activity.window.decorView)
-                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+            val inset = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
             assertTrue("navigation-bar screenshot coverage requires a visible system bar", inset > 0)
             var actual: Int? = null
             var glyphContrast = 1.0
