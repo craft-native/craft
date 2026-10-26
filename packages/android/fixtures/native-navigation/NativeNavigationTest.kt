@@ -2297,6 +2297,42 @@ class NativeNavigationTest {
             .bufferedReader().use { it.readText().trim() }
 
     @Test
+    fun nativeStatusBarTracksLiveDeviceAppearance() {
+        val original = Regex("Night mode: (\\w+)").find(systemCommand("cmd uimode night"))?.groupValues?.get(1)
+            ?: throw AssertionError("Cannot read the original device appearance")
+        assertTrue(original in setOf("no", "yes", "auto", "custom_schedule", "custom_bedtime"))
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "toggle-status-bar-content")
+            instrumentation.runOnMainSync {
+                activity.delegate.localNightMode = androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            }
+            for (dark in listOf(false, true, false)) {
+                systemCommand("cmd uimode night ${if (dark) "yes" else "no"}")
+                var matching = false
+                val deadline = SystemClock.uptimeMillis() + 5000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.runOnMainSync {
+                        val appDark = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+                        val lightIcons = !WindowCompat.getInsetsController(activity.window, activity.window.decorView).isAppearanceLightStatusBars
+                        matching = appDark == dark && lightIcons == dark
+                    }
+                    if (matching) break
+                    SystemClock.sleep(50)
+                }
+                assertTrue("Live device appearance must preserve readable status icons (dark=$dark)", matching)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+            systemCommand("cmd uimode night $original")
+        }
+    }
+
+    @Test
     fun nativeStatusBarPropsUpdateWithoutNavigation() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

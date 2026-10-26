@@ -3926,7 +3926,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('refreshTraitDefaults()')
     expect(ios).toContain('override func viewWillAppear(_ animated: Bool)')
     expect(android).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
-    expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+    expect(android).toContain('screen.mutations.document()?.let { renderCommitted(screen, it) }')
     expect(android).toContain('private fun refreshScreenTheme(screen: Screen)')
     expect(android).toContain('refreshScreenTheme(screen)')
     expect(android).toContain('private fun refreshThemeDefaults()')
