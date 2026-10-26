@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.357...v0.0.358)
+
+## 🐛 Bug Fixes
+
+- recompute Android safe-area padding when edges change ([9b8d314](https://github.com/craft-native/craft/commit/9b8d314)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.356...v0.0.357)
 
 ## 🐛 Bug Fixes
