@@ -1,6 +1,9 @@
 package dev.craft.navigationtest
 
 import android.content.Intent
+import android.media.AudioManager
+import android.media.MediaPlayer
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.net.ServerSocket
@@ -42,6 +45,100 @@ class NativeCapabilitiesTest {
     }
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    // A real local PCM file keeps these playback regressions independent of
+    // networking, codecs downloaded by the device, and the user's media.
+    private fun silentWav(): java.io.File {
+        val samples = 8000 * 2
+        val bytes = java.nio.ByteBuffer.allocate(44 + samples * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        bytes.put("RIFF".toByteArray()).putInt(36 + samples * 2).put("WAVEfmt ".toByteArray())
+        bytes.putInt(16).putShort(1.toShort()).putShort(1.toShort()).putInt(8000).putInt(16000)
+        bytes.putShort(2.toShort()).putShort(16.toShort()).put("data".toByteArray()).putInt(samples * 2)
+        return java.io.File(instrumentation.targetContext.cacheDir, "sound-${UUID.randomUUID()}.wav").apply { writeBytes(bytes.array()) }
+    }
+
+    private fun sound(service: CraftNativeSounds): Any =
+        (CraftNativeSounds::class.java.getDeclaredField("sounds").apply { isAccessible = true }.get(service) as Map<*, *>)["tone"]!!
+
+    private fun field(sound: Any, name: String): Any? =
+        sound.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(sound)
+
+    private fun focus(service: CraftNativeSounds, change: Int) {
+        CraftNativeSounds::class.java.getDeclaredMethod("onAudioFocusChange", Int::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(service, change)
+    }
+
+    @Test
+    fun replacingAPreparingSoundSettlesItAndItsOldCancellationCannotStopTheReplacement() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var service: CraftNativeSounds
+                val ready = CountDownLatch(1)
+                var replacement: CraftNativeCapabilityResult? = null
+                var cancelled = 0
+                try {
+                    scenario.onActivity { activity ->
+                        service = CraftNativeSounds(activity)
+                        service.play("tone", file.toURI().toString(), JSONObject()) {
+                            assertEquals("CANCELLED", it.code)
+                            cancelled++
+                        }
+                        val oldCancel = service.cancellation("tone")
+                        service.play("tone", file.toURI().toString(), JSONObject().put("loop", true)) {
+                            replacement = it
+                            ready.countDown()
+                        }
+                        assertEquals(1, cancelled)
+                        oldCancel()
+                    }
+                    assertTrue("replacement did not prepare", ready.await(10, TimeUnit.SECONDS))
+                    assertNull(replacement?.message, replacement?.code)
+                    scenario.onActivity {
+                        assertTrue((field(sound(service), "player") as MediaPlayer).isPlaying)
+                        assertEquals(1, cancelled)
+                    }
+                } finally { scenario.onActivity { service.close() } }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun explicitPauseSurvivesFocusGainAndVolumeChangesStayCurrent() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var service: CraftNativeSounds
+                val ready = CountDownLatch(1)
+                var result: CraftNativeCapabilityResult? = null
+                try {
+                    scenario.onActivity { activity ->
+                        service = CraftNativeSounds(activity)
+                        service.play("tone", file.toURI().toString(), JSONObject().put("loop", true).put("volume", 0.8).put("fadeIn", 1000)) {
+                            result = it
+                            ready.countDown()
+                        }
+                        assertEquals(0f, field(sound(service), "volume"))
+                    }
+                    assertTrue("sound did not prepare", ready.await(10, TimeUnit.SECONDS))
+                    assertNull(result?.message, result?.code)
+                    scenario.onActivity {
+                        assertTrue(service.setVolume("tone", 0.25, 0.0))
+                        assertEquals(0.25f, field(sound(service), "volume"))
+                        focus(service, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+                        focus(service, AudioManager.AUDIOFOCUS_GAIN)
+                        assertEquals(0.25f, field(sound(service), "volume"))
+                        focus(service, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+                        assertTrue(service.pause("tone"))
+                        focus(service, AudioManager.AUDIOFOCUS_GAIN)
+                        assertFalse((field(sound(service), "player") as MediaPlayer).isPlaying)
+                        assertTrue(service.resume("tone"))
+                        assertTrue((field(sound(service), "player") as MediaPlayer).isPlaying)
+                    }
+                } finally { scenario.onActivity { service.close() } }
+            }
+        } finally { file.delete() }
+    }
 
     @Test
     fun rejectedSnapshotReplacementPreservesDiskCacheAndTheOtherIsolates() {

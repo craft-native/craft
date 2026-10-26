@@ -26,7 +26,9 @@ internal class CraftNativeSounds(private val context: Context) {
         var volume: Float,
         var paused: Boolean = false,
         var interrupted: Boolean = false,
+        var prepared: Boolean = false,
         var fade: Runnable? = null,
+        var pending: ((CraftNativeCapabilityResult) -> Unit)? = null,
     )
 
     private val main = Handler(Looper.getMainLooper())
@@ -58,24 +60,23 @@ internal class CraftNativeSounds(private val context: Context) {
         val fadeIn = options.optDouble("fadeIn", 0.0)
         if (!fadeIn.isFinite() || fadeIn < 0) return done(failure("INVALID_ARGUMENT", "audio.play fadeIn must be a non-negative finite number"))
         val player = MediaPlayer()
-        val sound = Sound(player, volume)
+        val sound = Sound(player, if (fadeIn > 0) 0f else volume, pending = done)
         sounds[id] = sound
-        var settled = false
         fun settle(result: CraftNativeCapabilityResult) {
-            if (settled) return
-            settled = true
-            done(result)
+            val answer = sound.pending ?: return
+            sound.pending = null
+            answer(result)
         }
         fun failed(message: String) {
             if (sounds[id] !== sound) return
-            remove(id)
             settle(failure("AUDIO_ERROR", message))
+            remove(id)
             emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", message))
         }
 
         if (audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
-            remove(id)
             settle(failure("AUDIO_FOCUS_DENIED", "Audio focus was denied by the operating system"))
+            remove(id)
             emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", "Audio focus was denied by the operating system"))
             return
         }
@@ -89,9 +90,13 @@ internal class CraftNativeSounds(private val context: Context) {
             player.setVolume(if (fadeIn > 0) 0f else volume, if (fadeIn > 0) 0f else volume)
             player.setOnPreparedListener {
                 if (sounds[id] !== sound) return@setOnPreparedListener
+                sound.prepared = true
+                if (!sound.paused && !sound.interrupted) player.start()
                 settle(CraftNativeCapabilityResult(data = true))
-                player.start()
-                if (fadeIn > 0) ramp(sound, volume, fadeIn / 1000.0)
+                if (fadeIn > 0) {
+                    if (!sound.paused) ramp(sound, volume, fadeIn / 1000.0)
+                    else { sound.volume = volume; player.setVolume(volume, volume) }
+                }
             }
             player.setOnCompletionListener {
                 if (sounds[id] !== sound) return@setOnCompletionListener
@@ -106,11 +111,17 @@ internal class CraftNativeSounds(private val context: Context) {
             player.prepareAsync()
         }.onFailure { error ->
             if (sounds[id] === sound) {
-                remove(id)
                 settle(failure("AUDIO_ERROR", error.message ?: "The sound could not be loaded"))
+                remove(id)
                 emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", error.message ?: "The sound could not be loaded"))
             }
         }
+    }
+
+    /** Cancellation belongs to this playback, not a later reuse of its id. */
+    fun cancellation(id: String): () -> Unit {
+        val sound = sounds[id]
+        return { if (sound != null && sounds[id] === sound) remove(id) }
     }
 
     fun pause(id: String): Boolean {
@@ -119,12 +130,13 @@ internal class CraftNativeSounds(private val context: Context) {
         sound.fade = null
         runCatching { if (sound.player.isPlaying) sound.player.pause() }
         sound.paused = true
+        sound.interrupted = false
         return true
     }
 
     fun resume(id: String): Boolean {
         val sound = sounds[id] ?: return false
-        runCatching { sound.player.start() }.onFailure { return false }
+        if (sound.prepared) runCatching { sound.player.start() }.onFailure { return false }
         sound.paused = false
         sound.interrupted = false
         return true
@@ -137,7 +149,10 @@ internal class CraftNativeSounds(private val context: Context) {
         sound.fade?.let(main::removeCallbacks)
         sound.fade = null
         if (fade > 0 && !sound.paused) ramp(sound, target, fade / 1000.0)
-        else sound.player.setVolume(target, target)
+        else {
+            sound.volume = target
+            sound.player.setVolume(target, target)
+        }
         return true
     }
 
@@ -181,6 +196,9 @@ internal class CraftNativeSounds(private val context: Context) {
         }
         sound.player.release()
         if (sounds.isEmpty()) audioManager.abandonAudioFocusRequest(focusRequest)
+        val answer = sound.pending
+        sound.pending = null
+        answer?.invoke(failure("CANCELLED", "Audio playback was stopped or replaced"))
     }
 
     private fun onAudioFocusChange(change: Int) {
@@ -194,18 +212,18 @@ internal class CraftNativeSounds(private val context: Context) {
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> sounds.values.toList().forEach { sound ->
-                if (!sound.paused && runCatching { sound.player.isPlaying }.getOrDefault(false)) {
+                if (!sound.paused) {
                     sound.interrupted = true
-                    runCatching { sound.player.pause() }
+                    if (sound.prepared) runCatching { sound.player.pause() }
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> sounds.values.toList().forEach { sound ->
                 runCatching { sound.player.setVolume(sound.volume * 0.2f, sound.volume * 0.2f) }
             }
             AudioManager.AUDIOFOCUS_GAIN -> sounds.values.toList().forEach { sound ->
-                if (sound.interrupted) {
+                if (sound.interrupted && !sound.paused) {
                     sound.interrupted = false
-                    runCatching { sound.player.start() }
+                    if (sound.prepared) runCatching { sound.player.start() }
                 } else {
                     runCatching { sound.player.setVolume(sound.volume, sound.volume) }
                 }

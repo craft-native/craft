@@ -7663,10 +7663,10 @@ class MainActivity : AppCompatActivity() {
         } else if (module == "Audio") {
             { completion ->
                 val id = args.optString(0)
-                if (method == "play" && id.isNotBlank()) {
-                    screen.soundRequestCancellers[token] = { screen.sounds.stop(id, 0.0) }
-                }
                 performAudio(screen, method, args, completion)
+                if (method == "play" && id.isNotBlank() && screen.pendingCapabilities.contains(token)) {
+                    screen.soundRequestCancellers[token] = screen.sounds.cancellation(id)
+                }
             }
         } else if (services.handles(module)) {
             { completion -> services.perform(module, method, args, completion) }
