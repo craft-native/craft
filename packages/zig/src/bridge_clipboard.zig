@@ -16,6 +16,21 @@ fn historySourceIsProtected(source: []const u8) bool {
     return false;
 }
 
+fn declaredHistorySource(source: []const u8) []const u8 {
+    if (source.len == 0 or source.len > 256) return "";
+    for (source) |char| {
+        if (!std.ascii.isAlphanumeric(char) and char != '.' and char != '-') return "";
+    }
+    return source;
+}
+
+test "clipboard source labels require declared bundle identifiers" {
+    try std.testing.expectEqualStrings("com.apple.TextEdit", declaredHistorySource("com.apple.TextEdit"));
+    try std.testing.expectEqualStrings("", declaredHistorySource(""));
+    try std.testing.expectEqualStrings("", declaredHistorySource("not an app\nprivate text"));
+    try std.testing.expectEqualStrings("", declaredHistorySource("/Applications/TextEdit.app"));
+}
+
 test "clipboard history excludes known credential applications" {
     try std.testing.expect(historySourceIsProtected("com.apple.Passwords"));
     try std.testing.expect(historySourceIsProtected("COM.BITWARDEN.DESKTOP"));
@@ -296,12 +311,28 @@ pub const ClipboardBridge = struct {
         const source_app = macos.msgSend0(workspace, "frontmostApplication");
         const source_string = macos.msgSend0(source_app, "bundleIdentifier");
         const source_ptr = macos.msgSend0(source_string, "UTF8String");
-        const source = if (source_ptr != null) std.mem.span(@as([*:0]const u8, @ptrCast(source_ptr))) else "";
-        var blocked = historySourceIsProtected(source);
+        const foreground = if (source_ptr != null) std.mem.span(@as([*:0]const u8, @ptrCast(source_ptr))) else "";
+        var blocked = historySourceIsProtected(foreground);
         const types = macos.msgSend0(pasteboard, "types");
         for (protected_history_types) |format| {
             const ns_format = macos.msgSend1(macos.getClass("NSString"), "stringWithUTF8String:", format.ptr);
             if (macos.msgSendBool1Id(types, "containsObject:", ns_format)) blocked = true;
+        }
+        // The foreground app at polling time is only an extra exclusion check,
+        // never evidence of clipboard ownership. Honor the declared source
+        // convention and leave unmarked sources unknown rather than mislabeling.
+        var source: []const u8 = "";
+        if (!blocked and parsed.value.since >= 0 and parsed.value.since != count) {
+            const source_type = macos.msgSend1(macos.getClass("NSString"), "stringWithUTF8String:", @as([*:0]const u8, "org.nspasteboard.source"));
+            if (macos.msgSendBool1Id(types, "containsObject:", source_type)) {
+                const value = macos.msgSend1(pasteboard, "stringForType:", source_type);
+                const size = macos.msgSend1(value, "lengthOfBytesUsingEncoding:", @as(c_ulong, 4));
+                if (@intFromPtr(size) <= 256) {
+                    const ptr = macos.msgSend0(value, "UTF8String");
+                    if (ptr != null) source = declaredHistorySource(std.mem.span(@as([*:0]const u8, @ptrCast(ptr))));
+                }
+            }
+            blocked = historySourceIsProtected(source);
         }
         var text: ?[]const u8 = null;
         if (!blocked and parsed.value.since >= 0 and parsed.value.since != count) {
