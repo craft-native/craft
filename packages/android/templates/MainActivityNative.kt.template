@@ -740,6 +740,112 @@ private class CraftNativeSvgView(context: Context) : View(context) {
     private data class Quadruple<T1, T2, T3, T4>(val first: T1, val second: T2, val third: T3, val fourth: T4)
 }
 
+/** One photo contract and loader shared by the Google and MapLibre hosts. */
+internal data class CraftMarkerPhoto(val address: String, val size: Float, val circle: Boolean) {
+    companion object {
+        fun from(props: JSONObject): CraftMarkerPhoto? {
+            val address = props.opt("image") as? String ?: return null
+            val uri = Uri.parse(address)
+            if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.userInfo != null) return null
+            val size = (props.opt("imageSize") as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: 30.0
+            return CraftMarkerPhoto(address, size.coerceIn(16.0, 96.0).toFloat(), props.optString("imageShape") != "square")
+        }
+    }
+}
+
+internal class CraftMarkerPhotos(private val context: Context, private val changed: () -> Unit) {
+    private class Entry(val spec: CraftMarkerPhoto) {
+        var job: Future<*>? = null
+        var bitmap: Bitmap? = null
+    }
+    private val entries = mutableMapOf<String, Entry>()
+    private val executor = Executors.newFixedThreadPool(2)
+    private val main = Handler(Looper.getMainLooper())
+
+    fun bitmap(id: String, spec: CraftMarkerPhoto? = null): Bitmap? = entries[id]?.takeIf { spec == null || it.spec == spec }?.bitmap
+
+    fun reconcile(wanted: Map<String, CraftMarkerPhoto>) {
+        entries.keys.filter { entries[it]?.spec != wanted[it] }.forEach { entries.remove(it)?.job?.cancel(true) }
+        wanted.forEach { (id, spec) ->
+            if (entries.containsKey(id)) return@forEach
+            val entry = Entry(spec)
+            entries[id] = entry
+            entry.job = executor.submit {
+                val bitmap = runCatching { load(spec) }.getOrNull()
+                main.post {
+                    if (entries[id] !== entry) return@post
+                    entry.bitmap = bitmap
+                    entry.job = null
+                    if (bitmap != null) changed()
+                }
+            }
+        }
+    }
+
+    private fun load(spec: CraftMarkerPhoto): Bitmap? {
+        val kept = CraftNativeMedia.local(context, spec.address)
+        val bytes = if (kept != null) kept.inputStream().use(::readBounded) else download(spec.address)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val size = (spec.size * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= size && bounds.outHeight / (sample * 2) >= size) sample *= 2
+        val source = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+        try {
+            val result = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val scale = maxOf(size.toFloat() / source.width, size.toFloat() / source.height)
+            val matrix = Matrix().apply {
+                setScale(scale, scale)
+                postTranslate((size - source.width * scale) / 2, (size - source.height * scale) / 2)
+            }
+            val shader = android.graphics.BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(matrix) }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { this.shader = shader }
+            val canvas = Canvas(result)
+            if (spec.circle) canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            else canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+            return result
+        } finally { source.recycle() }
+    }
+
+    private fun readBounded(input: java.io.InputStream): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val count = input.read(buffer)
+            if (count < 0) return output.toByteArray()
+            require(output.size() + count <= 8 * 1024 * 1024) { "Marker image exceeds 8 MiB" }
+            output.write(buffer, 0, count)
+        }
+    }
+
+    private fun download(address: String): ByteArray {
+        var url = URL(address)
+        repeat(6) {
+            require(url.protocol.equals("https", true) && url.userInfo == null)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000; readTimeout = 10_000
+                instanceFollowRedirects = false; useCaches = false
+            }
+            try {
+                when (connection.responseCode) {
+                    200 -> return connection.inputStream.use(::readBounded)
+                    301, 302, 303, 307, 308 -> url = URL(url, requireNotNull(connection.getHeaderField("Location")))
+                    else -> error("Marker image request failed")
+                }
+            } finally { connection.disconnect() }
+        }
+        error("Too many marker image redirects")
+    }
+
+    fun destroy() {
+        entries.values.forEach { it.job?.cancel(true) }
+        entries.clear()
+        executor.shutdownNow()
+    }
+}
+
 {{NATIVE_MAP_HOST}}
 
 /** A finite celebration owned by a View, never by the JavaScript frame loop. */

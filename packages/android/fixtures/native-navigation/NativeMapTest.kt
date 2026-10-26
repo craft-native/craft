@@ -30,6 +30,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.Point
+import kotlin.math.roundToInt
 
 /** The actual generated host and GL renderer, installed on an Android device. */
 @RunWith(AndroidJUnit4::class)
@@ -129,6 +130,64 @@ class NativeMapTest {
         } finally {
             main { if (hostCreated) { host.destroy(); host.destroy() }; activity.finish() }
         }
+    }
+
+    @Test
+    fun markerPhotosCropClampAndKeepTapIdentityAcrossMutations() = withMap { activity, host, _, map, _ ->
+        val address = "https://marker-photo.invalid/${java.util.UUID.randomUUID()}.png"
+        val file = CraftNativeMedia.file(activity, address)
+        file.parentFile!!.mkdirs()
+        val source = Bitmap.createBitmap(80, 40, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        file.outputStream().use { assertTrue(source.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        source.recycle()
+        val pressed = AtomicReference<String?>()
+        val key = "craft-map-photo-${CraftNativeMedia.digest("start")}"
+        fun update(url: String, size: Int, shape: String) = main {
+            val children = overlays()
+            children.getJSONObject(1).getJSONObject("props").put("image", url).put("imageSize", size).put("imageShape", shape)
+            children.getJSONObject(1).put("events", JSONObject().put("onPress", "runner-tap"))
+            host.configure(props(), children) { pressed.set(it) }
+        }
+        try {
+            update(address, 30, "circle")
+            awaitState("Marker photo never reached the native renderer") {
+                map.queryRenderedFeatures(map.projection.toScreenLocation(LatLng(47.0, 11.0)), "craft-map-photos")
+                    .any { it.getStringProperty("craftMarkerId") == "start" }
+            }
+            main {
+                val image = requireNotNull(map.style?.getImage(key))
+                assertEquals((30 * host.resources.displayMetrics.density).roundToInt(), image.width)
+                assertEquals(0, Color.alpha(image.getPixel(0, 0)))
+                assertEquals(Color.RED, image.getPixel(image.width / 2, image.height / 2))
+                assertEquals("runner-tap", host.markerHandler("start"))
+            }
+            val point = main {
+                val screen = map.projection.toScreenLocation(LatLng(47.0, 11.0))
+                val origin = IntArray(2).also { host.getLocationOnScreen(it) }
+                (screen.x + origin[0]) to (screen.y + origin[1])
+            }
+            val now = SystemClock.uptimeMillis()
+            for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                val event = android.view.MotionEvent.obtain(now, now + action * 50L, action, point.first, point.second, 0)
+                try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+            }
+            awaitState("Photo tap lost the marker ID") { pressed.get() == "start" }
+            update(address, 500, "square")
+            awaitState("Photo size mutation did not reach the existing style") {
+                map.style?.getImage(key)?.width == (96 * host.resources.displayMetrics.density).roundToInt()
+            }
+            main { assertEquals(255, Color.alpha(requireNotNull(map.style?.getImage(key)).getPixel(0, 0))) }
+            evidence("marker-photo-square")
+            update("http://marker-photo.invalid/avatar.png", 30, "circle")
+            awaitState("Invalid photo URL did not restore the pin") {
+                features(map).first { it.getStringProperty("craftOverlayId") == "start" }.getStringProperty("kind") == "marker" &&
+                    map.style?.getImage(key) == null
+            }
+            update(address, 40, "circle")
+            update("file:///private/avatar.png", 30, "circle")
+            SystemClock.sleep(200)
+            main { assertNull("Late photo replaced fallback", map.style?.getImage(key)) }
+        } finally { file.delete() }
     }
 
     @Test

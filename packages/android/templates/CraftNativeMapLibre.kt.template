@@ -26,6 +26,8 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
     private var userChangingCamera = false
     private var geometryPoints = emptyList<LatLng>()
     private val markerHandlers = mutableMapOf<String, String>()
+    private val markerPhotos = CraftMarkerPhotos(context) { if (!destroyed) readyStyle?.let(::updateOverlays) }
+    private val installedPhotos = mutableMapOf<String, Bitmap>()
     private var onMarkerTap: ((String) -> Unit)? = null
     var onMapPress: ((LatLng) -> Unit)? = null
     var onRegionChangeComplete: ((JSONObject) -> Unit)? = null
@@ -83,7 +85,7 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
         nativeMap.addOnMapClickListener { point ->
             val screen = nativeMap.projection.toScreenLocation(point)
             val radius = 18 * resources.displayMetrics.density
-            val hit = nativeMap.queryRenderedFeatures(android.graphics.RectF(screen.x - radius, screen.y - radius, screen.x + radius, screen.y + radius), "craft-map-markers", "craft-map-directions").firstOrNull()
+            val hit = nativeMap.queryRenderedFeatures(android.graphics.RectF(screen.x - radius, screen.y - radius, screen.x + radius, screen.y + radius), "craft-map-markers", "craft-map-directions", "craft-map-photos").firstOrNull()
             val id = hit?.takeIf { it.hasProperty("craftMarkerId") }?.getStringProperty("craftMarkerId")
             if (id != null) onMarkerTap?.invoke(id) else onMapPress?.invoke(point)
             true
@@ -247,6 +249,7 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
         .put("type", "raster").put("tiles", JSONArray().put(url)).put("tileSize", 256).put("maxzoom", 19).put("attribution", credit)
 
     private fun installOverlays(style: Style) {
+        installedPhotos.clear()
         style.addSource(GeoJsonSource("craft-map-overlays"))
         style.addImage("craft-map-direction", directionBitmap())
         style.addLayer(LineLayer("craft-map-routes", "craft-map-overlays")
@@ -264,11 +267,29 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
         style.addLayer(SymbolLayer("craft-map-directions", "craft-map-overlays")
             .withFilter(Expression.eq(Expression.get("kind"), "direction"))
             .withProperties(iconImage("craft-map-direction"), iconRotate(Expression.get("bearing")), iconRotationAlignment("map"), iconAllowOverlap(true), iconIgnorePlacement(true), iconAnchor("center")))
+        style.addLayer(SymbolLayer("craft-map-photos", "craft-map-overlays")
+            .withFilter(Expression.eq(Expression.get("kind"), "photo"))
+            .withProperties(iconImage(Expression.get("photoIcon")), iconAllowOverlap(true), iconIgnorePlacement(true), iconAnchor("center")))
     }
 
     private fun updateOverlays(style: Style) {
         val features = JSONArray()
         val pointsForFit = mutableListOf<LatLng>()
+        val wantedPhotos = mutableMapOf<String, CraftMarkerPhoto>()
+        val usedImages = mutableSetOf<String>()
+        fun photo(id: String, props: JSONObject, properties: JSONObject) {
+            wantedPhotos.remove(id)
+            val spec = CraftMarkerPhoto.from(props) ?: return
+            wantedPhotos[id] = spec
+            val bitmap = markerPhotos.bitmap(id, spec) ?: return
+            val key = "craft-map-photo-${CraftNativeMedia.digest(id)}"
+            usedImages.add(key)
+            if (installedPhotos[key] !== bitmap) {
+                style.addImage(key, bitmap)
+                installedPhotos[key] = bitmap
+            }
+            properties.put("kind", "photo").put("photoIcon", key)
+        }
         markerHandlers.clear()
         val dataMarkers = pendingProps.optJSONArray("markers")
         for (index in 0 until (dataMarkers?.length() ?: 0)) {
@@ -282,6 +303,7 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
                 .put("craftMarkerId", id)
                 .put("bearing", (bearing ?: 0.0) % 360)
                 .put("color", cssColor(overlay.opt("pinColor"), Color.rgb(36, 114, 75)))
+            photo(id, overlay, properties)
             val geometry = JSONObject().put("type", "Point").put("coordinates", JSONArray().put(point.longitude).put(point.latitude))
             features.put(JSONObject().put("type", "Feature").put("properties", properties).put("geometry", geometry))
             pointsForFit.add(point)
@@ -320,6 +342,7 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
                 val bearing = finiteNumber(props.opt("bearing"))
                 properties.put("kind", if (bearing == null) "marker" else "direction").put("craftMarkerId", id)
                 properties.put("bearing", (bearing ?: 0.0) % 360).put("color", cssColor(props.opt("pinColor"), Color.rgb(36, 114, 75)))
+                photo(id, props, properties)
                 geometry.put("type", "Point").put("coordinates", JSONArray().put(point.longitude).put(point.latitude))
                 listOf(events.opt("onPress"), events.opt("onMarkerPress")).firstNotNullOfOrNull(::craftNativeOptionalString)?.let { markerHandlers[id] = it }
                 pointsForFit.add(point)
@@ -348,7 +371,9 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
             features.put(JSONObject().put("type", "Feature").put("properties", properties).put("geometry", geometry))
         }
         geometryPoints = pointsForFit
+        markerPhotos.reconcile(wantedPhotos)
         style.getSourceAs<GeoJsonSource>("craft-map-overlays")?.setGeoJson(JSONObject().put("type", "FeatureCollection").put("features", features).toString())
+        installedPhotos.keys.filter { it !in usedImages }.forEach { style.removeImage(it); installedPhotos.remove(it) }
     }
 
     private fun cssColor(value: Any?, fallback: Int): String {
@@ -521,6 +546,8 @@ internal class CraftNativeMapView(context: Context) : FrameLayout(context), OnMa
     fun destroy() {
         if (destroyed) return
         destroyed = true
+        markerPhotos.destroy()
+        installedPhotos.clear()
         styleVersion++
         onMarkerTap = null; onMapPress = null; onRegionChangeComplete = null
         markerHandlers.clear(); geometryPoints = emptyList()
