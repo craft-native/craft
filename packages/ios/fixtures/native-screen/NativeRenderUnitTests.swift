@@ -3661,6 +3661,36 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(toggle.layer.animationKeys() ?? [], [], "the reconciliation must not add a second switch animation")
     }
 
+    func testSwitchColorMutationsRetainControlAndRestoreSystemAppearance() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([[
+            "id": "switch", "type": "Switch", "props": ["key": "switch", "value": false],
+        ]]))
+        let toggle = try XCTUnwrap(find(UISwitch.self, key: "switch", below: controller.view))
+        _ = try controller.applyMutation(batch(1, [[
+            "op": "updateNode", "id": "switch", "patch": ["props": [
+                "value": true, "trackColor": ["true": "#ff0000", "false": "#0000ff"],
+                "thumbColor": "#ffff00", "ios_backgroundColor": "#00ff00",
+            ]],
+        ]]))
+        XCTAssertTrue(toggle === find(UISwitch.self, key: "switch", below: controller.view))
+        XCTAssertTrue(toggle.isOn)
+        XCTAssertEqual(toggle.onTintColor, UIColor.red)
+        XCTAssertEqual(toggle.tintColor, UIColor.green, "the explicit iOS track fill takes precedence")
+        XCTAssertEqual(toggle.thumbTintColor, UIColor.yellow)
+
+        _ = try controller.applyMutation(batch(2, [[
+            "op": "updateNode", "id": "switch", "patch": ["props": [
+                "value": false, "trackColor": NSNull(), "thumbColor": NSNull(), "ios_backgroundColor": NSNull(),
+            ]],
+        ]]))
+        XCTAssertTrue(toggle === find(UISwitch.self, key: "switch", below: controller.view))
+        XCTAssertFalse(toggle.isOn)
+        XCTAssertNil(toggle.onTintColor)
+        XCTAssertNil(toggle.thumbTintColor)
+    }
+
     func testSwitchReceivesNativeTouchesWhenMountedInAFlowView() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()

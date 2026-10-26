@@ -1,6 +1,22 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    /// Record this alongside testSwitchTapChangesUIKitStateAndDeliversValueChange
+    /// when investigating animation artifacts. A final value assertion alone
+    /// cannot prove the thumb was visible in every intermediate frame.
+    func testUnmodifiedUIKitSwitchRespondsToTheSameTap() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reference-switch"]
+        app.launch()
+        let toggle = app.switches["reference-switch"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertEqual(toggle.value as? String, "0")
+        toggle.tap()
+        waitForValue(toggle, "1")
+        toggle.tap()
+        waitForValue(toggle, "0")
+    }
+
     private func keyboardIsVisible(_ app: XCUIApplication) -> Bool {
         app.keyboards.firstMatch.waitForExistence(timeout: 5)
     }
@@ -111,6 +127,11 @@ final class NativeRenderUITests: XCTestCase {
                 context.add(hierarchy)
             }
         }
+        // A controlled echo must leave the same control able to toggle back;
+        // verify both directions rather than just the first settled frame.
+        toggle.tap()
+        waitForValue(toggle, "0")
+        waitForLabel(app.staticTexts["switch-result"], "Switch off")
     }
 
     func testSwitchInsideScrollViewTakesOneTap() throws {

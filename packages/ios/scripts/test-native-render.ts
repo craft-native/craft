@@ -42,6 +42,17 @@ try {
 
   mkdirSync(join(output, 'UnitTests'))
   mkdirSync(join(output, 'UITests'))
+  // A plain UIKit comparison is installed only in this generated test app,
+  // never in the shipped template or an application's public bridge.
+  copyFileSync(join(fixture, 'SwitchReference.swift'), join(output, 'Sources', 'SwitchReference.swift'))
+  const appSourcePath = join(output, 'Sources', 'NativeRenderApp.swift')
+  const appSource = readFileSync(appSourcePath, 'utf8')
+  const sceneAnchor = 'WindowGroup {\n            Group {\n'
+  if (!appSource.includes(sceneAnchor)) throw new Error('Native renderer test app scene anchor changed')
+  writeFileSync(appSourcePath, appSource.replace(sceneAnchor, `${sceneAnchor}                if ProcessInfo.processInfo.arguments.contains("--reference-switch") {
+                    SwitchReference()
+                } else
+`))
   copyFileSync(join(fixture, 'NativeRenderUnitTests.swift'), join(output, 'UnitTests', 'NativeRenderUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeLayoutUnitTests.swift'), join(output, 'UnitTests', 'NativeLayoutUnitTests.swift'))
   copyFileSync(join(fixture, 'NativeAudioUnitTests.swift'), join(output, 'UnitTests', 'NativeAudioUnitTests.swift'))
