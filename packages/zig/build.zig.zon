@@ -1,7 +1,7 @@
 .{
     .fingerprint = 0xf45c4a848bf58c1c,
     .name = .craft,
-    .version = "0.0.358",
+    .version = "0.0.359",
     .minimum_zig_version = "0.18.0-dev.146+35accc06e",
     .dependencies = .{
         // Portable first-party source, qualified by zig-js CI and native

@@ -1,5 +1,57 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.358...v0.0.359)
+
+## 🚀 Features
+
+- **vulkan**: add Android native-window surface adapter ([2e71b04](https://github.com/craft-native/craft/commit/2e71b04)) _(by glennmichael123)_
+- **android**: share marker photos across native map providers ([d5ac78f](https://github.com/craft-native/craft/commit/d5ac78f)) _(by glennmichael123)_
+- **ios**: render custom map marker photos ([aa11b43](https://github.com/craft-native/craft/commit/aa11b43)) _(by glennmichael123)_
+- **android**: handle native audio focus ([677444c](https://github.com/craft-native/craft/commit/677444c)) _(by glennmichael123)_
+- **android**: support native document imports ([6783c11](https://github.com/craft-native/craft/commit/6783c11)) _(by glennmichael123)_
+- **android**: add native screen audio playback ([acbe714](https://github.com/craft-native/craft/commit/acbe714)) _(by glennmichael123)_
+- **js**: add persistent typed host handles ([398d9b8](https://github.com/craft-native/craft/commit/398d9b8)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: break snapshot host callback retain cycles ([67f221d](https://github.com/craft-native/craft/commit/67f221d)) _(by glennmichael123)_
+- **ios**: keep interrupted audio explicitly resumable ([7b77ee0](https://github.com/craft-native/craft/commit/7b77ee0)) _(by glennmichael123)_
+- **android**: scope audio cancellation and preserve playback state ([6499cbf](https://github.com/craft-native/craft/commit/6499cbf)) _(by glennmichael123)_
+- **native**: accept STX marker photo prop spellings ([59e705f](https://github.com/craft-native/craft/commit/59e705f)) _(by glennmichael123)_
+- **android**: load kept images before network requests ([1e866bb](https://github.com/craft-native/craft/commit/1e866bb)) _(by glennmichael123)_
+- **ios**: display private images from kept media ([22afd64](https://github.com/craft-native/craft/commit/22afd64)) _(by glennmichael123)_
+- **ios**: reject checkpoints after screen deallocation ([85f2189](https://github.com/craft-native/craft/commit/85f2189)) _(by glennmichael123)_
+- **ios**: clean failed photo imports ([c880b08](https://github.com/craft-native/craft/commit/c880b08)) _(by glennmichael123)_
+- **ios**: reject checkpoint completions after disposal ([d56c95d](https://github.com/craft-native/craft/commit/d56c95d)) _(by glennmichael123)_
+- **android**: reject pending checkpoints on screen close ([86baf40](https://github.com/craft-native/craft/commit/86baf40)) _(by glennmichael123)_
+- **ios**: report missing native audio handles ([47715ec](https://github.com/craft-native/craft/commit/47715ec)) _(by glennmichael123)_
+- **android**: clean up cancelled media imports ([8d164c6](https://github.com/craft-native/craft/commit/8d164c6)) _(by glennmichael123)_
+- **ios**: restore nested press gesture delegation ([d7f56af](https://github.com/craft-native/craft/commit/d7f56af)) _(by glennmichael123)_
+- **ios**: resume native audio after interruption ([f47f796](https://github.com/craft-native/craft/commit/f47f796)) _(by glennmichael123)_
+- **android**: validate native checkpoints ([266540d](https://github.com/craft-native/craft/commit/266540d)) _(by glennmichael123)_
+- **ios**: close native interaction capability gaps ([17e09f4](https://github.com/craft-native/craft/commit/17e09f4)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **android**: isolate kept image document from home updates ([7151c36](https://github.com/craft-native/craft/commit/7151c36)) _(by glennmichael123)_
+- **ios**: compare controlled switch taps with unmodified UIKit ([198add5](https://github.com/craft-native/craft/commit/198add5)) _(by glennmichael123)_
+- **android**: exercise kept image source mutations on mounted views ([2107ffe](https://github.com/craft-native/craft/commit/2107ffe)) _(by glennmichael123)_
+- **native**: the writeImage contract matches the signature it now has ([795137d](https://github.com/craft-native/craft/commit/795137d)) _(by glennmichael123)_
+- **native**: pin frame clock host contracts ([9409e61](https://github.com/craft-native/craft/commit/9409e61)) _(by glennmichael123)_
+
+## 📄 Miscellaneous
+
+- Merge pull request #415 from craft-native/codex/issues-388-400-344 ([f28fc0b](https://github.com/craft-native/craft/commit/f28fc0b)) _(by Glenn Michael Torregosa)_ ([#415](https://github.com/craft-native/craft/issues/415), [#401](https://github.com/craft-native/craft/issues/401))
+- Merge remote-tracking branch 'origin/main' into codex/issues-388-400-344 ([7a7075d](https://github.com/craft-native/craft/commit/7a7075d)) _(by glennmichael123)_
+- Merge remote-tracking branch 'origin/main' into codex/issues-388-400-344 ([b1f3247](https://github.com/craft-native/craft/commit/b1f3247)) _(by glennmichael123)_
+- Merge remote-tracking branch 'origin/main' into codex/issues-388-400-344 ([f6929b7](https://github.com/craft-native/craft/commit/f6929b7)) _(by glennmichael123)_
+- Revert "feat(js): add persistent typed host handles" ([36b1777](https://github.com/craft-native/craft/commit/36b1777)) _(by glennmichael123)_
+
+## Contributors
+
+- _Glenn Michael Torregosa_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.357...v0.0.358)
 
 ## 🐛 Bug Fixes
