@@ -6662,7 +6662,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let snapshotGet: @convention(block) (String) -> String? = { name in
             CraftSnapshots.read(name)
         }
-        let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { name, value, done in
+        // JavaScriptCore retains these outer host blocks. A weak capture only
+        // on the nested completion still makes the host block retain self,
+        // forming controller -> JSContext -> host block -> controller.
+        let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { [weak self] name, value, done in
             CraftSnapshots.write(name, json: value.isNull || value.isUndefined ? nil : value.toString()) { [weak self] ok in
                 CraftNativeScriptThread.run {
                     // A writer can finish after UIKit has disposed this
@@ -6672,7 +6675,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 }
             }
         }
-        let snapshotClear: @convention(block) (JSValue, JSValue) -> Void = { keep, done in
+        let snapshotClear: @convention(block) (JSValue, JSValue) -> Void = { [weak self] keep, done in
             let names = (keep.isUndefined || keep.isNull ? [] : (keep.toArray() ?? [])).compactMap { $0 as? String }
             CraftSnapshots.clear(keeping: Set(names)) { [weak self] ok in
                 CraftNativeScriptThread.run {

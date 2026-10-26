@@ -1,5 +1,6 @@
 import UIKit
 import XCTest
+import JavaScriptCore
 @testable import NativeRender
 
 /// `nativeScriptThread: "background"`: a screen's JavaScript runs on a serial
@@ -165,6 +166,34 @@ final class ScriptThreadUnitTests: XCTestCase {
         // An interval cleared from inside itself never fires again.
         RunLoop.main.run(until: Date().addingTimeInterval(0.15))
         XCTAssertEqual(controller.evaluateScript("__fired")?.toInt32(), 3)
+    }
+
+    func testSnapshotHostFunctionsDoNotOwnTheirScreen() throws {
+        for background in [false, true] {
+            CraftNativeScriptThread.isBackground = background
+            weak var released: CraftNativeScreenController?
+            var write: JSValue?
+            var clear: JSValue?
+            autoreleasepool {
+                let controller = mounted()
+                until("the first render") { find(UILabel.self, key: "count", below: controller.view) != nil }
+                write = controller.evaluateScript("craftNativeSnapshotSet")
+                clear = controller.evaluateScript("craftNativeSnapshotClear")
+                XCTAssertEqual(write?.isObject, true)
+                XCTAssertEqual(clear?.isObject, true)
+                released = controller
+                window?.rootViewController = nil
+                window?.isHidden = true
+                window = nil
+            }
+            CraftNativeScriptThread.queue.sync {}
+            until("the snapshot host blocks to release their screen") { released == nil }
+            // Keep the exported functions (and their JSContext) alive across
+            // the assertion. Their owner must still be able to disappear.
+            withExtendedLifetime([write, clear]) {
+                XCTAssertNil(released, "host function ownership must not retain the screen in mode \(background)")
+            }
+        }
     }
 
     func testAScreenGoneOnTheMainThreadIsReleasedToo() throws {

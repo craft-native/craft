@@ -549,6 +549,8 @@ describe('Craft iOS builder', () => {
     expect(native).toContain('CraftNativeScriptThread.run { timers.pending.values.forEach { $0.cancel() } }')
     expect(native).toContain('pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }')
     expect(native).toContain('self?.runtimeDisposed != false ? false : ok')
+    expect(native).toContain('let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { [weak self] name, value, done in')
+    expect(native).toContain('let snapshotClear: @convention(block) (JSValue, JSValue) -> Void = { [weak self] keep, done in')
     expect(native).toContain('never as a successful write into a dead runtime')
     expect(native).toContain('lifecycleObservers.forEach(NotificationCenter.default.removeObserver)')
     expect(native).not.toContain('WKWebView')
