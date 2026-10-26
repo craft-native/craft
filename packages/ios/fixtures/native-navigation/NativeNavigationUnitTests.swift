@@ -172,6 +172,21 @@ final class NativeNavigationUnitTests: XCTestCase {
         CraftChrome.shared.updateTab(["id": "/", "badge": NSNull(), "title": "Home"])
     }
 
+    func testSystemTabAndNavigationBarsTrackAndReleaseTheSameScrollView() throws {
+        let home = try XCTUnwrap(stack("/")?.topViewController as? CraftNativeScreenController)
+        home.render(["id": "scroll-root", "type": "ScrollView", "children": [
+            ["type": "Text", "children": ["Scroll content"]],
+        ]])
+        let scroll = try XCTUnwrap(home.contentScrollView(for: .top))
+        XCTAssertTrue(home.contentScrollView(for: .bottom) === scroll)
+        try home.applyMutation([
+            "version": 1, "batchId": "remove-scroller", "baseRevision": 0, "revision": 1,
+            "operations": [["op": "removeNode", "id": "scroll-root"]],
+        ])
+        XCTAssertNil(home.contentScrollView(for: .top))
+        XCTAssertNil(home.contentScrollView(for: .bottom))
+    }
+
     func testSystemTabTapUsesCraftRoutingAndRetainsTheOtherStack() async throws {
         let home = try XCTUnwrap(stack("/"))
         let items = try XCTUnwrap(shell.viewControllers)

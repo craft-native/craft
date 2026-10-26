@@ -397,10 +397,51 @@ final class NativeNavigationUITests: XCTestCase {
             XCTAssertEqual(accessible[index].width, standard[index].width, accuracy: 1)
             XCTAssertGreaterThanOrEqual(accessible[index].width, 44)
             if index > 0 {
-                XCTAssertGreaterThanOrEqual(accessible[index].minX, accessible[index - 1].maxX - 1, "Neighboring tab slots must not overlap")
+                // UIKit expands accessibility hit bounds beyond each visual
+                // slot; their centers must remain ordered and on screen.
+                XCTAssertGreaterThan(accessible[index].midX, accessible[index - 1].midX)
             }
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(accessible[index]))
         }
         XCTAssertFalse(app.webViews.firstMatch.exists)
+    }
+
+    func testSystemTabBarMinimizesWithTheNativeScrollView() {
+        guard #available(iOS 26.0, *) else { return }
+        let app = XCUIApplication()
+        app.launch()
+        let bar = app.tabBars.firstMatch
+        XCTAssertTrue(bar.waitForExistence(timeout: 15), "the shell must expose a real system tab bar")
+        let scroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 10))
+        XCTAssertEqual(bar.buttons.count, 5)
+        let expandedHomeWidth = app.buttons["Home"].firstMatch.frame.width
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "System tab bar expanded"
+        before.lifetime = .keepAlways
+        add(before)
+        scroll.swipeUp()
+        // UIKit keeps the full-width container (and can retain hidden items
+        // in accessibility queries). Observe the actual hittable compact item.
+        let minimized = NSPredicate { _, _ in
+            app.buttons.matching(NSPredicate(format: "label == %@", "Home")).allElementsBoundByIndex.contains {
+                $0.isHittable && $0.frame.width < expandedHomeWidth - 15
+            }
+        }
+        print("Minimized tab hierarchy: \(app.debugDescription)")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: minimized, object: nil)], timeout: 10), .completed)
+        let compactHome = app.buttons["Home"].firstMatch
+        XCTAssertTrue(compactHome.waitForExistence(timeout: 5))
+        XCTAssertTrue(compactHome.isHittable)
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "System tab bar minimized"
+        after.lifetime = .keepAlways
+        add(after)
+        compactHome.tap()
+        let expanded = NSPredicate { _, _ in bar.buttons.count == 5 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expanded, object: nil)], timeout: 10), .completed)
+        bar.buttons["Details"].tap()
+        XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 10))
     }
 
     func testTabBarLargeContentViewerDuringAccessibilityHold() {

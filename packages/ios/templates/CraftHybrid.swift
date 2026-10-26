@@ -1109,6 +1109,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var stacks: [String: UINavigationController] = [:]
     private var currentTab = ""
     private var tabPlaceholders: [String: UIViewController] = [:]
+    private var systemTabItems: [String: UITabBarItem] = [:]
     private var chromeSubscription: AnyCancellable?
     private var chromeUpdatePending = false
     private var synchronizingTabs = false
@@ -1231,21 +1232,30 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 controller = UIViewController()
                 tabPlaceholders[id] = controller
             }
-            if let tab = chrome.tabs.first(where: { $0.id == id }) {
-                let item = controller.tabBarItem!
-                item.title = tab.displayTitle
-                item.image = systemTabImage(tab, selected: false)
-                item.selectedImage = systemTabImage(tab, selected: true)
-                item.badgeValue = tab.badge
-                item.accessibilityIdentifier = "craft-tab-\(tab.id)"
-                item.accessibilityLabel = tab.accessibilityLabel ?? tab.displayTitle
-            }
+            // An explicit retained item prevents UINavigationController from
+            // adopting a newly loaded root screen's default tab item later.
+            let item = systemTabItems[id] ?? UITabBarItem(title: nil, image: nil, tag: 0)
+            systemTabItems[id] = item
+            if controller.tabBarItem !== item { controller.tabBarItem = item }
             return controller
         }
         let existing = viewControllers ?? []
         if existing.count != controllers.count || zip(existing, controllers).contains(where: { $0 !== $1 }) {
             setViewControllers(controllers, animated: false)
             customizableViewControllers = []
+        }
+        // UIKit rebuilds item presentation when a lazy placeholder is replaced.
+        // Apply accessibility metadata after installing the retained stacks so
+        // the last prepared tab keeps the same identifier as every other tab.
+        for (id, controller) in zip(ids, controllers) {
+            guard let tab = chrome.tabs.first(where: { $0.id == id }) else { continue }
+            let item = controller.tabBarItem!
+            item.title = tab.displayTitle
+            item.image = systemTabImage(tab, selected: false)
+            item.selectedImage = systemTabImage(tab, selected: true)
+            item.badgeValue = tab.badge
+            item.accessibilityIdentifier = "craft-tab-\(tab.id)"
+            item.accessibilityLabel = tab.accessibilityLabel ?? tab.displayTitle
         }
         if let committed = stacks[currentTab], controllers.contains(where: { $0 === committed }), selectedViewController !== committed {
             UIView.performWithoutAnimation {
@@ -1340,6 +1350,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         accessoryButton.isHidden = model == nil
         accessoryButton.backgroundColor = config.resolvedBackgroundColor
         accessoryModel = model
+        for nav in stacks.values { nav.additionalSafeAreaInsets.bottom = safeAreaForTabBar() }
         view.setNeedsLayout()
     }
 
@@ -2222,8 +2233,13 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     }
 
     private func safeAreaForTabBar() -> CGFloat {
-        // UITabBarController supplies this inset to its selected child.
-        0
+        // UIKit supplies the bar (and on iOS 26, its accessory) inset. Only
+        // the older-system accessory above that bar needs an extra inset.
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) { return 0 }
+#endif
+        let chrome = CraftChrome.shared
+        return chrome.tabBarVisible && !chrome.tabs.isEmpty && chrome.tabAccessory != nil ? 44 : 0
     }
 
     override func viewSafeAreaInsetsDidChange() {

@@ -7438,7 +7438,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         scroll?.contentInsetAdjustmentBehavior = edgeToEdge ? .automatic : .never
         guard scroll !== trackedScrollView else { return }
         trackedScrollView = scroll
-        setContentScrollView(scroll, for: .top)
+        // The same primary vertical scroller drives the navigation bar and
+        // the system tab bar's scroll-edge/minimization behavior.
+        setContentScrollView(scroll, for: [.top, .bottom])
     }
 
     private func observeNativeEvents() {
@@ -8211,6 +8213,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func clearRenderedTree() {
         if let root = renderedRoot { detach(root, from: rootStack) }
         renderedRoot = nil
+        trackedScrollView = nil
+        setContentScrollView(nil, for: [.top, .bottom])
         rootIsSafeAreaView = false
         rootStack.setViewportChild(nil, fillsHeight: false)
         rootTopToSafeArea?.isActive = true
