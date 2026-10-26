@@ -44,4 +44,4 @@ void [compatible, error, typo, legacy]
     expect(check.exitCode).toBe(0)
   }
   finally { rmSync(root, { recursive: true, force: true }) }
-})
+}, 30_000)

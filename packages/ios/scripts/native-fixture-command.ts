@@ -1,10 +1,26 @@
 import { closeSync, openSync } from 'node:fs'
 
+/** Normal native fixture compilation phase; separate from test/capture admission. */
+export const nativeFixtureBuildTimeoutMs = 300_000
+
 export interface NativeFixtureCommandOptions {
   cwd: string
   timeoutMs: number
   logPath?: string
   signal?: AbortSignal
+}
+
+/** A later successful cleanup cannot erase an earlier missing disposal ACK. */
+export class NativeFixtureCommandScope {
+  private outstanding = 0
+  get allDisposed(): boolean { return this.outstanding === 0 }
+
+  async run(args: string[], options: NativeFixtureCommandOptions): ReturnType<typeof nativeFixtureCommand> {
+    this.outstanding++
+    const result = await nativeFixtureCommand(args, options)
+    this.outstanding--
+    return result
+  }
 }
 
 function groupExists(pid: number): boolean {

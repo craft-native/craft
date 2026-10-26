@@ -6,24 +6,20 @@ import { managedJavaHome } from './managed-java-home'
 import { softwareProvisioningCpus } from './software-provisioning-profile'
 
 if (process.platform !== 'linux' || process.arch !== 'x64')
-  throw new Error('The software emulator verification requires a Linux x86_64 host')
+  throw new Error('The emulator verification requires a Linux x86_64 host')
 const args = process.argv.slice(2)
 if (args.length > 1 || (args.length === 1 && args[0] !== '--cold-provisioning-diagnostic'))
   throw new Error('Only --cold-provisioning-diagnostic is supported')
 const diagnostic = args.length === 1
-// Stock Play's first boot performs OS/package provisioning under TCG. The
-// measured API 35 image took 943520 ms; this explicit software-only profile
-// leaves the public helper default and hardware acceptance at 600000 ms.
-const bootTimeoutMs = 1_200_000
-// Both retained 2 GB-profile failures show low-memory/process-death churn and
-// a SystemUI ANR. Give the unmodified stock image an explicit 4 GB guest;
-// readiness, software acceleration and the boot deadline stay intact.
+// Release acceptance uses the supported KVM backend and the public helper's
+// ten-minute hardware budget. Unsupported TCG measurements stay diagnostic.
+const acceleration = diagnostic ? 'software' : 'hardware'
+const bootTimeoutMs = diagnostic ? 1_200_000 : 600_000
+// Keep the same unmodified stock image and explicit 4 GB guest for acceptance
+// and diagnostics. Their backend-specific boot budgets are set above.
 const memoryMb = 4096
-// Keep two guest CPUs on the four-thread TCG runners: a retained four-CPU
-// stock-image run stalled in a SystemUI ANR, while the matching two-CPU
-// diagnostic reached readiness within the unchanged deadline. Receipts retain
-// the host model because runner variation also affects this bounded profile.
-// Diagnostic overrides never change release acceptance.
+// Diagnostic CPU overrides never change the acceptance profile. Receipts
+// retain the host model, actual guest resources and the selected backend.
 const virtualCpus = softwareProvisioningCpus(diagnostic, process.env.CRAFT_ANDROID_DIAGNOSTIC_VIRTUAL_CPUS)
 const expectedFingerprint = diagnostic ? process.env.CRAFT_ANDROID_DIAGNOSTIC_FINGERPRINT : undefined
 if (diagnostic && !expectedFingerprint)
@@ -39,14 +35,14 @@ function tool(name: string): string {
 const sdkmanager = tool('sdkmanager')
 const avdmanager = tool('avdmanager')
 const javaHome = managedJavaHome(managed)
-const artifacts = resolve(diagnostic ? 'artifacts/android-software-cold-provisioning' : 'artifacts/android-software-emulator')
+const artifacts = resolve(diagnostic ? 'artifacts/android-software-cold-provisioning' : 'artifacts/android-sdk-emulator')
 const owned = mkdtempSync(join(tmpdir(), 'craft-emulator-source-'))
 mkdirSync(artifacts, { recursive: true })
 let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
 const proof: Record<string, unknown> = {
-  purpose: diagnostic ? 'software-cold-provisioning-diagnostic-not-release-acceptance' : 'software-emulator-acceptance',
-  platform: process.platform, architecture: process.arch, acceleration: 'software', sdkmanager, avdmanager, javaHome,
-  provisioningProfile: 'stock-play-software-cold', bootTimeoutMs, memoryMb, virtualCpus,
+  purpose: diagnostic ? 'software-cold-provisioning-diagnostic-not-release-acceptance' : 'android-sdk-emulator-acceptance',
+  platform: process.platform, architecture: process.arch, acceleration, sdkmanager, avdmanager, javaHome,
+  provisioningProfile: diagnostic ? 'stock-play-software-cold' : 'stock-play-hardware-cold', bootTimeoutMs, memoryMb, virtualCpus,
   expectedFingerprint, runnerImage: process.env.ImageOS, runnerImageVersion: process.env.ImageVersion,
 }
 
@@ -54,7 +50,7 @@ try {
   session = await createAndroidEmulator({
     sdkRoot: join(owned, 'sdk'), sdkmanager, avdmanager,
     image: 'system-images;android-35;google_apis_playstore;x86_64',
-    acceleration: 'software', artifactsDirectory: artifacts,
+    acceleration, artifactsDirectory: artifacts,
     bootTimeoutMs, memoryMb, virtualCpus,
     temporaryDirectory: owned, acceptLicenses: true,
     env: { JAVA_HOME: javaHome },

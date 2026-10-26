@@ -25,11 +25,20 @@ assertion; `busy` describes this in-flight work. `collapsed` becomes true only
 when macOS confirms activation. No status item is widened.
 
 Hiding applies per app, so a visible sibling keeps every icon from that app
-visible. System controls and the owning app are protected. Missing or incomplete
+visible. System controls and the owning app are protected by default. Missing or incomplete
 Accessibility geometry stays visible. Apps launched during a collapsed session
 may remain hidden until the next reveal, when the unrestricted layout is read
 again. Native system overflow remains under macOS control when revealed icons
 exceed the available space; this API cannot pin app menus above system overflow.
+
+`init({ backend: 'nativeVisibility', preserveSystemItems: false })` explicitly
+accepts the private API's suppression of Apple modules, including Focus, Now
+Playing and camera/microphone activity indicators. This matches Hidden Bar's
+native behavior. Unselected application icons remain protected: if one disappears
+after activation, Craft releases the assertion and reports `visibilityMismatch`.
+Reveal restores suppressed modules. The default `preserveSystemItems: true`
+also restores the bar when an Apple module disappears. `getState()` reports the
+configured policy. Reinitializing reveals the group before applying a new policy.
 
 `getState()` and `onStateChange` expose availability, authorization, busy state,
 errors and the actual hidden-app count. Permission loss and activation failure

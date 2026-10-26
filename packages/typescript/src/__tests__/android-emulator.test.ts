@@ -72,7 +72,7 @@ else
         printf 'partial boot history\\n'
         exit 255
       fi
-      printf 'event stream ready\\n' ;;
+      if [ -f "$ANDROID_HOME/platform-events" ]; then cat "$ANDROID_HOME/platform-events"; else printf 'event stream ready\\n'; fi ;;
     *) printf '1\\n' ;;
   esac
 fi`)
@@ -98,6 +98,38 @@ test('hardware emulation refuses unavailable acceleration before creating a devi
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })
+
+for (const event of ['am_anr', 'am_crash'] as const) test(`a platform ${event} in the retained boot history refuses readiness and disposes the owned emulator`, async () => {
+  const { root, options } = fixture(true)
+  // Captured from the failed stock Play software boot. Launcher recovery must
+  // not erase the platform fault observed during this owned session.
+  writeFileSync(join(options.sdkRoot, 'platform-events'), `10-24 08:31:21.416 593 1637 I ${event} : [0,1440,com.android.systemui,550026765,failed to complete startup]\n`)
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  let failure: unknown
+  try {
+    try { session = await createAndroidEmulator(options) }
+    catch (error) { failure = error }
+    expect(failure).toBeInstanceOf(Error)
+    expect(String(failure)).toContain('platform ANR or crash')
+    const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
+    expect(identity.status).toBe('failed')
+    expect(existsSync(identity.avdDirectory)).toBe(false)
+    expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
+    expect(readFileSync(join(options.artifactsDirectory, 'device-commands.jsonl'), 'utf8')).toContain(event)
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 10_000)
+
+test('a boot history message mentioning a crash tag is not a platform crash event', async () => {
+  const { root, options } = fixture(true)
+  writeFileSync(join(options.sdkRoot, 'platform-events'), '10-24 08:31:21.416 593 1637 I auditd : process_name=am_crash:normal-value\n')
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    session = await createAndroidEmulator(options)
+    expect(JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8')).status).toBe('booted')
+  }
+  finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+}, 10_000)
 
 test('a cold boot reconnects only its previously connected stale ADB transport', async () => {
   const { root, options } = fixture(true, false, false, false, 'stale')
@@ -387,3 +419,15 @@ test('a foreign focused window cannot admit an otherwise ready emulator', async 
   }
   finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
 }, 10_000)
+
+
+test('an emulator process that exits before boot reports its exit instead of a fictitious timeout', async () => {
+  const { root, options } = fixture(true)
+  writeFileSync(join(options.sdkRoot, 'emulator/emulator'), '#!/bin/sh\nif [ "$1" = -accel-check ]; then exit 0; fi\necho "Insufficient disk space" >&2\nexit 28\n', { mode: 0o755 })
+  try {
+    await expect(createAndroidEmulator(options)).rejects.toThrow('exited with code 28 before boot')
+    expect(readFileSync(join(options.artifactsDirectory, 'emulator.log'), 'utf8')).toContain('Insufficient disk space')
+    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(true)
+  }
+  finally { rmSync(root, { recursive: true, force: true }) }
+})

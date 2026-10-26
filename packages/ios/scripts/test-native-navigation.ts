@@ -1,10 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join, resolve } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
 import { nativeNavigationGroup, verifyNativeNavigationResults } from './native-navigation-groups'
-import { nativeNavigationResultBundle } from './native-navigation-result'
+import { nativeTestResultBundle } from './native-test-result'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
+import { includesHeldViewer, waitForHeldViewerReady } from './held-viewer-capture'
+import { buildHeldViewerExtractor } from './held-viewer-extractor'
 
 const fixture = join(import.meta.dir, '..', 'fixtures', 'native-navigation')
 // The @stacksjs/stx CLI (`stx native compile`), from a sibling checkout unless CI pins one.
@@ -137,7 +139,7 @@ try {
     await bootSimulator(device)
     // Write directly into retained evidence: a CI cancellation can terminate
     // this process before any post-test copy or finally block can run.
-    const resultBundle = nativeNavigationResultBundle(workspace, process.env.CRAFT_NATIVE_NAVIGATION_RESULT)
+    const resultBundle = nativeTestResultBundle(workspace, process.env.CRAFT_NATIVE_NAVIGATION_RESULT, 'NativeNavigation.xcresult')
     const selectedTest = process.env.CRAFT_NATIVE_NAVIGATION_TEST
     const selectedTarget = process.env.CRAFT_ONLY_TESTING
     const group = process.env.CRAFT_NATIVE_NAVIGATION_GROUP
@@ -146,6 +148,13 @@ try {
     const selection = groupCases ? groupCases.map(target => `-only-testing:${target}`) : selectedTarget ? selectedTarget.split(',').map(target => target.trim()).filter(Boolean).map(target => `-only-testing:${target}`) : selectedTest
       ? [`-only-testing:NativeNavigationUITests/NativeNavigationUITests/${selectedTest}`]
       : []
+    const captureViewer = includesHeldViewer(selection.map(value => value.replace('-only-testing:', '')))
+    const liveLog = process.env.CRAFT_NATIVE_NAVIGATION_LIVE_LOG
+    // A held screenshot must be captured by a process independent of XCTest.
+    // Local full/core runs use the same tee contract as CI, for example:
+    // CRAFT_NATIVE_NAVIGATION_LIVE_LOG=/absolute/navigation.log bun ... 2>&1 | tee /absolute/navigation.log
+    if (captureViewer && (!liveLog || !isAbsolute(liveLog) || !existsSync(liveLog)))
+      throw new Error('Viewer acceptance requires CRAFT_NATIVE_NAVIGATION_LIVE_LOG pointing at the absolute live tee log (see mobile-e2e.yml)')
     const xcodeArgs = [
       'xcodebuild', '-quiet', '-project', 'NativeNavigation.xcodeproj', '-scheme', 'NativeNavigation',
       '-configuration', 'Debug', '-destination', `id=${device.udid}`,
@@ -155,16 +164,60 @@ try {
     // Separate build and test sessions: the combined action can stall before
     // launching a hosted XCTest bundle, even after compilation has finished.
     run([...xcodeArgs, 'build-for-testing'], output)
-    runXcodeTests([
-      // Retain live XCTest activity as well as the structured result bundle.
-      ...xcodeArgs.filter(arg => arg !== '-quiet'),
-      '-resultBundlePath', resultBundle,
-      // Keep XCTest results, screenshots and live logs without waiting for
-      // an unrelated OS diagnostic archive after a test has already finished.
-      '-collect-test-diagnostics', 'never',
-      ...selection,
-      'test-without-building',
-    ], output, resultBundle, groupCases?.length)
+    const captureOutput = `${resultBundle}.large-content-viewer`
+    const done = join(captureOutput, 'xcode-finished')
+    const ready = join(captureOutput, `preflight-ready-${process.pid}-${Date.now()}`)
+    if (captureViewer) mkdirSync(captureOutput, { recursive: true })
+    // Compilation belongs to fixture construction. Capture's independent
+    // readiness budget only admits verified tools, a control and recording.
+    const extractorManifest = captureViewer ? await buildHeldViewerExtractor({ output: captureOutput }) : undefined
+    const watcher = captureViewer ? Bun.spawn([
+      process.execPath, join(import.meta.dir, 'held-viewer-capture.ts'), liveLog!, device.udid,
+      captureOutput, done, String(statSync(liveLog!).size), String(process.pid), ready, extractorManifest!,
+    ], { stdout: 'inherit', stderr: 'inherit' }) : undefined
+    const stopWatcher = () => watcher?.kill('SIGTERM')
+    if (watcher) process.once('exit', stopWatcher)
+    let testFailure: unknown
+    try {
+      // Prove and warm the independent public capture path before XCTest can
+      // synthesize its hold. A failed control must never start the gesture.
+      if (watcher) await waitForHeldViewerReady(ready, watcher.exited)
+      runXcodeTests([
+        // Retain live XCTest activity as well as the structured result bundle.
+        ...xcodeArgs.filter(arg => arg !== '-quiet'),
+        '-resultBundlePath', resultBundle,
+        // Keep XCTest results, screenshots and live logs without waiting for
+        // an unrelated OS diagnostic archive after a test has already finished.
+        '-collect-test-diagnostics', 'never',
+        ...selection,
+        'test-without-building',
+      ], output, resultBundle, groupCases?.length)
+    }
+    catch (error) { testFailure = error }
+    finally {
+      if (watcher) {
+        writeFileSync(done, 'XCTest command completed\n')
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const watcherCode = await Promise.race([
+          watcher.exited,
+          new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 65_000) }),
+        ])
+        clearTimeout(timer)
+        if (watcherCode === undefined) {
+          stopWatcher()
+          const force = setTimeout(() => watcher.kill('SIGKILL'), 1500)
+          await watcher.exited
+          clearTimeout(force)
+        }
+        process.off('exit', stopWatcher)
+        if (watcherCode !== 0) {
+          const error = new Error(`During-hold frame qualification failed (exit ${watcherCode ?? 'timeout'}); see ${captureOutput}`)
+          if (testFailure) console.error(error)
+          else testFailure = error
+        }
+      }
+    }
+    if (testFailure) throw testFailure
     console.log('Native navigation simulator tests passed')
   }
 }

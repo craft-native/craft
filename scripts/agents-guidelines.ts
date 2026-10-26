@@ -7,7 +7,7 @@
  * that a machine without this repository's history cannot discover.
  *
  * Every topic below cost a real, separately diagnosed build failure here, in
- * this order: an unpinned `zig` on PATH, the absent sibling checkouts, and a
+ * this order: an unpinned `zig` on PATH, a non-portable dependency graph, and a
  * `bun test` that ran the wrong suite. None of them are code defects and none
  * are visible from the tree, which is exactly why they belong in writing.
  */
@@ -15,7 +15,7 @@
 /** Facts an agent cannot derive from the tree, each with the words that prove it was written down. */
 const briefings: { topic: string, needles: string[] }[] = [
   { topic: 'the pinned Zig toolchain', needles: ['CRAFT_ZIG', 'pantry.lock'] },
-  { topic: 'the sibling first-party checkouts', needles: ['Libraries/zig-js', 'pins.env'] },
+  { topic: 'portable Zig dependencies', needles: ['build.zig.zon', 'package hash'] },
   { topic: 'which suite each test script runs', needles: ['bun run test:sdk'] },
 ]
 

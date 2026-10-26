@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.media.MediaRecorder
+import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -83,6 +85,7 @@ internal class CraftNativeServices(
 {{NATIVE_WALLET_FIELDS}}
 
     init {
+        prepareVoiceFiles(context, config.optBoolean("enableAudioRecording"))
         if (config.optBoolean("enableGeolocation") || config.optBoolean("enableBackgroundLocation")) {
             // Native screens must also hear a recording started by the page.
             // Keep this process sink independent from the page's listener.
@@ -113,6 +116,7 @@ internal class CraftNativeServices(
         add("brightness")
         add("statusBar")
         add("speech")
+        if (config.optBoolean("enableAudioRecording")) add("audioRecording")
         // Videos kept on the phone for offline (CraftNativeMedia).
         add("media")
         if (config.optBoolean("enableShare")) add("share")
@@ -142,7 +146,7 @@ internal class CraftNativeServices(
 
     fun handles(module: String): Boolean = module in setOf(
         "Dialog", "Browser", "Linking", "Share", "Push", "Health", "KeepAwake", "Brightness", "StatusBar", "Speech", "Background",
-        "Location", "Media", "CrashReporter", "HeartRate",
+        "Location", "Media", "CrashReporter", "HeartRate", "AudioRecording",
         "Wallet",
     )
 
@@ -165,6 +169,7 @@ internal class CraftNativeServices(
                 "Brightness" -> brightness(method, args, done)
                 "StatusBar" -> statusBar(args.optString(0, "default"), done)
                 "Speech" -> speech(method, args, done)
+                "AudioRecording" -> main.post { voiceRecording(method, args, done) }
                 "Location" -> location(method, args, done)
                 "HeartRate" -> heartRate(method, args, done)
                 "Media" -> when (method) {
@@ -422,6 +427,12 @@ internal class CraftNativeServices(
     }
 
     fun onRequestPermissionsResult(requestCode: Int): Boolean {
+        if (requestCode == 7134) {
+            val pending = pendingVoicePermission
+            pendingVoicePermission = null
+            pending?.invoke(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+            return true
+        }
         if (heartRateEnabled && CraftHeartRate.get(context).onPermissions(requestCode)) return true
         if (requestCode == LOCATION_PERMISSION_REQUEST) {
             val pending = pendingLocationPermission
@@ -612,6 +623,94 @@ internal class CraftNativeServices(
         done(success(true))
     }
 
+    // A microphone belongs to its requesting screen/account, including the
+    // permission prompt. Files use the same private upload root as Files.
+    private var voiceOwner: String? = null
+    private var voiceRecorder: MediaRecorder? = null
+    private var voiceFile: File? = null
+    private var pendingVoicePermission: ((Boolean) -> Unit)? = null
+
+    fun pauseVoice() { if (voiceRecorder != null || voiceFile != null) cancelVoice() }
+    private fun cancelVoice() {
+        voiceOwner = null
+        val recorder = voiceRecorder
+        voiceRecorder = null
+        try { recorder?.stop() } catch (_: Exception) {}
+        recorder?.release()
+        voiceFile?.parentFile?.deleteRecursively()
+        voiceFile = null
+        val pending = pendingVoicePermission
+        pendingVoicePermission = null
+        pending?.invoke(false)
+    }
+
+    private fun voiceRecording(method: String, args: JSONArray, done: (CraftNativeCapabilityResult) -> Unit) {
+        if (!config.optBoolean("enableAudioRecording")) { done(failure("CAPABILITY_DISABLED", "Audio recording is disabled")); return }
+        val key = args.optString(0)
+        if (!key.matches(Regex("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"))) { done(failure("INVALID_ARGUMENT", "A recording owner UUID is required")); return }
+        if (method == "cancel") {
+            if (voiceOwner == key) cancelVoice()
+            done(success(true)); return
+        }
+        if (method == "stop") {
+            val file = voiceFile
+            if (voiceOwner != key || file == null) { done(failure("RECORDING_NOT_FOUND", "This recording is no longer available")); return }
+            try {
+                voiceRecorder?.stop()
+                voiceRecorder?.release()
+                voiceRecorder = null
+                val metadata = MediaMetadataRetriever()
+                val duration = try { metadata.setDataSource(file.absolutePath); (metadata.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toDoubleOrNull() ?: 0.0) / 1000 } finally { metadata.release() }
+                if (!file.exists() || file.length() == 0L || duration <= 0) throw IllegalStateException("Empty recording")
+                done(success(JSONObject().put("path", file.absolutePath).put("name", file.name).put("type", "audio/mp4").put("size", file.length()).put("durationSeconds", duration)))
+            } catch (_: Exception) { cancelVoice(); done(failure("RECORDING_FAILED", "The recording could not be read")) }
+            return
+        }
+        if (method != "start") { done(failure("UNKNOWN_ACTION", "Unknown recording action")); return }
+        if (voiceOwner != null) { done(failure("RECORDING_BUSY", "Another microphone session is active")); return }
+        val host = activity()
+        if (host == null) { done(failure("NEEDS_ACTIVITY", "Recording needs the foreground app")); return }
+        val seconds = args.optJSONObject(1)?.optInt("maxSeconds", 300) ?: 300
+        if (seconds !in 1..300) { done(failure("INVALID_ARGUMENT", "Recordings are limited to five minutes")); return }
+        voiceOwner = key
+        val start: (Boolean) -> Unit = start@ { allowed ->
+            if (voiceOwner != key) { done(failure("RECORDING_CANCELLED", "Recording was cancelled")); return@start }
+            if (!allowed) { cancelVoice(); done(failure("PERMISSION_DENIED", "Microphone permission was refused")); return@start }
+            try {
+                val folder = File(context.cacheDir, "craft-files/voice-recordings/" + UUID.randomUUID()).apply { mkdirs() }
+                val file = File(folder, "voice-feedback.m4a")
+                voiceFile = file
+                @Suppress("DEPRECATION")
+                val recorder = if (Build.VERSION.SDK_INT >= 31) MediaRecorder(context) else MediaRecorder()
+                voiceRecorder = recorder
+                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                recorder.setAudioChannels(1)
+                recorder.setAudioSamplingRate(16000)
+                recorder.setAudioEncodingBitRate(32000)
+                recorder.setMaxDuration(seconds * 1000 - 250)
+                recorder.setMaxFileSize(12L * 1024 * 1024)
+                recorder.setOutputFile(file.absolutePath)
+                recorder.setOnInfoListener { current, what, _ ->
+                    if (voiceOwner == key && what in setOf(MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED, MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)) {
+                        try { current.stop() } catch (_: Exception) {}
+                        current.release()
+                        voiceRecorder = null
+                    }
+                }
+                recorder.prepare()
+                recorder.start()
+                done(success(true))
+            } catch (_: Exception) { cancelVoice(); done(failure("RECORDING_FAILED", "The microphone could not start")) }
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) start(true)
+        else {
+            pendingVoicePermission = start
+            ActivityCompat.requestPermissions(host, arrayOf(Manifest.permission.RECORD_AUDIO), 7134)
+        }
+    }
+
     // MARK: Speech
 
     private fun speech(method: String, args: JSONArray, done: (CraftNativeCapabilityResult) -> Unit) {
@@ -703,6 +802,7 @@ internal class CraftNativeServices(
     }
 
     fun close() {
+        cancelVoice()
         watchCallback?.let(locationClient::removeLocationUpdates)
         watchCallback = null
         pendingLocationPermission = null
@@ -717,6 +817,38 @@ internal class CraftNativeServices(
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
 
     companion object {
+        private var voiceFilesPrepared = false
+        private var legacyVoiceFilesPrepared = false
+
+        @Synchronized
+        private fun prepareVoiceFiles(context: Context, includeLegacy: Boolean) {
+            val root = File(context.cacheDir, "craft-files")
+            if (!voiceFilesPrepared) {
+                discardAbandonedVoiceFiles(root, false)
+                voiceFilesPrepared = true
+            }
+            if (includeLegacy && !legacyVoiceFilesPrepared) {
+                discardAbandonedVoiceFiles(root)
+                legacyVoiceFilesPrepared = true
+            }
+        }
+
+        internal fun discardAbandonedVoiceFiles(root: File, includeLegacy: Boolean = true) {
+            val base = root.canonicalFile
+            val voice = File(base, "voice-recordings")
+            for (scope in if (includeLegacy) listOf(base, voice) else listOf(voice)) {
+                if (scope.canonicalFile != scope.absoluteFile) continue
+                for (folder in scope.listFiles().orEmpty()) {
+                    val owned = runCatching { UUID.fromString(folder.name).toString().equals(folder.name, ignoreCase = true) }.getOrDefault(false)
+                    if (!owned || folder.canonicalFile != folder.absoluteFile) continue
+                    val file = File(folder, "voice-feedback.m4a")
+                    if (!file.isFile || file.canonicalFile != file.absoluteFile) continue
+                    file.delete()
+                    if (folder.listFiles()?.isEmpty() == true) folder.delete()
+                }
+            }
+        }
+
         const val PUSH_PERMISSION_REQUEST = 4207
         const val LOCATION_PERMISSION_REQUEST = 4208
     }

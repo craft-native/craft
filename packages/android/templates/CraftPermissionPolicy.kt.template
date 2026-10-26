@@ -1,0 +1,96 @@
+package {{PACKAGE_NAME}}
+
+import android.Manifest
+import android.os.Build
+
+internal object CraftPermissionPolicy {
+    data class Request(
+        val groupIndex: Int,
+        val permissions: Array<String>
+    )
+
+    private fun permissionGroups(name: String, sdkInt: Int): List<List<String>>? = when (name) {
+        "camera" -> listOf(listOf(Manifest.permission.CAMERA))
+        "microphone" -> listOf(listOf(Manifest.permission.RECORD_AUDIO))
+        "photos" -> listOf(listOf(
+            if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+                Manifest.permission.READ_MEDIA_IMAGES
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+        ))
+        // Android presents precise and approximate location as one choice. A
+        // coarse grant is usable foreground location access even when the
+        // corresponding fine result is denied.
+        "location" -> listOf(listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ))
+        "locationAlways" -> if (sdkInt >= Build.VERSION_CODES.Q) {
+            listOf(
+                listOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            )
+        } else {
+            listOf(listOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ))
+        }
+        "notifications" -> if (sdkInt >= Build.VERSION_CODES.TIRAMISU) {
+            listOf(listOf(Manifest.permission.POST_NOTIFICATIONS))
+        } else {
+            emptyList()
+        }
+        "contacts" -> listOf(listOf(Manifest.permission.READ_CONTACTS))
+        "calendar" -> listOf(listOf(Manifest.permission.READ_CALENDAR))
+        "bluetooth" -> if (sdkInt >= Build.VERSION_CODES.S) {
+            listOf(listOf(Manifest.permission.BLUETOOTH_SCAN))
+        } else {
+            emptyList()
+        }
+        "motion" -> if (sdkInt >= Build.VERSION_CODES.Q) {
+            listOf(listOf(Manifest.permission.ACTIVITY_RECOGNITION))
+        } else {
+            emptyList()
+        }
+        else -> null
+    }
+
+    fun requiredPermissions(name: String, sdkInt: Int): Array<String>? =
+        permissionGroups(name, sdkInt)?.flatten()?.distinct()?.toTypedArray()
+
+    fun status(name: String, sdkInt: Int, isGranted: (String) -> Boolean): String {
+        val groups = permissionGroups(name, sdkInt) ?: return "undetermined"
+        return if (groups.all { group -> group.any(isGranted) }) "granted" else "denied"
+    }
+
+    fun nextRequest(
+        name: String,
+        sdkInt: Int,
+        startingAt: Int,
+        isGranted: (String) -> Boolean
+    ): Request? {
+        val groups = permissionGroups(name, sdkInt) ?: return null
+        val groupIndex = (startingAt until groups.size).firstOrNull { index ->
+            groups[index].none(isGranted)
+        } ?: return null
+        return Request(groupIndex, groups[groupIndex].toTypedArray())
+    }
+
+    fun groupIsGranted(
+        name: String,
+        sdkInt: Int,
+        groupIndex: Int,
+        isGranted: (String) -> Boolean
+    ): Boolean = permissionGroups(name, sdkInt)
+        ?.getOrNull(groupIndex)
+        ?.any(isGranted) == true
+
+    fun foregroundLocationIsGranted(isGranted: (String) -> Boolean): Boolean =
+        isGranted(Manifest.permission.ACCESS_FINE_LOCATION) ||
+            isGranted(Manifest.permission.ACCESS_COARSE_LOCATION)
+}

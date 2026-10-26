@@ -671,8 +671,8 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('return canonicalType(child["type"] as? String ?? "") != "RefreshControl"')
     expect(android).toContain('"statusbar" -> "StatusBar"')
     expect(android).toContain('"refreshcontrol" -> "RefreshControl"')
-    expect(android).toContain('screen.statusBarStyle = craftNativeOptionalString(props.opt("barStyle"))')
-    expect(android).toContain('screen.statusBarHidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
+    expect(android).toContain('val style = craftNativeOptionalString(props.opt("barStyle"))')
+    expect(android).toContain('val hidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
     expect(android).toContain('val tint = craftNativeOptionalString(props.opt("tintColor"))')
     expect(android).toContain('val background = craftNativeOptionalString(props.opt("progressBackgroundColor"))')
     expect(android).toContain('val contentChildren = JSONArray()')
@@ -2079,7 +2079,8 @@ describe('native renderer component contract', () => {
       'CraftNativeScriptThread.run { timers.pending.values.forEach { $0.cancel() } }',
       'pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }',
       'lifecycleObservers.forEach(NotificationCenter.default.removeObserver)',
-      'CraftNativeScriptThread.run(label: "unmount \\(route)") { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }',
+      'CraftNativeScriptThread.run(label: "unmount \\(route)") {',
+      'storageLifetime.unmount { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }',
       'let inStack = navigationController?.viewControllers.contains(where: { $0 === self }) ?? false',
       'if !inStack {',
     ]) expect(ios, `${marker} missing from iOS teardown`).toContain(marker)
@@ -2406,6 +2407,17 @@ describe('native renderer component contract', () => {
     expect(iosReadme).toContain('enablePasskeys: true')
   })
 
+  it('exposes network paths and forwards changes to native screens on both mobile hosts', () => {
+    expect(iosActions).toContain('values.append("network")')
+    expect(iosActions).toContain('case ("Network", "getStatus"):')
+    expect(iosActions).toContain('CraftWebServices.perform(action: "getNetworkStatus", body: [:])')
+    expect(readFileSync(join(root, 'packages/ios/templates/CraftApp.swift'), 'utf8')).toContain('static let forwardedEvents: Set<String> = ["craftNetworkChange"')
+    expect(androidCapabilities).toContain('put("network")')
+    expect(androidCapabilities).toContain('method == "getStatus"')
+    expect(androidCapabilities).toContain('registerDefaultNetworkCallback(networkWatch)')
+    expect(androidCapabilities).toContain('unregisterNetworkCallback(networkWatch)')
+  })
+
   it('keeps native iOS badges permission-free and capability-advertised', () => {
     expect(iosActions).toContain('var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "dialog", "speech", "audio", "eventStream", "linking", "badge", "animation", "viewFocus", "viewMeasure", "viewReparent", "viewNonModalPresentation", "nativePlatformControls"]')
     expect(iosActions).toContain('case ("Badge", "set"):')
@@ -2434,14 +2446,14 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('let refreshing = (refreshProps["refreshing"] ?? props["refreshing"]) as? Bool == true')
     expect(ios).toContain('func setRefreshAppearance(_ props: [String: Any])')
     expect(ios).toContain('scroll.setRefreshAppearance(refreshProps)')
-    expect(android).toContain('private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
+    expect(android).toContain('internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
     expect(android).toContain('fun setRefreshHandler(handler: (() -> Unit)?, refreshing: Boolean)')
     expect(android).toContain('fun setRefreshAppearance(props: JSONObject, density: Float, fallback: Int)')
     expect(android).toContain('setRefreshAppearance(refreshProps, resources.displayMetrics.density, refreshTintFallback(screen))')
     expect(android).toContain('background?.let { runCatching { craftNativeColor(it) }.getOrNull() } ?: Color.TRANSPARENT')
     expect(android).toContain('setRefreshHandler(refreshHandler, craftNativeBoolean(refreshProps.opt("refreshing"), craftNativeBoolean(props.opt("refreshing"))))')
     expect(android).toContain('released.filterIsInstance<CraftNativeScrollView>().forEach {\n            it.setRefreshHandler(null, false)')
-    const scrollStart = android.indexOf('private class CraftNativeScrollView')
+    const scrollStart = android.indexOf('internal class CraftNativeScrollView')
     const scrollEnd = android.indexOf('private class CraftNativeFlexSpacer', scrollStart)
     const scroll = android.slice(scrollStart, scrollEnd)
     expect(scroll).toContain('override fun onInterceptTouchEvent(event: MotionEvent): Boolean')
@@ -3318,8 +3330,8 @@ describe('native renderer component contract', () => {
     expect(androidNavigationTest).toContain('private fun awaitHorizontalScroller(activity: MainActivity, id: String)')
     expect(androidNavigationTest).toContain('findType(host, android.widget.HorizontalScrollView::class.java)')
     expect(androidNavigationTest).not.toContain('awaitView(activity, "tab-swipe-carousel") as android.widget.HorizontalScrollView')
-    expect(android).toContain('private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
-    expect(android).toContain('private val horizontal = HorizontalScrollView(context)')
+    expect(android).toContain('internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
+    expect(android).toContain('private val horizontal = object : HorizontalScrollView(context)')
   })
 
   it('keeps the hybrid web transition fixture wired into iOS mobile E2E', () => {
@@ -3491,7 +3503,7 @@ describe('native renderer component contract', () => {
     expect(navigationHome).toContain('const navigationRows = state([')
     expect(navigationHome).toContain('navigationRows.set([')
     expect(navigationDetails).toContain('const people = state(')
-    expect(navigationDetails).toContain('onDestroy(() => globalThis.craft.storage.set(')
+    expect(navigationDetails).toContain('onDestroy(() => globalThis.craft.storage.setSync(')
     expect(navigationHome).toContain('<View :for="row in navigationRows" :key="row.id"')
       expect(navigationHome).toContain(":testID=\"'navigation-input-' + row.id\"")
     expect(navigationHome).toContain('@input="updateNavigationDraft(row.id, $event)"')
@@ -3914,7 +3926,7 @@ describe('native renderer component contract', () => {
     expect(ios).toContain('refreshTraitDefaults()')
     expect(ios).toContain('override func viewWillAppear(_ animated: Bool)')
     expect(android).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
-    expect(android).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+    expect(android).toContain('screen.mutations.document()?.let { renderCommitted(screen, it) }')
     expect(android).toContain('private fun refreshScreenTheme(screen: Screen)')
     expect(android).toContain('refreshScreenTheme(screen)')
     expect(android).toContain('private fun refreshThemeDefaults()')
@@ -4159,13 +4171,14 @@ describe('native renderer component contract', () => {
 
 describe('mobile acceptance scopes', () => {
   const workflow = readFileSync(join(root, '.github/workflows/mobile-e2e.yml'), 'utf8')
-  const legs = ['harness', 'ios-native', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'media-cache']
+  const legs = ['harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation', 'media-cache']
   const selected: Record<string, string[]> = {
     '': legs,
     'all': legs,
     'android': ['harness', 'android-emulator', 'android-navigation'],
-    'ios-render': ['harness', 'ios-native'],
+    'ios-render': ['harness', 'ios-native', 'ios-metal'],
     'ios-navigation': ['harness', 'ios-native'],
+    'ios-hybrid': ['harness', 'ios-hybrid'],
     'android-navigation': ['harness', 'android-navigation'],
   }
   const summary = workflow.match(/- name: Fail if any leg failed\n\s+if: >-\n([\s\S]*?)\n\s+run:/)?.[1]

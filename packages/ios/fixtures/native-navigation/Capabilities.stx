@@ -51,16 +51,21 @@ async function testNotifications() {
 }
 
 async function testSecureStorage() {
+  let stage = 'SecureStorage.set'
   try {
     await globalThis.craft.secureStorage.set('native-e2e-secret', 'keychain-value')
+    stage = 'SecureStorage.get'
     const value = await globalThis.craft.secureStorage.get('native-e2e-secret')
+    stage = 'SecureStorage.delete'
     await globalThis.craft.secureStorage.delete('native-e2e-secret')
+    stage = 'Biometrics.isAvailable'
     await globalThis.craft.biometrics.isAvailable()
+    stage = 'Biometrics.getBiometricType'
     await globalThis.craft.biometrics.getBiometricType()
     status.set(value === 'keychain-value' ? 'Secure storage roundtrip' : 'Secure storage failed')
   }
   catch (error) {
-    status.set(`Secure storage error ${error.code || 'UNKNOWN'}: ${error.message}`)
+    status.set(`Secure storage error at ${stage} ${error.code || 'UNKNOWN'}: ${error.message}`)
   }
 }
 </script>

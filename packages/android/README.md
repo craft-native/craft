@@ -89,7 +89,7 @@ const device = await createAndroidEmulator({
   sdkmanager: '/ci/pantry/.bin/sdkmanager',
   avdmanager: '/ci/pantry/.bin/avdmanager',
   image: 'system-images;android-35;google_apis_playstore;x86_64',
-  acceleration: 'software',
+  acceleration: 'hardware',
   memoryMb: 4096,
   artifactsDirectory: '/ci/artifacts/android',
   acceptLicenses: true,
@@ -103,24 +103,30 @@ finally {
 ```
 
 `hardware` requires a successful emulator acceleration probe. `software` uses
-the Android emulator's explicit `-accel off` mode on x86_64 hosts; it provides
-functional test evidence, with no claim about hardware performance. The public
+the Android emulator's explicit `-accel off` mode on x86_64 hosts. Android
+[documents that CPU emulation mode as unsupported](https://developer.android.com/studio/run/emulator-commandline#startup-options);
+it is available for explicit diagnostics and does not provide release acceptance.
+Software graphics (`-gpu software`) are independent of CPU acceleration. The public
 helper defaults to a ten-minute boot budget, and hardware mode cannot exceed
 it. Software callers may explicitly set `bootTimeoutMs` up to twenty minutes.
 `memoryMb` selects the requested guest RAM, defaulting to 2048 MB. It accepts
 the emulator's documented [1536–8192 MB range](https://developer.android.com/studio/run/emulator-commandline#startup-options).
 `virtualCpus` selects the guest CPU count, defaulting to 2 and accepting values
-from 1 through 8. The stock Play software verifier requests four guest CPUs:
-the four-thread Intel runners used for this acceptance profile otherwise starve
-SystemUI during TCG startup and surface a real platform ANR.
-The stock Play software verifier requests 4096 MB after retained cold boots
-showed low-memory/process-death churn and a SystemUI ANR. It keeps the same
-image, readiness checks and twenty-minute deadline.
-The stock Play software CI verifier uses that cold-provisioning profile: the
-API 35 image took 943,520 ms in the retained diagnostic run
+from 1 through 8. The stock Play acceptance verifier requests two guest CPUs.
+Receipts retain the actual host model and guest allocation. Reaching launcher
+focus after a platform ANR does not establish a healthy cold boot.
+The stock Play verifier requests 4096 MB after retained cold boots
+showed low-memory/process-death churn and a SystemUI ANR. The image and complete
+readiness checks remain the same.
+The stock Play CI verifier provisions runner access to KVM and tests a cold
+boot of the unmodified API 35 Play image through the public SDK. The hardware
+budget remains ten minutes. A separate TCG diagnostic retains its twenty-minute
+budget and exact-image check. The API 35 image took 943,520 ms in the retained diagnostic run
 [39113277828](https://github.com/craft-native/craft/actions/runs/39113277828).
 This is OS provisioning before app installation; app and performance budgets
-are unchanged. Both modes require a complete event-history read, SettingsProvider,
+are unchanged. Both modes require a complete event-history read and reject
+recorded platform ANR or crash events, including faults before launcher focus
+recovers. SettingsProvider,
 the package manager and System UI to be ready, with HOME resolved beyond the
 automatic Android SDK setup activity and its launcher package owning the current
 input-focus window. Logs record the budget, actual
@@ -168,6 +174,10 @@ MapLibre renderer. It uses native GL views and needs neither a Google map SDK
 dependency nor a Google map key. `mapProvider: 'google'` retains the existing
 Google Maps host and uses `mapsApiKey` for its SDK manifest key; Google remains
 the default for compatibility with existing projects.
+
+Reactive `StatusBar` props update the visible window during targeted native
+mutations, including light/dark icon contrast and visibility. Retained screens
+keep their own values; unchanged props leave the current window appearance alone.
 
 Coordinates must be JSON numbers (numeric strings are not coerced), are
 range-checked at the native boundary, and invalid points or pole-crossing
@@ -228,6 +238,9 @@ pagination; the maintained native protocol does not serialize `data`/`renderItem
 callbacks.
 Flex items support `flex`, `flexGrow`, `flexShrink`, and numeric or percentage
 `flexBasis` for main-axis space distribution while preserving gaps and margins.
+The screen's document root fills its viewport unless it declares a height,
+matching iOS. This also applies after reactive style updates remove an explicit
+height. Ordinary child containers keep their authored flex and intrinsic sizing.
 Shared transforms, z-order, view shadows, text shadows, per-edge border
 styles, and linear gradients are applied with the same style keys as the iOS
 renderer. Android `elevation` remains an additional native shadow input.
@@ -296,6 +309,13 @@ builds its multipart body natively from text fields and those owned files, so
 image bytes do not cross the Android JavaScript bridge as base64. The browser
 renderer keeps using the ordinary web `File`/`FormData` implementations. Owned
 files survive Activity recreation and stale cache entries are swept after a day.
+Voice capture uses a separate temporary namespace. With `enableAudioRecording`,
+`craft.audioRecording` produces an owned M4A descriptor for multipart uploads.
+Cancellation and backgrounding erase both active and stopped captures. The next
+native launch removes files left by an interrupted process, including the earlier
+recorder's M4A files, without clearing picked files or downloads. Preparing another
+screen in the same process preserves the current screen's recording.
+
 `files.download` resolves a non-2xx response as `{ ok: false, status, body }`
 instead of turning the server's response into a transport error.
 
@@ -1116,3 +1136,20 @@ and detents; Android sizes its native bottom panel to the selected detent
 without an extra dependency. Omitting presentationStyle keeps the existing
 full-screen overlay. A native sheet's close request still belongs to its
 owner, which sets visible to false.
+
+### Controlled native paging and font families
+
+A horizontal `ScrollView` with `pagingEnabled: true` and a numeric `pageIndex`
+uses viewport-sized direct children. The host advertises `nativePager` and emits
+`onPageSelected` with `{ index, count }` after initial layout, count changes and
+settled user selection. Updates to `pageIndex` select a page; removed pages clamp
+the index and resizing preserves it. Offscreen pages stay mounted but are hidden
+from native accessibility. `scrollEnabled: false` locks swiping while retaining
+controls in the selected page. Without `pageIndex`, scroll content keeps its
+ordinary intrinsic layout; this is an opt-in contract for a shared Pager.
+
+Text `fontFamily` accepts a CSS fallback list. Bundled/custom fonts take priority
+when available. `monospace`/`ui-monospace`, `serif`/`ui-serif` and
+`sans-serif`/`ui-sans-serif`/`system-ui` select platform fonts, retaining requested
+weight, italic style and system text scaling. A missing custom face falls through
+to the next family rather than silently replacing a requested mono font with sans.

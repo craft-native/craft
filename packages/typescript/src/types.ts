@@ -649,6 +649,9 @@ export interface AppConfig {
    */
   craftPath?: string
 
+  /** macOS webview apps may omit the separate headless scripting engine. */
+  runtimeProfile?: 'full' | 'webview'
+
   /**
    * Suppress all non-error output from the native binary.
    * When true, the binary runs with --quiet and stdio is piped.
@@ -1384,7 +1387,7 @@ export interface CraftBridgeAPI {
   menubar?: {
     /** Native visibility requires macOS 27, a direct build and Accessibility.
      * No automatic fallback to width-based hiding is performed. */
-    init(options?: { backend?: 'legacy' | 'nativeVisibility' }): Promise<void>
+    init(options?: MenubarInitOptions): Promise<void>
     destroy(): Promise<void>
     requestPermission(): Promise<void>
     collapse(): Promise<void>
@@ -1863,11 +1866,13 @@ export interface CraftHapticsAPI {
  * `screen_sharing.zig` for the signal table.
  */
 export interface CraftScreenSharingAPI {
+  /** Read current native indicators. Rejects if a bounded Accessibility read is incomplete. */
   getState(): Promise<ScreenSharingState>
   /**
    * Start polling. Emits `craft:screenSharing:change` whenever the resolved
-   * state differs, including once immediately. Interval is clamped to
-   * 250ms–60s.
+   * confirmed state differs, including once after the first complete read.
+   * Incomplete native reads are retried without emitting a false stop.
+   * Interval is clamped to 250ms–60s.
    */
   watch(intervalMs?: number): Promise<{ ok: boolean, intervalMs: number }>
   unwatch(): Promise<{ ok: boolean }>
@@ -2621,6 +2626,14 @@ export interface CraftTimersAPI {
   sleep(delayMs: number, options?: { signal?: AbortSignal }): Promise<void>
 }
 
+/** Native grouping policy. Unselected application icons are always protected. */
+export interface MenubarInitOptions {
+  backend?: 'legacy' | 'nativeVisibility'
+  /** Defaults to true. False groups identifiable Apple controls by position
+   * and accepts native suppression of Focus, Now Playing and privacy indicators. */
+  preserveSystemItems?: boolean
+}
+
 /** Settled native menu-bar state; private visibility capability is explicit. */
 export interface MenubarState {
   collapsed: boolean
@@ -2631,6 +2644,8 @@ export interface MenubarState {
   authorized?: boolean
   busy?: boolean
   hiddenAppCount?: number
+  hiddenSystemItemCount?: number
+  preserveSystemItems?: boolean
   markerWidth?: number
-  error?: 'unavailable' | 'permissionRequired' | 'layoutUnavailable' | 'activationFailed' | 'activationTimeout' | null
+  error?: 'unavailable' | 'permissionRequired' | 'layoutUnavailable' | 'emptyGroup' | 'visibilityMismatch' | 'activationFailed' | 'activationTimeout' | null
 }

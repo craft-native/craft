@@ -237,6 +237,8 @@ test "native Vulkan layouts, scalar classes, signatures and values match Khronos
     try constant("VK_ERROR_OUT_OF_DATE_KHR");
     try constant("VK_ERROR_SURFACE_LOST_KHR");
     try constant("VK_ERROR_DEVICE_LOST");
+    try constant("VK_ERROR_OUT_OF_HOST_MEMORY");
+    try constant("VK_ERROR_OUT_OF_DEVICE_MEMORY");
     try constant("VK_ERROR_EXTENSION_NOT_PRESENT");
     try constant("VK_ERROR_FEATURE_NOT_PRESENT");
     try constant("VK_STRUCTURE_TYPE_APPLICATION_INFO");

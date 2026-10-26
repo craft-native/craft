@@ -18,7 +18,17 @@ pub const MenubarCollapseBridge = struct {
 
     pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
         if (std.mem.eql(u8, action, "init")) {
-            if (std.mem.eql(u8, data, "nativeVisibility")) menubar_collapse.initNativeVisibility() else menubar_collapse.init();
+            if (std.mem.eql(u8, data, "nativeVisibility")) {
+                menubar_collapse.initNativeVisibility(true);
+            } else if (data.len > 0 and data[0] == '{') {
+                const Options = struct { backend: []const u8, preserveSystemItems: bool = true };
+                const options = try std.json.parseFromSlice(Options, self.allocator, data, .{});
+                defer options.deinit();
+                if (!std.mem.eql(u8, options.value.backend, "nativeVisibility")) return error.InvalidBackend;
+                menubar_collapse.initNativeVisibility(options.value.preserveSystemItems);
+            } else {
+                menubar_collapse.init();
+            }
         } else if (std.mem.eql(u8, action, "destroy")) {
             menubar_collapse.destroy();
         } else if (std.mem.eql(u8, action, "collapse")) {

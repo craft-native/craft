@@ -2,12 +2,13 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { bootSimulator, build, init, pickSimulator } from '../src/index'
 import { addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from './insert-project-targets'
+import { nativeTestResultBundle } from './native-test-result'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 const cliArgs = process.argv.slice(2)
 if (cliArgs.length > 0) {
   if (cliArgs.length === 1 && ['--help', '-h'].includes(cliArgs[0]!)) {
-    console.log('Usage: bun packages/ios/scripts/test-native-render.ts\nSet CRAFT_NATIVE_RENDER_SIMULATOR to an owned disposable simulator UUID and CRAFT_ONLY_TESTING to an XCTest selection.')
+    console.log('Usage: bun packages/ios/scripts/test-native-render.ts\nSet CRAFT_NATIVE_RENDER_SIMULATOR to an owned disposable simulator UUID and CRAFT_ONLY_TESTING to an XCTest selection.\nCRAFT_NATIVE_RENDER_RESULT selects a retained .xcresult destination.')
     process.exit(0)
   }
   throw new Error(`Unknown native renderer test argument: ${cliArgs.join(' ')}`)
@@ -88,7 +89,9 @@ try {
   const device = requested ? { udid: requested, name: requested, state: 'Booted', runtime: 'iOS' } : await pickSimulator()
   if (!device) throw new Error('No iOS simulator is available for native renderer tests')
   if (!requested) await bootSimulator(device)
-  const results = join(workspace, 'TestResults.xcresult')
+  // XCTest writes failures and screenshots directly into retained CI evidence,
+  // so temporary-project cleanup cannot discard them after an error or abort.
+  const results = nativeTestResultBundle(workspace, process.env.CRAFT_NATIVE_RENDER_RESULT)
   run([
     'xcodebuild', '-project', 'NativeRender.xcodeproj', '-scheme', 'NativeRender',
     '-configuration', 'Debug', '-destination', `id=${device.udid}`,

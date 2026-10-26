@@ -6,6 +6,42 @@ import XCTest
 /// including frames while the finger is down. UI tests cover touch routing.
 @MainActor
 final class NativeNavigationUnitTests: XCTestCase {
+    @available(iOS 16.1, *)
+    func testActivityTransitionsCatchUpWithoutThePlayerAndStopAtCompletion() {
+        var state = CraftActivityAttributes.ContentState(status: "Training", distanceMeters: 0, durationSeconds: 0, progress: 0)
+        state.detail = "Leg cradles"
+        var timeline = CraftActivityTimeline(pending: [
+            .init(at: 1000, detail: "Lunges", duration: 20),
+            .init(at: 21000, detail: "Squats", duration: 30),
+            .init(at: 51000, detail: "Complete", duration: 0),
+        ])
+        timeline.advance(&state, to: 25000)
+        XCTAssertEqual(state.detail, "Squats")
+        XCTAssertEqual(state.timerEndsAt, 51000)
+        XCTAssertEqual(state.remainingSeconds, 26)
+        XCTAssertEqual(timeline.pending.count, 1)
+        timeline.advance(&state, to: 60000)
+        XCTAssertEqual(state.detail, "Complete")
+        XCTAssertEqual(state.paused, true)
+        XCTAssertEqual(state.remainingSeconds, 0)
+        XCTAssertTrue(timeline.pending.isEmpty)
+    }
+
+    @available(iOS 16.1, *)
+    func testLongActivityPlanNeverGrowsTheLockScreenPayload() throws {
+        var state = CraftActivityAttributes.ContentState(status: "Training", distanceMeters: 0, durationSeconds: 0, progress: 0)
+        var timeline = CraftActivityTimeline(pending: (1...100).map {
+            .init(at: Double($0 * 30000), detail: "Exercise \($0)", duration: 30)
+        })
+        timeline.advance(&state, to: 1805000)
+        XCTAssertEqual(state.detail, "Exercise 60")
+        XCTAssertEqual(state.timerEndsAt, 1830000)
+        XCTAssertEqual(timeline.pending.count, 40)
+        let payload = try JSONEncoder().encode(state)
+        XCTAssertLessThan(payload.count, 1024)
+        XCTAssertFalse(String(data: payload, encoding: .utf8)!.contains("Exercise 61"))
+    }
+
     private final class Pan: UIPanGestureRecognizer {
         var phase: UIGestureRecognizer.State = .changed
         var distance: CGFloat = 0
@@ -86,6 +122,24 @@ final class NativeNavigationUnitTests: XCTestCase {
         previousWindow?.makeKeyAndVisible()
         previousWindow = nil
         super.tearDown()
+    }
+
+    func testAccessorySelectionTracksDestinationWithoutSelectingAnOwningTab() {
+        let chrome = CraftChrome.shared
+        chrome.selected = "/"
+        chrome.updateTabAccessory(["path": "/messages", "title": "Messages", "symbol": "bubble.left"])
+        defer { chrome.visiblePath = nil; chrome.updateTabAccessory(nil) }
+        chrome.visiblePath = "/messages"
+        XCTAssertTrue(chrome.accessorySelected)
+        XCTAssertNil(chrome.highlightedTab)
+        XCTAssertEqual(chrome.selected, "/", "the underlying stack remains available for Back")
+        chrome.visiblePath = "/messages/42"
+        XCTAssertTrue(chrome.accessorySelected)
+        chrome.visiblePath = "/messages-other"
+        XCTAssertFalse(chrome.accessorySelected)
+        XCTAssertEqual(chrome.highlightedTab, "/")
+        chrome.visiblePath = "/"
+        XCTAssertFalse(chrome.accessorySelected)
     }
 
     private func drag(_ distance: CGFloat, phase: UIGestureRecognizer.State = .changed, speed: CGFloat = 0) {
@@ -695,6 +749,31 @@ final class NativeNavigationUnitTests: XCTestCase {
         }
     }
 
+    func testOpeningNativeTabsDeliversQueryAndPropsToRetainedRoots() async throws {
+        _ = shell.tabTapped("/details", reselect: false)
+        await renderFrames()
+        let details = try XCTUnwrap(stack("/details"))
+        let root = try XCTUnwrap(details.viewControllers.first as? CraftNativeScreenController)
+        _ = shell.tabTapped("/", reselect: false)
+        shell.open("/details?subscription=7", props: ["source": "checkout"])
+        await renderFrames()
+        XCTAssertEqual(CraftChrome.shared.selected, "/details")
+        XCTAssertTrue(details.viewControllers.first === root)
+        XCTAssertEqual(root.routeParams["subscription"] as? String, "7")
+        XCTAssertEqual(root.routeProps["source"] as? String, "checkout")
+
+        shell.open("/details?subscription=8")
+        await renderFrames()
+        XCTAssertTrue(details.viewControllers.first === root)
+        XCTAssertEqual(root.routeParams["subscription"] as? String, "8")
+        XCTAssertTrue(root.routeProps.isEmpty)
+
+        shell.open("/details", props: ["source": "billing"])
+        await renderFrames()
+        XCTAssertNil(root.routeParams["subscription"])
+        XCTAssertEqual(root.routeProps["source"] as? String, "billing")
+    }
+
     func testTabAccessoryRoutePushesAndRestoresTheSelectedNativeStack() async throws {
         shell.open("/linked-details")
         let home = try XCTUnwrap(stack("/"))
@@ -717,6 +796,29 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(CraftChrome.shared.tabAccessory?.id, "/capabilities")
         home.popViewController(animated: false)
         await renderFrames()
+        XCTAssertNil(CraftChrome.shared.tabAccessory)
+    }
+
+    func testPreparedTabOptionsCannotReplaceVisibleScreenChrome() async throws {
+        await displayWait("the Third tab is prepared") { [self] in stack("/third") != nil }
+        let home = try XCTUnwrap(stack("/"))
+        let visible = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        visible.evaluateScript("craft.navigation.setOptions({tabBarHidden:true,tabAccessory:{path:'/capabilities',title:'Visible controls',symbol:'bolt'}})")
+        await displayWait("the visible screen owns the hidden bar and accessory") {
+            CraftChrome.shared.hiddenByScreen && CraftChrome.shared.tabAccessory?.id == "/capabilities"
+        }
+        let background = try XCTUnwrap(stack("/third"))
+        XCTAssertTrue(background.view.isHidden)
+        let prepared = try XCTUnwrap(background.topViewController as? CraftNativeScreenController)
+        prepared.evaluateScript("craft.navigation.setOptions({title:'Prepared update delivered',tabBarHidden:false,tabAccessory:null})")
+        await displayWait("the background screen received its late options") {
+            prepared.navigationItem.title == "Prepared update delivered"
+        }
+        XCTAssertTrue(CraftChrome.shared.hiddenByScreen, "a late background update cannot reveal the foreground screen's tab bar")
+        XCTAssertEqual(CraftChrome.shared.tabAccessory?.id, "/capabilities", "the visible screen keeps its accessory")
+        _ = shell.tabTapped("/third", reselect: false)
+        await settle()
+        XCTAssertFalse(CraftChrome.shared.hiddenByScreen, "the prepared options apply when that screen becomes visible")
         XCTAssertNil(CraftChrome.shared.tabAccessory)
     }
 

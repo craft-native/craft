@@ -32,7 +32,7 @@ import { existsSync } from 'node:fs'
  * @returns The string to pass to `spawn(...)`. Either `explicit`,
  *   `process.env.CRAFT_BIN`, or the bare `'craft'` for PATH lookup.
  */
-export function resolveCraftBinary(explicit?: string): string {
+export function resolveCraftBinary(explicit?: string, profile: 'full' | 'webview' = 'full'): string {
   if (explicit) {
     if (!existsSync(explicit)) {
       throw new Error(`Custom Craft binary path not found: ${explicit}`)
@@ -47,7 +47,7 @@ export function resolveCraftBinary(explicit?: string): string {
     return fromEnv
   }
   // PATH lookup. The OS resolves `'craft'` to whatever pantry installed.
-  return 'craft'
+  return profile === 'webview' ? 'craft-webview' : 'craft'
 }
 
 /**

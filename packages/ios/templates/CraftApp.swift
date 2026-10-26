@@ -766,6 +766,13 @@ final class CraftChrome: ObservableObject {
     @Published var tabAccessory: Tab?
     private weak var tabAccessoryOwner: AnyObject?
     @Published var selected: String?
+    /// The visible destination may be the accessory, independently of its owning stack.
+    @Published var visiblePath: String?
+    var accessorySelected: Bool {
+        guard let path = visiblePath, let accessory = tabAccessory?.id else { return false }
+        return path == accessory || path.hasPrefix(accessory + "/")
+    }
+    var highlightedTab: String? { accessorySelected ? nil : selected }
     let tabSwipeProgress = CraftTabSwipeProgress()
     private(set) var tabSwipePosition: CGFloat? {
         get { tabSwipeProgress.position }
@@ -1172,6 +1179,18 @@ final class CraftChromeRelay: NSObject, WKScriptMessageHandler {
 
 /// The floating tab bar: Liquid Glass on iOS 26 and later, a material capsule before.
 struct CraftTabBarView: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        // ScaledMetric reads the environment of its owning view. Put the
+        // metrics in a child so this compact-chrome cap reaches them too.
+        CraftTabBarContent(viewerTextSize: dynamicTypeSize)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+}
+
+private struct CraftTabBarContent: View {
+    let viewerTextSize: DynamicTypeSize
     @ObservedObject private var chrome = CraftChrome.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -1183,7 +1202,7 @@ struct CraftTabBarView: View {
     @ScaledMetric(relativeTo: .caption2) private var badgeSize: CGFloat = 10
 
     var body: some View {
-        if chrome.tabBarVisible && !chrome.tabs.isEmpty {
+        if !chrome.tabs.isEmpty {
             HStack(spacing: 8) {
                 bar
                 if let accessory = chrome.tabAccessory {
@@ -1191,8 +1210,13 @@ struct CraftTabBarView: View {
                         surface {
                             Image(systemName: accessory.symbol)
                                 .font(.system(size: iconSize))
-                                .foregroundStyle(Color.primary)
+                                .foregroundStyle(chrome.accessorySelected ? selectedColor : Color.primary)
                                 .frame(width: 62, height: 62)
+                                .background {
+                                    if chrome.accessorySelected {
+                                        Circle().fill(selectedColor.opacity(0.14)).padding(4)
+                                    }
+                                }
                         }
                             .contentShape(Rectangle())
                             .overlay(alignment: .topTrailing) {
@@ -1207,9 +1231,17 @@ struct CraftTabBarView: View {
                             }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityShowsLargeContentViewer {
+                        Image(systemName: accessory.symbol)
+                        Text(accessory.accessibilityLabel ?? accessory.title)
+                    }
+                    // Keep accessibility intent for the viewer; displayed
+                    // sizes come from the bounded metrics owned above.
+                    .environment(\.dynamicTypeSize, viewerTextSize)
                     .accessibilityLabel(accessory.accessibilityLabel ?? accessory.title)
                     .accessibilityValue(accessory.badge ?? "")
                     .accessibilityIdentifier("craft-tab-accessory")
+                    .accessibilityAddTraits(chrome.accessorySelected ? .isSelected : [])
                 }
             }
                 .padding(.horizontal, 16)
@@ -1219,9 +1251,14 @@ struct CraftTabBarView: View {
                         .onAppear { report(proxy) }
                         .onChange(of: proxy.frame(in: .global)) { _ in report(proxy) }
                 })
-                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                // Keep the view mounted: a disappearing conditional inside a
+                // child does not reliably animate in the UIKit navigation transaction.
+                .offset(y: chrome.tabBarVisible || reduceMotion ? 0 : 120)
+                .opacity(chrome.tabBarVisible ? 1 : 0)
+                .allowsHitTesting(chrome.tabBarVisible)
+                .accessibilityHidden(!chrome.tabBarVisible)
+                .animation(.easeInOut(duration: reduceMotion ? 0.12 : 0.24), value: chrome.tabBarVisible)
                 .ignoresSafeArea(.keyboard)
-                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         }
     }
 
@@ -1260,7 +1297,7 @@ struct CraftTabBarView: View {
     private var items: some View {
         HStack(spacing: 0) {
             ForEach(chrome.tabs) { tab in
-                let isSelected = tab.id == chrome.selected
+                let isSelected = tab.id == chrome.highlightedTab
                 Button { chrome.tap(tab) } label: {
                     VStack(spacing: 3) {
                         ZStack(alignment: .topTrailing) {
@@ -1305,6 +1342,7 @@ struct CraftTabBarView: View {
                     Image(systemName: symbol(tab.symbol, selected: isSelected))
                     Text(tab.displayTitle)
                 }
+                .environment(\.dynamicTypeSize, viewerTextSize)
                 .accessibilityIdentifier("craft-tab-\(tab.id)")
                 .accessibilityLabel(tab.accessibilityLabel ?? tab.badge.map { "\(tab.displayTitle), \($0)" } ?? tab.displayTitle)
                 .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
@@ -1312,7 +1350,7 @@ struct CraftTabBarView: View {
         }
         .background {
             CraftTabSelectionIndicator(
-                selected: chrome.tabs.firstIndex(where: { $0.id == chrome.selected }),
+                selected: chrome.tabs.firstIndex(where: { $0.id == chrome.highlightedTab }),
                 count: chrome.tabs.count,
                 cornerRadius: chrome.tabSelectionCornerRadius
             )
@@ -5973,6 +6011,8 @@ struct CraftWebView: UIViewRepresentable {
                         stopScan: function() { return craft._invoke('bluetoothChannel', {method: 'stopScan'}); },
                         connect: function(options) { return craft._invoke('bluetoothChannel', {method: 'connect', options: options || {}}); },
                         exchange: function(options) { return craft._invoke('bluetoothChannel', {method: 'exchange', options: options || {}}); },
+                        read: function(options) { return craft._invoke('bluetoothChannel', {method: 'read', options: options || {}}); },
+                        write: function(options) { return craft._invoke('bluetoothChannel', {method: 'write', options: options || {}}); },
                         disconnect: function() { return craft._invoke('bluetoothChannel', {method: 'disconnect'}); }
                     };
                     craft.heartRate = {
@@ -8243,7 +8283,7 @@ struct CraftWebView: UIViewRepresentable {
         // MARK: - Live Activities
         private func liveActivity(method: String, args: [Any], callbackId: String?) {
             let token = armDeadline(Coordinator.liveActivityDeadline, callbackId: callbackId, error: "Live Activity request timed out")
-            CraftLiveActivities.perform(method: method, args: args, enabled: config.enableLiveActivities, appName: config.appName) { [weak self] result in
+            CraftLiveActivities.perform(method: method, args: args, enabled: config.enableLiveActivities, appName: config.appName, healthEnabled: config.enableHealthKit) { [weak self] result in
                 guard let self, self.claimDeadline(token) else { return }
                 switch result {
                 case .success(let value): self.resolveCallback(callbackId, result: value)
@@ -9638,7 +9678,7 @@ final class CraftZigRuntime: NSObject {
 enum CraftWebServices {
     private static var waiting: [String: (Result<Any, CraftNativeActionError>) -> Void] = [:]
     /// Coordinator events a native screen hears too.
-    static let forwardedEvents: Set<String> = ["craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]
+    static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]
     static let event = Notification.Name("craftWebServicesEvent")
 
     static var isAvailable: Bool { CraftSwiftShim.coordinator != nil }

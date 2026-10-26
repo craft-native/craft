@@ -9,7 +9,7 @@ const read = (name: string): string => readFileSync(join(root, name), 'utf8')
 const rules = 'Use pickier, never eslint. buddy-bot handles updates. Use conventional commit messages.'
 const briefed = [
   'Set CRAFT_ZIG to the executable pantry.lock pins.',
-  'Zig needs the sibling Libraries/zig-js checkout at the SHA in pins.env.',
+  'Zig resolves build.zig.zon using each native package hash.',
   'The SDK suite is bun run test:sdk.',
 ].join('\n')
 
@@ -25,8 +25,8 @@ test('rejects an AGENTS.md that only repeats CLAUDE.md', () => {
 test('names the briefing an AGENTS.md leaves out', () => {
   expect(() => checkAgentsGuidelines(`# Codex\n\n${rules}\n${briefed.replace('pantry.lock', 'the lockfile')}`, `# Claude\n\n${rules}`))
     .toThrow('pinned Zig toolchain')
-  expect(() => checkAgentsGuidelines(`# Codex\n\n${rules}\n${briefed.replace('pins.env', 'a pin file')}`, `# Claude\n\n${rules}`))
-    .toThrow('sibling first-party checkouts')
+  expect(() => checkAgentsGuidelines(`# Codex\n\n${rules}\n${briefed.replace('package hash', 'checksum')}`, `# Claude\n\n${rules}`))
+    .toThrow('portable Zig dependencies')
   expect(() => checkAgentsGuidelines(`# Codex\n\n${rules}\n${briefed.replace('bun run test:sdk', 'bun test')}`, `# Claude\n\n${rules}`))
     .toThrow('which suite each test script runs')
 })

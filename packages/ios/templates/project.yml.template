@@ -14,6 +14,12 @@ settings:
       CRAFT_APNS_ENVIRONMENT: development
     release:
       CRAFT_APNS_ENVIRONMENT: production
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      GCC_OPTIMIZATION_LEVEL: s
+      DEAD_CODE_STRIPPING: YES
+      STRIP_INSTALLED_PRODUCT: YES
+      COPY_PHASE_STRIP: YES
 targets:
   {{APP_NAME}}:
     type: application

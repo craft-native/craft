@@ -19,6 +19,28 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesTest {
+    @Test
+    fun networkStatusIsAvailableWithoutAWebViewAndClosesCleanly() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        try {
+            assertTrue(capabilities.names().toString().contains("\"network\""))
+            val done = CountDownLatch(1)
+            var answer: CraftNativeCapabilityResult? = null
+            capabilities.perform("network-status", 1, "Network", "getStatus", JSONArray()) { result ->
+                answer = result
+                done.countDown()
+            }
+            assertTrue("network status did not settle", done.await(5, TimeUnit.SECONDS))
+            assertNull(answer?.code)
+            val status = answer?.data as JSONObject
+            assertTrue(status.get("isConnected") is Boolean)
+            assertTrue(setOf("none", "unknown", "wifi", "cellular", "ethernet").contains(status.getString("type")))
+        } finally {
+            capabilities.close()
+        }
+    }
+
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test
@@ -76,6 +98,58 @@ class NativeCapabilitiesTest {
             assertEquals(2, UUID.fromString(first).variant())
             assertFalse(first == second)
         } finally { capabilities.close() }
+    }
+
+    @Test
+    fun cancelledQueuedStorageWritePreservesThePreviousCheckpoint() {
+        val base = instrumentation.targetContext
+        val name = "checkpoint-cancel-${UUID.randomUUID()}"
+        val values = base.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
+        val context = object : android.content.ContextWrapper(base) {
+            override fun getSharedPreferences(key: String, mode: Int) =
+                if (key == "craft-native-storage") values else super.getSharedPreferences(key, mode)
+        }
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        val token = UUID.randomUUID().toString()
+        try {
+            assertEquals(true, call(capabilities, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 1))).data)
+            instrumentation.runOnMainSync {
+                capabilities.perform(token, CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 2))) { answered.set(true) }
+                capabilities.cancel(token)
+            }
+            instrumentation.waitForIdleSync()
+            val restored = call(capabilities, "Storage", "get", JSONArray().put("draft")).data as JSONObject
+            assertEquals(1, restored.getInt("generation"))
+            assertFalse("Cancelled requests must not acknowledge a checkpoint", answered.get())
+        } finally { capabilities.close(); base.deleteSharedPreferences(name) }
+    }
+
+    @Test
+    fun closingTheNativeHostCancelsItsQueuedCheckpointWrite() {
+        val base = instrumentation.targetContext
+        val name = "checkpoint-close-${UUID.randomUUID()}"
+        val values = base.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
+        val context = object : android.content.ContextWrapper(base) {
+            override fun getSharedPreferences(key: String, mode: Int) =
+                if (key == "craft-native-storage") values else super.getSharedPreferences(key, mode)
+        }
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val reopened = CraftNativeCapabilities(context, JSONObject())
+        val answered = java.util.concurrent.atomic.AtomicBoolean(false)
+        try {
+            assertEquals(true, call(capabilities, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 1))).data)
+            instrumentation.runOnMainSync {
+                capabilities.perform(UUID.randomUUID().toString(), CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 2))) { answered.set(true) }
+                capabilities.close()
+            }
+            instrumentation.waitForIdleSync()
+            val restored = call(reopened, "Storage", "get", JSONArray().put("draft")).data as JSONObject
+            assertEquals(1, restored.getInt("generation"))
+            assertFalse("A closed host must not acknowledge a checkpoint", answered.get())
+            assertEquals("HOST_CLOSED", call(capabilities, "Storage", "set", JSONArray().put("draft").put(JSONObject().put("generation", 3))).code)
+            assertEquals(1, (call(reopened, "Storage", "get", JSONArray().put("draft")).data as JSONObject).getInt("generation"))
+        } finally { capabilities.close(); reopened.close(); base.deleteSharedPreferences(name) }
     }
 
     @Test

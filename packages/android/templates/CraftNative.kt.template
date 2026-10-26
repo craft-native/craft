@@ -1245,6 +1245,7 @@ object CraftNative {
         return resolve to reject
     }
 
+    // CRAFT_WEB_ML_START
     @JvmStatic
     fun runImageClassification(imageBase64: String) {
         val (resolve, reject) = createMlSettlement()
@@ -1365,6 +1366,8 @@ object CraftNative {
             reject(e.message ?: "Text recognition failed")
         }
     }
+
+    // CRAFT_WEB_ML_END
 
     fun classifyImage(imageBase64: String): Boolean {
         if (!isAvailable) return false

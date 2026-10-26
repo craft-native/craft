@@ -33,6 +33,13 @@ internal class CraftBluetooth(private val context: Context) {
     private var writeId: UUID? = null
     private var notifyId: UUID? = null
     private var connected = false
+    private var streaming = false
+    private val notifications = java.util.ArrayDeque<ByteArray>()
+    private var notificationBytes = 0
+    private var readDone: ((CraftNativeCapabilityResult) -> Unit)? = null
+    private var writeDone: ((CraftNativeCapabilityResult) -> Unit)? = null
+    private var readTimer: Runnable? = null
+    private var writeTimer: Runnable? = null
     private var mtu = 23
     private var connectDone: ((CraftNativeCapabilityResult) -> Unit)? = null
     private var exchangeDone: ((CraftNativeCapabilityResult) -> Unit)? = null
@@ -50,11 +57,13 @@ internal class CraftBluetooth(private val context: Context) {
             val options = args.optJSONObject(0) ?: JSONObject()
             try {
                 when (method) {
-                    "getState" -> done(CraftNativeCapabilityResult(JSONObject().put("available", adapter != null).put("connected", connected).put("scanning", scanDone != null)))
+                    "getState" -> done(CraftNativeCapabilityResult(JSONObject().put("available", adapter != null).put("connected", connected).put("scanning", scanDone != null).put("streaming", true)))
                     "scan" -> scan(options, done)
                     "stopScan" -> { stopScan(failure("CANCELLED", "Bluetooth scan cancelled")); done(CraftNativeCapabilityResult(true)) }
                     "connect" -> connect(options, done)
                     "exchange" -> exchange(options, done)
+                    "read" -> read(options, done)
+                    "write" -> write(options, done)
                     "disconnect" -> { disconnect(); done(CraftNativeCapabilityResult(true)) }
                     else -> done(failure("UNKNOWN_ACTION", "Unsupported Bluetooth method"))
                 }
@@ -124,6 +133,7 @@ internal class CraftBluetooth(private val context: Context) {
         val device = devices[options.optString("id")] ?: throw IllegalArgumentException()
         disconnect()
         serviceId = UUID.fromString(options.getString("service")); writeId = UUID.fromString(options.getString("write")); notifyId = UUID.fromString(options.getString("notify"))
+        streaming = options.optBoolean("stream")
         connectDone = done
         gatt = device.connectGatt(context, false, callbacks, BluetoothDevice.TRANSPORT_LE)
         connectTimer = timer(15000) { failConnection("TIMEOUT", "Device did not connect; wake it and try again") }
@@ -141,7 +151,7 @@ internal class CraftBluetooth(private val context: Context) {
         } }
         override fun onMtuChanged(peer: BluetoothGatt, value: Int, status: Int) { handler.post {
             if (peer !== gatt) return@post
-            if (status != BluetoothGatt.GATT_SUCCESS || value < 185) { failConnection("MTU_TOO_SMALL", "Bluetooth MTU is too small for sensor history"); return@post }
+            if (status != BluetoothGatt.GATT_SUCCESS || value < (if (streaming) 23 else 185)) { failConnection("MTU_TOO_SMALL", "Bluetooth MTU is too small for sensor history"); return@post }
             mtu = value
             if (!peer.discoverServices()) failConnection("CONNECT_FAILED", "Could not discover Bluetooth services")
         } }
@@ -160,15 +170,27 @@ internal class CraftBluetooth(private val context: Context) {
             if (peer !== gatt || descriptor.characteristic !== notifier) return@post
             if (status != BluetoothGatt.GATT_SUCCESS) { failConnection("CONNECT_FAILED", "Could not enable notifications"); return@post }
             connected = true
-            finishConnect(CraftNativeCapabilityResult(JSONObject().put("id", peer.device.address)))
+            finishConnect(CraftNativeCapabilityResult(JSONObject().put("id", peer.device.address).put("maxWrite", minOf(182, mtu - 3))))
         } }
         override fun onCharacteristicWrite(peer: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) { handler.post {
-            if (peer === gatt && characteristic === writer && status != BluetoothGatt.GATT_SUCCESS) finishExchange(failure("WRITE_FAILED", "Bluetooth write failed"))
+            if (peer !== gatt || characteristic !== writer) return@post
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                finishWrite(failure("WRITE_FAILED", "Bluetooth write failed"))
+                finishExchange(failure("WRITE_FAILED", "Bluetooth write failed"))
+            } else finishWrite(CraftNativeCapabilityResult(true))
         } }
         override fun onCharacteristicChanged(peer: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val bytes = characteristic.value?.copyOf() ?: return
             handler.post {
-                if (peer !== gatt || characteristic !== notifier || exchangeDone == null) return@post
+                if (peer !== gatt || characteristic !== notifier) return@post
+                if (streaming) {
+                    if (bytes.isEmpty() || bytes.size > 4096) { disconnect(); return@post }
+                    if (readDone != null) { finishRead(CraftNativeCapabilityResult(JSONArray(bytes.map { it.toInt() and 255 }))); return@post }
+                    if (notifications.size >= 512 || notificationBytes + bytes.size > 1048576) { disconnect(); return@post }
+                    notifications.addLast(bytes); notificationBytes += bytes.size
+                    return@post
+                }
+                if (exchangeDone == null) return@post
                 if (bytes.size < responsePrefix.size || !bytes.take(responsePrefix.size).toByteArray().contentEquals(responsePrefix)) return@post
                 if (bytes.size > 4096) finishExchange(failure("INVALID_RESPONSE", "Bluetooth response is too large"))
                 else finishExchange(CraftNativeCapabilityResult(JSONArray(bytes.map { it.toInt() and 255 })))
@@ -185,7 +207,7 @@ internal class CraftBluetooth(private val context: Context) {
         }
     }
     private fun exchange(options: JSONObject, done: (CraftNativeCapabilityResult) -> Unit) {
-        if (exchangeDone != null) { done(failure("BUSY", "A Bluetooth request is running")); return }
+        if (streaming || exchangeDone != null) { done(failure("BUSY", "A Bluetooth request is running or streaming")); return }
         val peer = gatt; val write = writer
         if (!connected || peer == null || write == null) { done(failure("DISCONNECTED", "Bluetooth device is disconnected")); return }
         val bytes = byteArray(options, "bytes", 182)
@@ -201,10 +223,43 @@ internal class CraftBluetooth(private val context: Context) {
         exchangeTimer?.let(handler::removeCallbacks); exchangeTimer = null; responsePrefix = byteArrayOf()
         val done = exchangeDone; exchangeDone = null; done?.invoke(result)
     }
+    private fun finishRead(result: CraftNativeCapabilityResult) {
+        readTimer?.let(handler::removeCallbacks); readTimer = null
+        val done = readDone; readDone = null; done?.invoke(result)
+    }
+    private fun finishWrite(result: CraftNativeCapabilityResult) {
+        writeTimer?.let(handler::removeCallbacks); writeTimer = null
+        val done = writeDone; writeDone = null; done?.invoke(result)
+    }
+    private fun read(options: JSONObject, done: (CraftNativeCapabilityResult) -> Unit) {
+        if (!streaming || !connected) { done(failure("DISCONNECTED", "Bluetooth stream disconnected")); return }
+        if (readDone != null) { done(failure("BUSY", "A Bluetooth read is running")); return }
+        if (!notifications.isEmpty()) {
+            val bytes = notifications.removeFirst(); notificationBytes -= bytes.size
+            done(CraftNativeCapabilityResult(JSONArray(bytes.map { it.toInt() and 255 }))); return
+        }
+        readDone = done
+        readTimer = timer(options.optLong("timeoutMs", 10000).coerceIn(1, 20000)) { finishRead(failure("TIMEOUT", "Bluetooth read timed out")) }
+    }
+    private fun write(options: JSONObject, done: (CraftNativeCapabilityResult) -> Unit) {
+        val peer = gatt; val write = writer
+        if (!streaming || !connected || peer == null || write == null) { done(failure("DISCONNECTED", "Bluetooth stream disconnected")); return }
+        if (writeDone != null) { done(failure("BUSY", "A Bluetooth write is running")); return }
+        val bytes = byteArray(options, "bytes", 182)
+        require(bytes.size <= mtu - 3)
+        write.writeType = if (write.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        writeDone = done
+        writeTimer = timer(10000) { finishWrite(failure("TIMEOUT", "Bluetooth write timed out")); disconnect() }
+        write.value = bytes
+        if (!peer.writeCharacteristic(write)) finishWrite(failure("WRITE_FAILED", "Bluetooth write queue is busy"))
+    }
     fun disconnect() {
         stopScan(failure("CANCELLED", "Bluetooth scan cancelled"))
         finishConnect(failure("CANCELLED", "Bluetooth connection cancelled"))
         finishExchange(failure("DISCONNECTED", "Bluetooth device disconnected"))
+        finishRead(failure("DISCONNECTED", "Bluetooth stream closed"))
+        finishWrite(failure("DISCONNECTED", "Bluetooth stream closed"))
+        notifications.clear(); notificationBytes = 0; streaming = false
         val old = gatt; gatt = null; connected = false; writer = null; notifier = null; mtu = 23
         runCatching { old?.disconnect(); old?.close() }
     }

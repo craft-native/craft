@@ -46,6 +46,7 @@ try {
         { id: '/summary', title: 'Summary', symbol: 'list.bullet' },
       ],
       enableDeepLinks: true,
+      enableAudioRecording: true,
       enableLocalDatabase: true,
       enableLocalNotifications: true,
       enableSecureStorage: true,
@@ -64,6 +65,7 @@ try {
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeFlatListTest.kt'), join(testDirectory, 'NativeFlatListTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilitiesTest.kt'), join(testDirectory, 'NativeCapabilitiesTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeRecordingTest.kt'), join(testDirectory, 'NativeRecordingTest.kt'))
+  copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeVoiceRecordingTest.kt'), join(testDirectory, 'NativeVoiceRecordingTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeCapabilityUiTest.kt'), join(testDirectory, 'NativeCapabilityUiTest.kt'))
   copyFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeMapTest.kt'), join(testDirectory, 'NativeMapTest.kt'))
   const debugDirectory = join(output, 'app/src/debug/java', ...packageName.split('.'))

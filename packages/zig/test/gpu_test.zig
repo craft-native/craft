@@ -456,3 +456,21 @@ test "BufferUsage - all values" {
     try testing.expectEqual(gpu.BufferUsage.dynamic, .dynamic);
     try testing.expectEqual(gpu.BufferUsage.stream, .stream);
 }
+
+test "public GPU timing uses the pinned clock and sleep interfaces" {
+    var device = try gpu.GPU.init(testing.allocator, .{ .backend = .software });
+    defer device.deinit();
+    try testing.expectEqual(@as(f64, 0), device.getCurrentFPS());
+    _ = device.getCurrentFPS();
+    try testing.expect(device.last_frame_time != null);
+    var limiter = gpu.FrameLimiter.init(1000);
+    limiter.limit();
+    try testing.expect(limiter.start_ts != null);
+    var profiler = gpu.GPUProfiler.init(testing.allocator);
+    defer profiler.deinit();
+    try profiler.beginQuery("native-frame");
+    try profiler.endQuery();
+    try testing.expectEqual(@as(usize, 1), profiler.getResults().len);
+    try testing.expectEqualStrings("native-frame", profiler.getResults()[0].name);
+    try testing.expect(profiler.active_start_ts == null and profiler.active_query_name == null);
+}

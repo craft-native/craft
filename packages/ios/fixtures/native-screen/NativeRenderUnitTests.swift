@@ -707,6 +707,92 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(imageView === find(UIImageView.self, key: "avatar", below: controller.view))
     }
 
+    /// Calendar may retarget a retained screen twice in one update: an
+    /// animated week-top request, then its actual nonanimated selected day.
+    /// Sticky geometry must follow the final viewport without a JS onScroll.
+    func testStickyHeaderTracksRetargetedDaysAndReactiveReconciliation() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let window = try hostWindow()
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        controller.loadViewIfNeeded()
+
+        func calendar(target: String, key: Int, animated: Bool, revision: Int) -> [String: Any] {
+            ["id": "calendar-root", "type": "View", "style": ["flex": 1], "children": [[
+                "id": "calendar-scroll", "type": "ScrollView",
+                "props": ["key": "calendar-scroll", "stickyHeaderIndices": [1],
+                          "scrollTarget": ["id": target, "key": key, "animated": animated]],
+                "style": ["flex": 1],
+                "children": [
+                    ["id": "calendar-top", "type": "View", "props": ["key": "calendar-top"], "style": ["height": 160]],
+                    ["id": "week-header", "type": "View", "props": ["key": "week-header"],
+                     "style": ["height": 80, "backgroundColor": "#f8fafc"],
+                     "children": [node("Text", key: "week-label", text: "Week revision \(revision)")]],
+                    ["id": "day-26", "type": "View", "props": ["key": "day-26"], "style": ["height": 360],
+                     "children": [node("Text", key: "day-26-label", text: "Monday, October 26: \(revision)")]],
+                    ["id": "day-27", "type": "View", "props": ["key": "day-27"], "style": ["height": 360]],
+                    ["id": "day-28", "type": "View", "props": ["key": "day-28"], "style": ["height": 360],
+                     "children": [node("Text", key: "day-28-label", text: "Wednesday, October 28: \(revision)")]],
+                    ["id": "trailing", "type": "View", "props": ["key": "trailing"], "style": ["height": 1000]],
+                ],
+            ]]]
+        }
+
+        // One normal layout consumes a pending target. Run the main loop
+        // afterwards rather than forcing another scroll layout to repair it.
+        func settle() {
+            controller.view.layoutIfNeeded()
+            let deadline = Date().addingTimeInterval(0.2)
+            while Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        }
+        controller.render(calendar(target: "day-26", key: 1, animated: false, revision: 0))
+        settle()
+        let scroll = try XCTUnwrap(find(UIScrollView.self, key: "calendar-scroll", below: controller.view))
+        let header = try XCTUnwrap(find(UIView.self, key: "week-header", below: scroll))
+        let content = try XCTUnwrap(header.superview)
+        let naturalCenter = header.center
+        let naturalBounds = header.bounds
+        XCTAssertGreaterThan(scroll.bounds.height, 0)
+        XCTAssertEqual(naturalCenter.y - naturalBounds.height / 2, 160, accuracy: 0.5)
+        XCTAssertEqual(naturalBounds.height, 80, accuracy: 0.5)
+
+        func assertSelectedDay(_ id: String, line: UInt = #line) throws {
+            let day = try XCTUnwrap(find(UIView.self, key: id, below: scroll), file: #filePath, line: line)
+            XCTAssertTrue(scroll === find(UIScrollView.self, key: "calendar-scroll", below: controller.view), file: #filePath, line: line)
+            XCTAssertTrue(header === find(UIView.self, key: "week-header", below: scroll), file: #filePath, line: line)
+            XCTAssertTrue(header.superview === content, file: #filePath, line: line)
+            let visibleTop = scroll.contentOffset.y + scroll.adjustedContentInset.top
+            let headerRect = header.convert(header.bounds, to: scroll)
+            let dayRect = day.convert(day.bounds, to: scroll)
+            XCTAssertEqual(headerRect.minY, visibleTop, accuracy: 0.5, "The sticky header follows this viewport, not the previous target", file: #filePath, line: line)
+            XCTAssertEqual(dayRect.minY, headerRect.maxY, accuracy: 0.5, "The selected day starts below the sticky header", file: #filePath, line: line)
+            XCTAssertEqual(header.center.x, naturalCenter.x, accuracy: 0.5, file: #filePath, line: line)
+            XCTAssertEqual(header.center.y, naturalCenter.y, accuracy: 0.5, file: #filePath, line: line)
+            XCTAssertEqual(header.bounds, naturalBounds, file: #filePath, line: line)
+        }
+        try assertSelectedDay("day-26")
+        let mondayOffset = scroll.contentOffset.y
+
+        controller.render(calendar(target: "calendar-top", key: 2, animated: true, revision: 1))
+        controller.view.layoutIfNeeded()
+        controller.render(calendar(target: "day-28", key: 3, animated: false, revision: 2))
+        settle()
+        try assertSelectedDay("day-28")
+        XCTAssertEqual(scroll.contentOffset.y - mondayOffset, 720, accuracy: 0.5)
+
+        // A later data response reconciles the same keyed header and days,
+        // without changing the target key or emitting any JS scroll handler.
+        controller.render(calendar(target: "day-28", key: 3, animated: false, revision: 3))
+        settle()
+        try assertSelectedDay("day-28")
+
+        controller.render(calendar(target: "day-26", key: 4, animated: false, revision: 4))
+        settle()
+        try assertSelectedDay("day-26")
+        XCTAssertEqual(scroll.contentOffset.y, mondayOffset, accuracy: 0.5)
+    }
+
     func testHeaderAccessibilityRoleMapsToUIKitTrait() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
@@ -813,6 +899,59 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(label.textAlignment, .right)
         XCTAssertEqual(label.attributedText?.attribute(.kern, at: 0, effectiveRange: nil) as? CGFloat, 2)
         XCTAssertNotNil(label.attributedText?.attribute(.underlineStyle, at: 0, effectiveRange: nil))
+    }
+
+    func testKeptPrivateImageLoadsOfflineAndDoesNotSurviveSourceReplacement() throws {
+        let address = "https://kept-image.invalid/\(UUID().uuidString).png"
+        let location = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: location)
+            try? FileManager.default.removeItem(at: CraftNativeMedia.file(for: address))
+        }
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 7, height: 5)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 7, height: 5))
+        }.pngData())
+        try png.write(to: location)
+        let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Length": String(png.count)]))
+        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response) {
+            return XCTFail("Could not seed kept image: \(error.message)")
+        }
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func render(_ uri: String) {
+            controller.render(document([["type": "Image", "props": ["key": "kept",
+                "source": ["uri": uri, "headers": ["Authorization": "Bearer private-fixture"]]]]]))
+        }
+        render(address)
+        let image = try XCTUnwrap(find(UIImageView.self, key: "kept", below: controller.view))
+        let deadline = Date().addingTimeInterval(3)
+        while image.image == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        let decoded = try XCTUnwrap(image.image, "HTTPS .invalid cannot supply this image: the kept copy must be read")
+        XCTAssertEqual(decoded.size.width / decoded.size.height, 7.0 / 5.0, accuracy: 0.001)
+        XCTAssertNil(image.accessibilityValue)
+
+        // A kept copy is not permission to load arbitrary filesystem URLs.
+        render(CraftNativeMedia.file(for: address).absoluteString)
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Unsupported image source")
+
+        // Queue a local decode then replace its source before the main queue
+        // can deliver it. Late pixels must not overwrite the replacement.
+        render(address)
+        render("data:image/png;base64,invalid")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Image data is invalid")
+
+        // A second mount must re-read kept bytes, not a global decoded cache.
+        try Data([1, 2, 3]).write(to: CraftNativeMedia.file(for: address))
+        render(address)
+        let failureDeadline = Date().addingTimeInterval(3)
+        while image.accessibilityValue == nil && Date() < failureDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Kept image is unavailable or invalid")
     }
 
     func testImageFailuresAreExplicitAndClearStaleContent() throws {
@@ -1065,6 +1204,70 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(update.updatedNodeIds, ["route"])
         XCTAssertEqual(update.affectedNodeIds, ["route"])
         XCTAssertFalse(update.requiresFullRender)
+    }
+
+    func testMapMarkerPhotoCropsUpdatesAndFallsBackWithoutReplacingAnnotation() throws {
+        let address = "https://marker-photo.invalid/\(UUID().uuidString).png"
+        let file = CraftNativeMedia.file(for: address)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 80, height: 40)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 80, height: 40))
+        }.pngData()).write(to: file)
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func render(_ url: String, _ size: Double, _ shape: String, sizeKey: String = "imageSize", shapeKey: String = "imageShape") {
+            controller.render(["type": "Map", "props": ["key": "photos"], "style": ["width": 320, "height": 320],
+                "children": [["type": "MapMarker", "props": ["id": "runner", "title": "Ada", "geometry": [37.7, -119.5],
+                    "image": url, sizeKey: size, shapeKey: shape], "events": ["onPress": "runner-tap"]]]])
+        }
+        render(address, 30, "circle")
+        let map = try XCTUnwrap(find(MKMapView.self, key: "photos", below: controller.view))
+        let annotation = try XCTUnwrap(map.annotations.first)
+        func photo(_ expectedSize: CGFloat) throws -> UIImage {
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline {
+                if let image = map.delegate?.mapView?(map, viewFor: annotation)?.image, image.size.width == expectedSize { return image }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            throw NSError(domain: "Marker photo did not load", code: 1)
+        }
+        func alpha(_ image: UIImage, x: Int, y: Int) throws -> UInt8 {
+            let cg = try XCTUnwrap(image.cgImage)
+            var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+            try pixels.withUnsafeMutableBytes { bytes in
+                let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: cg.width, height: cg.height,
+                    bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            }
+            return pixels[(y * cg.width + x) * 4 + 3]
+        }
+        let circle = try photo(30)
+        XCTAssertEqual(try alpha(circle, x: 0, y: 0), 0)
+        XCTAssertEqual(try alpha(circle, x: circle.cgImage!.width / 2, y: circle.cgImage!.height / 2), 255)
+        render(address, 500, "square")
+        let square = try photo(96)
+        XCTAssertEqual(try alpha(square, x: 0, y: 0), 255)
+        render(address, 40, "square", sizeKey: "imagesize", shapeKey: "imageshape")
+        XCTAssertEqual(try alpha(photo(40), x: 0, y: 0), 255)
+        render(address, 42, "square", sizeKey: "image-size", shapeKey: "image-shape")
+        XCTAssertEqual(try alpha(photo(42), x: 0, y: 0), 255)
+        XCTAssertTrue(map.annotations.first === annotation)
+        controller.evaluateScript("globalThis.__photoTap = ''; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT') globalThis.__photoTap = m.payload.handlerName + ':' + m.payload.nativeEvent.id; };")
+        map.delegate?.mapView?(map, didSelect: annotation)
+        let deadline = Date().addingTimeInterval(2)
+        while controller.evaluateScript("globalThis.__photoTap")?.toString() != "runner-tap:runner", Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(controller.evaluateScript("globalThis.__photoTap")?.toString(), "runner-tap:runner")
+        render("http://marker-photo.invalid/avatar.png", 30, "circle")
+        XCTAssertEqual(map.delegate?.mapView?(map, viewFor: annotation)?.image?.size.width, 28)
+        render(address, 40, "circle")
+        render("file:///private/avatar.png", 30, "circle")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(map.delegate?.mapView?(map, viewFor: annotation)?.image?.size.width, 28, "late photo replaced fallback")
     }
 
     func testMapExplorationCameraAndDirectionMarker() throws {
@@ -1604,6 +1807,38 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNotNil(retainedAnchor)
         XCTAssertTrue(retainedAnchor.map(list.visibleItemIdentities.contains) ?? false)
         XCTAssertLessThan(rendered.count, 100)
+    }
+
+    func testFlatListDoesNotPrepareDuplicateRowsOrReapplyUnchangedSnapshots() {
+        let list = CraftNativeFlatList()
+        list.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        XCTAssertFalse(list.isPrefetchingEnabled, "a keyed row owns one native view; speculative cells must not take it")
+        let rows: [[String: Any]] = (0..<200).map { ["id": "row-\($0)", "type": "Text", "children": ["Row \($0)"]] }
+        var renders = 0
+        let render: CraftNativeFlatList.RenderItem = { node, _, previous in
+            renders += 1
+            let label = (previous as? UILabel) ?? UILabel()
+            label.text = (node["children"] as? [String])?.first
+            return label
+        }
+        func apply() {
+            list.apply(nodes: rows, horizontal: false, columns: 1, inverted: false, endReachedThreshold: 0.1, renderItem: render, recycleItem: { _ in }, removeItem: { _ in }, endReached: nil)
+            list.layoutIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        apply()
+        list.contentOffset = CGPoint(x: 0, y: 180)
+        list.layoutIfNeeded()
+        let before = renders
+        let offset = list.contentOffset
+        for _ in 0..<5 { apply() }
+        XCTAssertEqual(renders, before, "an unrelated screen update must not rebuild cells or interrupt scrolling")
+        XCTAssertEqual(list.contentOffset, offset)
+        list.discardAll()
+        list.apply(nodes: [], horizontal: false, columns: 1, inverted: false, endReachedThreshold: 0.1, renderItem: render, recycleItem: { _ in }, removeItem: { _ in }, endReached: nil)
+        list.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        XCTAssertEqual(list.numberOfItems(inSection: 0), 0, "a recycled list rebound empty must clear its old UIKit snapshot")
     }
 
     /// A screen keeps one view per row, so a second cell UIKit prepares for a
@@ -2443,10 +2678,13 @@ final class NativeRenderUnitTests: XCTestCase {
     /// caret in view on the next turn of the run loop, and a fixed wait can
     /// end before that turn while a loaded simulator brings its keyboard up:
     /// the test then measured a text view not yet laid out for its new text.
-    private func drainMainQueue() {
+    /// Suspending releases the main actor; a synchronous XCTest wait inside
+    /// a main-queue block cannot drain another block queued on that queue.
+    private func drainMainQueue() async {
         let drained = expectation(description: "the main queue reached this block")
         DispatchQueue.main.async { drained.fulfill() }
-        wait(for: [drained], timeout: 5)
+        let result = await XCTWaiter.fulfillment(of: [drained], timeout: 5)
+        XCTAssertEqual(result, .completed, "the main queue reached this block")
     }
 
     func testImagesLoadOverHttpOnlyFromThisMachine() {
@@ -2570,7 +2808,7 @@ final class NativeRenderUnitTests: XCTestCase {
     /// The caret stays where it can be seen as an input at the bottom of a
     /// screen grows: only the field was scrolled into view, when editing
     /// began, so the words typed after that went under the keyboard.
-    func testTheCaretStaysInViewAsAnInputGrows() throws {
+    func testTheCaretStaysInViewAsAnInputGrows() async throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
         window.rootViewController = controller
@@ -2589,8 +2827,7 @@ final class NativeRenderUnitTests: XCTestCase {
         input.text = (1...10).map { "line \($0)" }.joined(separator: "\n")
         input.selectedRange = NSRange(location: (input.text as NSString).length, length: 0)
         input.delegate?.textViewDidChange?(input)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        drainMainQueue()
+        await drainMainQueue()
         let end = try XCTUnwrap(input.selectedTextRange?.end)
         let caret = input.convert(input.caretRect(for: end), to: form)
         let visible = form.bounds.inset(by: form.adjustedContentInset)
@@ -2603,7 +2840,7 @@ final class NativeRenderUnitTests: XCTestCase {
     /// was scrolled into view, so its last lines and the caret stayed under
     /// the keyboard. The caret is above the keyboard when it comes up, and
     /// after a line is typed.
-    func testALongInputWithoutAMaxHeightKeepsItsCaretAboveTheKeyboard() throws {
+    func testALongInputWithoutAMaxHeightKeepsItsCaretAboveTheKeyboard() async throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
         window.rootViewController = controller
@@ -2641,8 +2878,7 @@ final class NativeRenderUnitTests: XCTestCase {
             UIResponder.keyboardAnimationCurveUserInfoKey: 0,
         ])
         controller.view.layoutIfNeeded()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        drainMainQueue()
+        await drainMainQueue()
         XCTAssertTrue(window.bounds.intersects(currentKeyboard), "the observed keyboard covers part of this window")
         XCTAssertGreaterThan(input.bounds.height, currentKeyboard.minY - window.safeAreaInsets.top, "taller than the part the keyboard leaves")
         func caret() throws -> CGRect {
@@ -2656,8 +2892,7 @@ final class NativeRenderUnitTests: XCTestCase {
         input.text = long + "\n31) and one more line"
         input.selectedRange = NSRange(location: (input.text as NSString).length, length: 0)
         input.delegate?.textViewDidChange?(input)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        drainMainQueue()
+        await drainMainQueue()
         shown = try caret()
         XCTAssertLessThanOrEqual(shown.maxY, currentKeyboard.minY + 0.5, "typed: caret \(shown) above the keyboard at \(currentKeyboard.minY)")
         XCTAssertGreaterThanOrEqual(shown.minY, window.safeAreaInsets.top - 0.5, "typed: caret \(shown) on screen")
@@ -2668,8 +2903,7 @@ final class NativeRenderUnitTests: XCTestCase {
         input.text += "\n" + (32...41).map { "\($0)) continuing the answer" }.joined(separator: "\n")
         input.selectedRange = NSRange(location: (input.text as NSString).length, length: 0)
         input.delegate?.textViewDidChange?(input)
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        drainMainQueue()
+        await drainMainQueue()
         shown = try caret()
         XCTAssertTrue(window.bounds.intersects(currentKeyboard))
         XCTAssertLessThanOrEqual(shown.maxY, currentKeyboard.minY + 0.5, "continued: caret \(shown) above the keyboard at \(currentKeyboard.minY)")
@@ -2867,7 +3101,7 @@ final class NativeRenderUnitTests: XCTestCase {
     /// as a layout moves it: a footer under a form shrank while the keyboard
     /// was up, the form grew down under the keyboard, and the inset measured
     /// where it used to end left its last fields there with nothing to scroll.
-    func testAScrollViewKeepsItsKeyboardInsetAsALayoutMovesIt() throws {
+    func testAScrollViewKeepsItsKeyboardInsetAsALayoutMovesIt() async throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
         window.rootViewController = controller
@@ -2894,13 +3128,13 @@ final class NativeRenderUnitTests: XCTestCase {
             UIResponder.keyboardAnimationCurveUserInfoKey: 0,
         ])
         controller.view.layoutIfNeeded()
-        drainMainQueue()
+        await drainMainQueue()
         func covered() -> CGFloat { max(0, form.convert(form.bounds, to: window).maxY - keyboard.minY) }
         XCTAssertEqual(form.contentInset.bottom, covered(), accuracy: 0.5, "inset for what the keyboard covers")
 
         controller.render(document(screen(footer: 0)))
         controller.view.layoutIfNeeded()
-        drainMainQueue()
+        await drainMainQueue()
         XCTAssertGreaterThan(covered(), 50, "the form now ends under the keyboard")
         XCTAssertEqual(form.contentInset.bottom, covered(), accuracy: 0.5, "the inset follows the form to where it ends now")
         XCTAssertEqual(form.verticalScrollIndicatorInsets.bottom, covered(), accuracy: 0.5)
@@ -2911,7 +3145,7 @@ final class NativeRenderUnitTests: XCTestCase {
         ])
         controller.render(document(screen(footer: 120)))
         controller.view.layoutIfNeeded()
-        drainMainQueue()
+        await drainMainQueue()
         XCTAssertEqual(form.contentInset.bottom, 0, "no keyboard, no inset")
     }
 
@@ -3695,6 +3929,176 @@ final class NativePlatformControlTests: XCTestCase {
     private func find<T: UIView>(_ type: T.Type, below view: UIView) -> T? {
         if let result = view as? T { return result }
         return view.subviews.compactMap { find(type, below: $0) }.first
+    }
+
+    private func identified(_ id: String, below view: UIView) -> UIView? {
+        if view.accessibilityIdentifier == id { return view }
+        return view.subviews.lazy.compactMap { self.identified(id, below: $0) }.first
+    }
+
+    private func pagerDocument(index: Int, count: Int) -> [String: Any] {
+        ["id": "pager", "type": "ScrollView",
+         "props": ["key": "pager", "horizontal": true, "pagingEnabled": true, "pageIndex": index, "alwaysBounceHorizontal": false],
+         "style": ["width": "100%", "height": 180],
+         "events": ["onPageSelected": "page-selected"],
+         "children": (0..<count).map { number in
+            ["id": "page-\(number)", "type": "View", "props": ["key": "page-\(number)", "testID": "page-\(number)"],
+             "style": ["width": 37, "height": 22],
+             "children": [["type": "Text", "children": ["Page \(number + 1)"]]]] as [String: Any]
+         }]
+    }
+
+    private func waitForPager(_ screen: CraftNativeScreenController, index: Int, count: Int) {
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            screen.evaluateScript("Boolean(pages.length && pages[pages.length - 1].index === \(index) && pages[pages.length - 1].count === \(count))")?.toBool() == true
+        }, object: nil)
+        wait(for: [settled], timeout: 3)
+    }
+
+    func testPagerUsesWholeViewportRetainsPagesAndResizesAtItsSelectedPage() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        screen.view.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        screen.evaluateScript("globalThis.pages = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'page-selected') pages.push(m.payload.nativeEvent); };")
+        screen.render(pagerDocument(index: 1, count: 3))
+        screen.view.layoutIfNeeded()
+        let scroll = try XCTUnwrap(find(UIScrollView.self, below: screen.view))
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 1, count: 3)
+        XCTAssertTrue(scroll.isPagingEnabled)
+        XCTAssertFalse(scroll.alwaysBounceHorizontal, "Restoring the pager axis must preserve authored bounce options")
+        XCTAssertEqual(scroll.bounds.width, 320, accuracy: 0.5)
+        XCTAssertEqual(scroll.contentSize.width, 3 * scroll.bounds.width, accuracy: 0.5)
+        XCTAssertEqual(scroll.contentOffset.x, scroll.bounds.width, accuracy: 0.5)
+        let pages = try (0..<3).map { try XCTUnwrap(identified("page-\($0)", below: scroll)) }
+        for (index, page) in pages.enumerated() {
+            XCTAssertEqual(page.frame.width, scroll.bounds.width, accuracy: 0.5, "Page must fill its viewport despite authored intrinsic width")
+            XCTAssertEqual(page.frame.minX, CGFloat(index) * scroll.bounds.width, accuracy: 0.5)
+            XCTAssertEqual(page.accessibilityElementsHidden, index != 1, "VoiceOver must not read off-screen pages")
+        }
+        let reported = screen.evaluateScript("pages.length")?.toInt32()
+        screen.render(pagerDocument(index: 1, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        XCTAssertEqual(screen.evaluateScript("pages.length")?.toInt32(), reported, "Reconciliation is not a second page selection")
+        XCTAssertTrue(pages[1] === identified("page-1", below: scroll))
+
+        screen.view.frame.size.width = 480
+        screen.view.setNeedsLayout()
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        XCTAssertEqual(scroll.bounds.width, 480, accuracy: 0.5)
+        XCTAssertEqual(scroll.contentOffset.x, 480, accuracy: 0.5, "Rotation preserves the selected page")
+        XCTAssertEqual(scroll.contentSize.width, 1440, accuracy: 0.5)
+        XCTAssertEqual(pages[2].frame.width, 480, accuracy: 0.5)
+        XCTAssertEqual(screen.evaluateScript("pages.length")?.toInt32(), reported, "Resizing is not another selection")
+    }
+
+    func testPagerControlledCommandsAndSettledNativeScrollClampAndDeduplicateEvents() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        screen.view.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        screen.evaluateScript("globalThis.pages = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'page-selected') pages.push(m.payload.nativeEvent); };")
+        screen.render(pagerDocument(index: 0, count: 3))
+        screen.view.layoutIfNeeded()
+        let scroll = try XCTUnwrap(find(UIScrollView.self, below: screen.view))
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 0, count: 3)
+        screen.render(pagerDocument(index: 2, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 2, count: 3)
+        XCTAssertEqual(scroll.contentOffset.x, scroll.bounds.width * 2, accuracy: 0.5)
+        // UIKit supplies these settled callbacks after a drag. The UI fixture
+        // separately proves an actual synthesized finger swipe reaches them.
+        scroll.setContentOffset(CGPoint(x: scroll.bounds.width, y: 0), animated: false)
+        screen.scrollViewDidEndDragging(scroll, willDecelerate: false)
+        waitForPager(screen, index: 1, count: 3)
+        let reports = screen.evaluateScript("pages.length")?.toInt32()
+        screen.scrollViewDidEndDecelerating(scroll)
+        scroll.delegate?.scrollViewDidEndScrollingAnimation?(scroll)
+        XCTAssertEqual(screen.evaluateScript("pages.length")?.toInt32(), reports)
+        XCTAssertFalse(try XCTUnwrap(identified("page-1", below: scroll)).accessibilityElementsHidden)
+        XCTAssertTrue(try XCTUnwrap(identified("page-2", below: scroll)).accessibilityElementsHidden)
+        screen.render(pagerDocument(index: 99, count: 1))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 0, count: 1)
+        XCTAssertEqual(scroll.contentOffset.x, 0, accuracy: 0.5)
+        XCTAssertNil(identified("page-1", below: scroll))
+        screen.render(pagerDocument(index: -1, count: 0))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 0, count: 0)
+        XCTAssertEqual(scroll.contentSize.width, 0, accuracy: 0.5)
+    }
+
+    func testPagerReconciliationDuringAnimationDoesNotPublishAnIntermediatePage() throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        window.rootViewController = screen
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        screen.evaluateScript("globalThis.pages = []; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT' && m.payload.handlerName === 'page-selected') pages.push(m.payload.nativeEvent); };")
+        screen.render(pagerDocument(index: 0, count: 3))
+        screen.view.layoutIfNeeded()
+        let scroll = try XCTUnwrap(find(UIScrollView.self, below: screen.view))
+        scroll.layoutIfNeeded()
+        waitForPager(screen, index: 0, count: 3)
+        let before = screen.evaluateScript("pages.length")?.toInt32()
+        XCTAssertTrue(UIView.areAnimationsEnabled)
+        XCTAssertFalse(UIAccessibility.isReduceMotionEnabled, "The maintained fixture keeps animations enabled")
+        screen.render(pagerDocument(index: 2, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        let deadline = Date().addingTimeInterval(3)
+        func isBetweenPages() -> Bool { scroll.contentOffset.x > 1 && scroll.contentOffset.x < scroll.bounds.width * 2 - 1 }
+        while !isBetweenPages() && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertTrue(isBetweenPages(), "The real UIKit scroll must be observed during its animation")
+        // An unrelated update while UIKit animates still carries the same
+        // controlled target. It must not adopt the in-between viewport.
+        screen.render(pagerDocument(index: 2, count: 3))
+        screen.view.layoutIfNeeded()
+        scroll.layoutIfNeeded()
+        XCTAssertEqual(screen.evaluateScript("pages.length")?.toInt32(), before)
+        XCTAssertEqual(screen.evaluateScript("pages[pages.length - 1].index")?.toInt32(), 0)
+        waitForPager(screen, index: 2, count: 3)
+        XCTAssertEqual(screen.evaluateScript("pages.length")?.toInt32(), (before ?? 0) + 1)
+        XCTAssertEqual(scroll.contentOffset.x, scroll.bounds.width * 2, accuracy: 0.5)
+    }
+
+    func testCSSGenericFontFallbacksProduceNativeFamiliesAndPreserveTraits() throws {
+        let screen = CraftNativeScreenController(config: CraftConfig())
+        screen.loadViewIfNeeded()
+        func font(_ family: String, type: String = "Text", weight: String = "700", italic: Bool = true) throws -> UIFont {
+            screen.render(["type": type, "props": ["key": "sample", "value": "111 WWW"],
+                "style": ["fontFamily": family, "fontWeight": weight, "fontStyle": italic ? "italic" : "normal", "fontSize": 19],
+                "children": ["111 WWW"]])
+            if type == "TextInput" { return try XCTUnwrap(find(UITextField.self, below: screen.view)?.font) }
+            return try XCTUnwrap(find(UILabel.self, below: screen.view)?.font)
+        }
+        for family in ["monospace", "ui-monospace", "'Definitely Missing Font', ui-monospace, serif"] {
+            for type in ["Text", "TextInput"] {
+                let actual = try font(family, type: type)
+                XCTAssertTrue(actual.fontDescriptor.symbolicTraits.contains(.traitMonoSpace), family)
+                XCTAssertTrue(actual.fontDescriptor.symbolicTraits.contains(.traitBold), family)
+                XCTAssertTrue(actual.fontDescriptor.symbolicTraits.contains(.traitItalic), family)
+                XCTAssertGreaterThan(actual.pointSize, 0)
+            }
+        }
+        let sans = try font("system-ui", italic: false)
+        XCTAssertFalse(sans.fontDescriptor.symbolicTraits.contains(.traitMonoSpace))
+        let serif = try font("'Missing Font', ui-serif", italic: false)
+        XCTAssertNotEqual(serif.familyName, sans.familyName)
+        let custom = try XCTUnwrap(UIFont(name: "Helvetica", size: 19))
+        for type in ["Text", "TextInput"] {
+            let selected = try font("Helvetica, monospace", type: type)
+            XCTAssertEqual(selected.familyName, custom.familyName, "First available custom family wins over generic fallback: \(type)")
+            XCTAssertTrue(selected.fontDescriptor.symbolicTraits.contains(.traitBold), type)
+            XCTAssertTrue(selected.fontDescriptor.symbolicTraits.contains(.traitItalic), type)
+        }
     }
 
     func testSegmentsAreUIKitControlsAndReconcileWithoutFalseChanges() throws {

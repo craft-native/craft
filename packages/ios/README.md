@@ -29,6 +29,23 @@ decoration. Resuming does not replay it. Available on both native renderers.
 - **Audio Recording** - AVAudioRecorder with compressed output
 - **Video Recording** - UIImagePickerController video capture
 
+### Native voice capture
+
+With `enableAudioRecording`, the native renderer exposes
+`craft.audioRecording.start(owner, { maxSeconds })`, `stop(owner)` and
+`cancel(owner)`. Use a fresh UUID owner and at most 300 seconds. Stop returns
+an owned temporary M4A descriptor with its MIME type, size and duration for
+`craft.files` multipart uploads. Cancel and backgrounding erase the recording.
+
+Permission is answered on the main thread. Recorder startup, stopping and
+file inspection run on a serial audio queue. Startup has a 15-second deadline
+after permission is granted; cancellation or timeout prevents a delayed encoder
+from publishing a recording. A startup failure leaves the interface responsive. Deletion runs independently of
+encoder work, so a stalled encoder cannot retain a cancelled capture. Voice files
+use their own temporary namespace and are erased on the next native launch after
+an interruption or process termination, including the earlier recorder's M4A files.
+Picked files and downloads retain their separate lifetime.
+
 ### Device Access
 
 - **Camera & Gallery** - Take photos or pick from gallery
@@ -1324,3 +1341,23 @@ and detents; Android sizes its native bottom panel to the selected detent
 without an extra dependency. Omitting presentationStyle keeps the existing
 full-screen overlay. A native sheet's close request still belongs to its
 owner, which sets visible to false.
+
+
+### Controlled native paging and font families
+
+A horizontal `ScrollView` with `pagingEnabled: true` and a numeric `pageIndex`
+uses viewport-sized direct children. The host advertises `nativePager` and emits
+`onPageSelected` with `{ index, count }` after initial layout, count changes and
+settled user selection. Updates to `pageIndex` select a page; removed pages clamp
+the index and resizing preserves it. Offscreen pages stay mounted but are hidden
+from native accessibility. `scrollEnabled: false` locks swiping while retaining
+controls in the selected page. Without `pageIndex`, scroll content keeps its
+ordinary intrinsic layout; this is an opt-in contract for a shared Pager.
+
+Text `fontFamily` accepts a CSS fallback list. Bundled/custom fonts take priority
+when available. `monospace`/`ui-monospace`, `serif`/`ui-serif` and
+`sans-serif`/`ui-sans-serif`/`system-ui` select platform fonts, retaining requested
+weight, italic style and system text scaling. A missing custom face falls through
+to the next family rather than silently replacing a requested mono font with sans.
+
+The simulator driver requires a successful HTTP response from each control-server `exec` hook. A failed or unavailable hook fails XCTest and stops the journey before its next command.

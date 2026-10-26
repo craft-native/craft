@@ -43,6 +43,8 @@ enum CraftNativeActions {
         // `speech`, `audio` (background sound) and `eventStream` (a fetch read
         // as it arrives) need nothing the app has to declare.
         var values = ["device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "dialog", "speech", "audio", "eventStream", "linking", "badge", "animation", "viewFocus", "viewMeasure", "viewReparent", "viewNonModalPresentation", "nativePlatformControls"]
+        values.append("network")
+        values.append("nativePager")
         values.append("storageCompareAndSet")
         values.append("storageSetIfAbsent")
         values.append("viewScroll")
@@ -94,6 +96,7 @@ enum CraftNativeActions {
         // which the native Video element plays in place of the address.
         values.append("media")
         if config.enableCamera { values.append("camera") }
+        if config.enableAudioRecording { values.append("audioRecording") }
         // craft.crashReporter: the app's crash and error reporter (bughq).
         if config.crashReporting?.key.isEmpty == false { values.append("crashReporter") }
         return values
@@ -201,7 +204,13 @@ enum CraftNativeActions {
         case ("Clipboard", "read"):
             sync = perform(action: "clipboardRead", body: [:], config: config)
         case ("Storage", _):
-            DispatchQueue.main.async { complete(requestToken, storage(method: method, args: args), completion) }
+            DispatchQueue.main.async {
+                cancellationLock.lock()
+                let cancelled = cancelledRequests.remove(requestToken) != nil
+                cancellationLock.unlock()
+                guard !cancelled else { return }
+                complete(requestToken, storage(method: method, args: args), completion)
+            }
             return
         case ("SecureStorage", _):
             guard config.enableSecureStorage else {
@@ -236,6 +245,9 @@ enum CraftNativeActions {
                 return
             }
             authenticate(requestToken: requestToken, args: args, completion: completion)
+            return
+        case ("Network", "getStatus"):
+            CraftWebServices.perform(action: "getNetworkStatus", body: [:]) { complete(requestToken, $0, completion) }
             return
         case ("Network", "fetch"):
             fetch(requestToken: requestToken, args: args, completion: completion)
@@ -372,7 +384,7 @@ enum CraftNativeActions {
             }
             return
         case ("LiveActivities", _):
-            CraftLiveActivities.perform(method: method, args: args, enabled: config.enableLiveActivities, appName: config.appName) { result in
+            CraftLiveActivities.perform(method: method, args: args, enabled: config.enableLiveActivities, appName: config.appName, healthEnabled: config.enableHealthKit) { result in
                 complete(requestToken, result, completion)
             }
             return
@@ -553,6 +565,13 @@ enum CraftNativeActions {
             DispatchQueue.main.async {
                 CraftNativeShare.share(options) { complete(requestToken, $0, completion) }
             }
+            return
+        case ("AudioRecording", _):
+            guard config.enableAudioRecording else {
+                complete(requestToken, failure("CAPABILITY_DISABLED", "Audio recording is disabled"), completion)
+                return
+            }
+            CraftVoiceRecording.shared.perform(method: method, args: args) { result in complete(requestToken, result, completion) }
             return
         case ("Speech", "speak"):
             // Settles when the words have been said (true) or were cut off
@@ -1679,11 +1698,11 @@ enum CraftSnapshots {
             .appendingPathComponent("craft-snapshots", isDirectory: true)
     }
 
-    /// Letters, digits, `-`, `_` and `.`, not starting with a dot: a file
+    /// Letters, digits, `-`, `_`, `.` and account namespace `:`, not starting with a dot: a file
     /// name, never a path.
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name.count <= 128 && !name.hasPrefix(".")
-            && name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)) }
+            && name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)) }
     }
 
     static func url(for name: String) -> URL? {

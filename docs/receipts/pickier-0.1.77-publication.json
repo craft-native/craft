@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-10-23T18:58:39.802505+00:00",
+  "repository": "pickier/pickier",
+  "source": "0ce83cbbf06f23b0c05a61b332e074292d69961a",
+  "tag": "v0.1.77",
+  "releaseCommand": "bun run release:patch",
+  "releaseRunId": 39999788567,
+  "sourceCiRunId": 39999788210,
+  "originalNpmPublication": [
+    {
+      "name": "pickier",
+      "version": "0.1.77",
+      "shasum": "a3cb4eefba616e5f3eb0f19d56d1eebd6834c180",
+      "integrity": "sha512-ccrUEA9nRlPYXkRUaZ2UHncyH8L7Xy1tuX2KbSlgKN3pO//slDfXe716Q79kKCCDgL8MqoR5eCyHHXRp7qNIlg=="
+    }
+  ],
+  "originalNpmArchives": {
+    "packages": [
+      {
+        "name": "pickier",
+        "version": "0.1.77",
+        "shasum": "a3cb4eefba616e5f3eb0f19d56d1eebd6834c180",
+        "integrity": "sha512-ccrUEA9nRlPYXkRUaZ2UHncyH8L7Xy1tuX2KbSlgKN3pO//slDfXe716Q79kKCCDgL8MqoR5eCyHHXRp7qNIlg==",
+        "file": "pickier-0.1.77.tgz",
+        "bytes": 2214547,
+        "sha256": "45f80943c7e82f7d4a3f98082cb5f016471d088ce4cc3677af7384273201f6f0",
+        "matchedOriginalMetadataAndCompleteBytes": true
+      }
+    ],
+    "failures": []
+  },
+  "originalNativeArchives": {
+    "source": "0ce83cbbf06f23b0c05a61b332e074292d69961a",
+    "tag": "v0.1.77",
+    "archives": [
+      {
+        "name": "pickier-darwin-arm64.zip",
+        "size": 41020547,
+        "digest": "sha256:bfc1f152792a8a2d61cd3417edaaa55d6b00ab406cada7072a3162272a2eada0",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-darwin-x64.zip",
+        "size": 43637223,
+        "digest": "sha256:ec6e4bcdb427c7da3e2582f167b247e4182128a474327585c974c4dace4ff002",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-linux-arm64-musl.zip",
+        "size": 48064233,
+        "digest": "sha256:7860c56da293c4d6a68367786b0b0739622c75a9ec27152c99a10ea79b140967",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-linux-arm64.zip",
+        "size": 51841975,
+        "digest": "sha256:3cad9cfc1a27bff2310663b31fb31d5b059c3d3ed3a3976334a20299a69e9663",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-linux-x64-musl.zip",
+        "size": 48428953,
+        "digest": "sha256:497da321690e969b3ef2fac84b8029b763fb79cfca67ee1a87636076e41631e6",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-linux-x64.zip",
+        "size": 51976670,
+        "digest": "sha256:ceb9573f2e6a0a4dac31de698348d56f5db5da89a2358a6c529f575d14070219",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-windows-arm64.zip",
+        "size": 49584283,
+        "digest": "sha256:c70517dcc65984df91fc0df08bf1c1a2bb89f92a95b3df72dad2dea230ab3f17",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      },
+      {
+        "name": "pickier-windows-x64.zip",
+        "size": 54908260,
+        "digest": "sha256:6cf324fef2b6c1e25765c5f118bac0391b38cb9bae12a2ab888c37dfb7e3e65d",
+        "zipCrcEntryAndNativeArchitectureVerified": true
+      }
+    ]
+  },
+  "normalIndependentConsumer": {
+    "schemaVersion": 1,
+    "verifiedAt": "2026-10-23T18:20:24.725Z",
+    "sources": [
+      {
+        "repository": "pickier/pickier",
+        "commit": "0ce83cbbf06f23b0c05a61b332e074292d69961a",
+        "tag": "v0.1.77",
+        "gates": [
+          {
+            "runId": 39999788567,
+            "workflow": ".github/workflows/release.yml",
+            "requiredJobs": [
+              "npm"
+            ]
+          },
+          {
+            "runId": 39999788210,
+            "workflow": ".github/workflows/ci.yml",
+            "requiredJobs": [
+              "native",
+              "lint",
+              "typecheck",
+              "test"
+            ]
+          }
+        ],
+        "packages": [
+          {
+            "name": "pickier",
+            "version": "0.1.77",
+            "integrity": "sha512-ccrUEA9nRlPYXkRUaZ2UHncyH8L7Xy1tuX2KbSlgKN3pO//slDfXe716Q79kKCCDgL8MqoR5eCyHHXRp7qNIlg==",
+            "tarball": "https://registry.npmjs.org/pickier/-/pickier-0.1.77.tgz",
+            "bytes": 2214547,
+            "filesSha256": "fb39fbdd89f2371d0012fbc7156a241c26e0e023441db07f69f8b23e782ea0a9"
+          }
+        ],
+        "releaseCommand": "bun run release:patch",
+        "releaseScript": "./packages/pickier/pickier run CHANGELOG.md --mode lint --fix && bunx --bun @stacksjs/bumpx patch --recursive --yes"
+      }
+    ],
+    "consumer": {
+      "lockfile": "bun.lock",
+      "sha256": "08ca478d1fa7451c30f56a19e0f6ee57bd75a8eb847fdba74275afa24da7ffe3",
+      "bunVersion": "1.4.3",
+      "checks": [
+        {
+          "script": "check",
+          "exitCode": 0,
+          "outputSha256": "b64112b8047eca44ca3702714b4a43bede2d0a0df96ab037e320f9fdcbc8a0ae"
+        }
+      ]
+    }
+  },
+  "originalHostExecutable": {
+    "source": "0ce83cbbf06f23b0c05a61b332e074292d69961a",
+    "archive": "native-archives/pickier-darwin-arm64.zip",
+    "entry": "pickier-darwin-arm64",
+    "nativeExecutableSha256": "a2df7e88209e06b80596885af278f275e3446023d33302e4d26fe2cbb58a8253",
+    "originalArchiveBytesMatched": true
+  },
+  "actualMacExecution": "Published API and standalone CLI exclude compiler caches while reporting both owned sources; the installed native engine executes protocol 2 and reports both debugger statements. All six npm native payload architectures match.",
+  "craftRegression": {
+    "oldInstalledLinterErrors": 11,
+    "newInstalledLinterErrors": 0,
+    "projectCacheLintExceptionRemoved": true,
+    "transitiveDependencyUpdate": true,
+    "directPickierDependencyAdded": false
+  },
+  "limits": "Other-platform executables were checked as original archives and architecture headers. These tooling checks do not establish native game presentation or original-game fidelity."
+}

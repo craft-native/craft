@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "runtime": "Bun 1.4.3",
+  "compiler": "Zig 0.18.0-dev.146+35accc06e",
+  "checks": {
+    "npmPackageBuilds": 8,
+    "types": "passed",
+    "maintainedVerify": "passed",
+    "sdkTests": {
+      "passed": 779,
+      "skipped": 8,
+      "failed": 0,
+      "assertions": 2104
+    },
+    "releaseTests": {
+      "passed": 76,
+      "failed": 0,
+      "assertions": 1093
+    },
+    "zigFormat": "passed",
+    "publicArchiveConsumer": {
+      "steps": 3,
+      "passed": 3,
+      "pixelChecks": [
+        "bitmap",
+        "terrain",
+        "glyph",
+        "atomic CPU frame"
+      ],
+      "freshCaches": true,
+      "siblingCheckouts": false,
+      "window": false,
+      "maxRssReported": "643M"
+    }
+  },
+  "logs": [
+    {
+      "name": "craft-upstream-cache-real-red.log",
+      "sha256": "409a4c8189a44c22906536bbf010b1aaed270487d719605c3846c56cb4b85d25"
+    },
+    {
+      "name": "craft-upstream-cache-real-green.log",
+      "sha256": "8e440a3400091bc1dc52095557cf57b12e32fa3697f4f41c1c0fa8703de750bf"
+    },
+    {
+      "name": "craft-upstream-tools-build-npm.log",
+      "sha256": "98a0ab16a93984e7326dcf21eb0ca1ec2dffcb65ec171c4ad57a029a8eae748a"
+    },
+    {
+      "name": "craft-upstream-tools-types.log",
+      "sha256": "f4bd3e5ffdf746a098a423d2a605f5f5ff1c6a7e2ba77cfb640cb4adf863432a"
+    },
+    {
+      "name": "craft-upstream-tools-verify.log",
+      "sha256": "77e62360686cf904160c75375ec415281d4a5c16d1377e4b19beaac026f43180"
+    },
+    {
+      "name": "craft-upstream-tools-sdk-tests.log",
+      "sha256": "49642afcbc235c8f3ecebb7145063f621ea60ce1dc6d3b27e599a4177800882f"
+    },
+    {
+      "name": "craft-upstream-tools-release-tests-pinned.log",
+      "sha256": "084a05f3245d9463b44d7fc805cddc00d39599adc02d09315f5520997d5ff4b8"
+    },
+    {
+      "name": "craft-upstream-tools-zig-fmt.log",
+      "sha256": "8bd57ffeec804fe61382854873dc73df4fbbe19ecba073847894129d5ed7d5da"
+    },
+    {
+      "name": "craft-upstream-tools-public-consumer.log",
+      "sha256": "60f492eb6e3937993a2c4ee1b925b3649f6791a24e3076962a7d28743a28d749"
+    }
+  ],
+  "upstreamViewerIntegrationTests": {
+    "passed": 23,
+    "failed": 0,
+    "assertions": 160
+  }
+}

@@ -16,6 +16,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.provider.MediaStore
 import android.util.Base64
 import androidx.core.content.ContextCompat
@@ -37,6 +40,7 @@ import java.net.URLConnection
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -86,6 +90,7 @@ internal class CraftNativeCapabilities(
     private val databaseExecutor = Executors.newSingleThreadExecutor()
     private val networkExecutor = Executors.newCachedThreadPool()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    private val closed = AtomicBoolean(false)
     private val fetchConnections = ConcurrentHashMap<String, HttpURLConnection>()
     private val fileRoot by lazy { File(context.cacheDir, "craft-files").apply { mkdirs() } }
     private var pendingFilePick: PendingFilePick? = null
@@ -111,13 +116,38 @@ internal class CraftNativeCapabilities(
         val fileLimit: Long = 0,
     )
 
+    private val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val networkWatch = object : ConnectivityManager.NetworkCallback() {
+        private fun changed() {
+            if (!closed.get()) CraftNativeHub.broadcast("CRAFT_EVENT", JSONObject().put("event", "craftNetworkChange").put("detail", networkStatus()))
+        }
+        override fun onAvailable(network: Network) = changed()
+        override fun onLost(network: Network) = changed()
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed()
+    }
+
+    private fun networkStatus(): JSONObject {
+        val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+        val connected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        val type = when {
+            !connected -> "none"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "cellular"
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true -> "ethernet"
+            else -> "unknown"
+        }
+        return JSONObject().put("isConnected", connected).put("type", type)
+    }
+
     init {
+        connectivity.registerDefaultNetworkCallback(networkWatch)
         restoreNotifications()
         sweepFiles()
     }
 
     fun names(): JSONArray = JSONArray().apply {
         listOf("device", "clipboard", "haptics", "storage", "lifecycle", "fetch", "files").forEach(::put)
+        put("network")
         put("storageCompareAndSet")
         put("storageSetIfAbsent")
         put("crypto")
@@ -137,6 +167,10 @@ internal class CraftNativeCapabilities(
         args: JSONArray,
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
+        if (closed.get()) {
+            mainHandler.post { completion(failure("HOST_CLOSED", "The native capability host is closed")) }
+            return
+        }
         cancelled.remove(requestToken)
         if (version != CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION) {
             complete(requestToken, failure("UNSUPPORTED_VERSION", "Unsupported native capability protocol version"), completion)
@@ -152,6 +186,7 @@ internal class CraftNativeCapabilities(
                 else bluetooth.perform(method, args) { complete(requestToken, it, completion) }
             }
             "Storage" -> mainHandler.post {
+                if (cancelled.remove(requestToken) || closed.get()) return@post
                 val answer = runCatching { storage(method, args) }
                     .getOrElse { failure("STORAGE_ERROR", it.message ?: "Storage operation failed") }
                 complete(requestToken, answer, completion)
@@ -174,7 +209,9 @@ internal class CraftNativeCapabilities(
             "DeepLinks" -> complete(requestToken, deepLinks(method), completion)
             "Notifications" -> notifications(requestToken, method, args, completion)
             "Network" -> {
-                if (method != "fetch") {
+                if (method == "getStatus") {
+                    complete(requestToken, success(networkStatus()), completion)
+                } else if (method != "fetch") {
                     complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Network method"), completion)
                 } else networkExecutor.execute {
                     complete(requestToken, fetch(requestToken, args), completion)
@@ -202,6 +239,9 @@ internal class CraftNativeCapabilities(
     }
 
     fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { connectivity.unregisterNetworkCallback(networkWatch) }
+        cancelled.clear()
         if (config.optBoolean("enableBluetooth")) bluetooth.disconnect()
         databaseExecutor.shutdownNow()
         networkExecutor.shutdownNow()
@@ -791,7 +831,10 @@ internal class CraftNativeCapabilities(
     private fun sweepFiles() {
         val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
         fileRoot.listFiles()?.forEach { file ->
-            if (file.lastModified() < cutoff) file.deleteRecursively()
+            // Voice captures have a separate launch lifetime; sweep only
+            // generic per-file UUID folders here.
+            val owned = runCatching { UUID.fromString(file.name).toString().equals(file.name, ignoreCase = true) }.getOrDefault(false)
+            if (owned && file.lastModified() < cutoff) file.deleteRecursively()
         }
     }
 
@@ -823,9 +866,9 @@ internal class CraftNativeCapabilities(
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
         if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            if (!cancelled.remove(requestToken)) completion(result)
+            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
         } else mainHandler.post {
-            if (!cancelled.remove(requestToken)) completion(result)
+            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
         }
     }
 

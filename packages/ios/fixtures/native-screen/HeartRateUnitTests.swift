@@ -1,4 +1,5 @@
 import CryptoKit
+import UIKit
 import XCTest
 @testable import NativeRender
 
@@ -416,6 +417,74 @@ final class PersistentRecordingCheckpointUnitTests: XCTestCase {
         XCTAssertNotEqual(first, second)
         XCTAssertEqual(Array(first)[14], "4")
         XCTAssertTrue("89ab".contains(Array(first)[19]))
+    }
+
+    @MainActor
+    func testCancelledQueuedStorageWritePreservesThePreviousCheckpoint() async throws {
+        let key = "checkpoint-cancel-" + UUID().uuidString
+        defer { try? CraftPersistentStorage.set(key, data: nil, prefix: "craft.native.storage.") }
+        func call(_ method: String, _ args: [Any]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: method, args: args, config: CraftConfig()) { result in
+                    switch result {
+                    case .success(let value): continuation.resume(returning: value)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+        _ = try await call("set", [key, ["generation": 1]])
+        let token = UUID().uuidString
+        var answered = false
+        // Both calls execute on main before its queued storage write can run.
+        CraftNativeActions.perform(requestToken: token, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: "set", args: [key, ["generation": 2]], config: CraftConfig()) { _ in answered = true }
+        CraftNativeActions.cancel(requestToken: token)
+        let restored = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(restored?["generation"] as? Int, 1)
+        XCTAssertFalse(answered, "Cancelled requests must not acknowledge a checkpoint")
+    }
+
+    func testDisposedRetainedScreenCannotCommitItsQueuedCheckpoint() async throws {
+        let key = "checkpoint-screen-close-" + UUID().uuidString
+        defer { try? CraftPersistentStorage.set(key, data: nil, prefix: "craft.native.storage.") }
+        func call(_ method: String, _ args: [Any]) async throws -> Any {
+            try await withCheckedThrowingContinuation { continuation in
+                CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion, module: "Storage", method: method, args: args, config: CraftConfig()) { result in
+                    switch result {
+                    case .success(let value): continuation.resume(returning: value)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+        _ = try await call("set", [key, ["generation": 1]])
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        XCTAssertEqual(controller.evaluateScript("typeof craftNativePostMessage")?.toString(), "function")
+        let message: [String: Any] = ["type": "API_REQUEST", "id": UUID().uuidString, "payload": ["version": craftNativeCapabilityProtocolVersion, "module": "Storage", "method": "set", "args": [key, ["generation": 2]]]]
+        let json = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: message), encoding: .utf8))
+        controller.evaluateScript("craftNativePostMessage(JSON.stringify(\(json)))")
+        if CraftNativeScriptThread.isBackground {
+            // The script's request reaches main before this disappearance,
+            // while the request's own queued write comes after it.
+            await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { controller.viewDidDisappear(false); continuation.resume() }
+            }
+        } else {
+            controller.viewDidDisappear(false)
+        }
+        let restored = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(restored?["generation"] as? Int, 1)
+        controller.evaluateScript("craftNativePostMessage(JSON.stringify(\(json)))")
+        let afterClose = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(afterClose?["generation"] as? Int, 1, "A closed retained context cannot start another storage request")
+        let syncResult = controller.evaluateScript("(function() { try { craft.storage.setSync((\(json)).payload.args[0], { generation: 3 }); return 'accepted'; } catch (error) { return 'closed'; } })()")?.toString()
+        XCTAssertEqual(syncResult, "closed", "The synchronous storage API also belongs to the native screen lifetime")
+        let syncReadResult = controller.evaluateScript("(function() { try { craft.storage.getSync((\(json)).payload.args[0]); return 'accepted'; } catch (error) { return 'closed'; } })()")?.toString()
+        XCTAssertEqual(syncReadResult, "closed", "A closed screen cannot read synchronous storage either")
+        let afterSyncClose = try await call("get", [key]) as? [String: Any]
+        XCTAssertEqual(afterSyncClose?["generation"] as? Int, 1, "A closed synchronous host must preserve the checkpoint")
+        withExtendedLifetime(controller) {}
     }
 
     func testPublicStorageCapabilityRoutesAtomicCheckpointsAndDeletion() async throws {

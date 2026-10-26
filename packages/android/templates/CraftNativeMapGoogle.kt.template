@@ -26,6 +26,7 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
     private var userChangingCamera = false
     private var markerBearings = mutableMapOf<String, Float>()
     private var markerPinColors = mutableMapOf<String, Int>()
+    private val markerPhotos = CraftMarkerPhotos(context) { if (!destroyed) applyPending() }
     private val pinIcons = mutableMapOf<Int, com.google.android.gms.maps.model.BitmapDescriptor>()
     private var directionIcon: com.google.android.gms.maps.model.BitmapDescriptor? = null
     private var lifecycleStarted = false
@@ -122,6 +123,7 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
         val nextMarkers = mutableMapOf<String, Pair<LatLng, String?>>()
         val nextBearings = mutableMapOf<String, Float>()
         val nextPinColors = mutableMapOf<String, Int>()
+        val nextPhotos = mutableMapOf<String, CraftMarkerPhoto>()
         val nextHandlers = mutableMapOf<String, String>()
         val nextPolylines = mutableMapOf<String, Triple<List<LatLng>, Int, Float>>()
         val nextPolygons = mutableMapOf<String, PolygonValue>()
@@ -131,6 +133,7 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
             val id = craftNativeOptionalString(overlay.opt("id")) ?: continue
             val point = coordinates(overlay.optJSONArray("geometry")).firstOrNull() ?: continue
             nextMarkers[id] = point to (overlay.opt("title") as? String)
+            CraftMarkerPhoto.from(overlay)?.let { nextPhotos[id] = it }
             (overlay.opt("pinColor") as? String)?.let { nextPinColors[id] = color(it) }
             (overlay.opt("bearing") as? Number)?.toDouble()?.takeIf { it.isFinite() }?.let { nextBearings[id] = (it % 360).toFloat() }
         }
@@ -161,6 +164,8 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
             if (type == "mapmarker" || type == "marker") {
                 points.firstOrNull()?.let { point ->
                     nextMarkers[id] = point to (props.opt("title") as? String)
+                    nextPhotos.remove(id)
+                    CraftMarkerPhoto.from(props)?.let { nextPhotos[id] = it }
                     (props.opt("pinColor") as? String)?.let { value -> nextPinColors[id] = color(value) }
                     (props.opt("bearing") as? Number)?.toDouble()?.takeIf { it.isFinite() }?.let { nextBearings[id] = (it % 360).toFloat() }
                     listOf(events.opt("onPress"), events.opt("onMarkerPress"))
@@ -203,19 +208,26 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
         }
         markerBearings = nextBearings
         markerPinColors = nextPinColors
+        markerPhotos.reconcile(nextPhotos)
         pinIcons.keys.filter { it !in markerPinColors.values }.forEach { pinIcons.remove(it) }
         markers.keys.filter { nextMarkers[it] == null }.forEach { markers.remove(it)?.remove() }
         for ((id, value) in nextMarkers) {
+            val photo = markerPhotos.bitmap(id)
+            val direction = photo == null && markerBearings.containsKey(id)
+            val icon = photo?.let(BitmapDescriptorFactory::fromBitmap)
+                ?: if (direction) directionMarkerIcon() else pinMarkerIcon(id)
+            val anchor = if (photo != null || direction || markerPinColors.containsKey(id)) 0.5f else 1f
             val marker = markers[id]
             if (marker != null) {
                 marker.position = value.first
                 marker.title = value.second
-                marker.setIcon(if (markerBearings.containsKey(id)) directionMarkerIcon() else pinMarkerIcon(id))
-                marker.isFlat = markerBearings.containsKey(id)
-                marker.rotation = markerBearings[id] ?: 0f
-                marker.setAnchor(0.5f, if (markerBearings.containsKey(id) || markerPinColors.containsKey(id)) 0.5f else 1f)
+                marker.setIcon(icon)
+                marker.isFlat = direction
+                marker.rotation = if (direction) markerBearings[id] ?: 0f else 0f
+                marker.setAnchor(0.5f, anchor)
             } else {
-                map.addMarker(MarkerOptions().position(value.first).title(value.second).icon(if (markerBearings.containsKey(id)) directionMarkerIcon() else pinMarkerIcon(id)).flat(markerBearings.containsKey(id)).rotation(markerBearings[id] ?: 0f).anchor(0.5f, if (markerBearings.containsKey(id) || markerPinColors.containsKey(id)) 0.5f else 1f))?.let { markers[id] = it }
+                map.addMarker(MarkerOptions().position(value.first).title(value.second).icon(icon).flat(direction)
+                    .rotation(if (direction) markerBearings[id] ?: 0f else 0f).anchor(0.5f, anchor))?.let { markers[id] = it }
             }
         }
         markerHandlers.clear()
@@ -445,6 +457,7 @@ private class CraftNativeMapView(context: Context) : FrameLayout(context), OnMap
     fun destroy() {
         if (destroyed) return
         destroyed = true
+        markerPhotos.destroy()
         if (lifecycleStarted) {
             mapView.onPause()
             mapView.onStop()

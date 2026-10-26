@@ -96,6 +96,8 @@ export type SimulatorStep =
   | { command: 'tapxy', x: number, y: number }
   /** One native event record, without quiescence between paths. Times are seconds. */
   | { command: 'touches', paths: TimedTouchPoint[][] }
+  /** Standard XCTest tab hold; independent screenshots must be captured before release. */
+  | { command: 'holdtab', text: string, seconds?: number }
   | { command: 'field', index: number, text: string }
   | { command: 'typeid' | 'labelid' | 'valueid', id: string, text: string }
   /** Adjust an actual native UISlider by identifier, using its normalized range. */
@@ -123,7 +125,13 @@ export function serializeSimulatorSteps(steps: readonly SimulatorStep[]): string
   }
   const line = (step: SimulatorStep): string => {
     let arg = ''
-    if ('paths' in step) {
+    if (step.command === 'holdtab') {
+      const seconds = step.seconds ?? 6
+      if (!step.text.trim() || step.text.includes('|') || number(seconds) < 2 || seconds > 10)
+        throw new Error('holdtab needs a nonempty tab name and 2–10 seconds')
+      arg = `${step.text} | ${seconds}`
+    }
+    else if ('paths' in step) {
       if (!step.paths.length || step.paths.length > 64) throw new Error('Expected 1–64 touch paths')
       for (const path of step.paths) {
         if (path.length < 2 || path.length > 64) throw new Error('Expected 2–64 points per touch')

@@ -35,6 +35,10 @@ describe('resolveCraftBinary', () => {
     expect(resolveCraftBinary()).toBe('craft')
   })
 
+  it('resolves the requested webview profile through Pantry PATH', () => {
+    expect(resolveCraftBinary(undefined, 'webview')).toBe('craft-webview')
+  })
+
   it('honours an explicit caller-supplied path when it exists', () => {
     const dir = createTempDir('craft-resolver-')
     const bin = join(dir, 'craft-fake')

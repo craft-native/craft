@@ -92,6 +92,53 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertTrue(cleaned)
     }
 
+    func testAccountScopedSnapshotNamesPersistAndClearIndependently() async throws {
+        let names = ["larq-bottle:116", "larq-bottle:117"]
+        for (index, name) in names.enumerated() {
+            let kept = await withCheckedContinuation { continuation in
+                CraftSnapshots.write(name, json: "{\"account\":\(index)}") { continuation.resume(returning: $0) }
+            }
+            XCTAssertTrue(kept)
+            XCTAssertEqual(CraftSnapshots.read(name), "{\"account\":\(index)}")
+            XCTAssertTrue(CraftSnapshots.names().contains(name))
+        }
+        XCTAssertNil(CraftSnapshots.url(for: "../larq-bottle:116"))
+        XCTAssertNil(CraftSnapshots.url(for: "bottle/116"))
+        let cleared = await withCheckedContinuation { continuation in
+            CraftSnapshots.clear(keeping: Set(CraftSnapshots.names()).subtracting([names[0]])) { continuation.resume(returning: $0) }
+        }
+        XCTAssertTrue(cleared)
+        XCTAssertNil(CraftSnapshots.read(names[0]))
+        XCTAssertNotNil(CraftSnapshots.read(names[1]))
+        let removed = await withCheckedContinuation { continuation in
+            CraftSnapshots.write(names[1], json: nil) { continuation.resume(returning: $0) }
+        }
+        XCTAssertTrue(removed)
+    }
+
+    func testCompiledFlexibleScrollingWrappersReachTheLastControl() async throws {
+        let rows = (0..<20).map { box("card-\($0)", style: ["height": 100], [text("label-\($0)", "Bottle detail \($0)")]) }
+        let controller = screen(box("root", [
+          box("empty-header"),
+          box("wrapper", style: ["maxWidth": 768, "flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], [
+            box("screen", style: ["flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], [
+                ["id": "form", "type": "ScrollView", "props": ["testID": "form"],
+                 "style": ["flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], "children": rows],
+            ]),
+          ]),
+        ]))
+        await settle(controller)
+        let scroll = try XCTUnwrap(find("form", below: controller.view) as? UIScrollView)
+        XCTAssertGreaterThan(scroll.bounds.height, 600)
+        XCTAssertLessThanOrEqual(scroll.bounds.height, controller.view.bounds.height)
+        XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height + 1000)
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+        scroll.layoutIfNeeded()
+        let last = try XCTUnwrap(find("card-19", below: controller.view))
+        XCTAssertEqual(last.convert(last.bounds, to: scroll).maxY, scroll.contentSize.height, accuracy: 1)
+        XCTAssertGreaterThan(scroll.contentOffset.y, 1000)
+    }
+
     func testContainerFillsSurvivePressFeedbackReconciliation() throws {
         func document(_ fill: String?) -> [String: Any] {
             var style: [String: Any] = ["width": 100, "height": 44, "borderRadius": 12]
@@ -863,6 +910,28 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertGreaterThan(thread.height, 600)
         XCTAssertGreaterThan(draft.width, 300)
         XCTAssertEqual(try frame("send", in: controller).width, 36, accuracy: 1)
+    }
+
+    func testNestedGroupedConversationKeepsItsViewportAfterAStyleUpdate() async throws {
+        let controller = screen(box("root", [
+            box("chrome", style: ["height": 0]),
+            box("screen", style: ["flex": 1], [
+                box("group", style: ["flex": 1, "backgroundColor": "#f2f2f7"], [
+                    ["id": "thread", "type": "ScrollView", "props": ["testID": "thread"], "style": ["flex": 1, "flexBasis": 0], "children": [text("intro", "Your coach is ready")]],
+                    box("composer", style: ["padding": 12], [text("draft", "Ask your coach")]),
+                ]),
+            ]),
+        ]))
+        await settle(controller)
+        XCTAssertGreaterThan(try frame("thread", in: controller).height, 600)
+        XCTAssertEqual(try frame("composer", in: controller).maxY, controller.view.bounds.height, accuracy: 1)
+        try controller.applyMutation([
+            "version": 1, "batchId": "appearance", "baseRevision": 0, "revision": 1,
+            "operations": [["op": "updateNode", "id": "group", "patch": ["style": ["flex": 1, "backgroundColor": "#000000"]]]],
+        ])
+        await settle(controller)
+        XCTAssertGreaterThan(try frame("thread", in: controller).height, 600)
+        XCTAssertEqual(try frame("composer", in: controller).maxY, controller.view.bounds.height, accuracy: 1)
     }
 
     func testNumericNavigationBadgeOneSurvivesTheJSONBridge() throws {

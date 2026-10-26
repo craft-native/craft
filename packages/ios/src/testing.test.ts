@@ -81,6 +81,19 @@ describe('package-owned iOS shells', () => {
     expect(driver).toMatch(/host\.launch\(\)\s+host\.buttons\["craft-driver-open-universal-link"\]\.tap\(\)\s+let opened = app\.wait\(for: \.runningForeground, timeout: 75\)/)
   })
 
+  it('stops a journey when a control-server hook fails', () => {
+    const output = folder()
+    initSimulatorDriver({ output, bundleId: 'org.example.app' })
+    const source = readFileSync(join(output, 'UITests/DriverTests.swift'), 'utf8')
+    expect(source).toContain('(200..<300).contains(response.statusCode)')
+    expect(source).toContain('if error == nil, let response = response as? HTTPURLResponse')
+    const hook = source.slice(source.indexOf('case "exec":'), source.indexOf('case "openurl":'))
+    expect(hook).toContain('guard let data = get(')
+    expect(hook).toContain('check(false, "exec ')
+    expect(hook).not.toContain('?? "no answer"')
+    expect(source).toContain('continueAfterFailure = false')
+  })
+
   it('serializes typed journeys and rejects extra wire commands and invalid coordinates', () => {
     expect(serializeSimulatorSteps([
       { command: 'launch' }, { command: 'field', index: 0, text: 'demo@example.org' },
@@ -164,6 +177,27 @@ describe('package-owned iOS shells', () => {
     expect(source).toContain('(target.value as? String) == want')
   })
 
+  it('holds a tab with standard XCTest input and retains bounded timing evidence', () => {
+    expect(serializeSimulatorSteps([{ command: 'holdtab', text: 'Health' }])).toBe('holdtab Health | 6\n')
+    expect(serializeSimulatorSteps([{ command: 'holdtab', text: 'Today', seconds: 4 }])).toBe('holdtab Today | 4\n')
+    for (const seconds of [0, 1.9, 10.1, NaN, Infinity])
+      expect(() => serializeSimulatorSteps([{ command: 'holdtab', text: 'Health', seconds }])).toThrow()
+    for (const text of ['', ' ', 'Health | 6', 'Health\nlaunch'])
+      expect(() => serializeSimulatorSteps([{ command: 'holdtab', text }])).toThrow()
+    const output = folder()
+    initSimulatorDriver({ output, bundleId: 'org.example.app', tabs: ['Health'] })
+    const source = readFileSync(join(output, 'UITests/DriverTests.swift'), 'utf8')
+    const hold = source.slice(source.indexOf('case "holdtab":'), source.indexOf('case "touches":'))
+    expect(hold).toContain('coordinate.press(forDuration: duration)')
+    expect(hold).toContain('duration.isFinite, (2...10).contains(duration)')
+    expect(hold.indexOf('BEGIN holdtab')).toBeLessThan(hold.indexOf('coordinate.press('))
+    expect(hold.indexOf('END holdtab')).toBeGreaterThan(hold.indexOf('coordinate.press('))
+    expect(hold).toContain('"returnedAt": returnedAt')
+    expect(hold).toContain('"startedAt": startedAt')
+    expect(hold).not.toContain('CraftTimedInput')
+    expect(hold).not.toContain('waitForQuiescence')
+  })
+
   it('bundles an on-device journey with native XCTest evidence and removes it when returning to server mode', () => {
     const output = folder()
     const options = { output, bundleId: 'org.example.app', script: 'activate\nshot current\ntree current\n' }
@@ -225,7 +259,7 @@ describe('package-owned iOS shells', () => {
     initSimulatorDriver({ output, bundleId: 'org.example.app' })
     const source = readFileSync(join(output, 'UITests/DriverTests.swift'), 'utf8')
     const handled = new Set([...source.matchAll(/case "([a-z]+)"/g)].map(match => match[1]))
-    const commands: SimulatorStep['command'][] = ['launch', 'activate', 'terminate', 'home', 'back', 'return', 'unlabelled', 'background', 'wait', 'delay', 'net', 'swipe', 'drag', 'edge', 'tabbar', 'tapxy', 'touches', 'field', 'typeid', 'labelid', 'valueid', 'sliderid', 'expectapp', 'expect', 'expectexact', 'expectid', 'tap', 'tapif', 'tapid', 'longpressid', 'tapexact', 'type', 'absent', 'absentid', 'selected', 'tab', 'scrollto', 'dismiss', 'log', 'shot', 'tree', 'audit', 'exec', 'openurl', 'universallink', 'ifid', 'notifications', 'systemexpect', 'systemabsent', 'systemtap', 'systemtree']
+    const commands: SimulatorStep['command'][] = ['launch', 'activate', 'terminate', 'home', 'back', 'return', 'unlabelled', 'background', 'wait', 'delay', 'net', 'swipe', 'drag', 'edge', 'tabbar', 'tapxy', 'touches', 'field', 'typeid', 'labelid', 'valueid', 'sliderid', 'expectapp', 'expect', 'expectexact', 'expectid', 'tap', 'tapif', 'tapid', 'longpressid', 'holdtab', 'tapexact', 'type', 'absent', 'absentid', 'selected', 'tab', 'scrollto', 'dismiss', 'log', 'shot', 'tree', 'audit', 'exec', 'openurl', 'universallink', 'ifid', 'notifications', 'systemexpect', 'systemabsent', 'systemtap', 'systemtree']
     expect(commands.filter(command => !handled.has(command))).toEqual([])
     // ifid re-enters the same dispatcher, so a guarded command is any command.
     expect(source).toContain('func run(_ line: String)')

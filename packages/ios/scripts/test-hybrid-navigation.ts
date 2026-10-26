@@ -16,10 +16,13 @@ const prepareOnly = process.argv.includes('--prepare-only')
 const testIterations = Number(process.env.CRAFT_HYBRID_NAVIGATION_ITERATIONS ?? 1)
 if (!Number.isSafeInteger(testIterations) || testIterations < 1)
   throw new Error('CRAFT_HYBRID_NAVIGATION_ITERATIONS must be a positive integer')
-const page = readFileSync(join(fixture, 'index.html'))
+const page = new Uint8Array(readFileSync(join(fixture, 'index.html')))
 let servedRequests = 0
+const pageSha256 = new Bun.CryptoHasher('sha256').update(page).digest('hex')
+const httpEvents: { receivedWall: number, responsePreparedWall: number, method: string, url: string, abortObservedWall?: number }[] = []
+let testWindow: { startedWall: number, finishedWall?: number } | undefined
 
-function servePage(body: Buffer) {
+function servePage(body: Uint8Array<ArrayBuffer>) {
   const firstPort = 38000 + (process.pid % 1000)
   for (let offset = 0; offset < 32; offset++) {
     try {
@@ -31,8 +34,16 @@ function servePage(body: Buffer) {
         port: firstPort + offset,
         fetch: (request) => {
           servedRequests++
+          const receivedWall = Date.now() / 1000
           console.log(`Hybrid HTTP fixture request: ${request.method} ${request.url}`)
-          return new Response(body, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+          const response = new Response(body, { headers: { 'content-type': 'text/html; charset=utf-8' } })
+          if (httpEvents.length < 128) {
+            const event: typeof httpEvents[number] = { receivedWall, responsePreparedWall: Date.now() / 1000, method: request.method, url: request.url }
+            httpEvents.push(event)
+            if (request.signal.aborted) event.abortObservedWall = Date.now() / 1000
+            else request.signal.addEventListener('abort', () => { event.abortObservedWall = Date.now() / 1000 }, { once: true })
+          }
+          return response
         },
       })
     }
@@ -57,7 +68,12 @@ async function runXcodeTests(args: string[], cwd: string, resultBundle: string):
   console.log(args.join(' '))
   // Keep Bun's HTTP server responsive while the simulator requests pages.
   const result = Bun.spawn(args, { cwd, stdout: 'inherit', stderr: 'inherit' })
-  const code = await result.exited
+  testWindow = { startedWall: Date.now() / 1000 }
+  let code: number
+  try { code = await result.exited }
+  finally {
+    testWindow.finishedWall = Date.now() / 1000
+  }
   if (code === 0) {
     const summary = Bun.spawnSync(['xcrun', 'xcresulttool', 'get', 'test-results', 'summary', '--path', resultBundle], { stdout: 'pipe', stderr: 'pipe' })
     if (summary.exitCode !== 0) throw new Error(`Could not read hybrid XCTest results: ${summary.stderr.toString()}`)
@@ -108,6 +124,10 @@ try {
       renderer: 'web',
       nativeScreens: { '/native': 'HybridNative' },
       devServerURL,
+      // The hosted simulator's first WebKit request includes cold networking
+      // startup. Match the fixture's existing readiness budget; the production
+      // offline-page deadline is intentionally much shorter.
+      requestTimeoutSeconds: 120,
       backgroundColor: '#000000',
       backgroundColorDark: '#000000',
     },
@@ -186,6 +206,18 @@ try {
 finally {
   console.log(`Hybrid HTTP fixture served ${servedRequests} requests`)
   try {
+    const httpReceipt = join(workspace, 'HybridHttp.json')
+    writeFileSync(httpReceipt, JSON.stringify({
+      bunVersion: Bun.version, pageSha256, responseBytes: page.length, servedRequests,
+      httpEvents, httpEventsTruncated: servedRequests > httpEvents.length,
+      testWindow,
+      responseObservation: 'Response construction is observed here; socket delivery must be established from the client diagnostics.',
+    }, null, 2))
+    if (process.env.CI) {
+      const evidence = resolve('artifacts/mobile-e2e/ios-hybrid')
+      mkdirSync(evidence, { recursive: true })
+      copyFileSync(httpReceipt, join(evidence, 'HybridHttp.json'))
+    }
     if (process.env.CI && existsSync(resultBundle)) {
       const evidence = resolve('artifacts/mobile-e2e/ios-hybrid')
       mkdirSync(evidence, { recursive: true })

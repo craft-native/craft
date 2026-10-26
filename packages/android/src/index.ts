@@ -1,10 +1,24 @@
+import { gzipSync } from 'node:zlib'
 /**
  * Craft Android Builder
  *
  * Generates Android apps with native Craft components and optional WebView content.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+
+/** Store large native source assets compressed; the host decodes each once on demand. */
+export function compressNativeSources(target: string): void {
+  if (statSync(target).isDirectory()) {
+    for (const entry of readdirSync(target)) compressNativeSources(join(target, entry))
+    return
+  }
+  if (!/\.(?:js|json)$/.test(target)) return
+  const bytes = readFileSync(target)
+  if (bytes.length < 1024 || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return
+  const packed = gzipSync(bytes, { level: 9 })
+  if (packed.length < bytes.length) writeFileSync(target, packed)
+}
 import { dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { $ } from 'bun'
 import { androidMapHost, type AndroidMapProvider } from './native-map.js'
@@ -148,6 +162,7 @@ export interface CraftAndroidConfig {
   backgroundColor?: string
   backgroundColorDark?: string
   enableSpeechRecognition?: boolean
+  enableAudioRecording?: boolean
   enableHaptics?: boolean
   enableShare?: boolean
   enableCamera?: boolean
@@ -427,6 +442,7 @@ const DEFAULT_CONFIG: Omit<CraftAndroidConfig, 'appName' | 'packageName'> = {
   darkMode: true,
   backgroundColor: '#0b1712',
   enableSpeechRecognition: false,
+  enableAudioRecording: false,
   enableHaptics: false,
   enableShare: false,
   enableCamera: false,
@@ -754,7 +770,7 @@ export function syncAndroidWebAssets(source: string, output: string): void {
 
 export function renderAndroidPermissions(config: CraftAndroidConfig): string {
   const permissions = new Set(['android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE'])
-  if (config.enableSpeechRecognition) permissions.add('android.permission.RECORD_AUDIO')
+  if (config.enableSpeechRecognition || config.enableAudioRecording) permissions.add('android.permission.RECORD_AUDIO')
   if (config.enableCamera) permissions.add('android.permission.CAMERA')
   if (config.enableHaptics) permissions.add('android.permission.VIBRATE')
   if (config.enableBiometric) permissions.add('android.permission.USE_BIOMETRIC')
@@ -1186,6 +1202,9 @@ export async function init(options: InitOptions): Promise<void> {
     writeNativeShellSources(output, packagePath, finalPackageName, config)
   }
 
+  const permissionPolicy = readFileSync(join(TEMPLATES_DIR, 'CraftPermissionPolicy.kt.template'), 'utf8')
+  writeFileSync(join(output, 'app/src/main/java', packagePath, 'CraftPermissionPolicy.kt'), permissionPolicy.replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName))
+
   // Create CraftBridge.kt
   const craftBridgeTemplate = readFileSync(join(TEMPLATES_DIR, 'CraftBridge.kt.template'), 'utf-8')
   const craftBridge = craftBridgeTemplate
@@ -1226,13 +1245,25 @@ export async function init(options: InitOptions): Promise<void> {
       : `evaluatePromiseJavascript(
             "window._craftPushReject && window._craftPushReject('Push notifications are disabled')"
         )`)
-  writeFileSync(join(output, 'app/src/main/java', packagePath, 'CraftBridge.kt'), craftBridge)
+  // Typed native screens have no WebView bridge or ML surface. Shipping its
+  // otherwise unreachable OCR models added ~100 MB of native libraries.
+  const bridgeFile = join(output, 'app/src/main/java', packagePath, 'CraftBridge.kt')
+  if (config.renderer === 'native') rmSync(bridgeFile, { force: true })
+  else writeFileSync(bridgeFile, craftBridge)
 
   // CraftNative goes to a fixed package, not the app's. The prebuilt
   // libcraft.so binds its natives by class name in JNI_OnLoad, and it cannot
   // know a name chosen here — so this one file is deliberately not templated
   // and deliberately not under packagePath.
-  const craftNative = readFileSync(join(TEMPLATES_DIR, 'CraftNative.kt.template'), 'utf-8')
+  let craftNative = readFileSync(join(TEMPLATES_DIR, 'CraftNative.kt.template'), 'utf-8')
+  if (config.renderer === 'native') {
+    craftNative = craftNative.replace(/^import com\.google\.mlkit\..*\n/gm, '')
+      .replace(/    \/\/ CRAFT_WEB_ML_START[\s\S]*?    \/\/ CRAFT_WEB_ML_END/, () =>
+        // The fixed JNI holder keeps these callback signatures, even though
+        // typed screens do not expose the WebView's machine-learning API.
+        ['runImageClassification', 'runObjectDetection', 'runTextRecognition'].map(name =>
+          `    @JvmStatic\n    fun ${name}(imageBase64: String) {\n        val (_, reject) = createMlSettlement()\n        reject("Machine learning is unavailable in the native renderer")\n    }`).join('\n\n'))
+  }
   const nativeDir = join(output, 'app/src/main/java/com/craft/runtime')
   mkdirSync(nativeDir, { recursive: true })
   writeFileSync(join(nativeDir, 'CraftNative.kt'), craftNative)
@@ -1311,6 +1342,9 @@ export async function init(options: InitOptions): Promise<void> {
   // Create build.gradle.kts (app level)
   const appGradleTemplate = readFileSync(join(TEMPLATES_DIR, 'build.gradle.kts.app.template'), 'utf-8')
   const appGradle = appGradleTemplate
+    .replace(/\{\{MACHINE_LEARNING_DEPENDENCIES\}\}/g, config.renderer === 'native' ? '' : [
+      'barcode-scanning:17.3.0', 'image-labeling:17.0.9', 'object-detection:17.0.2', 'text-recognition:16.0.1',
+    ].map(module => `    implementation("com.google.mlkit:${module}")`).join('\n'))
     .replace(/\{\{PACKAGE_NAME\}\}/g, finalPackageName)
     .replace(/\{\{VERSION_NAME\}\}/g, escapeKotlinString(config.version || '1.0.0'))
     .replace(/\{\{VERSION_CODE\}\}/g, String(config.versionCode || 1))
@@ -1581,11 +1615,13 @@ export async function build(options: BuildOptions): Promise<void> {
         if (resolve(nativeBundlePath) !== resolve(routeDestination)) {
           rmSync(routeDestination, { recursive: true, force: true })
           cpSync(nativeBundlePath, routeDestination, { recursive: true })
+          compressNativeSources(routeDestination)
         }
         rmSync(destination, { force: true })
       }
       else {
         if (resolve(nativeBundlePath) !== resolve(destination)) cpSync(nativeBundlePath, destination)
+        compressNativeSources(destination)
         rmSync(routeDestination, { recursive: true, force: true })
       }
     }

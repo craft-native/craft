@@ -1,7 +1,10 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { gunzipSync } from 'node:zlib'
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
-import { ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
+import { compressNativeSources, ANDROID_MIN_SDK, build, init, installRuntime, renderAndroidDeepLinks, renderAndroidPermissions, resolveRuntimeDir, runPostGenerateHook, syncAndroidWebAssets, syncNativeFonts } from './index'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -78,7 +81,7 @@ describe('Craft Android builder', () => {
     const bundled = join(output, 'app/src/main/assets/NativeFonts')
     const activity = readFileSync(join(output, 'app/src/main/java/com/craft/native/MainActivity.kt'), 'utf8')
     expect(activity).toContain('Typeface.createFromAsset(assets, "NativeFonts/$filename")')
-    expect(activity).toContain('bundledFonts[it]')
+    expect(activity).toContain('bundledFonts[name]')
     expect([...readFileSync(join(bundled, 'Signature-Regular.ttf'))]).toEqual([0, 1, 0, 0, 7, 8])
     expect(readFileSync(join(bundled, 'Signature-Regular.LICENSE.txt'), 'utf8')).toBe('Test font license')
     expect(() => syncNativeFonts({ Signature: { src: join(bundled, 'Signature-Regular.ttf') } }, output)).toThrow('sources must be outside')
@@ -283,7 +286,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('columns = craftNativeInt(props.opt("numColumns"), 1)')
       expect(nativeActivity).toContain('map.uiSettings.isScrollGesturesEnabled = craftNativeBoolean(pendingProps.opt("scrollEnabled"), true)')
       expect(nativeActivity).toContain('craftNativeBoolean(pendingProps.opt("fitToBounds"))')
-      expect(nativeActivity).toContain('screen.statusBarHidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
+      expect(nativeActivity).toContain('val hidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
       expect(nativeActivity).toContain('val correction = if (craftNativeBoolean(props.opt("autoCorrect"), true))')
       expect(nativeActivity).toContain('val width = craftNativeFiniteDouble(style, "width", Double.NaN)')
       expect(nativeActivity).toContain('dp(craftNativeFiniteDouble(style, "marginLeft", horizontal))')
@@ -321,7 +324,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('view.clearColorFilter()')
       expect(nativeActivity).toContain('"ScrollView", "SectionList" -> (previous as? CraftNativeScrollView')
       expect(nativeActivity).toContain('"sectionlist" -> "SectionList"')
-      expect(nativeActivity).toContain('private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
+      expect(nativeActivity).toContain('internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context)')
       expect(nativeActivity).toContain('val propRefresh = props.optJSONObject("refreshControl")')
       expect(nativeActivity).toContain('setRefreshHandler(refreshHandler, craftNativeBoolean(refreshProps.opt("refreshing"), craftNativeBoolean(props.opt("refreshing"))))')
       expect(nativeActivity).toContain('transparent = craftNativeBoolean(props.opt("transparent"))')
@@ -361,7 +364,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('?.takeUnless { it == "null" || it == "undefined" }')
       expect(nativeActivity).toContain('return craftNativeOptionalString(style.opt("resizeMode"))')
       expect(nativeActivity).toContain('val label = craftNativeOptionalString(props.opt("accessibilityLabel"))')
-      expect(nativeActivity).toContain('screen.statusBarHidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
+      expect(nativeActivity).toContain('val hidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null')
       expect(nativeActivity).toContain('view.tooltipText = craftNativeOptionalString(props.opt("accessibilityHint"))')
       expect(nativeActivity).toContain('private fun imageUri(source: Any?): String')
       expect(nativeActivity).toContain('craftNativeOptionalString(source.opt("uri"))')
@@ -498,7 +501,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('val cellWidth = columnWidths.maxOrNull() ?: 0')
       expect(nativeActivity).toContain('cellWidth * columns')
       expect(nativeActivity).toContain('override fun onConfigurationChanged(newConfig: Configuration)')
-      expect(nativeActivity).toContain('screen.mutations.node("root")?.let { renderCommitted(screen, it) }')
+      expect(nativeActivity).toContain('screen.mutations.document()?.let { renderCommitted(screen, it) }')
       expect(nativeActivity).toContain('private fun refreshInputDefaultsForTraitChange()')
       expect(nativeActivity).toContain('val probe = EditText(this)')
       expect(nativeActivity).toContain('if (screen.active) send(screen, "APPEARANCE", appearance)')
@@ -1597,7 +1600,7 @@ describe('Craft Android builder', () => {
     expect(bridge.match(/ActivityCompat\.requestPermissions\(/g)?.length).toBe(2)
     expect(bridge).toContain('private fun requestPermissionsBestEffort(permissions: Array<String>, requestCode: Int)')
     expect(bridge).toContain('runCatching { ActivityCompat.requestPermissions(activity, permissions, requestCode) }')
-    expect(bridge).toContain('group.any(isGranted)')
+    expect(readFileSync(join(sourceRoot, 'CraftPermissionPolicy.kt'), 'utf8')).toContain('group.any(isGranted)')
     expect(bridge).toContain('CraftPermissionPolicy.nextRequest(')
     expect(bridge).toContain('pendingPermissionRequests.remove(requestCode)')
     expect(bridge).toContain('catch (error: Exception)')
@@ -1694,7 +1697,6 @@ describe('Craft Android builder', () => {
     const builders = [
       'app/src/main/java/dev/craft/glyph/CraftNativeMessagingService.kt',
       'app/src/main/java/dev/craft/glyph/CraftNativeNotificationReceiver.kt',
-      'app/src/main/java/dev/craft/glyph/CraftBridge.kt',
       'app/src/main/java/com/craft/runtime/LocationRecordingService.kt',
     ].map(path => readFileSync(join(defaults, path), 'utf8'))
     for (const source of builders) {
@@ -1702,7 +1704,8 @@ describe('Craft Android builder', () => {
       expect(source).toContain('R.color.craft_notification_color')
       expect(source).not.toMatch(/setSmallIcon\((applicationInfo\.icon|android\.R\.drawable)/)
     }
-    expect(builders[3]).toContain('import dev.craft.glyph.R')
+    expect(builders[2]).toContain('import dev.craft.glyph.R')
+    expect(existsSync(join(defaults, 'app/src/main/java/dev/craft/glyph/CraftBridge.kt'))).toBe(false)
 
     const custom = join(root, 'custom')
     const vector = join(root, 'hq-notification.xml')
@@ -2778,9 +2781,11 @@ it('reads a heart-rate strap on the page and on native screens alike, declared o
       expect(service).toContain('openGatt(automatic = true)')
       // The stand-in strap is an emulator's only.
       expect(service).toContain('isEmulator() && File(context.filesDir, "CraftFakeHeartRateMonitor").exists()')
-      const bridge = readFileSync(join(java, 'CraftBridge.kt'), 'utf8')
-      expect(bridge).toContain('heartRate: true,')
-      expect(bridge).toContain('private val heartRateEnabled = true')
+      if (renderer !== 'native') {
+        const bridge = readFileSync(join(java, 'CraftBridge.kt'), 'utf8')
+        expect(bridge).toContain('heartRate: true,')
+        expect(bridge).toContain('private val heartRateEnabled = true')
+      } else expect(existsSync(join(java, 'CraftBridge.kt'))).toBe(false)
       if (renderer === 'native') {
         const services = readFileSync(join(java, 'CraftNativeServices.kt'), 'utf8')
         expect(services).toContain('if (heartRateEnabled) addAll(listOf("heartRate", "heartRateRecordingOwnership", "heartRateRecordingIntentIdentity"))')
@@ -2798,7 +2803,7 @@ it('reads a heart-rate strap on the page and on native screens alike, declared o
       expect(plain).not.toContain('CraftHeartRateService')
       expect(plain).not.toContain('FOREGROUND_SERVICE_CONNECTED_DEVICE')
       expect(existsSync(join(off, 'app/src/main/java/dev/craft/plain/CraftHeartRate.kt'))).toBe(true)
-      expect(readFileSync(join(off, 'app/src/main/java/dev/craft/plain/CraftBridge.kt'), 'utf8')).toContain('heartRate: false,')
+      if (renderer !== 'native') expect(readFileSync(join(off, 'app/src/main/java/dev/craft/plain/CraftBridge.kt'), 'utf8')).toContain('heartRate: false,')
     }
     finally {
       rmSync(output, { recursive: true, force: true })
@@ -2812,4 +2817,41 @@ it('declares the Bluetooth permissions once for a strap and a GATT channel toget
   expect(both.match(/BLUETOOTH_CONNECT/g)?.length).toBe(1)
   expect(both).toContain('android.permission.FOREGROUND_SERVICE"')
   expect(renderAndroidPermissions({ appName: 'Gatt', packageName: 'dev.craft.gatt', enableBluetooth: true })).not.toContain('FOREGROUND_SERVICE_CONNECTED_DEVICE')
+})
+
+it('packs large native sources losslessly and idempotently without touching small assets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'craft-source-compression-'))
+  try {
+    const source = 'globalThis.ready = true;\n'.repeat(5000)
+    const file = join(root, 'screen.js')
+    writeFileSync(file, source)
+    writeFileSync(join(root, 'config.json'), '{}')
+    compressNativeSources(root)
+    const packed = readFileSync(file)
+    expect(packed.length).toBeLessThan(source.length / 5)
+    expect(gunzipSync(packed).toString()).toBe(source)
+    expect(readFileSync(join(root, 'config.json'), 'utf8')).toBe('{}')
+    compressNativeSources(root)
+    expect(readFileSync(file)).toEqual(packed)
+  }
+  finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+it('native projects omit the WebView ML models while preserving JNI callback signatures', async () => {
+  const root = createTempDir('craft-native-no-ml-')
+  try {
+    await init({ name: 'Lean', packageName: 'dev.craft.lean', output: root, runtimeDir: null, config: { renderer: 'native' } })
+    const runtime = readFileSync(join(root, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')
+    const gradle = readFileSync(join(root, 'app/build.gradle.kts'), 'utf8')
+    expect(gradle).not.toContain('com.google.mlkit:')
+    expect(runtime).not.toContain('import com.google.mlkit.')
+    for (const method of ['runTextRecognition', 'runObjectDetection', 'runImageClassification']) expect(runtime).toContain(`fun ${method}(imageBase64: String)`)
+    expect(existsSync(join(root, 'app/src/main/java/dev/craft/lean/CraftBridge.kt'))).toBe(false)
+    // Switching a generated project back to web restores the public web API.
+    await init({ name: 'Lean', packageName: 'dev.craft.lean', output: root, runtimeDir: null, config: { renderer: 'web' } })
+    expect(readFileSync(join(root, 'app/build.gradle.kts'), 'utf8')).toContain('com.google.mlkit:text-recognition')
+    expect(readFileSync(join(root, 'app/src/main/java/com/craft/runtime/CraftNative.kt'), 'utf8')).toContain('import com.google.mlkit.')
+    expect(existsSync(join(root, 'app/src/main/java/dev/craft/lean/CraftBridge.kt'))).toBe(true)
+  }
+  finally { rmSync(root, { recursive: true, force: true }) }
 })

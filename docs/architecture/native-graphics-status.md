@@ -95,3 +95,6 @@ errors, without consumer linker flags. The expanded scene fixture passed
 native macOS Debug and ReleaseSafe execution and Windows GNU cross compilation
 locally. Hosted execution is required independently on each matrix host. This source
 check does not qualify a published Zig archive or native game presentation.
+Run `bun scripts/verify-zig-package-consumer.ts` with the pinned `CRAFT_ZIG`
+to build the fixture from an unchanged archive of the manifest's declared
+package paths, with fresh dependency caches and no sibling checkouts.

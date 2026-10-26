@@ -27,6 +27,12 @@ Launch the executable with `--api-url`, `--native-bundle`, `--title`, and an
 optional `--route`. The HTTP agent's `/native/session` endpoint must establish
 the session cookie. URLSession owns that cookie and shares it between windows.
 
+Use `--titlebar-style transparent` to hide the window title on a transparent
+title bar. The default keeps the standard AppKit title bar. `--width`,
+`--height`, `--min-width` and `--min-height` configure the main window in points.
+Additional windows accept `titlebarStyle: 'standard' | 'transparent'` with the
+same size options through `craft.desktop.openWindow`.
+
 This is a native control vocabulary, not an HTML renderer. Unsupported controls
 produce a diagnostic and an explicit visible error. The native `Sidebar` accepts
 sections of `{ id, header?, items: [{ id, label, icon?, badge? }] }` and sends an

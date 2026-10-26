@@ -821,6 +821,10 @@ internal class CraftNativeChrome(
     private val density = resources.displayMetrics.density
     private var screenBackgroundColor: Int? = null
     private var selectedTab = 0
+    private var tabBarHiddenByScreen = false
+    private var visiblePath: String? = null
+    private val accessorySelected: Boolean
+        get() = accessorySpec?.optString("path")?.let { path -> visiblePath == path || visiblePath?.startsWith(path + "/") == true } == true
     private var swipeTracking = false
     private var swipeIntercepted = false
     private var horizontalScrollDeferred = false
@@ -984,7 +988,8 @@ internal class CraftNativeChrome(
     }
 
     /** Draws `options` (a screen's `setOptions`) for a screen `depth` deep in its stack. */
-    fun apply(options: JSONObject, depth: Int, fallbackTitle: String?) {
+    fun apply(options: JSONObject, depth: Int, fallbackTitle: String?, path: String? = null) {
+        visiblePath = path
         screenBackgroundColor = options.opt("backgroundColor")
             ?.takeUnless { it == JSONObject.NULL }
             ?.let { craftNativeOptionalString(it) }
@@ -1019,7 +1024,19 @@ internal class CraftNativeChrome(
             renderedButtonSpecs = buttonSpecs
         }
         val tabBarHidden = options.optBoolean("tabBarHidden", false) || depth > 0 && options.optBoolean("tabBarHiddenWhenPushed", false)
-        tabRow.visibility = if (tabs.isEmpty() || tabBarHidden) View.GONE else View.VISIBLE
+        if (tabBarHiddenByScreen != tabBarHidden) {
+            tabBarHiddenByScreen = tabBarHidden
+            tabRow.animate().cancel()
+            val duration = if (android.animation.ValueAnimator.areAnimatorsEnabled()) 240L else 0L
+            if (tabBarHidden) {
+                tabRow.animate().translationY(dp(80).toFloat()).alpha(0f).setDuration(duration).withEndAction {
+                    if (tabBarHiddenByScreen) tabRow.visibility = View.GONE
+                }.start()
+            } else if (tabs.isNotEmpty()) {
+                tabRow.visibility = View.VISIBLE
+                tabRow.animate().translationY(0f).alpha(1f).setDuration(duration).start()
+            }
+        } else if (tabs.isEmpty()) tabRow.visibility = View.GONE
         accessorySpec = options.optJSONObject("tabAccessory")?.takeIf {
             val path = it.optString("path")
             path.startsWith("/") && !path.startsWith("//") && it.has("title")
@@ -1106,7 +1123,7 @@ internal class CraftNativeChrome(
     /** Selection belongs to the native tab stack, including retained pushed screens. */
     internal fun tabIconAppearance(index: Int, motionAllowed: Boolean): CraftTabIconAppearance {
         val tab = tabs[index]
-        val selected = index == selectedTab
+        val selected = index == selectedTab && !accessorySelected
         return CraftTabIconAppearance(
             if (selected) selectedSymbols[tab.id] ?: tabSymbols[tab.id] ?: tab.symbol else tabSymbols[tab.id] ?: tab.symbol,
             if (selected) selectedIconTints[tab.id] ?: tabIconTints[tab.id] else tabIconTints[tab.id],
@@ -1129,12 +1146,13 @@ internal class CraftNativeChrome(
         backButton.imageTintList = ColorStateList.valueOf(accent)
         val surface = if (dark) Color.parseColor("#1C1C1E") else Color.parseColor("#F9F9F9")
         tabBar.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
-        accessory.background = GradientDrawable().apply { setColor(surface); cornerRadius = dp(32).toFloat() }
-        accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), text)) }
+        accessory.isSelected = accessorySelected
+        accessory.background = GradientDrawable().apply { setColor(if (accessorySelected) Color.argb(36, Color.red(accent), Color.green(accent), Color.blue(accent)) else surface); cornerRadius = dp(32).toFloat() }
+        accessorySpec?.let { accessoryIcon.setImageDrawable(CraftNativeIcons.drawable(context, null, it.optString("symbol"), if (accessorySelected) accent else text)) }
         tabViews.forEachIndexed { index, (icon, label) ->
-            tabBar.getChildAt(index).isSelected = index == selectedTab
+            tabBar.getChildAt(index).isSelected = index == selectedTab && !accessorySelected
             tabBar.getChildAt(index).background = tabCellBackground(index, dark)
-            val color = if (index == selectedTab) accent else muted
+            val color = if (index == selectedTab && !accessorySelected) accent else muted
             val id = tabs[index].id
             val number = tabIconText[id]
             val appearance = tabIconAppearance(index, hasWindowFocus() && tabRow.isShown && android.animation.ValueAnimator.areAnimatorsEnabled())
@@ -1224,7 +1242,7 @@ internal class CraftNativeChrome(
     private fun accentColor(dark: Boolean): Int = if (dark) Color.parseColor("#0A84FF") else Color.parseColor("#007AFF")
 
     private fun tabCellBackground(index: Int, dark: Boolean): android.graphics.drawable.Drawable? {
-        if (index != selectedTab || (tabBarAppearance.selectionColor == null && tabBarAppearance.selectionCornerRadius == null)) return rippleBackground()
+        if (accessorySelected || index != selectedTab || (tabBarAppearance.selectionColor == null && tabBarAppearance.selectionCornerRadius == null)) return rippleBackground()
         val color = tabBarAppearance.selectionColor?.let { runCatching { Color.parseColor(it) }.getOrNull() }
             ?: if (dark) Color.argb(42, 255, 255, 255) else Color.argb(23, 0, 0, 0)
         val radius = tabBarAppearance.selectionCornerRadius?.let { (it * density).toInt().toFloat() } ?: dp(32).toFloat()

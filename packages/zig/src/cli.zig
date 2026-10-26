@@ -488,6 +488,16 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
         } else if (std.mem.eql(u8, arg, "--version") or std.mem.eql(u8, arg, "-v")) {
             printVersion();
             std.process.exit(0);
+        } else if (std.mem.eql(u8, arg, "--runtime-profile")) {
+            const opts = @import("build_options");
+            const enabled = if (@hasDecl(opts, "js_runtime")) opts.js_runtime else true;
+            writeStdout("{s}\n", .{if (enabled) "full" else "webview"});
+            std.process.exit(0);
+        } else if (std.mem.eql(u8, arg, "--distribution")) {
+            const opts = @import("build_options");
+            const private_apis = if (@hasDecl(opts, "private_apis")) opts.private_apis else true;
+            writeStdout("{s}\n", .{if (private_apis) "direct" else "app-store"});
+            std.process.exit(0);
         } else if (std.mem.eql(u8, arg, "--url") or std.mem.eql(u8, arg, "-u")) {
             i += 1;
             if (i >= args.len) return CliError.MissingValue;
@@ -777,6 +787,8 @@ fn printHelp() void {
         \\      --timing             Print startup phase timings (process, window, webview, load)
         \\  -h, --help               Show this help message
         \\  -v, --version            Show version information
+        \\      --runtime-profile    Show full or webview runtime profile
+        \\      --distribution       Show direct or app-store runtime distribution
         \\
         \\Examples:
         \\  craft http://localhost:3000

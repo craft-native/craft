@@ -1,62 +1,8 @@
 name: First-party Zig dependencies
-description: >
-  Clone the first-party Zig packages craft depends on by relative path
-  (zig-js and its zig-regex / zig-gc) into the directory build.zig.zon
-  resolves to, at the revisions pinned in pins.env.
-
-inputs:
-  git-executable:
-    description: Verified Git executable used for every dependency command
-    required: false
-    default: git
+description: Resolve the immutable source URLs and native package hashes declared in build.zig.zon.
 
 runs:
   using: composite
   steps:
-    # These are co-developed first-party packages, so there is no published
-    # tarball to fetch and the dependency is a relative path — which means Zig's
-    # package manager has no `.url` + hash to verify and nothing records which
-    # revision a build used.
-    #
-    # So the revision is recorded here instead, in pins.env. Cloning the default
-    # branch, which this did until now, hands the question of whether craft's CI
-    # is green to whoever last pushed to another repository. See pins.env for
-    # what that cost and for how to bump one.
-    #
-    # Idempotent, because several jobs call this and some run more than one
-    # build step. A checkout already at the pinned revision is left alone; one
-    # at any other revision is replaced, so a stale cache cannot silently win.
     - shell: bash
-      env:
-        CRAFT_DEPENDENCY_GIT: ${{ inputs.git-executable }}
-      run: |
-        set -euo pipefail
-
-        # shellcheck source=pins.env
-        . "$GITHUB_ACTION_PATH/pins.env"
-
-        deps="$GITHUB_WORKSPACE/packages/zig/../../../../Libraries"
-        mkdir -p "$deps"
-
-        fetch_pinned() {
-          local repo="$1" sha="$2" dest="$deps/$1"
-
-          if [ -d "$dest/.git" ] && [ "$("$CRAFT_DEPENDENCY_GIT" -C "$dest" rev-parse HEAD)" = "$sha" ]; then
-            echo "$repo already at $sha"
-            return
-          fi
-
-          rm -rf "$dest"
-          "$CRAFT_DEPENDENCY_GIT" init --quiet "$dest"
-          "$CRAFT_DEPENDENCY_GIT" -C "$dest" remote add origin "https://github.com/zig-utils/$repo"
-          # Fetch the one commit rather than the branch: the pin may point at
-          # something that is no longer the tip, and --depth 1 on a branch would
-          # not reach it.
-          "$CRAFT_DEPENDENCY_GIT" -C "$dest" fetch --quiet --depth 1 origin "$sha"
-          "$CRAFT_DEPENDENCY_GIT" -C "$dest" checkout --quiet FETCH_HEAD
-          echo "$repo pinned at $sha"
-        }
-
-        fetch_pinned zig-js "$zig_js"
-        fetch_pinned zig-regex "$zig_regex"
-        fetch_pinned zig-gc "$zig_gc"
+      run: bun scripts/zig.ts --core build --fetch

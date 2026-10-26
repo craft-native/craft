@@ -1,4 +1,4 @@
-# UIKit Metal fixture
+# Native Metal display fixtures
 
 This fixture compiles `metal_surface.zig` with Craft's pinned compiler and calls
 its public `Surface` interface through a test-only C boundary. A native UIKit
@@ -47,3 +47,32 @@ toolchain passed both unit and UI cases with zero failures or skips. Its
 the original artifact digest and records all three inspected screen captures.
 That focused execution predates the command ownership correction; complete
 release acceptance and consumer adoption remain separate gates.
+
+## macOS display acceptance
+
+```sh
+CRAFT_ZIG=/absolute/path/to/pinned/zig bun scripts/test-metal-surface-macos.ts \
+  --xcodegen /absolute/path/to/managed/xcodegen \
+  --output artifacts/native-metal-macos
+```
+
+The AppKit application uses the same test-only C boundary and public Metal
+surface. A native UI test captures only the owned view, compares its four
+displayed color quadrants, resizes it, hides and resumes the application, then
+verifies layer disposal. The existing macOS Zig tests independently compare
+drawable pixels and backing scale. Screen capture and GPU readback are distinct
+checks; neither substitutes for the other.
+
+The runner checks the host's existing UI automation admission policy before
+compiling. It never changes authentication or privacy settings. The standard
+GitHub macOS image provisions unattended UI testing, and the macOS `zig-core`
+job requires this display test. Missing admission, skipped tests, wrong pixels
+and incomplete disposal fail acceptance. LaunchServices applications are checked
+and disposed by executable paths beneath the unique generated project. If that
+disposal cannot be confirmed, the project is retained for diagnosis.
+
+Local AppKit and XCTest compilation passed, but this machine requires user
+authentication for UI automation. The original XCTest attempt timed out before
+any UI test began; the subsequent admission check refuses that host immediately.
+These are retained failed executions, not proof of displayed macOS pixels.
+Hosted execution and a qualified package release remain required.

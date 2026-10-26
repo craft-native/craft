@@ -3,7 +3,7 @@
 #include <stdbool.h>
 
 bool craft_menubar_visibility_available(void);
-void craft_menubar_visibility_init(void *marker, void (*changed)(void));
+void craft_menubar_visibility_init(void *marker, void (*changed)(void), bool preserve_system_items);
 void craft_menubar_visibility_collapse(void);
 void craft_menubar_visibility_expand(void);
 void craft_menubar_visibility_cleanup(void);

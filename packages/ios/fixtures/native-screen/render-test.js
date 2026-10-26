@@ -9,6 +9,8 @@
   let scrollPresses = 0
   let nextMessage = 0
   let revision = 0
+  let pagerMode = false
+  let pageIndex = 0
 
   function mutate(operations) {
     const baseRevision = revision
@@ -26,7 +28,27 @@
     }))
   }
 
+  function renderPager() {
+    globalThis.craftNativePostMessage(JSON.stringify({
+      id: `render-${++nextMessage}`,
+      type: 'RENDER',
+      payload: { document: { type: 'View', style: { padding: 16 }, children: [
+        { id: 'pager-status', type: 'Text', props: { key: 'pager-status' }, children: ['Page 1 of 3'] },
+        { id: 'native-pager', type: 'ScrollView', props: { key: 'native-pager', testID: 'native-pager', horizontal: true, pagingEnabled: true, pageIndex },
+          style: { height: 240, width: '100%' }, events: { onPageSelected: 'selectPage' },
+          children: Array.from({ length: 3 }, (_, index) => ({
+            id: `pager-slot-${index}`, type: 'View', props: { key: `pager-slot-${index}` },
+            style: { width: 37, backgroundColor: ['#dbeafe', '#dcfce7', '#fef3c7'][index] },
+            children: [{ id: `pager-page-${index}`, type: 'Text', props: { key: `pager-page-${index}` }, children: [`Page ${index + 1} content`] }],
+          })),
+        },
+        { id: 'pager-last', type: 'Button', props: { key: 'pager-last' }, events: { onPress: 'selectLastPage' }, children: ['Select last page'] },
+      ] } },
+    }))
+  }
+
   function render() {
+    if (pagerMode) { renderPager(); return }
     globalThis.craftNativePostMessage(JSON.stringify({
       id: `render-${++nextMessage}`,
       type: 'RENDER',
@@ -79,6 +101,7 @@
             { id: 'notes', type: 'Text', props: { key: 'notes' }, children: [`Notes: ${notes}`] },
             { id: 'native-switch', type: 'Switch', props: { key: 'native-switch' }, events: { onValueChange: 'changeSwitch' } },
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
+            { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
           ],
         },
       },
@@ -88,6 +111,18 @@
   globalThis.__stxNativeBridge.onMessage(function (raw) {
     const message = JSON.parse(raw)
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openPager') { pagerMode = true; render(); return }
+    if (message.payload.handlerName === 'selectPage') {
+      const page = message.payload.nativeEvent
+      pageIndex = page.index
+      mutate([
+        { op: 'updateNode', id: 'native-pager', patch: { props: { pageIndex } } },
+        { op: 'updateNode', id: 'pager-status', patch: { children: [`Page ${page.index + 1} of ${page.count}`] } },
+      ])
+    }
+    if (message.payload.handlerName === 'selectLastPage') {
+      mutate([{ op: 'updateNode', id: 'native-pager', patch: { props: { pageIndex: 2 } } }])
+    }
     if (message.payload.handlerName === 'increment') {
       count += 1
       mutate([{ op: 'updateNode', id: 'count', patch: { children: [`Count: ${count}`] } }])

@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "repository": "pickier/pickier",
+      "commit": "0ce83cbbf06f23b0c05a61b332e074292d69961a",
+      "tag": "v0.1.77",
+      "gates": [
+        {
+          "runId": 39999788567,
+          "workflow": ".github/workflows/release.yml",
+          "requiredJobs": [
+            "npm"
+          ]
+        },
+        {
+          "runId": 39999788210,
+          "workflow": ".github/workflows/ci.yml",
+          "requiredJobs": [
+            "native",
+            "lint",
+            "typecheck",
+            "test"
+          ]
+        }
+      ],
+      "packages": [
+        {
+          "name": "pickier",
+          "version": "0.1.77",
+          "integrity": "sha512-ccrUEA9nRlPYXkRUaZ2UHncyH8L7Xy1tuX2KbSlgKN3pO//slDfXe716Q79kKCCDgL8MqoR5eCyHHXRp7qNIlg=="
+        }
+      ]
+    }
+  ],
+  "checks": [
+    "lint"
+  ]
+}

@@ -803,6 +803,8 @@ static constexpr AbiConstant constants[] = {
     {"VK_ERROR_OUT_OF_DATE_KHR", static_cast<uint64_t>(VK_ERROR_OUT_OF_DATE_KHR)},
     {"VK_ERROR_SURFACE_LOST_KHR", static_cast<uint64_t>(VK_ERROR_SURFACE_LOST_KHR)},
     {"VK_ERROR_DEVICE_LOST", static_cast<uint64_t>(VK_ERROR_DEVICE_LOST)},
+    {"VK_ERROR_OUT_OF_HOST_MEMORY", static_cast<uint64_t>(VK_ERROR_OUT_OF_HOST_MEMORY)},
+    {"VK_ERROR_OUT_OF_DEVICE_MEMORY", static_cast<uint64_t>(VK_ERROR_OUT_OF_DEVICE_MEMORY)},
     {"VK_ERROR_EXTENSION_NOT_PRESENT", static_cast<uint64_t>(VK_ERROR_EXTENSION_NOT_PRESENT)},
     {"VK_ERROR_FEATURE_NOT_PRESENT", static_cast<uint64_t>(VK_ERROR_FEATURE_NOT_PRESENT)},
     {"VK_STRUCTURE_TYPE_APPLICATION_INFO", static_cast<uint64_t>(VK_STRUCTURE_TYPE_APPLICATION_INFO)},

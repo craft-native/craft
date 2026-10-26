@@ -1,7 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, statSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
+import { candleArguments, codesignArguments, DEFAULT_DEB_DEPENDENCIES, dmgCapacityMegabytes, dmgCreateArguments, formatPackagingCommandError, linuxDesktopEntry, macOSInfoPlist, macOSRuntimeExecutablePath, notarytoolArguments, packageApp, pkgbuildArguments, pkgbuildComponentPlist, productbuildArguments, renderWixSource, shouldRetryHdiutil, urlTypesEntry, WINDOWS_NOTIFICATION_ID_FILE, windowsArchitecture, windowsExecutableName, windowsNotificationAppId } from './package.js'
 import { createTempDir, removeAllTempDirs, removeTempDir } from './temp-dir'
 
 // Every scratch directory this file made goes when the file is done (#357).
@@ -486,6 +486,49 @@ it('preserves the resources and metadata of a prebuilt macOS app', async () => {
     const invalid = await packageApp({ name: 'Invalid', version: '1.0.0', binaryPath: join(source, 'Contents', 'MacOS', 'App'), outDir: join(root, 'invalid'), platforms: ['macos'], macos: { appBundlePath: root, dmg: false } })
     expect(invalid[0].success).toBe(false)
     expect(invalid[0].error).toBe(`Invalid prebuilt macOS application: ${root}`)
+  }
+  finally { removeTempDir(root) }
+})
+
+it.skipIf(process.platform !== 'darwin')('signs the actual disk image container as well as the application', async () => {
+  const root = createTempDir('signed-dmg')
+  try {
+    const results = await packageApp({
+      name: 'SignedImage', version: '1.0.0', bundleId: 'dev.craft.signed-dmg',
+      binaryPath: '/usr/bin/true', outDir: root, platforms: ['macos'],
+      macos: { dmg: true, signIdentity: '-' },
+    })
+    expect(results.every(result => result.success), JSON.stringify(results)).toBe(true)
+    const image = results.find(result => result.format === 'dmg')!.outputPath!
+    expect(Bun.spawnSync(['codesign', '--verify', '--strict', image]).exitCode).toBe(0)
+    expect(Bun.spawnSync(['codesign', '-dv', image]).stderr.toString()).toContain('Signature=adhoc')
+    expect(Bun.spawnSync(['codesign', '--verify', '--deep', '--strict', results[0].outputPath!]).exitCode).toBe(0)
+  }
+  finally { removeTempDir(root) }
+}, 30000)
+
+it.skipIf(process.platform !== 'darwin')('packages and signs a native GUI agent with its own executable identity', async () => {
+  const root = createTempDir('native-agent-package')
+  try {
+    const results = await packageApp({
+      name: 'Example', version: '1.2.3', bundleId: 'dev.craft.agent-test',
+      binaryPath: '/usr/bin/true', outDir: root, platforms: ['macos'],
+      macos: { nativeRuntimePath: '/usr/bin/true', dmg: false, signIdentity: '-' },
+    })
+    expect(results[0].success).toBe(true)
+    const app = results[0].outputPath!
+    const runtime = macOSRuntimeExecutablePath(app)
+    expect(existsSync(join(app, 'Contents/MacOS/craft'))).toBe(false)
+    expect(existsSync(runtime)).toBe(true)
+    const helper = join(app, 'Contents/Helpers/CraftRuntime.app')
+    const metadata = (key: string) => Bun.spawnSync(['plutil', '-extract', key, 'raw', '-o', '-', join(helper, 'Contents/Info.plist')]).stdout.toString().trim()
+    expect(metadata('CFBundleExecutable')).toBe('craft')
+    expect(metadata('CFBundleName')).toBe('Example')
+    expect(metadata('CFBundleIdentifier')).toBe('dev.craft.agent-test.runtime')
+    expect(metadata('LSUIElement')).toBe('true')
+    const signature = Bun.spawnSync(['codesign', '-dv', runtime])
+    expect(signature.stderr.toString()).toContain('Identifier=dev.craft.agent-test.runtime')
+    expect(Bun.spawnSync(['codesign', '--verify', '--deep', '--strict', app]).exitCode).toBe(0)
   }
   finally { removeTempDir(root) }
 })

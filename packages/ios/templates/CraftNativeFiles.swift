@@ -94,6 +94,9 @@ enum CraftNativeFiles {
         let dayAgo = Date().addingTimeInterval(-86_400)
         let folders = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey])) ?? []
         for folder in folders {
+            // Only generic per-file folders: private voice captures have their
+            // own launch lifetime and must not be swept during a live recording.
+            guard UUID(uuidString: folder.lastPathComponent) != nil else { continue }
             let created = (try? folder.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
             if created < dayAgo { try? fm.removeItem(at: folder) }
         }
@@ -730,11 +733,11 @@ enum CraftNativeMedia {
         lock.lock()
         defer { lock.unlock() }
         if let flight, inFlight[address]?.id != flight {
-            return .failure(CraftNativeActionError(code: "CANCELLED", message: "The video cache was cleared"))
+            return .failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))
         }
         // A background transfer from before the cache was cleared (sign-out).
         if let stillWanted, !stillWanted() {
-            return .failure(CraftNativeActionError(code: "CANCELLED", message: "The video cache was cleared"))
+            return .failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))
         }
         let staging = root.appendingPathComponent(UUID().uuidString + ".part")
         defer { try? fm.removeItem(at: staging) }
@@ -783,7 +786,7 @@ enum CraftNativeMedia {
             catch { failure = error }
         }
         lock.unlock()
-        for done in waiting { done(.failure(CraftNativeActionError(code: "CANCELLED", message: "The video cache was cleared"))) }
+        for done in waiting { done(.failure(CraftNativeActionError(code: "CANCELLED", message: "The media cache was cleared"))) }
         if let failure { throw failure }
         return removed
     }

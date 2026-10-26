@@ -41,6 +41,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -344,12 +345,27 @@ class NativeNavigationTest {
             // Appearance flags alone cannot establish contrast on Android 15.
             // Check the actual protected surface and every native button.
             val authored = color ?: throw AssertionError("missing screen background")
-            val tappable = ViewCompat.getRootWindowInsets(activity.window.decorView)
-                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.tappableElement())?.bottom ?: 0
+            // Finding a protocol view and receiving window focus both precede
+            // the first inset dispatch after an activity or appearance change.
+            // Wait for that actual system measurement before taking pixels.
+            var measured: androidx.core.view.WindowInsetsCompat? = null
+            for (attempt in 0 until 50) {
+                instrumentation.runOnMainSync {
+                    val next = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                    if (activity.hasWindowFocus() && next?.getInsets(
+                            androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom?.let { it > 0 } == true) {
+                        measured = next
+                    }
+                }
+                if (measured != null) break
+                SystemClock.sleep(100)
+            }
+            val insets = measured ?: throw AssertionError(
+                "navigation-bar screenshot coverage requires a visible system bar after window layout")
+            val tappable = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.tappableElement()).bottom
             val buttonNavigation = tappable > 0
             var expected = authored
-            val inset = ViewCompat.getRootWindowInsets(activity.window.decorView)
-                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars())?.bottom ?: 0
+            val inset = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.navigationBars()).bottom
             assertTrue("navigation-bar screenshot coverage requires a visible system bar", inset > 0)
             var actual: Int? = null
             var glyphContrast = 1.0
@@ -694,6 +710,61 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun keptPrivateImageLoadsOfflineWithoutEnteringPublicCache() {
+        val context = instrumentation.targetContext
+        val address = "https://kept-image.invalid/${java.util.UUID.randomUUID()}.png"
+        val kept = CraftNativeMedia.file(context, address)
+        kept.parentFile!!.mkdirs()
+        val pixels = Bitmap.createBitmap(7, 5, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        kept.outputStream().use { assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        pixels.recycle()
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "selectable-native-text")
+            // Exercise the actual renderer on the mounted screen, without a
+            // public test-only host API or a fake ImageView implementation.
+            fun render(uri: String) {
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
+                    .get(activity) as List<*>
+                val screen = requireNotNull(screens.last())
+                val method = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, org.json.JSONObject::class.java)
+                    .apply { isAccessible = true }
+                method.invoke(activity, screen, org.json.JSONObject().put("type", "Image")
+                    .put("props", org.json.JSONObject().put("key", "kept").put("testID", "kept")
+                        .put("source", org.json.JSONObject().put("uri", uri)
+                            .put("headers", org.json.JSONObject().put("Authorization", "Bearer private-fixture")))))
+            }
+            instrumentation.runOnMainSync { render(address) }
+            val image = awaitView(activity, "kept") { it is ImageView && it.drawable != null } as ImageView
+            instrumentation.runOnMainSync {
+                val bitmap = (image.drawable as android.graphics.drawable.BitmapDrawable).bitmap
+                assertEquals(7, bitmap.width)
+                assertEquals(5, bitmap.height)
+                assertEquals(Color.RED, bitmap.getPixel(3, 2))
+                assertTrue(CraftNativeImageCache(java.io.File(context.cacheDir, "craft-native-images")).read(address) == null)
+                render(kept.toURI().toString())
+                assertTrue("kept bytes must not allow arbitrary file URLs", image.drawable == null)
+                render(address)
+                render("data:image/png;base64,invalid")
+            }
+            SystemClock.sleep(200)
+            instrumentation.runOnMainSync {
+                assertTrue("late local pixels replaced the new source", image.drawable == null)
+                kept.writeBytes(byteArrayOf(1, 2, 3))
+                render(address)
+            }
+            awaitView(activity, "kept") { it.contentDescription?.contains("Image download failed") == true }
+            instrumentation.runOnMainSync { assertTrue("corrupt kept file reused decoded pixels", image.drawable == null) }
+        } finally {
+            kept.delete()
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun selectableTextUsesNativeTextSelection() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
@@ -992,6 +1063,33 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun nativeTeardownRecordsSynchronousStorageBeforeReturning() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            val retained = awaitText(activity, "navigation-home-state", "Home state: Ada/0")
+            for (increments in 1..2) {
+                click(activity, "navigation-open-details")
+                awaitText(activity, "details-count", "Count: 0")
+                repeat(increments) { click(activity, "details-increment") }
+                awaitText(activity, "details-count", "Count: $increments")
+                if (increments == 1) click(activity, "details-back")
+                else instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+                assertSame(retained, awaitText(activity, "navigation-home-state", "Home state: Ada/0"))
+                click(activity, "navigation-check-lifecycle")
+                awaitText(activity, "navigation-lifecycle", "Disposed Ada/$increments")
+                assertNoWebView(activity)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun compiledBundleRendersNavigatesAndRetainsNativeControls() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(
@@ -1050,7 +1148,8 @@ class NativeNavigationTest {
             click(activity, "toggle-retained-safe-area")
             awaitText(activity, "retained-safe-area-status", "Retained: safe")
             assertSame("type-switched retained container was replaced", retained, awaitView(activity, "retained-safe-area"))
-            assertEquals("SafeAreaView type switch did not apply the received top inset", plainRetainedPadding + initialRootTop - authoredRootPadding, retained.paddingTop)
+            // The outer SafeAreaView already protects this nested container.
+            assertEquals("Nested SafeAreaView duplicated its parent's consumed inset", plainRetainedPadding, retained.paddingTop)
             click(activity, "toggle-retained-safe-area")
             awaitText(activity, "retained-safe-area-status", "Retained: plain")
             assertSame("retained container changed identity on the way back", retained, awaitView(activity, "retained-safe-area"))
@@ -2247,11 +2346,86 @@ class NativeNavigationTest {
         assertEquals("top edge should add the current window inset", 22, layout.paddingTop)
         assertEquals("right edge should keep authored padding", 7, layout.paddingRight)
         assertEquals("bottom edge should add the current window inset", 34, layout.paddingBottom)
+        instrumentation.runOnMainSync { layout.setSafeAreaEdges(JSONArray().put("bottom")) }
+        assertEquals("removing an edge must not wait for another inset dispatch", 5, layout.paddingTop)
+        assertEquals(34, layout.paddingBottom)
+        instrumentation.runOnMainSync { layout.setSafeAreaEdges(null) }
+        assertEquals("restoring edges must reuse the last platform insets", 22, layout.paddingTop)
+        assertEquals(16, layout.paddingLeft)
+        assertEquals(26, layout.paddingRight)
+        instrumentation.runOnMainSync { repeat(3) { layout.setPadding(3, 5, 7, 11) } }
+        assertEquals("reconciliation must not accumulate safe-area padding", 22, layout.paddingTop)
+        instrumentation.runOnMainSync { layout.setWindowSafeInsets(0, 0, 0, 0) }
+        assertEquals(5, layout.paddingTop)
+        assertEquals(11, layout.paddingBottom)
     }
 
     private fun systemCommand(command: String): String =
         android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
             .bufferedReader().use { it.readText().trim() }
+
+    @Test
+    fun nativeStatusBarTracksLiveDeviceAppearance() {
+        val original = Regex("Night mode: (\\w+)").find(systemCommand("cmd uimode night"))?.groupValues?.get(1)
+            ?: throw AssertionError("Cannot read the original device appearance")
+        assertTrue(original in setOf("no", "yes", "auto", "custom_schedule", "custom_bedtime"))
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "toggle-status-bar-content")
+            instrumentation.runOnMainSync {
+                activity.delegate.localNightMode = androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+            }
+            for (dark in listOf(false, true, false)) {
+                systemCommand("cmd uimode night ${if (dark) "yes" else "no"}")
+                var matching = false
+                val deadline = SystemClock.uptimeMillis() + 5000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.runOnMainSync {
+                        val appDark = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+                        val lightIcons = !WindowCompat.getInsetsController(activity.window, activity.window.decorView).isAppearanceLightStatusBars
+                        matching = appDark == dark && lightIcons == dark
+                    }
+                    if (matching) break
+                    SystemClock.sleep(50)
+                }
+                assertTrue("Live device appearance must preserve readable status icons (dark=$dark)", matching)
+            }
+        } finally {
+            instrumentation.runOnMainSync { activity.finish() }
+            systemCommand("cmd uimode night $original")
+        }
+    }
+
+    @Test
+    fun nativeStatusBarPropsUpdateWithoutNavigation() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "toggle-status-bar-content")
+            for (expectedLightAppearance in listOf(false, true, false)) {
+                click(activity, "toggle-status-bar-content")
+                var actual: Boolean? = null
+                val deadline = SystemClock.uptimeMillis() + 5000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.runOnMainSync {
+                        actual = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                            .isAppearanceLightStatusBars
+                    }
+                    if (actual == expectedLightAppearance) break
+                    SystemClock.sleep(50)
+                }
+                assertEquals("Live StatusBar props must update the visible window without navigation",
+                    expectedLightAppearance, actual)
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
 
     @Test
     fun nativeScreenBackgroundOptionAppliesAndResets() {

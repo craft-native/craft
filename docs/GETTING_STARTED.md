@@ -129,8 +129,10 @@ not copy Craft's linker flags. The maintained
 [graphics package consumer](../packages/zig/test/fixtures/graphics-package-consumer/)
 uses this same dependency API to check exact CPU bitmap, textured terrain,
 UTF-8 atlas glyph and complete-frame pixels, shared Canvas types, atomic frame
-rejection and explicit unsupported shader/font-family text errors. Run `zig build check` from
-that fixture. It selects `js-runtime=false` because it opens no window and
+rejection and explicit unsupported shader/font-family text errors. Run
+`bun scripts/verify-zig-package-consumer.ts` from the repository root, with the
+pinned `CRAFT_ZIG`. It archives only the declared package paths and runs the
+consumer against an unchanged extraction with fresh compiler caches. It selects `js-runtime=false` because it opens no window and
 executes no JavaScript. This check does not prove native window presentation.
 
 ## Platform-Specific Setup

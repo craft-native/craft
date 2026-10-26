@@ -1,4 +1,5 @@
 import Foundation
+import zlib
 import CoreFoundation
 import ImageIO
 import AVFoundation
@@ -13,6 +14,45 @@ import SwiftUI
 import UIKit
 
 private let craftNativeCapabilityTimeoutMilliseconds = 30_000
+
+/// A retained JavaScript context must lose synchronous storage access when
+/// its screen closes. Only the actual synchronous unmount callback may finish
+/// its cleanup; queued script work runs after that allowance ends.
+private final class CraftNativeStorageLifetime {
+    private let lock = NSLock()
+    private var closed = false
+    private var unmounting = false
+
+    func close() {
+        lock.lock()
+        closed = true
+        lock.unlock()
+    }
+
+    func unmount(_ work: () -> Void) {
+        lock.lock()
+        unmounting = true
+        lock.unlock()
+        defer {
+            lock.lock()
+            unmounting = false
+            lock.unlock()
+        }
+        work()
+    }
+
+    func access<T>(closedValue: T, _ work: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed || unmounting else {
+            if let context = JSContext.current() {
+                context.exception = JSValue(newErrorFromMessage: "SCREEN_CLOSED: The native screen is closed", in: context)
+            }
+            return closedValue
+        }
+        return work()
+    }
+}
 
 /// Foundation's `NSNumber(0/1) is Bool` is true even for JSON numbers.
 /// Check the Core Foundation identity so real booleans stay invalid numeric
@@ -1403,6 +1443,16 @@ enum CraftBasemap: String {
     static let outdoorCredit = "Topography: Esri, USGS, NOAA, OpenStreetMap contributors"
 }
 
+private final class CraftMarkerPhotoRedirects: NSObject, URLSessionTaskDelegate {
+    static let session = URLSession(configuration: .ephemeral, delegate: CraftMarkerPhotoRedirects(), delegateQueue: nil)
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        let url = request.url
+        completionHandler(url?.scheme?.lowercased() == "https" && url?.user == nil && url?.password == nil ? request : nil)
+    }
+}
+
 private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     private var annotationsByID: [String: MKPointAnnotation] = [:]
     private var overlaysByID: [String: MKPolyline] = [:]
@@ -1427,6 +1477,26 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     private var edgePadding = UIEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
     private var markerBearings: [String: Double] = [:]
     private var markerPinColors: [String: UIColor] = [:]
+    private struct MarkerPhoto: Equatable {
+        let url: URL
+        let size: CGFloat
+        let circle: Bool
+
+        init?(_ props: [String: Any]) {
+            guard let raw = props["image"] as? String, let url = URL(string: raw),
+                  url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty,
+                  url.user == nil, url.password == nil else { return nil }
+            self.url = url
+            // Current STX releases preserve unknown HTML/binding spellings.
+            let value = CraftNativeMapView.numeric(props["imageSize"] ?? props["imagesize"] ?? props["image-size"]) ?? 30
+            size = CGFloat(value.isFinite ? min(96, max(16, value)) : 30)
+            circle = (props["imageShape"] ?? props["imageshape"] ?? props["image-shape"]) as? String != "square"
+        }
+    }
+    private var markerPhotos: [String: MarkerPhoto] = [:]
+    private var markerPhotoImages: [String: UIImage] = [:]
+    private var markerPhotoTasks: [String: URLSessionDataTask] = [:]
+    private var markerPhotoRequests: [String: UUID] = [:]
     private var tileOverlay: MKTileOverlay?
     private var tileTemplate: String?
     private var tileReplacesMap = true
@@ -1512,6 +1582,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
         edgePadding = UIEdgeInsets(top: inset("top"), left: inset("left"), bottom: inset("bottom"), right: inset("right"))
         var nextBearings: [String: Double] = [:]
         var nextPinColors: [String: UIColor] = [:]
+        var nextPhotos: [String: MarkerPhoto] = [:]
         // Showing the user dot must not trigger a permission prompt from a
         // renderer pass. The app's existing location capability owns that
         // prompt; a map only opts in after authorization is already granted.
@@ -1540,6 +1611,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
                 guard let id = (overlay["id"] as? CustomStringConvertible)?.description,
                       let point = points.first else { continue }
                 nextMarkers[id] = (point, overlay["title"] as? String)
+                nextPhotos[id] = MarkerPhoto(overlay)
                 if let color = overlay["pinColor"] as? String { nextPinColors[id] = Self.color(color) }
                 if let bearing = Self.numeric(overlay["bearing"]), bearing.isFinite {
                     nextBearings[id] = bearing.truncatingRemainder(dividingBy: 360)
@@ -1558,6 +1630,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             if type == "mapmarker" || type == "marker" {
                 guard let point = points.first else { continue }
                 nextMarkers[id] = (point, childProps["title"] as? String)
+                nextPhotos[id] = MarkerPhoto(childProps)
                 if let color = childProps["pinColor"] as? String { nextPinColors[id] = Self.color(color) }
                 if let bearing = Self.numeric(childProps["bearing"]), bearing.isFinite {
                     nextBearings[id] = bearing.truncatingRemainder(dividingBy: 360)
@@ -1586,6 +1659,12 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
 
         markerBearings = nextBearings
         markerPinColors = nextPinColors
+        for id in markerPhotos.keys where markerPhotos[id] != nextPhotos[id] {
+            markerPhotoTasks.removeValue(forKey: id)?.cancel()
+            markerPhotoRequests.removeValue(forKey: id)
+            markerPhotoImages.removeValue(forKey: id)
+        }
+        markerPhotos = nextPhotos
         let staleMarkers = annotationsByID.keys.filter { nextMarkers[$0] == nil }
         removeAnnotations(staleMarkers.compactMap { annotationsByID.removeValue(forKey: $0) })
         for (id, value) in nextMarkers {
@@ -1602,6 +1681,9 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             }
         }
         markerHandlers = nextHandlers
+        for (id, photo) in markerPhotos where markerPhotoRequests[id] == nil {
+            loadMarkerPhoto(photo, id: id)
+        }
 
         let staleOverlays = overlaysByID.keys.filter { nextPolylines[$0] == nil }
         for id in staleOverlays {
@@ -1733,6 +1815,11 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
         markerHandlers.removeAll()
         markerBearings.removeAll()
         markerPinColors.removeAll()
+        markerPhotoTasks.values.forEach { $0.cancel() }
+        markerPhotoTasks.removeAll()
+        markerPhotoRequests.removeAll()
+        markerPhotoImages.removeAll()
+        markerPhotos.removeAll()
         removeAnnotations(Array(annotationsByID.values))
         annotationsByID.removeAll()
         removeOverlays(Array(overlaysByID.values))
@@ -1850,7 +1937,15 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     }
 
     private func configureMarkerView(_ view: MKAnnotationView, id: String) {
-        if let bearing = markerBearings[id] {
+        if let photo = markerPhotoImages[id] {
+            view.image = photo
+            view.transform = .identity
+            view.displayPriority = .required
+            view.collisionMode = markerPhotos[id]?.circle == true ? .circle : .rectangle
+            if #available(iOS 14.0, *) { view.zPriority = .max }
+            view.isAccessibilityElement = true
+            view.accessibilityTraits = .button
+        } else if let bearing = markerBearings[id] {
             let color = (markerPinColors[id] ?? .systemGreen).resolvedColor(with: traitCollection)
             view.tintColor = color
             view.image = Self.markerImage(color: color, direction: true)
@@ -1876,6 +1971,45 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             if #available(iOS 14.0, *) { view.zPriority = .max }
             view.isAccessibilityElement = true
             view.accessibilityTraits = .button
+        }
+    }
+
+    private func loadMarkerPhoto(_ photo: MarkerPhoto, id: String) {
+        let request = UUID()
+        markerPhotoRequests[id] = request
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        let finish: (Data?) -> Void = { [weak self] data in
+            let pixels = CGSize(width: photo.size * scale, height: photo.size * scale)
+            let decoded = data.flatMap { $0.count <= 8 * 1024 * 1024 ? CraftNativeScreenController.decodeImage($0, fitting: (pixels, scale), fill: true) : nil }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.markerPhotoRequests[id] == request else { return }
+                self.markerPhotoTasks.removeValue(forKey: id)
+                guard let decoded, decoded.size.width > 0, decoded.size.height > 0 else { return }
+                let size = CGSize(width: photo.size, height: photo.size)
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = scale
+                self.markerPhotoImages[id] = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                    let bounds = CGRect(origin: .zero, size: size)
+                    if photo.circle { UIBezierPath(ovalIn: bounds).addClip() }
+                    let factor = max(photo.size / decoded.size.width, photo.size / decoded.size.height)
+                    let drawn = CGSize(width: decoded.size.width * factor, height: decoded.size.height * factor)
+                    decoded.draw(in: CGRect(x: (photo.size - drawn.width) / 2, y: (photo.size - drawn.height) / 2,
+                                            width: drawn.width, height: drawn.height))
+                }.withRenderingMode(.alwaysOriginal)
+                if let annotation = self.annotationsByID[id], let view = self.view(for: annotation) {
+                    self.configureMarkerView(view, id: id)
+                }
+            }
+        }
+        if let local = CraftNativeMedia.local(photo.url.absoluteString) {
+            DispatchQueue.global(qos: .userInitiated).async { finish(try? Data(contentsOf: local)) }
+        } else {
+            let task = CraftMarkerPhotoRedirects.session.dataTask(with: photo.url) { data, response, _ in
+                let response = response as? HTTPURLResponse
+                finish(response?.statusCode == 200 && response?.url?.scheme?.lowercased() == "https" ? data : nil)
+            }
+            markerPhotoTasks[id] = task
+            task.resume()
         }
     }
 
@@ -2744,6 +2878,7 @@ final class CraftNativeCelebration {
 }
 
 private class CraftNativeFlowView: UIStackView {
+    var pageViewport: CGSize? { didSet { if pageViewport != oldValue { invalidateMeasurements() } } }
     var celebration: CraftNativeCelebration?
     func configureCelebration(_ raw: Any?) {
         if raw != nil && celebration == nil { celebration = CraftNativeCelebration(view: self) }
@@ -2966,6 +3101,7 @@ private class CraftNativeFlowView: UIStackView {
     }
 
     func measure(width: CGFloat?, height: CGFloat?, maxWidth: CGFloat, maxHeight: CGFloat) -> CGSize {
+        if let page = pageViewport { return CGSize(width: page.width * CGFloat(arrangedSubviews.filter { !$0.isHidden }.count), height: page.height) }
         let key = MeasureKey(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight)
         if let cached = measurements[key] { return cached }
         let size = layout(width: width, height: height, maxWidth: maxWidth, maxHeight: maxHeight, place: false).size
@@ -2977,6 +3113,12 @@ private class CraftNativeFlowView: UIStackView {
         super.layoutSubviews()
         craftApplyCornerRadius()
         celebration?.layout()
+        if let page = pageViewport {
+            for (index, child) in arrangedSubviews.filter({ !$0.isHidden }).enumerated() {
+                child.frame = CGRect(x: CGFloat(index) * page.width, y: 0, width: page.width, height: page.height)
+            }
+            return
+        }
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let result = layout(width: bounds.width, height: bounds.height, maxWidth: bounds.width, maxHeight: bounds.height, place: true)
         var moved = false
@@ -4374,6 +4516,46 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     private var laidOutSize: CGSize = .zero
     private let pullToRefresh = UIRefreshControl()
     private var refreshHandler: (() -> Void)?
+    private var authoredPageIndex: Int?
+    private var pendingPageIndex: Int?
+    private var currentPageIndex = 0
+    private var pageAnimating = false
+    private var reportedPage: (Int, Int)?
+    private var pageHandler: ((Int, Int) -> Void)?
+
+    /// Opt-in viewport-sized pages. Ordinary horizontal scroll strips retain
+    /// their intrinsic widths; only a controlled pageIndex enables this mode.
+    func configurePager(_ raw: Any?, onSelect: ((Int, Int) -> Void)?) {
+        let next = craftNativeNumber(raw).flatMap { number -> Int? in
+            let value = number.doubleValue
+            return value.isFinite ? Int(min(Double(Int.max / 2), max(0, value))) : nil
+        }
+        if next != authoredPageIndex { pendingPageIndex = next; contentNeedsLayout = true }
+        authoredPageIndex = next
+        pageHandler = onSelect
+        if next == nil { contentStack.pageViewport = nil; reportedPage = nil; pageAnimating = false }
+        setNeedsLayout()
+    }
+
+    func beginPageDrag() { pageAnimating = false }
+
+    func finishPageMotion() {
+        pageAnimating = false
+        DispatchQueue.main.async { [weak self] in self?.settlePage() }
+    }
+
+    func settlePage() {
+        guard authoredPageIndex != nil, bounds.width > 0, !pageAnimating,
+              !isTracking, !isDragging, !isDecelerating else { return }
+        let pages = contentStack.arrangedSubviews.filter { !$0.isHidden }
+        let index = min(max(0, Int((contentOffset.x / bounds.width).rounded())), max(0, pages.count - 1))
+        currentPageIndex = index
+        for (i, child) in pages.enumerated() { child.accessibilityElementsHidden = i != index }
+        if reportedPage?.0 != index || reportedPage?.1 != pages.count {
+            reportedPage = (index, pages.count)
+            pageHandler?(index, pages.count)
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -4414,6 +4596,11 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
     /// The size of the content laid out across the visible width (or, sideways,
     /// height), which is also the scroll view's own size when nothing fixes it.
     func contentFitting(width: CGFloat?, height: CGFloat?) -> CGSize {
+        if authoredPageIndex != nil && !isVertical {
+            let pageWidth = max(0, width ?? bounds.width)
+            let pageHeight = max(0, height ?? bounds.height)
+            return CGSize(width: pageWidth * CGFloat(contentStack.arrangedSubviews.filter { !$0.isHidden }.count), height: pageHeight)
+        }
         if isVertical {
             let contentWidth = max(0, (width ?? bounds.width) - adjustedContentInset.left - adjustedContentInset.right)
             return contentStack.measure(width: contentWidth, height: nil, maxWidth: contentWidth, maxHeight: CraftNativeFlexLayout.unbounded)
@@ -4436,7 +4623,9 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         craftApplyCornerRadius()
         if contentNeedsLayout || laidOutSize != bounds.size {
             contentNeedsLayout = false
+            let resized = laidOutSize != bounds.size
             laidOutSize = bounds.size
+            if authoredPageIndex != nil && !isVertical { contentStack.pageViewport = bounds.size }
             var size = contentFitting(width: bounds.width, height: bounds.height)
             if isVertical {
                 size.width = max(0, bounds.width - adjustedContentInset.left - adjustedContentInset.right)
@@ -4446,12 +4635,31 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
             let frame = CGRect(origin: .zero, size: size)
             if contentStack.frame != frame { contentStack.frame = frame }
             if contentSize != size { contentSize = size }
+            if authoredPageIndex != nil && !isVertical {
+                contentStack.layoutIfNeeded()
+                let count = contentStack.arrangedSubviews.filter { !$0.isHidden }.count
+                let index = min(max(0, pendingPageIndex ?? currentPageIndex), max(0, count - 1))
+                let target = CGPoint(x: CGFloat(index) * bounds.width, y: 0)
+                let moves = pendingPageIndex != nil || resized || index != currentPageIndex
+                let animated = moves && target != contentOffset && !resized && !UIAccessibility.isReduceMotionEnabled
+                if moves {
+                    pageAnimating = animated
+                    setContentOffset(target, animated: animated)
+                }
+                pendingPageIndex = nil
+                currentPageIndex = index
+                if !animated && !isTracking && !isDragging && !isDecelerating { settlePage() }
+            }
         }
         // A scroll view lays out on every frame of a scroll: the sticky
         // headers follow it here, over content placed by this same pass.
         if !stickyIndices.isEmpty || pendingScrollTarget != nil { contentStack.layoutIfNeeded() }
         updateStickyHeaders()
         scrollToPendingTarget()
+        // A nonanimated target changes the offset synchronously inside this
+        // layout pass. Rebase the headers against that actual viewport, not
+        // the viewport from before the target was applied.
+        updateStickyHeaders()
     }
 
     // MARK: Sticky headers
@@ -4474,7 +4682,7 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         view.center.y - view.bounds.height / 2
     }
 
-    private func updateStickyHeaders() {
+    fileprivate func updateStickyHeaders() {
         let children = contentStack.arrangedSubviews
         let headers = isVertical ? stickyIndices.compactMap { $0 < children.count ? children[$0] : nil }.filter { !$0.isHidden } : []
         for view in stickyViews where !headers.contains(where: { $0 === view }) {
@@ -4647,11 +4855,13 @@ private final class CraftNativeScrollView: UIScrollView, UIGestureRecognizerDele
         craftScrollGesture(gestureRecognizer, runsWith: otherGestureRecognizer)
     }
 
-    func setAxis(_ axis: NSLayoutConstraint.Axis) {
+    func setAxis(_ axis: NSLayoutConstraint.Axis, resetBounce: Bool = true) {
         if contentStack.axis != axis { setContentNeedsLayout() }
         contentStack.axis = axis
-        alwaysBounceVertical = axis == .vertical
-        alwaysBounceHorizontal = axis == .horizontal
+        if resetBounce {
+            alwaysBounceVertical = axis == .vertical
+            alwaysBounceHorizontal = axis == .horizontal
+        }
     }
 }
 
@@ -5504,10 +5714,36 @@ enum CraftNativeBundle {
         return read(url)
     }
 
+    /// gzip assets are immutable, decoded lazily and held in the same bounded cache.
+    private static func unpack(_ bytes: Data) -> Data? {
+        guard bytes.starts(with: [0x1f, 0x8b]) else { return bytes }
+        return bytes.withUnsafeBytes { raw -> Data? in
+            var stream = z_stream()
+            guard inflateInit2_(&stream, 15 + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
+            defer { inflateEnd(&stream) }
+            stream.next_in = UnsafeMutablePointer<Bytef>(mutating: raw.bindMemory(to: Bytef.self).baseAddress)
+            stream.avail_in = uInt(bytes.count)
+            var result = Data()
+            var chunk = [UInt8](repeating: 0, count: 32768)
+            var status = Z_OK
+            repeat {
+                status = chunk.withUnsafeMutableBytes { output in
+                    stream.next_out = output.bindMemory(to: Bytef.self).baseAddress
+                    stream.avail_out = uInt(output.count)
+                    return inflate(&stream, Z_NO_FLUSH)
+                }
+                guard status == Z_OK || status == Z_STREAM_END else { return nil }
+                result.append(contentsOf: chunk.prefix(chunk.count - Int(stream.avail_out)))
+                guard result.count <= 64 << 20 else { return nil }
+            } while status != Z_STREAM_END
+            return result
+        }
+    }
+
     private static func read(_ url: URL) -> (source: String, url: URL)? {
         let key = url.path as NSString
         if let cached = sources.object(forKey: key) { return (cached as String, url) }
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        guard let bytes = try? Data(contentsOf: url), let decoded = unpack(bytes), let text = String(data: decoded, encoding: .utf8) else { return nil }
         sources.setObject(text as NSString, forKey: key, cost: text.utf8.count)
         return (text, url)
     }
@@ -5654,6 +5890,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// itself to be in front and acts on it: a sign-in guard on a prepared
     /// Record tab pushed Login over the Feed at launch.
     private var reportedVisible: Bool?
+    private var voiceRecordingOwner: String?
     private let capabilityScope = UUID().uuidString
     private var pendingCapabilityRequests = Set<String>()
     private var pendingCapabilityDeadlines: [String: DispatchWorkItem] = [:]
@@ -5677,6 +5914,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     weak var hybridEvents: CraftHybridScreenEvents?
     private var hybridRendered = false
     private var runtimeDisposed = false
+    private let storageLifetime = CraftNativeStorageLifetime()
     /// The app script (`nativeApp`, CraftHybrid.swift): a bundle route with
     /// no screen, loaded once and never shown, that runs for the app's life.
     /// It hears every `APP_STATE` and the app's events (`CRAFT_EVENT`), no
@@ -5690,6 +5928,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         self.routeProps = routeProps
         self.isAppScript = isAppScript
         super.init(nibName: nil, bundle: nil)
+        CraftVoiceRecording.prepareForLaunch(includeLegacy: config.enableAudioRecording)
     }
 
     required init?(coder: NSCoder) {
@@ -5924,12 +6163,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func disposeRuntime() {
         guard !runtimeDisposed else { return }
         runtimeDisposed = true
+        storageLifetime.close()
+        pendingCapabilityDeadlines.values.forEach { $0.cancel() }
+        pendingCapabilityDeadlines.removeAll()
+        pendingCapabilityRequests.forEach { CraftNativeActions.cancel(requestToken: $0) }
+        pendingCapabilityRequests.removeAll()
+        if let owner = voiceRecordingOwner {
+            voiceRecordingOwner = nil
+            CraftVoiceRecording.shared.perform(method: "cancel", args: [owner]) { _ in }
+        }
         frameWanted = false
         CraftNativeFrameClock.shared.cancel(self)
         disposeRenderedTree()
         let context = jsContext
         let route = routeName ?? "screen"
-        CraftNativeScriptThread.run(label: "unmount \(route)") { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }
+        let storageLifetime = self.storageLifetime
+        CraftNativeScriptThread.run(label: "unmount \(route)") {
+            storageLifetime.unmount { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }
+        }
         audio.close()
         sounds.close()
         streams.close()
@@ -6391,17 +6642,22 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let log: @convention(block) (String, String, String) -> Void = { level, category, message in
             CraftNativeConsole.write(level, category: category, message: message)
         }
+        let storageLifetime = self.storageLifetime
         let storageGet: @convention(block) (String) -> String? = { key in
-            do { return try CraftNativeActions.storageJSON(forKey: key) }
-            catch {
-                if let context = JSContext.current() {
-                    context.exception = JSValue(newErrorFromMessage: "STORAGE_ERROR: Unable to read stored value", in: context)
+            storageLifetime.access(closedValue: nil) {
+                do { return try CraftNativeActions.storageJSON(forKey: key) }
+                catch {
+                    if let context = JSContext.current() {
+                        context.exception = JSValue(newErrorFromMessage: "STORAGE_ERROR: Unable to read stored value", in: context)
+                    }
+                    return nil
                 }
-                return nil
             }
         }
         let storageSet: @convention(block) (String, JSValue) -> Bool = { key, value in
-            CraftNativeActions.setStorageJSON(value.isNull || value.isUndefined ? nil : value.toString(), forKey: key)
+            storageLifetime.access(closedValue: false) {
+                CraftNativeActions.setStorageJSON(value.isNull || value.isUndefined ? nil : value.toString(), forKey: key)
+            }
         }
         let snapshotGet: @convention(block) (String) -> String? = { name in
             CraftSnapshots.read(name)
@@ -6848,10 +7104,12 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         // The app script has no screen, so no bar and no tab bar to change.
         guard !isAppScript else { return }
+        // Prepared tabs have a window and a top controller too. Keep their
+        // options, but only the focused screen may change the shared chrome.
         if options.keys.contains("tabAccessory") {
             tabAccessory = options["tabAccessory"] as? [String: Any]
             tabAccessoryDeclared = true
-            if navigationController?.topViewController === self, view.window != nil {
+            if navigationController?.topViewController === self, isShownOnScreen {
                 CraftChrome.shared.updateTabAccessory(tabAccessory, owner: self)
             }
         }
@@ -6870,7 +7128,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if let hidden = options["tabBarHidden"] as? Bool {
             tabBarHidden = hidden
-            if navigationController?.topViewController === self, view.window != nil {
+            if navigationController?.topViewController === self, isShownOnScreen {
                 CraftChrome.shared.setHiddenByScreen(hidden)
             }
         }
@@ -7540,6 +7798,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 navigationController?.popToRootViewController(animated: true)
             }
         case "API_REQUEST":
+            guard !runtimeDisposed else { return }
             guard let id = message["id"] as? String else { return }
             let args = payload["args"] as? [Any] ?? []
             let requestToken = "\(capabilityScope)/\(id)"
@@ -7609,7 +7868,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "API_CANCEL":
             guard let id = payload["requestId"] as? String else { return }
             let requestToken = "\(capabilityScope)/\(id)"
-            pendingCapabilityRequests.remove(requestToken)
+            guard pendingCapabilityRequests.remove(requestToken) != nil else { return }
             pendingCapabilityDeadlines.removeValue(forKey: requestToken)?.cancel()
             screenRequestCancellers.removeValue(forKey: requestToken)?()
             CraftNativeActions.cancel(requestToken: requestToken)
@@ -7635,6 +7894,24 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         let id = args.first as? String ?? ""
         switch (module, method) {
+        case ("AudioRecording", _):
+            guard config.enableAudioRecording else {
+                reply(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "Audio recording is disabled")))
+                return true
+            }
+            if method == "start" {
+                guard voiceRecordingOwner == nil else {
+                    reply(.failure(CraftNativeActionError(code: "RECORDING_BUSY", message: "This screen already owns a recording")))
+                    return true
+                }
+                voiceRecordingOwner = id
+            }
+            if method == "cancel", voiceRecordingOwner == id { voiceRecordingOwner = nil }
+            CraftVoiceRecording.shared.perform(method: method, args: args, isActive: { [weak self] in self?.runtimeDisposed == false }) { [weak self] result in
+                if case .failure = result, self?.voiceRecordingOwner == id { self?.voiceRecordingOwner = nil }
+                reply(result)
+            }
+            return true
         case ("View", "focus"):
             let options = args.first as? [String: Any]
             let nodeId = options?["nodeId"] as? String ?? (args.first as? String) ?? ""
@@ -8493,6 +8770,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             scroll.isScrollEnabled = props["scrollEnabled"] as? Bool != false
             scroll.bounces = props["bounces"] as? Bool ?? true
             scroll.isPagingEnabled = props["pagingEnabled"] as? Bool ?? false
+            let pageHandler = nonEmptyHandler(events["onPageSelected"])
+            scroll.configurePager(props["pageIndex"], onSelect: pageHandler.map { handler in
+                { [weak self] index, count in self?.send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["index": index, "count": count]]) }
+            })
             scroll.keyboardDismissMode = keyboardDismissMode(props["keyboardDismissMode"])
             scroll.setKeyboardShouldPersistTaps(props["keyboardShouldPersistTaps"])
             scroll.showsVerticalScrollIndicator = props["showsVerticalScrollIndicator"] as? Bool != false
@@ -8524,6 +8805,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 contentStyle.merge(override) { _, next in next }
             }
             configureStack(scroll.contentStack, style: contentStyle)
+            // Content-style defaults are vertical; the scroll host's explicit
+            // axis must survive that shared container configuration without
+            // resetting the authored bounce options applied above.
+            scroll.setAxis(direction, resetBounce: false)
             reconcileChildren(children.filter {
                 guard let child = $0 as? [String: Any] else { return true }
                 return canonicalType(child["type"] as? String ?? "") != "RefreshControl"
@@ -9746,10 +10031,28 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             for: size,
             compatibleWith: traitCollection
         )
-        var font = (style["fontFamily"] as? String).flatMap { UIFont(name: $0, size: scaledSize) }
-            ?? .systemFont(ofSize: scaledSize, weight: weight)
+        let families = (style["fontFamily"] as? String ?? "").split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        let selectedFont = families.lazy.compactMap { family -> UIFont? in
+            switch family.lowercased() {
+            case "monospace", "ui-monospace": return .monospacedSystemFont(ofSize: scaledSize, weight: weight)
+            case "serif", "ui-serif":
+                let system = UIFont.systemFont(ofSize: scaledSize, weight: weight)
+                return system.fontDescriptor.withDesign(.serif).map { UIFont(descriptor: $0, size: scaledSize) }
+            case "sans-serif", "ui-sans-serif", "system-ui", "-apple-system": return .systemFont(ofSize: scaledSize, weight: weight)
+            default:
+                guard let custom = UIFont(name: family, size: scaledSize) else { return nil }
+                let weighted = custom.fontDescriptor.addingAttributes([.traits: [UIFontDescriptor.TraitKey.weight: weight.rawValue]])
+                var traits = custom.fontDescriptor.symbolicTraits
+                if weight >= .semibold { traits.insert(.traitBold) } else { traits.remove(.traitBold) }
+                let descriptor = weighted.withSymbolicTraits(traits) ?? weighted
+                return UIFont(descriptor: descriptor, size: scaledSize)
+            }
+        }.first
+        var font = selectedFont ?? .systemFont(ofSize: scaledSize, weight: weight)
         if style["fontStyle"] as? String == "italic",
-           let descriptor = font.fontDescriptor.withSymbolicTraits(.traitItalic) {
+           let descriptor = font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(.traitItalic)) {
             font = UIFont(descriptor: descriptor, size: scaledSize)
         }
         return font
@@ -9936,6 +10239,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // Decoded at the size it is drawn, when the style fixes that size.
             let pixels = Self.displayPixels(of: view)
             let fill = view.contentMode == .scaleAspectFill
+            // media.keep owns private/offline copies keyed by the authored URL.
+            // Read before the decoded/network cache, without retaining private
+            // pixels there after the app clears its media on sign-out.
+            if let local = CraftNativeMedia.local(uri) {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self, weak view] in
+                    let decoded = (try? Data(contentsOf: local)).flatMap { Self.decodeImage($0, fitting: pixels, fill: fill) }
+                    DispatchQueue.main.async { [weak self, weak view] in
+                        guard let self, let view, self.imageSources[ObjectIdentifier(view)] == requestKey else { return }
+                        guard let image = decoded, CraftNativeMedia.local(uri) == local else {
+                            self.imageFailure(view, uri: uri, message: "Kept image is unavailable or invalid")
+                            return
+                        }
+                        view.image = self.imageForDisplay(image, view: view)
+                        self.imageDidChange(view)
+                        self.emitImageEvent(view, handler: self.imageLoadHandlers[ObjectIdentifier(view)])
+                        self.emitImageEvent(view, handler: self.imageLoadEndHandlers[ObjectIdentifier(view)])
+                    }
+                }
+                return
+            }
             let cacheKey = pixels.map { "\(requestKey)@\(Int($0.size.width))x\(Int($0.size.height))\(fill ? "f" : "")" } ?? requestKey
             // Shown before: on screen in this same frame, already decoded.
             if let decoded = Self.decodedImages.object(forKey: cacheKey as NSString) {
@@ -10536,6 +10859,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // Sticky positioning is a native scroll behavior and must also run
+        // without a JavaScript onScroll subscription, including animations.
+        (scrollView as? CraftNativeScrollView)?.updateStickyHeaders()
         guard let handler = scrollHandlers[ObjectIdentifier(scrollView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
     }
@@ -10544,12 +10870,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         CraftFramePacing.shared.begin(pacingName)
+        (scrollView as? CraftNativeScrollView)?.beginPageDrag()
         guard let handler = scrollBeginHandlers[ObjectIdentifier(scrollView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate { CraftFramePacing.shared.end(pacingName) }
+        if !decelerate { CraftFramePacing.shared.end(pacingName); (scrollView as? CraftNativeScrollView)?.finishPageMotion() }
         guard let handler = scrollEndHandlers[ObjectIdentifier(scrollView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
     }
@@ -10561,8 +10888,13 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         CraftFramePacing.shared.end(pacingName)
+        (scrollView as? CraftNativeScrollView)?.finishPageMotion()
         guard let handler = scrollMomentumEndHandlers[ObjectIdentifier(scrollView)] else { return }
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": scrollEvent(scrollView)])
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        (scrollView as? CraftNativeScrollView)?.finishPageMotion()
     }
 
     private func scrollEvent(_ scrollView: UIScrollView) -> [String: Any] {

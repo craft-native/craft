@@ -2,11 +2,14 @@ package dev.craft.navigationtest
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.SystemClock
 import android.view.View
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.HorizontalScrollView
 import androidx.swiperefreshlayout.widget.CircularProgressDrawable
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -30,6 +33,191 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class NativeFlatListTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    private fun horizontalScroller(view: View): HorizontalScrollView? {
+        if (view is HorizontalScrollView) return view
+        if (view is ViewGroup) for (index in 0 until view.childCount) {
+            horizontalScroller(view.getChildAt(index))?.let { return it }
+        }
+        return null
+    }
+
+    private fun layoutPager(pager: CraftNativeScrollView, width: Int) {
+        pager.layoutParams = FrameLayout.LayoutParams(width, 180)
+        pager.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(180, View.MeasureSpec.EXACTLY))
+        pager.layout(0, 0, width, 180)
+    }
+
+    @Test
+    fun pagerFillsViewportRetainsPagesClampsCommandsAndPreservesSelectionOnResize() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        lateinit var pager: CraftNativeScrollView
+        val reports = mutableListOf<Pair<Int, Int>>()
+        val handler: (Int, Int) -> Unit = { index, count -> reports.add(index to count) }
+        fun awaitReport(expected: Pair<Int, Int>) {
+            val deadline = SystemClock.uptimeMillis() + 5000
+            while (SystemClock.uptimeMillis() < deadline) {
+                var settled = false
+                // Native quiescence callbacks need the main queue. Never wait
+                // inside onActivity while its 80ms settle is still pending.
+                scenario.onActivity { settled = reports.lastOrNull() == expected }
+                if (settled) return
+                SystemClock.sleep(25)
+            }
+            scenario.onActivity { assertEquals("Native pager did not settle within 5000ms", expected, reports.lastOrNull()) }
+        }
+        try {
+            scenario.onActivity { activity ->
+                val host = FrameLayout(activity)
+                activity.setContentView(host)
+                pager = CraftNativeScrollView(activity)
+                host.addView(pager)
+                pager.setHorizontal(true)
+                pager.setPagingEnabled(true)
+                repeat(3) { index ->
+                    pager.content.addView(TextView(activity).apply {
+                        text = "Page $index"
+                        tag = "page-$index"
+                        layoutParams = LinearLayout.LayoutParams(37, 22)
+                    })
+                }
+                pager.configurePager(1, handler)
+                layoutPager(pager, 320)
+            }
+            awaitReport(1 to 3)
+            scenario.onActivity {
+                layoutPager(pager, 320)
+                val scroller = requireNotNull(horizontalScroller(pager))
+                assertEquals(320, scroller.width)
+                assertEquals(960, pager.content.width)
+                assertEquals(320, scroller.scrollX)
+                assertEquals(1 to 3, reports.last())
+                repeat(3) { index ->
+                    val page = pager.content.getChildAt(index)
+                    assertEquals(320, page.width)
+                    assertEquals(index * 320, page.left)
+                    assertEquals(if (index == 1) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, page.importantForAccessibility)
+                }
+                val kept = pager.content.getChildAt(1)
+                val reported = reports.size
+                pager.configurePager(1, handler)
+                layoutPager(pager, 320)
+                assertEquals(reported, reports.size)
+                assertTrue(kept === pager.content.getChildAt(1))
+                layoutPager(pager, 480)
+                assertEquals(480, scroller.scrollX)
+                assertEquals(1440, pager.content.width)
+                assertEquals(480, kept.width)
+                assertEquals(reported, reports.size)
+                pager.configurePager(99, handler)
+                layoutPager(pager, 480)
+            }
+            awaitReport(2 to 3)
+            scenario.onActivity {
+                assertEquals(960, requireNotNull(horizontalScroller(pager)).scrollX)
+                assertEquals(2 to 3, reports.last())
+                pager.content.removeViews(1, 2)
+                layoutPager(pager, 480)
+            }
+            awaitReport(0 to 1)
+            scenario.onActivity {
+                assertEquals(0, requireNotNull(horizontalScroller(pager)).scrollX)
+                assertEquals(480, pager.content.width)
+                assertEquals(0 to 1, reports.last())
+                pager.content.removeAllViews()
+                pager.configurePager(-1, handler)
+                layoutPager(pager, 480)
+            }
+            awaitReport(0 to 0)
+            scenario.onActivity {
+                assertEquals(0 to 0, reports.last())
+                assertEquals("Reconciliation and resize must not add selected events",
+                    listOf(1 to 3, 2 to 3, 0 to 1, 0 to 0), reports)
+            }
+        } finally { scenario.close() }
+    }
+
+    @Test
+    fun pagerFingerDragReportsSettledPageAndHidesOtherPagesFromAccessibility() {
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        lateinit var pager: CraftNativeScrollView
+        val selected = AtomicInteger(-1)
+        val changes = AtomicInteger()
+        try {
+            scenario.onActivity { activity ->
+                val host = FrameLayout(activity)
+                activity.setContentView(host)
+                pager = CraftNativeScrollView(activity)
+                host.addView(pager)
+                pager.setHorizontal(true)
+                pager.setPagingEnabled(true)
+                repeat(3) { pager.content.addView(TextView(activity).apply { text = "Page $it" }) }
+                pager.configurePager(0) { index, _ -> selected.set(index); changes.incrementAndGet() }
+                layoutPager(pager, 320)
+            }
+            instrumentation.waitForIdleSync()
+            var downTime = SystemClock.uptimeMillis()
+            fun touch(action: Int, x: Float) {
+                instrumentation.runOnMainSync {
+                    val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, x, 90f, 0)
+                    try { pager.dispatchTouchEvent(event) } finally { event.recycle() }
+                }
+            }
+            touch(MotionEvent.ACTION_DOWN, 280f)
+            for (step in 1..12) {
+                SystemClock.sleep(16)
+                touch(MotionEvent.ACTION_MOVE, 280f - step * 20f)
+            }
+            instrumentation.runOnMainSync {
+                assertTrue("Hold must be beyond half a viewport", requireNotNull(horizontalScroller(pager)).scrollX > 160)
+            }
+            // More than the native 80ms quiescence window, while the finger is
+            // still down: an apparent pause must not publish a selection.
+            SystemClock.sleep(250)
+            assertEquals("A held drag has not selected a page", 0, selected.get())
+            assertEquals("A held drag must not emit an intermediate selection", 1, changes.get())
+            touch(MotionEvent.ACTION_UP, 40f)
+            val deadline = SystemClock.uptimeMillis() + 5000
+            while (selected.get() != 1 && SystemClock.uptimeMillis() < deadline) SystemClock.sleep(25)
+            assertEquals("A real touch drag must select the next viewport page", 1, selected.get())
+            instrumentation.runOnMainSync {
+                assertEquals(320, requireNotNull(horizontalScroller(pager)).scrollX)
+                assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_AUTO, pager.content.getChildAt(1).importantForAccessibility)
+                assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, pager.content.getChildAt(0).importantForAccessibility)
+                assertEquals(2, changes.get())
+                pager.setScrollEnabled(false)
+            }
+            downTime = SystemClock.uptimeMillis()
+            touch(MotionEvent.ACTION_DOWN, 280f)
+            for (step in 1..12) {
+                SystemClock.sleep(16)
+                touch(MotionEvent.ACTION_MOVE, 280f - step * 20f)
+            }
+            touch(MotionEvent.ACTION_UP, 40f)
+            SystemClock.sleep(250)
+            instrumentation.runOnMainSync {
+                assertEquals("A locked page must ignore another finger drag", 320, requireNotNull(horizontalScroller(pager)).scrollX)
+                assertEquals(1, selected.get())
+                assertEquals("Locked gestures must not emit selected events", 2, changes.get())
+            }
+        } finally { scenario.close() }
+    }
+
+    @Test
+    fun cssGenericFamiliesUseRealAndroidTypefaceAndRespectFallbackOrder() {
+        instrumentation.runOnMainSync {
+            for (family in listOf("monospace", "ui-monospace", "'Missing Font', ui-monospace, serif")) {
+                val view = TextView(instrumentation.targetContext)
+                view.typeface = craftNativeFontFamily(family)
+                assertEquals(Typeface.MONOSPACE, view.typeface)
+                assertEquals(view.paint.measureText("iii"), view.paint.measureText("WWW"), 0.1f)
+            }
+            assertEquals(Typeface.SERIF, craftNativeFontFamily("'Missing Font', ui-serif"))
+            assertEquals(Typeface.SANS_SERIF, craftNativeFontFamily("system-ui"))
+            assertEquals(Typeface.SERIF, craftNativeFontFamily("Brand Font, monospace", mapOf("Brand Font" to Typeface.SERIF)))
+        }
+    }
 
     @Test
     fun celebrationIsFiniteReplayableAndHonorsReducedMotion() {

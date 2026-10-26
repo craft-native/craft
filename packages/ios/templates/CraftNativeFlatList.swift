@@ -60,7 +60,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         /// The row this cell showed is gone; its views stay in the cell, and
         /// the next row it shows reuses them when it has the same shape.
         func recycle() {
-            if let identity = representedIdentity { onRecycle?(identity) }
+            if let identity = representedIdentity, showsHostedView { onRecycle?(identity) }
             representedIdentity = nil
             onRecycle = nil
         }
@@ -81,6 +81,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             // since moved to another cell is that cell's now, and pulling it
             // from there blanked a row on screen.
             if let shown = hostedView, shown !== view, shown.superview === contentView { shown.removeFromSuperview() }
+            NSLayoutConstraint.deactivate(hostedConstraints)
             hostedView = view
             view.translatesAutoresizingMaskIntoConstraints = false
             contentView.addSubview(view)
@@ -110,6 +111,8 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         func releaseHostedView() {
             recycle()
             if let shown = hostedView, shown.superview === contentView { shown.removeFromSuperview() }
+            NSLayoutConstraint.deactivate(hostedConstraints)
+            hostedConstraints = []
             hostedView = nil
         }
 
@@ -195,8 +198,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     private var endReachedThreshold = 0.1
     private var endReachedSignature: String?
     private var dataContentSignature = ""
+    private var dataOrdinals: [Int] = []
+    private var dataItemCount = 0
     private var columns = 1
     private var isApplyingSnapshot = false
+    private var snapshotNeedsReset = false
     private var pendingApply: (() -> Void)?
     private var pendingThemeRefresh = false
     private let nativeRefreshControl = UIRefreshControl()
@@ -224,6 +230,10 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         backgroundColor = .clear
         alwaysBounceVertical = true
         delegate = self
+        // The renderer keeps one live view per keyed row. UIKit's speculative
+        // cell prefetch can otherwise move that view out of its visible cell.
+        // UICollectionView still recycles and self-sizes the visible window.
+        isPrefetchingEnabled = false
         keyboardTapGesture.cancelsTouchesInView = false
         keyboardTapGesture.delegate = self
         keyboardTapGesture.addTarget(self, action: #selector(keyboardTap))
@@ -382,13 +392,15 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         let padding = nonNegative(raw?["padding"]) ?? 0
         let horizontal = nonNegative(raw?["paddingHorizontal"]) ?? padding
         let vertical = nonNegative(raw?["paddingVertical"]) ?? padding
-        contentInset = UIEdgeInsets(
+        let inset = UIEdgeInsets(
             top: nonNegative(raw?["paddingTop"]) ?? vertical,
             left: nonNegative(raw?["paddingLeft"]) ?? horizontal,
             bottom: nonNegative(raw?["paddingBottom"]) ?? vertical,
             right: nonNegative(raw?["paddingRight"]) ?? horizontal
         )
-        scrollIndicatorInsets = contentInset
+        guard contentInset != inset else { return }
+        contentInset = inset
+        scrollIndicatorInsets = inset
         collectionViewLayout.invalidateLayout()
     }
 
@@ -479,7 +491,9 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         self.removeItem = removeItem
         self.endReached = endReached
         self.endReachedThreshold = max(0, endReachedThreshold)
-        self.columns = max(1, columns)
+        let nextColumns = max(1, columns)
+        let layoutChanged = self.columns != nextColumns || flowLayout.scrollDirection != (horizontal ? .horizontal : .vertical)
+        self.columns = nextColumns
 
         layoutIfNeeded()
         let oldItems = itemsByIdentity
@@ -496,6 +510,19 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
             return Item(identity: identity, node: node, signature: signature, isChrome: role != nil && role != "item")
         }
         if inverted { next.reverse() }
+        // Reapplying an identical keyed tree during a timer or badge update
+        // must not reconfigure cells, invalidate self-sizing, or reset a drag.
+        if !snapshotNeedsReset, !layoutChanged, next.count == items.count,
+           zip(next, items).allSatisfy({ $0.identity == $1.identity && $0.signature == $1.signature }) {
+            finishApplyingSnapshot()
+            return
+        }
+        snapshotNeedsReset = false
+        dataItemCount = 0
+        dataOrdinals = next.map { item in
+            if !item.isChrome { dataItemCount += 1 }
+            return dataItemCount - 1
+        }
         items = next
         itemsByIdentity = Dictionary(uniqueKeysWithValues: next.map { ($0.identity, $0) })
 
@@ -504,7 +531,7 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         alwaysBounceVertical = !horizontal
         showsHorizontalScrollIndicator = horizontal
         showsVerticalScrollIndicator = !horizontal
-        flowLayout.invalidateLayout()
+        if layoutChanged { flowLayout.invalidateLayout() }
 
         let nextIds = Set(itemsByIdentity.keys)
         for identity in oldItems.keys where !nextIds.contains(identity) { removeItem(identity) }
@@ -550,9 +577,12 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
     }
 
     func discardAll() {
+        snapshotNeedsReset = true
         visibleCells.compactMap { $0 as? Cell }.forEach { $0.releaseHostedView() }
         itemsByIdentity.keys.forEach { recycleItem?($0) }
         items = []
+        dataOrdinals = []
+        dataItemCount = 0
         itemsByIdentity = [:]
         renderItem = nil
         recycleItem = nil
@@ -638,11 +668,11 @@ final class CraftNativeFlatList: UICollectionView, UICollectionViewDelegateFlowL
         guard !isApplyingSnapshot, pendingApply == nil,
               let endReached = endReached,
               let lastVisible = indexPathsForVisibleItems.map(\.item).max() else { return }
-        let dataIndices = items.indices.filter { !items[$0].isChrome }
-        guard !dataIndices.isEmpty,
-              let lastDataOrdinal = dataIndices.lastIndex(where: { $0 <= lastVisible }) else { return }
-        let remaining = dataIndices.count - lastDataOrdinal - 1
-        let thresholdItems = max(1, Int(ceil(Double(dataIndices.count) * endReachedThreshold)))
+        guard dataItemCount > 0, dataOrdinals.indices.contains(lastVisible) else { return }
+        let lastDataOrdinal = dataOrdinals[lastVisible]
+        guard lastDataOrdinal >= 0 else { return }
+        let remaining = dataItemCount - lastDataOrdinal - 1
+        let thresholdItems = max(1, Int(ceil(Double(dataItemCount) * endReachedThreshold)))
         guard remaining <= thresholdItems else { return }
         let signature = dataContentSignature
         guard endReachedSignature != signature else { return }

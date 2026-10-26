@@ -2,6 +2,8 @@
 zig-cache/
 zig-out/
 .zig-cache/
+# Dependency sources fetched and verified by the pinned Zig compiler.
+zig-pkg/
 
 # Compiled binaries
 bin/craft-*

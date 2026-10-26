@@ -65,11 +65,17 @@ internal object CraftNativeSandbox {
  */
 internal object CraftNativeBundle {
     private val sources = object : android.util.LruCache<String, String>(24 shl 20) {
-        override fun sizeOf(key: String, value: String) = value.length
+        override fun sizeOf(key: String, value: String) = value.length * 2
     }
 
     private fun read(context: Context, asset: String): String? = sources.get(asset)
-        ?: runCatching { context.assets.open(asset).bufferedReader().use { it.readText() } }.getOrNull()?.also { sources.put(asset, it) }
+        ?: runCatching { context.assets.open(asset).buffered().use { input ->
+            input.mark(2)
+            val packed = input.read() == 0x1f && input.read() == 0x8b
+            input.reset()
+            val decoded = if (packed) java.util.zip.GZIPInputStream(input) else input
+            decoded.bufferedReader().use { it.readText() }
+        } }.getOrNull()?.also { sources.put(asset, it) }
 
     /**
      * A route's file runs on the runtime stx writes beside it

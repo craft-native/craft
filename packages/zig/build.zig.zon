@@ -1,19 +1,21 @@
 .{
     .fingerprint = 0xf45c4a848bf58c1c,
     .name = .craft,
-    .version = "0.0.304",
+    .version = "0.0.358",
     .minimum_zig_version = "0.18.0-dev.146+35accc06e",
     .dependencies = .{
-        // First-party, and the engine craft's own JavaScript runs on — see
-        // src/js_runtime.zig. A sibling checkout rather than a URL because
-        // zig-js's own dependencies are relative paths; publishing those is
-        // what would let this become a fetchable `.url` dependency.
-        .zig_js = .{ .path = "../../../../Libraries/zig-js" },
+        // Portable first-party source, qualified by zig-js CI and native
+        // isolated Debug/ReleaseSafe consumers. The compiler checks this hash.
+        .zig_js = .{
+            .url = "https://codeload.github.com/zig-utils/zig-js/tar.gz/afb30ec2620d701269477c987d9344b792d0ce96",
+            .hash = "zig_js-0.0.1-gDtlP6gRjQEt_U4Qg-k3mIQy9yAKwt6kKItRRG0Ycbyh",
+        },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "vendor/sqlite",
         "test",
     },
 }

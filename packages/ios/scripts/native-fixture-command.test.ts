@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { nativeFixtureCommand } from './native-fixture-command'
+import { NativeFixtureCommandScope, nativeFixtureCommand } from './native-fixture-command'
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true }
@@ -82,3 +82,38 @@ test.skipIf(process.platform === 'win32')('a failed command retains its actual s
   }
   finally { rmSync(directory, { recursive: true, force: true }) }
 })
+
+test.skipIf(process.platform === 'win32')('an exceptional command keeps its scope unacknowledged after later cleanup succeeds', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'craft-native-command-scope-'))
+  const logPath = join(directory, 'native.log'), marker = join(directory, 'child.pid')
+  const scope = new NativeFixtureCommandScope()
+  const nativeKill = process.kill
+  try {
+    expect(scope.allDisposed).toBe(true)
+    const initial = await scope.run([process.execPath, '-e', 'process.exit(7)'], { cwd: directory, timeoutMs: 3000, logPath })
+    expect(initial.code).toBe(7)
+    expect(scope.allDisposed).toBe(true)
+    // Execute a real child tree, but deny the OS confirmation that the group
+    // disappeared. Real termination signals still reach only this owned group.
+    process.kill = ((pid: number, signal: NodeJS.Signals | number = 'SIGTERM') => {
+      if (pid < 0 && signal === 0) throw Object.assign(new Error('Cannot confirm owned group disappearance'), { code: 'EPERM' })
+      return nativeKill(pid, signal)
+    }) as typeof process.kill
+    const source = `const child=Bun.spawn([process.execPath,'-e','setInterval(()=>{},1000)'],{stdin:'ignore',stdout:'inherit',stderr:'inherit'});await Bun.write(${JSON.stringify(marker)},String(child.pid));process.exit(0)`
+    await expect(scope.run([process.execPath, '-e', source], { cwd: directory, timeoutMs: 3000 })).rejects.toThrow('remained after forced disposal')
+    process.kill = nativeKill
+    expect(alive(Number(readFileSync(marker, 'utf8')))).toBe(false)
+    expect(scope.allDisposed).toBe(false)
+    const cleanup = await scope.run([process.execPath, '-e', 'process.exit(0)'], { cwd: directory, timeoutMs: 3000 })
+    expect(cleanup.code).toBe(0)
+    expect(scope.allDisposed).toBe(false)
+  }
+  finally {
+    process.kill = nativeKill
+    if (existsSync(marker)) {
+      const child = Number(readFileSync(marker, 'utf8'))
+      if (alive(child)) nativeKill(child, 'SIGKILL')
+    }
+    rmSync(directory, { recursive: true, force: true })
+  }
+}, 5000)

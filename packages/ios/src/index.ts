@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib'
 /**
  * Craft iOS Builder
  *
@@ -5,6 +6,19 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+
+/** Store large native source assets compressed; the host decodes each once on demand. */
+export function compressNativeSources(target: string): void {
+  if (statSync(target).isDirectory()) {
+    for (const entry of readdirSync(target)) compressNativeSources(join(target, entry))
+    return
+  }
+  if (!/\.(?:js|json)$/.test(target)) return
+  const bytes = readFileSync(target)
+  if (bytes.length < 1024 || (bytes[0] === 0x1f && bytes[1] === 0x8b)) return
+  const packed = gzipSync(bytes, { level: 9 })
+  if (packed.length < bytes.length) writeFileSync(target, packed)
+}
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { $ } from 'bun'
 import { appShortcutsSwift, type CraftAppShortcut } from './app-shortcuts.js'
@@ -582,10 +596,12 @@ function installNativeBundle(source: string, output: string): void {
       rmSync(routes, { recursive: true, force: true })
       cpSync(source, routes, { recursive: true })
     }
+    compressNativeSources(routes)
     rmSync(single, { force: true })
     return
   }
   if (resolve(source) !== resolve(single)) cpSync(source, single)
+  compressNativeSources(single)
   rmSync(routes, { recursive: true, force: true })
 }
 
@@ -1499,6 +1515,7 @@ function writeShell(output: string, config: CraftConfig): void {
   cpSync(join(TEMPLATES_DIR, 'CraftNativeUI.swift'), join(output, 'Sources', 'CraftNativeUI.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftNativeServices.swift'), join(output, 'Sources', 'CraftNativeServices.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftNativeFiles.swift'), join(output, 'Sources', 'CraftNativeFiles.swift'))
+  cpSync(join(TEMPLATES_DIR, 'CraftVoiceRecording.swift'), join(output, 'Sources', 'CraftVoiceRecording.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftWebAudio.swift'), join(output, 'Sources', 'CraftWebAudio.swift'))
   cpSync(join(TEMPLATES_DIR, 'CraftHybrid.swift'), join(output, 'Sources', 'CraftHybrid.swift'))
   // Always copied: without `crashReporting` in the config it installs nothing.

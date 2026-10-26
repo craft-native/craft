@@ -89,7 +89,7 @@ export function craftProcessFailedMessage(code: number | null, stderr: string, q
 }
 
 // Export packaging API
-export { packageApp, pack, type PackageConfig, type PackageResult } from './package.js'
+export { packageApp, pack, macOSRuntimeExecutablePath, type PackageConfig, type PackageResult } from './package.js'
 
 // Export binary resolution. Craft ships through the pantry registry, and this is
 // the single source of truth for finding the native binary (PATH, or CRAFT_BIN
@@ -659,7 +659,7 @@ export class CraftApp {
    * {@link craftBinaryNotFoundMessage}.
    */
   private async findCraftBinary(): Promise<string> {
-    return resolveCraftBinary(this.config.craftPath)
+    return resolveCraftBinary(this.config.craftPath, this.config.runtimeProfile)
   }
 }
 
@@ -702,6 +702,7 @@ export type {
   CraftAppAPI,
   CraftBridgeAPI,
   MenubarState,
+  MenubarInitOptions,
   CraftTimersAPI,
   Permission,
   HapticType,

@@ -109,12 +109,15 @@ describe('bridge reply correlation', () => {
   it('selects native menu bar visibility explicitly and never silently downgrades an unknown backend', async () => {
     const h = loadBridge()
     await h.craft.menubar.init({ backend: 'nativeVisibility' })
-    expect(h.sent.at(-1)).toMatchObject({ t: 'menubarCollapse', a: 'init', d: 'nativeVisibility' })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'menubarCollapse', a: 'init', d: '{"backend":"nativeVisibility","preserveSystemItems":true}' })
+    await h.craft.menubar.init({ backend: 'nativeVisibility', preserveSystemItems: false })
+    expect(h.sent.at(-1)).toMatchObject({ t: 'menubarCollapse', a: 'init', d: '{"backend":"nativeVisibility","preserveSystemItems":false}' })
     await h.craft.menubar.destroy()
     expect(h.sent.at(-1)).toMatchObject({ t: 'menubarCollapse', a: 'destroy' })
     const count = h.sent.length
     await expect(h.craft.menubar.init({ backend: 'unknown' })).rejects.toThrow('Unknown menu bar backend')
     await expect(h.craft.menubar.init({ backend: '' })).rejects.toThrow('Unknown menu bar backend')
+    await expect(h.craft.menubar.init({ backend: 'nativeVisibility', preserveSystemItems: 'false' })).rejects.toThrow('preserveSystemItems must be a boolean')
     expect(h.sent).toHaveLength(count)
   })
 
@@ -376,6 +379,30 @@ describe('bridge reply correlation', () => {
 
     h.reply('get', { tags: ['fine'] }, liveId)
     expect(await live).toEqual(['fine'])
+  })
+
+  it('keeps native dialogs pending until selection or cancellation while machine requests still expire', async () => {
+    const h = loadBridge()
+    h.win.__craftBridgeRequestTimeoutMs = 1
+    const selected = h.craft.dialog.showOpenDialog({ properties: ['openDirectory'] })
+    const selectedId = h.sent.at(-1)!.i!
+    const cancelled = h.craft.dialog.showOpenDialog({ properties: ['openDirectory'] })
+    const cancelledId = h.sent.at(-1)!.i!
+    const failed = h.craft.dialog.showSaveDialog({})
+    const failedId = h.sent.at(-1)!.i!
+    // User-controlled dialogs must not schedule a machine timeout at all.
+    expect(timers.size).toBe(0)
+    await expect(h.craft.tags.get('/a')).rejects.toThrow(/timed out/)
+    expect(h.win.__craftBridgeById[selectedId]).toBeDefined()
+    expect(h.win.__craftBridgeById[cancelledId]).toBeDefined()
+    h.reply('openFolder', { canceled: true, filePaths: [] }, cancelledId)
+    h.reply('openFolder', { canceled: false, filePaths: ['/selected'] }, selectedId)
+    h.fail({ action: 'saveFile', code: 'NATIVE_CALL_FAILED', message: 'native panel failed', id: failedId })
+    await expect(failed).rejects.toThrow('native panel failed')
+    expect(await cancelled).toMatchObject({ canceled: true, filePaths: [] })
+    expect(await selected).toMatchObject({ canceled: false, filePaths: ['/selected'] })
+    expect(Object.keys(h.win.__craftBridgeById)).toHaveLength(0)
+    expect(h.win.__craftBridgePending.openFolder).toBeUndefined()
   })
 
   it('forgets a timed-out call in both tables, and drops its late reply', async () => {

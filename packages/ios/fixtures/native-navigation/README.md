@@ -9,6 +9,12 @@ explicit and UIKit back behavior, replace stack semantics, and `onDestroy`
 cleanup after both pop and replace. The shared runtime provides `craft`,
 signals, and lifecycle hooks to ordinary client scripts; mutable values use
 `state()` so bindings and route parameters observe the same live values.
+The cleanup marker uses the native host's existing synchronous storage method.
+An asynchronous request made by `onDestroy` still belongs to that screen and
+is cancelled when its bridge disposes. A checkpoint requiring acknowledged
+completion must finish before the application intentionally closes its context.
+The synchronous marker tests callback delivery, while the capability suite
+separately verifies that cancelled queued writes never mutate storage.
 Run only that acceptance path with:
 
 ```bash

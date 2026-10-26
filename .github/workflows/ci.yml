@@ -29,19 +29,29 @@ defaults:
     shell: bash
 
 jobs:
-  android-software-emulator:
+  android-sdk-emulator:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
-    name: Android software emulator
+    name: Android SDK emulator
     runs-on: ubuntu-latest
-    # Managed tool setup + bounded 20-minute stock Play software provisioning
-    # + owned cleanup. Hardware and app/performance budgets are unchanged.
+    # Use the supported KVM backend for stock Play acceptance. Unaccelerated
+    # TCG remains an explicit diagnostic, separate from release acceptance.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - name: Enable owned runner access to KVM
+        run: |
+          mkdir -p artifacts/android-sdk-emulator
+          id | tee artifacts/android-sdk-emulator/runner-user.txt
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          timeout 30s sudo udevadm trigger --name-match=kvm --settle
+          ls -l /dev/kvm | tee artifacts/android-sdk-emulator/kvm-node.txt
+          test -r /dev/kvm
+          test -w /dev/kvm
       - name: Install the managed Android toolchain
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
           install: 'false'
           packages: bun.com@1.4.3 git-scm.org@2.53.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
       - name: Boot and dispose the stock Play image through the SDK
@@ -50,8 +60,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-software-emulator
-          path: artifacts/android-software-emulator
+          name: android-sdk-emulator
+          path: artifacts/android-sdk-emulator
           if-no-files-found: error
 
   android-software-cold-provisioning-diagnostic:
@@ -64,9 +74,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install the identical managed Android toolchain
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
           install: 'false'
           packages: bun.com@1.4.3 git-scm.org@2.53.0 openjdk.org@17.0.20.8 android.com/cmdline-tools@14742923.0.0
       - name: Verify bounded budget validation and normal readiness contracts
@@ -104,13 +114,54 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install the pinned ABI toolchain
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        id: abi-toolchain
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          version: '0.11.119'
+          version: '0.11.120'
           install: 'false'
           packages: ${{ matrix.tools }}
+      # Preserve the failing tree before a diagnostic install can change it.
+      # The required setup step above still fails the job. Keep its cache key,
+      # package versions and provider checks unchanged while collecting evidence.
+      - name: Capture a failed native toolchain installation
+        if: ${{ failure() && steps.abi-toolchain.conclusion == 'failure' }}
+        env:
+          PANTRY_DIAGNOSTIC_BIN: ${{ steps.abi-toolchain.outputs.pantry-path }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, lstatSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs'
+          import { resolve, join } from 'node:path'
+          import { spawnSync } from 'node:child_process'
+          const output = 'artifacts/abi-toolchain'
+          mkdirSync(output, { recursive: true })
+          const entries = []
+          function inspect(path) {
+            if (entries.length >= 50000) return
+            try {
+              const stat = lstatSync(path)
+              entries.push({ path, mode: stat.mode, size: stat.size, link: stat.isSymbolicLink() ? readlinkSync(path) : undefined })
+              if (stat.isDirectory()) for (const name of readdirSync(path).sort()) inspect(join(path, name))
+            }
+            catch (error) { entries.push({ path, error: error.code }) }
+          }
+          inspect('pantry/.bin')
+          inspect('pantry/git-scm.org')
+          writeFileSync(join(output, 'before-install.json'), JSON.stringify({ entries, truncated: entries.length >= 50000 }, null, 2))
+          const binary = process.env.PANTRY_DIAGNOSTIC_BIN
+          if (!binary) throw new Error('Failed toolchain setup did not retain its Pantry executable path')
+          const result = spawnSync(resolve(binary), ['install', 'git-scm.org@2.53.0', '--no-save', '--verbose'], { encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 })
+          writeFileSync(join(output, 'native-install.log'), `${result.stdout ?? ''}\n${result.stderr ?? ''}`)
+          writeFileSync(join(output, 'diagnostic-result.json'), JSON.stringify({ exitCode: result.status, signal: result.signal, error: result.error?.message }, null, 2))
+          NODE
+      - name: Retain failed native toolchain evidence
+        if: ${{ failure() && steps.abi-toolchain.conclusion == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: abi-toolchain-${{ matrix.os }}
+          path: artifacts/abi-toolchain
+          if-no-files-found: error
       - name: Check Git is the declared Pantry provider
         id: managed-git
         run: bun scripts/managed-git.ts --verify
@@ -123,11 +174,8 @@ jobs:
           sudo apt-get install -y libx11-dev libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
-        with:
-          git-executable: ${{ steps.managed-git.outputs.executable }}
       - name: Run the documented public graphics package consumer
-        working-directory: packages/zig/test/fixtures/graphics-package-consumer
-        run: zig build check --summary all
+        run: bun scripts/verify-zig-package-consumer.ts
       - name: Check out the exact Khronos SDK headers
         run: |
           bun scripts/managed-git.ts init .zig-cache/vulkan-headers
@@ -140,6 +188,12 @@ jobs:
         run: |
           VULKAN_HEADERS="$(bun -p "require('node:path').resolve('../../.zig-cache/vulkan-headers/include')")"
           zig build test:vulkan-abi -Dvulkan-headers="$VULKAN_HEADERS" --summary all
+      - name: Compile Android Vulkan adapter branches (not device acceptance)
+        if: runner.os == 'Linux'
+        working-directory: packages/zig
+        run: |
+          zig test src/vulkan_surface.zig -target aarch64-linux-android -lc -fno-emit-bin
+          zig test src/vulkan_surface.zig -target x86_64-linux-android -lc -fno-emit-bin
 
   zig-core:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
@@ -157,9 +211,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Verify Zig installation
         run: zig version
@@ -178,7 +232,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl x11-utils
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev xvfb xauth xclip dbus-x11 dunst libnotify-bin openbox wmctrl x11-utils libvulkan1 mesa-vulkan-drivers vulkan-tools vulkan-validationlayers libxtst-dev
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -205,6 +259,16 @@ jobs:
       - name: Verify standalone macOS signing entitlements
         if: runner.os == 'macOS'
         run: bun test ./scripts/macos-release.test.ts
+
+      - name: Verify AppKit component layout and controls
+        if: runner.os == 'macOS'
+        run: bun test ./packages/macos/src/renderer.test.ts
+
+      - name: Verify WebKit inspection and distribution capabilities natively
+        if: runner.os == 'macOS'
+        run: |
+          bun scripts/zig.ts --core --versioned build test:webkit-public -Djs-runtime=false -Dprivate-apis=false
+          bun scripts/zig.ts --core --versioned build test:webkit-public -Djs-runtime=false
 
       - name: Check binary size
         if: runner.os == 'Linux'
@@ -239,6 +303,44 @@ jobs:
             bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft "$VERSION"
           fi
 
+      - name: Verify displayed Xlib Vulkan scene frames
+        if: runner.os == 'Linux'
+        env:
+          VK_INSTANCE_LAYERS: VK_LAYER_KHRONOS_validation
+        run: bun scripts/test-vulkan-surface-linux.ts --output artifacts/native-vulkan-linux
+
+      - name: Retain native Linux Vulkan display evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-native-vulkan-surface
+          path: artifacts/native-vulkan-linux
+          if-no-files-found: error
+
+      - name: Install the pinned native display fixture generator
+        if: matrix.os == 'macos-latest'
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        with:
+          version: '0.11.120'
+          install: 'false'
+          packages: github.com/yonaskolb/XcodeGen@2.46.0
+
+      - name: Verify displayed AppKit Metal frames
+        if: matrix.os == 'macos-latest'
+        run: >-
+          bun scripts/test-metal-surface-macos.ts
+          --xcodegen "$PWD/pantry/.bin/xcodegen"
+          --output artifacts/native-metal-macos
+
+      - name: Retain native macOS Metal display evidence
+        if: always() && matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-native-metal-surface
+          path: artifacts/native-metal-macos
+          if-no-files-found: error
+          retention-days: 30
+
   windows-multi-window:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: windows-2025
@@ -248,9 +350,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun and Zig)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
@@ -303,6 +405,58 @@ jobs:
           $version = bun -p "require('./package.json').version"
           bun scripts/verify-packaged-app.ts packages/zig/zig-out/bin/craft.exe $version
 
+  windows-native-vulkan:
+    if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
+    runs-on: windows-2025
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup the pinned native toolchain
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        with:
+          version: '0.11.120'
+
+      - name: Compile the first-party Windows Job Object owner
+        shell: pwsh
+        run: |
+          if ((zig version).Trim() -ne '0.18.0-dev.146+35accc06e') { throw 'Unexpected native compiler' }
+          $owner = Join-Path $env:RUNNER_TEMP 'craft-native-windows-owner.exe'
+          zig cc -target x86_64-windows-gnu -O2 -municode scripts/native/windows-command-owner.c -o $owner
+          if ($LASTEXITCODE -ne 0) { throw 'Native command owner compilation failed' }
+          "CRAFT_NATIVE_WINDOWS_COMMAND_OWNER=$owner" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify the declared native Git provider
+        shell: pwsh
+        run: bun scripts/managed-git.ts --verify
+
+      - name: Verify actual native command ownership
+        shell: pwsh
+        run: |
+          bun test ./scripts/native/windows-command.test.ts 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'native-windows-command-tests.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Native command ownership verification failed' }
+
+      - name: Verify displayed Win32 Vulkan scene frames
+        shell: pwsh
+        run: bun scripts/test-vulkan-surface-windows.ts --owner "$env:CRAFT_NATIVE_WINDOWS_COMMAND_OWNER" --output artifacts/native-vulkan-windows
+
+      - name: Retain native Win32 Vulkan display evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-vulkan-surface
+          path: artifacts/native-vulkan-windows
+          if-no-files-found: error
+
+      - name: Retain original Windows command ownership results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-command-ownership
+          path: ${{ runner.temp }}/native-windows-command-tests.log
+          if-no-files-found: error
+
   typescript-sdk:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     runs-on: ubuntu-latest
@@ -311,9 +465,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -357,9 +511,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -384,9 +538,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -397,6 +551,10 @@ jobs:
       - name: Test Swift launch and queued native link lifecycle
         working-directory: packages/ios
         run: bun test ./src/launch-link-state.test.ts
+
+      - name: Test public recording frame provenance
+        working-directory: packages/ios
+        run: bun test ./src/held-viewer-video.test.ts ./src/held-viewer-extractor.test.ts
 
       # Build generated iOS, Live Activity, and Watch targets against device
       # SDKs; build the Watch-enabled app with its Watch app embedded and
@@ -426,9 +584,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Setup Java
         uses: actions/setup-java@v6
@@ -477,9 +635,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -496,9 +654,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -523,9 +681,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -548,6 +706,9 @@ jobs:
 
       - name: Test host-neutral native renderer contract
         run: bun test ./scripts/native-renderer-contract.test.ts
+
+      - name: Test native Windows C++ toolchain discovery
+        run: bun test ./scripts/native/windows-vulkan-driver.test.ts
 
       - name: Test multi-window event delivery policy
         run: bun test ./scripts/multi-window-event-policy.test.ts
@@ -585,6 +746,9 @@ jobs:
       - name: Test installed-app smoke checkpoints
         run: bun test ./scripts/verify-packaged-app.test.ts
 
+      - name: Test native Metal suite admission
+        run: bun test ./packages/ios/scripts/metal-xctest-steps.test.ts
+
       - name: Run pickier (lint + format check)
         run: bun run lint
 
@@ -606,9 +770,9 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install dependencies
         run: bun install
@@ -655,7 +819,7 @@ jobs:
 
   publish-commit:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
-    needs: [android-software-emulator, zig-core, windows-multi-window, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
+    needs: [android-sdk-emulator, zig-core, windows-multi-window, windows-native-vulkan, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:
@@ -664,9 +828,9 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Pantry (provides Bun, Zig, etc.)
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:
-          version: '0.11.119'
+          version: '0.11.120'
 
       - name: Install Dependencies
         run: bun install

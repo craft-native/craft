@@ -367,6 +367,71 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Home"].isSelected)
     }
 
+    func testTabBarAccessibilityChromeStaysWithinStandardSizeWhileBodyScales() throws {
+        let app = XCUIApplication()
+        let tabs = [("/", "Home"), ("/details", "Details"), ("/third", "Third"), ("/fourth", "Fourth"), ("/fifth", "Fifth")]
+        func launch(_ category: String) -> ([CGRect], CGFloat) {
+            app.terminate()
+            app.launchArguments = ["-UIPreferredContentSizeCategoryName", category]
+            app.launch()
+            let body = app.staticTexts["home-title"]
+            XCTAssertTrue(body.waitForExistence(timeout: 15))
+            let frames = tabs.map { id, title -> CGRect in
+                let button = app.buttons["craft-tab-\(id)"]
+                XCTAssertTrue(button.waitForExistence(timeout: 10), "Missing tab \(title)")
+                XCTAssertEqual(button.label, title, "The complete tab title must remain accessible")
+                XCTAssertTrue(button.isHittable)
+                return button.frame
+            }
+            let image = XCTAttachment(screenshot: app.screenshot())
+            image.name = "Native chrome \(category)"
+            image.lifetime = .keepAlways
+            add(image)
+            return (frames, body.frame.height)
+        }
+        let (standard, standardBody) = launch("UICTContentSizeCategoryXXXL")
+        let (accessible, accessibleBody) = launch("UICTContentSizeCategoryAccessibilityXXXL")
+        XCTAssertGreaterThan(accessibleBody, standardBody + 1, "Only compact navigation chrome is capped; page text must still grow")
+        for index in tabs.indices {
+            XCTAssertEqual(accessible[index].height, standard[index].height, accuracy: 1, "Tab chrome must stop growing at the largest standard size")
+            XCTAssertEqual(accessible[index].width, standard[index].width, accuracy: 1)
+            XCTAssertGreaterThanOrEqual(accessible[index].width, 44)
+            if index > 0 {
+                XCTAssertGreaterThanOrEqual(accessible[index].minX, accessible[index - 1].maxX - 1, "Neighboring tab slots must not overlap")
+            }
+        }
+        XCTAssertFalse(app.webViews.firstMatch.exists)
+    }
+
+    func testTabBarLargeContentViewerDuringAccessibilityHold() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["home-title"].waitForExistence(timeout: 15))
+        app.buttons["held-viewer-heartbeat-toggle"].tap()
+        XCTAssertTrue(app.activityIndicators["held-viewer-heartbeat"].waitForExistence(timeout: 5), "The fixture must produce real compositor frames during a static held viewer")
+        let tab = app.buttons["craft-tab-/"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 10))
+        XCTAssertTrue(tab.isHittable)
+        let before = XCTAttachment(screenshot: app.screenshot())
+        before.name = "Large content viewer before hold"
+        before.lifetime = .keepAlways
+        add(before)
+
+        // The independent host capture watches this activity's actual
+        // synthesized press and records the screen while the finger is down.
+        // An after-release image alone cannot prove this transient UI.
+        FileHandle.standardOutput.write(Data("CRAFT_TAB_LCV_HOLD_BEGIN \(Date().timeIntervalSince1970)\n".utf8))
+        tab.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(forDuration: 6)
+        FileHandle.standardOutput.write(Data("CRAFT_TAB_LCV_HOLD_END \(Date().timeIntervalSince1970)\n".utf8))
+        let after = XCTAttachment(screenshot: app.screenshot())
+        after.name = "Large content viewer after release"
+        after.lifetime = .keepAlways
+        add(after)
+        XCTAssertTrue(app.staticTexts["home-title"].exists)
+        XCTAssertFalse(app.webViews.firstMatch.exists)
+    }
+
     func testSwipesAcrossAllFiveNativeTabsAndBack() {
         let app = XCUIApplication()
         app.launch()
@@ -446,6 +511,14 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(selectAll.waitForExistence(timeout: 5), "The text area must retain its native selection menu")
         selectAll.tap()
         notes.typeText("Draft edited")
+        // XCTest can return from key synthesis before UIKit has delivered
+        // every character. Await the exact edit, preserving the native focus
+        // and scroll assertions below rather than accepting a partial value.
+        let edited = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "Draft edited"),
+            object: notes
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [edited], timeout: 5), .completed, "The complete native edit must arrive")
         XCTAssertEqual(notes.value as? String, "Draft edited")
         notes.tap()
         XCTAssertTrue(app.keyboards.firstMatch.exists, "Tapping the text area again must preserve editing")

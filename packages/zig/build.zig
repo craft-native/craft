@@ -1,8 +1,12 @@
 const std = @import("std");
 
+// One distribution choice applies to every executable and host-test module.
+var private_apis_enabled: bool = true;
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const desktop_host = b.option(bool, "desktop-host", "Link Craft desktop window/WebView hosting; disable for caller-owned native surfaces") orelse true;
     // Zig renamed these tags during the 0.17 development cycle. Craft's
     // pinned CI compiler uses `.debug` / `.small`, while newer snapshots use
     // `.Debug` / `.ReleaseSmall`; tag-name comparisons keep both buildable.
@@ -62,6 +66,8 @@ pub fn build(b: *std.Build) void {
     // Create build options module for version
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", version_option);
+    private_apis_enabled = b.option(bool, "private-apis", "Include private platform APIs (disable for App Store distribution)") orelse true;
+    build_options.addOption(bool, "private_apis", private_apis_enabled);
 
     // Craft's own JavaScript runtime, distinct from the page's: the page runs
     // on WebKit's JSC inside the WebContent process, which craft does not own.
@@ -81,6 +87,8 @@ pub fn build(b: *std.Build) void {
         "js-runtime",
         "Craft's first-party JavaScript runtime on zig-js (default true; false saves ~6.5MB)",
     ) orelse true;
+
+    build_options.addOption(bool, "js_runtime", js_runtime_enabled);
 
     const js_backend_module = blk: {
         if (js_runtime_enabled) {
@@ -139,7 +147,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{.{ .name = "js_backend", .module = js_backend_module }},
     });
-    linkPlatformLibraries(b, public_craft_module, target.result.os.tag, macos_sdk);
+    linkPlatformLibrariesMode(b, public_craft_module, target.result.os.tag, macos_sdk, desktop_host);
     if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
         public_craft_module.linkFramework("Metal", .{});
         public_craft_module.linkFramework("QuartzCore", .{});
@@ -228,6 +236,30 @@ pub fn build(b: *std.Build) void {
     linkPlatformLibraries(b, lib_unit_tests.root_module, target_os, macos_sdk);
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
+
+    const public_webkit_step = b.step("test:webkit-public", "Verify native WebKit rendering and distribution API boundaries");
+    if (target_os == .macos) {
+        const public_webkit_test = b.addExecutable(.{
+            .name = "craft-public-webkit-test",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/webkit_preferences_test.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "js_backend", .module = js_backend_module },
+                    .{ .name = "build_options", .module = build_options.createModule() },
+                },
+            }),
+        });
+        public_webkit_test.root_module.addCSourceFile(.{
+            .file = b.path("src/webkit_preferences_test.m"),
+            .flags = &.{ "-fobjc-arc", "-fblocks" },
+        });
+        linkPlatformLibraries(b, public_webkit_test.root_module, target_os, macos_sdk);
+        public_webkit_step.dependOn(&b.addRunArtifact(public_webkit_test).step);
+    } else {
+        public_webkit_step.dependOn(&b.addFail("test:webkit-public requires macOS").step);
+    }
 
     // Individual test files with proper imports
     // Create module for each source file
@@ -2107,6 +2139,15 @@ pub fn build(b: *std.Build) void {
     metal_surface_step.dependOn(&run_metal_layout.step);
     test_step.dependOn(&run_metal_layout.step);
     test_step.dependOn(&run_host_fixture.step);
+    const vulkan_surface_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/vulkan_surface.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    const run_vulkan_surface_tests = b.addRunArtifact(vulkan_surface_tests);
+    b.step("test:vulkan-surface", "Verify native Vulkan ownership and frame validation").dependOn(&run_vulkan_surface_tests.step);
+    test_step.dependOn(&run_vulkan_surface_tests.step);
     const screen_sharing_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/sharing_accessibility.zig"),
@@ -3168,16 +3209,36 @@ fn iosSdkPath(b: *std.Build, sdk_name: []const u8) ?[]const u8 {
 /// Shared by the CLI and by host test artifacts that reach the tray indirectly.
 fn linkMenuBarVisibility(b: *std.Build, module: *std.Build.Module) void {
     module.linkFramework("ApplicationServices", .{});
+    module.linkFramework("Security", .{});
     // Objective-C owns blocks and exception boundaries. The private framework
     // itself is resolved at runtime and is never a linked dependency.
+    const flags: []const []const u8 = if (private_apis_enabled)
+        &.{ "-fobjc-arc", "-fblocks" }
+    else
+        &.{ "-fobjc-arc", "-fblocks", "-DCRAFT_PUBLIC_APIS_ONLY=1" };
     module.addCSourceFile(.{
         .file = b.path("src/menubar_visibility.m"),
-        .flags = &.{ "-fobjc-arc", "-fblocks" },
+        .flags = flags,
+    });
+    module.addCSourceFile(.{
+        .file = b.path("src/webkit_preferences.m"),
+        .flags = flags,
     });
 }
 
 fn linkPlatformLibraries(b: *std.Build, module: *std.Build.Module, target_os: std.Target.Os.Tag, sdk_path: ?[]const u8) void {
-    switch (target_os) {
+    linkPlatformLibrariesMode(b, module, target_os, sdk_path, true);
+}
+fn linkPlatformLibrariesMode(b: *std.Build, module: *std.Build.Module, target_os: std.Target.Os.Tag, sdk_path: ?[]const u8, desktop_host: bool) void {
+    // Raw graphics and caller-owned native surfaces do not create Craft's
+    // desktop Window/WebView host. Preserve one public module and its type
+    // ownership without imposing a browser or GTK on those consumers.
+    if (!desktop_host) {
+        if (target_os == .macos or target_os == .ios) {
+            module.linkSystemLibrary("objc", .{});
+            applySdkPaths(b, module, sdk_path);
+        }
+    } else switch (target_os) {
         .macos => {
             module.linkFramework("Cocoa", .{});
             module.linkFramework("WebKit", .{});

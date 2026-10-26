@@ -214,8 +214,9 @@
   //
   // Each call is reaped after `__craftBridgeRequestTimeoutMs` (default
   // 30s) so a misbehaving native side can't strand callers forever.
-  // Apps with legitimate long-running calls (modal dialogs) can bump
-  // this knob globally before the call.
+  // Interactive native dialogs settle on user selection/cancellation, not a
+  // machine deadline. Their request ids still isolate concurrent replies and
+  // native errors still reject and remove their pending entries.
   const DEFAULT_TIMEOUT_MS = 30000
   function _req(t, a, d, timeoutMs) {
     return new Promise(function (ok, no) {
@@ -225,7 +226,8 @@
       q.push(entry)
       window.__craftBridgeById[id] = entry
 
-      const timeout = timeoutMs === 0 ? 0 : (typeof window.__craftBridgeRequestTimeoutMs === 'number')
+      const interactive = t === 'dialog' && ['openFile', 'openFiles', 'openFolder', 'saveFile', 'showAlert', 'showConfirm', 'showPrompt'].indexOf(a) >= 0
+      const timeout = interactive || timeoutMs === 0 ? 0 : (typeof window.__craftBridgeRequestTimeoutMs === 'number')
         ? window.__craftBridgeRequestTimeoutMs
         : (typeof timeoutMs === 'number' ? timeoutMs : DEFAULT_TIMEOUT_MS)
       const timer = (timeout > 0)
@@ -846,7 +848,7 @@
   const PREFS_KEY_RE = /^[a-z0-9][\w.-]{0,63}$/i
   const PREFS_MAX_VALUE_BYTES = 8192
   // A local plist read that has not answered in two seconds is not going to;
-  // the 30-second default is for things like modal dialogs.
+  // other machine requests use the 30-second default.
   const PREFS_TIMEOUT_MS = 2000
 
   function _prefsErr(Ctor, code, message) {
@@ -1705,7 +1707,10 @@
     init:                  function (opts)  {
       const backend = opts && opts.backend !== undefined ? opts.backend : 'legacy'
       if (backend !== 'legacy' && backend !== 'nativeVisibility') return Promise.reject(new TypeError('Unknown menu bar backend'))
-      return _send('menubarCollapse', 'init', backend)
+      if (opts && opts.preserveSystemItems !== undefined && typeof opts.preserveSystemItems !== 'boolean') return Promise.reject(new TypeError('preserveSystemItems must be a boolean'))
+      return _send('menubarCollapse', 'init', backend === 'nativeVisibility'
+        ? JSON.stringify({ backend: backend, preserveSystemItems: !opts || opts.preserveSystemItems !== false })
+        : backend)
     },
     destroy:               function ()      { return _send('menubarCollapse', 'destroy') },
     requestPermission:     function ()      { return _send('menubarCollapse', 'requestPermission') },

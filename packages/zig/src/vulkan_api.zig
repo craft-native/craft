@@ -783,6 +783,9 @@ pub const VK_ERROR_SURFACE_LOST_KHR = -1000000000;
 
 pub const VK_ERROR_DEVICE_LOST = -4;
 
+pub const VK_ERROR_OUT_OF_HOST_MEMORY = -1;
+pub const VK_ERROR_OUT_OF_DEVICE_MEMORY = -2;
+
 pub const VK_ERROR_EXTENSION_NOT_PRESENT = -7;
 
 pub const VK_ERROR_FEATURE_NOT_PRESENT = -8;
@@ -918,3 +921,6 @@ pub const VK_KHR_XLIB_SURFACE_EXTENSION_NAME = "VK_KHR_xlib_surface";
 pub const VK_KHR_WIN32_SURFACE_EXTENSION_NAME = "VK_KHR_win32_surface";
 
 pub const VK_KHR_ANDROID_SURFACE_EXTENSION_NAME = "VK_KHR_android_surface";
+
+pub const VK_KHR_SURFACE_MAINTENANCE_1_EXTENSION_NAME = "VK_KHR_surface_maintenance1";
+pub const VK_KHR_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME = "VK_KHR_swapchain_maintenance1";

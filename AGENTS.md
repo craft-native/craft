@@ -10,11 +10,9 @@ These are the things a fresh checkout cannot tell you, each of which has already
 
 **`zig build` needs the pinned toolchain.** The `zig` on your PATH is almost certainly the wrong snapshot, and the build refuses it by design. Point `CRAFT_ZIG` at the executable `pantry.lock` pins, or activate the pinned Pantry toolchain. `CRAFT_ALLOW_UNPINNED_ZIG=1` exists only for deliberately testing another snapshot.
 
-**`zig build` also needs three sibling checkouts outside the repository.** `packages/zig/build.zig.zon` resolves them by relative path — `../../../../Libraries/zig-js` and likewise `zig-regex` and `zig-gc` — so they must sit four levels above `packages/zig`, beside the repository's own parent. CI provides them through `.github/actions/first-party-zig-deps`, which clones each at the SHA in `pins.env`.
+**Zig dependencies resolve through the package manifest.** `packages/zig/build.zig.zon` declares immutable source URLs and native package hashes. The compiler verifies each package hash, including transitive dependencies. No sibling checkouts are required. CI uses `.github/actions/first-party-zig-deps` to run the pinned compiler's normal dependency fetch.
 
-Two traps follow from that. The pins are **not branch tips**, so `git fetch` and `git pull` will not reach them; fetch the commit directly (`git fetch --depth 1 origin <sha>`), which is what the action does and why it says so. And a checkout that merely *exists* is not enough: a local clone at a different revision fails to compile against the pinned Zig with errors that look like Zig bugs.
-
-**A container that installs Zig still cannot build** until both of the above are satisfied. If you cannot satisfy them, say so and let CI's `zig-core` job be the signal rather than fighting it.
+**Check the shipped source contract with `bun scripts/verify-zig-package-consumer.ts`.** This creates an archive from the manifest's declared paths, extracts it unchanged into an isolated consumer, and builds with fresh compiler caches. Set `CRAFT_ZIG` to the pinned executable. The fixture selects `js-runtime=false` and checks CPU graphics without opening a native window. It does not establish published archive identity or native game presentation.
 
 **`bun run test` is the Zig suite, not the SDK suite.** The SDK suite is `bun run test:sdk`. A bare `bun test` at the repository root is worse than either: `bunfig.toml` picks up vendored fixtures under `pantry/`, so it reports failures that have nothing to do with your change. Inside a package, plain `bun test` is correct.
 

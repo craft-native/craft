@@ -1011,6 +1011,17 @@ final class CraftHealth {
         }
     }
 
+    /// Only the Live Activity that started this runtime can release it. HQ
+    /// persists its own final result, so collecting here must not duplicate it.
+    func discardActivityWorkout(expectedID: String) {
+        guard #available(iOS 26.0, *), liveWorkoutID == expectedID,
+              let session = liveWorkoutSession as? HKWorkoutSession,
+              let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder else { return }
+        session.end()
+        builder.discardWorkout()
+        clearLiveWorkout()
+    }
+
     private func clearLiveWorkout() {
         liveWorkoutSession = nil
         liveWorkoutBuilder = nil
@@ -1052,6 +1063,9 @@ final class CraftHealth {
         case "elliptical": return .elliptical
         case "strength": return .traditionalStrengthTraining
         case "hiit": return .highIntensityIntervalTraining
+        case "flexibility": return .flexibility
+        case "yoga": return .yoga
+        case "other": return .other
         default: return nil
         }
     }

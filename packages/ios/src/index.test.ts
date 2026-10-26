@@ -1,8 +1,12 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { gunzipSync } from 'node:zlib'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { afterAll, describe, expect, it } from 'bun:test'
 import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
 import {
+  compressNativeSources,
   associatedDomainEntries,
   build,
   init,
@@ -227,7 +231,8 @@ describe('Craft iOS builder', () => {
     expect(guide).toContain('`ScrollView` and `FlatList` emit the scroll callbacks described above, accept')
     expect(nativeSwift).toContain('platform: "ios"')
     expect(nativeSwift).toContain('mutationProtocolVersion: 1')
-    expect(nativeSwift).toContain('CraftNativeScriptThread.run(label: "unmount \\(route)") { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }')
+    expect(nativeSwift).toContain('CraftNativeScriptThread.run(label: "unmount \\(route)") {')
+    expect(nativeSwift).toContain('storageLifetime.unmount { context.objectForKeyedSubscript("__stxNativeUnmount")?.call(withArguments: []) }')
     expect(nativeSwift).toContain('capabilityProtocolVersion: \\(craftNativeCapabilityProtocolVersion)')
     expect(nativeSwift).toContain('capabilityTimeoutMs: \\(craftNativeCapabilityTimeoutMilliseconds)')
     expect(nativeSwift).toContain('"code": "TIMEOUT"')
@@ -1772,7 +1777,7 @@ describe('Craft iOS builder', () => {
     // the stack's willShow showed the bar again, so it had two Backs.
     const hybrid = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftHybrid.swift'), 'utf8')
     const willShow = hybrid.slice(hybrid.indexOf('func navigationController(_ navigationController: UINavigationController, willShow viewController: UIViewController'))
-    expect(willShow.slice(0, 900)).toContain('native?.navigationBarHidden == true')
+    expect(willShow.slice(0, willShow.indexOf("func navigationController", 5))).toContain('native?.navigationBarHidden == true')
     const swift = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     expect(swift).toContain('private(set) var navigationBarHidden: Bool?')
   })
@@ -2104,7 +2109,7 @@ describe('Craft iOS builder', () => {
     expect(app).toContain('if CraftWebServices.resolve(id, result: result) { return }')
     expect(app).toContain('if CraftWebServices.reject(id, message: error, code: code) { return }')
     expect(app).toContain('CraftWebServices.forward(event, data: data)')
-    expect(app).toContain('static let forwardedEvents: Set<String> = ["craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
+    expect(app).toContain('static let forwardedEvents: Set<String> = ["craftNetworkChange", "craftLocationUpdate", "craftLocationError", "craftHealthHeartRate", "craftHealthWorkout", "craftMusicChange", "craftHeartRate"]')
     expect(screen).toContain('self?.send(type: "CRAFT_EVENT", payload: ["event": name')
   })
 
@@ -2978,4 +2983,22 @@ describe('crash reporting (CraftCrashReporter.swift)', () => {
     // The test crash exists only in Debug builds.
     expect(source).toMatch(/#if DEBUG\n {4}\/\/\/ `-CraftCrashTest/)
   })
+})
+
+it('packs large native sources losslessly and idempotently without touching small assets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'craft-source-compression-'))
+  try {
+    const source = 'globalThis.ready = true;\n'.repeat(5000)
+    const file = join(root, 'screen.js')
+    writeFileSync(file, source)
+    writeFileSync(join(root, 'config.json'), '{}')
+    compressNativeSources(root)
+    const packed = readFileSync(file)
+    expect(packed.length).toBeLessThan(source.length / 5)
+    expect(gunzipSync(packed).toString()).toBe(source)
+    expect(readFileSync(join(root, 'config.json'), 'utf8')).toBe('{}')
+    compressNativeSources(root)
+    expect(readFileSync(file)).toEqual(packed)
+  }
+  finally { rmSync(root, { recursive: true, force: true }) }
 })

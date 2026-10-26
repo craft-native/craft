@@ -24,11 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install the pinned published Action and native Git
-        uses: pantry-pm/pantry/packages/action@6fbf7259c2764d18a12d915bf8bc68c500cb4931 # v0.11.119
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          version: '0.11.119'
+          version: '0.11.120'
           install: 'false'
           packages: bun.com@1.4.2 git-scm.org@2.53.0
       - name: Verify the declared Git provider for Bash build steps

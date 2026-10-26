@@ -61,7 +61,7 @@ struct CraftLiveActivityWidget: Widget {
             } compactLeading: {
                 activityIcon(context)
             } compactTrailing: {
-                timer(context).monospacedDigit().frame(maxWidth: 64, alignment: .trailing)
+                timer(context).monospacedDigit().frame(width: 64, alignment: .trailing)
             } minimal: {
                 activityIcon(context)
             }

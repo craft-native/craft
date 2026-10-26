@@ -212,6 +212,24 @@ private data class CraftNativeLength(
     }
 }
 
+/** A screen root owns its viewport unless the document explicitly sizes it.
+ * Keep this parent constraint out of the protocol document, and apply it to
+ * targeted style updates too. An unstyled fragment with flex children would
+ * otherwise measure at their zero flex bases and collapse the entire screen. */
+internal fun craftNativeScreenRootStyle(style: JSONObject): JSONObject {
+    val rootStyle = JSONObject()
+    val keys = style.keys()
+    while (keys.hasNext()) {
+        val key = keys.next()
+        rootStyle.put(key, style.opt(key))
+    }
+    if (rootStyle.isNull("height")) {
+        if (rootStyle.isNull("flex")) rootStyle.put("flex", 1)
+        rootStyle.put("height", "100%")
+    }
+    return rootStyle
+}
+
 private data class CraftNativeLayoutStyle(
     val width: CraftNativeLength? = null,
     val height: CraftNativeLength? = null,
@@ -722,6 +740,115 @@ private class CraftNativeSvgView(context: Context) : View(context) {
     private data class Quadruple<T1, T2, T3, T4>(val first: T1, val second: T2, val third: T3, val fourth: T4)
 }
 
+/** One photo contract and loader shared by the Google and MapLibre hosts. */
+internal data class CraftMarkerPhoto(val address: String, val size: Float, val circle: Boolean) {
+    companion object {
+        fun from(props: JSONObject): CraftMarkerPhoto? {
+            val address = props.opt("image") as? String ?: return null
+            val uri = Uri.parse(address)
+            if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.userInfo != null) return null
+            // Current STX releases preserve unknown HTML/binding spellings.
+            val rawSize = props.opt("imageSize") ?: props.opt("imagesize") ?: props.opt("image-size")
+            val shape = props.opt("imageShape") ?: props.opt("imageshape") ?: props.opt("image-shape")
+            val size = (rawSize as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: 30.0
+            return CraftMarkerPhoto(address, size.coerceIn(16.0, 96.0).toFloat(), shape != "square")
+        }
+    }
+}
+
+internal class CraftMarkerPhotos(private val context: Context, private val changed: () -> Unit) {
+    private class Entry(val spec: CraftMarkerPhoto) {
+        var job: Future<*>? = null
+        var bitmap: Bitmap? = null
+    }
+    private val entries = mutableMapOf<String, Entry>()
+    private val executor = Executors.newFixedThreadPool(2)
+    private val main = Handler(Looper.getMainLooper())
+
+    fun bitmap(id: String, spec: CraftMarkerPhoto? = null): Bitmap? = entries[id]?.takeIf { spec == null || it.spec == spec }?.bitmap
+
+    fun reconcile(wanted: Map<String, CraftMarkerPhoto>) {
+        entries.keys.filter { entries[it]?.spec != wanted[it] }.forEach { entries.remove(it)?.job?.cancel(true) }
+        wanted.forEach { (id, spec) ->
+            if (entries.containsKey(id)) return@forEach
+            val entry = Entry(spec)
+            entries[id] = entry
+            entry.job = executor.submit {
+                val bitmap = runCatching { load(spec) }.getOrNull()
+                main.post {
+                    if (entries[id] !== entry) return@post
+                    entry.bitmap = bitmap
+                    entry.job = null
+                    if (bitmap != null) changed()
+                }
+            }
+        }
+    }
+
+    private fun load(spec: CraftMarkerPhoto): Bitmap? {
+        val kept = CraftNativeMedia.local(context, spec.address)
+        val bytes = if (kept != null) kept.inputStream().use(::readBounded) else download(spec.address)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val size = (spec.size * context.resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= size && bounds.outHeight / (sample * 2) >= size) sample *= 2
+        val source = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample }) ?: return null
+        try {
+            val result = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            val scale = maxOf(size.toFloat() / source.width, size.toFloat() / source.height)
+            val matrix = Matrix().apply {
+                setScale(scale, scale)
+                postTranslate((size - source.width * scale) / 2, (size - source.height * scale) / 2)
+            }
+            val shader = android.graphics.BitmapShader(source, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(matrix) }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply { this.shader = shader }
+            val canvas = Canvas(result)
+            if (spec.circle) canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            else canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+            return result
+        } finally { source.recycle() }
+    }
+
+    private fun readBounded(input: java.io.InputStream): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException()
+            val count = input.read(buffer)
+            if (count < 0) return output.toByteArray()
+            require(output.size() + count <= 8 * 1024 * 1024) { "Marker image exceeds 8 MiB" }
+            output.write(buffer, 0, count)
+        }
+    }
+
+    private fun download(address: String): ByteArray {
+        var url = URL(address)
+        repeat(6) {
+            require(url.protocol.equals("https", true) && url.userInfo == null)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 10_000; readTimeout = 10_000
+                instanceFollowRedirects = false; useCaches = false
+            }
+            try {
+                when (connection.responseCode) {
+                    200 -> return connection.inputStream.use(::readBounded)
+                    301, 302, 303, 307, 308 -> url = URL(url, requireNotNull(connection.getHeaderField("Location")))
+                    else -> error("Marker image request failed")
+                }
+            } finally { connection.disconnect() }
+        }
+        error("Too many marker image redirects")
+    }
+
+    fun destroy() {
+        entries.values.forEach { it.job?.cancel(true) }
+        entries.clear()
+        executor.shutdownNow()
+    }
+}
+
 {{NATIVE_MAP_HOST}}
 
 /** A finite celebration owned by a View, never by the JavaScript frame loop. */
@@ -864,6 +991,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         super.onWindowVisibilityChanged(visibility)
         if (visibility != View.VISIBLE) celebration?.stop()
     }
+    var pageViewport: Pair<Int, Int>? = null
     var onLayoutChanged: (() -> Unit)? = null
     private val styles = mutableMapOf<View, CraftNativeLayoutStyle>()
     private var wrap = false
@@ -880,6 +1008,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private var wrapReverse = false
     private var unboundedWidth = false
     private var authoredPadding = intArrayOf(0, 0, 0, 0)
+    private var windowSafeAreaInsets = intArrayOf(0, 0, 0, 0)
     private var safeAreaPadding = intArrayOf(0, 0, 0, 0)
     private var applyingPadding = false
     private var safeAreaEdges = setOf("top", "right", "bottom", "left")
@@ -943,18 +1072,20 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     fun setWindowSafeInsets(left: Int, top: Int, right: Int, bottom: Int) {
-        val insets = intArrayOf(left, top, right, bottom)
-        safeAreaPadding = intArrayOf(
-            if ("left" in safeAreaEdges) insets[0] else 0,
-            if ("top" in safeAreaEdges) insets[1] else 0,
-            if ("right" in safeAreaEdges) insets[2] else 0,
-            if ("bottom" in safeAreaEdges) insets[3] else 0,
-        )
+        windowSafeAreaInsets = intArrayOf(left, top, right, bottom)
         applySafeAreaPadding()
         invalidateMeasurements()
     }
 
     private fun applySafeAreaPadding() {
+        // Keep the unfiltered insets so changing edges takes effect immediately,
+        // including restoring an edge without another platform inset dispatch.
+        safeAreaPadding = intArrayOf(
+            if ("left" in safeAreaEdges) windowSafeAreaInsets[0] else 0,
+            if ("top" in safeAreaEdges) windowSafeAreaInsets[1] else 0,
+            if ("right" in safeAreaEdges) windowSafeAreaInsets[2] else 0,
+            if ("bottom" in safeAreaEdges) windowSafeAreaInsets[3] else 0,
+        )
         setPadding(authoredPadding[0], authoredPadding[1], authoredPadding[2], authoredPadding[3])
     }
 
@@ -1131,14 +1262,23 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
         invalidateMeasurements()
     }
 
+    private var viewportChild: View? = null
+
+    fun setViewportChild(view: View?) {
+        viewportChild = view
+        invalidateMeasurements()
+    }
+
     fun setChildStyle(view: View, style: JSONObject, density: Float) {
-        styles[view] = CraftNativeLayoutStyle.from(style, density)
+        val effective = if (view === viewportChild) craftNativeScreenRootStyle(style) else style
+        styles[view] = CraftNativeLayoutStyle.from(effective, density)
         invalidateMeasurements()
         invalidateMeasurementAncestors(parent)
     }
 
     override fun onViewRemoved(child: View) {
         val parentBeforeRemoval = parent
+        if (child === viewportChild) viewportChild = null
         styles.remove(child)
         super.onViewRemoved(child)
         invalidateMeasurements()
@@ -1839,6 +1979,12 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        pageViewport?.let { (pageWidth, pageHeight) ->
+            val pages = (0 until childCount).map { getChildAt(it) }.filter { it.visibility != View.GONE }
+            pages.forEach { it.measure(MeasureSpec.makeMeasureSpec(pageWidth, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(pageHeight, MeasureSpec.EXACTLY)) }
+            setMeasuredDimension(pageWidth * pages.size, pageHeight)
+            return
+        }
         val unboundedHorizontal = unboundedWidth && orientation == HORIZONTAL
         val widthMode = if (unboundedHorizontal) View.MeasureSpec.UNSPECIFIED else View.MeasureSpec.getMode(widthMeasureSpec)
         widthDefinite = widthMode == View.MeasureSpec.EXACTLY
@@ -1875,6 +2021,12 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         celebration?.layout()
+        pageViewport?.let { (pageWidth, pageHeight) ->
+            val pages = (0 until childCount).map { getChildAt(it) }.filter { it.visibility != View.GONE }
+            pages.forEachIndexed { index, child -> child.layout(index * pageWidth, 0, (index + 1) * pageWidth, pageHeight) }
+            onLayoutChanged?.invoke()
+            return
+        }
         widthDefinite = true
         if (grid) {
             val layout = gridLayout(width, height)
@@ -2237,15 +2389,92 @@ private class CraftNativeKeyboardAvoidingView(context: Context) : FrameLayout(co
     }
 }
 
-private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context) {
+/** CSS family fallback order, using bundled app fonts before platform families. */
+internal fun craftNativeFontFamily(family: String?, bundledFonts: Map<String, Typeface> = emptyMap()): Typeface =
+    family?.split(',')?.asSequence()?.map { it.trim().trim('"', '\'') }?.mapNotNull { name ->
+        bundledFonts[name] ?: when (name.lowercase()) {
+            "monospace", "ui-monospace" -> Typeface.MONOSPACE
+            "serif", "ui-serif" -> Typeface.SERIF
+            "sans-serif", "ui-sans-serif", "system-ui", "-apple-system" -> Typeface.SANS_SERIF
+            else -> Typeface.create(name, Typeface.NORMAL).takeUnless { it == Typeface.DEFAULT }
+        }
+    }?.firstOrNull() ?: Typeface.DEFAULT
+
+internal class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(context) {
     val content = CraftNativeFlexLayout(context)
     // Keep one refresh target across axis changes. Replacing all children of
     // SwipeRefreshLayout would also detach its own animated indicator.
     private val scrollContainer = FrameLayout(context)
-    private val vertical = ScrollView(context)
-    private val horizontal = HorizontalScrollView(context)
+    private val vertical = object : ScrollView(context) {
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onInterceptTouchEvent(event)
+        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onTouchEvent(event)
+    }
+    private val horizontal = object : HorizontalScrollView(context) {
+        override fun onInterceptTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onInterceptTouchEvent(event)
+        override fun onTouchEvent(event: MotionEvent): Boolean = isEnabled && super.onTouchEvent(event)
+    }
     private var horizontalMode: Boolean? = null
     private var pagingEnabled = false
+    private var authoredPageIndex: Int? = null
+    private var pendingPageIndex: Int? = null
+    private var currentPageIndex = 0
+    private var reportedPage: Pair<Int, Int>? = null
+    private var pageHandler: ((Int, Int) -> Unit)? = null
+    private var pageSettleGeneration = 0
+    private var pageDragging = false
+    private var pageInMotion = false
+
+    private fun schedulePageSettle(scroller: View) {
+        val generation = ++pageSettleGeneration
+        scroller.postDelayed({
+            if (generation == pageSettleGeneration && !pageDragging) {
+                pageInMotion = false
+                settlePage()
+            }
+        }, 80L)
+    }
+
+    fun configurePager(value: Any?, onSelect: ((Int, Int) -> Unit)?) {
+        val next = (value as? Number)?.toDouble()?.takeIf { it.isFinite() }?.coerceIn(0.0, (Int.MAX_VALUE / 2).toDouble())?.toInt()
+        if (next != authoredPageIndex) pendingPageIndex = next
+        authoredPageIndex = next
+        pageHandler = onSelect
+        if (next == null) { content.pageViewport = null; reportedPage = null }
+        requestLayout()
+    }
+
+    private fun settlePage() {
+        if (authoredPageIndex == null || horizontal.width <= 0 || pageDragging || pageInMotion) return
+        val pages = (0 until content.childCount).map { content.getChildAt(it) }.filter { it.visibility != View.GONE }
+        val index = (horizontal.scrollX.toFloat() / horizontal.width).roundToInt().coerceIn(0, max(0, pages.size - 1))
+        val target = index * horizontal.width
+        if (horizontal.scrollX != target) {
+            // ACTION_UP can start native motion after our touch listener's snap.
+            // A rounded index is not settled until that viewport is fully shown.
+            pageInMotion = true
+            horizontal.smoothScrollTo(target, 0)
+            schedulePageSettle(horizontal)
+            return
+        }
+        currentPageIndex = index
+        pages.forEachIndexed { i, page -> page.importantForAccessibility = if (i == index) View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS }
+        val report = index to pages.size
+        if (report != reportedPage) { reportedPage = report; pageHandler?.invoke(index, pages.size) }
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val oldWidth = horizontal.width
+        super.onLayout(changed, left, top, right, bottom)
+        if (authoredPageIndex != null && horizontalMode == true && horizontal.width > 0) {
+            val count = (0 until content.childCount).count { content.getChildAt(it).visibility != View.GONE }
+            val index = (pendingPageIndex ?: currentPageIndex).coerceIn(0, max(0, count - 1))
+            if (pendingPageIndex != null || oldWidth != horizontal.width || index != currentPageIndex) horizontal.scrollTo(index * horizontal.width, 0)
+            pendingPageIndex = null
+            currentPageIndex = index
+            settlePage()
+        }
+    }
+
     private var bounces = true
     private var alwaysBounceVertical = true
     private var alwaysBounceHorizontal = true
@@ -2273,6 +2502,10 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
         // configured. Interception is gated below instead.
         isEnabled = true
         setHorizontal(false)
+        // Paging is owned by this native control even before an Activity
+        // supplies optional bridge callbacks. Its normal configuration may
+        // replace these listeners without changing gesture ownership.
+        setScrollListeners(null, null, null, null, null, "none", null)
     }
 
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -2301,6 +2534,7 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
         val unspecified = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
         val horizontalPadding = paddingLeft + paddingRight
         val verticalPadding = paddingTop + paddingBottom
+        content.pageViewport = if (authoredPageIndex != null && sideways) max(0, widthSize - horizontalPadding) to max(0, heightSize - verticalPadding) else null
         content.measure(
             if (sideways || widthMode == MeasureSpec.UNSPECIFIED) unspecified
             else MeasureSpec.makeMeasureSpec(max(0, widthSize - horizontalPadding), MeasureSpec.EXACTLY),
@@ -2316,7 +2550,7 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            params.width = max(params.width, content.measuredWidth)
+            params.width = if (authoredPageIndex != null) content.measuredWidth else max(params.width, content.measuredWidth)
             content.layoutParams = params
         }
         fun fit(mode: Int, size: Int, wanted: Int): Int = when (mode) {
@@ -2648,11 +2882,18 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
 
             scroller.setOnScrollChangeListener { _, x, y, _, _ ->
                 if (horizontalMode != true) updateStickyHeaders()
+                if (authoredPageIndex != null) {
+                    pageInMotion = true
+                    schedulePageSettle(scroller)
+                }
                 onScroll?.invoke(x, y)
             }
             scroller.setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     android.view.MotionEvent.ACTION_DOWN -> {
+                        pageDragging = true
+                        pageInMotion = false
+                        pageSettleGeneration += 1
                         if (momentumActive) {
                             momentumActive = false
                             onMomentumEnd?.invoke()
@@ -2674,6 +2915,8 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
                         }
                         onEndDrag?.invoke()
                         if (pagingEnabled) snapToPage(scroller)
+                        pageDragging = false
+                        if (authoredPageIndex != null) schedulePageSettle(scroller)
                         if (moved && !momentumActive) {
                             momentumActive = true
                             lastX = scroller.scrollX
@@ -2692,6 +2935,10 @@ private class CraftNativeScrollView(context: Context) : SwipeRefreshLayout(conte
 
     fun clearScrollListeners() {
         scrollListenerGeneration += 1
+        pageSettleGeneration += 1
+        pageDragging = false
+        pageInMotion = false
+        pageHandler = null
         vertical.setOnScrollChangeListener(null)
         vertical.setOnTouchListener(null)
         horizontal.setOnScrollChangeListener(null)
@@ -4878,7 +5125,7 @@ class MainActivity : AppCompatActivity() {
         val bars = chrome ?: return
         val depth = screens.indexOf(screen).coerceAtLeast(0)
         val fallback = if (depth == 0) routes.tabs.getOrNull(currentTab)?.title else null
-        bars.apply(screen.options, depth, fallback)
+        bars.apply(screen.options, depth, fallback, screen.path)
     }
 
     /** Applies a screen-specific background, falling back to the dynamic app colour. */
@@ -4943,6 +5190,7 @@ class MainActivity : AppCompatActivity() {
         put("viewReparent")
         put("viewNonModalPresentation")
         put("nativePlatformControls")
+        put("nativePager")
     }
 
     private fun appVersion(): Pair<String, String> = runCatching {
@@ -5029,7 +5277,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshScreenTheme(screen: Screen) {
         applyScreenBackground(screen)
-        screen.mutations.node("root")?.let { renderCommitted(screen, it) }
+        screen.mutations.document()?.let { renderCommitted(screen, it) }
         screen.controls.values.mapNotNull {
             when (it) {
                 is CraftNativeRefreshableFlatList -> it.list
@@ -5047,7 +5295,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateSafeAreaViews() {
         if (!::root.isInitialized) return
         val active = visibleScreen ?: screens.lastOrNull { it.active }
-        val rootNode = active?.mutations?.node("root")
+        val rootNode = active?.mutations?.document()
         val safeRoot = rootNode?.let { canonicalType(it.optString("type")) == "SafeAreaView" } == true
         root.setPadding(
             if (safeRoot) 0 else windowSafeInsets[0],
@@ -5066,7 +5314,7 @@ class MainActivity : AppCompatActivity() {
      * against zero insets.
      */
     private fun updateSafeAreaInsets(screen: Screen) {
-        val rootNode = screen.mutations.node("root")
+        val rootNode = screen.mutations.document()
         val safeRoot = rootNode?.let { canonicalType(it.optString("type")) == "SafeAreaView" } == true
         val tree = screen.view.getChildAt(0) as? CraftNativeFlexLayout
         if (safeRoot) tree?.setWindowSafeInsets(windowSafeInsets[0], windowSafeInsets[1], windowSafeInsets[2], windowSafeInsets[3])
@@ -5344,6 +5592,7 @@ class MainActivity : AppCompatActivity() {
         screen.controls.clear()
         screen.controls.putAll(next)
         screen.handlers.keys.retainAll(retainedViews(screen))
+        screen.view.setViewportChild(tree)
         screen.view.setChildStyle(tree, document.optJSONObject("style") ?: JSONObject(), resources.displayMetrics.density)
         promoteModalOverlays(screen)
         updateSafeAreaViews()
@@ -5391,6 +5640,17 @@ class MainActivity : AppCompatActivity() {
             }
             modal.bringToFront()
         }
+    }
+
+    private fun updateStatusBarProps(screen: Screen, props: JSONObject) {
+        val style = craftNativeOptionalString(props.opt("barStyle"))
+        val hidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null
+        val changed = screen.statusBarStyle != style || screen.statusBarHidden != hidden
+        screen.statusBarStyle = style
+        screen.statusBarHidden = hidden
+        // MUTATE can reconcile this node without committing the whole screen.
+        // Retained screens keep their props until their next visible commit.
+        if (changed && visibleScreen === screen) applyStatusBar(screen)
     }
 
     private fun applyStatusBar(screen: Screen) {
@@ -5464,8 +5724,7 @@ class MainActivity : AppCompatActivity() {
                 isLongClickable = selectable
             }
             "StatusBar" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
-                screen.statusBarStyle = craftNativeOptionalString(props.opt("barStyle"))
-                screen.statusBarHidden = if (props.has("hidden") && !props.isNull("hidden")) craftNativeBoolean(props.opt("hidden")) else null
+                updateStatusBarProps(screen, props)
                 visibility = View.GONE
             }
             "RefreshControl" -> (previous as? CraftNativeFlexLayout ?: CraftNativeFlexLayout(this)).apply {
@@ -6114,6 +6373,10 @@ class MainActivity : AppCompatActivity() {
                     craftNativeBoolean(props.opt("alwaysBounceHorizontal"), horizontal),
                 )
                 setPagingEnabled(craftNativeBoolean(props.opt("pagingEnabled")))
+                val pageHandler = craftNativeEventName(events, "onPageSelected").takeIf { it.isNotBlank() }
+                configurePager(props.opt("pageIndex"), pageHandler?.let { handler ->
+                    { index, count -> send(screen, "EVENT", JSONObject().put("handlerName", handler).put("nativeEvent", JSONObject().put("index", index).put("count", count))) }
+                })
                 val refreshNode = (0 until children.length()).asSequence()
                     .mapNotNull { children.optJSONObject(it) }
                     .firstOrNull { canonicalType(it.optString("type")) == "RefreshControl" }
@@ -6935,7 +7198,7 @@ class MainActivity : AppCompatActivity() {
         }
         val italic = craftNativeOptionalString(style.opt("fontStyle")) == "italic"
         val family = craftNativeOptionalString(style.opt("fontFamily"))?.takeIf { it.isNotBlank() }
-        val base = family?.let { bundledFonts[it] } ?: Typeface.create(family, Typeface.NORMAL)
+        val base = craftNativeFontFamily(family, bundledFonts)
         view.typeface = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             Typeface.create(base, weight, italic)
         } else Typeface.create(base, (if (weight >= 600) Typeface.BOLD else Typeface.NORMAL) or
@@ -7119,6 +7382,12 @@ class MainActivity : AppCompatActivity() {
         }
         imageJobs[view] = imageExecutor.submit {
             val bitmap = runCatching {
+                // Prefer the authored URL's private/offline copy. Never put
+                // these pixels in the public HTTP cache: media.clear owns them.
+                CraftNativeMedia.local(this, uri)?.let { kept ->
+                    val decoded = kept.inputStream().use(BitmapFactory::decodeStream)
+                    return@runCatching decoded.takeIf { CraftNativeMedia.local(this, uri) == kept }
+                }
                 val publicRequest = headers.isEmpty() && Uri.parse(requestUri).userInfo.isNullOrEmpty()
                 if (publicRequest) {
                     val bytes = imageCache.read(requestUri)
@@ -7605,6 +7874,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        if (::services.isInitialized) services.pauseVoice()
         nativeAppState = "inactive"
         publish("APP_STATE", JSONObject().put("state", nativeAppState))
         super.onPause()

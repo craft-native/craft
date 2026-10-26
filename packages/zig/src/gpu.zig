@@ -2,7 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const io_context = @import("io_context.zig");
 
-const macos = if (builtin.os.tag == .macos) @import("macos.zig") else struct {};
+// GPU discovery needs the Objective-C runtime, not the desktop Window/WebView host.
+const objc = @import("objc_runtime.zig").objc;
 
 /// Metal helpers – only resolved on macOS.
 const metal = if (builtin.os.tag == .macos) struct {
@@ -107,7 +108,7 @@ pub const GPU = struct {
         // Release the Metal device if we acquired one
         if (builtin.os.tag == .macos) {
             if (self.metal_device) |dev| {
-                macos.msgSendVoid0(dev, "release");
+                objc.msgSend(dev, objc.sel_registerName("release"));
                 self.metal_device = null;
             }
         }
@@ -119,7 +120,7 @@ pub const GPU = struct {
         if (self.metal_device) |dev| return dev;
         self.metal_device = metal.createDevice();
         if (self.metal_device) |dev| {
-            _ = macos.msgSend0(dev, "retain");
+            _ = objc.msgSendId(dev, objc.sel_registerName("retain"));
         }
         return self.metal_device;
     }
@@ -182,9 +183,9 @@ pub const GPU = struct {
 
         // Query device name via [MTLDevice name] -> NSString
         var renderer: []const u8 = "Metal GPU";
-        const name_nsstring = macos.msgSend0(device, "name");
+        const name_nsstring = objc.msgSendId(device, objc.sel_registerName("name"));
         if (name_nsstring) |ns| {
-            const cstr = macos.msgSend0(ns, "UTF8String");
+            const cstr = objc.msgSendId(ns, objc.sel_registerName("UTF8String"));
             if (cstr) |c| {
                 renderer = std.mem.span(@as([*:0]const u8, @ptrCast(c)));
             }
@@ -202,14 +203,14 @@ pub const GPU = struct {
 
         // Query recommended max working set size for VRAM estimate (returns u64 bytes)
         const mem_send = @as(
-            *const fn (*anyopaque, macos.objc.SEL) callconv(.c) u64,
-            @ptrCast(&macos.objc.objc_msgSend),
+            *const fn (*anyopaque, objc.SEL) callconv(.c) u64,
+            @ptrCast(&objc.objc_msgSend),
         );
-        const max_working_set = mem_send(device, macos.sel("recommendedMaxWorkingSetSize"));
+        const max_working_set = mem_send(device, objc.sel_registerName("recommendedMaxWorkingSetSize"));
         const memory_mb: usize = @intCast(max_working_set / (1024 * 1024));
 
         // isLowPower returns YES for integrated GPUs, so discrete = !isLowPower
-        const is_low_power = macos.msgSendBool(device, "isLowPower");
+        const is_low_power = objc.msgSendBool(device, objc.sel_registerName("isLowPower"));
 
         self.info = GPUInfo{
             .vendor = vendor,
@@ -343,17 +344,17 @@ pub const GPU = struct {
                 const webview = window.webview;
                 if (webview) |wv| {
                     // Get configuration -> preferences and enable accelerated drawing
-                    const config_obj = macos.msgSend0(wv, "configuration");
+                    const config_obj = objc.msgSendId(wv, objc.sel_registerName("configuration"));
                     if (config_obj) |cfg| {
-                        const prefs = macos.msgSend0(cfg, "preferences");
+                        const prefs = objc.msgSendId(cfg, objc.sel_registerName("preferences"));
                         if (prefs) |p| {
                             // _acceleratedDrawingEnabled is a private but widely-used
                             // WKPreferences property that enables GPU compositing.
-                            _ = macos.msgSend1Bool(p, "_setAcceleratedDrawingEnabled:", true);
+                            objc.msgSendVoid1(p, objc.sel_registerName("_setAcceleratedDrawingEnabled:"), true);
                         }
                     }
                     // Ensure the view uses a CALayer for GPU compositing
-                    _ = macos.msgSend1Bool(wv, "setWantsLayer:", true);
+                    objc.msgSendVoid1(wv, objc.sel_registerName("setWantsLayer:"), true);
                 }
             }
         } else if (builtin.os.tag == .linux) {
@@ -384,7 +385,7 @@ pub const GPU = struct {
     /// Call this once per frame. It measures wall-clock time between calls and
     /// returns a smoothed frames-per-second value.  The first call returns 0.
     pub fn getCurrentFPS(self: *GPU) f64 {
-        const now_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch return self.current_fps;
+        const now_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake);
 
         if (self.last_frame_time) |last| {
             self.frame_count += 1;
@@ -423,10 +424,10 @@ pub const GPU = struct {
             const device = self.getMetalDevice() orelse return 0;
             // currentAllocatedSize returns NSUInteger (bytes)
             const size_send = @as(
-                *const fn (*anyopaque, macos.objc.SEL) callconv(.c) u64,
-                @ptrCast(&macos.objc.objc_msgSend),
+                *const fn (*anyopaque, objc.SEL) callconv(.c) u64,
+                @ptrCast(&objc.objc_msgSend),
             );
-            const bytes = size_send(device, macos.sel("currentAllocatedSize"));
+            const bytes = size_send(device, objc.sel_registerName("currentAllocatedSize"));
             return @intCast(bytes / (1024 * 1024));
         }
 
@@ -451,22 +452,22 @@ pub const FrameLimiter = struct {
         return FrameLimiter{
             .target_fps = target_fps,
             .frame_time_ns = frame_time,
-            .start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch null,
+            .start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake),
         };
     }
 
     pub fn limit(self: *FrameLimiter) void {
         if (self.start_ts) |start| {
-            const end_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch return;
+            const end_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake);
             const elapsed = start.durationTo(end_ts);
             const elapsed_ns = @as(u64, @intCast(elapsed.raw.nanoseconds));
 
             if (elapsed_ns < self.frame_time_ns) {
                 const sleep_ns = self.frame_time_ns - elapsed_ns;
-                std.posix.nanosleep(0, sleep_ns);
+                std.Io.sleep(io_context.get(), .fromNanoseconds(sleep_ns), .awake) catch return;
             }
 
-            self.start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch null;
+            self.start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake);
         }
     }
 
@@ -1465,13 +1466,13 @@ pub const GPUProfiler = struct {
 
     pub fn beginQuery(self: *GPUProfiler, name: []const u8) !void {
         self.active_query_name = name;
-        self.active_start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch null;
+        self.active_start_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake);
     }
 
     pub fn endQuery(self: *GPUProfiler) !void {
         if (self.active_start_ts) |start_ts| {
             if (self.active_query_name) |name| {
-                const end_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake) catch return;
+                const end_ts = std.Io.Clock.Timestamp.now(io_context.get(), .awake);
                 const elapsed = start_ts.durationTo(end_ts);
                 const duration = @as(u64, @intCast(elapsed.raw.nanoseconds));
                 try self.queries.append(self.allocator, .{
@@ -1848,7 +1849,7 @@ test "gpu profiler" {
 
     try profiler.beginQuery("test_pass");
     // Simulate some work
-    std.posix.nanosleep(0, 1_000_000); // 1ms
+    try std.Io.sleep(io_context.get(), .fromNanoseconds(1_000_000), .awake);
     try profiler.endQuery();
 
     const results = profiler.getResults();

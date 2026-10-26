@@ -6,7 +6,7 @@
       "name": "craft",
       "devDependencies": {
         "@stacksjs/buddy": "0.72.56",
-        "@stacksjs/bumpx": "^0.2.26",
+        "@stacksjs/bumpx": "^0.2.27",
         "@stacksjs/bunpress": "^0.2.13",
         "@stacksjs/env": "^0.72.50",
         "better-dx": "^0.2.38",
@@ -15,7 +15,7 @@
     },
     "benchmarks": {
       "name": "craft-benchmarks",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "dependencies": {
         "mitata": "^1.0.10",
       },
@@ -25,11 +25,11 @@
     },
     "packages/android": {
       "name": "@craft-native/android",
-      "version": "0.0.304",
+      "version": "0.0.358",
     },
     "packages/create-craft": {
       "name": "create-craft",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "bin": {
         "create-craft": "./bin/cli.ts",
       },
@@ -42,7 +42,7 @@
     },
     "packages/examples-ts": {
       "name": "craft-examples",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "dependencies": {
         "craft-native": "workspace:*",
       },
@@ -52,18 +52,18 @@
     },
     "packages/ios": {
       "name": "@craft-native/ios",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "bin": {
         "craft-ios": "dist/cli.js",
       },
     },
     "packages/macos": {
       "name": "@craft-native/macos",
-      "version": "0.0.304",
+      "version": "0.0.358",
     },
     "packages/react": {
       "name": "@craft-native/react",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "devDependencies": {
         "@types/react": "^18.2.0",
         "react": "^18.2.0",
@@ -76,7 +76,7 @@
     },
     "packages/svelte": {
       "name": "@craft-native/svelte",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "devDependencies": {
         "svelte": "^4.0.0",
         "tsup": "^8.0.0",
@@ -88,7 +88,7 @@
     },
     "packages/ts-maps": {
       "name": "@craft-native/ts-maps",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "ts-maps": "^0.3.9",
@@ -97,7 +97,7 @@
     },
     "packages/typescript": {
       "name": "craft-native",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "bin": {
         "craft-sdk": "./dist/cli.js",
       },
@@ -110,7 +110,7 @@
     },
     "packages/vue": {
       "name": "@craft-native/vue",
-      "version": "0.0.304",
+      "version": "0.0.358",
       "devDependencies": {
         "tsup": "^8.0.0",
         "typescript": "7.1.0-dev.20261011.1",
@@ -284,7 +284,7 @@
 
     "@stacksjs/build": ["@stacksjs/build@0.72.56", "", { "dependencies": { "bun-plugin-dtsx": "^0.11.10" } }, "sha512-mYbEAFXJNzjzaqt94sqEP22w7Vp+31nS8D0Y2tShUe4abDiWjg+AYRlLLt/tXMJLaJURwMc+w9wZ/GX6vHVUAA=="],
 
-    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.2.26", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "@stacksjs/logsmith": "^0.2.6", "bunfig": "^0.15.6" }, "bin": { "bumpx": "./dist/bin/cli.js" } }, "sha512-fgoQd9bZf8u/7qY5kL2rJiHsP5wv03xu3MVb7/9c0aitTNbUu9+u/3Vk/eNUz/sKPiIuZFA0erE76Ca6nD8y/g=="],
+    "@stacksjs/bumpx": ["@stacksjs/bumpx@0.2.27", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "@stacksjs/logsmith": "^0.2.6", "bunfig": "^0.15.6" }, "bin": { "bumpx": "./dist/bin/cli.js" } }, "sha512-LOaqknhToQDIey7UwfG9BPZ2CQfK1TfA/mZxpPnxoPKfzTvVWaudKatpw/R3J4+8WuR0V08/olV28lBxI9S7cg=="],
 
     "@stacksjs/bun-router": ["@stacksjs/bun-router@0.1.0", "", { "dependencies": { "@stacksjs/clapp": "^0.2.0", "ts-rate-limiter": "^0.4.2" }, "bin": { "bun-router": "./dist/cli.js", "router": "./bin/cli.ts" } }, "sha512-LV7RbL9x8/EGTIuFMKoFf9TpSLIwcE13f8BdYHLaltx1emHDm9TSzEIItzLJnOWypFo7vyAtC1CogmSFmMcUpg=="],
 
@@ -562,7 +562,7 @@
 
     "fast-deep-equal": ["fast-deep-equal@3.1.3", "", {}, "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q=="],
 
-    "fast-uri": ["fast-uri@3.1.8", "", {}, "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg=="],
+    "fast-uri": ["fast-uri@3.1.9", "", {}, "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ=="],
 
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
@@ -612,7 +612,7 @@
 
     "periscopic": ["periscopic@3.1.0", "", { "dependencies": { "@types/estree": "^1.0.0", "estree-walker": "^3.0.0", "is-reference": "^3.0.0" } }, "sha512-vKiQ8RRtkl9P+r/+oefh25C3fhybptkHKCZSPlcXiJux2tJF55GnEj3BVn4A5gKfq9NWWXXrxkHBwVPUfH0opw=="],
 
-    "pickier": ["pickier@0.1.71", "", { "dependencies": { "@stacksjs/clapp": "^0.2.3", "@stacksjs/clarity": "^0.3.24" }, "optionalDependencies": { "@stacksjs/ts-spell-check": "^0.1.0" }, "bin": { "pickier": "./dist/bin/cli.js" } }, "sha512-3j3/p7af8NQerR8X7Rnod/bpENFDI7gwTYlDBF7V7tzTO21jCdSntXTb7XKMg2XlMZGIFzDNWVl+eIoP7xlbKA=="],
+    "pickier": ["pickier@0.1.77", "", { "dependencies": { "@stacksjs/clapp": "^0.2.3", "@stacksjs/clarity": "^0.3.24" }, "optionalDependencies": { "@stacksjs/ts-spell-check": "^0.1.0" }, "bin": { "pickier": "./dist/bin/cli.js" } }, "sha512-ccrUEA9nRlPYXkRUaZ2UHncyH8L7Xy1tuX2KbSlgKN3pO//slDfXe716Q79kKCCDgL8MqoR5eCyHHXRp7qNIlg=="],
 
     "picocolors": ["picocolors@1.1.1", "", {}, "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA=="],
 
@@ -732,10 +732,6 @@
 
     "@stacksjs/httx/ts-error-handling": ["ts-error-handling@0.1.1", "", {}, "sha512-d4VqdX0bJ+jvOYNsY58isJgrEr806Q9cjef5+1UO/kIn1M/+YYSwpR6fqdRhn9XXVASJLSzNmcnBSdl0fRCjDg=="],
 
-    "@stacksjs/lint/pickier": ["pickier@0.1.62", "", { "dependencies": { "@stacksjs/clapp": "^0.2.3", "@stacksjs/clarity": "^0.3.24" }, "optionalDependencies": { "@stacksjs/ts-spell-check": "^0.1.0" }, "bin": { "pickier": "./dist/bin/cli.js" } }, "sha512-QgFE7mUXjFsR0c2n5j2vhJjO7GxUZuIE7DjFAB7V3GIdKoTbp22Z9rfqKV8v6fugmV59eOfY+CtTV53zfnYFCw=="],
-
-    "@stacksjs/logsmith/pickier": ["pickier@0.1.62", "", { "dependencies": { "@stacksjs/clapp": "^0.2.3", "@stacksjs/clarity": "^0.3.24" }, "optionalDependencies": { "@stacksjs/ts-spell-check": "^0.1.0" }, "bin": { "pickier": "./dist/bin/cli.js" } }, "sha512-QgFE7mUXjFsR0c2n5j2vhJjO7GxUZuIE7DjFAB7V3GIdKoTbp22Z9rfqKV8v6fugmV59eOfY+CtTV53zfnYFCw=="],
-
     "@stacksjs/stx/@stacksjs/clapp": ["@stacksjs/clapp@0.2.10", "", {}, "sha512-l/2F0u5ihpae8R4kJ3Pdh6tV7aEpSxu6hCyafhw38Fl9+x2YKxZfUK+fF/G5AVwSzJar3dkKuMxbMcQ0PXKGRg=="],
 
     "@stacksjs/ts-i18n/@stacksjs/clapp": ["@stacksjs/clapp@0.2.10", "", {}, "sha512-l/2F0u5ihpae8R4kJ3Pdh6tV7aEpSxu6hCyafhw38Fl9+x2YKxZfUK+fF/G5AVwSzJar3dkKuMxbMcQ0PXKGRg=="],
@@ -751,8 +747,6 @@
     "buddy-bot/ts-pantry": ["ts-pantry@0.11.79", "", { "bin": { "ts-pantry": "./dist/bin/cli.js" } }, "sha512-dADnHozPpXuWyyawyxFZjgfeMqgJhUWBhnA8RGnADPQtOdUwO5gj5SaNqEQfuuylKhzcPf1wvVM94hGPaZ9doA=="],
 
     "@stacksjs/actions/@stacksjs/logsmith/@stacksjs/clapp": ["@stacksjs/clapp@0.2.10", "", {}, "sha512-l/2F0u5ihpae8R4kJ3Pdh6tV7aEpSxu6hCyafhw38Fl9+x2YKxZfUK+fF/G5AVwSzJar3dkKuMxbMcQ0PXKGRg=="],
-
-    "@stacksjs/actions/@stacksjs/logsmith/pickier": ["pickier@0.1.37", "", { "dependencies": { "@stacksjs/clapp": "^0.2.3", "@stacksjs/clarity": "^0.3.24" }, "optionalDependencies": { "@stacksjs/ts-spell-check": "^0.1.0" }, "bin": { "pickier": "./dist/bin/cli.js" } }, "sha512-wna4oJxKm59QuTCwGEMuxowaEeXmj0L1tzHtAkgJ593KM6eKGurp7fDclMdnnnCk1eHlCuxDBI20qvK3DUC4KQ=="],
 
     "@stacksjs/actions/@stacksjs/stx/@stacksjs/desktop": ["@stacksjs/desktop@0.2.219", "", { "dependencies": { "craft-native": ">=0.0.55" } }, "sha512-giBwNLtnu49wUA4oY1anPiPY+qzCzvJkLsViDZboBBfdE2v+c7t8y8JPE4Xta4gLTPaorEfrvGT6OxUMPoZHFg=="],
 
@@ -801,7 +795,5 @@
     "@stacksjs/types/@stacksjs/stx/bun-plugin-stx": ["bun-plugin-stx@0.2.219", "", { "dependencies": { "@stacksjs/stx": "^0.2.72", "stx-router": "^0.2.72" }, "bin": { "serve": "./dist/serve.js", "stx-serve": "./dist/serve.js" } }, "sha512-LoqhsuERZXxfVJ2SSqaK2VnNnmldM0e/PuLCeURvJkfVib3gNZepFhxO1S9NbKZhap0/mP6r2kPoxCfI18gzdw=="],
 
     "@stacksjs/types/@stacksjs/stx/stx-router": ["stx-router@0.2.219", "", {}, "sha512-lqTX9ytwxq1xer1I4S7JXFMM3C4dF5QG0iZcrLC60gcBHN5mzHxp8yp9Z5oIMOnnDJ6innaOQlGTQscQOeMspA=="],
-
-    "@stacksjs/actions/@stacksjs/logsmith/pickier/@stacksjs/clarity": ["@stacksjs/clarity@0.3.28", "", { "dependencies": { "bunfig": "^0.15.6" }, "bin": { "clarity": "./dist/bin/cli.js" } }, "sha512-SElzGeDewEbp0c4C8PTfdvi/Xtr1HGAjG6b0prHvkVxyYGM+2R0BFU0otUmy+DbR7wsfZ4rNU3YN1+JK/CzoTw=="],
   }
 }

@@ -22,6 +22,7 @@ import Darwin
 ///   tapif <text>          tap it when it is on screen, else carry on (the big timer's "Show the controls")
 ///   tapid <identifier>
 ///   longpressid <identifier> holds a hittable native element to open its edit menu
+///   holdtab <name> [| secs] standard XCTest hold (2–10s, default 6), BEGIN/END timing receipt
 ///   touches <JSON>       timed normalized touch paths in one native dispatch
 ///   tapxy <x> <y>         normalised 0…1 of the screen
 ///   tapexact <label>      a button whose label is exactly this
@@ -63,7 +64,10 @@ final class DriverTests: XCTestCase {
     func get(_ path: String, timeout: Double = 15) -> Data? {
         var result: Data?
         let done = expectation(description: path)
-        URLSession.shared.dataTask(with: URL(string: control + path)!) { data, _, _ in result = data; done.fulfill() }.resume()
+        URLSession.shared.dataTask(with: URL(string: control + path)!) { data, response, error in
+            if error == nil, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) { result = data }
+            done.fulfill()
+        }.resume()
         wait(for: [done], timeout: timeout)
         return result
     }
@@ -331,7 +335,10 @@ final class DriverTests: XCTestCase {
         case "net": _ = get("/\(arg)"); note("net \(arg)")
         case "delay": _ = get("/delay?ms=\(arg)"); note("delay \(arg)ms")
         case "exec":
-            let out = get("/exec?name=\(arg)", timeout: 180).flatMap { String(data: $0, encoding: .utf8) } ?? "no answer"
+            guard let data = get("/exec?name=\(arg)", timeout: 180), let out = String(data: data, encoding: .utf8) else {
+                check(false, "exec \(arg): hook failed or returned no successful response")
+                return
+            }
             note("exec \(arg): \(out.trimmingCharacters(in: .whitespacesAndNewlines))")
         case "openurl":
             if let url = URL(string: arg) {
@@ -381,6 +388,43 @@ final class DriverTests: XCTestCase {
             }
             target.press(forDuration: 1.2)
             note("longpressid \(arg): ok")
+        case "holdtab":
+            let parts = arg.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count <= 2, let name = parts.first, !name.isEmpty,
+                  let duration = parts.count == 2 ? Double(parts[1]) : 6,
+                  duration.isFinite, (2...10).contains(duration) else {
+                check(false, "holdtab needs a tab name and 2–10 seconds")
+                return
+            }
+            guard let button = poll(10, { tabButton(name) }) else {
+                check(false, "holdtab cannot find tab \(name)")
+                return
+            }
+            let frame = button.frame
+            let coordinate = button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            let startedAt = Date().timeIntervalSince1970
+            let startedUptime = ProcessInfo.processInfo.systemUptime
+            // BEGIN arms the independent screenshot watcher. XCTest still
+            // performs its normal idle checks before synthesizing the press;
+            // the watcher must wait for that synthesis, not infer touch-down.
+            note("BEGIN holdtab \(name) | \(duration) | \(startedAt)")
+            fflush(nil)
+            coordinate.press(forDuration: duration)
+            let returnedAt = Date().timeIntervalSince1970
+            let returnedUptime = ProcessInfo.processInfo.systemUptime
+            note("END holdtab \(name) | \(returnedAt)")
+            let receipt: [String: Any] = [
+                "tab": name, "requestedSeconds": duration,
+                "input": "XCUICoordinate.press(forDuration:)",
+                "startedAt": startedAt, "returnedAt": returnedAt,
+                "startedUptime": startedUptime, "returnedUptime": returnedUptime,
+                "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
+                "note": "Call times include XCTest idle checks; during-hold screenshots require an independent synthesis-timed capture.",
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]) {
+                post("/save?name=holdtab-\(Int(startedUptime * 1000)).json", data)
+            }
+            check(true, "holdtab \(name): standard \(duration)s press returned")
         case "touches":
             do {
                 guard let data = arg.data(using: .utf8),

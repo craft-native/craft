@@ -266,6 +266,11 @@ export class AutoUpdater extends EventEmitter {
         if (this.isNewerVersion(this.cachedManifest.version, this.config.currentVersion)) {
           this.updateInfo = this.cachedManifest
           this.emit('update-available', this.cachedManifest)
+          // A cached manifest says nothing about whether its archive arrived.
+          // Retry the normal download path after a failed or interrupted fetch.
+          if (this.config.autoDownload) {
+            await this.downloadUpdate()
+          }
           return this.cachedManifest
         }
         this.emit('update-not-available')

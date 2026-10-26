@@ -7,9 +7,10 @@
  */
 
 import { execFileSync } from 'child_process'
+import { createHash } from 'crypto'
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test'
 import { AutoUpdater, DeltaGenerator } from '../updater/index'
 import {
   canReplaceBundle,
@@ -246,5 +247,58 @@ describe('AutoUpdater.getLastError', () => {
     const pending = updater.checkForUpdates()
     expect(updater.getLastError()).toBeNull()
     await pending
+  })
+})
+
+
+describe('AutoUpdater conditional downloads', () => {
+  it('retries a failed archive when the manifest is unchanged', async () => {
+    const payload = Buffer.from('a verified release archive')
+    let attempts = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch() {
+        attempts++
+        return attempts === 1 ? new Response('Unavailable', { status: 503 }) : new Response(payload)
+      },
+    })
+    const manifest = {
+      version: '2.0.0', releaseDate: '2026-10-23',
+      platforms: { [process.platform]: {
+        url: `http://127.0.0.1:${server.port}/App.zip`, size: payload.length,
+        sha256: createHash('sha256').update(payload).digest('hex'),
+      } },
+    }
+    const originalFetch = globalThis.fetch
+    let checks = 0
+    const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async (input, init) => {
+      if (String(input).startsWith('https://releases.example.test/')) {
+        checks++
+        if (checks === 1) return Response.json(manifest, { headers: { etag: 'release-2' } })
+        expect(new Headers(init?.headers).get('If-None-Match')).toBe('release-2')
+        return new Response(null, { status: 304 })
+      }
+      return originalFetch(input, init)
+    }) as typeof fetch)
+    const updater = new AutoUpdater({
+      updateUrl: 'https://releases.example.test/update.json', currentVersion: '1.0.0',
+      appPath: join(work, 'App.app'), downloadDir: join(work, 'downloads'), autoDownload: true,
+    })
+    updater.on('error', () => {})
+    let downloaded = ''
+    updater.on('update-downloaded', ({ path }) => { downloaded = path })
+    try {
+      await updater.checkForUpdates()
+      expect(updater.getLastError()?.message).toContain('503')
+      expect(downloaded).toBe('')
+      expect((await updater.checkForUpdates())?.version).toBe('2.0.0')
+      expect(updater.getLastError()).toBeNull()
+      expect(attempts).toBe(2)
+      expect(readFileSync(downloaded)).toEqual(payload)
+    }
+    finally {
+      fetcher.mockRestore()
+      server.stop(true)
+    }
   })
 })

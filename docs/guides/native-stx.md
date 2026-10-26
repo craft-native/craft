@@ -262,6 +262,17 @@ or `fitToBounds`, which recenters only when its overlay geometry changes. Explic
 authored camera bounds on both hosts; only `fitToBounds` adds framing padding. A marker's `onPress` or
 `onMarkerPress` receives `nativeEvent.id`; a marker's own handler wins, and the map-level handler is
 used as a fallback when the marker has no non-empty handler.
+`MapMarker.image` accepts an HTTPS avatar URL. `imageSize` defaults to 30 logical
+points and is clamped to 16–96; `imageShape` is `circle` (default) or `square`.
+Photos are center-cropped, drawn upright and centered on the coordinate, and keep
+the marker's title and tap ID. Until loading succeeds, or when the URL is absent,
+invalid or unavailable, the existing pin/direction marker remains visible.
+Changing these props updates the existing annotation; removing a marker cancels
+its pending photo. Kept media can supply the original HTTPS URL offline.
+The hosts also accept `imagesize`/`imageshape` and `image-size`/`image-shape`,
+which current STX template compilers may emit before these names are added to
+their canonical prop list. STX's `MapMarkerProps`/`MapMarkerOverlay` TypeScript
+interfaces need the corresponding upstream additions for typed programmatic use.
 It is backed by MapKit on iOS and the configured native provider on Android.
 Set the Craft Android config's `mapProvider` to `maplibre` for a key-free native
 GL view; `google` preserves the existing Google Maps host. Only the selected
@@ -640,6 +651,15 @@ error value. That value remains stable when the native node is reconciled again;
 it is not appended repeatedly. `onLoadStart`, `onLoad`, and `onLoadEnd` report the image lifecycle;
 `onError` receives `nativeEvent.error.message` for failures. Route teardown and
 node removal cancel outstanding downloads.
+
+Images also prefer the copy saved by `await craft.media.keep(url, { headers })`.
+Keep the original HTTPS URL as the image source, not the returned filesystem path.
+Both hosts decode the kept file off the UI thread before trying their image cache
+or the network, so private photos can display offline without a second request.
+Kept image bytes do not enter the public image cache. Clear kept media on sign-out
+and unmount private screens; clearing the files does not erase pixels already displayed.
+A corrupt kept image reports a load error rather than silently fetching it again.
+This does not enable arbitrary file URLs or picker paths as image sources.
 
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
 renders its children as native views. `scrollEnabled`, the platform scroll
@@ -1283,7 +1303,19 @@ if (craft.capabilities.badge) {
 }
 ```
 
-Storage is JSON-serializable and survives process termination. SQLite is stored
+Storage is JSON-serializable and survives process termination. A queued native
+Storage operation cancelled before it starts leaves the saved value unchanged
+and sends no completion. Cancelling an operation that has already started cannot
+undo its atomic commit. Android host disposal also stops queued storage work and
+pending completions; new calls to that closed host reject with `HOST_CLOSED`.
+iOS screen disposal cancels pending requests before controller deallocation and
+rejects later requests from that closed runtime. Flush a final checkpoint before
+disposing its screen or host.
+Individual storage operations are atomic. A sequence of reads and writes is not
+a transaction: use `setIfAbsent` or `compareAndSet` when sessions can compete for
+the same checkpoint, and handle a `false` result as a conflict.
+
+SQLite is stored
 in the app's persistent data directory and supports typed string, number,
 boolean, and null parameters. `execute` resolves to `{ rowsAffected,
 lastInsertId }`; transaction methods resolve to `true` on success. Local

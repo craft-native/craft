@@ -148,13 +148,15 @@ nativeTest('native visibility keeps a compact control and disables without a leg
     const before = await craft.menubar.getState();
     await craft.menubar.init({backend:'nativeVisibility'});
     const initialized = await craft.menubar.getState();
+    await craft.menubar.init({backend:'nativeVisibility',preserveSystemItems:false});
+    const configured = await craft.menubar.getState();
     await craft.menubar.collapse();
     await craft.menubar.expand();
     await new Promise(resolve => setTimeout(resolve, 100));
     const expanded = await craft.menubar.getState();
     await craft.menubar.destroy();
     const destroyed = await craft.menubar.getState();
-    await craft.fs.writeFile(${JSON.stringify(marker)}, JSON.stringify({before, initialized, expanded, destroyed}));
+    await craft.fs.writeFile(${JSON.stringify(marker)}, JSON.stringify({before, initialized, configured, expanded, destroyed}));
     craft.app.quit();
   })();</script>`
   const proc = Bun.spawn([process.env.CRAFT_NATIVE_TEST_BIN!, '--headless', '--system-tray', '--html', html], { stdout: 'ignore', stderr: 'pipe' })
@@ -165,11 +167,14 @@ nativeTest('native visibility keeps a compact control and disables without a leg
     const result = JSON.parse(await readFile(marker, 'utf8'))
     expect(result.before.initialized).toBe(false)
     expect(result.initialized.backend).toBe('nativeVisibility')
+    expect(result.initialized.preserveSystemItems).toBe(true)
+    expect(result.configured.preserveSystemItems).toBe(false)
     expect(typeof result.initialized.authorized).toBe('boolean')
     expect(typeof result.initialized.available).toBe('boolean')
     expect(result.initialized.initialized).toBe(result.initialized.available)
     expect(result.initialized.markerWidth).toBe(result.initialized.available ? 20 : 0)
     expect(result.expanded).toMatchObject({collapsed: false, busy: false, hiddenAppCount: 0})
+    expect(result.expanded.preserveSystemItems).toBe(false)
     expect(result.expanded.markerWidth).toBe(result.initialized.markerWidth)
     expect(result.destroyed.initialized).toBe(false)
     expect(result.destroyed.collapsed).toBe(false)
@@ -189,14 +194,16 @@ nativeTest('native visibility lifecycle rejects stale replies and restores icons
   try {
     const fixture = join(import.meta.dir, '../../../zig/test/menubar_visibility.m')
     const executable = join(dir, 'visibility-test')
-    const compile = Bun.spawnSync(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror', '-framework', 'Cocoa', '-framework', 'ApplicationServices', fixture, '-o', executable])
+    const compile = Bun.spawnSync(['xcrun', 'clang', '-fobjc-arc', '-fblocks', '-Wall', '-Wextra', '-Werror', '-framework', 'Cocoa', '-framework', 'ApplicationServices', '-framework', 'Security', fixture, '-o', executable])
     expect(compile.stderr.toString()).toBe('')
     expect(compile.exitCode).toBe(0)
-    const run = Bun.spawnSync([executable])
-    expect(run.exitCode).toBe(0)
+    const signed = Bun.spawnSync(['codesign', '--force', '--sign', '-', '--identifier', 'dev.craft.visibility.fixture.runtime', executable])
+    expect(signed.exitCode).toBe(0)
+    const run = Bun.spawnSync([executable], { timeout: 15000 })
+    expect(run.exitCode, `Native visibility fixture (${run.signalCode || 'normal exit'}):\n${run.stdout.toString()}\n${run.stderr.toString()}`).toBe(0)
     expect(run.stdout.toString()).toContain('permission revocation, errors, timeout and quit passed')
   }
   finally {
     await rm(dir, { recursive: true, force: true })
   }
-}, 20000)
+}, 30000)

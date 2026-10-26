@@ -5,7 +5,8 @@
  * across all platforms (macOS, Windows, Linux)
  */
 
-import { spawn } from 'child_process'
+import type { WindowOptions } from './types.js'
+import { spawn, spawnSync } from 'child_process'
 import { createHash } from 'crypto'
 import {
   chmodSync,
@@ -23,7 +24,7 @@ import {
   writeFileSync,
 } from 'fs'
 import { homedir } from 'os'
-import { basename, join, resolve } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import { deflateRawSync } from 'zlib'
 import { createTempDir, removeTempDir } from './temp-dir.js'
 
@@ -231,12 +232,25 @@ export interface PackageConfig {
     teamId?: string
 
     /**
+     * Native Craft provider for a server-backed app. Embeds a separately
+     * identified agent app so AppKit, Accessibility and MenuBarAgent resolve
+     * the GUI process to its own CFBundleExecutable.
+     */
+    nativeRuntimePath?: string
+
+    /** Window settings for Craft's sandboxed App Store UI host. The compiled
+     * binary becomes its inherited backend and implements the bundle protocol.
+     */
+    nativeWindow?: Pick<WindowOptions,
+      'width' | 'height' | 'x' | 'y' | 'headless' | 'systemTray' | 'keepRunning'
+      | 'hideDockIcon' | 'titlebarHidden' | 'frameless' | 'transparent'
+      | 'alwaysOnTop' | 'resizable' | 'darkMode' | 'trayPopover'>
+
+    /**
      * Extra executables copied into `Contents/MacOS/` beside the app binary.
      *
-     * A server-backed app (a Bun program driving a Craft webview, say) spawns a
-     * helper at runtime; bundle it here so the installed `.app` is
-     * self-contained. Resolve it relative to the running executable — on macOS
-     * the helper lands next to `process.execPath`.
+     * Use nativeRuntimePath for the GUI provider. This option is for non-GUI
+     * command line helpers, resolved beside process.execPath.
      */
     additionalExecutables?: string[]
 
@@ -376,6 +390,25 @@ export async function packageApp(config: PackageConfig): Promise<PackageResult[]
   return results
 }
 
+/** Select the public-only runtime shipped beside Pantry's direct runtime.
+ * App Store packaging fails closed if an older provider has no public build.
+ */
+export function macOSAppStoreRuntimePath(providerPath: string): string {
+  const providerName = basename(providerPath)
+  const storeName = providerName.startsWith('craft-webview') ? 'craft-webview-app-store' : 'craft-app-store'
+  const runtime = providerName === storeName ? providerPath : join(dirname(providerPath), storeName)
+  if (!existsSync(runtime))
+    throw new Error('App Store packaging requires Pantry’s craft-app-store runtime. Upgrade Craft with Pantry before building.')
+  const bytes = readFileSync(runtime)
+  const privateMarkers = ['MenuBarClientCore', 'MBAssessmentMode', 'developerExtrasEnabled', 'javaScriptCanAccessClipboard', 'drawsBackground']
+  if (privateMarkers.some(marker => bytes.includes(Buffer.from(marker))))
+    throw new Error('App Store packaging refused a runtime that includes private platform APIs.')
+  const probe = spawnSync(runtime, ['--distribution'], { encoding: 'utf8', timeout: 10_000 })
+  if (probe.status !== 0 || probe.stdout.trim() !== 'app-store')
+    throw new Error('App Store packaging refused a runtime that includes private platform APIs.')
+  return runtime
+}
+
 /**
  * Package for macOS (DMG + PKG)
  */
@@ -390,6 +423,16 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
 
   if (opts.appStore && (!opts.entitlements || !opts.provisioningProfile))
     return [{ success: false, platform: 'macos', format: 'app', error: 'App Store packaging requires macos.entitlements and macos.provisioningProfile' }]
+
+  let nativeRuntimePath = opts.nativeRuntimePath
+  if (opts.appStore && nativeRuntimePath) {
+    try {
+      nativeRuntimePath = macOSAppStoreRuntimePath(nativeRuntimePath)
+    }
+    catch (error) {
+      return [{ success: false, platform: 'macos', format: 'app', error: (error as Error).message }]
+    }
+  }
 
   // Create app bundle
   const appBundlePath = join(outDir, `${name}.app`)
@@ -408,6 +451,9 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
     iconPath: config.iconPath,
     provisioningProfile: opts.provisioningProfile,
     additionalExecutables: opts.additionalExecutables,
+    nativeRuntimePath,
+    nativeHost: opts.appStore === true && Boolean(nativeRuntimePath),
+    nativeWindow: opts.nativeWindow,
     outputPath: appBundlePath,
   })
 
@@ -424,6 +470,17 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
   // Apply distribution metadata to complete prebuilt bundles too, before signing.
   try {
     const contents = join(appBundlePath, 'Contents')
+    if (opts.appStore && opts.appBundlePath && existsSync(join(contents, 'Resources', 'craft.json'))) {
+      if (!nativeRuntimePath)
+        throw new Error('App Store packaging of a prebuilt Craft bundle requires macos.nativeRuntimePath from Pantry.')
+      const plist = join(contents, 'Info.plist')
+      const executable = spawnSync('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', plist], { encoding: 'utf8' })
+      const name = executable.stdout.trim()
+      if (executable.status !== 0 || !name || basename(name) !== name || name === '.' || name === '..')
+        throw new Error('Prebuilt Craft bundle has an invalid CFBundleExecutable')
+      copyFileSync(nativeRuntimePath, join(contents, 'MacOS', name))
+      chmodSync(join(contents, 'MacOS', name), 0o755)
+    }
     if (opts.provisioningProfile) {
       const profile = join(contents, 'embedded.provisionprofile')
       copyFileSync(opts.provisioningProfile, profile)
@@ -464,12 +521,34 @@ async function packageMacOS(config: PackageConfig, outDir: string): Promise<Pack
     return [{ success: false, platform: 'macos', format: 'app', error: (error as Error).message }]
   }
 
+  // Staple the app itself before copying it into any container. A ticket on
+  // the DMG alone is lost when an updater extracts the bundle for replacement.
+  if (opts.notarize && !opts.appStore) {
+    const notarized = await notarizeIfRequested(opts, appBundlePath, 'app')
+    results.push(...notarized)
+    if (notarized.some(result => !result.success)) return results
+  }
+
   results.push({ success: true, platform: 'macos', format: 'app', outputPath: appBundlePath })
 
   // Create DMG
   if (opts.dmg !== false) {
     const outputPath = join(outDir, `${name}-${version}.dmg`)
-    const dmgResult = await createDMG({ appBundlePath, outputPath, volumeName: name })
+    let dmgResult = await createDMG({ appBundlePath, outputPath, volumeName: name })
+    // The disk image is its own distribution artifact. Its signature must be
+    // present before notarization so Gatekeeper can assess the downloaded
+    // container independently of the signed application inside it.
+    if (dmgResult.success && opts.signIdentity) {
+      const signed = await runTool('codesign', codesignArguments({
+        path: outputPath, identity: opts.signIdentity, keychain: opts.signingKeychain,
+        hardenedRuntime: false, deep: false,
+      }))
+      const verified = signed.success
+        ? await runTool('codesign', ['--verify', '--strict', outputPath])
+        : signed
+      if (!verified.success)
+        dmgResult = { success: false, error: verified.error }
+    }
     results.push({
       success: dmgResult.success,
       platform: 'macos',
@@ -529,25 +608,40 @@ async function notarizeIfRequested(
     }]
   }
 
-  const submitted = await runTool('xcrun', notarytoolArguments({
-    artifactPath,
-    appleId: opts.appleId,
-    applePassword: opts.applePassword,
-    teamId: opts.teamId,
-    keychainProfile: opts.notaryKeychainProfile,
-    apiKey: opts.notaryApiKey,
-  }))
-  if (!submitted.success)
-    return [{ success: false, platform: 'macos', format: `${format} (notarize)`, error: submitted.error }]
+  // notarytool accepts archives, not a raw .app directory. Preserve the
+  // signed bundle with Apple's archive tool, then attach its returned ticket
+  // to the original bundle before it is distributed.
+  const scratch = format === 'app' ? createTempDir('craft-notarize-') : undefined
+  try {
+    const submission = scratch ? join(scratch, 'app.zip') : artifactPath
+    if (scratch) {
+      const zipped = await runTool('ditto', ['-c', '-k', '--keepParent', artifactPath, submission])
+      if (!zipped.success)
+        return [{ success: false, platform: 'macos', format: `${format} (notarize)`, error: zipped.error }]
+    }
+    const submitted = await runTool('xcrun', notarytoolArguments({
+      artifactPath: submission,
+      appleId: opts.appleId,
+      applePassword: opts.applePassword,
+      teamId: opts.teamId,
+      keychainProfile: opts.notaryKeychainProfile,
+      apiKey: opts.notaryApiKey,
+    }))
+    if (!submitted.success)
+      return [{ success: false, platform: 'macos', format: `${format} (notarize)`, error: submitted.error }]
 
-  const stapled = await runTool('xcrun', ['stapler', 'staple', artifactPath])
-  return [{
-    success: stapled.success,
-    platform: 'macos',
-    format: `${format} (notarize)`,
-    outputPath: stapled.success ? artifactPath : undefined,
-    error: stapled.success ? undefined : stapled.error,
-  }]
+    const stapled = await runTool('xcrun', ['stapler', 'staple', artifactPath])
+    return [{
+      success: stapled.success,
+      platform: 'macos',
+      format: `${format} (notarize)`,
+      outputPath: stapled.success ? artifactPath : undefined,
+      error: stapled.success ? undefined : stapled.error,
+    }]
+  }
+  finally {
+    if (scratch) removeTempDir(scratch)
+  }
 }
 
 /**
@@ -678,6 +772,8 @@ async function packageLinux(config: PackageConfig, outDir: string): Promise<Pack
 
 export interface MacOSBundleMetadata {
   name: string
+  /** Actual executable basename when it differs from the app's display name. */
+  executableName?: string
   version: string
   bundleId: string
   /** `CFBundleVersion`. Defaults to `version`. */
@@ -785,7 +881,7 @@ ${schemes.length ? `MimeType=${schemes.map(scheme => `x-scheme-handler/${scheme.
  */
 export function macOSInfoPlist(metadata: MacOSBundleMetadata): string {
   const entries: Array<[string, string | true]> = [
-    ['CFBundleExecutable', metadata.name],
+    ['CFBundleExecutable', metadata.executableName || metadata.name],
     ['CFBundleIdentifier', metadata.bundleId],
     ['CFBundleName', metadata.name],
     ['CFBundleShortVersionString', metadata.version],
@@ -954,6 +1050,11 @@ function copyMacOSAppBundle(source: string, destination: string): { success: boo
 /**
  * Helper: Create macOS app bundle
  */
+/** The native GUI agent's location, shared with desktop launchers. */
+export function macOSRuntimeExecutablePath(appBundlePath: string): string {
+  return join(appBundlePath, 'Contents', 'Helpers', 'CraftRuntime.app', 'Contents', 'MacOS', 'craft')
+}
+
 function createMacOSAppBundle(opts: MacOSBundleMetadata & {
   binaryPath: string
   /** Path to a `.icns` file copied into `Contents/Resources` */
@@ -962,6 +1063,9 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
   provisioningProfile?: string
   /** Extra executables copied beside the app binary in `Contents/MacOS/` */
   additionalExecutables?: string[]
+  nativeRuntimePath?: string
+  nativeHost?: boolean
+  nativeWindow?: NonNullable<PackageConfig['macos']>['nativeWindow']
   outputPath: string
 }): { success: boolean; error?: string } {
   try {
@@ -974,7 +1078,7 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
     mkdirSync(join(contents, 'Resources'), { recursive: true })
 
     // Copy binary
-    copyFileSync(binaryPath, join(macOS, name))
+    copyFileSync(opts.nativeHost ? opts.nativeRuntimePath! : binaryPath, join(macOS, name))
 
     // Make executable
     chmodSync(join(macOS, name), 0o755)
@@ -987,6 +1091,34 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
       const destination = join(macOS, basename(executable))
       copyFileSync(executable, destination)
       chmodSync(destination, 0o755)
+    }
+
+    if (opts.nativeHost) {
+      const backend = join(macOS, 'craft-backend')
+      copyFileSync(binaryPath, backend)
+      chmodSync(backend, 0o755)
+      writeFileSync(join(contents, 'Resources', 'craft.json'), `${JSON.stringify({
+        title: name, appName: name, ...opts.nativeWindow,
+        backend: { executable: 'craft-backend' },
+      }, null, 2)}\n`)
+    }
+    else if (opts.nativeRuntimePath) {
+      const helper = macOSRuntimeExecutablePath(outputPath)
+      const helperContents = resolve(helper, '..', '..')
+      mkdirSync(join(helperContents, 'MacOS'), { recursive: true })
+      copyFileSync(opts.nativeRuntimePath, helper)
+      chmodSync(helper, 0o755)
+      if (iconPath) {
+        mkdirSync(join(helperContents, 'Resources'), { recursive: true })
+        copyFileSync(iconPath, join(helperContents, 'Resources', 'icon.icns'))
+      }
+      // Keep permission prompts recognizable as the enclosing application.
+      writeFileSync(join(helperContents, 'Info.plist'), macOSInfoPlist({
+        name, executableName: 'craft', version: opts.version,
+        bundleId: `${opts.bundleId}.runtime`, buildNumber: opts.buildNumber,
+        minimumSystemVersion: opts.minimumSystemVersion, menuBarOnly: true,
+        iconName: iconPath ? 'icon' : undefined,
+      }))
     }
 
     // Copy the icon into Resources so CFBundleIconFile resolves

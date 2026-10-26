@@ -19,13 +19,19 @@ final class HybridNavigationUnitTests: XCTestCase {
         let ready = await wait(timeout: 120) {
             hybrid.pageReady && hybrid.controller != nil && !CraftChrome.shared.splashVisible
         }
-        XCTAssertTrue(ready, "the real fixture page must load before navigation")
+        guard ready else {
+            XCTFail("the real fixture page must load before navigation: pageReady=\(hybrid.pageReady), pagePath=\(String(describing: hybrid.pagePath)), splashVisible=\(CraftChrome.shared.splashVisible), URL=\(String(describing: hybrid.webView?.url)), loading=\(String(describing: hybrid.webView?.isLoading))")
+            return
+        }
         let controller = try XCTUnwrap(hybrid.controller)
         let nav = try XCTUnwrap(controller.children.compactMap { $0 as? UINavigationController }.first)
         let source = try XCTUnwrap(nav.topViewController as? CraftHybridWebSlot)
         let webView = try XCTUnwrap(hybrid.webView)
         let settled = await wait { hybrid.pagePath == "/" && nav.transitionCoordinator == nil }
-        XCTAssertTrue(settled)
+        guard settled else {
+            XCTFail("the initial fixture route must settle before navigation")
+            return
+        }
         // Hold the real fixture router, so observing the pending native slot
         // does not race its 650ms timer on a busy simulator.
         _ = try await webView.evaluateJavaScript("window.hybridFixture.holdArrival = true")

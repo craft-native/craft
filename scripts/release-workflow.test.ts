@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { requiredReleaseAssets } from './release-manifest'
 import { createTempDir, removeAllTempDirs } from '../packages/typescript/src/temp-dir'
-import { nativeNavigationResultBundle } from '../packages/ios/scripts/native-navigation-result'
+import { nativeTestResultBundle } from '../packages/ios/scripts/native-test-result'
 
 // Every scratch directory this file made goes when the file is done (#357).
 afterAll(removeAllTempDirs)
@@ -15,13 +15,36 @@ type Job = {
   if?: string
   uses?: string
   with?: { enforce_high?: boolean, 'release-draft'?: string, release?: string, version?: string }
-  steps?: { name?: string, run?: string, uses?: string, 'working-directory'?: string, env?: Record<string, string>, with?: { 'version'?: string, 'bun-version'?: string, 'publish'?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
+  steps?: { name?: string, if?: string, run?: string, uses?: string, 'working-directory'?: string, env?: Record<string, string>, with?: { 'version'?: string, 'bun-version'?: string, 'publish'?: string, 'release-draft'?: string, release?: string, 'package-dir'?: string, install?: string } }[]
   strategy?: { 'fail-fast'?: boolean, matrix: { platform: { name: string, os: string }[] } }
 }
 const release = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/release.yml'), 'utf8')) as { jobs: Record<string, Job> }
 const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093'
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
+
+test('release rehearsals include the actual host-neutral native CI contract', () => {
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const contract = ci.jobs.lint.steps?.find(step => step.name === 'Test host-neutral native renderer contract')?.run
+  expect(contract).toBeDefined()
+  const invocation = contract?.match(/^bun test (\.\/scripts\/[\w-]+\.test\.ts)$/)
+  expect(invocation).not.toBeNull()
+  const manifest = JSON.parse(readFileSync(join(import.meta.dir, '../package.json'), 'utf8'))
+  expect(manifest.scripts['test:release'].split(/\s+/)).toContain(invocation![1])
+})
+
+test('Win32 Vulkan publication requires native command ownership and displayed scene acceptance', () => {
+  const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job & { 'runs-on'?: string, 'continue-on-error'?: boolean }> }
+  const job = ci.jobs['windows-native-vulkan']
+  expect(job['runs-on']).toBe('windows-2025')
+  expect(job['continue-on-error']).not.toBe(true)
+  expect(steps(job)).toContain('zig cc -target x86_64-windows-gnu -O2 -municode scripts/native/windows-command-owner.c')
+  expect(steps(job)).toContain('bun test ./scripts/native/windows-command.test.ts')
+  expect(steps(job)).toContain('bun scripts/test-vulkan-surface-windows.ts --owner')
+  expect(needs(ci.jobs['publish-commit'])).toContain('windows-native-vulkan')
+  const evidence = job.steps?.find(step => step.name === 'Retain native Win32 Vulkan display evidence')
+  expect(evidence?.if).toBe('always()')
+})
 
 test('the Vulkan ABI matrix requires managed Git on every platform and still runs the exact compiler probe', () => {
   const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as any
@@ -36,10 +59,10 @@ test('the Vulkan ABI matrix requires managed Git on every platform and still run
   expect(job.steps.find((step: any) => step.name === 'Install the pinned ABI toolchain').with.packages).toBe('${{ matrix.tools }}')
   expect(steps(job)).toContain('zig build test:vulkan-abi')
   expect(steps(job)).toContain('bun scripts/managed-git.ts --verify')
-  expect(job.steps.find((step: any) => step.name === 'First-party Zig dependencies').with['git-executable']).toBe('${{ steps.managed-git.outputs.executable }}')
   const dependencies = readFileSync(join(import.meta.dir, '../.github/actions/first-party-zig-deps/action.yml'), 'utf8')
-  expect(dependencies).toContain('"$CRAFT_DEPENDENCY_GIT" -C')
+  expect(dependencies).toContain('bun scripts/zig.ts --core build --fetch')
   expect(dependencies).not.toContain('git -C')
+  expect(steps(job)).toContain('bun scripts/verify-zig-package-consumer.ts')
   const checkout = job.steps.find((step: any) => step.name === 'Check out the exact Khronos SDK headers').run
   expect(checkout).toContain('bun scripts/managed-git.ts -C .zig-cache/vulkan-headers fetch --depth 1 origin 6802bb4733b63ed5efd3adb308a6c885ef180ea1')
   expect(checkout).toContain('bun scripts/managed-git.ts -C .zig-cache/vulkan-headers checkout --detach FETCH_HEAD')
@@ -96,11 +119,11 @@ test.each(['microphone', 'location', 'kTCCServiceSpeechRecognition'])('the Zig s
   expect(result.stdout.toString()).not.toContain('launched app')
 })
 
-test('interrupted native navigation results survive temporary workspace cleanup', () => {
+test.each(['navigation', 'uikit'])('interrupted %s results survive temporary workspace cleanup', (suite) => {
   const workspace = createTempDir('craft-navigation-work-')
   const evidence = createTempDir('craft-navigation-evidence-')
-  const destination = join(evidence, 'ios-native', 'navigation.xcresult')
-  const actual = nativeNavigationResultBundle(workspace, destination)
+  const destination = join(evidence, 'ios-native', `${suite}.xcresult`)
+  const actual = nativeTestResultBundle(workspace, destination)
   expect(existsSync(actual)).toBe(false)
   mkdirSync(actual)
   writeFileSync(join(actual, 'progress.log'), 'unfinished XCTest evidence')
@@ -189,6 +212,42 @@ test('native iOS suites and protocol checks have independent required jobs', () 
     expect(workflow.jobs[name].env?.DEVELOPER_DIR).toBe('/Applications/Xcode_26.2.app/Contents/Developer')
 })
 
+test('focused native diagnostics retain their service gates and complete releases retain every required leg', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as {
+    on: { workflow_dispatch: { inputs: { scope: { options: string[] } } } }
+    jobs: Record<string, Job>
+  }
+  expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-hybrid')
+  expect(workflow.on.workflow_dispatch.inputs.scope.options).toContain('ios-checkpoints')
+  const legs = ['media-cache', 'harness', 'ios-native', 'ios-metal', 'ios-hybrid', 'ios-simulator', 'android-emulator', 'ios-zig-slice', 'android-navigation']
+  const evaluate = (expression: string | undefined, scope: string, outcomes: Record<string, string> = {}) => expression === undefined || runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, '').replace(/\bneeds\.([\w-]+)\.result/g, 'needs["$1"].result'), {
+    inputs: { scope },
+    needs: Object.fromEntries(legs.map(name => [name, { result: outcomes[name] ?? 'success' }])),
+    fromJSON: JSON.parse,
+    contains: (values: string[], value: string) => values.includes(value),
+  }, { timeout: 100 })
+  const reject = workflow.jobs['mobile-summary'].steps?.find(step => step.name === 'Fail if any leg failed')?.if
+  expect(reject).toBeDefined()
+  for (const scope of ['', 'all']) {
+    expect(legs.filter(name => evaluate(workflow.jobs[name].if, scope))).toEqual(legs)
+    for (const name of legs) {
+      expect(evaluate(reject, scope, { [name]: 'failure' })).toBe(true)
+      expect(evaluate(reject, scope, { [name]: 'skipped' })).toBe(true)
+    }
+    expect(evaluate(reject, scope)).toBe(false)
+  }
+  for (const [scope, service] of [['ios-hybrid', 'ios-hybrid'], ['ios-checkpoints', 'ios-native']]) {
+    const selected = ['harness', service]
+    expect(legs.filter(name => evaluate(workflow.jobs[name].if, scope))).toEqual(selected)
+    const skipped = Object.fromEntries(legs.filter(name => !selected.includes(name)).map(name => [name, 'skipped']))
+    expect(evaluate(reject, scope, skipped)).toBe(false)
+    for (const name of selected) {
+      expect(evaluate(reject, scope, { ...skipped, [name]: 'failure' })).toBe(true)
+      expect(evaluate(reject, scope, { ...skipped, [name]: 'skipped' })).toBe(true)
+    }
+  }
+})
+
 test('navigation shards retain both complete XCTest targets and focused selection', () => {
   const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
   const native = workflow.jobs['ios-native']
@@ -202,6 +261,9 @@ test('navigation shards retain both complete XCTest targets and focused selectio
     expect(evaluate(expression, scope)).toEqual(['uikit', 'navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
   expect(evaluate(expression, 'ios-navigation')).toEqual(['navigation-unit', 'navigation-ui-core', 'navigation-ui-controls'])
   expect(evaluate(expression, 'ios-render')).toEqual(['uikit'])
+  expect(evaluate(expression, 'ios-checkpoints')).toEqual(['uikit'])
+  const uikit = native.steps!.find(step => step.name === 'Test native UIKit reconciliation')!
+  expect(evaluate(uikit.env!.CRAFT_ONLY_TESTING, 'ios-checkpoints')).toBe('NativeRenderUnitTests/PersistentRecordingCheckpointUnitTests')
   const focused = 'NativeNavigationUITests/NativeNavigationUITests/testMultilineInputKeepsKeyboardFocusWhenTapped'
   expect(evaluate(expression, 'ios-navigation', focused)).toEqual(['navigation'])
   expect(evaluate(navigation!.env!.CRAFT_ONLY_TESTING, 'all', '', 'navigation-unit')).toBe('NativeNavigationUnitTests')
@@ -216,6 +278,20 @@ test('navigation shards retain both complete XCTest targets and focused selectio
   expect(evaluate(navigation!.if!, 'all', '', 'uikit')).toBe(false)
   expect(native.strategy?.['fail-fast']).toBe(false)
   expect(workflow.jobs['mobile-summary'].steps?.find(step => step.name === 'Fail if any leg failed')?.if).toContain('needs.ios-native.result')
+})
+
+test('native teardown diagnostics require both Android APIs and keep queued cancellation coverage', () => {
+  const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/mobile-e2e.yml'), 'utf8')) as { jobs: Record<string, Job> }
+  const job = workflow.jobs['android-navigation']!
+  const api = (job.strategy!.matrix as unknown as Record<string, string>)['api-level']!
+  const evaluate = (expression: string, scope: string, android_suite: string) => runInNewContext(expression.replace(/^\$\{\{\s*|\s*\}\}$/g, ''), { inputs: { scope, android_suite }, fromJSON: JSON.parse }, { timeout: 100 })
+  expect(evaluate(api, 'android-navigation', 'teardown')).toEqual([34, 35])
+  expect(evaluate(job.env!.CRAFT_ANDROID_TEST_CLASS!, 'android-navigation', 'teardown')).toBe('dev.craft.navigationtest.NativeCapabilitiesTest,dev.craft.navigationtest.NativeNavigationTest#nativeTeardownRecordsSynchronousStorageBeforeReturning')
+  for (const scope of ['', 'all']) {
+    expect(evaluate(api, scope, '')).toEqual([34, 35])
+    expect(evaluate(job.env!.CRAFT_ANDROID_TEST_CLASS!, scope, '')).toBe('')
+    expect(evaluate(job.env!.CRAFT_ANDROID_NATIVE_SUITE!, scope, '')).toBe('full')
+  }
 })
 
 test('mobile device jobs preserve runner diagnostics when the harness fails', () => {
@@ -248,14 +324,14 @@ test('workflow setup uses a known Pantry CLI instead of resolving latest', () =>
           // qualified provider. An older fixture pin hit PathAlreadyExists
           // while reconciling a restored Git cache and blocked v0.0.302.
           const version = ['ci.yml', 'release.yml', 'mobile-e2e.yml', 'windows-managed-git.yml'].includes(file)
-            ? '0.11.119'
+            ? '0.11.120'
             : file === 'windows-source-provenance.yml' || (file === 'ci.yml' && name === 'windows-multi-window')
               ? '0.11.109'
               : ['benchmarks.yml', 'binary-size.yml'].includes(file)
                 ? '0.11.106'
                 : '0.11.101'
-          const source = version === '0.11.119'
-            ? '6fbf7259c2764d18a12d915bf8bc68c500cb4931'
+          const source = version === '0.11.120'
+            ? '3de609e1a7e305393b3d94e2848d859b39c5b5de'
             : version === '0.11.109'
               ? 'd160044a6fe4ad7e8463828f80dfbc55bcdc07d9'
               : version === '0.11.106'
@@ -481,7 +557,7 @@ test('a failed native leg cannot publish a partial GitHub, Zig, or npm release',
   expect(release.jobs.npm.if).toContain("needs.prepare-npm.result == 'success'")
   expect(release.jobs.npm.if).toContain("needs.publish-release.result == 'success'")
   const zigPublish = registry.steps!.find(step => step.name === 'Publish Zig package')
-  expect(zigPublish?.with).toMatchObject({ version: '0.11.119', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
+  expect(zigPublish?.with).toMatchObject({ version: '0.11.120', install: 'false', publish: 'zig', 'package-dir': 'packages/zig' })
   expect(zigPublish?.with?.release).toBeUndefined()
   expect(Object.entries(release.jobs).flatMap(([name, job]) =>
     (job.steps ?? []).filter(step => step.with?.publish === 'zig').map(() => name))).toEqual(['publish-pantry'])
@@ -666,7 +742,7 @@ test('every run script in every workflow is valid bash', async () => {
   }
   // Parse each snippet independently. Bounded parallel processes avoid a
   // growing serial spawn cost without letting scripts balance each other's
-  // syntax, changing the timeout, or leaving children running after a failure.
+  // syntax. The integration budget covers all process startups on a cold host.
   for (let index = 0; index < checks.length; index += 4) {
     const results = await Promise.all(checks.slice(index, index + 4).map(async ({ script, label }) => {
       const check = Bun.spawn(['bash', '-n'], { stdin: new TextEncoder().encode(script), stdout: 'ignore', stderr: 'pipe' })
@@ -678,7 +754,7 @@ test('every run script in every workflow is valid bash', async () => {
       expect(code, label).toBe(0)
     }
   }
-})
+}, 30000)
 
 test('Linux and Windows release binaries target a baseline CPU, not the build runner', () => {
   // A host build compiles for the runner's own CPU; the published binary then
@@ -700,4 +776,17 @@ test('every descendant of a reused suite has explicit, fail-closed status gating
     for (const parent of needs(job).filter(parent => !parent.endsWith('-suite')))
       expect(job.if, `${name} must reject a failed ${parent}`).toContain(`needs.${parent}.result == 'success'`)
   }
+})
+
+
+test('macOS publishes, signs and verifies both webview distribution variants from the tagged source', () => {
+  const commands = steps(release.jobs.pantry)
+  expect(commands).toContain('-Djs-runtime=false -Dprivate-apis="$PRIVATE_APIS"')
+  for (const name of ['craft-webview', 'craft-webview-app-store']) {
+    expect(commands).toContain(`packages/zig/zig-out/bin/${name}`)
+    expect(commands).toContain(`packages/zig/zig-out/cross/darwin-x64/${name}`)
+  }
+  expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview:arm64-webview"')
+  expect(commands).toContain('"packages/zig/zig-out/bin/craft-webview-app-store:arm64-webview-app-store"')
+  expect(steps(release.jobs['verify-macos-downloads'])).toContain('for RUNTIME in craft craft-app-store craft-webview craft-webview-app-store')
 })

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'bun:test'
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { macOSRuntimeExecutablePath, packageApp } from '../package'
 
 // Opt-in real private-API acceptance on macOS 27 with existing Accessibility
 // authorization. CI's default native tests cover unavailability and cancellation
@@ -10,7 +11,7 @@ import { join } from 'node:path'
 const nativeVisibilityTest = process.platform === 'darwin'
   && process.env.CRAFT_NATIVE_TEST_BIN && process.env.CRAFT_NATIVE_VISIBILITY_E2E === '1' ? test : test.skip
 
-nativeVisibilityTest('packaged native visibility hides a group and releases its real macOS assertion', async () => {
+nativeVisibilityTest('packaged native visibility preserves other icons or releases its macOS assertion', async () => {
   const runtime = process.env.CRAFT_NATIVE_TEST_BIN!
   const dir = await mkdtemp(join(tmpdir(), 'craft-visibility-packaged-'))
   const stages: Record<string, any> = {}
@@ -31,6 +32,7 @@ nativeVisibilityTest('packaged native visibility hides a group and releases its 
       await craft.timers.sleep(100);
     }
     await fetch('/stage/collapsed',{method:'POST',body:JSON.stringify(collapsed)});
+    await fetch('/stage/controller',{method:'POST',body:JSON.stringify(await craft.tray.getState())});
     await craft.menubar.expand();
     await fetch('/stage/expanded',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
     await craft.menubar.destroy();
@@ -55,14 +57,13 @@ nativeVisibilityTest('packaged native visibility hides a group and releases its 
     for (const proc of processes) if (proc.exitCode === null) proc.kill('SIGTERM')
   }, 35000)
   async function bundle(name:string) {
-    const app = join(dir, `${name}.app`), macos = join(app,'Contents/MacOS')
-    await mkdir(macos,{recursive:true})
-    await copyFile(runtime,join(macos,'craft'))
     const id = `org.craft-native.visibility-e2e.${name.toLowerCase()}.${process.pid}`
-    await writeFile(join(app,'Contents/Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>craft</string><key>CFBundleIdentifier</key><string>${id}</string><key>CFBundleName</key><string>${name}</string><key>CFBundlePackageType</key><string>APPL</string><key>LSUIElement</key><true/></dict></plist>`)
-    const signed = Bun.spawnSync(['codesign','--force','--sign','-','--identifier',id,app])
-    assert.equal(signed.exitCode,0,signed.stderr.toString())
-    const proc = Bun.spawn([join(macos,'craft'),'--headless','--system-tray','--title',name,'--url',`http://127.0.0.1:${server.port}/${name === 'Target' ? 'target' : ''}`],{stdout:'ignore',stderr:'pipe'})
+    const result = await packageApp({
+      name, version:'1.0.0', bundleId:id, binaryPath:'/usr/bin/true', outDir:dir, platforms:['macos'],
+      macos:{nativeRuntimePath:runtime,dmg:false,signIdentity:'-'},
+    })
+    assert.equal(result[0].success,true,result[0].error)
+    const proc = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--title',name,'--url',`http://127.0.0.1:${server.port}/${name === 'Target' ? 'target' : ''}`],{stdout:'ignore',stderr:'pipe'})
     processes.push(proc)
     logs.push(new Response(proc.stderr).text())
     return proc
@@ -83,10 +84,19 @@ nativeVisibilityTest('packaged native visibility hides a group and releases its 
     assert.equal(initialized.markerWidth,20)
     await bundle('Target')
     const collapsed = await until('collapsed')
-    assert.equal(collapsed.error,null,JSON.stringify(collapsed))
-    assert.equal(collapsed.collapsed,true)
-    assert(collapsed.hiddenAppCount >= 1,JSON.stringify(collapsed))
+    // AppKit owns placement; newly created agent icons may land on either side
+    // of the control. Never move real user icons or assume a nonempty group.
+    if (collapsed.hiddenAppCount === 0) {
+      assert(['emptyGroup','visibilityMismatch'].includes(collapsed.error),JSON.stringify(collapsed))
+      assert.equal(collapsed.collapsed,false)
+    }
+    else {
+      assert.equal(collapsed.error,null,JSON.stringify(collapsed))
+      assert.equal(collapsed.collapsed,true)
+    }
     assert.equal(collapsed.markerWidth,20)
+    const ownTray = await until('controller')
+    assert.equal(ownTray.visible,true,'The controller must remain visible while its group is hidden')
     const expanded = await until('expanded')
     assert.equal(expanded.collapsed,false)
     assert.equal(expanded.hiddenAppCount,0)

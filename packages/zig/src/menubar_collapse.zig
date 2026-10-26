@@ -116,7 +116,7 @@ fn getSystemStatusBar() objc.id {
 
 const visibility = struct {
     extern fn craft_menubar_visibility_available() bool;
-    extern fn craft_menubar_visibility_init(item: objc.id, changed: *const fn () callconv(.c) void) void;
+    extern fn craft_menubar_visibility_init(item: objc.id, changed: *const fn () callconv(.c) void, preserve_system_items: bool) void;
     extern fn craft_menubar_visibility_collapse() void;
     extern fn craft_menubar_visibility_expand() void;
     extern fn craft_menubar_visibility_cleanup() void;
@@ -358,17 +358,16 @@ pub fn init() void {
 }
 
 /// Explicit opt-in. Failure never selects the legacy width-based backend.
-pub fn initNativeVisibility() void {
+pub fn initNativeVisibility(preserve_system_items: bool) void {
     if (builtin.target.os.tag != .macos) return;
     if (is_initialized) {
-        if (native_visibility) return;
         destroy();
     }
     native_visibility = true;
-    visibility.craft_menubar_visibility_init(null, &visibilityChanged);
+    visibility.craft_menubar_visibility_init(null, &visibilityChanged, preserve_system_items);
     if (!visibility.craft_menubar_visibility_available()) return;
     init();
-    visibility.craft_menubar_visibility_init(separator_item, &visibilityChanged);
+    visibility.craft_menubar_visibility_init(separator_item, &visibilityChanged, preserve_system_items);
     drawMarker(separator_item, false);
 }
 
@@ -587,9 +586,10 @@ fn drawMarker(item: objc.id, widened: bool) void {
     if (item == null) return;
     const button = msgSend0(item, "button");
     if (button == null) return;
-    const label = if (widened) "Show menu bar items" else "Hide menu bar items";
+    const pending = native_visibility and visibility.craft_menubar_visibility_busy();
+    const label = if (pending) "Cancel hiding menu bar items" else if (widened) "Show menu bar items" else "Hide menu bar items";
     msgSendVoid1(button, "setAlignment:", NSTextAlignmentRight);
-    msgSendVoid1(button, "setTitle:", createNSString(if (widened) "›" else if (native_visibility) "‹" else if (separator_hidden) "" else MARKER_GLYPH));
+    msgSendVoid1(button, "setTitle:", createNSString(if (pending) "…" else if (widened) "›" else if (native_visibility) "‹" else if (separator_hidden) "" else MARKER_GLYPH));
     msgSendVoid1(button, "setToolTip:", createNSString(label));
     msgSendVoid1(button, "setAccessibilityLabel:", createNSString(label));
     clearHighlight(button);
