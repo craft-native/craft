@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.355...v0.0.356)
+
+## 🐛 Bug Fixes
+
+- apply live Android status bar properties ([3cb92a3](https://github.com/craft-native/craft/commit/3cb92a3)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- exercise live Android status bar contrast on device ([e1f3cdc](https://github.com/craft-native/craft/commit/e1f3cdc)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.354...v0.0.355)
 
 ## 🐛 Bug Fixes
