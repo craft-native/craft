@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.351...v0.0.352)
+
+## 🐛 Bug Fixes
+
+- keep Android screen roots sized to their viewport ([9fff34b](https://github.com/craft-native/craft/commit/9fff34b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.350...v0.0.351)
 
 ## 🐛 Bug Fixes
