@@ -412,7 +412,9 @@ class CraftEventManager {
     /// The app script's delivery, once its bundle has run.
     private var appScriptSink: ((String, [String: Any]) -> Void)?
 
-    private init() {}
+    // Internal construction also allows isolated event-delivery tests without
+    // replacing the running app's singleton listener.
+    init() {}
 
     func setWebView(_ webView: WKWebView) {
         self.webView = webView

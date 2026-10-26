@@ -6742,34 +6742,35 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     if (runtimeCallback) runtimeCallback(raw);
                 };
                 var nextRequest = 0;
-                function request(method, args) {
+                function request(module, method, args, untimed) {
                     return new Promise(function(resolve, reject) {
-                        var id = 'craft-dialog-' + (++nextRequest);
+                        var id = 'craft-host-' + (++nextRequest);
                         var remove = bridge.addMessageListener(function(raw) {
                             var message;
                             try { message = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (error) { return; }
                             var payload = message && message.payload;
                             if (!payload || payload.requestId !== id) return;
+                            if (message.type !== 'API_ERROR' && message.type !== 'API_RESPONSE') return;
                             remove();
                             if (message.type === 'API_ERROR') {
-                                var failure = new Error(payload.message || 'Native dialog failed');
+                                var failure = new Error(payload.message || 'Native capability failed');
                                 failure.code = payload.code || 'NATIVE_CALL_FAILED';
                                 reject(failure);
                             } else if (message.type === 'API_RESPONSE') {
                                 resolve(payload.data === undefined ? null : payload.data);
                             }
                         });
-                        bridge.postMessage(JSON.stringify({
+                        try { bridge.postMessage(JSON.stringify({
                             type: 'API_REQUEST',
                             id: id,
                             payload: {
                                 version: bridge.capabilityProtocolVersion || 1,
-                                module: 'Dialog',
+                                module: module,
                                 method: method,
                                 args: args,
-                                untimed: true
+                                untimed: untimed === true
                             }
-                        }));
+                        })); } catch (error) { remove(); reject(error); }
                     });
                 }
                 // Native capability ownership wins over any browser-shaped
@@ -6780,10 +6781,28 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                     var craft = globalThis.craft = globalThis.craft || {};
                     if (Array.isArray(bridge.capabilities) && bridge.capabilities.indexOf('dialog') >= 0) {
                         craft.dialog = {
-                            alert: function(options) { return request('alert', [options || {}]).then(function() {}); },
-                            confirm: function(options) { return request('confirm', [options || {}]).then(Boolean); },
-                            actionSheet: function(options) { return request('actionSheet', [options || {}]).then(function(id) { return typeof id === 'string' ? id : null; }); }
+                            alert: function(options) { return request('Dialog', 'alert', [options || {}], true).then(function() {}); },
+                            confirm: function(options) { return request('Dialog', 'confirm', [options || {}], true).then(Boolean); },
+                            actionSheet: function(options) { return request('Dialog', 'actionSheet', [options || {}], true).then(function(id) { return typeof id === 'string' ? id : null; }); }
                         };
+                    }
+                    if (Array.isArray(bridge.capabilities) && bridge.capabilities.indexOf('shortcuts') >= 0) {
+                        var shortcuts = {
+                            set: function(items) { return request('Shortcuts', 'set', [items]); },
+                            clear: function() { return request('Shortcuts', 'clear', []); }
+                        };
+                        // An older STX bundle may install a browser-only
+                        // namespace. Preserve extras, but keep set/clear native.
+                        Object.defineProperty(craft, 'shortcuts', {
+                            configurable: true, enumerable: true,
+                            get: function() { return shortcuts; },
+                            set: function(value) {
+                                if (!value || typeof value !== 'object') return;
+                                value.set = shortcuts.set;
+                                value.clear = shortcuts.clear;
+                                shortcuts = value;
+                            }
+                        });
                     }
                 }
                 globalThis.__craftInstallNativeDialog = installNativeDialog;

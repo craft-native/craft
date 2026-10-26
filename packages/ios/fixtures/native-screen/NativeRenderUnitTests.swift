@@ -5,6 +5,141 @@ import CoreLocation
 import XCTest
 @testable import NativeRender
 
+@MainActor
+final class NativeShortcutsUnitTests: XCTestCase {
+    private var previous: [UIApplicationShortcutItem]?
+
+    override func setUp() {
+        super.setUp()
+        previous = UIApplication.shared.shortcutItems
+    }
+
+    override func tearDown() {
+        UIApplication.shared.shortcutItems = previous
+        super.tearDown()
+    }
+
+    private func call(_ method: String, _ args: [Any] = []) async -> Result<Any, CraftNativeActionError> {
+        await withCheckedContinuation { continuation in
+            CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion,
+                module: "Shortcuts", method: method, args: args, config: CraftConfig()) {
+                continuation.resume(returning: $0)
+            }
+        }
+    }
+
+    func testRegistersReplacesAndClearsTheActualUIKitMenu() async throws {
+        XCTAssertTrue(CraftNativeActions.capabilities(config: CraftConfig()).contains("shortcuts"))
+        let items: [[String: Any]] = [
+            ["type": "saved", "title": "Saved trails", "subtitle": "Your places", "iconName": "heart.fill",
+             "userInfo": ["url": "craft-fixture://saved", "flags": [true, false], "meta": ["count": 2]]],
+            ["type": "record", "title": "Record"],
+        ]
+        guard case .success(let result) = await call("set", [items]) else { return XCTFail("set failed") }
+        XCTAssertEqual((result as? [String: Int])?["count"], 2)
+        let menu = try XCTUnwrap(UIApplication.shared.shortcutItems)
+        XCTAssertEqual(menu.map(\.type), ["saved", "record"])
+        XCTAssertEqual(menu[0].localizedSubtitle, "Your places")
+        XCTAssertNotNil(menu[0].icon)
+        XCTAssertEqual(menu[0].userInfo?["url"] as? String, "craft-fixture://saved")
+        XCTAssertEqual((menu[0].userInfo?["meta"] as? [String: Int])?["count"], 2)
+        guard case .success = await call("set", [[items[1]]]) else { return XCTFail("replace failed") }
+        XCTAssertEqual(UIApplication.shared.shortcutItems?.map(\.type), ["record"])
+        guard case .success(let cleared) = await call("clear") else { return XCTFail("clear failed") }
+        XCTAssertEqual(cleared as? Bool, true)
+        XCTAssertTrue(UIApplication.shared.shortcutItems?.isEmpty ?? true)
+        guard case .success(let empty) = await call("set", [[] as [[String: Any]]]) else { return XCTFail("empty set failed") }
+        XCTAssertEqual((empty as? [String: Int])?["count"], 0)
+        let four = (0..<4).map { ["type": "item-\($0)", "title": "Item \($0)"] }
+        guard case .success = await call("set", [four]) else { return XCTFail("four items failed") }
+        XCTAssertEqual(UIApplication.shared.shortcutItems?.count, 4)
+    }
+
+    func testInvalidListsRejectAtomicallyWithoutRemovingTheExistingMenu() async {
+        let valid: [String: Any] = ["type": "saved", "title": "Saved"]
+        _ = await call("set", [[valid]])
+        let invalid: [[Any]] = [
+            [], [NSNull()], ["not a list"], [[valid], "extra"],
+            [[valid, valid]], [Array(repeating: valid, count: 5)],
+            [[["type": " ", "title": "Name"]]], [[["type": "new", "title": "\n"]]],
+            [[valid, ["type": "bad", "title": 7]]],
+            [[["type": "bad", "title": "Bad", "subtitle": 7]]],
+            [[["type": "bad", "title": "Bad", "iconName": NSNull()]]],
+            [[["type": "bad", "title": "Bad", "userInfo": ["nested": [NSNull()]]]]],
+        ]
+        for args in invalid {
+            guard case .failure(let error) = await call("set", args) else {
+                XCTFail("accepted invalid arguments: \(args)"); continue
+            }
+            XCTAssertEqual(error.code, "INVALID_ARGUMENT")
+            XCTAssertEqual(UIApplication.shared.shortcutItems?.map(\.type), ["saved"])
+        }
+        guard case .failure(let error) = await call("clear", [true]) else { return XCTFail("clear accepted arguments") }
+        XCTAssertEqual(error.code, "INVALID_ARGUMENT")
+        guard case .failure(let unknown) = await call("unknown") else { return XCTFail("accepted unknown method") }
+        XCTAssertEqual(unknown.code, "UNSUPPORTED_METHOD")
+        XCTAssertEqual(UIApplication.shared.shortcutItems?.map(\.type), ["saved"])
+    }
+
+    func testCancelledQueuedCallsCannotReplaceOrClearTheAppMenu() async {
+        _ = await call("set", [[["type": "saved", "title": "Saved"]]])
+        for method in ["set", "clear"] {
+            let token = UUID().uuidString
+            let response = expectation(description: "cancelled shortcut response")
+            response.isInverted = true
+            CraftNativeActions.perform(requestToken: token, version: craftNativeCapabilityProtocolVersion,
+                module: "Shortcuts", method: method,
+                args: method == "set" ? [[["type": "new", "title": "New"]]] : [], config: CraftConfig()) { _ in response.fulfill() }
+            CraftNativeActions.cancel(requestToken: token)
+            await fulfillment(of: [response], timeout: 0.1)
+            XCTAssertEqual(UIApplication.shared.shortcutItems?.map(\.type), ["saved"])
+        }
+    }
+
+    func testScreenAndAppScriptKeepNativeMethodsAfterAnOlderBundleReplacesTheNamespace() async throws {
+        for appScript in [false, true] {
+            let screen = CraftNativeScreenController(config: CraftConfig(), isAppScript: appScript)
+            screen.loadViewIfNeeded()
+            defer { screen.viewDidDisappear(false) }
+            screen.evaluateScript("""
+                globalThis.__shortcutAnswer = null;
+                craft.shortcuts = { extra: 42, set: function() { throw new Error('browser fallback'); }, clear: function() { return false; } };
+                craft.shortcuts.set([{type:'native',title:'Native'}]).then(function(result) {
+                    return craft.shortcuts.clear().then(function(cleared) { __shortcutAnswer = {count:result.count, cleared:cleared, extra:craft.shortcuts.extra}; });
+                }).catch(function(error) { __shortcutAnswer = {error:String(error)}; });
+            """)
+            for _ in 0..<100 {
+                if screen.evaluateScript("__shortcutAnswer !== null")?.toBool() == true { break }
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            let result = try XCTUnwrap(screen.evaluateScript("__shortcutAnswer")?.toDictionary())
+            XCTAssertNil(result["error"])
+            XCTAssertEqual(result["count"] as? Int, 1)
+            XCTAssertEqual(result["cleared"] as? Bool, true)
+            XCTAssertEqual(result["extra"] as? Int, 42)
+            XCTAssertTrue(UIApplication.shared.shortcutItems?.isEmpty ?? true)
+        }
+    }
+
+    func testColdAndWarmShortcutTapsReachTheAppHandlerExactlyOnce() {
+        let events = CraftEventManager()
+        events.configure(appScript: true, page: false)
+        let cold = UIApplicationShortcutItem(type: "saved", localizedTitle: "Saved")
+        events.handleShortcut(cold)
+        // A WebView becoming ready must not steal an app-script event.
+        events.setReady()
+        var received: [(String, String?)] = []
+        events.appScriptReady { name, detail in received.append((name, detail["type"] as? String)) }
+        XCTAssertEqual(received.map(\.0), ["craftShortcut"])
+        XCTAssertEqual(received.map(\.1), ["saved"])
+        events.handleShortcut(UIApplicationShortcutItem(type: "record", localizedTitle: "Record"))
+        events.setReady()
+        events.appScriptReady { name, detail in received.append((name, detail["type"] as? String)) }
+        XCTAssertEqual(received.map(\.0), ["craftShortcut", "craftShortcut"])
+        XCTAssertEqual(received.map(\.1), ["saved", "record"])
+    }
+}
+
 private final class UnitLocationManager: CLLocationManager {
     var state: CLAuthorizationStatus = .notDetermined
     var whenInUseRequests = 0

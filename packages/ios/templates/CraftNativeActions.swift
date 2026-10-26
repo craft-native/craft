@@ -49,6 +49,7 @@ enum CraftNativeActions {
         values.append("storageSetIfAbsent")
         values.append("viewScroll")
         values.append("crypto")
+        values.append("shortcuts")
         if config.enableBiometric { values.append("biometric") }
         if config.enableSecureStorage { values.append("secureStorage") }
         if config.enableLocalDatabase { values.append("database") }
@@ -210,6 +211,17 @@ enum CraftNativeActions {
                 cancellationLock.unlock()
                 guard !cancelled else { return }
                 complete(requestToken, storage(method: method, args: args), completion)
+            }
+            return
+        case ("Shortcuts", _):
+            // UIKit quick actions belong to the app, not the calling route.
+            // A queued call from a disposed screen must not change that menu.
+            DispatchQueue.main.async {
+                cancellationLock.lock()
+                let cancelled = cancelledRequests.remove(requestToken) != nil
+                cancellationLock.unlock()
+                guard !cancelled else { return }
+                complete(requestToken, shortcuts(method: method, args: args), completion)
             }
             return
         case ("SecureStorage", _):
@@ -948,6 +960,44 @@ enum CraftNativeActions {
             cancellationLock.unlock()
             if !cancelled { completion(result) }
         }
+    }
+
+    private static func shortcuts(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
+        if method == "clear" {
+            guard args.isEmpty else { return failure("INVALID_ARGUMENT", "Shortcuts.clear takes no arguments") }
+            UIApplication.shared.shortcutItems = nil
+            return .success(true)
+        }
+        guard method == "set" else { return failure("UNSUPPORTED_METHOD", "Unknown Shortcuts method") }
+        guard args.count == 1, let items = args.first as? [[String: Any]], items.count <= 4 else {
+            return failure("INVALID_ARGUMENT", "Shortcuts.set needs a list of at most four shortcuts")
+        }
+        var types = Set<String>()
+        var shortcuts: [UIApplicationShortcutItem] = []
+        for item in items {
+            guard let type = item["type"] as? String, !type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let title = item["title"] as? String, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  types.insert(type).inserted else {
+                return failure("INVALID_ARGUMENT", "Every shortcut needs a unique type and a non-empty title")
+            }
+            for name in ["subtitle", "iconName"] where item[name] != nil {
+                guard item[name] is String else { return failure("INVALID_ARGUMENT", "Shortcut \(name) must be a string") }
+            }
+            var userInfo: [String: NSSecureCoding]?
+            if let raw = item["userInfo"] {
+                guard let info = raw as? [String: Any], PropertyListSerialization.propertyList(info, isValidFor: .binary),
+                      let secure = info as? [String: NSSecureCoding] else {
+                    return failure("INVALID_ARGUMENT", "Shortcut userInfo must contain property-list values")
+                }
+                userInfo = secure
+            }
+            shortcuts.append(UIApplicationShortcutItem(type: type, localizedTitle: title,
+                localizedSubtitle: item["subtitle"] as? String,
+                icon: (item["iconName"] as? String).map { UIApplicationShortcutIcon(systemImageName: $0) }, userInfo: userInfo))
+        }
+        // Validate the whole list before replacing the previously valid menu.
+        UIApplication.shared.shortcutItems = shortcuts
+        return .success(["count": shortcuts.count])
     }
 
     private static func storage(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {
