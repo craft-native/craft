@@ -192,10 +192,12 @@ enum CraftNativeFiles {
         do {
             let url = try newFile(named: name)
             guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
+                try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
                 return .failure(CraftNativeActionError(code: "WRITE_ERROR", message: "The photo could not be saved"))
             }
             CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
             guard CGImageDestinationFinalize(destination) else {
+                try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
                 return .failure(CraftNativeActionError(code: "WRITE_ERROR", message: "The photo could not be saved"))
             }
             return .success(describe(url, type: "image/jpeg", extra: ["width": image.width, "height": image.height]))

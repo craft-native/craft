@@ -3198,6 +3198,28 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertTrue(disabled.accessibilityTraits.contains(.notEnabled))
     }
 
+    func testNestedPressRecognizersGiveTheInnermostActionFirstRefusal() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([[
+            "type": "Pressable", "props": ["key": "outer"], "events": ["onPress": "outerPressed"],
+            "children": [[
+                "type": "Pressable", "props": ["key": "inner"], "events": ["onPress": "innerPressed"],
+                "children": [["type": "Text", "props": ["key": "label"], "children": ["Tap"]]],
+            ]],
+        ]]))
+
+        let outer = try XCTUnwrap(find(UIView.self, key: "outer", below: controller.view))
+        let inner = try XCTUnwrap(find(UIView.self, key: "inner", below: controller.view))
+        let outerTap = try XCTUnwrap(outer.gestureRecognizers?.first { $0 is UITapGestureRecognizer })
+        let innerTap = try XCTUnwrap(inner.gestureRecognizers?.first { $0 is UITapGestureRecognizer })
+        let delegate = try XCTUnwrap(outerTap.delegate as? CraftPressGestureDelegate)
+        XCTAssertTrue(innerTap.delegate === CraftPressGestureDelegate.shared)
+        XCTAssertTrue(delegate.gestureRecognizer(outerTap, shouldRequireFailureOf: innerTap))
+        XCTAssertFalse(delegate.gestureRecognizer(innerTap, shouldRequireFailureOf: outerTap))
+        XCTAssertFalse(outerTap.cancelsTouchesInView)
+    }
+
     func testModalCloseRequestAndDismissAreIndependentVisibilityEvents() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
@@ -3747,6 +3769,34 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(flat.isAccessibilityElement)
         XCTAssertFalse(section.isAccessibilityElement)
         XCTAssertEqual(authored.accessibilityContainerType, .none)
+    }
+
+    func testLabelledModalAndDrawerExposeTheirInteractiveChildren() throws {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        controller.render(document([
+            [
+                "type": "Modal",
+                "props": ["key": "labelled-modal", "visible": true, "accessibilityLabel": "Outer dialog"],
+                "children": [["type": "Button", "props": ["key": "modal-action"], "children": ["Open nested"]]],
+            ],
+            [
+                "type": "Drawer",
+                "props": ["key": "labelled-drawer", "accessibilityLabel": "Filters"],
+                "children": [["type": "Button", "props": ["key": "drawer-action"], "children": ["Apply"]]],
+            ],
+        ]))
+
+        let modal = try XCTUnwrap(find(UIView.self, key: "labelled-modal", below: controller.view))
+        let drawer = try XCTUnwrap(find(UIView.self, key: "labelled-drawer", below: controller.view))
+        XCTAssertFalse(modal.isAccessibilityElement)
+        XCTAssertFalse(drawer.isAccessibilityElement)
+        XCTAssertEqual(modal.accessibilityLabel, "Outer dialog")
+        XCTAssertEqual(drawer.accessibilityLabel, "Filters")
+        XCTAssertEqual(modal.accessibilityContainerType, .semanticGroup)
+        XCTAssertEqual(drawer.accessibilityContainerType, .semanticGroup)
+        XCTAssertTrue(try XCTUnwrap(find(UIButton.self, key: "modal-action", below: modal)).isAccessibilityElement)
+        XCTAssertTrue(try XCTUnwrap(find(UIButton.self, key: "drawer-action", below: drawer)).isAccessibilityElement)
     }
 
     func testSwitchAccessibilityMatchesUIKitAcrossValueAndEnabledChanges() throws {

@@ -15,6 +15,8 @@ const notesEndEditings = state(0)
 const status = state('')
 const pressIns = state(0)
 const pressOuts = state(0)
+const nestedButtonTaps = state(0)
+const nestedParentTaps = state(0)
 const linkAccessibilityDisabled = state(false)
 const panelAccessibilityDisabled = state(false)
 const longPressStatus = state('')
@@ -401,6 +403,14 @@ function pressNativePressableIn() {
 
 function pressNativePressableOut() {
   pressOuts.update(value => value + 1)
+}
+
+function pressNestedButton() {
+  nestedButtonTaps.update(value => value + 1)
+}
+
+function pressNestedParent() {
+  nestedParentTaps.update(value => value + 1)
 }
 
 function pressPanelLong() {
@@ -852,6 +862,11 @@ function openDetailsThenUpdateBackground() {
     <Pressable testID="native-linked-pressable" href="/linked-details" style={{"height":24}}><Text>Linked pressable</Text></Pressable>
     <Pressable testID="native-raw-pressable" style={{"height":24,"color":"#ef4444","fontSize":18,"textTransform":"uppercase"}}>Raw pressable</Pressable>
     <Text testID="pressable-lifecycle" :text="'Press lifecycle: ' + pressIns + '/' + pressOuts" />
+    <Pressable testID="nested-press-parent" @click="pressNestedParent()" style={{"height":44}}>
+      <Button testID="nested-press-button" @click="pressNestedButton()">Nested press</Button>
+    </Pressable>
+    <Text testID="nested-button-taps" :text="'Nested button taps: ' + nestedButtonTaps" />
+    <Text testID="nested-parent-taps" :text="'Nested parent taps: ' + nestedParentTaps" />
     <Pressable testID="disabled-pressable" disabled @click="pressNativePressable()" style={{"height":24}}><Text>Disabled pressable</Text></Pressable>
     <Button testID="toggle-panel-accessibility" @click="togglePanelAccessibility()">Toggle panel accessibility</Button>
     <View testID="long-press-panel" accessibilityState={longPressAccessibilityState()} @longpress="pressPanelLong()" style={{"height":24}}><Text>Long press panel</Text></View>

@@ -100,6 +100,14 @@ describe('the native shell prelude (JavaScriptSandbox has no synchronous host ca
     expect(app.context.craft.snapshots.get('campaign')).toEqual({ tick: 24 })
   })
 
+  it('rejects invalid checkpoint names and values before posting a write', async () => {
+    const app = isolate()
+    await expect(app.context.craft.snapshots.set('../escape', { tick: 1 })).rejects.toThrow(/Snapshot names are letters/)
+    await expect(app.context.craft.snapshots.set('valid', undefined)).rejects.toThrow(/is not JSON/)
+    expect(app.context.craft.snapshots.get('../escape')).toBeNull()
+    expect(app.posted.filter(message => message.type === 'SYNC_WRITE')).toHaveLength(0)
+  })
+
   it('follows another isolate\'s writes and tells the screen a snapshot changed', () => {
     const app = isolate({ snapshots: { header: '{"userId":1}' } })
     app.deliver({ type: 'SYNC_UPDATE', payload: { store: 'snapshots', key: 'header', value: '{"userId":2}' } })

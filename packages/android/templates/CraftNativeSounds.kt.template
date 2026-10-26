@@ -1,0 +1,260 @@
+package {{PACKAGE_NAME}}
+
+import android.content.Context
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import org.json.JSONObject
+import java.io.File
+import kotlin.math.max
+import kotlin.math.min
+
+/**
+ * Screen-owned `craft.audio` playback for native Android routes.
+ *
+ * Each id owns one MediaPlayer, so effects can overlap and a replacement
+ * invalidates the previous load. The player is released on every terminal
+ * path, including cancellation, decode failure and screen teardown.
+ */
+internal class CraftNativeSounds(private val context: Context) {
+    private data class Sound(
+        val player: MediaPlayer,
+        var volume: Float,
+        var paused: Boolean = false,
+        var interrupted: Boolean = false,
+        var prepared: Boolean = false,
+        var fade: Runnable? = null,
+        var pending: ((CraftNativeCapabilityResult) -> Unit)? = null,
+    )
+
+    private val main = Handler(Looper.getMainLooper())
+    private val sounds = mutableMapOf<String, Sound>()
+    private val audioManager by lazy { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    private val focusRequest by lazy {
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build())
+            .setAcceptsDelayedFocusGain(false)
+            .setOnAudioFocusChangeListener({ change -> onAudioFocusChange(change) }, main)
+            .build()
+    }
+
+    /** `{ id, event: "ended" | "error", message? }` for the screen bridge. */
+    var emit: ((JSONObject) -> Unit)? = null
+
+    fun play(id: String, address: String, options: JSONObject, done: (CraftNativeCapabilityResult) -> Unit) {
+        if (id.isBlank()) return done(failure("INVALID_ARGUMENT", "audio.play needs an id"))
+        val uri = source(address)
+            ?: return done(failure("INVALID_ARGUMENT", "audio.play needs an absolute http, https, file or content URL"))
+        stop(id, 0.0)
+
+        val requestedVolume = options.optDouble("volume", 1.0)
+        val volume = requestedVolume.takeIf { it.isFinite() }?.coerceIn(0.0, 1.0)?.toFloat()
+            ?: return done(failure("INVALID_ARGUMENT", "audio.play volume must be a finite number between 0 and 1"))
+        val fadeIn = options.optDouble("fadeIn", 0.0)
+        if (!fadeIn.isFinite() || fadeIn < 0) return done(failure("INVALID_ARGUMENT", "audio.play fadeIn must be a non-negative finite number"))
+        val player = MediaPlayer()
+        val sound = Sound(player, if (fadeIn > 0) 0f else volume, pending = done)
+        sounds[id] = sound
+        fun settle(result: CraftNativeCapabilityResult) {
+            val answer = sound.pending ?: return
+            sound.pending = null
+            answer(result)
+        }
+        fun failed(message: String) {
+            if (sounds[id] !== sound) return
+            settle(failure("AUDIO_ERROR", message))
+            remove(id)
+            emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", message))
+        }
+
+        if (audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            settle(failure("AUDIO_FOCUS_DENIED", "Audio focus was denied by the operating system"))
+            remove(id)
+            emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", "Audio focus was denied by the operating system"))
+            return
+        }
+
+        runCatching {
+            player.setAudioAttributes(AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build())
+            player.isLooping = options.optBoolean("loop", false)
+            player.setVolume(if (fadeIn > 0) 0f else volume, if (fadeIn > 0) 0f else volume)
+            player.setOnPreparedListener {
+                if (sounds[id] !== sound) return@setOnPreparedListener
+                sound.prepared = true
+                if (!sound.paused && !sound.interrupted) player.start()
+                settle(CraftNativeCapabilityResult(data = true))
+                if (fadeIn > 0) {
+                    if (!sound.paused) ramp(sound, volume, fadeIn / 1000.0)
+                    else { sound.volume = volume; player.setVolume(volume, volume) }
+                }
+            }
+            player.setOnCompletionListener {
+                if (sounds[id] !== sound) return@setOnCompletionListener
+                remove(id)
+                emit?.invoke(JSONObject().put("id", id).put("event", "ended"))
+            }
+            player.setOnErrorListener { _, what, extra ->
+                failed("The sound could not be played ($what, $extra)")
+                true
+            }
+            player.setDataSource(context, uri)
+            player.prepareAsync()
+        }.onFailure { error ->
+            if (sounds[id] === sound) {
+                settle(failure("AUDIO_ERROR", error.message ?: "The sound could not be loaded"))
+                remove(id)
+                emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", error.message ?: "The sound could not be loaded"))
+            }
+        }
+    }
+
+    /** Cancellation belongs to this playback, not a later reuse of its id. */
+    fun cancellation(id: String): () -> Unit {
+        val sound = sounds[id]
+        return { if (sound != null && sounds[id] === sound) remove(id) }
+    }
+
+    fun pause(id: String): Boolean {
+        val sound = sounds[id] ?: return false
+        sound.fade?.let(main::removeCallbacks)
+        sound.fade = null
+        runCatching { if (sound.player.isPlaying) sound.player.pause() }
+        sound.paused = true
+        sound.interrupted = false
+        return true
+    }
+
+    fun resume(id: String): Boolean {
+        val sound = sounds[id] ?: return false
+        if (sound.prepared) runCatching { sound.player.start() }.onFailure { return false }
+        sound.paused = false
+        sound.interrupted = false
+        return true
+    }
+
+    fun setVolume(id: String, volume: Double, fade: Double): Boolean {
+        val sound = sounds[id] ?: return false
+        if (!volume.isFinite() || !fade.isFinite() || fade < 0) return false
+        val target = volume.coerceIn(0.0, 1.0).toFloat()
+        sound.fade?.let(main::removeCallbacks)
+        sound.fade = null
+        if (fade > 0 && !sound.paused) ramp(sound, target, fade / 1000.0)
+        else {
+            sound.volume = target
+            sound.player.setVolume(target, target)
+        }
+        return true
+    }
+
+    fun stop(id: String, fadeOut: Double): Boolean {
+        val sound = sounds[id] ?: return false
+        if (!fadeOut.isFinite() || fadeOut < 0) return false
+        if (fadeOut > 0 && !sound.paused) {
+            ramp(sound, 0f, fadeOut / 1000.0) { if (sounds[id] === sound) remove(id) }
+        } else remove(id)
+        return true
+    }
+
+    fun stopAll(fadeOut: Double): Boolean {
+        if (!fadeOut.isFinite() || fadeOut < 0) return false
+        sounds.keys.toList().forEach { stop(it, fadeOut) }
+        return true
+    }
+
+    fun close() {
+        sounds.keys.toList().forEach(::remove)
+        emit = null
+    }
+
+    private fun source(address: String): Uri? {
+        val text = address.trim()
+        if (text.isBlank()) return null
+        CraftNativeMedia.local(context, text)?.let { file: File -> return Uri.fromFile(file) }
+        val uri = runCatching { Uri.parse(text) }.getOrNull() ?: return null
+        return uri.takeIf { it.scheme?.lowercase() in setOf("http", "https", "file", "content") && !it.toString().contains(" ") }
+    }
+
+    private fun remove(id: String) {
+        val sound = sounds.remove(id) ?: return
+        sound.fade?.let(main::removeCallbacks)
+        sound.fade = null
+        runCatching {
+            sound.player.setOnPreparedListener(null)
+            sound.player.setOnCompletionListener(null)
+            sound.player.setOnErrorListener(null)
+            sound.player.stop()
+        }
+        sound.player.release()
+        if (sounds.isEmpty()) audioManager.abandonAudioFocusRequest(focusRequest)
+        val answer = sound.pending
+        sound.pending = null
+        answer?.invoke(failure("CANCELLED", "Audio playback was stopped or replaced"))
+    }
+
+    private fun onAudioFocusChange(change: Int) {
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                sounds.keys.toList().forEach { id ->
+                    if (sounds[id] != null) {
+                        remove(id)
+                        emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", "Audio focus was lost"))
+                    }
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> sounds.values.toList().forEach { sound ->
+                if (!sound.paused) {
+                    sound.interrupted = true
+                    if (sound.prepared) runCatching { sound.player.pause() }
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> sounds.values.toList().forEach { sound ->
+                runCatching { sound.player.setVolume(sound.volume * 0.2f, sound.volume * 0.2f) }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> sounds.values.toList().forEach { sound ->
+                if (sound.interrupted && !sound.paused) {
+                    sound.interrupted = false
+                    if (sound.prepared) runCatching { sound.player.start() }
+                } else {
+                    runCatching { sound.player.setVolume(sound.volume, sound.volume) }
+                }
+            }
+        }
+    }
+
+    private fun ramp(sound: Sound, target: Float, seconds: Double, done: (() -> Unit)? = null) {
+        sound.fade?.let(main::removeCallbacks)
+        val start = sound.volume
+        val began = android.os.SystemClock.uptimeMillis()
+        val duration = max(1L, (seconds * 1000).toLong())
+        val tick = object : Runnable {
+            override fun run() {
+                if (!sounds.containsValue(sound)) return
+                val progress = min(1.0, (android.os.SystemClock.uptimeMillis() - began).toDouble() / duration).toFloat()
+                val value = start + (target - start) * progress
+                sound.player.setVolume(value, value)
+                sound.volume = value
+                if (progress >= 1f) {
+                    sound.fade = null
+                    done?.invoke()
+                } else {
+                    sound.fade = this
+                    main.postDelayed(this, 33L)
+                }
+            }
+        }
+        sound.fade = tick
+        main.post(tick)
+    }
+
+    private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)
+}

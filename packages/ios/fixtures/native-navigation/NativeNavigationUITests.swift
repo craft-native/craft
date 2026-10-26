@@ -816,6 +816,26 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(scroll.exists, "keyed reconciliation replaced the list scroll host")
     }
 
+    func testNestedButtonKeepsItsActionInsidePressable() throws {
+        let app = XCUIApplication()
+        app.launch()
+        let rootScroll = app.scrollViews["native-root-scroll"]
+        XCTAssertTrue(rootScroll.waitForExistence(timeout: 15))
+        let nestedButton = app.buttons["nested-press-button"]
+        XCTAssertTrue(nestedButton.waitForExistence(timeout: 15))
+        reveal(nestedButton, in: rootScroll)
+
+        let nestedButtonTaps = app.staticTexts["nested-button-taps"]
+        XCTAssertTrue(nestedButtonTaps.waitForExistence(timeout: 5))
+        XCTAssertEqual(nestedButtonTaps.label, "Nested button taps: 0")
+
+        nestedButton.tap()
+        XCTAssertTrue(waitForLabel(nestedButtonTaps, "Nested button taps: 1"), "nested Button action did not arrive")
+
+        nestedButton.tap()
+        XCTAssertTrue(waitForLabel(nestedButtonTaps, "Nested button taps: 2"), "nested Button action was lost or duplicated")
+    }
+
     func testPushNativeBackSwipeReplaceAndRetainedHomeState() throws {
         let app = XCUIApplication()
         app.launch()

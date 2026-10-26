@@ -1391,6 +1391,40 @@ unchanged. `craft.files.download` resolves a non-2xx response as
 `{ ok: false, status, body }`; transport failures still reject with the native
 network error codes.
 
+Both maintained native hosts implement `craft.files.pickFile`. Android maps the
+shared MIME, UTI, and common extension filters to `ACTION_OPEN_DOCUMENT`, copies
+each selected document into the same app-owned directory, and enforces the
+shared 512 MiB default/per-file limit before publishing a descriptor. A
+dismissed picker resolves with an empty array; a canceled or oversized copy
+never leaves a partial file behind. The same cancellation cleanup applies while
+Android is decoding a picked image or copying a video, so a request canceled
+after the picker closes cannot publish or leak an app-owned file. Use this for
+GPX, TCX, FIT, PDF, or other documents that are not photos or videos. On iOS,
+failed photo JPEG creation or finalization also removes its staging directory,
+so a rejected image import does not accumulate orphaned temporary files.
+
+`craft.audio` playback is screen-owned on both hosts. Android requests audio
+focus before preparing a player, reports a denied request as `AUDIO_FOCUS_DENIED`,
+pauses on a transient interruption and resumes on focus gain, ducks during a
+duckable interruption, and releases focus when the last sound ends or the
+screen closes. iOS observes `AVAudioSession` interruptions and resumes sounds
+only when the system grants the `shouldResume` option. A permanent Android
+focus loss releases every player and sends each sound's error event; replacement,
+decode failure, cancellation, interruption, and teardown also release their
+player resources.
+Control calls resolve `false` when their sound id is not owned by the screen,
+matching the browser host instead of reporting a false success.
+
+Checkpoint names use the same bounded filename contract on both native hosts:
+letters, digits, `.`, `_`, and `-`, up to 128 characters, without a leading
+dot. Non-JSON values and invalid names are rejected before a write is posted;
+the previous confirmed checkpoint remains available after a failed or
+interrupted replacement. If a screen closes while a checkpoint is still being
+written, its promise rejects instead of hanging; the host's later worker
+completion cannot publish a second result for that request. iOS also reports a
+failed result when its writer completes after the screen runtime is disposed or
+has already been deallocated.
+
 The `media` capability (iOS) keeps video and audio on the phone for offline,
 in Application Support rather than the temporary directory, left out of
 iCloud backups. `craft.media.keep(url, { headers })` downloads the file once

@@ -373,6 +373,10 @@ internal class CraftNativeStores private constructor(
 
     /** `craft.snapshots.set`: null deletes it. `done` hears whether it was kept, on the main thread. */
     fun setSnapshot(name: String, json: String?, from: String?, done: (Boolean) -> Unit) {
+        if (!isSnapshotName(name)) {
+            main.post { done(false) }
+            return
+        }
         writer.execute {
             val file = snapshotFile(name)
             val previous = snapshotCache[name]
@@ -421,6 +425,8 @@ internal class CraftNativeStores private constructor(
         if (key == null) payload.put("clear", true) else payload.put("key", key).put("value", value ?: JSONObject.NULL)
         CraftNativeHub.broadcast("SYNC_UPDATE", payload, except = from)
     }
+
+    private fun isSnapshotName(name: String): Boolean = name.matches(Regex("[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}"))
 
     private fun snapshotFile(name: String): File = File(snapshotsDir, URLEncoder.encode(name, "UTF-8") + ".json")
 
@@ -659,6 +665,9 @@ internal object CraftNativePrelude {
             if (json === null || json === undefined) return null;
             try { return JSON.parse(json); } catch (error) { return null; }
           }
+          function validSnapshotName(name) {
+            return /^[A-Za-z0-9_-][A-Za-z0-9_.-]{0,127}$/.test(name);
+          }
           var craft = globalThis.craft = globalThis.craft || {};
           function keep(name, extras) {
             var current = {};
@@ -681,12 +690,18 @@ internal object CraftNativePrelude {
             }
           });
           keep('snapshots', {
-            get: function(name) { return parsed(sync.snapshots[String(name)]); },
+            get: function(name) {
+              name = String(name);
+              return validSnapshotName(name) ? parsed(sync.snapshots[name]) : null;
+            },
             set: function(name, value) {
-              var json = value === null || value === undefined ? null : JSON.stringify(value);
-              if (json === null) delete sync.snapshots[String(name)];
-              else sync.snapshots[String(name)] = json;
-              return wait('snapshots.set', { store: 'snapshots', key: String(name), value: json });
+              name = String(name);
+              if (!validSnapshotName(name)) return Promise.reject(new TypeError('Snapshot names are letters, digits, ".", "_" and "-"'));
+              var json = value === null ? null : JSON.stringify(value);
+              if (json === undefined) return Promise.reject(new TypeError('Snapshot ' + name + ' is not JSON'));
+              if (json === null) delete sync.snapshots[name];
+              else sync.snapshots[name] = json;
+              return wait('snapshots.set', { store: 'snapshots', key: name, value: json });
             },
             clear: function(keepNames) {
               var names = Array.isArray(keepNames) ? keepNames.map(String) : [];

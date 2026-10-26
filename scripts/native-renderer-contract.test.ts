@@ -4163,7 +4163,7 @@ describe('native renderer component contract', () => {
     expect(androidCapabilities).toContain('CRAFT_NATIVE_FILE_ERROR_BODY_BYTES = 64 * 1024')
     expect(androidCapabilities).toContain('private fun sweepFiles()')
     expect(androidCapabilities).not.toContain('fileRoot.deleteRecursively()')
-    expect(androidCapabilities).toContain('private fun writeImage(bitmap: Bitmap, maxPixels: Int, quality: Float, name: String): JSONObject?')
+    expect(androidCapabilities).toContain('private fun writeImage(bitmap: Bitmap, maxPixels: Int, quality: Float, name: String, requestToken: String? = null): JSONObject?')
     expect(androidCapabilities).toContain('CRAFT_NATIVE_FILE_DEFAULT_MAX_PIXELS = 2048')
     expect(android).toContain('capabilities.onActivityResult(requestCode, resultCode, data)')
   })

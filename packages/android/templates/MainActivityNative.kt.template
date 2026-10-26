@@ -4250,6 +4250,10 @@ class MainActivity : AppCompatActivity() {
         val pendingCapabilities = mutableSetOf<String>()
         val capabilityTimeouts = mutableMapOf<String, Runnable>()
         val audio = CraftNativeAudio()
+        val sounds = CraftNativeSounds(view.context)
+        val soundRequestCancellers = mutableMapOf<String, () -> Unit>()
+        /** Snapshot writes awaiting the writer thread; close rejects them once. */
+        val pendingSyncResults = mutableSetOf<String>()
         var active = true
         var closing = false
             private set
@@ -4265,6 +4269,9 @@ class MainActivity : AppCompatActivity() {
             active = false
             closing = true
             audio.close()
+            soundRequestCancellers.values.toList().forEach { it() }
+            soundRequestCancellers.clear()
+            sounds.close()
             // Evaluation completion does not mean its outbound messages have
             // reached the host. Close only after the ordered channel barrier,
             // so onDestroy's final writes run before navigation continues.
@@ -4796,6 +4803,9 @@ class MainActivity : AppCompatActivity() {
         activeScreen.view.onLayoutChanged = {
             if (activeScreen.active) emitLayoutEvents(activeScreen)
         }
+        activeScreen.sounds.emit = { payload ->
+            if (activeScreen.active) send(activeScreen, "SOUND_EVENT", payload)
+        }
         screen = activeScreen
         CraftNativeHub.register(activeScreen.capabilityScope) { type, payload ->
             if (activeScreen.active) send(activeScreen, type, payload)
@@ -5173,6 +5183,7 @@ class MainActivity : AppCompatActivity() {
     /** The bridge's capability names: Craft's core set and this host's services. */
     private fun capabilityNames(): JSONArray = capabilities.names().apply {
         services.names().forEach { name -> put(name) }
+        put("audio")
         put("viewFocus")
         put("viewMeasure")
         put("viewScroll")
@@ -5191,13 +5202,20 @@ class MainActivity : AppCompatActivity() {
     /** A synchronous store written in an isolate (CraftNativeShell.kt's prelude). */
     private fun syncWrite(screen: Screen, payload: JSONObject) {
         val id = payload.optString("id").takeIf { it.isNotBlank() }
+        val store = payload.optString("store")
+        if (id != null) screen.pendingSyncResults.add(id)
         val reply: (Boolean) -> Unit = { ok ->
-            if (id != null && screen.active) send(screen, "SYNC_RESULT", JSONObject().put("id", id).put("ok", ok))
+            if (id != null && screen.pendingSyncResults.remove(id) && (screen.active || screen.closing)) {
+                send(screen, "SYNC_RESULT", JSONObject().put("id", id).put("ok", ok))
+            }
         }
         val key = payload.optString("key")
         val value = if (payload.isNull("value")) null else payload.optString("value")
-        when (payload.optString("store")) {
-            "storage" -> if (key.isNotBlank()) stores.setStorage(key, value, from = screen.capabilityScope)
+        when (store) {
+            "storage" -> if (key.isNotBlank()) {
+                stores.setStorage(key, value, from = screen.capabilityScope)
+                if (id != null) reply(true)
+            } else if (id != null) reply(false)
             "snapshots" -> if (payload.optBoolean("clear")) {
                 val keep = payload.optJSONArray("keep") ?: JSONArray()
                 stores.clearSnapshots((0 until keep.length()).map { keep.optString(it) }.toSet(), reply)
@@ -5438,6 +5456,7 @@ class MainActivity : AppCompatActivity() {
                     val token = "${screen.capabilityScope}/$id"
                     val pending = screen.pendingCapabilities.remove(token)
                     screen.capabilityTimeouts.remove(token)?.let(capabilityHandler::removeCallbacks)
+                    screen.soundRequestCancellers.remove(token)?.invoke()
                     if (pending) capabilities.cancel(token)
                 }
             }
@@ -7623,6 +7642,7 @@ class MainActivity : AppCompatActivity() {
         val timeout = Runnable {
             if (!screen.active || !screen.pendingCapabilities.remove(token)) return@Runnable
             screen.capabilityTimeouts.remove(token)
+            screen.soundRequestCancellers.remove(token)?.invoke()
             capabilities.cancel(token)
             send(screen, "API_ERROR", JSONObject()
                 .put("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION)
@@ -7640,6 +7660,14 @@ class MainActivity : AppCompatActivity() {
         val method = payload.optString("method")
         val perform: ((CraftNativeCapabilityResult) -> Unit) -> Unit = if (module == "View") {
             { completion -> performView(screen, method, args, completion) }
+        } else if (module == "Audio") {
+            { completion ->
+                val id = args.optString(0)
+                performAudio(screen, method, args, completion)
+                if (method == "play" && id.isNotBlank() && screen.pendingCapabilities.contains(token)) {
+                    screen.soundRequestCancellers[token] = screen.sounds.cancellation(id)
+                }
+            }
         } else if (services.handles(module)) {
             { completion -> services.perform(module, method, args, completion) }
         } else {
@@ -7657,12 +7685,34 @@ class MainActivity : AppCompatActivity() {
         perform { result ->
             if ((!screen.active && !screen.closing) || !screen.pendingCapabilities.remove(token)) return@perform
             screen.capabilityTimeouts.remove(token)?.let(capabilityHandler::removeCallbacks)
+            screen.soundRequestCancellers.remove(token)
             val response = JSONObject()
                 .put("version", CRAFT_NATIVE_CAPABILITY_PROTOCOL_VERSION)
                 .put("requestId", id)
             if (result.code == null) response.put("data", result.data ?: JSONObject.NULL)
             else response.put("code", result.code).put("message", result.message ?: "Native API failed")
             send(screen, if (result.code == null) "API_RESPONSE" else "API_ERROR", response, id)
+        }
+    }
+
+    private fun performAudio(
+        screen: Screen,
+        method: String,
+        args: JSONArray,
+        completion: (CraftNativeCapabilityResult) -> Unit,
+    ) {
+        val id = args.optString(0)
+        when (method) {
+            "play" -> {
+                val address = args.optString(1)
+                screen.sounds.play(id, address, args.optJSONObject(2) ?: JSONObject(), completion)
+            }
+            "pause" -> completion(CraftNativeCapabilityResult(data = screen.sounds.pause(id)))
+            "resume" -> completion(CraftNativeCapabilityResult(data = screen.sounds.resume(id)))
+            "setVolume" -> completion(CraftNativeCapabilityResult(data = screen.sounds.setVolume(id, args.optDouble(1, Double.NaN), args.optJSONObject(2)?.optDouble("fade", 0.0) ?: 0.0)))
+            "stop" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stop(id, args.optJSONObject(1)?.optDouble("fadeOut", 0.0) ?: 0.0)))
+            "stopAll" -> completion(CraftNativeCapabilityResult(data = screen.sounds.stopAll(args.optJSONObject(0)?.optDouble("fadeOut", 0.0) ?: 0.0)))
+            else -> completion(CraftNativeCapabilityResult(code = "UNKNOWN_ACTION", message = "Unsupported Audio method"))
         }
     }
 
@@ -8280,6 +8330,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun closeScreen(screen: Screen, done: () -> Unit = {}) {
         if (!screen.active) { screen.close(done); return }
+        // A snapshot writer may still be replacing a file after the isolate
+        // starts teardown. Reject its promise before the port is closed; the
+        // worker's later completion sees the id was already consumed.
+        screen.pendingSyncResults.toList().forEach { id ->
+            send(screen, "SYNC_RESULT", JSONObject().put("id", id).put("ok", false))
+        }
+        screen.pendingSyncResults.clear()
         CraftNativeHub.unregister(screen.capabilityScope)
         screen.timers.values.forEach(capabilityHandler::removeCallbacks)
         screen.timers.clear()

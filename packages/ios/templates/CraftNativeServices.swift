@@ -279,6 +279,7 @@ final class CraftNativeSounds {
         /// The volume asked for; a fade in or out moves toward or away from it.
         var volume: Float
         var paused = false
+        var interrupted = false
 
         init(player: AVQueuePlayer, volume: Float) {
             self.player = player
@@ -306,8 +307,43 @@ final class CraftNativeSounds {
     private static var category: AVAudioSession.Category = .ambient
 
     private var sounds: [String: Sound] = [:]
+    private var interruptionObserver: NSObjectProtocol?
     /// `{ id, event: "ended" | "error", message? }` to the screen's script.
     var emit: (([String: Any]) -> Void)?
+
+    init() {
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main,
+        ) { [weak self] note in
+            guard let self else { return }
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+            if type == AVAudioSession.InterruptionType.began.rawValue {
+                self.sounds.values.forEach { sound in
+                    guard !sound.paused else { return }
+                    sound.interrupted = true
+                    sound.player.pause()
+                }
+                return
+            }
+            guard type == AVAudioSession.InterruptionType.ended.rawValue else { return }
+            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+            let shouldResume = options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0
+            self.sounds.values.forEach { sound in
+                guard sound.interrupted else { return }
+                sound.interrupted = false
+                // Without permission to auto-resume, keep a resumable paused
+                // handle. A later unrelated interruption must not restart it.
+                sound.paused = !shouldResume
+                if shouldResume { sound.player.play() }
+            }
+        }
+    }
+
+    deinit {
+        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
+    }
 
     /// Starts `url`. `answer` hears once it plays (or could not be loaded).
     func play(id: String, url: URL, options: [String: Any], answer: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
@@ -362,40 +398,52 @@ final class CraftNativeSounds {
         if fadeIn > 0 { ramp(sound, to: volume, over: fadeIn) }
     }
 
-    func pause(id: String) {
-        guard let sound = sounds[id] else { return }
+    @discardableResult
+    func pause(id: String) -> Bool {
+        guard let sound = sounds[id] else { return false }
         sound.paused = true
+        sound.interrupted = false
         sound.fade?.invalidate()
         sound.player.pause()
+        return true
     }
 
-    func resume(id: String) {
-        guard let sound = sounds[id], sound.paused else { return }
+    @discardableResult
+    func resume(id: String) -> Bool {
+        guard let sound = sounds[id], sound.paused else { return false }
         sound.paused = false
+        sound.interrupted = false
         sound.player.volume = sound.volume
         sound.player.play()
+        return true
     }
 
     /// Changes the volume, over `fade` seconds when given.
-    func setVolume(id: String, volume: Double, fade: Double) {
-        guard let sound = sounds[id] else { return }
+    @discardableResult
+    func setVolume(id: String, volume: Double, fade: Double) -> Bool {
+        guard let sound = sounds[id] else { return false }
         sound.volume = Float(min(max(volume, 0), 1))
         if fade > 0, !sound.paused { ramp(sound, to: sound.volume, over: fade) }
         else { sound.fade?.invalidate(); sound.player.volume = sound.volume }
+        return true
     }
 
     /// Stops the sound, fading it out over `fadeOut` seconds first.
-    func stop(id: String, fadeOut: Double) {
-        guard let sound = sounds[id] else { return }
-        guard fadeOut > 0, !sound.paused else { remove(id); return }
+    @discardableResult
+    func stop(id: String, fadeOut: Double) -> Bool {
+        guard let sound = sounds[id] else { return false }
+        guard fadeOut > 0, !sound.paused else { remove(id); return true }
         ramp(sound, to: 0, over: fadeOut) { [weak self, weak sound] in
             guard let self, let sound, self.sounds[id] === sound else { return }
             self.remove(id)
         }
+        return true
     }
 
-    func stopAll(fadeOut: Double) {
+    @discardableResult
+    func stopAll(fadeOut: Double) -> Bool {
         for id in Array(sounds.keys) { stop(id: id, fadeOut: fadeOut) }
+        return true
     }
 
     /// The screen closed: everything stops at once.

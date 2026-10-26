@@ -4437,6 +4437,36 @@ final class CraftMapTapDelegate: NSObject, UIGestureRecognizerDelegate {
     }
 }
 
+/// A pressable wrapper must yield to an actionable descendant. Without this
+/// ordering UIKit may let the ancestor's tap recognizer win the same touch,
+/// so a nested Button never receives its physical action. A descendant
+/// control or tap recognizer is the source of the event; STX handles the
+/// logical bubbling from there.
+final class CraftPressGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    static let shared = CraftPressGestureDelegate()
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let parent = gestureRecognizer.view,
+              let child = otherGestureRecognizer.view,
+              child !== parent else { return false }
+        return child.isDescendant(of: parent)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let container = gestureRecognizer.view else { return true }
+        let hitView = container.hitTest(touch.location(in: container), with: nil)
+        guard var candidate = hitView ?? touch.view else { return true }
+        while candidate !== container {
+            if candidate is UIControl { return false }
+            if candidate.gestureRecognizers?.contains(where: { $0 !== gestureRecognizer && $0 is UITapGestureRecognizer }) == true {
+                return false
+            }
+            candidate = candidate.superview ?? container
+        }
+        return true
+    }
+}
+
 /// The delegate of a Pressable's press-in/out feedback. That recognizer is
 /// a long press of no duration, so it begins the moment a finger lands; on its
 /// own it would claim the touch, and the tap that is the Pressable's onPress
@@ -6633,14 +6663,21 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             CraftSnapshots.read(name)
         }
         let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { name, value, done in
-            CraftSnapshots.write(name, json: value.isNull || value.isUndefined ? nil : value.toString()) { ok in
-                CraftNativeScriptThread.run { done.call(withArguments: [ok]) }
+            CraftSnapshots.write(name, json: value.isNull || value.isUndefined ? nil : value.toString()) { [weak self] ok in
+                CraftNativeScriptThread.run {
+                    // A writer can finish after UIKit has disposed this
+                    // screen. Resolve the pending promise as a cancellation,
+                    // never as a successful write into a dead runtime.
+                    done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+                }
             }
         }
         let snapshotClear: @convention(block) (JSValue, JSValue) -> Void = { keep, done in
             let names = (keep.isUndefined || keep.isNull ? [] : (keep.toArray() ?? [])).compactMap { $0 as? String }
-            CraftSnapshots.clear(keeping: Set(names)) { ok in
-                CraftNativeScriptThread.run { done.call(withArguments: [ok]) }
+            CraftSnapshots.clear(keeping: Set(names)) { [weak self] ok in
+                CraftNativeScriptThread.run {
+                    done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+                }
             }
         }
         let config = self.config
@@ -8009,20 +8046,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             screenRequestCancellers[requestToken] = { [weak self] in self?.sounds.stop(id: id, fadeOut: 0) }
             sounds.play(id: id, url: url, options: args.count > 2 ? args[2] as? [String: Any] ?? [:] : [:], answer: reply)
         case ("Audio", "pause"):
-            sounds.pause(id: id)
-            reply(.success(true))
+            reply(.success(sounds.pause(id: id)))
         case ("Audio", "resume"):
-            sounds.resume(id: id)
-            reply(.success(true))
+            reply(.success(sounds.resume(id: id)))
         case ("Audio", "setVolume"):
-            sounds.setVolume(id: id, volume: number(1), fade: number(2, "fade") / 1000)
-            reply(.success(true))
+            reply(.success(sounds.setVolume(id: id, volume: number(1), fade: number(2, "fade") / 1000)))
         case ("Audio", "stop"):
-            sounds.stop(id: id, fadeOut: number(1, "fadeOut") / 1000)
-            reply(.success(true))
+            reply(.success(sounds.stop(id: id, fadeOut: number(1, "fadeOut") / 1000)))
         case ("Audio", "stopAll"):
-            sounds.stopAll(fadeOut: number(0, "fadeOut") / 1000)
-            reply(.success(true))
+            reply(.success(sounds.stopAll(fadeOut: number(0, "fadeOut") / 1000)))
         default:
             return false
         }
@@ -9433,6 +9465,8 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let actionable = handler != nil || linkTargets[id] != nil
         if actionable, tapRecognizers[id] == nil {
             let recognizer = UITapGestureRecognizer(target: self, action: #selector(viewPressed(_:)))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = CraftPressGestureDelegate.shared
             tapRecognizers[id] = recognizer
             view.addGestureRecognizer(recognizer)
         } else if !actionable, let recognizer = tapRecognizers.removeValue(forKey: id) {
@@ -10353,7 +10387,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let controlledVideo = type == "Video" && (props["controls"] as? Bool) == true
         // UIPickerView exposes adjustable component wheels. Making the
         // picker itself a leaf hides those wheels and their selected values.
-        let container = ["ScrollView", "FlatList", "SectionList", "Picker", "SegmentedControl"].contains(type)
+        let container = ["ScrollView", "FlatList", "SectionList", "Picker", "SegmentedControl", "Modal", "Drawer"].contains(type)
             || ["tablist", "radiogroup", "list", "menu", "menubar", "toolbar"].contains(role ?? "")
             || controlledVideo
         view.isAccessibilityElement = !container && role != "none" && (view.accessibilityLabel != nil || role != nil || ["Text", "Button", "Link", "Checkbox", "Image", "ImageBackground", "Video", "TextInput", "Picker", "DatePicker", "Switch", "Slider"].contains(type))

@@ -900,6 +900,7 @@ import com.google.android.gms.pay.PayClient` : '')
             done(failure("PUSH_UNAVAILABLE", error.message ?: "Firebase Cloud Messaging is not configured"))
         }`
       : '        done(failure("CAPABILITY_DISABLED", "Push notifications are disabled"))'))
+  write('CraftNativeSounds.kt.template', 'CraftNativeSounds.kt')
   if (config.enablePushNotifications) write('CraftNativeMessagingService.kt.template', 'CraftNativeMessagingService.kt')
   else rmSync(join(javaDir, 'CraftNativeMessagingService.kt'), { force: true })
   // Files a screen shares (craft.files' copies, in the cache) go to other apps through this provider.
