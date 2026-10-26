@@ -104,6 +104,13 @@ click, selection, slider movement, modal lifecycle callback, or a visual-propert
 update.
 Test identities stay in Android view tags, leaving visible text available to
 accessibility services unless a label or value is explicitly supplied.
+The kept-private-image regression drives a mounted protocol document directly.
+It suspends the replaced Home screen's inbound script messages while asserting
+offline pixels, file-URL rejection, stale decode suppression, and corrupt-file
+failure. Otherwise Home's own asynchronous mutations trigger revision recovery
+and overwrite the test document. The screen's lifecycle flag is restored before
+normal teardown. This is renderer coverage, not an STX binding end-to-end test;
+the other navigation cases keep the shared runtime active.
 Returning to a retained route reapplies native theme defaults before it becomes
 visible, so a dark-mode change while another route is open cannot leave stale
 colors behind.

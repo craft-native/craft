@@ -721,10 +721,23 @@ class NativeNavigationTest {
         val activity = instrumentation.startActivitySync(
             Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         ) as MainActivity
+        var resumeScreenMessages: (() -> Unit)? = null
         try {
             awaitView(activity, "selectable-native-text")
             // Exercise the actual renderer on the mounted screen, without a
             // public test-only host API or a fake ImageView implementation.
+            // This test owns the protocol document directly. Home's runtime
+            // must not keep sending mutations for its replaced document: a
+            // revision mismatch makes STX redraw Home over the test image.
+            instrumentation.runOnMainSync {
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
+                    .get(activity) as List<*>
+                val screen = requireNotNull(screens.last())
+                val active = screen.javaClass.getDeclaredField("active").apply { isAccessible = true }
+                val wasActive = active.getBoolean(screen)
+                active.setBoolean(screen, false)
+                resumeScreenMessages = { active.setBoolean(screen, wasActive) }
+            }
             var revision = 0
             fun render(uri: String) {
                 val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
@@ -778,7 +791,12 @@ class NativeNavigationTest {
             instrumentation.runOnMainSync { assertTrue("corrupt kept file reused decoded pixels", image.drawable == null) }
         } finally {
             kept.delete()
-            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.runOnMainSync {
+                // Restore the lifecycle flag before ordinary teardown so the
+                // host still cancels Home's pending capabilities and timers.
+                resumeScreenMessages?.invoke()
+                activity.finishAndRemoveTask()
+            }
             instrumentation.waitForIdleSync()
         }
     }

@@ -805,6 +805,8 @@ describe('Craft Android builder', () => {
     const fixture = readFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), 'utf8')
     expect(fixture).toContain('put("op", "updateNode").put("id", "kept-image")')
     expect(fixture).toContain('source updates must retain the mounted image')
+    expect(fixture).toContain('active.setBoolean(screen, false)')
+    expect(fixture).toContain('resumeScreenMessages?.invoke()')
   })
 
   it('gives native screens screen-owned audio playback with cancellation and teardown', async () => {
