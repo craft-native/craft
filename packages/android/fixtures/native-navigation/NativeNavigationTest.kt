@@ -710,6 +710,61 @@ class NativeNavigationTest {
     }
 
     @Test
+    fun keptPrivateImageLoadsOfflineWithoutEnteringPublicCache() {
+        val context = instrumentation.targetContext
+        val address = "https://kept-image.invalid/${java.util.UUID.randomUUID()}.png"
+        val kept = CraftNativeMedia.file(context, address)
+        kept.parentFile!!.mkdirs()
+        val pixels = Bitmap.createBitmap(7, 5, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.RED) }
+        kept.outputStream().use { assertTrue(pixels.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        pixels.recycle()
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "selectable-native-text")
+            // Exercise the actual renderer on the mounted screen, without a
+            // public test-only host API or a fake ImageView implementation.
+            fun render(uri: String) {
+                val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
+                    .get(activity) as List<*>
+                val screen = requireNotNull(screens.last())
+                val method = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, org.json.JSONObject::class.java)
+                    .apply { isAccessible = true }
+                method.invoke(activity, screen, org.json.JSONObject().put("type", "Image")
+                    .put("props", org.json.JSONObject().put("key", "kept").put("testID", "kept")
+                        .put("source", org.json.JSONObject().put("uri", uri)
+                            .put("headers", org.json.JSONObject().put("Authorization", "Bearer private-fixture")))))
+            }
+            instrumentation.runOnMainSync { render(address) }
+            val image = awaitView(activity, "kept") { it is ImageView && it.drawable != null } as ImageView
+            instrumentation.runOnMainSync {
+                val bitmap = (image.drawable as android.graphics.drawable.BitmapDrawable).bitmap
+                assertEquals(7, bitmap.width)
+                assertEquals(5, bitmap.height)
+                assertEquals(Color.RED, bitmap.getPixel(3, 2))
+                assertTrue(CraftNativeImageCache(java.io.File(context.cacheDir, "craft-native-images")).read(address) == null)
+                render(kept.toURI().toString())
+                assertTrue("kept bytes must not allow arbitrary file URLs", image.drawable == null)
+                render(address)
+                render("data:image/png;base64,invalid")
+            }
+            SystemClock.sleep(200)
+            instrumentation.runOnMainSync {
+                assertTrue("late local pixels replaced the new source", image.drawable == null)
+                kept.writeBytes(byteArrayOf(1, 2, 3))
+                render(address)
+            }
+            awaitView(activity, "kept") { it.contentDescription?.contains("Image download failed") == true }
+            instrumentation.runOnMainSync { assertTrue("corrupt kept file reused decoded pixels", image.drawable == null) }
+        } finally {
+            kept.delete()
+            instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    @Test
     fun selectableTextUsesNativeTextSelection() {
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(

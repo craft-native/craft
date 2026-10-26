@@ -7254,6 +7254,12 @@ class MainActivity : AppCompatActivity() {
         }
         imageJobs[view] = imageExecutor.submit {
             val bitmap = runCatching {
+                // Prefer the authored URL's private/offline copy. Never put
+                // these pixels in the public HTTP cache: media.clear owns them.
+                CraftNativeMedia.local(this, uri)?.let { kept ->
+                    val decoded = kept.inputStream().use(BitmapFactory::decodeStream)
+                    return@runCatching decoded.takeIf { CraftNativeMedia.local(this, uri) == kept }
+                }
                 val publicRequest = headers.isEmpty() && Uri.parse(requestUri).userInfo.isNullOrEmpty()
                 if (publicRequest) {
                     val bytes = imageCache.read(requestUri)

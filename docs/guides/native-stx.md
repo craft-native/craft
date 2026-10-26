@@ -641,6 +641,15 @@ it is not appended repeatedly. `onLoadStart`, `onLoad`, and `onLoadEnd` report t
 `onError` receives `nativeEvent.error.message` for failures. Route teardown and
 node removal cancel outstanding downloads.
 
+Images also prefer the copy saved by `await craft.media.keep(url, { headers })`.
+Keep the original HTTPS URL as the image source, not the returned filesystem path.
+Both hosts decode the kept file off the UI thread before trying their image cache
+or the network, so private photos can display offline without a second request.
+Kept image bytes do not enter the public image cache. Clear kept media on sign-out
+and unmount private screens; clearing the files does not erase pixels already displayed.
+A corrupt kept image reports a load error rather than silently fetching it again.
+This does not enable arbitrary file URLs or picker paths as image sources.
+
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
 renders its children as native views. `scrollEnabled`, the platform scroll
 indicators, and nested scrolling are native; Android forwards the nested-scroll
