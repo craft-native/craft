@@ -94,6 +94,7 @@ final class NativeNavigationUnitTests: XCTestCase {
         // decide (0.0.263), so a test starts from no accessory rather than
         // the last test's.
         CraftChrome.shared.updateTabAccessory(nil)
+        CraftChrome.shared.setHiddenByScreen(false)
         shell = CraftHybridController(config: CraftHybrid.shared.config)
         let scene = previousWindow?.windowScene
             ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
@@ -155,9 +156,55 @@ final class NativeNavigationUnitTests: XCTestCase {
         }
     }
 
+    func testSystemTabControllerOwnsRetainedNavigationStacksAndBadges() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        XCTAssertTrue(home.tabBarController === shell)
+        XCTAssertTrue(shell.selectedViewController === home)
+        XCTAssertEqual(shell.viewControllers?.count, CraftChrome.shared.tabs.count)
+        CraftChrome.shared.updateTab(["id": "/", "badge": "7", "title": "Today"])
+        await displayWait("system tab item updated") { home.tabBarItem.badgeValue == "7" }
+        XCTAssertTrue(shell.selectedViewController === home, "a badge update must not replace the selected stack")
+        XCTAssertEqual(home.tabBarItem.title, "Today")
+        CraftChrome.shared.updateTab(["id": "/", "iconText": "123", "iconTint": "#ff0000"])
+        await displayWait("system tab accepts the live icon") { home.tabBarItem.image?.renderingMode == .alwaysOriginal }
+        XCTAssertNotNil(home.tabBarItem.image)
+        CraftChrome.shared.updateTab(["id": "/", "iconText": NSNull(), "iconTint": NSNull()])
+        CraftChrome.shared.updateTab(["id": "/", "badge": NSNull(), "title": "Home"])
+    }
+
+    func testSystemTabTapUsesCraftRoutingAndRetainsTheOtherStack() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        let items = try XCTUnwrap(shell.viewControllers)
+        XCTAssertFalse(shell.tabBarController(shell, shouldSelect: items[1]))
+        await displayWait("system-selected details stack") { self.stack("/details") === self.shell.selectedViewController }
+        let details = try XCTUnwrap(stack("/details"))
+        XCTAssertTrue(details.tabBarController === shell)
+        XCTAssertTrue(stack("/") === home)
+        XCTAssertFalse(shell.tabBarController(shell, shouldSelect: home))
+        XCTAssertTrue(shell.selectedViewController === home)
+        XCTAssertTrue(stack("/details") === details)
+    }
+
+#if compiler(>=6.2)
+    @available(iOS 26.0, *)
+    func testSystemTabAccessoryAndMinimizationUseUIKit() async throws {
+        XCTAssertEqual(shell.tabBarMinimizeBehavior, .onScrollDown)
+        let home = try XCTUnwrap(stack("/")?.topViewController as? CraftNativeScreenController)
+        home.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Controls',symbol:'bolt'}})")
+        await displayWait("UIKit bottom accessory installed") { self.shell.bottomAccessory != nil }
+        let button = try XCTUnwrap(shell.bottomAccessory?.contentView as? UIButton)
+        XCTAssertEqual(button.accessibilityIdentifier, "craft-tab-accessory")
+        XCTAssertEqual(button.accessibilityLabel, "Controls")
+        home.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
+        await displayWait("UIKit bottom accessory removed") { self.shell.bottomAccessory == nil }
+    }
+#endif
+
     func testColdLinkWaitsForTheConstructedShellToLoadItsStacks() async throws {
         let earlyShell = CraftHybridController(config: CraftHybrid.shared.config)
-        XCTAssertFalse(earlyShell.isViewLoaded)
+        // UITabBarController may load its view during construction; a cold
+        // link must still survive before that shell is connected to a window.
+        XCTAssertNil(earlyShell.viewIfLoaded?.window)
         defer {
             window.rootViewController = shell
             CraftHybrid.shared.controller = shell

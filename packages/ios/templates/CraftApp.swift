@@ -668,7 +668,6 @@ struct CraftApp: App {
                         CraftColorSchemeObserver()
                         CraftHybridRoot(config: appState.config)
                             .ignoresSafeArea()
-                        CraftTabBarView()
                         CraftSplashView(background: appState.config.resolvedBackgroundColor)
                     }
                     // The keyboard covers the tab bar, as it does UIKit's: the

@@ -968,6 +968,19 @@ the app is inactive, and honors Reduce Motion on iOS and disabled system
 animations on Android. iOS 16 shows a static icon; iOS 17 and later use the
 system symbol pulse. Changing the caption does not restart the animation.
 
+Native and hybrid iOS route shells use `UITabBarController`. UIKit owns tab
+selection, badge sizing, accessibility and scroll-edge presentation. On iOS 26,
+the bar minimizes on downward scrolling and the action uses `UITabAccessory`:
+it appears above the expanded bar and moves inline when the system collapses
+the bar. Older iOS versions keep the action above the system tab bar.
+Titles, selected symbols, icon tints, text icons and account photos remain
+supported. Repeating `iconPulse`/`selectedIconPulse` and custom
+`tabBar.selection` shapes/colors do not override this system control; they
+still apply to the legacy web-only chrome and Android where supported.
+The system indicator follows committed selection rather than Craft's
+fractional swipe preview. Native route stacks and swipe cancellation are
+retained. This migration does not change the web-only shell.
+
 `tabAccessory` adds one destination button beside the tab pill without adding
 it to any tab stack or to the tab-swipe order. Give it an app-local path,
 title, and symbol; an optional badge and accessibility label are shared across
@@ -1105,7 +1118,9 @@ only for app-owned source changes that Craft does not model yet:
 
 The `tabBar.selection` option is shared by the iOS and Android builders. Its
 `cornerRadius` is in points on iOS and dp on Android; `color` is `#RRGGBB`.
-Omitted values preserve each host's default selection appearance.
+It styles Android and the legacy web-only iOS chrome. Native and hybrid iOS
+route shells use the system tab indicator and do not override its shape or
+fill. Omitted values preserve each host's default selection appearance.
 
 `postGenerate` runs after `craft ios build` or `craft android build` generates
 the native project. The command runs with the generated project as its working

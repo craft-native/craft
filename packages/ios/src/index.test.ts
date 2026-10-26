@@ -43,6 +43,17 @@ import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
 afterAll(removeAllTempDirs)
 
 describe('Craft iOS builder', () => {
+  it('uses a system tab controller for native and hybrid route stacks', () => {
+    const shell = readFileSync(join(import.meta.dir, '../templates/CraftHybrid.swift'), 'utf8')
+    expect(shell).toContain('CraftHybridController: UITabBarController, UITabBarControllerDelegate')
+    expect(shell).toContain('setViewControllers(controllers, animated: false)')
+    expect(shell).toContain('item.badgeValue = tab.badge')
+    expect(shell).toContain('UITabAccessory(contentView: accessoryButton)')
+    expect(shell).toContain('tabBarMinimizeBehavior = .onScrollDown')
+    const app = readFileSync(join(import.meta.dir, '../templates/CraftApp.swift'), 'utf8')
+    const hybrid = app.slice(app.indexOf('if CraftHybrid.shared.isEnabled {'), app.indexOf('} else if appState.config.renderer == "native"'))
+    expect(hybrid).not.toContain('CraftTabBarView()')
+  })
   it('runs a declared postGenerate command from the project root with metadata', async () => {
     const output = createTempDir('craft-ios-post-generate-')
     await init({ name: 'Hook App', output, runtimeDir: null, config: {

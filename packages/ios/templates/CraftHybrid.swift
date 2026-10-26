@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 import WebKit
+import Combine
 
 // MARK: - Hybrid: web plus native screens
 //
@@ -1098,7 +1099,7 @@ final class CraftNativeNavigationController: UINavigationController {
     }
 }
 
-final class CraftHybridController: UIViewController, UINavigationControllerDelegate, UIGestureRecognizerDelegate, CraftHybridScreenEvents {
+final class CraftHybridController: UITabBarController, UITabBarControllerDelegate, UINavigationControllerDelegate, UIGestureRecognizerDelegate, CraftHybridScreenEvents {
     private let config: CraftConfig
     private let hybrid = CraftHybrid.shared
     /// The web view's host; nil in an all-native app, which never makes one.
@@ -1107,6 +1108,14 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
     private let parking = UIView()
     private var stacks: [String: UINavigationController] = [:]
     private var currentTab = ""
+    private var tabPlaceholders: [String: UIViewController] = [:]
+    private var chromeSubscription: AnyCancellable?
+    private var chromeUpdatePending = false
+    private var synchronizingTabs = false
+    private var accessoryModel: CraftChrome.Tab?
+    private let accessoryButton = UIButton(type: .system)
+    private static let tabPictures = NSCache<NSURL, UIImage>()
+    private var requestedTabPictures = Set<URL>()
     /// The path each native entry opened at.
     private var nativePaths: [ObjectIdentifier: String] = [:]
     /// Each stack as it was after its last transition, to see what a pop removed.
@@ -1159,10 +1168,30 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        hybrid.controller = self
+        delegate = self
+        if #available(iOS 18.0, *) { mode = .tabBar }
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) { tabBarMinimizeBehavior = .onScrollDown }
+#endif
+        accessoryButton.accessibilityIdentifier = "craft-tab-accessory"
+        accessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
+        chromeSubscription = CraftChrome.shared.objectWillChange.sink { [weak self] in
+            guard let self, !self.chromeUpdatePending else { return }
+            self.chromeUpdatePending = true
+            // Published sends before its value changes; coalesce the complete
+            // chrome transaction before updating UIKit's retained tab items.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.chromeUpdatePending = false
+                guard self.hybrid.controller === self else { return }
+                self.synchronizeSystemTabs()
+            }
+        }
         view.backgroundColor = config.resolvedBackgroundColor
         parking.frame = view.bounds
         parking.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        view.addSubview(parking)
+        view.insertSubview(parking, at: 0)
 
         // A native start screen draws first; the web view, whose creation
         // costs a frame or more, starts loading straight after it. An
@@ -1183,6 +1212,155 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         prepareAdjacentNativeTabs()
+    }
+
+    /// UIKit owns the bar, selection indicator, badges and content safe area.
+    /// Placeholders preserve lazy screen creation without inventing a second
+    /// navigation stack when a tab is first selected or prepared for a swipe.
+    private func synchronizeSystemTabs() {
+        guard isViewLoaded, !synchronizingTabs else { return }
+        synchronizingTabs = true
+        defer { synchronizingTabs = false }
+        let chrome = CraftChrome.shared
+        let ids = hybrid.tabIds.isEmpty ? [currentTab] : hybrid.tabIds
+        let controllers = ids.map { id -> UIViewController in
+            let controller: UIViewController
+            if let stack = stacks[id] { controller = stack }
+            else if let placeholder = tabPlaceholders[id] { controller = placeholder }
+            else {
+                controller = UIViewController()
+                tabPlaceholders[id] = controller
+            }
+            if let tab = chrome.tabs.first(where: { $0.id == id }) {
+                let item = controller.tabBarItem!
+                item.title = tab.displayTitle
+                item.image = systemTabImage(tab, selected: false)
+                item.selectedImage = systemTabImage(tab, selected: true)
+                item.badgeValue = tab.badge
+                item.accessibilityIdentifier = "craft-tab-\(tab.id)"
+                item.accessibilityLabel = tab.accessibilityLabel ?? tab.displayTitle
+            }
+            return controller
+        }
+        let existing = viewControllers ?? []
+        if existing.count != controllers.count || zip(existing, controllers).contains(where: { $0 !== $1 }) {
+            setViewControllers(controllers, animated: false)
+            customizableViewControllers = []
+        }
+        if let committed = stacks[currentTab], controllers.contains(where: { $0 === committed }), selectedViewController !== committed {
+            UIView.performWithoutAnimation {
+                selectedViewController = committed
+                view.layoutIfNeeded()
+            }
+        }
+        tabBar.tintColor = chrome.tint ?? view.tintColor
+        let hidden = !chrome.tabBarVisible || chrome.tabs.isEmpty
+        if #available(iOS 18.0, *) { setTabBarHidden(hidden, animated: false) }
+        else { tabBar.isHidden = hidden }
+        updateSystemAccessory(hidden: hidden)
+    }
+
+    private func systemTabImage(_ tab: CraftChrome.Tab, selected: Bool) -> UIImage? {
+        if let address = tab.image, let url = URL(string: address), url.scheme == "https" {
+            if let image = Self.tabPictures.object(forKey: url as NSURL) { return image }
+            if requestedTabPictures.insert(url).inserted {
+                URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+                    guard let data, let response = response as? HTTPURLResponse,
+                          (200..<300).contains(response.statusCode), let image = UIImage(data: data) else { return }
+                    DispatchQueue.main.async { [weak self] in
+                        let fitted = UIGraphicsImageRenderer(size: CGSize(width: 26, height: 26)).image { _ in
+                            UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 26, height: 26)).addClip()
+                            let scale = max(26 / max(1, image.size.width), 26 / max(1, image.size.height))
+                            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+                            image.draw(in: CGRect(x: (26 - size.width) / 2, y: (26 - size.height) / 2, width: size.width, height: size.height))
+                        }.withRenderingMode(.alwaysOriginal)
+                        Self.tabPictures.countLimit = 16
+                        Self.tabPictures.setObject(fitted, forKey: url as NSURL)
+                        guard let self, self.hybrid.controller === self else { return }
+                        self.synchronizeSystemTabs()
+                    }
+                }.resume()
+            }
+        } else if let text = tab.iconText {
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedDigitSystemFont(ofSize: 16, weight: .semibold), .foregroundColor: UIColor.systemRed,
+            ]
+            let label = text as NSString
+            let size = label.size(withAttributes: attributes)
+            return UIGraphicsImageRenderer(size: CGSize(width: min(48, max(1, size.width)), height: 26)).image { _ in
+                label.draw(in: CGRect(x: 0, y: (26 - size.height) / 2, width: 48, height: size.height), withAttributes: attributes)
+            }.withRenderingMode(.alwaysOriginal)
+        }
+        let appearance = tab.iconAppearance(selected: selected, motionAllowed: false)
+        let filled = selected && tab.selectedSymbol == nil && !appearance.symbol.hasSuffix(".fill")
+            ? UIImage(systemName: appearance.symbol + ".fill") : nil
+        let image = filled ?? UIImage(systemName: appearance.symbol)
+        if let color = appearance.tint.flatMap({ UIColor(hex: $0) }) {
+            return image?.withTintColor(color, renderingMode: .alwaysOriginal)
+        }
+        return image
+    }
+
+    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        let ids = hybrid.tabIds
+        guard let index = viewControllers?.firstIndex(where: { $0 === viewController }), ids.indices.contains(index),
+              let tab = CraftChrome.shared.tabs.first(where: { $0.id == ids[index] }) else { return false }
+        // Craft may wait for the shared web page. Its committed stack decides
+        // selection, including reselect-to-root and interruption of a swipe.
+        CraftChrome.shared.tap(tab)
+        return false
+    }
+
+    private func updateSystemAccessory(hidden: Bool) {
+        let chrome = CraftChrome.shared
+        let model = hidden ? nil : chrome.tabAccessory
+        if let model {
+            var configuration = UIButton.Configuration.plain()
+            configuration.image = UIImage(systemName: model.symbol)
+            configuration.title = model.displayTitle
+            configuration.subtitle = model.badge
+            configuration.imagePadding = 8
+            accessoryButton.configuration = configuration
+            accessoryButton.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
+            accessoryButton.accessibilityValue = model.badge
+            accessoryButton.accessibilityTraits = chrome.accessorySelected ? [.button, .selected] : [.button]
+        }
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            if (model == nil) != (bottomAccessory == nil) {
+                bottomAccessory = model.map { _ in UITabAccessory(contentView: accessoryButton) }
+            }
+            accessoryModel = model
+            return
+        }
+#endif
+        // Older systems have no bottom-accessory container. Keep the action
+        // available above the system bar, without recreating the tab control.
+        if model != nil, accessoryButton.superview == nil { view.addSubview(accessoryButton) }
+        accessoryButton.isHidden = model == nil
+        accessoryButton.backgroundColor = config.resolvedBackgroundColor
+        accessoryModel = model
+        view.setNeedsLayout()
+    }
+
+    @objc private func openTabAccessory() {
+        if let accessoryModel { hybrid.open(accessoryModel.id) }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard hybrid.controller === self else { return }
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            // UIKit already supplies the native safe area. This measurement is
+            // only the web CSS contract, not another native bottom inset.
+            let top = bottomAccessory.map { $0.contentView.convert($0.contentView.bounds, to: view).minY } ?? tabBar.frame.minY
+            CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - top))
+            return
+        }
+#endif
+        accessoryButton.frame = CGRect(x: 16, y: tabBar.frame.minY - 44, width: max(0, view.bounds.width - 32), height: 44)
+        CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + (accessoryModel == nil ? 0 : 44))
     }
 
     private var webAttached = false
@@ -1304,6 +1482,9 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
                 self.reveal(slot)
             }
         }
+        if let container = current.view.superview, target.view.superview !== container {
+            container.addSubview(target.view)
+        }
         target.view.isHidden = false
         let width = view.bounds.width
         tabSwipeFrom = -direction * width
@@ -1321,7 +1502,7 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
             }
         }
         target.view.frame = view.bounds.offsetBy(dx: tabSwipeFrom + tabSwipeBase, dy: 0)
-        view.bringSubviewToFront(target.view)
+        target.view.superview?.bringSubviewToFront(target.view)
         CraftChrome.shared.beginTabSwipe(to: id, from: currentTab)
         lastNavigation = CACurrentMediaTime()
         CraftFramePacing.shared.begin("tab swipe")
@@ -1416,10 +1597,18 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         let completing = settleCompleting
         CraftFramePacing.shared.end("tab swipe")
         finish()
+        // The two pages are exactly one viewport apart. UIKit can reparent
+        // the outgoing layer when selection commits; its presentation frame
+        // then uses the new container's coordinates, not the old swipe's.
         let (stay, stayX, other, otherId, otherX) = completing
-            ? (target, targetX, current, outgoing, currentX)
-            : (current, currentX, target, targetId, targetX)
+            ? (target, targetX, current, outgoing, targetX - tabSwipeFrom)
+            : (current, currentX, target, targetId, currentX + tabSwipeFrom)
         guard abs(stayX) > 0.5 else { return }
+        // Selection removes UIKit's outgoing view. A caught interactive swipe
+        // needs it beside the new selected view again, in the same container.
+        if let container = stay.view.superview, other.view.superview !== container {
+            container.addSubview(other.view)
+        }
         stay.view.frame = view.bounds.offsetBy(dx: stayX, dy: 0)
         other.view.isHidden = false
         other.view.frame = view.bounds.offsetBy(dx: otherX, dy: 0)
@@ -1604,17 +1793,18 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
         nav.view.backgroundColor = config.resolvedBackgroundColor
         nav.additionalSafeAreaInsets.bottom = safeAreaForTabBar()
         nav.setNavigationBarHidden(true, animated: false)
-        addChild(nav)
         nav.view.frame = view.bounds
         nav.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         nav.view.isHidden = hidden
-        view.addSubview(nav.view)
-        nav.didMove(toParent: self)
         // Only once the stack's view has loaded: the recognizer is made then,
         // and before it is nil, so the delegate never took.
         for recognizer in popRecognizers(of: nav) { recognizer.delegate = self }
         stacks[tab] = nav
         shownStacks[ObjectIdentifier(nav)] = nav.viewControllers
+        synchronizeSystemTabs()
+        if hidden, nav.view.superview == nil, let container = visibleStack?.view.superview {
+            container.addSubview(nav.view)
+        }
         return nav
     }
 
@@ -1664,10 +1854,11 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
             (nav.topViewController as? CraftNativeScreenController)?.screenVisibilityChanged(true)
         }
         currentTab = id
+        synchronizeSystemTabs()
         if let top = nav.topViewController { CraftChrome.shared.visiblePath = nativePaths[ObjectIdentifier(top)] }
         for (key, other) in stacks { other.view.isHidden = key != id }
         nav.view.frame = view.bounds
-        view.bringSubviewToFront(nav.view)
+        nav.view.superview?.bringSubviewToFront(nav.view)
         prepareAdjacentNativeTabs()
         if let slot = nav.topViewController as? CraftHybridWebSlot, slot.isViewLoaded {
             adoptWeb(into: slot)
@@ -2028,15 +2219,11 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
 
     func tabBarCovers(_ height: CGFloat) {
         tabBarHeight = height
-        let inset = safeAreaForTabBar()
-        for nav in stacks.values where nav.additionalSafeAreaInsets.bottom != inset {
-            nav.additionalSafeAreaInsets.bottom = inset
-        }
     }
 
     private func safeAreaForTabBar() -> CGFloat {
-        let bottom = view.window?.safeAreaInsets.bottom ?? view.safeAreaInsets.bottom
-        return max(0, tabBarHeight - bottom)
+        // UITabBarController supplies this inset to its selected child.
+        0
     }
 
     override func viewSafeAreaInsetsDidChange() {
@@ -2157,6 +2344,12 @@ final class CraftHybridController: UIViewController, UINavigationControllerDeleg
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         if tabSwipeRecognizers.contains(where: { $0 === gestureRecognizer }) {
+            // System tab-bar tracking owns touches on the bar and accessory;
+            // Craft's content swipe must not steal their drag/hold gestures.
+            let point = gestureRecognizer.location(in: view)
+            if !tabBar.isHidden, tabBar.frame.contains(point) { return false }
+            if !accessoryButton.isHidden, accessoryButton.window != nil,
+               accessoryButton.convert(accessoryButton.bounds, to: view).contains(point) { return false }
             // A swipe may begin while the last one settles: it catches it.
             guard activeTabSwipeTarget == nil || tabSwipeSettling,
                   hybrid.tabIds.count > 1, let nav = visibleStack, let top = nav.topViewController else { return false }
