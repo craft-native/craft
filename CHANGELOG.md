@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.353...v0.0.354)
+
+## 🐛 Bug Fixes
+
+- **ios**: persist account-scoped snapshot names ([d3a5c9c](https://github.com/craft-native/craft/commit/d3a5c9c)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.352...v0.0.353)
 
 ## 🚀 Features
