@@ -901,6 +901,59 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertNotNil(label.attributedText?.attribute(.underlineStyle, at: 0, effectiveRange: nil))
     }
 
+    func testKeptPrivateImageLoadsOfflineAndDoesNotSurviveSourceReplacement() throws {
+        let address = "https://kept-image.invalid/\(UUID().uuidString).png"
+        let location = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {
+            try? FileManager.default.removeItem(at: location)
+            try? FileManager.default.removeItem(at: CraftNativeMedia.file(for: address))
+        }
+        let png = try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 7, height: 5)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 7, height: 5))
+        }.pngData())
+        try png.write(to: location)
+        let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: address)!, statusCode: 200, httpVersion: nil,
+            headerFields: ["Content-Length": String(png.count)]))
+        if case .failure(let error) = CraftNativeMedia.store(address, at: location, response: response) {
+            return XCTFail("Could not seed kept image: \(error.message)")
+        }
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func render(_ uri: String) {
+            controller.render(document([["type": "Image", "props": ["key": "kept",
+                "source": ["uri": uri, "headers": ["Authorization": "Bearer private-fixture"]]]]]))
+        }
+        render(address)
+        let image = try XCTUnwrap(find(UIImageView.self, key: "kept", below: controller.view))
+        let deadline = Date().addingTimeInterval(3)
+        while image.image == nil && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        let decoded = try XCTUnwrap(image.image, "HTTPS .invalid cannot supply this image: the kept copy must be read")
+        XCTAssertEqual(decoded.size.width / decoded.size.height, 7.0 / 5.0, accuracy: 0.001)
+        XCTAssertNil(image.accessibilityValue)
+
+        // A kept copy is not permission to load arbitrary filesystem URLs.
+        render(CraftNativeMedia.file(for: address).absoluteString)
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Unsupported image source")
+
+        // Queue a local decode then replace its source before the main queue
+        // can deliver it. Late pixels must not overwrite the replacement.
+        render(address)
+        render("data:image/png;base64,invalid")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Image data is invalid")
+
+        // A second mount must re-read kept bytes, not a global decoded cache.
+        try Data([1, 2, 3]).write(to: CraftNativeMedia.file(for: address))
+        render(address)
+        let failureDeadline = Date().addingTimeInterval(3)
+        while image.accessibilityValue == nil && Date() < failureDeadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        XCTAssertNil(image.image)
+        XCTAssertEqual(image.accessibilityValue, "Kept image is unavailable or invalid")
+    }
+
     func testImageFailuresAreExplicitAndClearStaleContent() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()

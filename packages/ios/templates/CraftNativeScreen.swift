@@ -10111,6 +10111,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             // Decoded at the size it is drawn, when the style fixes that size.
             let pixels = Self.displayPixels(of: view)
             let fill = view.contentMode == .scaleAspectFill
+            // media.keep owns private/offline copies keyed by the authored URL.
+            // Read before the decoded/network cache, without retaining private
+            // pixels there after the app clears its media on sign-out.
+            if let local = CraftNativeMedia.local(uri) {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self, weak view] in
+                    let decoded = (try? Data(contentsOf: local)).flatMap { Self.decodeImage($0, fitting: pixels, fill: fill) }
+                    DispatchQueue.main.async { [weak self, weak view] in
+                        guard let self, let view, self.imageSources[ObjectIdentifier(view)] == requestKey else { return }
+                        guard let image = decoded, CraftNativeMedia.local(uri) == local else {
+                            self.imageFailure(view, uri: uri, message: "Kept image is unavailable or invalid")
+                            return
+                        }
+                        view.image = self.imageForDisplay(image, view: view)
+                        self.imageDidChange(view)
+                        self.emitImageEvent(view, handler: self.imageLoadHandlers[ObjectIdentifier(view)])
+                        self.emitImageEvent(view, handler: self.imageLoadEndHandlers[ObjectIdentifier(view)])
+                    }
+                }
+                return
+            }
             let cacheKey = pixels.map { "\(requestKey)@\(Int($0.size.width))x\(Int($0.size.height))\(fill ? "f" : "")" } ?? requestKey
             // Shown before: on screen in this same frame, already decoded.
             if let decoded = Self.decodedImages.object(forKey: cacheKey as NSString) {
