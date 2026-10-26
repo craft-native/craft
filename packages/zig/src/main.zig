@@ -241,6 +241,8 @@ pub const App = struct {
     notifications: ?*Notifications = null,
     /// Run without putting anything on screen. See `runMacOS`.
     headless: bool = false,
+    /// Keep a visible window interactive without adding a Dock icon on macOS.
+    hide_dock_icon: bool = false,
 
     const Self = @This();
 
@@ -478,9 +480,6 @@ pub const App = struct {
 
     fn runMacOS(self: *Self) !void {
         if (builtin.os.tag == .macos) {
-            // Show windows if we don't have a system tray
-            // If we have a system tray, windows were already shown in the correct order
-            // (after tray creation) by the caller
             // Headless is these two calls not happening, and almost nothing
             // else: `createWindowWithStyle` has never ordered its window on
             // screen — that is `showAllWindows`'s job, and activation is what
@@ -496,13 +495,12 @@ pub const App = struct {
             // advances itself — animations, canvas loops, "wait for the
             // spinner to stop" — sees frame one forever. Driving the page with
             // explicit calls works; waiting for it to drive itself does not.
-            if (self.system_tray == null and !self.headless) {
+            if (!self.headless and self.windows.items.len > 0) {
                 macos.showAllWindows();
-                // Windowed app: claim regular activation (Dock icon, key
-                // window, foreground) — launching from a bare binary would
-                // otherwise leave the window buried with no Dock presence.
-                macos.activateWindowedApp();
-            } else if (self.headless) {
+                // A status item does not replace window activation. Accessory
+                // apps can also become active and take keyboard/mouse input.
+                macos.activateWindowedAppWithDockIcon(!self.hide_dock_icon);
+            } else {
                 // No Dock icon and no app-switcher entry either; the point is
                 // to be invisible, and a bouncing Dock icon is not that.
                 macos.setAccessoryActivationPolicy();

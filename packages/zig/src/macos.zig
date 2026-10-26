@@ -8550,19 +8550,13 @@ pub fn runApp() void {
     const NSApplication = getClass("NSApplication");
     const app = msgSend0(NSApplication, "sharedApplication");
 
-    // DON'T activate - let the app activate naturally
-    // The working test (test-minimal-tray.zig) doesn't call activate and it works!
-    // Calling activate might interfere with the status bar item visibility
+    // App.run has already applied the startup policy. Do not activate here:
+    // headless and windowless menubar apps must remain in the background.
 
     // Run event loop
     msgSendVoid0(app, "run");
 }
 
-/// Activate as a regular, foreground windowed app. Windowed (non-tray) apps
-/// must call this before runApp(): without it the process keeps the default
-/// activation policy when launched outside an .app bundle, so the window
-/// stays behind other apps with no Dock icon and never becomes key.
-/// Tray/menubar apps must NOT call this — see the runApp() comment above.
 /// Run with no Dock icon and no app-switcher entry.
 ///
 /// `NSApplicationActivationPolicyAccessory`, the same policy menubar apps use.
@@ -8575,11 +8569,18 @@ pub fn setAccessoryActivationPolicy() void {
 }
 
 pub fn activateWindowedApp() void {
+    activateWindowedAppWithDockIcon(true);
+}
+
+/// Activate a visible window, whether or not the app also owns a status item.
+/// Accessory policy hides the Dock icon but still permits window interaction.
+/// Headless and windowless menubar apps must not call this.
+pub fn activateWindowedAppWithDockIcon(show_dock_icon: bool) void {
     const NSApplication = getClass("NSApplication");
     const app = msgSend0(NSApplication, "sharedApplication");
 
-    // NSApplicationActivationPolicyRegular = 0 (Dock icon + can become active)
-    _ = msgSend1(app, "setActivationPolicy:", @as(c_long, 0));
+    // Regular = 0, Accessory = 1; both support becoming active.
+    _ = msgSend1(app, "setActivationPolicy:", @as(c_long, if (show_dock_icon) 0 else 1));
 
     // Bring the key (or first) window to front and activate the app.
     const key_window = msgSend0(app, "keyWindow");
@@ -8589,9 +8590,14 @@ pub fn activateWindowedApp() void {
         const windows = msgSend0(app, "windows");
         const count_obj = msgSend0(windows, "count");
         const count: c_ulong = @intCast(@intFromPtr(count_obj));
-        if (count > 0) {
-            const window = msgSend1(windows, "objectAtIndex:", @as(c_ulong, 0));
-            _ = msgSend1(window, "makeKeyAndOrderFront:", @as(?*anyopaque, null));
+        // NSApplication.windows also contains status-item and other AppKit
+        // utility windows. The first object need not accept keyboard focus.
+        for (0..count) |index| {
+            const window = msgSend1(windows, "objectAtIndex:", @as(c_ulong, @intCast(index)));
+            if (msgSendBool(window, "isVisible") and msgSendBool(window, "canBecomeKeyWindow")) {
+                _ = msgSend1(window, "makeKeyAndOrderFront:", @as(?*anyopaque, null));
+                break;
+            }
         }
     }
 

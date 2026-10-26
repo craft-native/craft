@@ -1,7 +1,10 @@
 const std = @import("std");
 const macos = @import("macos.zig");
+const craft = @import("main.zig");
 
 extern "c" fn craft_test_webkit_pixel(view: macos.objc.id, rgba: *[4]f64) c_int;
+extern "c" fn craft_test_tray_window_begin(window: macos.objc.id, view: macos.objc.id, hidden: bool, hide_dock: bool) void;
+extern "c" fn craft_test_tray_window_result() c_int;
 
 fn findWebView(view: macos.objc.id) ?macos.objc.id {
     if (view == null) return null;
@@ -34,7 +37,7 @@ pub fn main() !void {
                 continue;
             }
             const window = try macos.createWindowWithStyle("Craft WebKit verification", 320, 240, html, null, style);
-            defer macos.closeWindow(window);
+            defer macos.destroyWindow(window);
             const webview = findWebView(macos.msgSend0(window, "contentView")) orelse return error.WebViewNotFound;
             try std.testing.expectEqual(inspectable, macos.msgSendBool(webview, "isInspectable"));
             const background = macos.msgSend0(webview, "underPageBackgroundColor");
@@ -57,12 +60,47 @@ pub fn main() !void {
     }
     if (!macos.supportsTransparentWebContent()) {
         const window = try macos.createWindowWithStyle("Public Store preferences", 320, 240, "<html style='background:rgb(24,64,128)'><body>Store preferences</body></html>", null, .{ .titlebar_hidden = true, .dev_tools = false, .hide_dock_icon = true });
-        defer macos.closeWindow(window);
+        defer macos.destroyWindow(window);
         const webview = findWebView(macos.msgSend0(window, "contentView")) orelse return error.WebViewNotFound;
         try std.testing.expect(macos.msgSendBool(webview, "isOpaque"));
         var rgba: [4]f64 = undefined;
         try std.testing.expectEqual(@as(c_int, 1), craft_test_webkit_pixel(webview, &rgba));
         try std.testing.expectApproxEqAbs(@as(f64, 1), rgba[3], 0.00001);
     }
+    // Exercise App.run itself, not just its activation helper. A real AppKit
+    // mouse down/up must reach WebKit with a status item present, without any
+    // page-side showDockIcon/focus workaround or Accessibility permission.
+    for ([_]bool{ false, true }) |hide_dock| {
+        for ([_]bool{ false, true }) |frameless| {
+            try verifyTrayWindow(false, hide_dock, frameless, false);
+        }
+    }
+    try verifyTrayWindow(true, false, false, false);
+    try verifyTrayWindow(false, true, false, true);
     std.debug.print("Native WebKit inspection, rendered alpha and distribution capabilities verified.\n", .{});
+}
+
+fn verifyTrayWindow(headless: bool, hide_dock: bool, frameless: bool, menubar_only: bool) !void {
+    var app = craft.App.init(std.heap.c_allocator);
+    defer app.deinit();
+    app.headless = headless;
+    app.hide_dock_icon = hide_dock;
+    app.initPlatformForTray();
+    const tray = try app.createSystemTray("Craft tray input test");
+    const window: macos.objc.id = if (menubar_only) null else blk: {
+        const created = try app.createWindowWithHTML("Tray activation regression", 320, 240,
+            \\<html><body style="margin:0"><button style="position:fixed;inset:0" onclick="this.dataset.clicked='yes'">Click me</button></body></html>
+        , .{ .system_tray = true, .headless = headless, .hide_dock_icon = hide_dock, .frameless = frameless });
+        break :blk @ptrCast(created.native_handle);
+    };
+    defer if (window != null) macos.destroyWindow(window);
+    const webview = if (window == null) null else findWebView(macos.msgSend0(window, "contentView")) orelse return error.WebViewNotFound;
+    // Reproduce the old tray startup: ordering a window alone is not enough
+    // to make it interactive. App.run must still activate it.
+    if (!headless and !menubar_only) app.showWindows();
+    craft_test_tray_window_begin(window, webview, headless or menubar_only, hide_dock);
+    try app.run();
+    try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_window_result());
+    try std.testing.expect(macos.msgSendBool(tray.platform_handle, "isVisible"));
+    std.debug.print("Tray input verified: headless={any}, hideDock={any}, frameless={any}, menubarOnly={any}\n", .{ headless, hide_dock, frameless, menubar_only });
 }
