@@ -1443,6 +1443,16 @@ enum CraftBasemap: String {
     static let outdoorCredit = "Topography: Esri, USGS, NOAA, OpenStreetMap contributors"
 }
 
+private final class CraftMarkerPhotoRedirects: NSObject, URLSessionTaskDelegate {
+    static let session = URLSession(configuration: .ephemeral, delegate: CraftMarkerPhotoRedirects(), delegateQueue: nil)
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        let url = request.url
+        completionHandler(url?.scheme?.lowercased() == "https" && url?.user == nil && url?.password == nil ? request : nil)
+    }
+}
+
 private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     private var annotationsByID: [String: MKPointAnnotation] = [:]
     private var overlaysByID: [String: MKPolyline] = [:]
@@ -1467,6 +1477,25 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     private var edgePadding = UIEdgeInsets(top: 24, left: 24, bottom: 24, right: 24)
     private var markerBearings: [String: Double] = [:]
     private var markerPinColors: [String: UIColor] = [:]
+    private struct MarkerPhoto: Equatable {
+        let url: URL
+        let size: CGFloat
+        let circle: Bool
+
+        init?(_ props: [String: Any]) {
+            guard let raw = props["image"] as? String, let url = URL(string: raw),
+                  url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty,
+                  url.user == nil, url.password == nil else { return nil }
+            self.url = url
+            let value = CraftNativeMapView.numeric(props["imageSize"]) ?? 30
+            size = CGFloat(value.isFinite ? min(96, max(16, value)) : 30)
+            circle = props["imageShape"] as? String != "square"
+        }
+    }
+    private var markerPhotos: [String: MarkerPhoto] = [:]
+    private var markerPhotoImages: [String: UIImage] = [:]
+    private var markerPhotoTasks: [String: URLSessionDataTask] = [:]
+    private var markerPhotoRequests: [String: UUID] = [:]
     private var tileOverlay: MKTileOverlay?
     private var tileTemplate: String?
     private var tileReplacesMap = true
@@ -1552,6 +1581,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
         edgePadding = UIEdgeInsets(top: inset("top"), left: inset("left"), bottom: inset("bottom"), right: inset("right"))
         var nextBearings: [String: Double] = [:]
         var nextPinColors: [String: UIColor] = [:]
+        var nextPhotos: [String: MarkerPhoto] = [:]
         // Showing the user dot must not trigger a permission prompt from a
         // renderer pass. The app's existing location capability owns that
         // prompt; a map only opts in after authorization is already granted.
@@ -1580,6 +1610,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
                 guard let id = (overlay["id"] as? CustomStringConvertible)?.description,
                       let point = points.first else { continue }
                 nextMarkers[id] = (point, overlay["title"] as? String)
+                nextPhotos[id] = MarkerPhoto(overlay)
                 if let color = overlay["pinColor"] as? String { nextPinColors[id] = Self.color(color) }
                 if let bearing = Self.numeric(overlay["bearing"]), bearing.isFinite {
                     nextBearings[id] = bearing.truncatingRemainder(dividingBy: 360)
@@ -1598,6 +1629,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             if type == "mapmarker" || type == "marker" {
                 guard let point = points.first else { continue }
                 nextMarkers[id] = (point, childProps["title"] as? String)
+                nextPhotos[id] = MarkerPhoto(childProps)
                 if let color = childProps["pinColor"] as? String { nextPinColors[id] = Self.color(color) }
                 if let bearing = Self.numeric(childProps["bearing"]), bearing.isFinite {
                     nextBearings[id] = bearing.truncatingRemainder(dividingBy: 360)
@@ -1626,6 +1658,12 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
 
         markerBearings = nextBearings
         markerPinColors = nextPinColors
+        for id in markerPhotos.keys where markerPhotos[id] != nextPhotos[id] {
+            markerPhotoTasks.removeValue(forKey: id)?.cancel()
+            markerPhotoRequests.removeValue(forKey: id)
+            markerPhotoImages.removeValue(forKey: id)
+        }
+        markerPhotos = nextPhotos
         let staleMarkers = annotationsByID.keys.filter { nextMarkers[$0] == nil }
         removeAnnotations(staleMarkers.compactMap { annotationsByID.removeValue(forKey: $0) })
         for (id, value) in nextMarkers {
@@ -1642,6 +1680,9 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             }
         }
         markerHandlers = nextHandlers
+        for (id, photo) in markerPhotos where markerPhotoRequests[id] == nil {
+            loadMarkerPhoto(photo, id: id)
+        }
 
         let staleOverlays = overlaysByID.keys.filter { nextPolylines[$0] == nil }
         for id in staleOverlays {
@@ -1773,6 +1814,11 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
         markerHandlers.removeAll()
         markerBearings.removeAll()
         markerPinColors.removeAll()
+        markerPhotoTasks.values.forEach { $0.cancel() }
+        markerPhotoTasks.removeAll()
+        markerPhotoRequests.removeAll()
+        markerPhotoImages.removeAll()
+        markerPhotos.removeAll()
         removeAnnotations(Array(annotationsByID.values))
         annotationsByID.removeAll()
         removeOverlays(Array(overlaysByID.values))
@@ -1890,7 +1936,15 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     }
 
     private func configureMarkerView(_ view: MKAnnotationView, id: String) {
-        if let bearing = markerBearings[id] {
+        if let photo = markerPhotoImages[id] {
+            view.image = photo
+            view.transform = .identity
+            view.displayPriority = .required
+            view.collisionMode = markerPhotos[id]?.circle == true ? .circle : .rectangle
+            if #available(iOS 14.0, *) { view.zPriority = .max }
+            view.isAccessibilityElement = true
+            view.accessibilityTraits = .button
+        } else if let bearing = markerBearings[id] {
             let color = (markerPinColors[id] ?? .systemGreen).resolvedColor(with: traitCollection)
             view.tintColor = color
             view.image = Self.markerImage(color: color, direction: true)
@@ -1916,6 +1970,45 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             if #available(iOS 14.0, *) { view.zPriority = .max }
             view.isAccessibilityElement = true
             view.accessibilityTraits = .button
+        }
+    }
+
+    private func loadMarkerPhoto(_ photo: MarkerPhoto, id: String) {
+        let request = UUID()
+        markerPhotoRequests[id] = request
+        let scale = window?.screen.scale ?? UIScreen.main.scale
+        let finish: (Data?) -> Void = { [weak self] data in
+            let pixels = CGSize(width: photo.size * scale, height: photo.size * scale)
+            let decoded = data.flatMap { $0.count <= 8 * 1024 * 1024 ? CraftNativeScreenController.decodeImage($0, fitting: (pixels, scale), fill: true) : nil }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.markerPhotoRequests[id] == request else { return }
+                self.markerPhotoTasks.removeValue(forKey: id)
+                guard let decoded, decoded.size.width > 0, decoded.size.height > 0 else { return }
+                let size = CGSize(width: photo.size, height: photo.size)
+                let format = UIGraphicsImageRendererFormat()
+                format.scale = scale
+                self.markerPhotoImages[id] = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+                    let bounds = CGRect(origin: .zero, size: size)
+                    if photo.circle { UIBezierPath(ovalIn: bounds).addClip() }
+                    let factor = max(photo.size / decoded.size.width, photo.size / decoded.size.height)
+                    let drawn = CGSize(width: decoded.size.width * factor, height: decoded.size.height * factor)
+                    decoded.draw(in: CGRect(x: (photo.size - drawn.width) / 2, y: (photo.size - drawn.height) / 2,
+                                            width: drawn.width, height: drawn.height))
+                }.withRenderingMode(.alwaysOriginal)
+                if let annotation = self.annotationsByID[id], let view = self.view(for: annotation) {
+                    self.configureMarkerView(view, id: id)
+                }
+            }
+        }
+        if let local = CraftNativeMedia.local(photo.url.absoluteString) {
+            DispatchQueue.global(qos: .userInitiated).async { finish(try? Data(contentsOf: local)) }
+        } else {
+            let task = CraftMarkerPhotoRedirects.session.dataTask(with: photo.url) { data, response, _ in
+                let response = response as? HTTPURLResponse
+                finish(response?.statusCode == 200 && response?.url?.scheme?.lowercased() == "https" ? data : nil)
+            }
+            markerPhotoTasks[id] = task
+            task.resume()
         }
     }
 

@@ -262,6 +262,13 @@ or `fitToBounds`, which recenters only when its overlay geometry changes. Explic
 authored camera bounds on both hosts; only `fitToBounds` adds framing padding. A marker's `onPress` or
 `onMarkerPress` receives `nativeEvent.id`; a marker's own handler wins, and the map-level handler is
 used as a fallback when the marker has no non-empty handler.
+`MapMarker.image` accepts an HTTPS avatar URL. `imageSize` defaults to 30 logical
+points and is clamped to 16–96; `imageShape` is `circle` (default) or `square`.
+Photos are center-cropped, drawn upright and centered on the coordinate, and keep
+the marker's title and tap ID. Until loading succeeds, or when the URL is absent,
+invalid or unavailable, the existing pin/direction marker remains visible.
+Changing these props updates the existing annotation; removing a marker cancels
+its pending photo. Kept media can supply the original HTTPS URL offline.
 It is backed by MapKit on iOS and the configured native provider on Android.
 Set the Craft Android config's `mapProvider` to `maplibre` for a key-free native
 GL view; `google` preserves the existing Google Maps host. Only the selected

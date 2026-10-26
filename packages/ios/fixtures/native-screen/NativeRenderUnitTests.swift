@@ -1206,6 +1206,66 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertFalse(update.requiresFullRender)
     }
 
+    func testMapMarkerPhotoCropsUpdatesAndFallsBackWithoutReplacingAnnotation() throws {
+        let address = "https://marker-photo.invalid/\(UUID().uuidString).png"
+        let file = CraftNativeMedia.file(for: address)
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try XCTUnwrap(UIGraphicsImageRenderer(size: CGSize(width: 80, height: 40)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 80, height: 40))
+        }.pngData()).write(to: file)
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        func render(_ url: String, _ size: Double, _ shape: String) {
+            controller.render(["type": "Map", "props": ["key": "photos"], "style": ["width": 320, "height": 320],
+                "children": [["type": "MapMarker", "props": ["id": "runner", "title": "Ada", "geometry": [37.7, -119.5],
+                    "image": url, "imageSize": size, "imageShape": shape], "events": ["onPress": "runner-tap"]]]])
+        }
+        render(address, 30, "circle")
+        let map = try XCTUnwrap(find(MKMapView.self, key: "photos", below: controller.view))
+        let annotation = try XCTUnwrap(map.annotations.first)
+        func photo(_ expectedSize: CGFloat) throws -> UIImage {
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline {
+                if let image = map.delegate?.mapView?(map, viewFor: annotation)?.image, image.size.width == expectedSize { return image }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            throw NSError(domain: "Marker photo did not load", code: 1)
+        }
+        func alpha(_ image: UIImage, x: Int, y: Int) throws -> UInt8 {
+            let cg = try XCTUnwrap(image.cgImage)
+            var pixels = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+            try pixels.withUnsafeMutableBytes { bytes in
+                let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: cg.width, height: cg.height,
+                    bitsPerComponent: 8, bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            }
+            return pixels[(y * cg.width + x) * 4 + 3]
+        }
+        let circle = try photo(30)
+        XCTAssertEqual(try alpha(circle, x: 0, y: 0), 0)
+        XCTAssertEqual(try alpha(circle, x: circle.cgImage!.width / 2, y: circle.cgImage!.height / 2), 255)
+        render(address, 500, "square")
+        let square = try photo(96)
+        XCTAssertEqual(try alpha(square, x: 0, y: 0), 255)
+        XCTAssertTrue(map.annotations.first === annotation)
+        controller.evaluateScript("globalThis.__photoTap = ''; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT') globalThis.__photoTap = m.payload.handlerName + ':' + m.payload.nativeEvent.id; };")
+        map.delegate?.mapView?(map, didSelect: annotation)
+        let deadline = Date().addingTimeInterval(2)
+        while controller.evaluateScript("globalThis.__photoTap")?.toString() != "runner-tap:runner", Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(controller.evaluateScript("globalThis.__photoTap")?.toString(), "runner-tap:runner")
+        render("http://marker-photo.invalid/avatar.png", 30, "circle")
+        XCTAssertEqual(map.delegate?.mapView?(map, viewFor: annotation)?.image?.size.width, 28)
+        render(address, 40, "circle")
+        render("file:///private/avatar.png", 30, "circle")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(map.delegate?.mapView?(map, viewFor: annotation)?.image?.size.width, 28, "late photo replaced fallback")
+    }
+
     func testMapExplorationCameraAndDirectionMarker() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         let window = try hostWindow()
