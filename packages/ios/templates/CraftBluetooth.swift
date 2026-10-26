@@ -30,6 +30,13 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     private var exchangeTimer: DispatchWorkItem?
     private var responsePrefix = Data()
     private var connected = false
+    private var streaming = false
+    private var notifications: [Data] = []
+    private var notificationBytes = 0
+    private var readCompletion: Completion?
+    private var readTimer: DispatchWorkItem?
+    private var writeCompletion: Completion?
+    private var writeTimer: DispatchWorkItem?
 
     func perform(method: String, args: [Any], completion: @escaping Completion) {
         if !Thread.isMainThread {
@@ -39,11 +46,13 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         let options = args.first as? [String: Any] ?? [:]
         switch method {
         case "getState":
-            completion(.success(["available": true, "connected": connected, "scanning": scanCompletion != nil]))
+            completion(.success(["available": true, "connected": connected, "scanning": scanCompletion != nil, "streaming": true]))
         case "scan": scan(options, completion)
         case "stopScan": stopScan(); completion(.success(true))
         case "connect": connect(options, completion)
         case "exchange": exchange(options, completion)
+        case "write": write(options, completion)
+        case "read": read(options, completion)
         case "disconnect": disconnect(); completion(.success(true))
         default: reject(completion, "Unsupported Bluetooth method", "UNKNOWN_ACTION")
         }
@@ -102,6 +111,8 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         central?.stopScan(); scanTimer?.cancel(); scanTimer = nil
         let scan = scanCompletion; scanCompletion = nil; scan?(.failure(failure))
         settleConnect(.failure(failure)); settleExchange(.failure(failure))
+        settleRead(.failure(failure)); settleWrite(.failure(failure))
+        notifications.removeAll(); notificationBytes = 0
         connected = false
     }
 
@@ -131,6 +142,7 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         guard central?.state == .poweredOn else { return reject(completion, "Bluetooth is off", "BLUETOOTH_OFF") }
         disconnect()
         peripheral = found; serviceUUID = CBUUID(string: service); writeUUID = CBUUID(string: write); notifyUUID = CBUUID(string: notify)
+        streaming = options["stream"] as? Bool == true
         found.delegate = self; connectCompletion = completion
         central?.connect(found, options: nil)
         let timer = DispatchWorkItem { [weak self] in
@@ -161,6 +173,9 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         guard peripheral === self.peripheral else { return }
         connected = false; writer = nil; notifier = nil
+        settleRead(.failure(CraftBluetoothError(message: "Bluetooth device disconnected", code: "DISCONNECTED")))
+        settleWrite(.failure(CraftBluetoothError(message: "Bluetooth device disconnected", code: "DISCONNECTED")))
+        notifications.removeAll(); notificationBytes = 0
         settleConnect(.failure(CraftBluetoothError(message: "Bluetooth device disconnected", code: "DISCONNECTED")))
         settleExchange(.failure(CraftBluetoothError(message: "Bluetooth device disconnected", code: "DISCONNECTED")))
     }
@@ -190,11 +205,11 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
         connected = true
         let id = peripheral.identifier.uuidString
-        settleConnect(.success(["id": id, "name": names[id] ?? peripheral.name ?? ""]))
+        settleConnect(.success(["id": id, "name": names[id] ?? peripheral.name ?? "", "maxWrite": min(182, peripheral.maximumWriteValueLength(for: writer?.properties.contains(.write) == true ? .withResponse : .withoutResponse))]))
     }
 
     private func exchange(_ options: [String: Any], _ completion: @escaping Completion) {
-        guard exchangeCompletion == nil else { return reject(completion, "A Bluetooth request is already running", "BUSY") }
+        guard !streaming, exchangeCompletion == nil else { return reject(completion, "A Bluetooth request is already running or streaming", "BUSY") }
         guard connected, let peripheral, let writer else { return reject(completion, "Bluetooth device is disconnected", "DISCONNECTED") }
         guard let bytes = options["bytes"] as? [Int], !bytes.isEmpty, bytes.count <= 182, bytes.allSatisfy({ (0...255).contains($0) }),
               let prefix = options["responsePrefix"] as? [Int], !prefix.isEmpty, prefix.count <= 16, prefix.allSatisfy({ (0...255).contains($0) }) else {
@@ -217,12 +232,28 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peripheral === self.peripheral, characteristic === writer, error != nil else { return }
-        settleExchange(.failure(CraftBluetoothError(message: "Bluetooth write failed", code: "WRITE_FAILED")))
+        guard peripheral === self.peripheral, characteristic === writer else { return }
+        if let error {
+            let failure = CraftBluetoothError(message: error.localizedDescription, code: "WRITE_FAILED")
+            settleWrite(.failure(failure)); settleExchange(.failure(failure))
+        } else { settleWrite(.success(true)) }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard peripheral === self.peripheral, characteristic === notifier, exchangeCompletion != nil else { return }
+        guard peripheral === self.peripheral, characteristic === notifier else { return }
+        if streaming {
+            guard error == nil, let data = characteristic.value, !data.isEmpty, data.count <= 4096 else {
+                disconnect(); return
+            }
+            if readCompletion != nil { settleRead(.success(data.map(Int.init))); return }
+            guard notifications.count < 512, notificationBytes + data.count <= 1048576 else {
+                settleRead(.failure(CraftBluetoothError(message: "Bluetooth receive queue overflow", code: "OVERFLOW")))
+                disconnect(); return
+            }
+            notifications.append(data); notificationBytes += data.count
+            return
+        }
+        guard exchangeCompletion != nil else { return }
         guard error == nil, let data = characteristic.value else {
             settleExchange(.failure(CraftBluetoothError(message: "Bluetooth notification failed", code: "READ_FAILED"))); return
         }
@@ -233,8 +264,51 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         settleExchange(.success(data.map(Int.init)))
     }
 
+    private func settleRead(_ result: Result<Any, CraftBluetoothError>) {
+        readTimer?.cancel(); readTimer = nil
+        let completion = readCompletion; readCompletion = nil; completion?(result)
+    }
+    private func settleWrite(_ result: Result<Any, CraftBluetoothError>) {
+        writeTimer?.cancel(); writeTimer = nil
+        let completion = writeCompletion; writeCompletion = nil; completion?(result)
+    }
+    private func read(_ options: [String: Any], _ completion: @escaping Completion) {
+        guard streaming, connected else { return reject(completion, "Bluetooth stream disconnected", "DISCONNECTED") }
+        guard readCompletion == nil else { return reject(completion, "A Bluetooth read is running", "BUSY") }
+        if !notifications.isEmpty {
+            let data = notifications.removeFirst(); notificationBytes -= data.count
+            completion(.success(data.map(Int.init))); return
+        }
+        readCompletion = completion
+        let timeout = min(20, max(0.001, (options["timeoutMs"] as? Double ?? 10000) / 1000))
+        let timer = DispatchWorkItem { [weak self] in self?.settleRead(.failure(CraftBluetoothError(message: "Bluetooth read timed out", code: "TIMEOUT"))) }
+        readTimer = timer
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: timer)
+    }
+    private func write(_ options: [String: Any], _ completion: @escaping Completion) {
+        guard streaming, connected, let peripheral, let writer else { return reject(completion, "Bluetooth stream disconnected", "DISCONNECTED") }
+        guard writeCompletion == nil else { return reject(completion, "A Bluetooth write is running", "BUSY") }
+        guard let bytes = options["bytes"] as? [Int], !bytes.isEmpty, bytes.count <= 182, bytes.allSatisfy({ (0...255).contains($0) }) else { return reject(completion, "Invalid Bluetooth bytes", "INVALID_ARGUMENT") }
+        let type: CBCharacteristicWriteType = writer.properties.contains(.write) ? .withResponse : .withoutResponse
+        guard bytes.count <= peripheral.maximumWriteValueLength(for: type) else { return reject(completion, "Bluetooth write exceeds MTU", "MTU_TOO_SMALL") }
+        if type == .withoutResponse, !peripheral.canSendWriteWithoutResponse { return reject(completion, "Bluetooth queue busy", "BUSY") }
+        if type == .withResponse {
+            writeCompletion = completion
+            let timer = DispatchWorkItem { [weak self] in
+                self?.settleWrite(.failure(CraftBluetoothError(message: "Bluetooth write timed out", code: "TIMEOUT")))
+                self?.disconnect()
+            }
+            writeTimer = timer
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timer)
+        }
+        peripheral.writeValue(Data(bytes.map(UInt8.init)), for: writer, type: type)
+        if type == .withoutResponse { completion(.success(true)) }
+    }
     private func disconnect() {
         stopScan()
+        settleRead(.failure(CraftBluetoothError(message: "Bluetooth stream closed", code: "DISCONNECTED")))
+        settleWrite(.failure(CraftBluetoothError(message: "Bluetooth stream closed", code: "DISCONNECTED")))
+        notifications.removeAll(); notificationBytes = 0; streaming = false
         settleConnect(.failure(CraftBluetoothError(message: "Bluetooth connection cancelled", code: "CANCELLED")))
         settleExchange(.failure(CraftBluetoothError(message: "Bluetooth request cancelled", code: "CANCELLED")))
         if let peripheral { central?.cancelPeripheralConnection(peripheral); peripheral.delegate = nil }

@@ -6011,6 +6011,8 @@ struct CraftWebView: UIViewRepresentable {
                         stopScan: function() { return craft._invoke('bluetoothChannel', {method: 'stopScan'}); },
                         connect: function(options) { return craft._invoke('bluetoothChannel', {method: 'connect', options: options || {}}); },
                         exchange: function(options) { return craft._invoke('bluetoothChannel', {method: 'exchange', options: options || {}}); },
+                        read: function(options) { return craft._invoke('bluetoothChannel', {method: 'read', options: options || {}}); },
+                        write: function(options) { return craft._invoke('bluetoothChannel', {method: 'write', options: options || {}}); },
                         disconnect: function() { return craft._invoke('bluetoothChannel', {method: 'disconnect'}); }
                     };
                     craft.heartRate = {
