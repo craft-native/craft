@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.360...v0.0.361)
+
+## 🚀 Features
+
+- **macos**: add real app icons and protected clipboard snapshots ([c801930](https://github.com/craft-native/craft/commit/c801930)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.355...v0.0.360)
 
 ## 🚀 Features
