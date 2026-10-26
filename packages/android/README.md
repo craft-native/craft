@@ -175,6 +175,10 @@ dependency nor a Google map key. `mapProvider: 'google'` retains the existing
 Google Maps host and uses `mapsApiKey` for its SDK manifest key; Google remains
 the default for compatibility with existing projects.
 
+Reactive `StatusBar` props update the visible window during targeted native
+mutations, including light/dark icon contrast and visibility. Retained screens
+keep their own values; unchanged props leave the current window appearance alone.
+
 Coordinates must be JSON numbers (numeric strings are not coerced), are
 range-checked at the native boundary, and invalid points or pole-crossing
 regions are ignored. `fitToBounds` waits for the map viewport to
@@ -1132,7 +1136,6 @@ and detents; Android sizes its native bottom panel to the selected detent
 without an extra dependency. Omitting presentationStyle keeps the existing
 full-screen overlay. A native sheet's close request still belongs to its
 owner, which sets visible to false.
-
 
 ### Controlled native paging and font families
 
