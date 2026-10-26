@@ -41,6 +41,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import org.json.JSONArray
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -2294,6 +2295,33 @@ class NativeNavigationTest {
     private fun systemCommand(command: String): String =
         android.os.ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
             .bufferedReader().use { it.readText().trim() }
+
+    @Test
+    fun nativeStatusBarPropsUpdateWithoutNavigation() {
+        val context = instrumentation.targetContext
+        val activity = instrumentation.startActivitySync(
+            Intent(context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        ) as MainActivity
+        try {
+            awaitView(activity, "toggle-status-bar-content")
+            for (expectedLightAppearance in listOf(false, true, false)) {
+                click(activity, "toggle-status-bar-content")
+                var actual: Boolean? = null
+                val deadline = SystemClock.uptimeMillis() + 5000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.runOnMainSync {
+                        actual = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                            .isAppearanceLightStatusBars
+                    }
+                    if (actual == expectedLightAppearance) break
+                    SystemClock.sleep(50)
+                }
+                assertEquals("Live StatusBar props must update the visible window without navigation",
+                    expectedLightAppearance, actual)
+            }
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
 
     @Test
     fun nativeScreenBackgroundOptionAppliesAndResets() {

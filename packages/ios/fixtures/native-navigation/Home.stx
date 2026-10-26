@@ -99,6 +99,7 @@ const sectionScrolls = state(0)
 const safeAreaBottomOnly = state(false)
 const retainedSafeArea = state(false)
 const screenBackgroundSolid = state(false)
+const statusBarContent = state('default')
 
 globalThis.craft.storage.remove('native-navigation-details-destroyed')
 globalThis.craft.navigation.setOptions({
@@ -585,6 +586,7 @@ function openDetailsThenUpdateBackground() {
 
 <template>
   <SafeAreaView testID="root" :edges="safeAreaBottomOnly() ? ['bottom'] : ['top', 'bottom']" class="p-4">
+    <StatusBar :barStyle="statusBarContent()" />
     <ScrollView testID="native-root-scroll" style={{"flex":1}}>
     <View testID="theme-probe" class="bg-white dark:bg-slate-950" style={{"height":24}}>
       <Text testID="theme-probe-label" class="text-slate-900 dark:text-white">Theme probe</Text>
@@ -602,6 +604,7 @@ function openDetailsThenUpdateBackground() {
       <Text testID="retained-safe-area-label">Safe retained container</Text>
     </SafeAreaView>
     <Button testID="toggle-screen-background" @click="toggleScreenBackground()">Toggle screen background</Button>
+    <Button testID="toggle-status-bar-content" @click="statusBarContent.set(statusBarContent() === 'light-content' ? 'dark-content' : 'light-content')">Toggle status bar content</Button>
     <Button testID="black-screen-background" @click="globalThis.craft.navigation.setOptions({ backgroundColor: '#000000' })">Black focus background</Button>
     <Button testID="background-open-details" @click="openDetailsThenUpdateBackground()">Update retained background</Button>
     <ScrollView testID="tab-swipe-carousel" horizontal style={{"width":240,"height":48}}>
