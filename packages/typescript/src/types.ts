@@ -1866,11 +1866,13 @@ export interface CraftHapticsAPI {
  * `screen_sharing.zig` for the signal table.
  */
 export interface CraftScreenSharingAPI {
+  /** Read current native indicators. Rejects if a bounded Accessibility read is incomplete. */
   getState(): Promise<ScreenSharingState>
   /**
    * Start polling. Emits `craft:screenSharing:change` whenever the resolved
-   * state differs, including once immediately. Interval is clamped to
-   * 250ms–60s.
+   * confirmed state differs, including once after the first complete read.
+   * Incomplete native reads are retried without emitting a false stop.
+   * Interval is clamped to 250ms–60s.
    */
   watch(intervalMs?: number): Promise<{ ok: boolean, intervalMs: number }>
   unwatch(): Promise<{ ok: boolean }>

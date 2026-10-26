@@ -126,11 +126,17 @@ const State = struct {
     }
 };
 
+// The watcher and one-shot callers share native AX servers and retained
+// control-panel references. Serialize their bounded native evaluations.
+var evaluation_mutex: @import("compat_mutex.zig").Mutex = .{};
+
 /// Evaluate every signal, appending each matched window to `sources` (as JSON)
 /// when a buffer is supplied. Returns the aggregate state.
 fn evaluate(allocator: std.mem.Allocator, sources: ?*std.ArrayListUnmanaged(u8)) !State {
     var state: State = .{};
     if (comptime builtin.os.tag != .macos) return state;
+    evaluation_mutex.lock();
+    defer evaluation_mutex.unlock();
 
     readSessionSignals(&state);
     if (state.system) state.digest.add(.system, "CGSession", "screenIsShared");
@@ -210,6 +216,8 @@ fn captureState(work: *CaptureWork) void {
     const macos = @import("macos.zig");
     const pool = macos.msgSend0(macos.msgSend0(macos.getClass("NSAutoreleasePool"), "alloc"), "init");
     defer _ = macos.msgSend0(pool, "drain");
+    // Failed or incomplete native reads must not publish an idle state. The
+    // watcher retries on its next tick; a one-shot caller receives an error.
     work.json = buildStateJson(allocator, &work.state) catch null;
     if (work.ticket) |ticket| {
         defer allocator.destroy(work);
