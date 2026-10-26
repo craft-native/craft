@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.356...v0.0.357)
+
+## 🐛 Bug Fixes
+
+- refresh Android traits from the committed screen root ([69ac6f5](https://github.com/craft-native/craft/commit/69ac6f5)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- verify live system appearance with the corrected STX compiler ([f018781](https://github.com/craft-native/craft/commit/f018781)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.355...v0.0.356)
 
 ## 🐛 Bug Fixes
