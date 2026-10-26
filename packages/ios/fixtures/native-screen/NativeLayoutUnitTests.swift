@@ -865,6 +865,28 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(try frame("send", in: controller).width, 36, accuracy: 1)
     }
 
+    func testNestedGroupedConversationKeepsItsViewportAfterAStyleUpdate() async throws {
+        let controller = screen(box("root", [
+            box("chrome", style: ["height": 0]),
+            box("screen", style: ["flex": 1], [
+                box("group", style: ["flex": 1, "backgroundColor": "#f2f2f7"], [
+                    ["id": "thread", "type": "ScrollView", "props": ["testID": "thread"], "style": ["flex": 1, "flexBasis": 0], "children": [text("intro", "Your coach is ready")]],
+                    box("composer", style: ["padding": 12], [text("draft", "Ask your coach")]),
+                ]),
+            ]),
+        ]))
+        await settle(controller)
+        XCTAssertGreaterThan(try frame("thread", in: controller).height, 600)
+        XCTAssertEqual(try frame("composer", in: controller).maxY, controller.view.bounds.height, accuracy: 1)
+        try controller.applyMutation([
+            "version": 1, "batchId": "appearance", "baseRevision": 0, "revision": 1,
+            "operations": [["op": "updateNode", "id": "group", "patch": ["style": ["flex": 1, "backgroundColor": "#000000"]]]],
+        ])
+        await settle(controller)
+        XCTAssertGreaterThan(try frame("thread", in: controller).height, 600)
+        XCTAssertEqual(try frame("composer", in: controller).maxY, controller.view.bounds.height, accuracy: 1)
+    }
+
     func testNumericNavigationBadgeOneSurvivesTheJSONBridge() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
