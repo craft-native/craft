@@ -747,8 +747,11 @@ internal data class CraftMarkerPhoto(val address: String, val size: Float, val c
             val address = props.opt("image") as? String ?: return null
             val uri = Uri.parse(address)
             if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.userInfo != null) return null
-            val size = (props.opt("imageSize") as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: 30.0
-            return CraftMarkerPhoto(address, size.coerceIn(16.0, 96.0).toFloat(), props.optString("imageShape") != "square")
+            // Current STX releases preserve unknown HTML/binding spellings.
+            val rawSize = props.opt("imageSize") ?: props.opt("imagesize") ?: props.opt("image-size")
+            val shape = props.opt("imageShape") ?: props.opt("imageshape") ?: props.opt("image-shape")
+            val size = (rawSize as? Number)?.toDouble()?.takeIf { it.isFinite() } ?: 30.0
+            return CraftMarkerPhoto(address, size.coerceIn(16.0, 96.0).toFloat(), shape != "square")
         }
     }
 }

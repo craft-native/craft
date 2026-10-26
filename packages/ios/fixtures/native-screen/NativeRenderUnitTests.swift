@@ -1217,10 +1217,10 @@ final class NativeRenderUnitTests: XCTestCase {
         }.pngData()).write(to: file)
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
-        func render(_ url: String, _ size: Double, _ shape: String) {
+        func render(_ url: String, _ size: Double, _ shape: String, sizeKey: String = "imageSize", shapeKey: String = "imageShape") {
             controller.render(["type": "Map", "props": ["key": "photos"], "style": ["width": 320, "height": 320],
                 "children": [["type": "MapMarker", "props": ["id": "runner", "title": "Ada", "geometry": [37.7, -119.5],
-                    "image": url, "imageSize": size, "imageShape": shape], "events": ["onPress": "runner-tap"]]]])
+                    "image": url, sizeKey: size, shapeKey: shape], "events": ["onPress": "runner-tap"]]]])
         }
         render(address, 30, "circle")
         let map = try XCTUnwrap(find(MKMapView.self, key: "photos", below: controller.view))
@@ -1250,6 +1250,10 @@ final class NativeRenderUnitTests: XCTestCase {
         render(address, 500, "square")
         let square = try photo(96)
         XCTAssertEqual(try alpha(square, x: 0, y: 0), 255)
+        render(address, 40, "square", sizeKey: "imagesize", shapeKey: "imageshape")
+        XCTAssertEqual(try alpha(photo(40), x: 0, y: 0), 255)
+        render(address, 42, "square", sizeKey: "image-size", shapeKey: "image-shape")
+        XCTAssertEqual(try alpha(photo(42), x: 0, y: 0), 255)
         XCTAssertTrue(map.annotations.first === annotation)
         controller.evaluateScript("globalThis.__photoTap = ''; globalThis.__stxNativeCallback = function(json) { const m = JSON.parse(json); if (m.type === 'EVENT') globalThis.__photoTap = m.payload.handlerName + ':' + m.payload.nativeEvent.id; };")
         map.delegate?.mapView?(map, didSelect: annotation)

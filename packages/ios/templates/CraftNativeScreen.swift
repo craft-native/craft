@@ -1487,9 +1487,10 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
                   url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty,
                   url.user == nil, url.password == nil else { return nil }
             self.url = url
-            let value = CraftNativeMapView.numeric(props["imageSize"]) ?? 30
+            // Current STX releases preserve unknown HTML/binding spellings.
+            let value = CraftNativeMapView.numeric(props["imageSize"] ?? props["imagesize"] ?? props["image-size"]) ?? 30
             size = CGFloat(value.isFinite ? min(96, max(16, value)) : 30)
-            circle = props["imageShape"] as? String != "square"
+            circle = (props["imageShape"] ?? props["imageshape"] ?? props["image-shape"]) as? String != "square"
         }
     }
     private var markerPhotos: [String: MarkerPhoto] = [:]

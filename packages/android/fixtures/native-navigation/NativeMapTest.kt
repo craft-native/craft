@@ -133,6 +133,19 @@ class NativeMapTest {
     }
 
     @Test
+    fun markerPhotoPropsAcceptCompilerSpellingsAndRejectUnsafeAddresses() {
+        for ((sizeKey, shapeKey) in listOf("imageSize" to "imageShape", "imagesize" to "imageshape", "image-size" to "image-shape")) {
+            val props = JSONObject().put("image", "https://example.com/avatar.png").put(sizeKey, 500).put(shapeKey, "square")
+            assertEquals(CraftMarkerPhoto("https://example.com/avatar.png", 96f, false), CraftMarkerPhoto.from(props))
+            props.put(sizeKey, -2)
+            assertEquals(16f, requireNotNull(CraftMarkerPhoto.from(props)).size, 0f)
+        }
+        for (address in listOf("http://example.com/avatar.png", "file:///avatar.png", "data:image/png;base64,AAAA", "https://", "https://user:secret@example.com/avatar.png")) {
+            assertNull(CraftMarkerPhoto.from(JSONObject().put("image", address)))
+        }
+    }
+
+    @Test
     fun markerPhotosCropClampAndKeepTapIdentityAcrossMutations() = withMap { activity, host, _, map, _ ->
         val address = "https://marker-photo.invalid/${java.util.UUID.randomUUID()}.png"
         val file = CraftNativeMedia.file(activity, address)

@@ -269,6 +269,10 @@ the marker's title and tap ID. Until loading succeeds, or when the URL is absent
 invalid or unavailable, the existing pin/direction marker remains visible.
 Changing these props updates the existing annotation; removing a marker cancels
 its pending photo. Kept media can supply the original HTTPS URL offline.
+The hosts also accept `imagesize`/`imageshape` and `image-size`/`image-shape`,
+which current STX template compilers may emit before these names are added to
+their canonical prop list. STX's `MapMarkerProps`/`MapMarkerOverlay` TypeScript
+interfaces need the corresponding upstream additions for typed programmatic use.
 It is backed by MapKit on iOS and the configured native provider on Android.
 Set the Craft Android config's `mapProvider` to `maplibre` for a key-free native
 GL view; `google` preserves the existing Google Maps host. Only the selected
