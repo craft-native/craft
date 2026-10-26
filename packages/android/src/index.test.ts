@@ -792,6 +792,21 @@ describe('Craft Android builder', () => {
     expect(native).toContain('control.transitionName = craftNativeOptionalString(props.opt("transitionID"))?.takeIf { it.isNotBlank() }')
   })
 
+  it('loads kept private images before public caches without allowing file URLs', () => {
+    const native = readFileSync(join(import.meta.dir, '../templates/MainActivityNative.kt.template'), 'utf8')
+    const loader = native.slice(native.indexOf('private fun updateImage('), native.indexOf('private fun imageFailure('))
+    const policy = loader.indexOf('if (!loadsImage(Uri.parse(requestUri)))')
+    const kept = loader.indexOf('CraftNativeMedia.local(this, uri)')
+    const cache = loader.indexOf('imageCache.read(requestUri)')
+    expect(policy).toBeGreaterThanOrEqual(0)
+    expect(kept).toBeGreaterThan(policy)
+    expect(cache).toBeGreaterThan(kept)
+    expect(loader).toContain('if (imageSources[view] != requestKey) return@runOnUiThread')
+    const fixture = readFileSync(join(import.meta.dir, '../fixtures/native-navigation/NativeNavigationTest.kt'), 'utf8')
+    expect(fixture).toContain('put("op", "updateNode").put("id", "kept-image")')
+    expect(fixture).toContain('source updates must retain the mounted image')
+  })
+
   it('gives native screens screen-owned audio playback with cancellation and teardown', async () => {
     const output = createTempDir('craft-android-native-audio-')
     await init({ name: 'NativeAudio', packageName: 'org.example.nativeaudio', output, runtimeDir: null, config: { renderer: 'native' } })

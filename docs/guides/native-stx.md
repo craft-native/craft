@@ -661,6 +661,19 @@ and unmount private screens; clearing the files does not erase pixels already di
 A corrupt kept image reports a load error rather than silently fetching it again.
 This does not enable arbitrary file URLs or picker paths as image sources.
 
+For an authenticated attachment, keep the response before assigning the original
+URL to the screen's image signal:
+
+```ts
+await craft.media.keep(attachmentURL, { headers: { Authorization: `Bearer ${token}` } })
+photoURL.set(attachmentURL) // <Image :source="{ uri: photoURL }" />
+```
+
+Do not assign `craft.media.path(attachmentURL)` or a `files.download`/`pickImage`
+descriptor's path to `source`: the kept-media lookup is keyed by the authored
+URL, not an arbitrary file path. Source changes still use the normal native
+mutation protocol and must clear the previous image before displaying new bytes.
+
 `ScrollView` uses `horizontal` (or a row flex direction) to choose its axis and
 renders its children as native views. `scrollEnabled`, the platform scroll
 indicators, and nested scrolling are native; Android forwards the nested-scroll

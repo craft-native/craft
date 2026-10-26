@@ -725,16 +725,32 @@ class NativeNavigationTest {
             awaitView(activity, "selectable-native-text")
             // Exercise the actual renderer on the mounted screen, without a
             // public test-only host API or a fake ImageView implementation.
+            var revision = 0
             fun render(uri: String) {
                 val screens = MainActivity::class.java.getDeclaredField("screens").apply { isAccessible = true }
                     .get(activity) as List<*>
                 val screen = requireNotNull(screens.last())
-                val method = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, org.json.JSONObject::class.java)
-                    .apply { isAccessible = true }
-                method.invoke(activity, screen, org.json.JSONObject().put("type", "Image")
-                    .put("props", org.json.JSONObject().put("key", "kept").put("testID", "kept")
-                        .put("source", org.json.JSONObject().put("uri", uri)
-                            .put("headers", org.json.JSONObject().put("Authorization", "Bearer private-fixture")))))
+                val source = org.json.JSONObject().put("uri", uri)
+                    .put("headers", org.json.JSONObject().put("Authorization", "Bearer private-fixture"))
+                if (revision == 0) {
+                    val method = MainActivity::class.java.getDeclaredMethod("render", screen.javaClass, org.json.JSONObject::class.java)
+                        .apply { isAccessible = true }
+                    method.invoke(activity, screen, org.json.JSONObject().put("id", "kept-image").put("type", "Image")
+                        .put("props", org.json.JSONObject().put("key", "kept").put("testID", "kept").put("source", source)))
+                } else {
+                    // Update the mounted protocol node, as a bound src does.
+                    // Replacing the whole fixture document and inspecting a
+                    // retained reference cannot establish which view is live.
+                    val method = MainActivity::class.java.getDeclaredMethod("applyMutation", screen.javaClass, org.json.JSONObject::class.java)
+                        .apply { isAccessible = true }
+                    method.invoke(activity, screen, org.json.JSONObject()
+                        .put("version", 1).put("batchId", "kept-$revision")
+                        .put("baseRevision", revision - 1).put("revision", revision)
+                        .put("operations", JSONArray().put(org.json.JSONObject()
+                            .put("op", "updateNode").put("id", "kept-image")
+                            .put("patch", org.json.JSONObject().put("props", org.json.JSONObject().put("source", source))))))
+                }
+                revision++
             }
             instrumentation.runOnMainSync { render(address) }
             val image = awaitView(activity, "kept") { it is ImageView && it.drawable != null } as ImageView
@@ -745,13 +761,16 @@ class NativeNavigationTest {
                 assertEquals(Color.RED, bitmap.getPixel(3, 2))
                 assertTrue(CraftNativeImageCache(java.io.File(context.cacheDir, "craft-native-images")).read(address) == null)
                 render(kept.toURI().toString())
+                assertSame("source updates must retain the mounted image", image, find(activity.window.decorView, "kept"))
                 assertTrue("kept bytes must not allow arbitrary file URLs", image.drawable == null)
+                assertTrue(image.contentDescription.toString().contains("Unsupported image source"))
                 render(address)
                 render("data:image/png;base64,invalid")
             }
             SystemClock.sleep(200)
             instrumentation.runOnMainSync {
                 assertTrue("late local pixels replaced the new source", image.drawable == null)
+                assertSame(image, find(activity.window.decorView, "kept"))
                 kept.writeBytes(byteArrayOf(1, 2, 3))
                 render(address)
             }
