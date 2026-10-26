@@ -5147,7 +5147,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshScreenTheme(screen: Screen) {
         applyScreenBackground(screen)
-        screen.mutations.node("root")?.let { renderCommitted(screen, it) }
+        screen.mutations.document()?.let { renderCommitted(screen, it) }
         screen.controls.values.mapNotNull {
             when (it) {
                 is CraftNativeRefreshableFlatList -> it.list
@@ -5165,7 +5165,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateSafeAreaViews() {
         if (!::root.isInitialized) return
         val active = visibleScreen ?: screens.lastOrNull { it.active }
-        val rootNode = active?.mutations?.node("root")
+        val rootNode = active?.mutations?.document()
         val safeRoot = rootNode?.let { canonicalType(it.optString("type")) == "SafeAreaView" } == true
         root.setPadding(
             if (safeRoot) 0 else windowSafeInsets[0],
@@ -5184,7 +5184,7 @@ class MainActivity : AppCompatActivity() {
      * against zero insets.
      */
     private fun updateSafeAreaInsets(screen: Screen) {
-        val rootNode = screen.mutations.node("root")
+        val rootNode = screen.mutations.document()
         val safeRoot = rootNode?.let { canonicalType(it.optString("type")) == "SafeAreaView" } == true
         val tree = screen.view.getChildAt(0) as? CraftNativeFlexLayout
         if (safeRoot) tree?.setWindowSafeInsets(windowSafeInsets[0], windowSafeInsets[1], windowSafeInsets[2], windowSafeInsets[3])

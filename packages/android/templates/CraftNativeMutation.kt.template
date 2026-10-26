@@ -162,6 +162,9 @@ class CraftNativeMutationDocument {
         )
     }
 
+    /** The committed root may have any protocol id supplied by the compiler. */
+    fun document(): JSONObject? = rootId?.let { materialize(it, nodes) }
+
     fun node(id: String): JSONObject? = materialize(id, nodes)
 
     /** Reserve surviving protocol nodes before reusing an authored keyed slot. */

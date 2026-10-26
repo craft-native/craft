@@ -19,6 +19,18 @@ class NativeMutationTest {
         """.trimIndent())
 
     @Test
+    fun materializesTheCommittedRootWithoutAssumingItsProtocolId() {
+        val document = CraftNativeMutationDocument()
+        assertNull(document.document())
+        document.replace(JSONObject("""{"id":"compiled-root","type":"SafeAreaView"}"""))
+        assertEquals("compiled-root", document.document()?.getString("id"))
+        document.apply(batch(1, """[{"op":"updateNode","id":"compiled-root","patch":{"props":{"testID":"updated"}}}]"""))
+        assertEquals("updated", document.document()?.getJSONObject("props")?.getString("testID"))
+        document.apply(batch(2, """[{"op":"removeNode","id":"compiled-root"}]"""))
+        assertNull(document.document())
+    }
+
+    @Test
     fun appliesAllOperationsWithStableOrdering() {
         val document = CraftNativeMutationDocument()
         val result = document.apply(batch(1, """
