@@ -50,8 +50,9 @@ pub const Host = struct {
             .stderr = .inherit,
         });
         errdefer {
+            // The pinned std.process.Child.kill reaps the child and clears
+            // its id. Calling wait afterwards asserts, hiding startup errors.
             child.kill(io);
-            _ = child.wait(io) catch {};
         }
         const input = child.stdin orelse return error.MissingBackendPipe;
         const output = child.stdout orelse return error.MissingBackendPipe;
@@ -71,7 +72,6 @@ pub const Host = struct {
         const io = io_context.get();
         self.input.close(io);
         self.process.kill(io);
-        _ = self.process.wait(io) catch {};
         if (self.drainer) |thread| thread.join();
         self.output.close(io);
         self.allocator.free(self.url);
@@ -125,4 +125,9 @@ test "bundled helpers stay inside MacOS and session URLs stay on authenticated l
         "http://127.0.0.1:1234/",              "http://127.0.0.1:1234/?session=a&external=true",
         "http://127.0.0.1:65536/?session=a",   "http://127.0.0.1:1234/?session=",
     }) |url| try std.testing.expect(!validSessionUrl(url));
+}
+
+test "a backend exiting before readiness returns its startup error without a second wait" {
+    if (comptime builtin.os.tag != .macos) return;
+    try std.testing.expectError(error.BackendExitedBeforeReady, Host.start(std.testing.allocator, "/usr/bin", "false"));
 }
