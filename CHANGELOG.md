@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.354...v0.0.355)
+
+## 🐛 Bug Fixes
+
+- preserve native sharing evidence across accessibility updates ([d728b6b](https://github.com/craft-native/craft/commit/d728b6b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.353...v0.0.354)
 
 ## 🐛 Bug Fixes
