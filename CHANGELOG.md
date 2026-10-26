@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.361...v0.0.362)
+
+## 🐛 Bug Fixes
+
+- **native**: avoid reaping a bundled helper twice ([a724934](https://github.com/craft-native/craft/commit/a724934)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.360...v0.0.361)
 
 ## 🚀 Features
