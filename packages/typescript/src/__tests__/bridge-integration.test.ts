@@ -29,7 +29,8 @@ describe('Bridge Type Definitions', () => {
         close: async () => {},
       },
       app: {
-        hideDockIcon: async () => {},
+        icon: async () => null,
+      hideDockIcon: async () => {},
         showDockIcon: async () => {},
         quit: async () => {},
         notify: async () => {},
@@ -84,6 +85,7 @@ describe('Bridge Type Definitions', () => {
 
   test('should have correct CraftAppAPI methods', () => {
     const mockApp: CraftAppAPI = {
+      icon: async () => null,
       hideDockIcon: async () => {},
       showDockIcon: async () => {},
       quit: async () => {},
@@ -295,6 +297,7 @@ describe('Bridge API Method Signatures', () => {
 
   test('app.getInfo should return AppInfo', async () => {
     const mockApp: CraftAppAPI = {
+      icon: async () => null,
       hideDockIcon: async () => {},
       showDockIcon: async () => {},
       quit: async () => {},
@@ -340,7 +343,8 @@ describe('Window Global Type Augmentation', () => {
           close: async () => {},
         },
         app: {
-          hideDockIcon: async () => {},
+          icon: async () => null,
+      hideDockIcon: async () => {},
           showDockIcon: async () => {},
           quit: async () => {},
           notify: async () => {},

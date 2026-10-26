@@ -768,6 +768,9 @@ export interface CraftAppAPI {
      */
     getInfo(): Promise<AppInfo>
 
+    /** Actual macOS application icon as a PNG data URL. Requires an absolute .app path. */
+    icon(path: string): Promise<string | null>
+
     /** Pin every native surface to Light, Dark, or the system setting. */
     setAppearance(appearance: 'light' | 'dark' | 'system'): Promise<void>
 

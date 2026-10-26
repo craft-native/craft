@@ -1,7 +1,16 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const bridge_error = @import("bridge_error.zig");
+const BridgeError = bridge_error.BridgeError;
 const capabilities = @import("capabilities.zig");
+
+test "application icons reject missing and non-application paths before native lookup" {
+    if (builtin.os.tag != .macos) return;
+    var bridge = AppBridge.init(std.testing.allocator);
+    try std.testing.expectError(BridgeError.MissingData, bridge.handleMessageWithData(A.icon, null));
+    try std.testing.expectError(BridgeError.InvalidParameter, bridge.handleMessageWithData(A.icon, "{\"path\":\"Safari.app\"}"));
+    try std.testing.expectError(BridgeError.InvalidParameter, bridge.handleMessageWithData(A.icon, "{\"path\":\"/etc/passwd\"}"));
+}
 
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
@@ -22,6 +31,7 @@ pub const A = struct {
     pub const show_dock_icon = "showDockIcon";
     pub const quit = "quit";
     pub const get_info = "getInfo";
+    pub const icon = "icon";
     pub const notify = "notify";
     pub const set_badge = "setBadge";
     pub const bounce = "bounce";
@@ -33,6 +43,7 @@ pub const capability_actions = [_]capabilities.ActionDecl{
     .{ .name = A.show_dock_icon, .reply = .none },
     .{ .name = A.quit, .reply = .none },
     .{ .name = A.get_info, .reply = .result },
+    .{ .name = A.icon, .reply = .result },
     .{ .name = A.notify, .reply = .none },
     .{ .name = A.set_badge, .reply = .none },
     .{ .name = A.bounce, .reply = .none },
@@ -66,6 +77,8 @@ pub const AppBridge = struct {
             try self.quit();
         } else if (std.mem.eql(u8, action, A.get_info)) {
             try self.getInfo();
+        } else if (std.mem.eql(u8, action, A.icon)) {
+            try self.icon(data);
         } else if (std.mem.eql(u8, action, A.notify)) {
             try self.notify(data);
         } else if (std.mem.eql(u8, action, A.set_badge)) {
@@ -166,6 +179,38 @@ pub const AppBridge = struct {
         const owned = try buf.toOwnedSlice(self.allocator);
         defer self.allocator.free(owned);
         bridge_error.sendResultToJS(self.allocator, "getInfo", owned);
+    }
+
+    /// Resolve the application's actual macOS icon, never a guessed bundle resource.
+    fn icon(self: *Self, data: ?[]const u8) !void {
+        if (builtin.os.tag != .macos) return BridgeError.PlatformNotSupported;
+        const parsed = try std.json.parseFromSlice(struct { path: []const u8 }, self.allocator, data orelse return BridgeError.MissingData, .{ .ignore_unknown_fields = true });
+        defer parsed.deinit();
+        const path = parsed.value.path;
+        if (!std.fs.path.isAbsolute(path) or !std.mem.endsWith(u8, path, ".app") or std.mem.indexOfScalar(u8, path, 0) != null) return BridgeError.InvalidParameter;
+        const macos = @import("macos.zig");
+        const path_z = try @import("memory.zig").dupeZ(self.allocator, u8, path);
+        defer self.allocator.free(path_z);
+        const ns_path = macos.msgSend1(macos.getClass("NSString"), "stringWithUTF8String:", path_z.ptr);
+        const workspace = macos.msgSend0(macos.getClass("NSWorkspace"), "sharedWorkspace");
+        const image = macos.msgSend1(workspace, "iconForFile:", ns_path);
+        var rect = macos.NSRect{ .origin = .{ .x = 0, .y = 0 }, .size = .{ .width = 64, .height = 64 } };
+        const cg = macos.msgSend3(image, "CGImageForProposedRect:context:hints:", &rect, @as(macos.objc.id, null), @as(macos.objc.id, null));
+        if (cg == null) {
+            bridge_error.sendResultToJS(self.allocator, A.icon, "{\"image\":null}");
+            return;
+        }
+        const rep = macos.msgSend1(macos.msgSend0(macos.getClass("NSBitmapImageRep"), "alloc"), "initWithCGImage:", cg);
+        defer {
+            _ = macos.msgSend0(rep, "release");
+        }
+        const png = macos.msgSend2(rep, "representationUsingType:properties:", @as(c_ulong, 4), @as(macos.objc.id, null));
+        const encoded = macos.msgSend1(png, "base64EncodedStringWithOptions:", @as(c_ulong, 0));
+        const ptr = macos.msgSend0(encoded, "UTF8String");
+        if (ptr == null) return BridgeError.NativeCallFailed;
+        const result = try std.fmt.allocPrint(self.allocator, "{{\"image\":\"data:image/png;base64,{s}\"}}", .{std.mem.span(@as([*:0]const u8, @ptrCast(ptr)))});
+        defer self.allocator.free(result);
+        bridge_error.sendResultToJS(self.allocator, A.icon, result);
     }
 
     fn notify(self: *Self, data: ?[]const u8) !void {

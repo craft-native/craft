@@ -568,6 +568,7 @@
     quit:         function () { return _send('app', 'quit') },
     // Bundle / process metadata for About panels and log paths.
     getInfo:      function () { return _req('app', 'getInfo') },
+    icon:         function (path) { return _req('app', 'icon', _stringify({ path: String(path) })).then(function (r) { return r.image || null }) },
     notify:       function (opts) { return _send('app', 'notify', _stringify(opts || {})) },
     setBadge:     function (n)    { return _send('app', 'setBadge', _stringify({ count: Number(n) || 0 })) },
     bounce:       function (type) { return _send('app', 'bounce', _stringify({ type: String(type || 'informational') })) },
@@ -636,6 +637,7 @@
   window.craft.clipboard = {
     writeText: function (text)        { return _send('clipboard', 'writeText', _stringify({ text: String(text) })) },
     readText:  function ()            { return _req('clipboard', 'readText').then(function (r) { return (r && r.text) || '' }) },
+    historySnapshot: function (since) { return _req('clipboard', 'historySnapshot', _stringify({ since: Number.isSafeInteger(since) ? since : -1 })) },
     writeHTML: function (html)        { return _send('clipboard', 'writeHTML', _stringify({ html: String(html) })) },
     readHTML:  function ()            { return _req('clipboard', 'readHTML').then(function (r) { return (r && r.html) || '' }) },
     clear:     function ()            { return _send('clipboard', 'clear') },
