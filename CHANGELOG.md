@@ -1,5 +1,20 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.352...v0.0.353)
+
+## 🚀 Features
+
+- add bounded native Bluetooth notification streams ([0055562](https://github.com/craft-native/craft/commit/0055562)) _(by Chris Breuer)_
+
+## 🧪 Tests
+
+- retain nested conversation viewport through style updates ([4a98721](https://github.com/craft-native/craft/commit/4a98721)) _(by Chris Breuer)_
+- await Android system bar inset delivery ([bdc4c8b](https://github.com/craft-native/craft/commit/bdc4c8b)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.351...v0.0.352)
 
 ## 🐛 Bug Fixes
