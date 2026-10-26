@@ -1130,6 +1130,43 @@ interpolation). Craft provides `CRAFT_PROJECT_ROOT`, `CRAFT_PLATFORM`, and
 non-zero exits fail the build and include the hook's stderr, so a source patch
 cannot silently stop applying after a template change.
 
+### iOS home-screen quick actions
+
+Native iOS screens and the `nativeApp` script expose `craft.shortcuts.set(items)`
+and `craft.shortcuts.clear()` through the `shortcuts` capability. They update
+the app-wide UIKit long-press menu without a WebView. `set` replaces the entire
+dynamic menu and resolves `{ count }`; `clear` removes it and resolves `true`.
+
+```ts
+await craft.shortcuts.set([
+  { type: 'saved', title: 'Saved trails', iconName: 'heart.fill' },
+  { type: 'record', title: 'Record a trail', subtitle: 'Start recording' },
+])
+```
+
+Provide at most four items, each with a unique, non-empty `type` and non-empty
+`title`. Optional `subtitle` and `iconName` must be strings. Optional `userInfo`
+is an object containing property-list-compatible JSON values (strings, finite
+numbers, booleans, arrays and nested objects; no `null`). Invalid input rejects
+with `INVALID_ARGUMENT` before changing the previous menu. UIKit decides how
+many actions it displays. A disposed screen's queued request cannot replace
+another screen's menu; once applied, actions outlive the registering screen.
+
+Configured `appShortcuts` still seed the menu at launch and generate App Intents;
+dynamic `set`/`clear` does not add or remove Siri/Spotlight intents. A later cold
+launch reapplies configured shortcuts. Registration is best owned by `nativeApp`
+when it depends on the signed-in account.
+
+Activation uses the existing `craftShortcut` app event with `{ type }`, including
+taps queued before the app script is ready. Handle it in the app script and run
+the usual sign-in/authorization checks before navigating. Registration does not
+automatically navigate, and `userInfo` is not added to the activation payload.
+The page's `onShortcut` helper is not a new native-screen event subscription.
+
+This capability is implemented by the iOS native host; it does not claim an
+Android native implementation. Cross-platform callers should check the host's
+advertised capabilities and report unsupported on hosts without `shortcuts`.
+
 ### The app script (`nativeApp`)
 
 `nativeApp` names a bundle route that has no screen (Stacks names it `__app`).

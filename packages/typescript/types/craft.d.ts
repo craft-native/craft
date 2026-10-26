@@ -743,14 +743,16 @@ export interface CraftBridge {
   shortcuts: {
     /**
      * Set app shortcuts (3D Touch / long press)
+     * iOS native screens and app scripts support at most four unique types.
+     * Invalid native input rejects without replacing the existing menu.
      * @param shortcuts - Array of shortcuts
      */
-    set(shortcuts: AppShortcut[]): Promise<{ set: boolean }>;
+    set(shortcuts: AppShortcut[]): Promise<{ count: number; set?: boolean }>;
 
     /**
      * Clear all shortcuts
      */
-    clear(): Promise<{ cleared: boolean }>;
+    clear(): Promise<boolean | { cleared: boolean }>;
 
     /**
      * Listen for shortcut activation
@@ -2010,7 +2012,11 @@ export interface AppShortcut {
   title: string;
   subtitle?: string;
   iconName?: string; // SF Symbol (iOS) or Android drawable name
+  /** iOS property-list metadata; null and non-JSON values are not supported. */
+  userInfo?: { [key: string]: AppShortcutMetadata };
 }
+
+export type AppShortcutMetadata = string | number | boolean | AppShortcutMetadata[] | { [key: string]: AppShortcutMetadata };
 
 export interface AuthPersistenceResult {
   enabled: boolean;

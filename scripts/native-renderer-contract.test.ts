@@ -1974,6 +1974,70 @@ describe('native renderer component contract', () => {
     expect(android).toContain('__craftInstallNativeDialog === \'function\'')
   })
 
+  function shortcutHost(capabilities = ['shortcuts', 'dialog']) {
+    const anchor = ios.indexOf('var bridge = globalThis.__stxNativeBridge;')
+    const start = ios.lastIndexOf('(function()', anchor)
+    const end = ios.indexOf('        """)', anchor)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    const messages: { type: string, id: string, payload: { module: string, method: string, args: unknown[], untimed: boolean } }[] = []
+    const context = runInNewContext('globalThis', {
+      __stxNativeBridge: {
+        capabilities,
+        capabilityProtocolVersion: 1,
+        postMessage(raw: string) { messages.push(JSON.parse(raw)) },
+      },
+    })
+    runInNewContext(ios.slice(start, end), context)
+    return { context, messages }
+  }
+
+  it('executes native shortcut set and clear through timed capability requests', async () => {
+    const { context, messages } = shortcutHost()
+    const items = [{ type: 'saved', title: 'Saved' }]
+    const set = context.craft.shortcuts.set(items)
+    expect(messages[0]?.payload).toEqual({ version: 1, module: 'Shortcuts', method: 'set', args: [items], untimed: false })
+    context.__stxNativeCallback(JSON.stringify({ type: 'API_RESPONSE', payload: { requestId: messages[0]!.id, data: { count: 1 } } }))
+    expect(await set).toEqual({ count: 1 })
+    const clear = context.craft.shortcuts.clear()
+    expect(messages[1]?.payload.method).toBe('clear')
+    expect(messages[1]?.payload.args).toEqual([])
+    expect(messages[1]?.id).not.toBe(messages[0]?.id)
+    context.__stxNativeCallback(JSON.stringify({ type: 'API_RESPONSE', payload: { requestId: messages[1]!.id, data: true } }))
+    expect(await clear).toBe(true)
+    expect(iosActions).toContain('values.append("shortcuts")')
+  })
+
+  it('keeps native shortcuts when older bundles install browser fallbacks and propagates errors', async () => {
+    const { context, messages } = shortcutHost()
+    context.craft.shortcuts = { extra: 42, set() { throw new Error('DOM fallback') }, clear() { return false } }
+    const request = context.craft.shortcuts.set(null)
+    // An unrelated event must not consume the one-shot response listener.
+    context.__stxNativeCallback(JSON.stringify({ type: 'CRAFT_EVENT', payload: { requestId: messages[0]!.id } }))
+    context.__stxNativeCallback(JSON.stringify({ type: 'API_ERROR', payload: { requestId: messages[0]!.id, code: 'INVALID_ARGUMENT', message: 'Invalid shortcuts' } }))
+    await expect(request).rejects.toMatchObject({ code: 'INVALID_ARGUMENT', message: 'Invalid shortcuts' })
+    expect(context.craft.shortcuts.extra).toBe(42)
+    const circular: unknown[] = []
+    circular.push(circular)
+    await expect(context.craft.shortcuts.set(circular)).rejects.toThrow()
+    expect(messages).toHaveLength(1)
+  })
+
+  it('keeps dialogs untimed and does not invent shortcuts support on other hosts', async () => {
+    const { context, messages } = shortcutHost(['dialog'])
+    expect(context.craft.shortcuts).toBeUndefined()
+    const request = context.craft.dialog.confirm({ title: 'Continue?' })
+    expect(messages[0]?.payload.module).toBe('Dialog')
+    expect(messages[0]?.payload.untimed).toBe(true)
+    context.__stxNativeCallback(JSON.stringify({ type: 'API_RESPONSE', payload: { requestId: messages[0]!.id, data: true } }))
+    expect(await request).toBe(true)
+    expect(guide).toContain('iOS home-screen quick actions')
+    const app = readFileSync(join(root, 'packages/ios/templates/CraftApp.swift'), 'utf8')
+    const launch = app.slice(app.indexOf('if let shortcut = launchOptions?'), app.indexOf('func application(_ application: UIApplication, performActionFor'))
+    expect(launch).toContain('CraftEventManager.shared.handleShortcut(shortcut)')
+    expect(launch).toContain('return false')
+  })
+
   it('keeps missing browser globals actionable on both native hosts', () => {
     for (const host of [ios, androidShell]) {
       expect(host).toContain("unavailable('URL'")
