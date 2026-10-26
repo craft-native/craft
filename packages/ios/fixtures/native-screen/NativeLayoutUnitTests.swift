@@ -92,6 +92,53 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertTrue(cleaned)
     }
 
+    func testAccountScopedSnapshotNamesPersistAndClearIndependently() async throws {
+        let names = ["larq-bottle:116", "larq-bottle:117"]
+        for (index, name) in names.enumerated() {
+            let kept = await withCheckedContinuation { continuation in
+                CraftSnapshots.write(name, json: "{\"account\":\(index)}") { continuation.resume(returning: $0) }
+            }
+            XCTAssertTrue(kept)
+            XCTAssertEqual(CraftSnapshots.read(name), "{\"account\":\(index)}")
+            XCTAssertTrue(CraftSnapshots.names().contains(name))
+        }
+        XCTAssertNil(CraftSnapshots.url(for: "../larq-bottle:116"))
+        XCTAssertNil(CraftSnapshots.url(for: "bottle/116"))
+        let cleared = await withCheckedContinuation { continuation in
+            CraftSnapshots.clear(keeping: Set(CraftSnapshots.names()).subtracting([names[0]])) { continuation.resume(returning: $0) }
+        }
+        XCTAssertTrue(cleared)
+        XCTAssertNil(CraftSnapshots.read(names[0]))
+        XCTAssertNotNil(CraftSnapshots.read(names[1]))
+        let removed = await withCheckedContinuation { continuation in
+            CraftSnapshots.write(names[1], json: nil) { continuation.resume(returning: $0) }
+        }
+        XCTAssertTrue(removed)
+    }
+
+    func testCompiledFlexibleScrollingWrappersReachTheLastControl() async throws {
+        let rows = (0..<20).map { box("card-\($0)", style: ["height": 100], [text("label-\($0)", "Bottle detail \($0)")]) }
+        let controller = screen(box("root", [
+          box("empty-header"),
+          box("wrapper", style: ["maxWidth": 768, "flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], [
+            box("screen", style: ["flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], [
+                ["id": "form", "type": "ScrollView", "props": ["testID": "form"],
+                 "style": ["flex": 1, "flexGrow": 1, "flexShrink": 1, "flexBasis": 0], "children": rows],
+            ]),
+          ]),
+        ]))
+        await settle(controller)
+        let scroll = try XCTUnwrap(find("form", below: controller.view) as? UIScrollView)
+        XCTAssertGreaterThan(scroll.bounds.height, 600)
+        XCTAssertLessThanOrEqual(scroll.bounds.height, controller.view.bounds.height)
+        XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height + 1000)
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height), animated: false)
+        scroll.layoutIfNeeded()
+        let last = try XCTUnwrap(find("card-19", below: controller.view))
+        XCTAssertEqual(last.convert(last.bounds, to: scroll).maxY, scroll.contentSize.height, accuracy: 1)
+        XCTAssertGreaterThan(scroll.contentOffset.y, 1000)
+    }
+
     func testContainerFillsSurvivePressFeedbackReconciliation() throws {
         func document(_ fill: String?) -> [String: Any] {
             var style: [String: Any] = ["width": 100, "height": 44, "borderRadius": 12]

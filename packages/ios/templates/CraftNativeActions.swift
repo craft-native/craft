@@ -1698,11 +1698,11 @@ enum CraftSnapshots {
             .appendingPathComponent("craft-snapshots", isDirectory: true)
     }
 
-    /// Letters, digits, `-`, `_` and `.`, not starting with a dot: a file
+    /// Letters, digits, `-`, `_`, `.` and account namespace `:`, not starting with a dot: a file
     /// name, never a path.
     static func isValidName(_ name: String) -> Bool {
         !name.isEmpty && name.count <= 128 && !name.hasPrefix(".")
-            && name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.".unicodeScalars.contains($0)) }
+            && name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || "-_.:".unicodeScalars.contains($0)) }
     }
 
     static func url(for name: String) -> URL? {
