@@ -88,8 +88,13 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private func startScan() {
-        guard scanCompletion != nil else { return }
-        central?.scanForPeripherals(withServices: scanServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+        guard scanCompletion != nil, let central else { return }
+        // A device connected by another app may have stopped advertising.
+        // This lookup does not change its system pairing or connection.
+        for found in central.retrieveConnectedPeripherals(withServices: scanServices) {
+            remember(found, name: found.name ?? "", rssi: nil)
+        }
+        central.scanForPeripherals(withServices: scanServices, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
     }
 
     private func finishScan() {
@@ -122,11 +127,18 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard scanCompletion != nil, devices.count < 64 else { return }
         let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? ""
+        remember(peripheral, name: name, rssi: RSSI.intValue)
+    }
+
+    private func remember(_ peripheral: CBPeripheral, name: String, rssi: Int?) {
+        guard scanCompletion != nil else { return }
         guard namePrefix.isEmpty || name.lowercased().hasPrefix(namePrefix.lowercased()) else { return }
         let id = peripheral.identifier.uuidString
-        devices[id] = peripheral; names[id] = name; strengths[id] = RSSI.intValue
+        guard devices[id] != nil || devices.count < 64 else { return }
+        devices[id] = peripheral
+        if !name.isEmpty || names[id] == nil { names[id] = name }
+        if let rssi { strengths[id] = rssi }
     }
 
     private func connect(_ options: [String: Any], _ completion: @escaping Completion) {

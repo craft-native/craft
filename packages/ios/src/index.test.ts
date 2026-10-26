@@ -2389,6 +2389,17 @@ describe('Craft iOS builder', () => {
     expect(screen).toContain('if payload["untimed"] as? Bool != true {')
   })
 
+  it('ships connected-peripheral discovery alongside advertised GATT devices', async () => {
+    const output = createTempDir('craft-ios-connected-gatt-')
+    await init({ name: 'Gatt', bundleId: 'dev.craft.gatt', output, config: { renderer: 'native', enableBluetooth: true } })
+    const bluetooth = readFileSync(join(output, 'Sources', 'CraftBluetooth.swift'), 'utf8')
+    // The published builder must ship the native lookup for a connected watch
+    // that has stopped advertising, as well as the normal service-filtered scan.
+    expect(bluetooth).toContain('central.retrieveConnectedPeripherals(withServices: scanServices)')
+    expect(bluetooth).toContain('central.scanForPeripherals(withServices: scanServices')
+    expect(bluetooth).toContain('devices[id] != nil || devices.count < 64')
+  })
+
   it('keeps a strap\'s readings coming with the screen locked only when the app reads one', () => {
     const config = { appName: 'HQ.training', bundleId: 'training.hq.app' }
     expect(renderBackgroundModes(config)).toBe('')

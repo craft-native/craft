@@ -2,6 +2,11 @@
 
 Build native iOS apps with web technologies using Craft.
 
+Bluetooth GATT discovery includes iOS-connected peripherals matching the requested
+services as well as new advertisements. A watch connected through another app can
+therefore appear without changing its system pairing. Discovery still requires
+Bluetooth permission and does not prove that the device accepts the app's protocol.
+
 ## Native celebration
 
 Any native `View` may opt into a finite card entrance, light sweep and confetti
