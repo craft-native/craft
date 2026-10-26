@@ -5,6 +5,7 @@ const craft = @import("main.zig");
 extern "c" fn craft_test_webkit_pixel(view: macos.objc.id, rgba: *[4]f64) c_int;
 extern "c" fn craft_test_tray_window_begin(window: macos.objc.id, view: macos.objc.id, hidden: bool, hide_dock: bool) void;
 extern "c" fn craft_test_tray_window_result() c_int;
+extern "c" fn craft_test_tray_callbacks(view: macos.objc.id, other_view: macos.objc.id, item: macos.objc.id, menu: macos.objc.id) c_int;
 
 fn findWebView(view: macos.objc.id) ?macos.objc.id {
     if (view == null) return null;
@@ -24,6 +25,8 @@ pub fn main() !void {
     const app = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
     _ = macos.msgSend1(app, "setActivationPolicy:", @as(c_long, 1));
     macos.msgSendVoid0(app, "finishLaunching");
+
+    try verifyTrayCallbacks();
 
     for ([_]bool{ false, true }) |transparent| {
         for ([_]bool{ false, true }) |inspectable| {
@@ -78,6 +81,36 @@ pub fn main() !void {
     try verifyTrayWindow(true, false, false, false);
     try verifyTrayWindow(false, true, false, true);
     std.debug.print("Native WebKit inspection, rendered alpha and distribution capabilities verified.\n", .{});
+}
+
+fn verifyTrayCallbacks() !void {
+    var app = craft.App.init(std.heap.c_allocator);
+    defer app.deinit();
+    app.initPlatformForTray();
+    const tray = try app.createSystemTray("Craft callback test");
+    const created = try app.createWindowWithHTML("Tray callback regression", 320, 240, "<html><body>Tray callbacks</body></html>", .{ .system_tray = true });
+    const window: macos.objc.id = @ptrCast(created.native_handle);
+    defer macos.destroyWindow(window);
+    const webview = findWebView(macos.msgSend0(window, "contentView")) orelse return error.WebViewNotFound;
+    var bridge = @import("bridge_tray.zig").TrayBridge.init(std.heap.c_allocator);
+    bridge.setTrayHandle(tray.platform_handle.?);
+    try bridge.handleMessage("setMenu", "[{\"label\":\"Hello\",\"action\":\"hello\"}]");
+    const menu = bridge.current_menu orelse return error.TrayMenuNotCreated;
+    defer @import("tray_menu.zig").destroyNSMenu(menu);
+    macos.showAllWindows();
+    macos.activateWindowedApp();
+    try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_callbacks(webview, null, tray.platform_handle, menu));
+    macos.hideWindow(window);
+    try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_callbacks(webview, null, tray.platform_handle, menu));
+    try macos.loadHTMLInWebView(webview, "<html><body>Reloaded tray page</body></html>");
+    try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_callbacks(webview, null, tray.platform_handle, menu));
+
+    const child = try app.createWindowWithHTML("Secondary tray page", 320, 240, "<html><body>Other window</body></html>", .{ .system_tray = true });
+    const child_window: macos.objc.id = @ptrCast(child.native_handle);
+    defer macos.destroyWindow(child_window);
+    const child_view = findWebView(macos.msgSend0(child_window, "contentView")) orelse return error.WebViewNotFound;
+    try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_callbacks(webview, child_view, tray.platform_handle, menu));
+    std.debug.print("Native tray click and menu callbacks verified: visible, hidden, reloaded, and second-window isolation.\n", .{});
 }
 
 fn verifyTrayWindow(headless: bool, hide_dock: bool, frameless: bool, menubar_only: bool) !void {

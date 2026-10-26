@@ -55,6 +55,60 @@ void craft_test_tray_window_begin(void *windowPointer, void *viewPointer, bool h
 
 int craft_test_tray_window_result(void) { return trayWindowResult; }
 
+static id trayEvaluate(WKWebView *view, NSString *script) {
+    __block BOOL done = NO;
+    __block id answer = nil;
+    [view evaluateJavaScript:script completionHandler:^(id result, NSError *error) {
+        if (error) NSLog(@"Tray evaluation failed: %@", error);
+        else answer = result;
+        done = YES;
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while (!done && deadline.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    return answer;
+}
+
+static BOOL prepareTrayListeners(WKWebView *view) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:15];
+    while (view.loading && deadline.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    if (view.loading) return NO;
+    return [trayEvaluate(view, @"globalThis.trayUnsubscribe?.forEach(f => f()); globalThis.trayClicks=[]; globalThis.trayActions=[]; globalThis.trayUnsubscribe=[craft.tray.onClick(d => trayClicks.push(d.button)),craft.tray.onMenuAction(d => trayActions.push(d.action))]; true") boolValue];
+}
+
+int craft_test_tray_callbacks(void *viewPointer, void *otherPointer, void *itemPointer, void *menuPointer) {
+    WKWebView *view = (__bridge WKWebView *)viewPointer;
+    WKWebView *other = (__bridge WKWebView *)otherPointer;
+    NSStatusItem *item = (__bridge NSStatusItem *)itemPointer;
+    NSMenu *menu = (__bridge NSMenu *)menuPointer;
+    if (!prepareTrayListeners(view) || (other && !prepareTrayListeners(other))) return -1;
+    // This invokes the actual installed AppKit target/action, not a direct
+    // call to the Zig callback or the JavaScript delivery function. It does
+    // not automate menu tracking or require Accessibility authorization.
+    if (item.menu != nil) return -2; // An attached menu would consume left clicks.
+    [item.button performClick:nil];
+    [menu performActionForItemAtIndex:0];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:15];
+    BOOL received = NO;
+    while (deadline.timeIntervalSinceNow > 0) {
+        received = [trayEvaluate(view, @"JSON.stringify(trayClicks) === '[\"left\"]' && JSON.stringify(trayActions) === '[\"hello\"]'") boolValue];
+        if (received) break;
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    if (!received) {
+        NSLog(@"Tray callbacks missing: %@", trayEvaluate(view, @"JSON.stringify({clicks:trayClicks,actions:trayActions})"));
+        return -3;
+    }
+    // Give the 100ms polling fallback time to expose accidental duplicates.
+    NSDate *quietUntil = [NSDate dateWithTimeIntervalSinceNow:1.2];
+    while (quietUntil.timeIntervalSinceNow > 0)
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    if (![trayEvaluate(view, @"trayClicks.length === 1 && trayActions.length === 1") boolValue]) return -4;
+    if (other && ![trayEvaluate(other, @"trayClicks.length === 0 && trayActions.length === 0") boolValue]) return -5;
+    return 1;
+}
+
 int craft_test_webkit_pixel(void *view, double rgba[4]) {
     WKWebView *webview = (__bridge WKWebView *)view;
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:15];

@@ -109,7 +109,7 @@ Register a click handler for the tray icon.
 ```javascript
 const unregister = window.craft.tray.onClick((event) => {
   console.log('Tray clicked!', event);
-  // event.button: 'left' | 'right' | 'middle'
+  // macOS: event.button is 'left'; right click opens the native menu
   // event.timestamp: number
   // event.modifiers: { command?, shift?, option?, control? }
 });
@@ -117,6 +117,10 @@ const unregister = window.craft.tray.onClick((event) => {
 // Later: unregister the handler
 unregister();
 ```
+
+On macOS, right click (or Control-left-click) opens the native context menu
+instead of firing `onClick`. With `--tray-popover`, left click opens or closes
+the popover natively and deliberately does not fire `onClick` either.
 
 ### `window.craft.tray.onClickToggleWindow(): Function`
 
@@ -141,12 +145,16 @@ await window.craft.tray.setMenu([
 ]);
 
 // Listen for custom menu actions
-window.addEventListener('craft:tray:menu', (event) => {
-  if (event.detail.action === 'start-timer') {
+window.craft.tray.onMenuAction(({ action }) => {
+  if (action === 'start-timer') {
     startTimer();
   }
 });
 ```
+
+The underlying event is `craft:tray:menuAction`, with `{ action }` in its
+`detail`. Built-in actions such as `show`, `hide`, `toggle`, and `quit` are
+handled natively; use a custom action name for application callbacks.
 
 **MenuItem Interface:**
 
@@ -878,7 +886,7 @@ window.craft.tray.setMenu([
 ]);
 
 // Handle menu actions
-window.addEventListener('craft:tray:menu', (event) => {
+window.addEventListener('craft:tray:menuAction', (event) => {
   switch (event.detail.action) {
     case 'toggle-playback':
       togglePlayback();
@@ -1003,6 +1011,31 @@ Common issues:
 1. Tray not created: Use `--system-tray` flag
 2. Title too long: Keep under 20 characters
 3. Invalid emoji: Some emoji may not render properly
+
+### Tray callbacks not arriving (macOS)
+
+Use `craft.tray.onClick` for a normal tray left click and
+`craft.tray.onMenuAction` for custom menu actions. The latter listens for
+`craft:tray:menuAction`, not the historical `craft:tray:menu` event. Register
+listeners again after a full page navigation. App-wide tray events belong to
+the primary page, not a newly opened secondary window.
+
+When reporting a failure, include the actual executable path (`command -v craft`),
+its `craft --version`, launch flags (especially `--tray-popover`), and a minimal
+page. A working `setTitle` or `setMenu` proves the outbound bridge works, but
+does not prove that a listener on the intended page received the callback.
+
+Maintainers can run the existing native regression target with the pinned Zig:
+
+```bash
+bun scripts/zig.ts --core --versioned build test:webkit-public -Doptimize=ReleaseSafe
+```
+
+It invokes the installed AppKit status-button and menu-item target/actions and
+checks the actual injected JavaScript listeners in visible, hidden, reloaded,
+and secondary-window cases. It also checks for duplicate delivery. This does
+not automate physical pointer clicks or right-click menu tracking, and it
+does not replace testing the reported application and launch command.
 
 ### TypeScript errors
 
