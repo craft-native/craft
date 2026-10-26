@@ -33,7 +33,7 @@ export fn craft_vulkan_create(display: ?*anyopaque, window: usize, width: u32, h
         _ = failed(err);
         return null;
     };
-    const native_window: native.NativeWindow = if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = display, .window = if (window == 0) null else @ptrFromInt(window) } } else .{ .xlib = .{ .display = display, .window = window } };
+    const native_window: native.NativeWindow = if (builtin.abi == .android) .{ .android = if (window == 0) null else @ptrFromInt(window) } else if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = display, .window = if (window == 0) null else @ptrFromInt(window) } } else .{ .xlib = .{ .display = display, .window = window } };
     const surface = native.Surface.init(native_window, .{ .width = width, .height = height }) catch |err| {
         allocator.free(pixels);
         var owned = canvas;

@@ -59,5 +59,22 @@ This source change is under development. Local ownership tests and cross
 compilation do not prove Linux native execution. Actual retained window output
 and complete source/release acceptance are required before publication claims.
 The Win32 adapter and its native acceptance are under development; cross
-compilation alone does not prove Windows execution. Android remains unavailable.
+compilation alone does not prove Windows execution.
+
+The Android core adapter accepts an acquired `ANativeWindow` through
+`NativeWindow.android` on 64-bit little-endian targets. It uses `libvulkan.so`
+and `VK_KHR_android_surface`, not Xlib. The C transport's `window` argument is
+that native pointer on Android (`display` is unused). The caller owns the
+reference: a Java `Surface`/JNI object is not interchangeable with it. Serialize
+creation, resize, presentation and disposal on the owning render thread; do not
+release the window while a disposal timeout still retains Vulkan resources.
+Like the desktop adapters, this requires Vulkan 1.1 and KHR/EXT surface and
+swapchain maintenance. Unsupported drivers fail explicitly; no blank fallback
+is reported as successful presentation.
+
+Android is **not execution-qualified** by this fixture yet. An Android activity,
+surface-recreation/input lifecycle harness, NDK build, actual displayed-frame
+captures and emulator/device CI remain required for #393. Host-side driver-call
+tests and Android cross-compilation establish only adapter routing and ABI
+coverage, not successful native Android presentation or lifecycle acceptance.
 The fixture does not establish full native game rendering or Gold Edition fidelity.

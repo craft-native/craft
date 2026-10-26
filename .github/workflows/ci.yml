@@ -188,6 +188,12 @@ jobs:
         run: |
           VULKAN_HEADERS="$(bun -p "require('node:path').resolve('../../.zig-cache/vulkan-headers/include')")"
           zig build test:vulkan-abi -Dvulkan-headers="$VULKAN_HEADERS" --summary all
+      - name: Compile Android Vulkan adapter branches (not device acceptance)
+        if: runner.os == 'Linux'
+        working-directory: packages/zig
+        run: |
+          zig test src/vulkan_surface.zig -target aarch64-linux-android -lc -fno-emit-bin
+          zig test src/vulkan_surface.zig -target x86_64-linux-android -lc -fno-emit-bin
 
   zig-core:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}

@@ -1,17 +1,19 @@
 //! Presentation of the shared CPU frame on an owned native Vulkan window.
-//! Xlib and Win32 adapters share the same frame and resource ownership rules.
-//! The Android adapter remains unavailable.
+//! Xlib, Win32 and Android adapters share frame and resource ownership rules.
+//! Android callers retain their ANativeWindow reference until deinit succeeds.
 //! The caller serializes calls on the creating thread and keeps its window alive
 //! until deinit succeeds. A timeout retains resources; retry disposal later.
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan_api.zig");
 
-pub const supported = (builtin.os.tag == .windows or (builtin.os.tag == .linux and builtin.abi != .android)) and @sizeOf(usize) == 8 and builtin.cpu.arch.endian() == .little;
+pub const supported = (builtin.os.tag == .windows or builtin.os.tag == .linux) and @sizeOf(usize) == 8 and builtin.cpu.arch.endian() == .little;
 pub const Error = error{ Unavailable, MissingEntryPoint, EnumerationLimit, InvalidWindow, InvalidSize, InvalidConfig, BufferLimitExceeded, AllocationFailed, WrongThread, Disposed, Suspended, InvalidFrame, DrawableUnavailable, OutOfDate, SurfaceLost, DeviceLost, GPUFailed, GPUTimeout, NoFrame };
 pub const NativeWindow = union(enum) {
     xlib: struct { display: ?*anyopaque, window: usize },
     win32: struct { instance: ?*anyopaque, window: ?*anyopaque },
+    /// An acquired ANativeWindow, not a jobject or Java Surface. The caller
+    /// retains and releases it only after all Vulkan resources are disposed.
     android: ?*anyopaque,
 };
 pub const Config = struct {
@@ -59,6 +61,17 @@ fn info(comptime T: type, comptime kind: u32) T {
     var value = std.mem.zeroes(T);
     value.sType = kind;
     return value;
+}
+fn androidWindow(window: NativeWindow) Error!*anyopaque {
+    return switch (window) {
+        .android => |value| value orelse error.InvalidWindow,
+        else => error.Unavailable,
+    };
+}
+fn createAndroidSurface(instance: vk.VkInstance, window: NativeWindow, surface: *vk.VkSurfaceKHR, create: vk.PFN_vkCreateAndroidSurfaceKHR) Error!void {
+    var native = info(vk.VkAndroidSurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR);
+    native.window = @ptrCast(try androidWindow(window));
+    try result(create(instance, &native, null, surface));
 }
 fn result(code: vk.VkResult) Error!void {
     return switch (code) {
@@ -128,6 +141,8 @@ const InstanceFns = struct {
 };
 const PlatformFns = if (builtin.os.tag == .windows) struct {
     vkCreateWin32SurfaceKHR: vk.PFN_vkCreateWin32SurfaceKHR,
+} else if (builtin.abi == .android) struct {
+    vkCreateAndroidSurfaceKHR: vk.PFN_vkCreateAndroidSurfaceKHR,
 } else struct {
     vkCreateXlibSurfaceKHR: vk.PFN_vkCreateXlibSurfaceKHR,
 };
@@ -229,7 +244,7 @@ const VulkanSurface = struct {
         try result(self.global.vkEnumerateInstanceExtensionProperties(null, &count, &extensions));
         if (count > extensions.len) return error.EnumerationLimit;
         var names: [5][*c]const u8 = undefined;
-        const platform_extension = if (builtin.os.tag == .windows) vk.VK_KHR_WIN32_SURFACE_EXTENSION_NAME else vk.VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+        const platform_extension = if (builtin.os.tag == .windows) vk.VK_KHR_WIN32_SURFACE_EXTENSION_NAME else if (builtin.abi == .android) vk.VK_KHR_ANDROID_SURFACE_EXTENSION_NAME else vk.VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
         const required = [_][*c]const u8{ vk.VK_KHR_SURFACE_EXTENSION_NAME, platform_extension, vk.VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME };
         for (required, 0..) |name, index| {
             stage = std.mem.span(name);
@@ -274,6 +289,10 @@ const VulkanSurface = struct {
     }
 
     fn validateWindow(window: NativeWindow) Error!void {
+        if (builtin.abi == .android) {
+            _ = try androidWindow(window);
+            return;
+        }
         if (builtin.os.tag == .windows) {
             const native = switch (window) {
                 .win32 => |value| value,
@@ -290,7 +309,9 @@ const VulkanSurface = struct {
     }
 
     fn createNativeSurface(self: *VulkanSurface, window: NativeWindow) Error!void {
-        if (builtin.os.tag == .windows) {
+        if (builtin.abi == .android) {
+            try createAndroidSurface(self.instance, window, &self.surface, self.platform_functions.vkCreateAndroidSurfaceKHR);
+        } else if (builtin.os.tag == .windows) {
             var native = info(vk.VkWin32SurfaceCreateInfoKHR, vk.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR);
             native.hinstance = window.win32.instance;
             native.hwnd = window.win32.window;
@@ -758,7 +779,37 @@ test "invalid frames and suspension do not touch queues or the last retained fra
 test "invalid native configuration fails before opening a driver" {
     try std.testing.expectError(error.InvalidSize, VulkanSurface.init(.{ .xlib = .{ .display = null, .window = 0 } }, .{ .width = 0, .height = 1 }));
     try std.testing.expectError(error.InvalidConfig, VulkanSurface.init(.{ .xlib = .{ .display = null, .window = 0 } }, .{ .width = 1, .height = 1, .command_timeout_ms = 0 }));
-    const invalid: NativeWindow = if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = null, .window = null } } else .{ .xlib = .{ .display = null, .window = 0 } };
+    const invalid: NativeWindow = if (builtin.abi == .android) .{ .android = null } else if (builtin.os.tag == .windows) .{ .win32 = .{ .instance = null, .window = null } } else .{ .xlib = .{ .display = null, .window = 0 } };
     try std.testing.expectError(error.InvalidWindow, VulkanSurface.init(invalid, .{ .width = 1, .height = 1 }));
-    try std.testing.expectError(error.Unavailable, VulkanSurface.init(.{ .android = null }, .{ .width = 1, .height = 1 }));
+    const foreign: NativeWindow = if (builtin.abi == .android) .{ .win32 = .{ .instance = null, .window = null } } else .{ .android = null };
+    try std.testing.expectError(error.Unavailable, VulkanSurface.init(foreign, .{ .width = 1, .height = 1 }));
+}
+
+test "Android surface creation forwards the owned native window and preserves driver failures" {
+    const Probe = struct {
+        var calls: usize = 0;
+        var code: vk.VkResult = vk.VK_SUCCESS;
+        fn create(instance: vk.VkInstance, native: [*c]const vk.VkAndroidSurfaceCreateInfoKHR, allocator: ?*const vk.VkAllocationCallbacks, surface: [*c]vk.VkSurfaceKHR) callconv(if (builtin.os.tag == .windows) .winapi else .c) vk.VkResult {
+            std.debug.assert(instance == @as(vk.VkInstance, @ptrFromInt(0x1000)));
+            std.debug.assert(native.*.sType == vk.VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR);
+            std.debug.assert(native.*.pNext == null and native.*.flags == 0 and allocator == null);
+            std.debug.assert(@intFromPtr(native.*.window.?) == 0x2000);
+            calls += 1;
+            if (code == vk.VK_SUCCESS) surface.* = @ptrFromInt(0x3000);
+            return code;
+        }
+    };
+    const instance: vk.VkInstance = @ptrFromInt(0x1000);
+    const window: NativeWindow = .{ .android = @ptrFromInt(0x2000) };
+    var surface: vk.VkSurfaceKHR = null;
+    try std.testing.expectError(error.InvalidWindow, createAndroidSurface(instance, .{ .android = null }, &surface, Probe.create));
+    try std.testing.expectError(error.Unavailable, createAndroidSurface(instance, .{ .xlib = .{ .display = null, .window = 0 } }, &surface, Probe.create));
+    try std.testing.expectEqual(@as(usize, 0), Probe.calls);
+    try createAndroidSurface(instance, window, &surface, Probe.create);
+    try std.testing.expectEqual(@as(usize, 0x3000), @intFromPtr(surface.?));
+    Probe.code = vk.VK_ERROR_SURFACE_LOST_KHR;
+    try std.testing.expectError(error.SurfaceLost, createAndroidSurface(instance, window, &surface, Probe.create));
+    Probe.code = vk.VK_ERROR_OUT_OF_HOST_MEMORY;
+    try std.testing.expectError(error.AllocationFailed, createAndroidSurface(instance, window, &surface, Probe.create));
+    try std.testing.expectEqual(@as(usize, 3), Probe.calls);
 }
