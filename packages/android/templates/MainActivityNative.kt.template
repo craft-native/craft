@@ -899,6 +899,7 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     private var wrapReverse = false
     private var unboundedWidth = false
     private var authoredPadding = intArrayOf(0, 0, 0, 0)
+    private var windowSafeAreaInsets = intArrayOf(0, 0, 0, 0)
     private var safeAreaPadding = intArrayOf(0, 0, 0, 0)
     private var applyingPadding = false
     private var safeAreaEdges = setOf("top", "right", "bottom", "left")
@@ -962,18 +963,20 @@ internal class CraftNativeFlexLayout(context: Context) : LinearLayout(context) {
     }
 
     fun setWindowSafeInsets(left: Int, top: Int, right: Int, bottom: Int) {
-        val insets = intArrayOf(left, top, right, bottom)
-        safeAreaPadding = intArrayOf(
-            if ("left" in safeAreaEdges) insets[0] else 0,
-            if ("top" in safeAreaEdges) insets[1] else 0,
-            if ("right" in safeAreaEdges) insets[2] else 0,
-            if ("bottom" in safeAreaEdges) insets[3] else 0,
-        )
+        windowSafeAreaInsets = intArrayOf(left, top, right, bottom)
         applySafeAreaPadding()
         invalidateMeasurements()
     }
 
     private fun applySafeAreaPadding() {
+        // Keep the unfiltered insets so changing edges takes effect immediately,
+        // including restoring an edge without another platform inset dispatch.
+        safeAreaPadding = intArrayOf(
+            if ("left" in safeAreaEdges) windowSafeAreaInsets[0] else 0,
+            if ("top" in safeAreaEdges) windowSafeAreaInsets[1] else 0,
+            if ("right" in safeAreaEdges) windowSafeAreaInsets[2] else 0,
+            if ("bottom" in safeAreaEdges) windowSafeAreaInsets[3] else 0,
+        )
         setPadding(authoredPadding[0], authoredPadding[1], authoredPadding[2], authoredPadding[3])
     }
 

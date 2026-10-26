@@ -1093,7 +1093,8 @@ class NativeNavigationTest {
             click(activity, "toggle-retained-safe-area")
             awaitText(activity, "retained-safe-area-status", "Retained: safe")
             assertSame("type-switched retained container was replaced", retained, awaitView(activity, "retained-safe-area"))
-            assertEquals("SafeAreaView type switch did not apply the received top inset", plainRetainedPadding + initialRootTop - authoredRootPadding, retained.paddingTop)
+            // The outer SafeAreaView already protects this nested container.
+            assertEquals("Nested SafeAreaView duplicated its parent's consumed inset", plainRetainedPadding, retained.paddingTop)
             click(activity, "toggle-retained-safe-area")
             awaitText(activity, "retained-safe-area-status", "Retained: plain")
             assertSame("retained container changed identity on the way back", retained, awaitView(activity, "retained-safe-area"))
@@ -2290,6 +2291,18 @@ class NativeNavigationTest {
         assertEquals("top edge should add the current window inset", 22, layout.paddingTop)
         assertEquals("right edge should keep authored padding", 7, layout.paddingRight)
         assertEquals("bottom edge should add the current window inset", 34, layout.paddingBottom)
+        instrumentation.runOnMainSync { layout.setSafeAreaEdges(JSONArray().put("bottom")) }
+        assertEquals("removing an edge must not wait for another inset dispatch", 5, layout.paddingTop)
+        assertEquals(34, layout.paddingBottom)
+        instrumentation.runOnMainSync { layout.setSafeAreaEdges(null) }
+        assertEquals("restoring edges must reuse the last platform insets", 22, layout.paddingTop)
+        assertEquals(16, layout.paddingLeft)
+        assertEquals(26, layout.paddingRight)
+        instrumentation.runOnMainSync { repeat(3) { layout.setPadding(3, 5, 7, 11) } }
+        assertEquals("reconciliation must not accumulate safe-area padding", 22, layout.paddingTop)
+        instrumentation.runOnMainSync { layout.setWindowSafeInsets(0, 0, 0, 0) }
+        assertEquals(5, layout.paddingTop)
+        assertEquals(11, layout.paddingBottom)
     }
 
     private fun systemCommand(command: String): String =
