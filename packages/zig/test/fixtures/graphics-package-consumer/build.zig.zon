@@ -1,6 +1,6 @@
 .{
     .name = .graphics_package_consumer,
-    .version = "0.0.359",
+    .version = "0.0.360",
     .fingerprint = 0xab1f9a8fd4d75f78, // Changing this has security and trust implications.
     .minimum_zig_version = "0.18.0-dev.146+35accc06e",
     .dependencies = .{ .craft = .{ .path = "package" } },
