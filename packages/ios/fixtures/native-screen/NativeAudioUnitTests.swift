@@ -1,4 +1,5 @@
 import JavaScriptCore
+import AVFoundation
 import XCTest
 @testable import NativeRender
 
@@ -7,6 +8,60 @@ import XCTest
 /// samples the engine would play.
 @MainActor
 final class NativeAudioUnitTests: XCTestCase {
+    private func withSound(_ test: (CraftNativeSounds) -> Void) throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sound-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000))
+        buffer.frameLength = 16000
+        buffer.floatChannelData?[0].initialize(repeating: 0, count: 16000)
+        do {
+            let output = try AVAudioFile(forWriting: file, settings: format.settings)
+            try output.write(from: buffer)
+        }
+        let service = CraftNativeSounds()
+        defer { service.close() }
+        service.play(id: "tone", url: file, options: ["loop": true]) { _ in }
+        test(service)
+    }
+
+    private func interrupt(_ type: AVAudioSession.InterruptionType, resume: Bool = false) {
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: [
+            AVAudioSessionInterruptionTypeKey: NSNumber(value: type.rawValue),
+            AVAudioSessionInterruptionOptionKey: NSNumber(value: resume ? AVAudioSession.InterruptionOptions.shouldResume.rawValue : 0),
+        ])
+    }
+
+    func testSoundWithoutAutomaticResumePermissionCanBeResumedExplicitly() throws {
+        try withSound { service in
+            interrupt(.began)
+            interrupt(.ended)
+            // Another unrelated interruption must not auto-resume this handle.
+            interrupt(.began)
+            interrupt(.ended, resume: true)
+            XCTAssertTrue(service.resume(id: "tone"))
+            XCTAssertFalse(service.resume(id: "tone"))
+        }
+    }
+
+    func testExplicitSoundPauseSurvivesInterruptionResumePermission() throws {
+        try withSound { service in
+            interrupt(.began)
+            XCTAssertTrue(service.pause(id: "tone"))
+            interrupt(.ended, resume: true)
+            XCTAssertTrue(service.resume(id: "tone"))
+        }
+    }
+
+    func testSoundAutomaticallyResumesOnlyWithSystemPermission() throws {
+        try withSound { service in
+            interrupt(.began)
+            interrupt(.ended, resume: true)
+            XCTAssertFalse(service.resume(id: "tone"), "already resumed automatically")
+            XCTAssertFalse(service.resume(id: "missing"))
+        }
+    }
+
     private final class VoiceRecorder: CraftVoiceRecorder {
         private let lock = NSLock()
         private var records = 0

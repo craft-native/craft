@@ -329,11 +329,14 @@ final class CraftNativeSounds {
             }
             guard type == AVAudioSession.InterruptionType.ended.rawValue else { return }
             let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
-            guard options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0 else { return }
+            let shouldResume = options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0
             self.sounds.values.forEach { sound in
                 guard sound.interrupted else { return }
                 sound.interrupted = false
-                sound.player.play()
+                // Without permission to auto-resume, keep a resumable paused
+                // handle. A later unrelated interruption must not restart it.
+                sound.paused = !shouldResume
+                if shouldResume { sound.player.play() }
             }
         }
     }
