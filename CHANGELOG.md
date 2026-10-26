@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.362...v0.0.363)
+
+## 🐛 Bug Fixes
+
+- **clipboard**: honor declared pasteboard source identity ([a2e3470](https://github.com/craft-native/craft/commit/a2e3470)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.361...v0.0.362)
 
 ## 🐛 Bug Fixes
