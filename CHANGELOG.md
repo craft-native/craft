@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.371...v0.0.372)
+
+## 🐛 Bug Fixes
+
+- **ci**: verify expanded tabs and bound native test workers ([11a608e](https://github.com/craft-native/craft/commit/11a608e)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.370...v0.0.371)
 
 ## 🚀 Features
