@@ -1,4 +1,5 @@
 import { gzipSync } from 'node:zlib'
+import { iosPermissionMask, iosPermissions, verifyRuntimeProfile, withAppRuntime } from './runtime-profile.js'
 /**
  * Craft iOS Builder
  *
@@ -657,6 +658,8 @@ export interface InitOptions {
    * monorepo dev loop uses.
    */
   runtimeDir?: string | null
+  /** Explicit Craft Zig source package for a per-app runtime build (or CRAFT_IOS_RUNTIME_SOURCE). */
+  runtimeSource?: string | null
 }
 
 export interface BuildOptions {
@@ -672,6 +675,8 @@ export interface BuildOptions {
    * leaves whatever `init` installed exactly as it is.
    */
   runtimeDir?: string | null
+  /** Rebuild the installed runtime from this source using the app's current feature flags. */
+  runtimeSource?: string | null
 }
 
 /**
@@ -1028,8 +1033,8 @@ export function renderRuntimeSettings(): string {
  * behind the `CRAFT_SCHEDULED_WORKOUTS` condition, so an app that does not
  * schedule workouts does not link it. `$(inherited)` keeps Debug's `DEBUG`.
  */
-export function renderFeatureSettings(config: Pick<CraftConfig, 'enableScheduledWorkouts' | 'enableAppleMusic'>): string {
-  const conditions: string[] = []
+export function renderFeatureSettings(config: Partial<CraftConfig>): string {
+  const conditions: string[] = iosPermissions(config).filter(name => name !== 'music').map(name => `CRAFT_PERMISSION_${name.toUpperCase()}`)
   if (config.enableScheduledWorkouts) conditions.push('CRAFT_SCHEDULED_WORKOUTS')
   if (config.enableAppleMusic) conditions.push('CRAFT_APPLE_MUSIC')
   if (!conditions.length) return ''
@@ -1449,6 +1454,15 @@ async function refreshRuntime(output: string, override?: string | null): Promise
   console.log('   Refreshed the Zig runtime from', dir)
 }
 
+async function installAppRuntime(output: string, source: string, config: CraftConfig): Promise<boolean> {
+  return withAppRuntime(source, config, async (directory) => {
+    verifyRuntimeProfile(directory, config)
+    await installRuntime(output, directory)
+    writeFileSync(join(output, 'Runtime', 'profile.json'), JSON.stringify({ version: 1, mask: iosPermissionMask(config), source: resolve(source) }, null, 2))
+    return true
+  })
+}
+
 /**
  * The identifier an app's display name becomes wherever Xcode or Swift needs
  * one: the project, the target, the product and the `@main` type.
@@ -1672,9 +1686,11 @@ export async function init(options: InitOptions): Promise<void> {
   // The Zig runtime, when this build has one. Installed before the project is
   // rendered because the settings below name the directories it creates.
   const runtimeDir = resolveRuntimeDir(options.runtimeDir)
-  const hasRuntime = runtimeDir ? await installRuntime(output, runtimeDir) : false
+  const runtimeSource = options.runtimeSource === null || options.runtimeDir === null ? undefined : options.runtimeSource ?? process.env.CRAFT_IOS_RUNTIME_SOURCE
+  if (runtimeSource && runtimeDir) throw new Error('Choose runtimeSource or runtimeDir, not both')
+  const hasRuntime = runtimeSource ? await installAppRuntime(output, runtimeSource, config) : runtimeDir ? await installRuntime(output, runtimeDir) : false
   if (hasRuntime) {
-    console.log('   Linked the Zig runtime from', runtimeDir)
+    console.log('   Linked the Zig runtime from', runtimeSource ?? runtimeDir)
   }
   else {
     // Re-running init without a runtime used to strip the link settings from
@@ -1810,7 +1826,18 @@ export async function build(options: BuildOptions): Promise<void> {
     }
   }
 
-  await refreshRuntime(output, options.runtimeDir)
+  const profilePath = join(output, 'Runtime', 'profile.json')
+  const savedProfile = existsSync(profilePath) ? JSON.parse(readFileSync(profilePath, 'utf8')) : undefined
+  const runtimeSource = options.runtimeSource === null || options.runtimeDir === null ? undefined : options.runtimeSource ?? process.env.CRAFT_IOS_RUNTIME_SOURCE ?? savedProfile?.source
+  if (runtimeSource && existsSync(join(output, 'Runtime'))) {
+    if (options.runtimeDir) throw new Error('Choose runtimeSource or runtimeDir, not both')
+    await installAppRuntime(output, runtimeSource, config)
+  }
+  else {
+    if (savedProfile && savedProfile.mask !== iosPermissionMask(config))
+      throw new Error('Installed Zig runtime permission profile is stale; provide runtimeSource to rebuild it')
+    await refreshRuntime(output, options.runtimeDir)
+  }
 
   if (!generateProject) return
 

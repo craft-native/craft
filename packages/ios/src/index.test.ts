@@ -39,11 +39,59 @@ import {
   syncNativeFonts,
 } from './index'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
+import { iosPermissionMask, iosPermissionNames, iosPermissions, verifyRuntimeProfile, withAppRuntime } from './runtime-profile'
 
 // Every scratch directory this file made goes when the file is done (#357).
 afterAll(removeAllTempDirs)
 
 describe('Craft iOS builder', () => {
+  it('derives independent permission bits and feature dependencies without using purpose strings as feature flags', () => {
+    expect(iosPermissionMask({})).toBe(0)
+    expect(iosPermissions({ enableVideoRecording: true })).toEqual(['microphone', 'camera', 'photos'])
+    expect(iosPermissions({ enableSpeechRecognition: true })).toEqual(['speech', 'microphone'])
+    expect(iosPermissions({ enableBackgroundLocation: true, enableHeartRate: true })).toEqual(['location', 'bluetooth'])
+    expect(iosPermissions({ enableAR: true, enableQRScanner: true })).toEqual(['camera'])
+    expect(iosPermissions({ usageDescriptions: { NSCameraUsageDescription: 'Custom' } })).toEqual([])
+    const zig = readFileSync(join(import.meta.dir, '../../zig/src/ios_permissions.zig'), 'utf8')
+    const order = zig.slice(zig.indexOf('enum(u4) {') + 'enum(u4) {'.length, zig.indexOf('    pub fn bit'))
+    expect(order.trim().split(',').map(value => value.trim()).filter(Boolean)).toEqual([...iosPermissionNames])
+  })
+
+  it('builds a fresh per-app archive profile with the pinned toolchain and rejects stale or altered archives', async () => {
+    const source = createTempDir('craft-ios-runtime-source-')
+    writeFileSync(join(source, 'build.zig.zon'), '.{ .minimum_zig_version = "1.2.3" }')
+    const executable = join(source, 'zig')
+    writeFileSync(executable, `#!${process.execPath}
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+if (process.argv[2] === 'version') { console.log('1.2.3'); process.exit(0); }
+const args = process.argv.slice(2);
+if (!args.includes('-Dios-permissions=camera,photos') || !args.includes('build-ios-all')) process.exit(2);
+const dir = join(args[args.indexOf('--prefix') + 1], 'lib'); mkdirSync(dir, { recursive: true });
+for (const name of ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a']) writeFileSync(join(dir, name), 'fixture ' + name);
+writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, mask: 12 }));
+`)
+    chmodSync(executable, 0o755)
+    const previous = process.env.CRAFT_ZIG
+    process.env.CRAFT_ZIG = executable
+    let built = ''
+    try {
+      await withAppRuntime(source, { enableCamera: true }, async (directory) => {
+        built = directory
+        expect(() => verifyRuntimeProfile(directory, { enableCamera: true })).not.toThrow()
+        expect(() => verifyRuntimeProfile(directory, {})).toThrow('does not match')
+        writeFileSync(join(directory, 'libcraft-ios.a'), 'different archive')
+        expect(() => verifyRuntimeProfile(directory, { enableCamera: true })).toThrow('identity mismatch')
+      })
+      expect(existsSync(built)).toBe(false)
+      writeFileSync(join(source, 'build.zig.zon'), '.{ .minimum_zig_version = "9.9.9" }')
+      await expect(withAppRuntime(source, {}, async () => { throw new Error('must not install') })).rejects.toThrow('requires Zig 9.9.9')
+    }
+    finally {
+      if (previous === undefined) delete process.env.CRAFT_ZIG
+      else process.env.CRAFT_ZIG = previous
+    }
+  })
   it('uses a system tab controller for native and hybrid route stacks', () => {
     const shell = readFileSync(join(import.meta.dir, '../templates/CraftHybrid.swift'), 'utf8')
     expect(shell).toContain('CraftHybridController: UITabBarController, UITabBarControllerDelegate')

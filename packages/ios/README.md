@@ -402,6 +402,19 @@ App Store Connect checks the binary:
 
 Appearance and navigation:
 
+For an opt-in Zig runtime built specifically for the app, set
+`CRAFT_IOS_RUNTIME_SOURCE` to an explicit Craft Zig source-package directory
+(the directory containing `build.zig` and `build.zig.zon`) and `CRAFT_ZIG` to
+the pinned compiler executable. `init` and subsequent `build` calls compile
+device and both simulator archives from the app's `enable*` flags. The
+programmatic equivalent is `runtimeSource` on `init`/`build`; do not combine it
+with `runtimeDir`. Ordinary apps still require no Zig runtime or compiler.
+Per-app builds check the compiler version, permission mask, and archive hashes
+before installation. A failed compile leaves the installed runtime in place.
+The source location is retained under `Runtime/`, not bundled as app config.
+Changing permission flags requires rebuilding the runtime and regenerating
+the Xcode project. No compiler, source checkout, or runtime directory is guessed.
+
 ```json
 {
   "appearance": "system",
