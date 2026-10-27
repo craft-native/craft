@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.368...v0.0.369)
+
+## 🐛 Bug Fixes
+
+- **android**: remove owned emulator state after reaping its process ([9b18051](https://github.com/craft-native/craft/commit/9b18051)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.367...v0.0.368)
 
 ## 🐛 Bug Fixes
