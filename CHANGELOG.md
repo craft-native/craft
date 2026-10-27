@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.373...v0.0.374)
+
+## 🐛 Bug Fixes
+
+- **ios**: preserve speech cleanup in restricted runtimes ([58a322f](https://github.com/craft-native/craft/commit/58a322f)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.372...v0.0.373)
 
 ## 🧪 Tests
