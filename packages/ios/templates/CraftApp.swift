@@ -1,6 +1,8 @@
 import SwiftUI
 import WebKit
+#if CRAFT_PERMISSION_SPEECH
 import Speech
+#endif
 import AVFoundation
 import LocalAuthentication
 import Security
@@ -2259,9 +2261,11 @@ struct CraftWebView: UIViewRepresentable {
     // MARK: - Coordinator (Native Bridge)
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler, UIImagePickerControllerDelegate, UINavigationControllerDelegate, CLLocationManagerDelegate, ARSCNViewDelegate {
         let config: CraftConfig
+        #if CRAFT_PERMISSION_SPEECH
         private var speechRecognizer: SFSpeechRecognizer?
         private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
         private var recognitionTask: SFSpeechRecognitionTask?
+        #endif
         private var audioEngine = AVAudioEngine()
         private weak var webView: WKWebView?
         private var pendingCallbackId: String?
@@ -2392,9 +2396,12 @@ struct CraftWebView: UIViewRepresentable {
             self.recordingDirectory = recordingDirectory
             self.config = config
             super.init()
+            #if CRAFT_PERMISSION_SPEECH
             if config.enableSpeechRecognition {
                 speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
             }
+            #endif
+            #if CRAFT_PERMISSION_LOCATION
             if config.enableGeolocation {
                 locationManager = suppliedLocationManager ?? CLLocationManager()
                 locationManager?.desiredAccuracy = kCLLocationAccuracyBest
@@ -2408,15 +2415,22 @@ struct CraftWebView: UIViewRepresentable {
                     catch { locationRecordingRestoreError = error }
                 }
             }
+            #endif
+            #if CRAFT_PERMISSION_CONTACTS
             if config.enableContacts {
                 contactStore = CNContactStore()
             }
+            #endif
+            #if CRAFT_PERMISSION_CALENDAR
             if config.enableCalendar {
                 eventStore = EKEventStore()
             }
+            #endif
+            #if CRAFT_PERMISSION_MOTION
             if config.enableMotionSensors {
                 motionManager = CMMotionManager()
             }
+            #endif
             if config.enableHealthKit {
                 // Apple Health's heart rate as it arrives
                 // (craft.health.startHeartRateUpdates) reaches the page, and
@@ -4126,11 +4140,13 @@ struct CraftWebView: UIViewRepresentable {
         /// The bridge, as the source the page runs. Only in a trusted page:
         /// the check is the first thing it does.
         func bridgeScript() -> String {
-            let laContext = LAContext()
             var biometricAvailable = false
+            #if CRAFT_PERMISSION_BIOMETRIC
+            let laContext = LAContext()
             if laContext.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil) {
                 biometricAvailable = true
             }
+            #endif
 
             let script = """
             window.craft = {
@@ -6347,6 +6363,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Speech Recognition
         private func startSpeechRecognition() {
+            #if CRAFT_PERMISSION_SPEECH
             SFSpeechRecognizer.requestAuthorization { [weak self] status in
                 guard status == .authorized else {
                     self?.sendToWeb("craftSpeechError", data: ["error": "Not authorized"])
@@ -6354,9 +6371,14 @@ struct CraftWebView: UIViewRepresentable {
                 }
                 DispatchQueue.main.async { self?.beginRecording() }
             }
+
+            #else
+            sendToWeb("craftSpeechError", data: ["error": "Speech recognition was not enabled when this app was built"])
+            #endif
         }
 
         private func beginRecording() {
+            #if CRAFT_PERMISSION_SPEECH
             if recognitionTask != nil {
                 recognitionTask?.cancel()
                 recognitionTask = nil
@@ -6408,9 +6430,14 @@ struct CraftWebView: UIViewRepresentable {
             } catch {
                 sendToWeb("craftSpeechError", data: ["error": "Audio engine failed"])
             }
+
+            #else
+
+            #endif
         }
 
         private func stopSpeechRecognition() {
+            #if CRAFT_PERMISSION_SPEECH
             audioEngine.stop()
             audioEngine.inputNode.removeTap(onBus: 0)
             recognitionRequest?.endAudio()
@@ -6419,6 +6446,10 @@ struct CraftWebView: UIViewRepresentable {
             recognitionTask = nil
             sendToWeb("craftSpeechEnd", data: [:])
             CraftNativeActions.triggerHaptic(style: "light")
+
+            #else
+
+            #endif
         }
 
         // MARK: - Share
@@ -6460,6 +6491,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Camera & Photo Library
         private func openCamera() {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async {
                 guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
                     self.rejectCallback(self.pendingCallbackId, error: "Camera not available")
@@ -6472,9 +6504,14 @@ struct CraftWebView: UIViewRepresentable {
                 picker.delegate = self
                 rootVC.present(picker, animated: true)
             }
+
+            #else
+            rejectCallback(pendingCallbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func pickImage() {
+            #if CRAFT_PERMISSION_PHOTOS
             DispatchQueue.main.async {
                 guard let rootVC = CraftPresenter.topViewController() else { return }
 
@@ -6483,6 +6520,10 @@ struct CraftWebView: UIViewRepresentable {
                 picker.delegate = self
                 rootVC.present(picker, animated: true)
             }
+
+            #else
+            rejectCallback(pendingCallbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
@@ -6520,6 +6561,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Biometric Authentication
         private func authenticate(reason: String, callbackId: String?) {
+            #if CRAFT_PERMISSION_BIOMETRIC
             let context = LAContext()
             var error: NSError?
 
@@ -6536,6 +6578,10 @@ struct CraftWebView: UIViewRepresentable {
             } else {
                 rejectCallback(callbackId, error: error?.localizedDescription ?? "Biometric not available")
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Push Notifications
@@ -6668,31 +6714,63 @@ struct CraftWebView: UIViewRepresentable {
             }
             switch permission {
             case "location", "locationAlways":
+                #if CRAFT_PERMISSION_LOCATION
                 let status = (locationManager ?? CLLocationManager()).authorizationStatus
                 let granted = status == .authorizedAlways || (permission == "location" && status == .authorizedWhenInUse)
                 resolveCallback(callbackId, result: permissionStatus(granted, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "camera":
+                #if CRAFT_PERMISSION_CAMERA
                 let status = AVCaptureDevice.authorizationStatus(for: .video)
                 resolveCallback(callbackId, result: permissionStatus(status == .authorized, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "microphone":
+                #if CRAFT_PERMISSION_MICROPHONE
                 let status = AVAudioSession.sharedInstance().recordPermission
                 resolveCallback(callbackId, result: permissionStatus(status == .granted, denied: status == .denied))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "photos":
+                #if CRAFT_PERMISSION_PHOTOS
                 let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
                 resolveCallback(callbackId, result: permissionStatus(status == .authorized || status == .limited, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "contacts":
+                #if CRAFT_PERMISSION_CONTACTS
                 let status = CNContactStore.authorizationStatus(for: .contacts)
                 resolveCallback(callbackId, result: permissionStatus(status == .authorized, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "calendar", "reminders":
+                #if CRAFT_PERMISSION_CALENDAR
                 let entity: EKEntityType = permission == "calendar" ? .event : .reminder
                 let status = EKEventStore.authorizationStatus(for: entity)
                 resolveCallback(callbackId, result: permissionStatus(status == .authorized || status.rawValue >= 4, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "motion":
+                #if CRAFT_PERMISSION_MOTION
                 let status = CMMotionActivityManager.authorizationStatus()
                 resolveCallback(callbackId, result: permissionStatus(status == .authorized, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "bluetooth":
+                #if CRAFT_PERMISSION_BLUETOOTH
                 let status = CBManager.authorization
                 resolveCallback(callbackId, result: permissionStatus(status == .allowedAlways, denied: status == .denied, restricted: status == .restricted))
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "notifications":
                 // Zig answers UnknownAction for this permission, so Swift
                 // serves it on both runtimes and this is the only answer.
@@ -6726,6 +6804,7 @@ struct CraftWebView: UIViewRepresentable {
             }
             switch permission {
             case "location", "locationAlways":
+                #if CRAFT_PERMISSION_LOCATION
                 guard let manager = locationManager else {
                     rejectCallback(callbackId, error: "Geolocation is disabled", code: "CAPABILITY_DISABLED")
                     return
@@ -6748,23 +6827,43 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     manager.requestWhenInUseAuthorization()
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "camera":
+                #if CRAFT_PERMISSION_CAMERA
                 AVCaptureDevice.requestAccess(for: .video) { granted in
                     self.resolveCallback(callbackId, result: granted ? "granted" : "denied")
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "microphone":
+                #if CRAFT_PERMISSION_MICROPHONE
                 AVAudioSession.sharedInstance().requestRecordPermission { granted in
                     self.resolveCallback(callbackId, result: granted ? "granted" : "denied")
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "photos":
+                #if CRAFT_PERMISSION_PHOTOS
                 PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
                     self.resolveCallback(callbackId, result: status == .authorized || status == .limited ? "granted" : "denied")
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "contacts":
+                #if CRAFT_PERMISSION_CONTACTS
                 (contactStore ?? CNContactStore()).requestAccess(for: .contacts) { granted, _ in
                     self.resolveCallback(callbackId, result: granted ? "granted" : "denied")
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "calendar", "reminders":
+                #if CRAFT_PERMISSION_CALENDAR
                 let store = eventStore ?? EKEventStore()
                 let entity: EKEntityType = permission == "calendar" ? .event : .reminder
                 if #available(iOS 17.0, *) {
@@ -6782,6 +6881,9 @@ struct CraftWebView: UIViewRepresentable {
                         self.resolveCallback(callbackId, result: granted ? "granted" : "denied")
                     }
                 }
+                #else
+                rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+                #endif
             case "notifications":
                 UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
                     self.resolveCallback(callbackId, result: granted ? "granted" : "denied")
@@ -6821,6 +6923,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func continueSingleLocationRequest(_ manager: CLLocationManager) {
+            #if CRAFT_PERMISSION_LOCATION
             guard let callbackId = singleLocationCallbackId else { return }
             switch manager.authorizationStatus {
             case .notDetermined:
@@ -6853,6 +6956,10 @@ struct CraftWebView: UIViewRepresentable {
             singleLocationTimeoutWorkItem = timeoutWorkItem
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(Int(min(timeoutMs + 100, Double(Int.max)))), execute: timeoutWorkItem)
             manager.requestLocation()
+
+            #else
+
+            #endif
         }
 
         private func finishSingleLocationRequest() {
@@ -6878,12 +6985,17 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func watchPosition(callbackId: String?) {
+            #if CRAFT_PERMISSION_LOCATION
             locationManager?.delegate = self
             isWatchingLocation = true
             requestLocationAuthorization()
             configureBackgroundLocationIfNeeded()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: true)
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopWatchingPosition() {
@@ -6905,16 +7017,26 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func requestLocationAuthorization() {
+            #if CRAFT_PERMISSION_LOCATION
             if config.enableBackgroundLocation {
                 locationManager?.requestAlwaysAuthorization()
             } else {
                 locationManager?.requestWhenInUseAuthorization()
             }
+
+            #else
+
+            #endif
         }
 
         private func configureBackgroundLocationIfNeeded() {
+            #if CRAFT_PERMISSION_LOCATION
             locationManager?.allowsBackgroundLocationUpdates = config.enableBackgroundLocation
             locationManager?.showsBackgroundLocationIndicator = config.enableBackgroundLocation
+
+            #else
+
+            #endif
         }
 
         private func persistLocationRecordingState() throws {
@@ -6923,6 +7045,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func restoreLocationRecordingState() throws {
+            #if CRAFT_PERMISSION_LOCATION
             guard FileManager.default.fileExists(atPath: locationRecordingStateURL.path) else {
                 if FileManager.default.fileExists(atPath: locationRecordingTrackURL.path), !(try Data(contentsOf: locationRecordingTrackURL)).isEmpty {
                     throw CraftNativeActionError(code: "RECORDING_STORAGE_ERROR", message: "Recording metadata is missing")
@@ -6952,6 +7075,10 @@ struct CraftWebView: UIViewRepresentable {
                 configureBackgroundLocationIfNeeded()
                 locationManager?.startUpdatingLocation()
             }
+
+            #else
+
+            #endif
         }
 
         /// Same serial main-queue dispatch as the operation it protects.
@@ -7023,6 +7150,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func startLocationRecording(body: [String: Any], callbackId: String?) {
+            #if CRAFT_PERMISSION_LOCATION
             guard !isRecordingLocation else {
                 rejectCallback(callbackId, error: "A location recording is already active", code: "RECORDING_ALREADY_ACTIVE")
                 return
@@ -7058,6 +7186,10 @@ struct CraftWebView: UIViewRepresentable {
             configureBackgroundLocationIfNeeded()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: locationRecordingSummary())
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func pauseLocationRecording(callbackId: String?) {
@@ -7078,6 +7210,7 @@ struct CraftWebView: UIViewRepresentable {
         }
 
         private func resumeLocationRecording(callbackId: String?) {
+            #if CRAFT_PERMISSION_LOCATION
             guard isRecordingLocation else {
                 rejectCallback(callbackId, error: "No active location recording", code: "NO_ACTIVE_RECORDING")
                 return
@@ -7098,6 +7231,10 @@ struct CraftWebView: UIViewRepresentable {
             configureBackgroundLocationIfNeeded()
             locationManager?.startUpdatingLocation()
             resolveCallback(callbackId, result: locationRecordingSummary())
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopLocationRecording(callbackId: String?) {
@@ -7286,6 +7423,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Flashlight
         private func setFlashlight(enabled: Bool, callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else {
                 rejectCallback(callbackId, error: "Flashlight not available")
                 return
@@ -7299,6 +7437,10 @@ struct CraftWebView: UIViewRepresentable {
             } catch {
                 rejectCallback(callbackId, error: error.localizedDescription)
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Vibration Pattern
@@ -7316,6 +7458,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Contacts
         private func getContacts(callbackId: String?) {
+            #if CRAFT_PERMISSION_CONTACTS
             guard let store = contactStore else {
                 rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
                 return
@@ -7354,9 +7497,14 @@ struct CraftWebView: UIViewRepresentable {
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func addContact(_ data: [String: Any], callbackId: String?) {
+            #if CRAFT_PERMISSION_CONTACTS
             guard let store = contactStore else {
                 rejectCallback(callbackId, error: "Contacts access is disabled", code: "CAPABILITY_DISABLED")
                 return
@@ -7387,10 +7535,15 @@ struct CraftWebView: UIViewRepresentable {
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Calendar
         private func getCalendarEvents(startDate: Double?, endDate: Double?, callbackId: String?) {
+            #if CRAFT_PERMISSION_CALENDAR
             guard let store = eventStore else {
                 rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
                 return
@@ -7423,9 +7576,14 @@ struct CraftWebView: UIViewRepresentable {
 
                 self?.resolveCallback(callbackId, result: eventData)
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func createCalendarEvent(_ data: [String: Any], callbackId: String?) {
+            #if CRAFT_PERMISSION_CALENDAR
             guard let store = eventStore else {
                 rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
                 return
@@ -7461,9 +7619,14 @@ struct CraftWebView: UIViewRepresentable {
                     self?.rejectCallback(callbackId, error: error.localizedDescription)
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func deleteCalendarEvent(_ eventId: String, callbackId: String?) {
+            #if CRAFT_PERMISSION_CALENDAR
             guard let store = eventStore else {
                 rejectCallback(callbackId, error: "Calendar access is disabled", code: "CAPABILITY_DISABLED")
                 return
@@ -7479,6 +7642,10 @@ struct CraftWebView: UIViewRepresentable {
             } catch {
                 rejectCallback(callbackId, error: error.localizedDescription)
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Local Notifications
@@ -7877,6 +8044,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - QR/Barcode Scanner
         private func scanQRCode(callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async {
                 guard let rootVC = CraftPresenter.topViewController() else { return }
 
@@ -7895,6 +8063,10 @@ struct CraftWebView: UIViewRepresentable {
                     self.rejectCallback(callbackId, error: "QR scanning requires iOS 16+")
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - File Picker
@@ -7985,6 +8157,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Audio Recording
         private func startAudioRecording(callbackId: String?) {
+            #if CRAFT_PERMISSION_MICROPHONE
             AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
                 guard granted else {
                     self?.rejectCallback(callbackId, error: "Microphone permission denied")
@@ -8015,9 +8188,14 @@ struct CraftWebView: UIViewRepresentable {
                     }
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopAudioRecording(callbackId: String?) {
+            #if CRAFT_PERMISSION_MICROPHONE
             audioRecorder?.stop()
             audioRecorder = nil
 
@@ -8032,10 +8210,15 @@ struct CraftWebView: UIViewRepresentable {
                 rejectCallback(callbackId, error: "No recording found")
             }
             recordingURL = nil
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Video Recording
         private func startVideoRecording(callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async {
                 guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
                     self.rejectCallback(callbackId, error: "Camera not available")
@@ -8052,10 +8235,15 @@ struct CraftWebView: UIViewRepresentable {
                 self.pendingCallbackId = callbackId
                 rootVC.present(picker, animated: true)
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Motion Sensors
         private func startMotionUpdates(interval: Double, callbackId: String?) {
+            #if CRAFT_PERMISSION_MOTION
             guard let motionManager = motionManager, motionManager.isDeviceMotionAvailable else {
                 rejectCallback(callbackId, error: "Motion sensors not available")
                 return
@@ -8088,11 +8276,20 @@ struct CraftWebView: UIViewRepresentable {
 
             isMotionUpdating = true
             resolveCallback(callbackId, result: true)
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopMotionUpdates() {
+            #if CRAFT_PERMISSION_MOTION
             motionManager?.stopDeviceMotionUpdates()
             isMotionUpdating = false
+
+            #else
+
+            #endif
         }
 
         // MARK: - Local Database (SQLite)
@@ -8204,19 +8401,30 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Bluetooth
         private func startBluetoothScan(callbackId: String?) {
+            #if CRAFT_PERMISSION_BLUETOOTH
             centralManager = CBCentralManager(delegate: self, queue: nil)
             pendingCallbackId = callbackId
             // Scanning starts in centralManagerDidUpdateState
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopBluetoothScan() {
+            #if CRAFT_PERMISSION_BLUETOOTH
             centralManager?.stopScan()
             centralManager = nil
             discoveredPeripherals.removeAll()
+
+            #else
+
+            #endif
         }
 
         // MARK: - NFC
         private func scanNFC(callbackId: String?) {
+            #if CRAFT_PERMISSION_NFC
             guard NFCNDEFReaderSession.readingAvailable else {
                 rejectCallback(callbackId, error: "NFC not available")
                 return
@@ -8226,6 +8434,10 @@ struct CraftWebView: UIViewRepresentable {
             let session = NFCNDEFReaderSession(delegate: self, queue: nil, invalidateAfterFirstRead: true)
             session.alertMessage = "Hold your iPhone near the NFC tag"
             session.begin()
+
+            #else
+            rejectCallback(callbackId, error: "NFC was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - Health
@@ -8449,6 +8661,7 @@ struct CraftWebView: UIViewRepresentable {
 
         // MARK: - Contacts Picker
         private func pickContact(multiple: Bool, callbackId: String?) {
+            #if CRAFT_PERMISSION_CONTACTS
             DispatchQueue.main.async {
                 guard let rootVC = CraftPresenter.topViewController() else {
                     self.rejectCallback(callbackId, error: "No root view controller")
@@ -8469,6 +8682,10 @@ struct CraftWebView: UIViewRepresentable {
 
                 rootVC.present(picker, animated: true)
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - App Shortcuts
@@ -8618,6 +8835,7 @@ struct CraftWebView: UIViewRepresentable {
         private var detectedPlanes: [UUID: ARPlaneAnchor] = [:]
 
         private func startAR(options: [String: Any], callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             guard ARWorldTrackingConfiguration.isSupported else {
                 rejectCallback(callbackId, error: "AR not supported on this device")
                 return
@@ -8649,9 +8867,14 @@ struct CraftWebView: UIViewRepresentable {
                 arView.session.run(configuration)
                 self.resolveCallback(callbackId, result: ["started": true])
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func stopAR(callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
 
@@ -8664,9 +8887,14 @@ struct CraftWebView: UIViewRepresentable {
 
                 self.resolveCallback(callbackId, result: ["stopped": true])
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func placeARObject(model: String, position: [String: Double]?, callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, let arView = self.arView else {
                     self?.rejectCallback(callbackId, error: "AR not started")
@@ -8730,9 +8958,14 @@ struct CraftWebView: UIViewRepresentable {
 
                 self.resolveCallback(callbackId, result: ["objectId": objectId, "placed": true])
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func removeARObject(objectId: String, callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
 
@@ -8744,9 +8977,14 @@ struct CraftWebView: UIViewRepresentable {
                     self.rejectCallback(callbackId, error: "Object not found")
                 }
             }
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         private func getARPlanes(callbackId: String?) {
+            #if CRAFT_PERMISSION_CAMERA
             var planes: [[String: Any]] = []
             for (_, anchor) in detectedPlanes {
                 planes.append([
@@ -8757,6 +8995,10 @@ struct CraftWebView: UIViewRepresentable {
                 ])
             }
             resolveCallback(callbackId, result: planes)
+
+            #else
+            rejectCallback(callbackId, error: "Capability was not enabled when this app was built", code: "CAPABILITY_DISABLED")
+            #endif
         }
 
         // MARK: - ML (Core ML / Vision)
@@ -9149,6 +9391,7 @@ extension CraftWebView.Coordinator: UIDocumentPickerDelegate {
 }
 
 // MARK: - Bluetooth Delegate
+#if CRAFT_PERMISSION_BLUETOOTH
 extension CraftWebView.Coordinator: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn {
@@ -9171,8 +9414,10 @@ extension CraftWebView.Coordinator: CBCentralManagerDelegate {
         }
     }
 }
+#endif
 
 // MARK: - NFC Delegate
+#if CRAFT_PERMISSION_NFC
 extension CraftWebView.Coordinator: NFCNDEFReaderSessionDelegate {
     func readerSession(_ session: NFCNDEFReaderSession, didDetectNDEFs messages: [NFCNDEFMessage]) {
         var records: [[String: Any]] = []
@@ -9202,6 +9447,7 @@ extension CraftWebView.Coordinator: NFCNDEFReaderSessionDelegate {
         pendingCallbackId = nil
     }
 }
+#endif
 
 // MARK: - ARSCNViewDelegate Extension
 extension CraftWebView.Coordinator {
@@ -9340,6 +9586,24 @@ extension CraftWebView.Coordinator: WKUIDelegate {
     /// thing reads as a web page. Anything embedded still gets the prompt.
     @available(iOS 15.0, *)
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        #if CRAFT_PERMISSION_CAMERA
+        let cameraEnabled = true
+        #else
+        let cameraEnabled = false
+        #endif
+        #if CRAFT_PERMISSION_MICROPHONE
+        let microphoneEnabled = true
+        #else
+        let microphoneEnabled = false
+        #endif
+        let enabled: Bool
+        switch type {
+        case .camera: enabled = cameraEnabled
+        case .microphone: enabled = microphoneEnabled
+        case .cameraAndMicrophone: enabled = cameraEnabled && microphoneEnabled
+        @unknown default: enabled = false
+        }
+        guard enabled else { decisionHandler(.deny); return }
         decisionHandler(trusts(origin) && trusts(frame.securityOrigin) ? .grant : .prompt)
     }
 }
@@ -9354,6 +9618,7 @@ extension CraftWebView.Coordinator: AVSpeechSynthesizerDelegate {
     }
 }
 
+#if CRAFT_PERMISSION_CONTACTS
 extension CraftWebView.Coordinator: CNContactPickerDelegate {
     func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
         let contactData = formatContact(contact)
@@ -9403,6 +9668,7 @@ extension CraftWebView.Coordinator: CNContactPickerDelegate {
         return data
     }
 }
+#endif
 
 // MARK: - Watch Connectivity Delegate
 extension CraftWebView.Coordinator: WCSessionDelegate {

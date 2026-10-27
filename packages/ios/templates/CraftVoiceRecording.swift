@@ -6,7 +6,9 @@ protocol CraftVoiceRecorder: AnyObject {
     func record(forDuration duration: TimeInterval) -> Bool
     func stop()
 }
+#if CRAFT_PERMISSION_MICROPHONE
 extension AVAudioRecorder: CraftVoiceRecorder {}
+#endif
 
 /// The main thread owns requests; audio and encoder work belong to one serial
 /// queue. Cancellation invalidates a request immediately, even while AVFoundation
@@ -93,12 +95,22 @@ final class CraftVoiceRecording {
 
     init(audioQueue: DispatchQueue = DispatchQueue(label: "craft.voice-recording", qos: .userInitiated),
          startupTimeout: TimeInterval = 15,
-         permission: @escaping (@escaping (Bool) -> Void) -> Void = { AVAudioSession.sharedInstance().requestRecordPermission($0) },
+         permission: @escaping (@escaping (Bool) -> Void) -> Void = { answer in
+             #if CRAFT_PERMISSION_MICROPHONE
+             AVAudioSession.sharedInstance().requestRecordPermission(answer)
+             #else
+             answer(false)
+             #endif
+         },
          makeRecorder: @escaping (URL) throws -> CraftVoiceRecorder = { file in
+             #if CRAFT_PERMISSION_MICROPHONE
              let session = AVAudioSession.sharedInstance()
              try session.setCategory(.record, mode: .measurement)
              try session.setActive(true)
              return try AVAudioRecorder(url: file, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32000])
+             #else
+             throw NSError(domain: "CraftVoiceRecording", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone was not enabled when this app was built"])
+             #endif
          },
          deactivate: @escaping () -> Void = { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }) {
         Self.prepareForLaunch()

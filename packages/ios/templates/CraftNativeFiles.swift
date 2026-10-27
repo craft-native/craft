@@ -133,6 +133,7 @@ enum CraftNativeFiles {
         }
 
         if source == "camera" {
+            #if CRAFT_PERMISSION_CAMERA
             guard cameraEnabled else {
                 done(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "The camera is disabled")))
                 return
@@ -150,6 +151,9 @@ enum CraftNativeFiles {
                 activePicker = nil
                 done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the camera")))
             }
+            #else
+            done(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "The camera was not enabled when this app was built")))
+            #endif
             return
         }
         guard source == "library" else {
@@ -247,6 +251,7 @@ enum CraftNativeFiles {
         }
     }
 
+    #if CRAFT_PERMISSION_CAMERA
     private final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let maxPixels: Int
         let quality: Double
@@ -286,6 +291,8 @@ enum CraftNativeFiles {
             done(.success(NSNull()))
         }
     }
+
+    #endif
 
     // MARK: Picking a video
 

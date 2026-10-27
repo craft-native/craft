@@ -1,6 +1,8 @@
 import Foundation
 import AuthenticationServices
+#if CRAFT_PERMISSION_BIOMETRIC
 import LocalAuthentication
+#endif
 import PassKit
 import SQLite3
 import Security
@@ -27,7 +29,9 @@ enum CraftNativeActions {
     private static let databaseQueue = DispatchQueue(label: "dev.craft.native.database")
     private static let cancellationLock = NSLock()
     private static var cancelledRequests = Set<String>()
+    #if CRAFT_PERMISSION_BIOMETRIC
     private static var biometricContexts = [String: LAContext]()
+    #endif
     private static var fetchTasks = [String: URLSessionTask]()
     private static let fetchSession: URLSession = {
         let configuration = URLSessionConfiguration.default
@@ -248,7 +252,7 @@ enum CraftNativeActions {
             }
             return
         case ("Biometrics", "isAvailable"):
-            sync = config.enableBiometric ? .success(biometricContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)) : failure("CAPABILITY_DISABLED", "Biometric authentication is disabled")
+            sync = config.enableBiometric ? .success(biometricAvailable()) : failure("CAPABILITY_DISABLED", "Biometric authentication is disabled")
         case ("Biometrics", "getBiometricType"):
             sync = config.enableBiometric ? .success(biometricType()) : failure("CAPABILITY_DISABLED", "Biometric authentication is disabled")
         case ("Biometrics", "authenticate"):
@@ -699,10 +703,14 @@ enum CraftNativeActions {
     static func cancel(requestToken: String) {
         cancellationLock.lock()
         cancelledRequests.insert(requestToken)
+        #if CRAFT_PERMISSION_BIOMETRIC
         let context = biometricContexts.removeValue(forKey: requestToken)
+        #endif
         let task = fetchTasks.removeValue(forKey: requestToken)
         cancellationLock.unlock()
+        #if CRAFT_PERMISSION_BIOMETRIC
         context?.invalidate()
+        #endif
         task?.cancel()
         CraftNativePasskeys.shared.cancel(requestToken: requestToken)
     }
@@ -1113,13 +1121,24 @@ enum CraftNativeActions {
         }
     }
 
+    #if CRAFT_PERMISSION_BIOMETRIC
     private static func biometricContext() -> LAContext {
         let context = LAContext()
         context.localizedCancelTitle = "Cancel"
         return context
     }
+    #endif
+
+    private static func biometricAvailable() -> Bool {
+        #if CRAFT_PERMISSION_BIOMETRIC
+        return biometricContext().canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
+        #else
+        return false
+        #endif
+    }
 
     private static func biometricType() -> String {
+        #if CRAFT_PERMISSION_BIOMETRIC
         let context = biometricContext()
         _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
         switch context.biometryType {
@@ -1127,6 +1146,9 @@ enum CraftNativeActions {
         case .touchID: return "touchId"
         default: return "none"
         }
+        #else
+        return "none"
+        #endif
     }
 
     private static func authenticate(
@@ -1135,6 +1157,7 @@ enum CraftNativeActions {
         completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
     ) {
         let reason = (args.first as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Authenticate to continue"
+        #if CRAFT_PERMISSION_BIOMETRIC
         let context = biometricContext()
         cancellationLock.lock()
         biometricContexts[requestToken] = context
@@ -1146,6 +1169,9 @@ enum CraftNativeActions {
             if result { complete(requestToken, .success(true), completion) }
             else { complete(requestToken, failure("AUTHENTICATION_FAILED", error?.localizedDescription ?? "Biometric authentication failed"), completion) }
         }
+        #else
+        complete(requestToken, failure("CAPABILITY_DISABLED", "Biometrics were not enabled when this app was built"), completion)
+        #endif
     }
 
     private static func database(method: String, args: [Any]) -> Result<Any, CraftNativeActionError> {

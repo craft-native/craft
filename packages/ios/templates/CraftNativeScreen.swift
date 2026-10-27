@@ -2245,6 +2245,7 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
     }
 
     private static func locationPermissionGranted() -> Bool {
+        #if CRAFT_PERMISSION_LOCATION
         let status: CLAuthorizationStatus
         if #available(iOS 14.0, *) {
             status = CLLocationManager().authorizationStatus
@@ -2252,6 +2253,9 @@ private final class CraftNativeMapView: MKMapView, MKMapViewDelegate {
             status = CLLocationManager.authorizationStatus()
         }
         return status == .authorizedAlways || status == .authorizedWhenInUse
+        #else
+        return false
+        #endif
     }
 }
 
