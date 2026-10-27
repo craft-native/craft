@@ -3125,7 +3125,7 @@ describe('native renderer component contract', () => {
     expect(android).toContain('view.tooltipText = craftNativeOptionalString(props.opt("accessibilityHint"))')
     expect(android).toContain('val label = craftNativeOptionalString(props.opt("accessibilityLabel"))')
     expect(android).toContain('val value = craftNativeOptionalString(props.opt("accessibilityValue"))')
-    expect(android).toContain('info.hintText = host.tooltipText')
+    expect(android).toContain('if (host.tooltipText != null) info.hintText = host.tooltipText')
     expect(android).toContain('info.isEnabled = host.isEnabled && !disabled')
   })
 

@@ -943,6 +943,32 @@ class NativeNavigationTest {
             val title = node("home-title")
             assertEquals("Home", title.text.toString())
             assertEquals("The test identity must not become a spoken label", null, title.contentDescription)
+            val input = awaitView(activity, "name-input") as EditText
+            val password = awaitView(activity, "password-input") as EditText
+            instrumentation.runOnMainSync {
+                val originalText = input.text.toString()
+                try {
+                    input.setText("")
+                    val empty = input.createAccessibilityNodeInfo()
+                    assertEquals("A custom text field must retain the platform accessibility class", EditText::class.java.name, empty.className.toString())
+                    assertEquals("An absent accessibility hint must not clear the placeholder", "Your name", empty.hintText.toString())
+                    assertTrue("An empty field must report its native hint", empty.isShowingHintText)
+                    assertTrue("A text field must remain editable to accessibility services", empty.isEditable)
+                    assertEquals("name-input", empty.viewIdResourceName)
+                    input.setText("Ada")
+                    val entered = input.createAccessibilityNodeInfo()
+                    assertEquals("Ada", entered.text.toString())
+                    assertEquals("Your name", entered.hintText.toString())
+                    assertFalse("Entered text must not be announced as a placeholder", entered.isShowingHintText)
+                    val secure = password.createAccessibilityNodeInfo()
+                    assertEquals(EditText::class.java.name, secure.className.toString())
+                    assertTrue("Secure input must retain its native password semantics", secure.isPassword)
+                    val hinted = (find(activity.window.decorView, "native-link") ?: throw AssertionError("Missing hinted link")).createAccessibilityNodeInfo()
+                    assertEquals("An authored accessibility hint must still be exposed", "Opens status", hinted.hintText.toString())
+                } finally {
+                    input.setText(originalText)
+                }
+            }
             val toggle = node("toggle-safe-area")
             assertEquals("Toggle safe edges", toggle.text.toString())
             assertEquals("link", node("native-linked-pressable").extras

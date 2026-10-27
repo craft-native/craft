@@ -7528,11 +7528,16 @@ class MainActivity : AppCompatActivity() {
                     "image" -> ImageView::class.java.name
                     "search" -> EditText::class.java.name
                     "scrollbar" -> ScrollView::class.java.name
-                    else -> host.javaClass.name
+                    // The platform widget supplies its accessible class. A
+                    // custom EditText subclass name can be obfuscated in a
+                    // release and must not replace its text-field semantics.
+                    else -> info.className
                 }
                 info.isHeading = role == "header"
                 info.roleDescription = role.takeIf { it !in setOf("view", "text", "textinput", "scrollview") }
-                info.hintText = host.tooltipText
+                // With no authored accessibility hint, retain the native
+                // placeholder populated by TextView/EditText above.
+                if (host.tooltipText != null) info.hintText = host.tooltipText
                 info.isEnabled = host.isEnabled && !disabled
                 // Keep the native widget state when no accessibilityState was
                 // authored. Overwriting it with the strict false fallback
