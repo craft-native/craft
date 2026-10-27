@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.366...v0.0.367)
+
+## 🐛 Bug Fixes
+
+- **keychain**: wait for interactive authentication decisions ([3a90d44](https://github.com/craft-native/craft/commit/3a90d44)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.365...v0.0.366)
 
 ## 🐛 Bug Fixes
