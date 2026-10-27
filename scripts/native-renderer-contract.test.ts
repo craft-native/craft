@@ -444,6 +444,8 @@ describe('native renderer component contract', () => {
     expect(iosHealth).toContain('func discardWorkout(completion rawCompletion: @escaping Completion)')
     expect(iosHealth).toContain('code: "WORKOUT_ENDING"')
     expect(iosHealth).toContain('guard self.liveWorkoutID == id else {')
+    expect(iosHealth).toContain('self?.onMain { [weak self] in\n                    guard let self, self.liveWorkoutID == id else { return }')
+    expect(iosHealth).toContain('guard let id = liveWorkoutID, builder === liveWorkoutBuilder else { return }')
     const discard = iosHealth.slice(iosHealth.indexOf('private func discardLiveWorkout('), iosHealth.indexOf('private func clearLiveWorkout()'))
     expect(discard).toContain('builder.discardWorkout()')
     expect(discard).not.toContain('finishWorkout')

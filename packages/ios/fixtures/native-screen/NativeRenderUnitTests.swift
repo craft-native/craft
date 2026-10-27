@@ -7,6 +7,24 @@ import XCTest
 
 @MainActor
 final class NativeHealthDiscardUnitTests: XCTestCase {
+    func testDiscardCompletionReturnsToMainFromABackgroundCaller() async {
+        let health = CraftHealth()
+        let completed = expectation(description: "main-thread discard refusal")
+        DispatchQueue.global().async {
+            health.perform(method: "discardWorkout", args: []) { result in
+                XCTAssertTrue(Thread.isMainThread)
+                guard case .failure(let error) = result else {
+                    XCTFail("missing workout must reject")
+                    completed.fulfill()
+                    return
+                }
+                XCTAssertEqual(error.code, "NO_WORKOUT")
+                completed.fulfill()
+            }
+        }
+        await fulfillment(of: [completed], timeout: 5)
+    }
+
     func testNativeBundlesKeepDiscardWhenReplacingTheHealthNamespace() async {
         for appScript in [false, true] {
             var config = CraftConfig()

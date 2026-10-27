@@ -929,7 +929,7 @@ final class CraftHealth {
             let builder = session.associatedWorkoutBuilder()
             let id = UUID().uuidString.lowercased()
             let delegate = CraftHealthWorkoutDelegate(id: { id }) { [weak self] detail in
-                onMain {
+                self?.onMain { [weak self] in
                     guard let self, self.liveWorkoutID == id else { return }
                     self.sendWorkout(detail)
                 }
