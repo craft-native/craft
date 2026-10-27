@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.364...v0.0.365)
+
+## 🐛 Bug Fixes
+
+- **bridge**: await native Keychain mutations ([e0fc436](https://github.com/craft-native/craft/commit/e0fc436)) _(by Chris Breuer)_
+- **keychain**: persist native Apple credentials securely ([d430345](https://github.com/craft-native/craft/commit/d430345)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.363...v0.0.364)
 
 ## 🚀 Features
