@@ -7,6 +7,30 @@ import XCTest
 
 @MainActor
 final class NativeHealthDiscardUnitTests: XCTestCase {
+    func testNativeBundlesKeepDiscardWhenReplacingTheHealthNamespace() async {
+        for appScript in [false, true] {
+            var config = CraftConfig()
+            config.enableHealthKit = true
+            let screen = CraftNativeScreenController(config: config, isAppScript: appScript)
+            screen.loadViewIfNeeded()
+            defer { screen.viewDidDisappear(false) }
+            for replacement in ["{endWorkout:function(){throw new Error('must not save')}}", "{discardWorkout:function(){return false}}", "null", "undefined"] {
+                screen.evaluateScript("""
+                    globalThis.__discardAnswer = null;
+                    craft.health = \(replacement);
+                    craft.health.discardWorkout().then(function(value) {
+                        __discardAnswer = {value:value};
+                    }).catch(function(error) { __discardAnswer = {code:error.code}; });
+                """)
+                for _ in 0..<100 {
+                    if screen.evaluateScript("__discardAnswer !== null")?.toBool() == true { break }
+                    try? await Task.sleep(nanoseconds: 20_000_000)
+                }
+                XCTAssertEqual(screen.evaluateScript("__discardAnswer && __discardAnswer.code")?.toString(), "NO_WORKOUT")
+            }
+        }
+    }
+
     func testDiscardDispatchRejectsDisabledHealthAndMissingWorkout() async {
         for enabled in [false, true] {
             var config = CraftConfig()

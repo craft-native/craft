@@ -6895,6 +6895,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                             actionSheet: function(options) { return request('Dialog', 'actionSheet', [options || {}], true).then(function(id) { return typeof id === 'string' ? id : null; }); }
                         };
                     }
+                    if (Array.isArray(bridge.capabilities) && bridge.capabilities.indexOf('health') >= 0) {
+                        var health = craft.health || {};
+                        var discardWorkout = function() { return request('Health', 'discardWorkout', []); };
+                        health.discardWorkout = discardWorkout;
+                        Object.defineProperty(craft, 'health', {
+                            configurable: true, enumerable: true,
+                            get: function() { return health; },
+                            set: function(value) {
+                                if (!value || typeof value !== 'object') return;
+                                value.discardWorkout = discardWorkout;
+                                health = value;
+                            }
+                        });
+                    }
                     if (Array.isArray(bridge.capabilities) && bridge.capabilities.indexOf('shortcuts') >= 0) {
                         var shortcuts = {
                             set: function(items) { return request('Shortcuts', 'set', [items]); },

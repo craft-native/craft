@@ -698,6 +698,38 @@ describe('Craft iOS builder', () => {
     ]).flat())
   })
 
+  it('keeps native workout discard available across older bundle initialization', async () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
+    const marker = source.indexOf('var bridge = globalThis.__stxNativeBridge;')
+    const opening = 'jsContext.evaluateScript("""'
+    const prelude = source.slice(source.lastIndexOf(opening, marker) + opening.length, source.indexOf('""")', marker))
+    for (const enabled of [false, true]) {
+      const requests: unknown[] = []
+      const sandbox: { __stxNativeBridge: unknown, __stxNativeCallback?: (message: unknown) => void } = {
+        __stxNativeBridge: { capabilities: enabled ? ['health'] : [], postMessage(raw: string) {
+          const message = JSON.parse(raw)
+          requests.push(message.payload)
+          sandbox.__stxNativeCallback?.({ type: 'API_RESPONSE', payload: { requestId: message.id, data: true } })
+        } },
+      }
+      const context = createContext(sandbox)
+      runInContext(prelude, context)
+      if (!enabled) {
+        expect(runInContext('craft.health', context)).toBeUndefined()
+        expect(requests).toEqual([])
+        continue
+      }
+      for (const replacement of ['{endWorkout:function(){throw new Error("must not save")}}', '{discardWorkout:function(){return false}}', 'null', 'undefined']) {
+        runInContext(`craft.health = ${replacement}`, context)
+        expect(await runInContext('craft.health.discardWorkout()', context)).toBe(true)
+      }
+      runInContext('__craftInstallNativeDialog()', context)
+      expect(await runInContext('craft.health.discardWorkout()', context)).toBe(true)
+      expect(requests).toHaveLength(5)
+      for (const request of requests) expect(request).toMatchObject({ module: 'Health', method: 'discardWorkout', args: [] })
+    }
+  })
+
   it('advertises mounted-view focus and measurement in native screens', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     const actions = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeActions.swift'), 'utf8')
