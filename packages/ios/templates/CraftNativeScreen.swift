@@ -7126,6 +7126,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 keep('navigation', {
                     setOptions: function(options) { craftNativeSetOptions(JSON.stringify(options || {})); }
                 });
+                // shortcuts already has a capability-owned accessor above.
+                // Do not wrap it in keep(): its adopt setter would let a
+                // bundle replace native set/clear during bootstrap.
             })();
         """)
     }

@@ -222,6 +222,42 @@ final class NativeShortcutsUnitTests: XCTestCase {
         }
     }
 
+    func testScreenAndAppScriptRegisterAndClearAfterPartialOrNullNamespaceReplacement() async throws {
+        for appScript in [false, true] {
+            let screen = CraftNativeScreenController(config: CraftConfig(), isAppScript: appScript)
+            screen.loadViewIfNeeded()
+            defer { screen.viewDidDisappear(false) }
+            for replacement in ["{extra:42}", "null", "undefined"] {
+                screen.evaluateScript("""
+                    globalThis.__shortcutAnswer = null;
+                    craft.shortcuts = \(replacement);
+                    craft.shortcuts.set([{type:'partial',title:'Partial'}]).then(function(result) {
+                        __shortcutAnswer = {count:result.count, extra:craft.shortcuts.extra};
+                    }).catch(function(error) { __shortcutAnswer = {error:String(error)}; });
+                """)
+                for _ in 0..<100 {
+                    if screen.evaluateScript("__shortcutAnswer !== null")?.toBool() == true { break }
+                    try await Task.sleep(nanoseconds: 20_000_000)
+                }
+                let result = try XCTUnwrap(screen.evaluateScript("__shortcutAnswer")?.toDictionary())
+                XCTAssertNil(result["error"])
+                XCTAssertEqual(result["count"] as? Int, 1)
+                XCTAssertEqual(result["extra"] as? Int, 42)
+                XCTAssertEqual(UIApplication.shared.shortcutItems?.map(\.type), ["partial"])
+                screen.evaluateScript("""
+                    globalThis.__shortcutCleared = null;
+                    craft.shortcuts.clear().then(function(result) { __shortcutCleared = result; });
+                """)
+                for _ in 0..<100 {
+                    if screen.evaluateScript("__shortcutCleared === true")?.toBool() == true { break }
+                    try await Task.sleep(nanoseconds: 20_000_000)
+                }
+                XCTAssertTrue(screen.evaluateScript("__shortcutCleared === true")?.toBool() == true)
+                XCTAssertTrue(UIApplication.shared.shortcutItems?.isEmpty ?? true)
+            }
+        }
+    }
+
     func testColdAndWarmShortcutTapsReachTheAppHandlerExactlyOnce() {
         let events = CraftEventManager()
         events.configure(appScript: true, page: false)
