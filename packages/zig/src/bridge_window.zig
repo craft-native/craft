@@ -579,8 +579,8 @@ pub const WindowBridge = struct {
             const tray_popover = @import("tray_popover.zig");
             if (tray_popover.owns(handle)) return tray_popover.show();
             const macos = @import("macos.zig");
-            // makeKeyAndOrderFront focuses the window
-            macos.showWindow(handle);
+            // Accessory apps must activate before their WebView can receive typing.
+            macos.focusWindow(handle);
         }
     }
 

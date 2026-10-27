@@ -1046,3 +1046,16 @@ test "a commented-out call does not count as a call" {
     // A real call on a line that also carries a trailing comment still counts.
     try testing.expect(callsFunction("    keepWindowAfterClose(window); // why", "keepWindowAfterClose("));
 }
+
+
+test "explicit bridge focus activates the app and transfers keyboard input to its webview" {
+    const at = std.mem.indexOf(u8, window_bridge_source, "fn focus(") orelse return error.FocusHandlerNotFound;
+    const end = std.mem.indexOfPos(u8, window_bridge_source, at, "\n    fn blur(") orelse return error.BlurHandlerNotFound;
+    const body = window_bridge_source[at..end];
+    try testing.expect(callsFunction(body, "macos.focusWindow("));
+    const focus_at = std.mem.indexOf(u8, macos_source, "pub fn focusWindow(") orelse return error.FocusWindowNotFound;
+    const focus_body = enclosingFnBody(macos_source, focus_at);
+    try testing.expect(callsFunction(focus_body, "activateIgnoringOtherApps:"));
+    try testing.expect(callsFunction(focus_body, "makeFirstResponder:"));
+    try testing.expect(callsFunction(focus_body, "webViewForWindow("));
+}

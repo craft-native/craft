@@ -4146,6 +4146,16 @@ pub fn showWindow(window_handle: anytype) void {
     _ = msgSend1(window, "makeKeyAndOrderFront:", @as(?*anyopaque, null));
 }
 
+/// Explicit keyboard focus activates an accessory app as well as raising its window.
+pub fn focusWindow(window_handle: anytype) void {
+    const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
+    const app = msgSend0(getClass("NSApplication"), "sharedApplication");
+    _ = msgSend1(app, "activateIgnoringOtherApps:", @as(c_int, 1));
+    showWindow(window);
+    if (webViewForWindow(window)) |webview|
+        _ = msgSend1(window, "makeFirstResponder:", webview);
+}
+
 pub fn toggleWindow(window_handle: anytype) void {
     const window: objc.id = if (@TypeOf(window_handle) == objc.id) window_handle else @ptrFromInt(@intFromPtr(window_handle));
     const is_visible = msgSend0(window, "isVisible");
