@@ -5,113 +5,91 @@ const keychain_mod = @import("keychain.zig");
 
 const BridgeError = bridge_error.BridgeError;
 
-/// Wraps `keychain.zig` (which already implements the platform-specific
-/// stores: macOS Keychain Services, iOS, Linux Secret Service, Windows
-/// Credential Manager) so JS can do `craft.keychain.set(account, secret)`.
-///
-/// Items are scoped under a `service_name` per Keychain instance. We
-/// lazily build a single instance per process keyed on the service
-/// passed in — this matches the typical "one app, one Keychain bucket"
-/// usage pattern. Apps that want multiple buckets should pass distinct
-/// `service` values per call; we allocate on demand.
+const pending = @import("ios_async.zig");
+const Operation = enum { set, get, delete, has };
+
+/// Keychain calls may wait for authentication. Keep them off AppKit's main
+/// thread, with owned arguments and the shared correlated reply lifecycle.
 pub const KeychainBridge = struct {
     allocator: std.mem.Allocator,
-    // Cache the most recently used keychain instance so we don't pay
-    // for re-initialisation on every call. A more elaborate cache (per
-    // service) is overkill for now — apps rarely use more than one.
-    cached: ?CachedKeychain = null,
-
-    const Self = @This();
-
-    const CachedKeychain = struct {
-        service: []u8,
-        kc: keychain_mod.Keychain,
-    };
-
-    pub fn init(allocator: std.mem.Allocator) Self {
+    pub fn init(allocator: std.mem.Allocator) KeychainBridge {
         return .{ .allocator = allocator };
     }
-
-    pub fn deinit(self: *Self) void {
-        if (self.cached) |*c| {
-            c.kc.deinit();
-            self.allocator.free(c.service);
-        }
-    }
-
-    pub fn handleMessage(self: *Self, action: []const u8, data: []const u8) !void {
-        self.handleMessageInternal(action, data) catch |err| {
-            // `@errorCast(err)` only works for cast-from-superset cases;
-            // here `err: anyerror` is broader than `BridgeError`, so we
-            // can't @errorCast it back — the cast would silently produce
-            // an invalid value. Manually map the variants we care about.
-            const e: BridgeError = switch (err) {
-                error.MissingData => BridgeError.MissingData,
-                error.InvalidJSON => BridgeError.InvalidJSON,
-                error.UnknownAction => BridgeError.UnknownAction,
-                error.NoAccess, error.AuthFailed, error.InteractionNotAllowed => BridgeError.PermissionDenied,
-                error.UserCancelled => BridgeError.Cancelled,
-                error.Unimplemented => BridgeError.PlatformNotSupported,
-                else => BridgeError.NativeCallFailed,
-            };
-            bridge_error.sendErrorToJS(self.allocator, action, e);
+    pub fn deinit(_: *KeychainBridge) void {}
+    pub fn handleMessage(self: *KeychainBridge, action: []const u8, data: []const u8) !void {
+        self.schedule(action, data) catch |err| {
+            bridge_error.sendErrorToJS(self.allocator, action, keychainError(err));
         };
     }
-
-    fn handleMessageInternal(self: *Self, action: []const u8, data: []const u8) !void {
-        if (std.mem.eql(u8, action, "set")) {
-            const params = try parsePayload(self.allocator, data);
-            defer freePayload(self.allocator, params);
-            var kc = try self.getKeychain(params.service);
-            try kc.setPassword(params.account, params.password orelse "");
-            bridge_error.sendResultToJS(self.allocator, "set", "{\"ok\":true}");
-        } else if (std.mem.eql(u8, action, "get")) {
-            const params = try parsePayload(self.allocator, data);
-            defer freePayload(self.allocator, params);
-            var kc = try self.getKeychain(params.service);
-            const got = try kc.getPassword(params.account);
-            try sendValueResult(self.allocator, "get", got);
-            if (got) |v| self.allocator.free(v);
-        } else if (std.mem.eql(u8, action, "delete")) {
-            const params = try parsePayload(self.allocator, data);
-            defer freePayload(self.allocator, params);
-            var kc = try self.getKeychain(params.service);
-            try kc.deletePassword(params.account);
-            bridge_error.sendResultToJS(self.allocator, "delete", "{\"ok\":true}");
-        } else if (std.mem.eql(u8, action, "has")) {
-            const params = try parsePayload(self.allocator, data);
-            defer freePayload(self.allocator, params);
-            var kc = try self.getKeychain(params.service);
-            const present = try kc.hasPassword(params.account);
-            const json = if (present) "{\"value\":true}" else "{\"value\":false}";
-            bridge_error.sendResultToJS(self.allocator, "has", json);
-        } else {
-            return BridgeError.UnknownAction;
-        }
-    }
-
-    fn getKeychain(self: *Self, service: []const u8) !*keychain_mod.Keychain {
-        // Reuse the cached instance only when the service matches; tear
-        // down + rebuild on a different service to avoid leaking the old
-        // one. This is "fast enough" — Keychain init is cheap, and apps
-        // typically pin one service per process.
-        if (self.cached) |*c| {
-            if (std.mem.eql(u8, c.service, service)) return &c.kc;
-            c.kc.deinit();
-            self.allocator.free(c.service);
-            self.cached = null;
-        }
-
-        // errdefer here matters: if Keychain.init fails AFTER we've
-        // duped the service string, the old code leaked the dup. Free
-        // it on error so this stays clean across long-running processes.
-        const service_copy = try self.allocator.dupe(u8, service);
-        errdefer self.allocator.free(service_copy);
-        const kc = try keychain_mod.Keychain.init(self.allocator, service_copy);
-        self.cached = .{ .service = service_copy, .kc = kc };
-        return &self.cached.?.kc;
+    fn schedule(_: *KeychainBridge, action: []const u8, data: []const u8) !void {
+        const thread = try startWork(action, data, perform);
+        thread.detach();
     }
 };
+
+fn startWork(action: []const u8, data: []const u8, comptime runner: fn (*Work) void) !std.Thread {
+    if (comptime builtin.os.tag != .macos and builtin.os.tag != .ios) return BridgeError.PlatformNotSupported;
+    const operation = std.meta.stringToEnum(Operation, action) orelse return BridgeError.UnknownAction;
+    const allocator = std.heap.c_allocator;
+    const payload = try parsePayload(allocator, data);
+    errdefer freePayload(allocator, payload);
+    if (operation == .set and payload.password == null) return BridgeError.MissingData;
+    const ticket = pending.acquire(action) orelse return BridgeError.Busy;
+    errdefer pending.abandon(ticket);
+    const work = try allocator.create(Work);
+    errdefer allocator.destroy(work);
+    work.* = .{ .operation = operation, .payload = payload, .ticket = ticket };
+    return try std.Thread.spawn(.{}, runner, .{work});
+}
+
+const Work = struct { operation: Operation, payload: Payload, ticket: pending.Ticket };
+fn perform(work: *Work) void {
+    const allocator = std.heap.c_allocator;
+    defer {
+        freePayload(allocator, work.payload);
+        allocator.destroy(work);
+    }
+    const json = execute(allocator, work.operation, work.payload) catch |err| {
+        pending.deliverErrorCode(work.ticket, keychainError(err));
+        return;
+    };
+    defer allocator.free(json);
+    pending.deliverJson(work.ticket, json);
+}
+
+fn execute(allocator: std.mem.Allocator, operation: Operation, payload: Payload) ![]u8 {
+    var kc = try keychain_mod.Keychain.init(allocator, payload.service);
+    defer kc.deinit();
+    switch (operation) {
+        .set => {
+            try kc.setPassword(payload.account, payload.password.?);
+            return allocator.dupe(u8, "{\"ok\":true}");
+        },
+        .delete => {
+            try kc.deletePassword(payload.account);
+            return allocator.dupe(u8, "{\"ok\":true}");
+        },
+        .has => return allocator.dupe(u8, if (try kc.hasPassword(payload.account)) "{\"value\":true}" else "{\"value\":false}"),
+        .get => {
+            const got = try kc.getPassword(payload.account);
+            defer if (got) |value| allocator.free(value);
+            return valueResult(allocator, got);
+        },
+    }
+}
+
+fn keychainError(err: anyerror) BridgeError {
+    return switch (err) {
+        error.MissingData => BridgeError.MissingData,
+        error.InvalidJSON => BridgeError.InvalidJSON,
+        error.UnknownAction => BridgeError.UnknownAction,
+        error.NoAccess, error.AuthFailed, error.InteractionNotAllowed => BridgeError.PermissionDenied,
+        error.UserCancelled => BridgeError.Cancelled,
+        error.Unimplemented => BridgeError.PlatformNotSupported,
+        error.InvalidData, error.Param => BridgeError.InvalidParameter,
+        else => bridge_error.fromHandlerError(err),
+    };
+}
 
 const Payload = struct {
     service: []const u8,
@@ -132,11 +110,11 @@ fn parsePayload(allocator: std.mem.Allocator, data: []const u8) !Payload {
     defer parsed.deinit();
     if (parsed.value.service.len == 0) return BridgeError.MissingData;
     if (parsed.value.account.len == 0) return BridgeError.MissingData;
-    return .{
-        .service = try allocator.dupe(u8, parsed.value.service),
-        .account = try allocator.dupe(u8, parsed.value.account),
-        .password = if (parsed.value.password) |p| try allocator.dupe(u8, p) else null,
-    };
+    const service = try allocator.dupe(u8, parsed.value.service);
+    errdefer allocator.free(service);
+    const account = try allocator.dupe(u8, parsed.value.account);
+    errdefer allocator.free(account);
+    return .{ .service = service, .account = account, .password = if (parsed.value.password) |p| try allocator.dupe(u8, p) else null };
 }
 
 fn freePayload(allocator: std.mem.Allocator, p: Payload) void {
@@ -145,11 +123,8 @@ fn freePayload(allocator: std.mem.Allocator, p: Payload) void {
     if (p.password) |pw| allocator.free(pw);
 }
 
-fn sendValueResult(allocator: std.mem.Allocator, action: []const u8, value: ?[]const u8) !void {
-    if (value == null) {
-        bridge_error.sendResultToJS(allocator, action, "{\"value\":null}");
-        return;
-    }
+fn valueResult(allocator: std.mem.Allocator, value: ?[]const u8) ![]u8 {
+    if (value == null) return allocator.dupe(u8, "{\"value\":null}");
     var buf: std.ArrayListUnmanaged(u8) = .empty;
     defer buf.deinit(allocator);
     try buf.appendSlice(allocator, "{\"value\":\"");
@@ -168,7 +143,58 @@ fn sendValueResult(allocator: std.mem.Allocator, action: []const u8, value: ?[]c
         }
     }
     try buf.appendSlice(allocator, "\"}");
-    const owned = try buf.toOwnedSlice(allocator);
-    defer allocator.free(owned);
-    bridge_error.sendResultToJS(allocator, action, owned);
+    return buf.toOwnedSlice(allocator);
+}
+
+test "Keychain replies preserve arbitrary control characters as valid JSON" {
+    const allocator = std.testing.allocator;
+    const secret = "unicode é\n\x00\x01\t\\\"";
+    const json = try valueResult(allocator, secret);
+    defer allocator.free(json);
+    const decoded = try std.json.parseFromSlice(struct { value: []const u8 }, allocator, json, .{});
+    defer decoded.deinit();
+    try std.testing.expectEqualStrings(secret, decoded.value.value);
+    try std.testing.expectEqual(BridgeError.PermissionDenied, keychainError(error.InteractionNotAllowed));
+}
+
+const WorkerTest = struct {
+    var released: std.atomic.Value(bool) = .init(false);
+    var timed_out = false;
+    var owned_payload = false;
+    var separate_thread = false;
+    var parent: std.Thread.Id = undefined;
+    fn run(work: *Work) void {
+        const allocator = std.heap.c_allocator;
+        defer {
+            freePayload(allocator, work.payload);
+            allocator.destroy(work);
+        }
+        defer pending.abandon(work.ticket);
+        const deadline = @import("compat.zig").milliTimestamp() + 1000;
+        while (!released.load(.acquire)) {
+            if (@import("compat.zig").milliTimestamp() > deadline) {
+                timed_out = true;
+                break;
+            }
+            std.Thread.yield() catch {};
+        }
+        owned_payload = std.mem.eql(u8, work.payload.service, "owned.service") and std.mem.eql(u8, work.payload.password.?, "owned secret");
+        separate_thread = std.Thread.getCurrentId() != parent;
+    }
+};
+
+test "Keychain work returns while the native operation waits and owns its payload" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .ios) return error.SkipZigTest;
+    WorkerTest.released.store(false, .release);
+    WorkerTest.timed_out = false;
+    WorkerTest.parent = std.Thread.getCurrentId();
+    const data = try std.testing.allocator.dupe(u8, "{\"service\":\"owned.service\",\"account\":\"fixture\",\"password\":\"owned secret\"}");
+    defer std.testing.allocator.free(data);
+    const thread = try startWork("set", data, WorkerTest.run);
+    @memset(data, 0);
+    WorkerTest.released.store(true, .release);
+    thread.join();
+    try std.testing.expect(!WorkerTest.timed_out);
+    try std.testing.expect(WorkerTest.owned_payload);
+    try std.testing.expect(WorkerTest.separate_thread);
 }

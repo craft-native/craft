@@ -1171,8 +1171,19 @@ pub fn build(b: *std.Build) void {
     }
     const run_keychain_tests = b.addRunArtifact(keychain_tests);
     run_keychain_tests.has_side_effects = true;
+    const keychain_bridge_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bridge_keychain.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    keychain_bridge_tests.root_module.link_libc = true;
+    linkPlatformLibraries(b, keychain_bridge_tests.root_module, target_os, macos_sdk);
+    const run_keychain_bridge_tests = b.addRunArtifact(keychain_bridge_tests);
     const keychain_step = b.step("test:keychain", "Run keychain contract tests (CRAFT_TEST_KEYCHAIN=1 opts into native storage)");
     keychain_step.dependOn(&run_keychain_tests.step);
+    keychain_step.dependOn(&run_keychain_bridge_tests.step);
 
     const local_tls_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -2256,6 +2267,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
     test_step.dependOn(&run_keychain_tests.step);
+    test_step.dependOn(&run_keychain_bridge_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_menu_keys_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);
