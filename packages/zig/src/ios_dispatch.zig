@@ -19,31 +19,78 @@ const bridge_mobile_misc = @import("bridge_mobile_misc.zig");
 const bridge_mobile_shortcuts = @import("bridge_mobile_shortcuts.zig");
 const bridge_mobile_securestore = @import("bridge_mobile_securestore.zig");
 const bridge_mobile_biometric = @import("bridge_mobile_biometric.zig");
-const bridge_mobile_permissions = @import("bridge_mobile_permissions.zig");
+const bridge_mobile_permissions = if (permission_profile.mask == permission_profile.all) @import("bridge_mobile_permissions.zig") else struct {
+    pub const PermissionsBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
 const bridge_mobile_db = @import("bridge_mobile_db.zig");
 const bridge_mobile_notifcancel = @import("bridge_mobile_notifcancel.zig");
 const bridge_mobile_notifications = @import("bridge_mobile_notifications.zig");
 const bridge_mobile_bgtasks = @import("bridge_mobile_bgtasks.zig");
 const bridge_mobile_watch = @import("bridge_mobile_watch.zig");
-const bridge_mobile_location = @import("bridge_mobile_location.zig");
-const bridge_mobile_locrecording = @import("bridge_mobile_locrecording.zig");
-const bridge_mobile_ar = @import("bridge_mobile_ar.zig");
-const bridge_mobile_motion = @import("bridge_mobile_motion.zig");
-const bridge_mobile_imagepicker = @import("bridge_mobile_imagepicker.zig");
+const bridge_mobile_location = if (permission_profile.enabled(.location)) @import("bridge_mobile_location.zig") else struct {
+    pub const LocationBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_locrecording = if (permission_profile.enabled(.location)) @import("bridge_mobile_locrecording.zig") else struct {
+    pub const LocationRecordingBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_ar = if (permission_profile.enabled(.camera)) @import("bridge_mobile_ar.zig") else struct {
+    pub const ARBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_motion = if (permission_profile.enabled(.motion)) @import("bridge_mobile_motion.zig") else struct {
+    pub const MotionBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_imagepicker = if (permission_profile.enabled(.camera) and permission_profile.enabled(.photos)) @import("bridge_mobile_imagepicker.zig") else struct {
+    pub const ImagePickerBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
 const bridge_mobile_filepicker = @import("bridge_mobile_filepicker.zig");
-const bridge_mobile_contactpicker = @import("bridge_mobile_contactpicker.zig");
-const bridge_mobile_calendar = @import("bridge_mobile_calendar.zig");
-const bridge_mobile_contacts = @import("bridge_mobile_contacts.zig");
+const bridge_mobile_contactpicker = if (permission_profile.enabled(.contacts)) @import("bridge_mobile_contactpicker.zig") else struct {
+    pub const ContactPickerBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_calendar = if (permission_profile.enabled(.calendar)) @import("bridge_mobile_calendar.zig") else struct {
+    pub const CalendarBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_contacts = if (permission_profile.enabled(.contacts)) @import("bridge_mobile_contacts.zig") else struct {
+    pub const ContactsBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
 const bridge_mobile_vision = @import("bridge_mobile_vision.zig");
-const bridge_mobile_auth = @import("bridge_mobile_auth.zig");
+const bridge_mobile_auth = if (permission_profile.enabled(.biometric)) @import("bridge_mobile_auth.zig") else struct {
+    pub const AuthBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
 const bridge_mobile_siri = @import("bridge_mobile_siri.zig");
 const bridge_mobile_pdf = @import("bridge_mobile_pdf.zig");
-const bridge_mobile_bluetooth = @import("bridge_mobile_bluetooth.zig");
-const bridge_mobile_audiorec = @import("bridge_mobile_audiorec.zig");
-const bridge_mobile_health = @import("bridge_mobile_health.zig");
-const bridge_mobile_speech = @import("bridge_mobile_speech.zig");
-const bridge_mobile_nfc = @import("bridge_mobile_nfc.zig");
+const bridge_mobile_bluetooth = if (permission_profile.enabled(.bluetooth)) @import("bridge_mobile_bluetooth.zig") else struct {
+    pub const BluetoothBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_audiorec = if (permission_profile.enabled(.microphone)) @import("bridge_mobile_audiorec.zig") else struct {
+    pub const AudioRecordingBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_health = if (permission_profile.enabled(.health)) @import("bridge_mobile_health.zig") else struct {
+    pub const HealthBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_speech = if (permission_profile.enabled(.speech) and permission_profile.enabled(.microphone)) @import("bridge_mobile_speech.zig") else struct {
+    pub const SpeechBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
+const bridge_mobile_nfc = if (permission_profile.enabled(.nfc)) @import("bridge_mobile_nfc.zig") else struct {
+    pub const NfcBridge = DisabledBridge;
+    pub const capability_actions = [_]capabilities.ActionDecl{};
+};
 const bridge_mobile_auth_apple = @import("bridge_mobile_auth_apple.zig");
+const permission_profile = @import("ios_permissions.zig");
+const DisabledBridge = struct {};
 
 const objc = objc_runtime.objc;
 
@@ -264,6 +311,9 @@ fn offerToModules(allocator: std.mem.Allocator, action: []const u8, data: []cons
     // dependent on the order of this tuple. That check was claimed here
     // before it existed; it exists now.
     inline for (mobile_bridges) |Bridge| {
+        // A runtime flag alone leaves selectors/classes in the archive. This
+        // comptime branch prevents disabled handler bodies being analyzed.
+        if (comptime !compiledBridge(Bridge)) continue;
         var bridge = Bridge.init(allocator);
         defer bridge.deinit();
 
@@ -325,6 +375,27 @@ const mobile_bridges = .{
     bridge_mobile_nfc.NfcBridge,
     bridge_mobile_auth_apple.AppleAuthBridge,
 };
+
+fn compiledBridge(comptime Bridge: type) bool {
+    if (Bridge == DisabledBridge) return false;
+    const p = permission_profile;
+    if (Bridge == bridge_mobile_permissions.PermissionsBridge) return p.mask == p.all;
+    if (Bridge == bridge_mobile_location.LocationBridge or Bridge == bridge_mobile_locrecording.LocationRecordingBridge) return p.enabled(.location);
+    if (Bridge == bridge_mobile_ar.ARBridge) return p.enabled(.camera);
+    if (Bridge == bridge_mobile_motion.MotionBridge) return p.enabled(.motion);
+    // Mixed handlers fall back to the feature-gated Swift host when only one
+    // half is enabled; retaining them would retain both permission APIs.
+    if (Bridge == bridge_mobile_imagepicker.ImagePickerBridge) return p.enabled(.camera) and p.enabled(.photos);
+    if (Bridge == bridge_mobile_contactpicker.ContactPickerBridge or Bridge == bridge_mobile_contacts.ContactsBridge) return p.enabled(.contacts);
+    if (Bridge == bridge_mobile_calendar.CalendarBridge) return p.enabled(.calendar);
+    if (Bridge == bridge_mobile_auth.AuthBridge) return p.enabled(.biometric);
+    if (Bridge == bridge_mobile_bluetooth.BluetoothBridge) return p.enabled(.bluetooth);
+    if (Bridge == bridge_mobile_audiorec.AudioRecordingBridge) return p.enabled(.microphone);
+    if (Bridge == bridge_mobile_health.HealthBridge) return p.enabled(.health);
+    if (Bridge == bridge_mobile_speech.SpeechBridge) return p.enabled(.speech) and p.enabled(.microphone);
+    if (Bridge == bridge_mobile_nfc.NfcBridge) return p.enabled(.nfc);
+    return true;
+}
 
 /// The same modules again, as their capability manifests.
 ///
@@ -489,6 +560,7 @@ export fn craft_ios_set_webview(webview: ?*anyopaque) callconv(.c) void {
 /// recording in progress still has a Zig-owned recorder for the next `start`,
 /// and a Swift restore under it would be a second owner of one file.
 export fn craft_ios_adopt_location_recording() callconv(.c) bool {
+    if (comptime !permission_profile.enabled(.location)) return false;
     return bridge_mobile_location.adoptRecording();
 }
 

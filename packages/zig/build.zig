@@ -2613,6 +2613,16 @@ pub fn build(b: *std.Build) void {
     const build_ios = b.step("build-ios", "Build for iOS (device)");
     const build_ios_simulator = b.step("build-ios-simulator", "Build for iOS Simulator");
     const build_ios_all = b.step("build-ios-all", "Build for iOS (device + simulator)");
+    const ios_permissions = @import("src/ios_permissions.zig");
+    const ios_permission_mask = ios_permissions.parse(b.option([]const u8, "ios-permissions", "iOS API profile: all, none, or comma-separated permission names") orelse "all") catch
+        @panic("Invalid -Dios-permissions: use all, none, or unique lowercase permission names");
+    const ios_permission_options = b.addOptions();
+    ios_permission_options.addOption(u16, "mask", ios_permission_mask);
+    const ios_profile = b.addWriteFiles().add("ios-permissions.json", b.fmt("{{\"version\":1,\"mask\":{d}}}\n", .{ios_permission_mask}));
+    const install_ios_profile = b.addInstallFileWithDir(ios_profile, .lib, "ios-permissions.json");
+    build_ios.dependOn(&install_ios_profile.step);
+    build_ios_simulator.dependOn(&install_ios_profile.step);
+    build_ios_all.dependOn(&install_ios_profile.step);
 
     // iOS Device (arm64)
     const ios_device_target = b.resolveTargetQuery(.{
@@ -2637,6 +2647,7 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_device_lib.bundle_compiler_rt = true;
+    ios_device_lib.root_module.addOptions("ios-permission-options", ios_permission_options);
     // The db actions run on the vendored SQLite, same flags as every other
     // target — an iOS archive without it would push the whole amalgamation
     // onto the consuming app's build instead.
@@ -2681,6 +2692,7 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_sim_arm64_lib.bundle_compiler_rt = true;
+    ios_sim_arm64_lib.root_module.addOptions("ios-permission-options", ios_permission_options);
     // The db actions run on the vendored SQLite, same flags as every other
     // target — an iOS archive without it would push the whole amalgamation
     // onto the consuming app's build instead.
@@ -2724,6 +2736,7 @@ pub fn build(b: *std.Build) void {
     // others) must travel inside the archive — no later link step provides
     // them, and the failure is undefined symbols in whoever consumes the lib.
     ios_sim_x64_lib.bundle_compiler_rt = true;
+    ios_sim_x64_lib.root_module.addOptions("ios-permission-options", ios_permission_options);
     // The db actions run on the vendored SQLite, same flags as every other
     // target — an iOS archive without it would push the whole amalgamation
     // onto the consuming app's build instead.

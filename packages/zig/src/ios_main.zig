@@ -1,4 +1,10 @@
 const std = @import("std");
+pub const craft_ios_permission_mask: u16 = @import("ios-permission-options").mask;
+
+/// Lets a host verify the installed runtime matches its generated profile.
+export fn craft_ios_permissions_v1() callconv(.c) u16 {
+    return craft_ios_permission_mask;
+}
 const ios = @import("ios.zig");
 const mobile = @import("mobile.zig");
 const objc_runtime = @import("objc_runtime.zig");
