@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.367...v0.0.368)
+
+## 🐛 Bug Fixes
+
+- **android**: preserve native text field accessibility metadata ([4c6bc18](https://github.com/craft-native/craft/commit/4c6bc18)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.366...v0.0.367)
 
 ## 🐛 Bug Fixes
