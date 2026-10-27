@@ -250,6 +250,17 @@ jobs:
         working-directory: packages/zig
         run: zig build test
 
+      - name: Verify native eval diagnostics through the public CLI
+        env:
+          CRAFT_NATIVE_TEST_BIN: ${{ github.workspace }}/packages/zig/zig-out/bin/craft
+        run: bun test ./scripts/native-eval.test.ts
+
+      - name: Verify runtime-disabled native eval classification
+        run: |
+          bun scripts/zig.ts --core --versioned build -Doptimize=ReleaseSafe -Djs-runtime=false --prefix .zig-cache/eval-no-runtime
+          bun scripts/zig.ts --core build test-js-runtime -Djs-runtime=false
+          CRAFT_NATIVE_TEST_BIN="$PWD/packages/zig/.zig-cache/eval-no-runtime/bin/craft" CRAFT_NATIVE_TEST_UNAVAILABLE=1 bun test ./scripts/native-eval.test.ts
+
       - name: Verify native bridge boundaries and background deadlines
         if: runner.os == 'macOS'
         env:

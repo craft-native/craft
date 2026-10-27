@@ -58,6 +58,18 @@ coercion. A mismatched scalar or string read returns `WrongType`.
 
 ## Bounds and failures
 
+The one-shot `craft --eval` / `--eval-file` CLI preserves thrown error details
+before its runtime is destroyed. For example, `throw new Error("distinct failure")`
+reports `uncaught error: Error: distinct failure` and exits nonzero. Syntax,
+runtime-unavailable and out-of-memory failures remain distinct.
+
+Diagnostics inspect engine-owned primitive values and an Error's own string
+message; they do not execute getters, proxy traps, `toString`, or prototype
+lookups. Other objects receive a type placeholder. Strings above 1,024 backing
+bytes receive a bounded placeholder instead of allocating an unbounded report.
+The input bundle is not printed. This diagnostic path does not alter evaluation
+budgets, heap limits, or timeout behavior.
+
 The defaults allow 1024 retained handles, 64 arguments per call, 16 MiB of input
 per operation, 16 MiB of copied output, and a 64 MiB realm heap. Set explicit
 `Options` for the application. The handle table is bounded separately from the
