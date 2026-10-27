@@ -7017,6 +7017,15 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 keep('navigation', {
                     setOptions: function(options) { craftNativeSetOptions(JSON.stringify(options || {})); }
                 });
+                // Dynamic home-screen quick actions belong to the app shell,
+                // not an individual JavaScriptCore screen. Keep the typed
+                // module present so STX can answer `unsupported` honestly
+                // instead of falling through to an undefined namespace.
+                keep('shortcuts', {
+                    set: function() { return Promise.resolve(false); },
+                    clear: function() { return Promise.resolve(false); },
+                    onShortcut: function() { return function() {}; }
+                });
             })();
         """)
     }

@@ -646,6 +646,19 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('guard width > 0, abs(width - reportedViewportWidth) >= 0.5 else { return }')
   })
 
+  it('keeps the shortcuts module present on a native screen, answering unsupported', () => {
+    // Added in 17e09f4d and deleted 28 minutes later by a merge from main
+    // (b1f32471) that nothing caught, because nothing asserted on it. The
+    // module has to exist even though a JavaScriptCore screen cannot register
+    // quick actions: without it `craft.shortcuts` is undefined and STX falls
+    // through to an undefined namespace instead of answering `unsupported`.
+    const source = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
+    expect(source).toContain("keep('shortcuts', {")
+    expect(source).toContain('set: function() { return Promise.resolve(false); }')
+    expect(source).toContain('clear: function() { return Promise.resolve(false); }')
+    expect(source).toContain('onShortcut: function() { return function() {}; }')
+  })
+
   it('advertises mounted-view focus and measurement in native screens', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
     const actions = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeActions.swift'), 'utf8')
