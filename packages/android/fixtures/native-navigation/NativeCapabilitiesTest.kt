@@ -57,8 +57,14 @@ class NativeCapabilitiesTest {
         return java.io.File(instrumentation.targetContext.cacheDir, "sound-${UUID.randomUUID()}.wav").apply { writeBytes(bytes.array()) }
     }
 
-    private fun sound(service: CraftNativeSounds): Any =
-        (CraftNativeSounds::class.java.getDeclaredField("sounds").apply { isAccessible = true }.get(service) as Map<*, *>)["tone"]!!
+    private fun sound(service: CraftNativeSounds, id: String = "tone"): Any =
+        (CraftNativeSounds::class.java.getDeclaredField("sounds").apply { isAccessible = true }.get(service) as Map<*, *>)[id]!!
+
+    private fun outputVolume(service: CraftNativeSounds, id: String): Float {
+        val handle = sound(service, id)
+        return CraftNativeSounds::class.java.getDeclaredMethod("outputVolume", handle.javaClass)
+            .apply { isAccessible = true }.invoke(service, handle) as Float
+    }
 
     private fun field(sound: Any, name: String): Any? =
         sound.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(sound)
@@ -66,6 +72,124 @@ class NativeCapabilitiesTest {
     private fun focus(service: CraftNativeSounds, change: Int) {
         CraftNativeSounds::class.java.getDeclaredMethod("onAudioFocusChange", Int::class.javaPrimitiveType)
             .apply { isAccessible = true }.invoke(service, change)
+    }
+
+    @Test
+    fun overlappingMusicAndEffectsStayDuckedThroughVolumeChangesAndFades() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var service: CraftNativeSounds
+                val ready = CountDownLatch(2)
+                try {
+                    scenario.onActivity { activity ->
+                        service = CraftNativeSounds(activity)
+                        for (id in listOf("music", "effect")) {
+                            service.play(id, file.toURI().toString(), JSONObject().put("loop", true).put("volume", 0.8)) {
+                                assertNull(it.message, it.code)
+                                ready.countDown()
+                            }
+                        }
+                    }
+                    assertTrue("both players must prepare", ready.await(10, TimeUnit.SECONDS))
+                    scenario.onActivity {
+                        for (id in listOf("music", "effect")) assertTrue((field(sound(service, id), "player") as MediaPlayer).isPlaying)
+                        focus(service, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)
+                        assertEquals(0.16f, outputVolume(service, "music"), 0.001f)
+                        service.setVolume("music", 0.5, 0.0)
+                        assertEquals(0.1f, outputVolume(service, "music"), 0.001f)
+                        service.setVolume("effect", 0.4, 100.0)
+                    }
+                    android.os.SystemClock.sleep(250)
+                    scenario.onActivity {
+                        assertEquals(0.4f, field(sound(service, "effect"), "volume") as Float, 0.001f)
+                        assertEquals(0.08f, outputVolume(service, "effect"), 0.001f)
+                        focus(service, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)
+                        for (id in listOf("music", "effect")) {
+                            assertFalse((field(sound(service, id), "player") as MediaPlayer).isPlaying)
+                            assertFalse("resume must not bypass focus loss", service.resume(id))
+                        }
+                        service.pause("effect")
+                        assertFalse(service.resume("effect"))
+                        focus(service, AudioManager.AUDIOFOCUS_GAIN)
+                        assertTrue((field(sound(service, "music"), "player") as MediaPlayer).isPlaying)
+                        assertFalse((field(sound(service, "effect"), "player") as MediaPlayer).isPlaying)
+                        assertEquals(0.5f, outputVolume(service, "music"), 0.001f)
+                        assertEquals(0.4f, outputVolume(service, "effect"), 0.001f)
+                        assertTrue(service.resume("effect"))
+                        assertTrue((field(sound(service, "effect"), "player") as MediaPlayer).isPlaying)
+                        service.stop("effect", 0.0)
+                        assertTrue((field(sound(service, "music"), "player") as MediaPlayer).isPlaying)
+                        focus(service, AudioManager.AUDIOFOCUS_LOSS)
+                        assertFalse(service.resume("music"))
+                        assertFalse(service.resume("effect"))
+                    }
+                } finally { scenario.onActivity { service.close() } }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun deniedAudioFocusSettlesOnceAndLeavesNoPlayerBeforeRetry() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                lateinit var service: CraftNativeSounds
+                var allowFocus = false
+                var refused = 0
+                val ready = CountDownLatch(1)
+                try {
+                    scenario.onActivity { activity ->
+                        // Inject only the OS focus decision; use real MediaPlayer
+                        // construction, disposal, and the platform focus path on retry.
+                        service = CraftNativeSounds(activity) { manager, request ->
+                            if (allowFocus) manager.requestAudioFocus(request) else AudioManager.AUDIOFOCUS_REQUEST_FAILED
+                        }
+                        service.play("tone", file.toURI().toString(), JSONObject()) {
+                            assertEquals("AUDIO_FOCUS_DENIED", it.code)
+                            refused++
+                        }
+                        assertEquals(1, refused)
+                        assertFalse(service.pause("tone"))
+                        allowFocus = true
+                        service.play("tone", file.toURI().toString(), JSONObject().put("loop", true)) {
+                            assertNull(it.message, it.code)
+                            ready.countDown()
+                        }
+                    }
+                    assertTrue("retry must prepare", ready.await(10, TimeUnit.SECONDS))
+                    scenario.onActivity {
+                        assertEquals(1, refused)
+                        assertTrue((field(sound(service), "player") as MediaPlayer).isPlaying)
+                    }
+                } finally { scenario.onActivity { service.close(); service.close() } }
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun closingOverlappingPreparingSoundsSettlesEveryLoadOnce() {
+        val file = silentWav()
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    val service = CraftNativeSounds(activity)
+                    val answers = mutableMapOf<String, Int>()
+                    try {
+                        for (id in listOf("music", "effect")) service.play(id, file.toURI().toString(), JSONObject()) {
+                            assertEquals("CANCELLED", it.code)
+                            answers[id] = (answers[id] ?: 0) + 1
+                        }
+                        service.close()
+                        service.close()
+                        assertEquals(mapOf("music" to 1, "effect" to 1), answers)
+                        assertFalse(service.resume("music"))
+                        assertFalse(service.resume("effect"))
+                    } finally { service.close() }
+                }
+                instrumentation.waitForIdleSync()
+            }
+        } finally { file.delete() }
     }
 
     @Test

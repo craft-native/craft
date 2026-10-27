@@ -20,7 +20,10 @@ import kotlin.math.min
  * invalidates the previous load. The player is released on every terminal
  * path, including cancellation, decode failure and screen teardown.
  */
-internal class CraftNativeSounds(private val context: Context) {
+internal class CraftNativeSounds(
+    private val context: Context,
+    private val requestFocus: (AudioManager, AudioFocusRequest) -> Int = { manager, request -> manager.requestAudioFocus(request) },
+) {
     private data class Sound(
         val player: MediaPlayer,
         var volume: Float,
@@ -33,6 +36,8 @@ internal class CraftNativeSounds(private val context: Context) {
 
     private val main = Handler(Looper.getMainLooper())
     private val sounds = mutableMapOf<String, Sound>()
+    private var focusSuspended = false
+    private var ducked = false
     private val audioManager by lazy { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     private val focusRequest by lazy {
         AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
@@ -74,12 +79,13 @@ internal class CraftNativeSounds(private val context: Context) {
             emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", message))
         }
 
-        if (audioManager.requestAudioFocus(focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        if (requestFocus(audioManager, focusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             settle(failure("AUDIO_FOCUS_DENIED", "Audio focus was denied by the operating system"))
             remove(id)
             emit?.invoke(JSONObject().put("id", id).put("event", "error").put("message", "Audio focus was denied by the operating system"))
             return
         }
+        onAudioFocusChange(AudioManager.AUDIOFOCUS_GAIN)
 
         runCatching {
             player.setAudioAttributes(AudioAttributes.Builder()
@@ -87,7 +93,7 @@ internal class CraftNativeSounds(private val context: Context) {
                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                 .build())
             player.isLooping = options.optBoolean("loop", false)
-            player.setVolume(if (fadeIn > 0) 0f else volume, if (fadeIn > 0) 0f else volume)
+            applyVolume(sound)
             player.setOnPreparedListener {
                 if (sounds[id] !== sound) return@setOnPreparedListener
                 sound.prepared = true
@@ -95,7 +101,7 @@ internal class CraftNativeSounds(private val context: Context) {
                 settle(CraftNativeCapabilityResult(data = true))
                 if (fadeIn > 0) {
                     if (!sound.paused) ramp(sound, volume, fadeIn / 1000.0)
-                    else { sound.volume = volume; player.setVolume(volume, volume) }
+                    else { sound.volume = volume; applyVolume(sound) }
                 }
             }
             player.setOnCompletionListener {
@@ -136,6 +142,7 @@ internal class CraftNativeSounds(private val context: Context) {
 
     fun resume(id: String): Boolean {
         val sound = sounds[id] ?: return false
+        if (focusSuspended) return false
         if (sound.prepared) runCatching { sound.player.start() }.onFailure { return false }
         sound.paused = false
         sound.interrupted = false
@@ -151,7 +158,7 @@ internal class CraftNativeSounds(private val context: Context) {
         if (fade > 0 && !sound.paused) ramp(sound, target, fade / 1000.0)
         else {
             sound.volume = target
-            sound.player.setVolume(target, target)
+            applyVolume(sound)
         }
         return true
     }
@@ -195,7 +202,11 @@ internal class CraftNativeSounds(private val context: Context) {
             sound.player.stop()
         }
         sound.player.release()
-        if (sounds.isEmpty()) audioManager.abandonAudioFocusRequest(focusRequest)
+        if (sounds.isEmpty()) {
+            audioManager.abandonAudioFocusRequest(focusRequest)
+            focusSuspended = false
+            ducked = false
+        }
         val answer = sound.pending
         sound.pending = null
         answer?.invoke(failure("CANCELLED", "Audio playback was stopped or replaced"))
@@ -211,21 +222,28 @@ internal class CraftNativeSounds(private val context: Context) {
                     }
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> sounds.values.toList().forEach { sound ->
-                if (!sound.paused) {
-                    sound.interrupted = true
-                    if (sound.prepared) runCatching { sound.player.pause() }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                focusSuspended = true
+                sounds.values.toList().forEach { sound ->
+                    if (!sound.paused) {
+                        sound.interrupted = true
+                        if (sound.prepared) runCatching { sound.player.pause() }
+                    }
                 }
             }
-            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> sounds.values.toList().forEach { sound ->
-                runCatching { sound.player.setVolume(sound.volume * 0.2f, sound.volume * 0.2f) }
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                ducked = true
+                sounds.values.toList().forEach { sound -> runCatching { applyVolume(sound) } }
             }
-            AudioManager.AUDIOFOCUS_GAIN -> sounds.values.toList().forEach { sound ->
-                if (sound.interrupted && !sound.paused) {
-                    sound.interrupted = false
-                    if (sound.prepared) runCatching { sound.player.start() }
-                } else {
-                    runCatching { sound.player.setVolume(sound.volume, sound.volume) }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                focusSuspended = false
+                ducked = false
+                sounds.values.toList().forEach { sound ->
+                    runCatching { applyVolume(sound) }
+                    if (sound.interrupted && !sound.paused) {
+                        sound.interrupted = false
+                        if (sound.prepared) runCatching { sound.player.start() }
+                    }
                 }
             }
         }
@@ -241,8 +259,8 @@ internal class CraftNativeSounds(private val context: Context) {
                 if (!sounds.containsValue(sound)) return
                 val progress = min(1.0, (android.os.SystemClock.uptimeMillis() - began).toDouble() / duration).toFloat()
                 val value = start + (target - start) * progress
-                sound.player.setVolume(value, value)
                 sound.volume = value
+                applyVolume(sound)
                 if (progress >= 1f) {
                     sound.fade = null
                     done?.invoke()
@@ -254,6 +272,13 @@ internal class CraftNativeSounds(private val context: Context) {
         }
         sound.fade = tick
         main.post(tick)
+    }
+
+    private fun outputVolume(sound: Sound): Float = sound.volume * if (ducked) 0.2f else 1f
+
+    private fun applyVolume(sound: Sound) {
+        val value = outputVolume(sound)
+        sound.player.setVolume(value, value)
     }
 
     private fun failure(code: String, message: String) = CraftNativeCapabilityResult(code = code, message = message)

@@ -1476,7 +1476,11 @@ files and the persistent `media.keep` cache are not removed by this cleanup.
 focus before preparing a player, reports a denied request as `AUDIO_FOCUS_DENIED`,
 pauses on a transient interruption and resumes on focus gain, ducks during a
 duckable interruption, and releases focus when the last sound ends or the
-screen closes. iOS observes `AVAudioSession` interruptions and resumes sounds
+screen closes. Android keeps ducking
+active through volume changes and fades, restoring the current requested volume
+on focus gain. Explicit `resume()` returns `false` during transient focus loss;
+a user-paused sound remains paused when focus returns. iOS observes
+`AVAudioSession` interruptions and resumes sounds
 only when the system grants the `shouldResume` option. A permanent Android
 focus loss releases every player and sends each sound's error event; replacement,
 decode failure, cancellation, interruption, and teardown also release their
