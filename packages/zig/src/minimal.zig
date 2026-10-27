@@ -694,7 +694,8 @@ fn runEval(allocator: std.mem.Allocator, options: cli.WindowOptions) !void {
         };
     };
 
-    const result = js_runtime.evalOnce(allocator, arena.allocator(), source) catch |err| {
+    var diagnostic: ?[]const u8 = null;
+    const result = js_runtime.evalOnceWithDiagnostic(allocator, arena.allocator(), source, &diagnostic) catch |err| {
         // Named distinctly: a syntax error and a thrown error are different
         // problems, and "it failed" sends the reader to the wrong place.
         const what = switch (err) {
@@ -703,7 +704,9 @@ fn runEval(allocator: std.mem.Allocator, options: cli.WindowOptions) !void {
             error.Unavailable => js_runtime.unavailable_message,
             error.OutOfMemory => "out of memory",
         };
-        std.debug.print("{s}\n", .{what});
+        if (diagnostic) |details| {
+            std.debug.print("{s}: {s}\n", .{ what, details });
+        } else std.debug.print("{s}\n", .{what});
         std.process.exit(1);
     };
 

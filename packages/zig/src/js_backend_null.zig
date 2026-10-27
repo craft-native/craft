@@ -25,6 +25,12 @@ pub const Context = struct {
         _ = self;
     }
 
+    pub fn copyExceptionText(self: *Context, arena: std.mem.Allocator) Error!?[]const u8 {
+        _ = self;
+        _ = arena;
+        return Error.Unavailable;
+    }
+
     pub fn evalToString(self: *Context, arena: std.mem.Allocator, source: []const u8) Error![]const u8 {
         _ = self;
         _ = arena;

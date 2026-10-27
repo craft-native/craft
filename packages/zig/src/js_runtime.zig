@@ -66,10 +66,22 @@ pub const Runtime = struct {
 /// Evaluate one script and return its result — the whole lifecycle, for a
 /// caller that has exactly one thing to run.
 pub fn evalOnce(allocator: std.mem.Allocator, arena: std.mem.Allocator, source: []const u8) Error![]const u8 {
+    return evalOnceWithDiagnostic(allocator, arena, source, null);
+}
+
+/// Preserve a bounded, non-coercing exception snapshot before teardown. A
+/// diagnostic allocation failure must not replace the original error category.
+pub fn evalOnceWithDiagnostic(allocator: std.mem.Allocator, arena: std.mem.Allocator, source: []const u8, diagnostic: ?*?[]const u8) Error![]const u8 {
+    if (diagnostic) |out| out.* = null;
     var runtime = try Runtime.init(allocator);
     defer runtime.deinit();
 
-    const result = try runtime.evalToString(arena, source);
+    const result = runtime.evalToString(arena, source) catch |err| {
+        if (err == Error.Throw) {
+            if (diagnostic) |out| out.* = runtime.ctx.copyExceptionText(arena) catch null;
+        }
+        return err;
+    };
     // Copied before the context dies. A string result can be backed by memory
     // the context owns rather than by the arena, so returning it directly left
     // the caller holding freed bytes — which showed up as a segfault while
@@ -196,4 +208,44 @@ test "runs without any browser globals" {
 
     const kind = try evalOnce(testing.allocator, arena.allocator(), "typeof window");
     try testing.expectEqualStrings("undefined", kind);
+}
+
+test "exception diagnostics outlive the context and never coerce objects" {
+    if (!available) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const cases = [_]struct { source: []const u8, expected: []const u8 }{
+        .{ .source = "throw new Error('distinct failure')", .expected = "Error: distinct failure" },
+        .{ .source = "throw 'primitive failure'", .expected = "primitive failure" },
+        .{ .source = "throw 42", .expected = "42" },
+        .{ .source = "throw new TypeError('café')", .expected = "TypeError: café" },
+        .{ .source = "throw null", .expected = "null" },
+        .{ .source = "throw {toString(){while(true){}}}", .expected = "[thrown object]" },
+        .{ .source = "var e=new Error('hidden'); Object.defineProperty(e,'message',{get(){while(true){}}}); throw e", .expected = "Error: [accessor message omitted]" },
+        .{ .source = "throw new Proxy(new Error('hidden'),{get(){while(true){}},getOwnPropertyDescriptor(){while(true){}}})", .expected = "[thrown proxy]" },
+        .{ .source = "throw 'x'.repeat(10000)", .expected = "[string exceeds diagnostic limit]" },
+    };
+    for (cases) |case| {
+        var diagnostic: ?[]const u8 = null;
+        try testing.expectError(Error.Throw, evalOnceWithDiagnostic(testing.allocator, arena.allocator(), case.source, &diagnostic));
+        try testing.expectEqualStrings(case.expected, diagnostic.?);
+    }
+    var diagnostic: ?[]const u8 = "stale";
+    try testing.expectError(Error.Parse, evalOnceWithDiagnostic(testing.allocator, arena.allocator(), "function (", &diagnostic));
+    try testing.expect(diagnostic == null);
+}
+
+test "diagnostic allocation failure does not replace the thrown error" {
+    if (!available) return error.SkipZigTest;
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    var diagnostic: ?[]const u8 = "stale";
+    try testing.expectError(Error.Throw, evalOnceWithDiagnostic(testing.allocator, failing.allocator(), "throw new Error('allocation failure')", &diagnostic));
+    try testing.expect(diagnostic == null);
+}
+
+test "diagnostics preserve unavailable and out of memory classifications" {
+    var diagnostic: ?[]const u8 = "stale";
+    var failing = testing.FailingAllocator.init(testing.allocator, .{ .fail_index = 0 });
+    try testing.expectError(if (available) Error.OutOfMemory else Error.Unavailable, evalOnceWithDiagnostic(failing.allocator(), failing.allocator(), "42", &diagnostic));
+    try testing.expect(diagnostic == null);
 }

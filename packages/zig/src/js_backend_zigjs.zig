@@ -39,6 +39,44 @@ pub const Context = struct {
         allocator.destroy(self);
     }
 
+    /// Snapshot engine-owned data only. Never perform JS [[Get]], walk a
+    /// prototype, stringify an object, or invoke a proxy/accessor for diagnostics.
+    pub fn copyExceptionText(self: *Context, arena: std.mem.Allocator) Error!?[]const u8 {
+        const value = self.inner.exception orelse return null;
+        var buffer: [8192]u8 = undefined;
+        var bounded = std.heap.FixedBufferAllocator.init(&buffer);
+        const alloc = bounded.allocator();
+        const text: []const u8 = switch (value.kind()) {
+            .string => try diagnosticString(value, alloc),
+            .number => value.toString(alloc) catch return error.OutOfMemory,
+            .boolean => if (value.asBool()) "true" else "false",
+            .null => "null",
+            .undefined => "undefined",
+            .object => blk: {
+                const object = value.asObj();
+                if (object.proxyHandler() != null or object.proxy_revoked) break :blk "[thrown proxy]";
+                if (!object.behavior.is_error) break :blk "[thrown object]";
+                const name = object.errorName();
+                const label = if (name.len > 0 and name.len <= 128) name else "Error";
+                const message = switch (object.namedOwnPropertySnapshot("message")) {
+                    .data => |data| if (data.value.isString()) try diagnosticString(data.value, alloc) else "[non-string message]",
+                    .accessor => "[accessor message omitted]",
+                    .absent => "",
+                };
+                break :blk if (message.len == 0) label else std.fmt.allocPrint(alloc, "{s}: {s}", .{ label, message }) catch return error.OutOfMemory;
+            },
+        };
+        // The caller owns this copy after the engine context is destroyed.
+        return arena.dupe(u8, text) catch error.OutOfMemory;
+    }
+
+    fn diagnosticString(value: js.Value, allocator: std.mem.Allocator) Error![]const u8 {
+        // Check before encoding Latin-1 into WTF-8; diagnostic formatting must
+        // not allocate in proportion to an attacker-controlled thrown string.
+        if (value.asStr().len > 1024) return "[string exceeds diagnostic limit]";
+        return value.asWtf8(allocator) catch error.OutOfMemory;
+    }
+
     /// Evaluate and render the result as text.
     ///
     /// `arena` rather than a general allocator: zig-js's `toString` allocates

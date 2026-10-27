@@ -2146,6 +2146,21 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_step = b.step("test", "Run all unit tests");
+    // main.zig's public import alone does not make Zig discover these tests.
+    // Exercise the same backend as the shipped CLI, including disabled builds.
+    const runtime_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/js_runtime.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+            .imports = &.{.{ .name = "js_backend", .module = js_backend_module }},
+        }),
+    });
+    const run_runtime_tests = b.addRunArtifact(runtime_tests);
+    test_step.dependOn(&run_runtime_tests.step);
+    b.step("test-js-runtime", "Verify one-shot JavaScript results and safe exception diagnostics")
+        .dependOn(&run_runtime_tests.step);
     // A quick host gate for artifacts that link the desktop reply path by hand.
     // The complete test step below also runs all four.
     const menubar_native_step = b.step("test-menubar-native", "Verify native menu bar linkage and host bridge consumers");
