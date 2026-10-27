@@ -1477,6 +1477,10 @@ only when the system grants the `shouldResume` option. A permanent Android
 focus loss releases every player and sends each sound's error event; replacement,
 decode failure, cancellation, interruption, and teardown also release their
 player resources.
+On iOS and Android, stopping, replacing, or closing a sound while it is still
+loading rejects that pending play request with `CANCELLED` exactly once.
+A late readiness callback cannot report success for a removed sound or affect
+another sound that reuses its id; decode failures retain `AUDIO_ERROR`.
 Control calls resolve `false` when their sound id is not owned by the screen,
 matching the browser host instead of reporting a false success.
 

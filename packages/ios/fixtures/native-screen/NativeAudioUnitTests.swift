@@ -8,9 +8,8 @@ import XCTest
 /// samples the engine would play.
 @MainActor
 final class NativeAudioUnitTests: XCTestCase {
-    private func withSound(_ test: (CraftNativeSounds) -> Void) throws {
+    private func soundFile() throws -> URL {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("sound-\(UUID().uuidString).wav")
-        defer { try? FileManager.default.removeItem(at: file) }
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8000, channels: 1))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16000))
         buffer.frameLength = 16000
@@ -19,10 +18,121 @@ final class NativeAudioUnitTests: XCTestCase {
             let output = try AVAudioFile(forWriting: file, settings: format.settings)
             try output.write(from: buffer)
         }
+        return file
+    }
+
+    private func withSound(_ test: (CraftNativeSounds) -> Void) throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
         let service = CraftNativeSounds()
         defer { service.close() }
         service.play(id: "tone", url: file, options: ["loop": true]) { _ in }
         test(service)
+    }
+
+    func testStoppingLoadingSoundsSettlesEachRequestOnce() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        // Both AVPlayerItem and AVPlayerLooper readiness callbacks are queued
+        // on main. Stop before yielding, then let any queued callbacks drain.
+        for loop in [false, true] {
+            let service = CraftNativeSounds()
+            defer { service.close() }
+            var results: [Result<Any, CraftNativeActionError>] = []
+            service.play(id: "loading", url: file, options: ["loop": loop]) { results.append($0) }
+            XCTAssertTrue(service.stop(id: "loading", fadeOut: 0))
+            XCTAssertEqual(results.count, 1, "stop must settle a pending play immediately")
+            if case .failure(let error)? = results.first { XCTAssertEqual(error.code, "CANCELLED") }
+            else { XCTFail("stopped loading sound must reject") }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            XCTAssertEqual(results.count, 1, "late readiness must not settle a second time")
+        }
+    }
+
+    func testReplacingLoadingSoundDoesNotCancelItsReplacement() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let service = CraftNativeSounds()
+        defer { service.close() }
+        var first: [Result<Any, CraftNativeActionError>] = []
+        var second: [Result<Any, CraftNativeActionError>] = []
+        let ready = expectation(description: "replacement loaded")
+        service.play(id: "music", url: file, options: ["loop": true]) { first.append($0) }
+        service.play(id: "music", url: file, options: ["loop": true]) { second.append($0); ready.fulfill() }
+        XCTAssertEqual(first.count, 1)
+        if case .failure(let error)? = first.first { XCTAssertEqual(error.code, "CANCELLED") }
+        else { XCTFail("replaced play must reject") }
+        await fulfillment(of: [ready], timeout: 5)
+        if case .success? = second.first {} else { XCTFail("replacement must load") }
+        service.close()
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(second.count, 1)
+    }
+
+    func testClosingOverlappingLoadingSoundsSettlesAllRequestsOnce() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let service = CraftNativeSounds()
+        var results: [String: [Result<Any, CraftNativeActionError>]] = [:]
+        for id in ["music", "effect"] {
+            service.play(id: id, url: file, options: ["loop": id == "music"]) { results[id, default: []].append($0) }
+        }
+        service.close()
+        service.close()
+        for id in ["music", "effect"] {
+            XCTAssertEqual(results[id]?.count, 1)
+            if case .failure(let error)? = results[id]?.first { XCTAssertEqual(error.code, "CANCELLED") }
+            else { XCTFail("close must reject the pending \(id) play") }
+            XCTAssertFalse(service.resume(id: id))
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(results["music"]?.count, 1)
+        XCTAssertEqual(results["effect"]?.count, 1)
+    }
+
+    func testDecodeFailureRetainsAudioErrorAndReleasesTheHandle() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("invalid-\(UUID().uuidString).wav")
+        try Data("not an audio file".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        for loop in [false, true] {
+            let service = CraftNativeSounds()
+            defer { service.close() }
+            var results: [Result<Any, CraftNativeActionError>] = []
+            let failed = expectation(description: "decode failed")
+            service.play(id: "invalid", url: file, options: ["loop": loop]) { results.append($0); failed.fulfill() }
+            await fulfillment(of: [failed], timeout: 5)
+            if case .failure(let error)? = results.first { XCTAssertEqual(error.code, "AUDIO_ERROR") }
+            else { XCTFail("invalid audio must reject") }
+            XCTAssertFalse(service.pause(id: "invalid"))
+            service.close()
+            XCTAssertEqual(results.count, 1)
+        }
+    }
+
+    func testLoadedMusicAndEffectKeepIndependentInterruptionState() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        let service = CraftNativeSounds()
+        defer { service.close() }
+        let ready = expectation(description: "both sounds loaded")
+        ready.expectedFulfillmentCount = 2
+        for id in ["music", "effect"] {
+            service.play(id: id, url: file, options: ["loop": id == "music"]) { result in
+                if case .failure(let error) = result { XCTFail("load failed: \(error.code)") }
+                ready.fulfill()
+            }
+        }
+        await fulfillment(of: [ready], timeout: 5)
+        interrupt(.began)
+        XCTAssertTrue(service.pause(id: "effect"))
+        interrupt(.ended, resume: true)
+        XCTAssertFalse(service.resume(id: "music"), "music already resumed automatically")
+        XCTAssertTrue(service.resume(id: "effect"), "explicitly paused effect must stay paused")
+        XCTAssertTrue(service.stop(id: "effect", fadeOut: 0))
+        XCTAssertTrue(service.pause(id: "music"), "stopping an effect must not remove the music")
+        service.close()
+        XCTAssertFalse(service.resume(id: "music"))
     }
 
     private func interrupt(_ type: AVAudioSession.InterruptionType, resume: Bool = false) {

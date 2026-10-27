@@ -280,10 +280,17 @@ final class CraftNativeSounds {
         var volume: Float
         var paused = false
         var interrupted = false
+        var pending: ((Result<Any, CraftNativeActionError>) -> Void)?
 
         init(player: AVQueuePlayer, volume: Float) {
             self.player = player
             self.volume = volume
+        }
+
+        func settle(_ result: Result<Any, CraftNativeActionError>) {
+            let answer = pending
+            pending = nil
+            answer?(result)
         }
 
         func end() {
@@ -357,33 +364,29 @@ final class CraftNativeSounds {
         let item = AVPlayerItem(url: url)
         let player = AVQueuePlayer()
         let sound = Sound(player: player, volume: volume)
+        sound.pending = answer
         sounds[id] = sound
-        var answered = false
-        let settle: (Result<Any, CraftNativeActionError>) -> Void = { result in
-            guard !answered else { return }
-            answered = true
-            answer(result)
-        }
         let failed: (String) -> Void = { [weak self, weak sound] message in
             guard let self, let sound, self.sounds[id] === sound else { return }
-            self.remove(id)
-            settle(.failure(CraftNativeActionError(code: "AUDIO_ERROR", message: message)))
+            self.remove(id, result: .failure(CraftNativeActionError(code: "AUDIO_ERROR", message: message)))
             self.emit?(["id": id, "event": "error", "message": message])
         }
         if loop {
             let looper = AVPlayerLooper(player: player, templateItem: item)
             sound.looper = looper
-            sound.observation = looper.observe(\.status, options: [.initial, .new]) { looper, _ in
+            sound.observation = looper.observe(\.status, options: [.initial, .new]) { [weak self, weak sound] looper, _ in
                 DispatchQueue.main.async {
-                    if looper.status == .ready { settle(.success(true)) }
+                    guard let self, let sound, self.sounds[id] === sound else { return }
+                    if looper.status == .ready { sound.settle(.success(true)) }
                     else if looper.status == .failed { failed(looper.error?.localizedDescription ?? "The sound could not be played") }
                 }
             }
         } else {
             player.insert(item, after: nil)
-            sound.observation = item.observe(\.status, options: [.initial, .new]) { item, _ in
+            sound.observation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak sound] item, _ in
                 DispatchQueue.main.async {
-                    if item.status == .readyToPlay { settle(.success(true)) }
+                    guard let self, let sound, self.sounds[id] === sound else { return }
+                    if item.status == .readyToPlay { sound.settle(.success(true)) }
                     else if item.status == .failed { failed(item.error?.localizedDescription ?? "The sound could not be played") }
                 }
             }
@@ -451,10 +454,13 @@ final class CraftNativeSounds {
         for id in Array(sounds.keys) { remove(id) }
     }
 
-    private func remove(_ id: String) {
+    private func remove(_ id: String, result: Result<Any, CraftNativeActionError> = .failure(CraftNativeActionError(code: "CANCELLED", message: "Audio playback was stopped or replaced"))) {
         guard let sound = sounds.removeValue(forKey: id) else { return }
         sound.end()
         Self.releaseSession()
+        // Settle after removing the old handle and releasing its resources so
+        // a completion can safely start another sound with the same id.
+        sound.settle(result)
     }
 
     /// Moves the volume in steps on the main run loop, a 30th of a second
