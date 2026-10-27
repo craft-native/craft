@@ -21,7 +21,7 @@
  * `if-no-files-found: error` so a run that produced no evidence is red rather
  * than quietly empty.
  *
- *   bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib
+ *   bun scripts/mobile-e2e.ts --platform ios --ios-runtime-source packages/zig
  *   bun scripts/mobile-e2e.ts --platform android
  */
 
@@ -64,6 +64,9 @@ const options: RunnerOptions = {
   iosRuntimeDir: flag('ios-runtime')
     ? resolve(root, flag('ios-runtime')!)
     : (process.env.CRAFT_IOS_RUNTIME ? resolve(root, process.env.CRAFT_IOS_RUNTIME) : null),
+  iosRuntimeSource: flag('ios-runtime-source')
+    ? resolve(root, flag('ios-runtime-source')!)
+    : (process.env.CRAFT_IOS_RUNTIME_SOURCE ? resolve(root, process.env.CRAFT_IOS_RUNTIME_SOURCE) : null),
   androidRuntimeDir: flag('android-runtime')
     ? resolve(root, flag('android-runtime')!)
     : (process.env.CRAFT_ANDROID_RUNTIME ? resolve(root, process.env.CRAFT_ANDROID_RUNTIME) : null),

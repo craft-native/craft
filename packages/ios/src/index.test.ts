@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 import { afterAll, describe, expect, it } from 'bun:test'
@@ -85,8 +85,14 @@ describe('Craft iOS builder', () => {
     expect(plist).not.toContain('NSMicrophoneUsageDescription')
     expect(plist).toContain('<key>AppOwnedValue</key><string>keep me</string>')
     expect(readFileSync(sourcePath, 'utf8')).toContain('#if false\n        let cameraEnabled = true')
+    const unchangedTime = new Date('2000-01-01T00:00:00Z')
+    utimesSync(sourcePath, unchangedTime, unchangedTime)
+    const appOwned = join(output, 'Sources', 'AppOwned.swift')
+    writeFileSync(appOwned, '#if CRAFT_PERMISSION_CUSTOM\n// App-owned source\n#endif')
     restoreShell(output)
     expect(readFileSync(plistPath, 'utf8')).toBe(plist)
+    expect(statSync(sourcePath).mtimeMs).toBe(unchangedTime.getTime())
+    expect(readFileSync(appOwned, 'utf8')).toContain('#if CRAFT_PERMISSION_CUSTOM')
   })
 
   it('omits all default purpose strings and keeps explicit custom descriptions opt-in', () => {

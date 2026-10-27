@@ -1494,6 +1494,11 @@ export { assertNoApplicationSwiftSources, findApplicationSwiftSources } from './
 function writeShell(output: string, config: CraftConfig): void {
   if (!config.appName || !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(config.bundleId))
     throw new Error('The iOS shell needs an appName and a valid bundleId in craft.config.json.')
+  // Build calls this too: unchanged templates must not force a full Swift rebuild.
+  const writeSource = (path: string, source: string): void => {
+    const rendered = renderPermissionSource(source, config)
+    if (!existsSync(path) || readFileSync(path, 'utf8') !== rendered) writeFileSync(path, rendered)
+  }
   const name = productName(config.appName)
   const shortcutSource = appShortcutsSwift(config.appShortcuts, config.urlSchemes)
   mkdirSync(join(output, 'Sources'), { recursive: true })
@@ -1503,35 +1508,35 @@ function writeShell(output: string, config: CraftConfig): void {
     .replace(/CraftApp/g, `${name}App`)
     .replace(/\{\{BUNDLE_ID\}\}/g, config.bundleId)
     .replace(/\{\{CRAFT_VERSION\}\}/g, CRAFT_VERSION)
-  writeFileSync(join(output, 'Sources', `${name}App.swift`), swiftSource)
-  writeFileSync(join(output, 'Sources', 'CraftAppShortcuts.swift'), shortcutSource)
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), join(output, 'Sources', 'CraftNativeScreen.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.swift'), join(output, 'Sources', 'CraftNativeFlatList.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeActions.swift'), join(output, 'Sources', 'CraftNativeActions.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftHealth.swift'), join(output, 'Sources', 'CraftHealth.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftMusic.swift'), join(output, 'Sources', 'CraftMusic.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftBluetooth.swift'), join(output, 'Sources', 'CraftBluetooth.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftHeartRate.swift'), join(output, 'Sources', 'CraftHeartRate.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftRecordingArchive.swift'), join(output, 'Sources', 'CraftRecordingArchive.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftPersistentStorage.swift'), join(output, 'Sources', 'CraftPersistentStorage.swift'))
+  writeSource(join(output, 'Sources', `${name}App.swift`), swiftSource)
+  writeSource(join(output, 'Sources', 'CraftAppShortcuts.swift'), shortcutSource)
+  writeSource(join(output, 'Sources', 'CraftNativeScreen.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeScreen.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeFlatList.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeFlatList.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeActions.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeActions.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftHealth.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHealth.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftMusic.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftMusic.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftBluetooth.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftBluetooth.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftHeartRate.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHeartRate.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftRecordingArchive.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftRecordingArchive.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftPersistentStorage.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftPersistentStorage.swift'), 'utf8'))
   // Always copied: without enableScheduledWorkouts it compiles to a stub
   // that answers unsupported, and WorkoutKit is not linked.
-  cpSync(join(TEMPLATES_DIR, 'CraftScheduledWorkouts.swift'), join(output, 'Sources', 'CraftScheduledWorkouts.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeMutation.swift'), join(output, 'Sources', 'CraftNativeMutation.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeUI.swift'), join(output, 'Sources', 'CraftNativeUI.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeServices.swift'), join(output, 'Sources', 'CraftNativeServices.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftNativeFiles.swift'), join(output, 'Sources', 'CraftNativeFiles.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftVoiceRecording.swift'), join(output, 'Sources', 'CraftVoiceRecording.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftWebAudio.swift'), join(output, 'Sources', 'CraftWebAudio.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftHybrid.swift'), join(output, 'Sources', 'CraftHybrid.swift'))
+  writeSource(join(output, 'Sources', 'CraftScheduledWorkouts.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftScheduledWorkouts.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeMutation.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeMutation.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeUI.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeUI.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeServices.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeServices.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftNativeFiles.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftNativeFiles.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftVoiceRecording.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftVoiceRecording.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftWebAudio.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftWebAudio.swift'), 'utf8'))
+  writeSource(join(output, 'Sources', 'CraftHybrid.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftHybrid.swift'), 'utf8'))
   // Always copied: without `crashReporting` in the config it installs nothing.
-  writeFileSync(
+  writeSource(
     join(output, 'Sources', 'CraftCrashReporter.swift'),
     readFileSync(join(TEMPLATES_DIR, 'CraftCrashReporter.swift'), 'utf-8').replace(/\{\{CRAFT_VERSION\}\}/g, CRAFT_VERSION),
   )
 
-  cpSync(join(TEMPLATES_DIR, 'CraftLiveActivities.swift'), join(output, 'Sources', 'CraftLiveActivities.swift'))
-  cpSync(join(TEMPLATES_DIR, 'CraftActivityAttributes.swift'), join(output, 'Shared', 'CraftActivityAttributes.swift'))
+  writeSource(join(output, 'Sources', 'CraftLiveActivities.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftLiveActivities.swift'), 'utf8'))
+  writeSource(join(output, 'Shared', 'CraftActivityAttributes.swift'), readFileSync(join(TEMPLATES_DIR, 'CraftActivityAttributes.swift'), 'utf8'))
   for (const [enabled, folder, template, filename] of [
     [config.enableLiveActivities, 'WidgetExtension', 'CraftLiveActivityWidget.swift.template', `${name}LiveActivity.swift`],
     [config.enableWatchApp, 'WatchExtension', 'CraftWatchApp.swift.template', `${name}WatchApp.swift`],
@@ -1541,16 +1546,7 @@ function writeShell(output: string, config: CraftConfig): void {
     const source = readFileSync(join(TEMPLATES_DIR, template), 'utf8')
       .replace(/\{\{APP_NAME\}\}/g, name)
       .replace(/\{\{HEALTH_KIT_ENABLED\}\}/g, config.enableHealthKit ? 'true' : 'false')
-    writeFileSync(join(output, folder, filename), source)
-  }
-  // Literal gates also work when restoreShell runs inside an existing Xcode
-  // project whose SWIFT_ACTIVE_COMPILATION_CONDITIONS predate these features.
-  for (const filename of readdirSync(join(output, 'Sources'))) {
-    if (!filename.endsWith('.swift')) continue
-    const path = join(output, 'Sources', filename)
-    const source = readFileSync(path, 'utf8')
-    const rendered = renderPermissionSource(source, config)
-    if (source !== rendered) writeFileSync(path, rendered)
+    writeSource(join(output, folder, filename), source)
   }
 }
 

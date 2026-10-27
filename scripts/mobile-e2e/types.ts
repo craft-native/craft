@@ -11,6 +11,8 @@ export interface RunnerOptions {
   runId: string
   /** Directory holding the Zig iOS simulator archives. */
   iosRuntimeDir: string | null
+  /** Explicit source package for per-app Zig runtime compilation. */
+  iosRuntimeSource?: string | null
   /** Directory holding the Zig Android `<abi>/libcraft.so` tree. */
   androidRuntimeDir: string | null
 }
