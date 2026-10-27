@@ -1,5 +1,43 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.370...v0.0.371)
+
+## 🚀 Features
+
+- **ios**: preserve incremental builds with per-app runtime sources ([fc8f9b7](https://github.com/craft-native/craft/commit/fc8f9b7)) _(by glennmichael123)_
+- **ios**: build and verify app-specific Zig runtime archives ([8e476e3](https://github.com/craft-native/craft/commit/8e476e3)) _(by glennmichael123)_
+- **ios**: compile Zig runtimes with per-app permission profiles ([883d75b](https://github.com/craft-native/craft/commit/883d75b)) _(by glennmichael123)_
+- **sdk**: type and test live workout discard ([cfa68bd](https://github.com/craft-native/craft/commit/cfa68bd)) _(by glennmichael123)_
+- **ios**: expose non-saving live workout discard ([dcfa35f](https://github.com/craft-native/craft/commit/dcfa35f)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- **ios**: keep tabs expanded with compact message accessories ([70ea0a6](https://github.com/craft-native/craft/commit/70ea0a6)) _(by Chris Breuer)_
+- **ios**: synchronize permission metadata with verified app runtimes ([13686a5](https://github.com/craft-native/craft/commit/13686a5)) _(by glennmichael123)_
+- **ios**: gate Bluetooth and HealthKit services at build time ([e14e671](https://github.com/craft-native/craft/commit/e14e671)) _(by glennmichael123)_
+- **ios**: compile disabled permission APIs out of native and web hosts ([39067b0](https://github.com/craft-native/craft/commit/39067b0)) _(by glennmichael123)_
+- **ios**: compile out disabled Apple Music permission APIs ([acc8eca](https://github.com/craft-native/craft/commit/acc8eca)) _(by glennmichael123)_
+- **ios**: deliver workout callbacks through the owning main queue ([06b723b](https://github.com/craft-native/craft/commit/06b723b)) _(by glennmichael123)_
+- **ios**: preserve native workout discard through bundle bootstrap ([5430c64](https://github.com/craft-native/craft/commit/5430c64)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **macos**: cover HTTP tray callbacks through menu tracking ([aac551a](https://github.com/craft-native/craft/commit/aac551a)) _(by glennmichael123)_
+- **ios**: verify permission APIs in linked runtime binaries ([629d585](https://github.com/craft-native/craft/commit/629d585)) _(by glennmichael123)_
+
+## 🤖 Continuous Integration
+
+- **ios**: validate matching permission profiles in both runtime legs ([2d9a119](https://github.com/craft-native/craft/commit/2d9a119)) _(by glennmichael123)_
+
+## 📄 Miscellaneous
+
+- Merge remote-tracking branch 'origin/main' ([8a59fd9](https://github.com/craft-native/craft/commit/8a59fd9)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.369...v0.0.370)
 
 ## 🚀 Features
