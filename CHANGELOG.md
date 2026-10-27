@@ -1,5 +1,37 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.369...v0.0.370)
+
+## 🚀 Features
+
+- **ios**: add opt-in solid native switches ([bfe5af0](https://github.com/craft-native/craft/commit/bfe5af0)) _(by glennmichael123)_
+
+## 🐛 Bug Fixes
+
+- allow managed backends to flush state on shutdown ([f8005eb](https://github.com/craft-native/craft/commit/f8005eb)) _(by Chris Breuer)_
+- **runtime**: retain safe native eval exception details ([c120294](https://github.com/craft-native/craft/commit/c120294)) _(by glennmichael123)_
+- **ios**: preserve native shortcuts during bundle bootstrap ([0dc4936](https://github.com/craft-native/craft/commit/0dc4936)) _(by glennmichael123)_
+- **android**: discard cancelled native file imports ([288a42f](https://github.com/craft-native/craft/commit/288a42f)) _(by glennmichael123)_
+- **android**: retain audio focus state across volume changes ([d28e116](https://github.com/craft-native/craft/commit/d28e116)) _(by glennmichael123)_
+- **ios**: restore the native screen shortcuts module, and pin it ([01b7bbd](https://github.com/craft-native/craft/commit/01b7bbd)) _(by glennmichael123)_ ([#415](https://github.com/craft-native/craft/issues/415), [#412](https://github.com/craft-native/craft/issues/412))
+- **ios**: discard undelivered native file imports ([d49fde7](https://github.com/craft-native/craft/commit/d49fde7)) _(by glennmichael123)_
+- **ios**: settle cancelled native audio loads ([3edd036](https://github.com/craft-native/craft/commit/3edd036)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ios**: cover solid switch taps drags and native fallback ([e0a3fc4](https://github.com/craft-native/craft/commit/e0a3fc4)) _(by glennmichael123)_
+- **cli**: enforce native eval diagnostic regressions ([6d3bdc5](https://github.com/craft-native/craft/commit/6d3bdc5)) _(by glennmichael123)_
+
+## 📄 Miscellaneous
+
+- Merge pull request #423 from craft-native/fix/native-screen-shortcuts-module ([0da4ba7](https://github.com/craft-native/craft/commit/0da4ba7)) _(by Glenn Michael Torregosa)_ ([#423](https://github.com/craft-native/craft/issues/423))
+
+## Contributors
+
+- _Chris Breuer_
+- _Glenn Michael Torregosa_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.368...v0.0.369)
 
 ## 🐛 Bug Fixes
