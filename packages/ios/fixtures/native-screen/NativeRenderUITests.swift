@@ -1,6 +1,42 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    func testSolidSwitchTapsDragsAndControlledEchoAvoidUIKitTracking() {
+        let app = XCUIApplication()
+        app.launch()
+        let open = app.buttons["open-solid"]
+        XCTAssertTrue(open.waitForExistence(timeout: 15))
+        open.tap()
+        let toggle = app.descendants(matching: .any).matching(identifier: "solid-switch").firstMatch
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        toggle.tap()
+        waitForValue(toggle, "1")
+        waitForLabel(app.staticTexts["solid-result"], "Solid on: 1")
+        toggle.tap()
+        waitForValue(toggle, "0")
+        waitForLabel(app.staticTexts["solid-result"], "Solid off: 2")
+        let left = toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.5))
+        let right = toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        left.press(forDuration: 0.1, thenDragTo: right)
+        waitForValue(toggle, "1")
+        waitForLabel(app.staticTexts["solid-result"], "Solid on: 3")
+        let image = XCTAttachment(screenshot: toggle.screenshot())
+        image.lifetime = .keepAlways
+        add(image)
+        right.press(forDuration: 0.1, thenDragTo: left)
+        waitForValue(toggle, "0")
+        waitForLabel(app.staticTexts["solid-result"], "Solid off: 4")
+        app.buttons["disable-solid"].tap()
+        XCTAssertFalse(toggle.isEnabled)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        waitForLabel(app.staticTexts["solid-result"], "Solid off: 4")
+        app.buttons["restore-native"].tap()
+        let native = app.switches["solid-switch"]
+        XCTAssertTrue(native.waitForExistence(timeout: 5))
+        native.tap()
+        waitForLabel(app.staticTexts["solid-result"], "Solid on: 5")
+    }
+
     /// Record this alongside testSwitchTapChangesUIKitStateAndDeliversValueChange
     /// when investigating animation artifacts. A final value assertion alone
     /// cannot prove the thumb was visible in every intermediate frame.

@@ -10,6 +10,8 @@
   let nextMessage = 0
   let revision = 0
   let pagerMode = false
+  let solidMode = false
+  let solidChanges = 0
   let pageIndex = 0
 
   function mutate(operations) {
@@ -49,6 +51,20 @@
 
   function render() {
     if (pagerMode) { renderPager(); return }
+    if (solidMode) {
+      globalThis.craftNativePostMessage(JSON.stringify({
+        id: `render-${++nextMessage}`, type: 'RENDER',
+        payload: { document: { type: 'View', style: { padding: 16 }, children: [
+          { type: 'ScrollView', style: { height: 120 }, children: [
+            { id: 'solid-switch', type: 'Switch', props: { key: 'solid-switch', ios_solid: true, value: false, accessibilityLabel: 'Solid consent' }, events: { onValueChange: 'changeSolid' } },
+            { id: 'solid-result', type: 'Text', props: { key: 'solid-result' }, children: ['Solid off: 0'] },
+          ] },
+          { type: 'Button', props: { key: 'disable-solid' }, events: { onPress: 'disableSolid' }, children: ['Disable switch'] },
+          { type: 'Button', props: { key: 'restore-native' }, events: { onPress: 'restoreNative' }, children: ['Use UIKit switch'] },
+        ] } },
+      }))
+      return
+    }
     globalThis.craftNativePostMessage(JSON.stringify({
       id: `render-${++nextMessage}`,
       type: 'RENDER',
@@ -102,6 +118,7 @@
             { id: 'native-switch', type: 'Switch', props: { key: 'native-switch', value: false }, events: { onValueChange: 'changeSwitch' } },
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
+            { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
           ],
         },
       },
@@ -111,6 +128,21 @@
   globalThis.__stxNativeBridge.onMessage(function (raw) {
     const message = JSON.parse(raw)
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openSolid') { solidMode = true; render(); return }
+    if (message.payload.handlerName === 'changeSolid') {
+      const value = message.payload.nativeEvent.value
+      solidChanges += 1
+      mutate([
+        { op: 'updateNode', id: 'solid-switch', patch: { props: { value } } },
+        { op: 'updateNode', id: 'solid-result', patch: { children: [`Solid ${value ? 'on' : 'off'}: ${solidChanges}`] } },
+      ])
+    }
+    if (message.payload.handlerName === 'disableSolid') {
+      mutate([{ op: 'updateNode', id: 'solid-switch', patch: { props: { disabled: true } } }])
+    }
+    if (message.payload.handlerName === 'restoreNative') {
+      mutate([{ op: 'updateNode', id: 'solid-switch', patch: { props: { ios_solid: false, disabled: false } } }])
+    }
     if (message.payload.handlerName === 'openPager') { pagerMode = true; render(); return }
     if (message.payload.handlerName === 'selectPage') {
       const page = message.payload.nativeEvent

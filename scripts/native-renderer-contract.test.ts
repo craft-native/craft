@@ -258,6 +258,16 @@ describe('native renderer component contract', () => {
     expect(navigationHome).toContain('<ActivityIndicator testID="scaled-indicator"')
   })
 
+  it('keeps the solid switch opt-in and retains simulator regression coverage', () => {
+    expect(componentTypes).toContain('ios_solid?: boolean')
+    expect(ios).toContain('if props["ios_solid"] as? Bool == true')
+    expect(ios).toContain('let toggle = UISwitch()')
+    expect(guide).toContain('Android ignores this iOS-only option')
+    expect(iosNativeUnitTests).toContain('testOptInIsStrictAndStyleChangesPreserveControlledValue')
+    expect(iosNativeUnitTests).toContain('testThumbIsOpaqueThroughoutDragAndCancellingRestoresStateInBothDirections')
+    expect(iosNativeScreenUITests).toContain('testSolidSwitchTapsDragsAndControlledEchoAvoidUIKitTracking')
+  })
+
   it('keeps Switch checked compatibility aligned with both hosts', () => {
     expect(componentTypes).toContain('checked?: boolean')
     expect(ios).toContain('if let value = props["value"] as? Bool ?? props["checked"] as? Bool')
