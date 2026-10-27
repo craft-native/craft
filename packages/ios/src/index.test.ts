@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
@@ -39,12 +40,64 @@ import {
   syncNativeFonts,
 } from './index'
 import { createTempDir, removeAllTempDirs } from '../../typescript/src/temp-dir'
-import { iosPermissionMask, iosPermissionNames, iosPermissions, verifyRuntimeProfile, withAppRuntime } from './runtime-profile'
+import { iosPermissionMask, iosPermissionNames, iosPermissions, renderPermissionSource, verifyInstalledProfile, verifyRuntimeProfile, withAppRuntime } from './runtime-profile'
 
 // Every scratch directory this file made goes when the file is done (#357).
 afterAll(removeAllTempDirs)
 
+function profileFixture(directory: string, names: string[]): void {
+  writeFileSync(join(directory, 'ios-permissions.json'), JSON.stringify({ version: 1, mask: 0,
+    sha256: Object.fromEntries(names.map(name => [name, createHash('sha256').update(readFileSync(join(directory, name))).digest('hex')])),
+  }))
+}
+
 describe('Craft iOS builder', () => {
+  it('bakes each permission gate into restored Swift without changing unrelated build conditions', () => {
+    const source = iosPermissionNames.map(name => `#if CRAFT_PERMISSION_${name.toUpperCase()}\nuse_${name}()\n#endif`).join('\n')
+    expect(renderPermissionSource(source, {})).not.toContain('#if CRAFT_PERMISSION_')
+    expect(renderPermissionSource(source, {}).match(/#if false/g)).toHaveLength(13)
+    const selected = renderPermissionSource(source, { enableVideoRecording: true })
+    expect(selected.match(/#if true/g)).toHaveLength(3)
+    expect(selected).toContain('#if true\nuse_microphone()')
+    expect(renderPermissionSource('#if CRAFT_APPLE_MUSIC\n#endif\n#if DEBUG', {})).toBe('#if false\n#endif\n#if DEBUG')
+    expect(() => renderPermissionSource('#if CRAFT_PERMISSION_UNKNOWN', {})).toThrow('Unknown Swift permission gate')
+  })
+
+  it('keeps source and plist permissions synchronized during restore, without accumulating edits', async () => {
+    const output = createTempDir('craft-permission-restore-')
+    await init({ name: 'PermissionRestore', output, runtimeDir: null, config: { enableCamera: true } })
+    const plistPath = join(output, 'Info.plist')
+    const sourcePath = join(output, 'Sources', 'PermissionRestoreApp.swift')
+    const configPath = join(output, 'craft.config.json')
+    expect(readFileSync(plistPath, 'utf8')).toContain('NSCameraUsageDescription')
+    writeFileSync(plistPath, readFileSync(plistPath, 'utf8').replace('</dict>', '<key>AppOwnedValue</key><string>keep me</string>\n</dict>'))
+    const config = JSON.parse(readFileSync(configPath, 'utf8'))
+    config.enableCamera = false
+    config.enableVideoRecording = true
+    writeFileSync(configPath, JSON.stringify(config))
+    restoreShell(output)
+    expect(readFileSync(plistPath, 'utf8')).toContain('NSMicrophoneUsageDescription')
+    config.enableVideoRecording = false
+    writeFileSync(configPath, JSON.stringify(config))
+    restoreShell(output)
+    const plist = readFileSync(plistPath, 'utf8')
+    expect(plist).not.toContain('NSCameraUsageDescription')
+    expect(plist).not.toContain('NSMicrophoneUsageDescription')
+    expect(plist).toContain('<key>AppOwnedValue</key><string>keep me</string>')
+    expect(readFileSync(sourcePath, 'utf8')).toContain('#if false\n        let cameraEnabled = true')
+    restoreShell(output)
+    expect(readFileSync(plistPath, 'utf8')).toBe(plist)
+  })
+
+  it('omits all default purpose strings and keeps explicit custom descriptions opt-in', () => {
+    const base = { appName: 'Permissions', bundleId: 'dev.craft.permissions' }
+    expect(renderUsageDescriptions(base).trim()).toBe('')
+    const custom = renderUsageDescriptions({ ...base, usageDescriptions: { NSCameraUsageDescription: 'A & B <photos>', NSMicrophoneUsageDescription: '  ' } })
+    expect(custom).toContain('A &amp; B &lt;photos&gt;')
+    expect(custom).not.toContain('NSMicrophoneUsageDescription')
+    expect(renderUsageDescriptions({ ...base, enableVideoRecording: true })).toContain('NSMicrophoneUsageDescription')
+  })
+
   it('derives independent permission bits and feature dependencies without using purpose strings as feature flags', () => {
     expect(iosPermissionMask({})).toBe(0)
     expect(iosPermissions({ enableVideoRecording: true })).toEqual(['microphone', 'camera', 'photos'])
@@ -91,7 +144,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
       if (previous === undefined) delete process.env.CRAFT_ZIG
       else process.env.CRAFT_ZIG = previous
     }
-  })
+  }, 30_000)
   it('uses a system tab controller for native and hybrid route stacks', () => {
     const shell = readFileSync(join(import.meta.dir, '../templates/CraftHybrid.swift'), 'utf8')
     expect(shell).toContain('CraftHybridController: UITabBarController, UITabBarControllerDelegate')
@@ -175,14 +228,14 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const file = join(output, 'craft.config.json')
     const original = { appName: 'Cloud App', bundleId: 'com.example.cloud', version: '1.0.0', buildNumber: '73', renderer: 'native', custom: { retained: true } }
     writeFileSync(file, JSON.stringify(original))
-    writeFileSync(join(output, 'Info.plist'), 'Xcode-owned metadata')
+    writeFileSync(join(output, 'Info.plist'), '<plist><dict><key>XcodeOwned</key><string>metadata</string></dict></plist>')
     writeFileSync(join(output, 'native-screen.js'), 'immutable compiled screens')
     const saved = process.env.CI_BUILD_NUMBER
     try {
       process.env.CI_BUILD_NUMBER = '74'
       restoreShell(output)
       expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ ...original, buildNumber: '74' })
-      expect(readFileSync(join(output, 'Info.plist'), 'utf8')).toBe('Xcode-owned metadata')
+      expect(readFileSync(join(output, 'Info.plist'), 'utf8')).toContain('<key>XcodeOwned</key><string>metadata</string>')
       expect(readFileSync(join(output, 'native-screen.js'), 'utf8')).toBe('immutable compiled screens')
       expect(existsSync(join(output, 'Sources', 'CloudAppApp.swift'))).toBe(true)
       const restored = readFileSync(file, 'utf8')
@@ -669,12 +722,10 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(renderUsageDescriptions(config)).toContain('NSLocationWhenInUseUsageDescription')
     expect(renderUsageDescriptions(config)).toContain('NSLocationAlwaysAndWhenInUseUsageDescription')
     expect(renderUsageDescriptions(config)).toContain('NSFaceIDUsageDescription')
-    // The shell links the camera whether or not this app uses it, and App Store
-    // Connect refuses a binary without the key (ITMS-90683), so it is always
-    // there, saying it is only asked for when a feature needs it.
-    expect(renderUsageDescriptions(config)).toContain('<key>NSCameraUsageDescription</key>\n    <string>WildLoop asks for the camera only in a feature that needs it.</string>')
+    // Disabled APIs are compiled out of both the shell and per-app runtime.
+    expect(renderUsageDescriptions(config)).not.toContain('NSCameraUsageDescription')
     for (const key of ['NSSpeechRecognitionUsageDescription', 'NSMicrophoneUsageDescription', 'NSCalendarsUsageDescription', 'NSMotionUsageDescription', 'NSContactsUsageDescription'])
-      expect(renderUsageDescriptions(config)).toContain(`<key>${key}</key>`)
+      expect(renderUsageDescriptions(config)).not.toContain(`<key>${key}</key>`)
     // An entitlement gates these, so a key without the feature would only invite questions.
     expect(renderUsageDescriptions(config)).not.toContain('NSHealthShareUsageDescription')
     expect(renderUsageDescriptions(config)).not.toContain('NFCReaderUsageDescription')
@@ -807,7 +858,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     })
     expect(own).toContain('<key>NSAppleMusicUsageDescription</key>\n    <string>Shows the song you&apos;re training to &amp; lets you skip it.</string>')
     // A blank override is no override.
-    expect(own).toContain('<string>HQ.training asks for the camera only in a feature that needs it.</string>')
+    expect(own).not.toContain('NSCameraUsageDescription')
   })
 
   it('pairs the Music purpose string with its compiled implementation, including explicit overrides', async () => {
@@ -819,7 +870,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
       expect(settings.includes('CRAFT_APPLE_MUSIC')).toBe(enabled)
       expect(plist.includes('NSAppleMusicUsageDescription')).toBe(enabled)
       const source = readFileSync(join(output, 'Sources', 'CraftMusic.swift'), 'utf8')
-      expect(source.startsWith('#if CRAFT_APPLE_MUSIC\n')).toBe(true)
+      expect(source.startsWith(`#if ${enabled}\n`)).toBe(true)
       restoreShell(output)
       expect(readFileSync(join(output, 'Sources', 'CraftMusic.swift'), 'utf8')).toBe(source)
     }
@@ -2577,8 +2628,7 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(renderBackgroundModes(config)).toBe('')
     expect(renderBackgroundModes({ ...config, enableHeartRate: true })).toContain('<string>bluetooth-central</string>')
     expect(renderBackgroundModes({ ...config, enableBluetooth: true })).toBe('')
-    // The shell links CoreBluetooth either way, so the key is always there.
-    expect(renderUsageDescriptions(config)).toContain('<string>HQ.training asks for Bluetooth only in a feature that needs it.</string>')
+    expect(renderUsageDescriptions(config)).not.toContain('NSBluetoothAlwaysUsageDescription')
     expect(renderUsageDescriptions({ ...config, enableBluetooth: true })).toContain('<string>HQ.training uses Bluetooth to connect to nearby devices.</string>')
     expect(renderUsageDescriptions({ ...config, enableHeartRate: true, usageDescriptions: { NSBluetoothAlwaysUsageDescription: 'Shows your heart rate from your strap.' } }))
       .toContain('<key>NSBluetoothAlwaysUsageDescription</key>\n    <string>Shows your heart rate from your strap.</string>')
@@ -3017,8 +3067,32 @@ describe('Zig runtime installation', () => {
   function fakeRuntime(archives = ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a']): string {
     const dir = createTempDir('craft-rt-')
     for (const a of archives) writeFileSync(join(dir, a), 'stand-in for an archive')
+    profileFixture(dir, archives)
     return dir
   }
+
+  it('refuses unprofiled archives and verifies installed identity before restoring any sources', async () => {
+    const output = createTempDir('craft-profile-restore-')
+    const directory = fakeRuntime()
+    await init({ name: 'ProfileRestore', output, runtimeDir: directory })
+    const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
+    const runtime = join(output, 'Runtime')
+    expect(() => verifyInstalledProfile(runtime, config)).not.toThrow()
+    expect(() => verifyInstalledProfile(runtime, { ...config, enableContacts: true })).toThrow('stale')
+    const source = join(output, 'Sources', 'ProfileRestoreApp.swift')
+    writeFileSync(source, 'preserve until validation succeeds')
+    writeFileSync(join(runtime, 'device/libcraft-ios.a'), 'tampered')
+    expect(() => restoreShell(output)).toThrow('identity mismatch')
+    expect(readFileSync(source, 'utf8')).toBe('preserve until validation succeeds')
+    rmSync(join(directory, 'ios-permissions.json'))
+    expect(() => verifyRuntimeProfile(directory, config)).toThrow('Unprofiled')
+    const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+    await expect(init({ name: 'ProfileRestore', output, runtimeDir: directory, config: { enableCamera: true } })).rejects.toThrow('Unprofiled')
+    expect(readFileSync(join(output, 'Info.plist'), 'utf8')).toBe(plist)
+    expect(readFileSync(source, 'utf8')).toBe('preserve until validation succeeds')
+    await expect(installRuntime(output, directory, config)).rejects.toThrow('Unprofiled')
+    expect(readFileSync(join(runtime, 'device/libcraft-ios.a'), 'utf8')).toBe('tampered')
+  })
 
   it('resolves an explicit directory, and null means no runtime whatever the environment says', () => {
     const dir = fakeRuntime()
@@ -3047,6 +3121,16 @@ describe('Zig runtime installation', () => {
     expect(await installRuntime(output, fakeRuntime())).toBe(true)
     expect(existsSync(join(output, 'Runtime', 'device', 'libcraft-ios.a'))).toBe(true)
     expect(existsSync(join(output, 'Runtime', 'simulator', 'libcraft-ios.a'))).toBe(true)
+  })
+
+  it('keeps installed archives when merging replacement simulator slices fails', async () => {
+    const output = createTempDir('craft-runtime-rollback-')
+    await installRuntime(output, fakeRuntime())
+    const installed = join(output, 'Runtime/device/libcraft-ios.a')
+    const before = readFileSync(installed, 'utf8')
+    const malformed = fakeRuntime(['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a'])
+    await expect(installRuntime(output, malformed)).rejects.toThrow()
+    expect(readFileSync(installed, 'utf8')).toBe(before)
   })
 
   it('warns when only one simulator slice is present, rather than shipping it silently', async () => {
@@ -3109,6 +3193,7 @@ describe('runtime staleness', () => {
     for (const a of ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a']) {
       writeFileSync(join(dir, a), marker)
     }
+    profileFixture(dir, ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a'])
     return dir
   }
 

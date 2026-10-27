@@ -1,12 +1,12 @@
 import { gzipSync } from 'node:zlib'
-import { iosPermissionMask, iosPermissions, verifyRuntimeProfile, withAppRuntime } from './runtime-profile.js'
+import { iosPermissionMask, iosPermissions, renderPermissionSource, verifyInstalledProfile, verifyRuntimeProfile, withAppRuntime, writeInstalledProfile } from './runtime-profile.js'
 /**
  * Craft iOS Builder
  *
  * Generates native iOS apps from web content using WKWebView.
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 
 /** Store large native source assets compressed; the host decodes each once on demand. */
 export function compressNativeSources(target: string): void {
@@ -821,31 +821,10 @@ export function renderAppearance(config: Pick<CraftConfig, 'appearance' | 'darkM
   return { interfaceStyle: 'Dark', statusBarStyle: 'UIStatusBarStyleLightContent' }
 }
 
-/**
- * Purpose strings the shell needs whatever the app turns on. CraftApp.swift is
- * one binary that links Speech, AVFoundation, Photos, CoreLocation, Contacts,
- * EventKit, CoreMotion, CoreBluetooth and LocalAuthentication, and App Store
- * Connect checks the binary, not the config: a build without these keys is
- * refused with ITMS-90683 ("Missing purpose string in Info.plist"). A feature
- * that is off never asks, so the string is never shown; it only has to exist.
- */
-const LINKED_PURPOSES: Record<string, string> = {
-  NSSpeechRecognitionUsageDescription: 'speech recognition',
-  NSMicrophoneUsageDescription: 'the microphone',
-  NSCameraUsageDescription: 'the camera',
-  NSPhotoLibraryUsageDescription: 'your photo library',
-  NSLocationWhenInUseUsageDescription: 'your location',
-  NSContactsUsageDescription: 'your contacts',
-  NSCalendarsUsageDescription: 'your calendar',
-  NSBluetoothAlwaysUsageDescription: 'Bluetooth',
-  NSMotionUsageDescription: 'motion data',
-  NSFaceIDUsageDescription: 'Face ID',
-}
-
 export function renderUsageDescriptions(config: CraftConfig): string {
   const entries: Array<[boolean | undefined, string, string]> = [
     [config.enableSpeechRecognition, 'NSSpeechRecognitionUsageDescription', `${config.appName} uses speech recognition for voice input.`],
-    [config.enableSpeechRecognition || config.enableAudioRecording, 'NSMicrophoneUsageDescription', `${config.appName} uses the microphone to record audio.`],
+    [config.enableSpeechRecognition || config.enableAudioRecording || config.enableVideoRecording, 'NSMicrophoneUsageDescription', `${config.appName} uses the microphone to record audio.`],
     [config.enableCamera || config.enableVideoRecording || config.enableQRScanner || config.enableAR, 'NSCameraUsageDescription', `${config.appName} uses the camera for photos, video, scanning, and augmented reality.`],
     [config.enableCamera || config.enableVideoRecording, 'NSPhotoLibraryUsageDescription', `${config.appName} lets you choose photos and videos from your library.`],
     [config.enableGeolocation || config.enableBackgroundLocation, 'NSLocationWhenInUseUsageDescription', `${config.appName} uses your location while you record an activity.`],
@@ -870,8 +849,7 @@ export function renderUsageDescriptions(config: CraftConfig): string {
       const custom = own[key]?.trim()
       if (custom) return [key, custom]
       if (enabled) return [key, value]
-      const linked = LINKED_PURPOSES[key]
-      return linked ? [key, `${config.appName} asks for ${linked} only in a feature that needs it.`] : null
+      return null
     })
     .filter((entry): entry is [string, string] => entry !== null)
     .map(([key, value]) => plistString(key, value))
@@ -1373,7 +1351,8 @@ const RUNTIME_ARCHIVES = {
  *
  * Returns true when a runtime was installed.
  */
-export async function installRuntime(output: string, runtimeDir: string): Promise<boolean> {
+export async function installRuntime(output: string, runtimeDir: string, config?: CraftConfig): Promise<boolean> {
+  if (config) verifyRuntimeProfile(runtimeDir, config)
   // Every SDK resolved before anything is written, and long before the
   // `rmSync` below. The check used to run per-SDK *after* the wipe, so a
   // runtime directory missing an archive destroyed a working install on its
@@ -1390,37 +1369,47 @@ export async function installRuntime(output: string, runtimeDir: string): Promis
     return { sdk, archives, present }
   })
 
-  const dest = join(output, 'Runtime')
-  rmSync(dest, { recursive: true, force: true })
+  const installed = join(output, 'Runtime')
+  const staging = mkdtempSync(join(output, '.craft-runtime-'))
+  const dest = join(staging, 'next')
+  const previous = join(staging, 'previous')
+  try {
+    for (const { sdk, archives, present } of resolved) {
+      const sdkDir = join(dest, sdk)
+      mkdirSync(sdkDir, { recursive: true })
+      const target = join(sdkDir, 'libcraft-ios.a')
 
-  for (const { sdk, archives, present } of resolved) {
-    const sdkDir = join(dest, sdk)
-    mkdirSync(sdkDir, { recursive: true })
-    const target = join(sdkDir, 'libcraft-ios.a')
-
-    if (present.length === 1) {
-      // Said out loud, because the comment on RUNTIME_ARCHIVES describes this
-      // exact outcome as the thing to avoid: a single-slice simulator archive
-      // links on the machine that built it and fails on the other kind, which
-      // is a break that only ever shows up on someone else's laptop. Copying
-      // is still better than refusing — a one-arch dev loop is legitimate —
-      // but it should not happen silently.
-      const missing = archives.filter(a => !present.includes(a))
-      if (missing.length > 0) {
-        console.warn(
-          `   ⚠ ${sdk}: only ${present[0]} was found; ${missing.join(', ')} is missing. `
-          + `The generated project will not link on the other architecture.`,
-        )
+      if (present.length === 1) {
+        // A one-architecture dev loop is legitimate, but it must not silently
+        // claim to support the other simulator architecture.
+        const missing = archives.filter(a => !present.includes(a))
+        if (missing.length > 0) {
+          console.warn(
+            `   ⚠ ${sdk}: only ${present[0]} was found; ${missing.join(', ')} is missing. `
+            + `The generated project will not link on the other architecture.`,
+          )
+        }
+        cpSync(join(runtimeDir, present[0]!), target)
       }
-      cpSync(join(runtimeDir, present[0]!), target)
+      else {
+        await $`lipo -create ${present.map(a => join(runtimeDir, a))} -output ${target}`.quiet()
+      }
     }
-    else {
-      // `lipo -create` rather than picking one slice: see RUNTIME_ARCHIVES.
-      await $`lipo -create ${present.map(a => join(runtimeDir, a))} -output ${target}`.quiet()
-    }
-  }
 
-  return true
+    if (config) writeInstalledProfile(dest, config)
+    if (existsSync(installed)) renameSync(installed, previous)
+    try {
+      renameSync(dest, installed)
+    }
+    catch (error) {
+      if (existsSync(previous)) renameSync(previous, installed)
+      throw error
+    }
+    return true
+  }
+  finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
 }
 
 /**
@@ -1441,24 +1430,25 @@ export async function installRuntime(output: string, runtimeDir: string): Promis
  * because a shell that forgot the variable should not quietly turn the runtime
  * off.
  */
-async function refreshRuntime(output: string, override?: string | null): Promise<void> {
+async function refreshRuntime(output: string, config: CraftConfig, override?: string | null): Promise<void> {
   if (!existsSync(join(output, 'Runtime'))) return
 
   const dir = resolveRuntimeDir(override)
   if (!dir) {
+    verifyInstalledProfile(join(output, 'Runtime'), config)
     console.log('   Keeping the Zig runtime installed at init (no runtime directory configured)')
     return
   }
 
-  await installRuntime(output, dir)
+  await installRuntime(output, dir, config)
   console.log('   Refreshed the Zig runtime from', dir)
 }
 
 async function installAppRuntime(output: string, source: string, config: CraftConfig): Promise<boolean> {
   return withAppRuntime(source, config, async (directory) => {
     verifyRuntimeProfile(directory, config)
-    await installRuntime(output, directory)
-    writeFileSync(join(output, 'Runtime', 'profile.json'), JSON.stringify({ version: 1, mask: iosPermissionMask(config), source: resolve(source) }, null, 2))
+    await installRuntime(output, directory, config)
+    writeInstalledProfile(join(output, 'Runtime'), config, resolve(source))
     return true
   })
 }
@@ -1487,6 +1477,7 @@ export function productName(name: string): string {
 export function restoreShell(output: string): void {
   const file = join(output, 'craft.config.json')
   const config = JSON.parse(readFileSync(file, 'utf8')) as CraftConfig
+  if (existsSync(join(output, 'Runtime'))) verifyInstalledProfile(join(output, 'Runtime'), config)
   const cloudBuild = process.env.CI_BUILD_NUMBER
   if (cloudBuild !== undefined) {
     if (!/^[1-9]\d*$/.test(cloudBuild) || cloudBuild.trim() !== cloudBuild)
@@ -1494,6 +1485,7 @@ export function restoreShell(output: string): void {
     config.buildNumber = cloudBuild
   }
   writeShell(output, config)
+  refreshUsageDescriptions(output, config)
   if (cloudBuild !== undefined) writeFileSync(file, JSON.stringify(config, null, 2))
 }
 
@@ -1551,6 +1543,25 @@ function writeShell(output: string, config: CraftConfig): void {
       .replace(/\{\{HEALTH_KIT_ENABLED\}\}/g, config.enableHealthKit ? 'true' : 'false')
     writeFileSync(join(output, folder, filename), source)
   }
+  // Literal gates also work when restoreShell runs inside an existing Xcode
+  // project whose SWIFT_ACTIVE_COMPILATION_CONDITIONS predate these features.
+  for (const filename of readdirSync(join(output, 'Sources'))) {
+    if (!filename.endsWith('.swift')) continue
+    const path = join(output, 'Sources', filename)
+    const source = readFileSync(path, 'utf8')
+    const rendered = renderPermissionSource(source, config)
+    if (source !== rendered) writeFileSync(path, rendered)
+  }
+}
+
+function refreshUsageDescriptions(output: string, config: CraftConfig): void {
+  const path = join(output, 'Info.plist')
+  if (!existsSync(path)) return
+  const managed = /\s*<key>(?:NS(?:SpeechRecognition|Microphone|Camera|PhotoLibrary|LocationWhenInUse|LocationAlwaysAndWhenInUse|Contacts|Calendars|BluetoothAlways|Motion|LocalNetwork|HealthShare|HealthUpdate|FaceID|AppleMusic)|NFCReader)UsageDescription<\/key>\s*<string>[\s\S]*?<\/string>/g
+  const plist = readFileSync(path, 'utf8').replace(managed, '')
+  const end = plist.lastIndexOf('</dict>')
+  if (end < 0) throw new Error('Info.plist must contain a root dictionary')
+  writeFileSync(path, `${plist.slice(0, end).trimEnd()}\n${renderUsageDescriptions(config)}\n${plist.slice(end)}`)
 }
 
 export async function init(options: InitOptions): Promise<void> {
@@ -1598,6 +1609,20 @@ export async function init(options: InitOptions): Promise<void> {
   if (problems.length) throw new Error(problems.join('\n'))
   // Native screens read what the page shares from the Keychain.
   if (Object.keys(config.shareStorage ?? {}).length) config.enableSecureStorage = true
+
+  // Validate/build the runtime before replacing source or privacy metadata.
+  // A failed rebuild must not leave an old archive with newly omitted keys.
+  const runtimeDir = resolveRuntimeDir(options.runtimeDir)
+  const runtimeSource = options.runtimeSource === null || options.runtimeDir === null ? undefined : options.runtimeSource ?? process.env.CRAFT_IOS_RUNTIME_SOURCE
+  if (runtimeSource && runtimeDir) throw new Error('Choose runtimeSource or runtimeDir, not both')
+  const hasRuntime = runtimeSource ? await installAppRuntime(output, runtimeSource, config) : runtimeDir ? await installRuntime(output, runtimeDir, config) : false
+  if (hasRuntime) {
+    console.log('   Linked the Zig runtime from', runtimeSource ?? runtimeDir)
+  }
+  else {
+    // A runtime-free regeneration must not leave orphaned runtime archives.
+    rmSync(join(output, 'Runtime'), { recursive: true, force: true })
+  }
 
   writeFileSync(join(output, 'craft.config.json'), JSON.stringify(config, null, 2))
 
@@ -1681,23 +1706,6 @@ export async function init(options: InitOptions): Promise<void> {
       SWIFT_VERSION: "5.0"
       APPLICATION_EXTENSION_API_ONLY: YES
       SKIP_INSTALL: YES`)
-  }
-
-  // The Zig runtime, when this build has one. Installed before the project is
-  // rendered because the settings below name the directories it creates.
-  const runtimeDir = resolveRuntimeDir(options.runtimeDir)
-  const runtimeSource = options.runtimeSource === null || options.runtimeDir === null ? undefined : options.runtimeSource ?? process.env.CRAFT_IOS_RUNTIME_SOURCE
-  if (runtimeSource && runtimeDir) throw new Error('Choose runtimeSource or runtimeDir, not both')
-  const hasRuntime = runtimeSource ? await installAppRuntime(output, runtimeSource, config) : runtimeDir ? await installRuntime(output, runtimeDir) : false
-  if (hasRuntime) {
-    console.log('   Linked the Zig runtime from', runtimeSource ?? runtimeDir)
-  }
-  else {
-    // Re-running init without a runtime used to strip the link settings from
-    // project.yml and leave the archives behind, so the directory said one
-    // thing and the project said another. Whatever this run decides, the tree
-    // agrees with it.
-    rmSync(join(output, 'Runtime'), { recursive: true, force: true })
   }
 
   const projectYml = projectYmlTemplate
@@ -1836,8 +1844,12 @@ export async function build(options: BuildOptions): Promise<void> {
   else {
     if (savedProfile && savedProfile.mask !== iosPermissionMask(config))
       throw new Error('Installed Zig runtime permission profile is stale; provide runtimeSource to rebuild it')
-    await refreshRuntime(output, options.runtimeDir)
+    await refreshRuntime(output, config, options.runtimeDir)
   }
+
+  // Always keep executable gates and plist metadata in step with edited flags.
+  writeShell(output, config)
+  refreshUsageDescriptions(output, config)
 
   if (!generateProject) return
 

@@ -31,17 +31,51 @@ export function iosPermissionMask(config: Partial<CraftConfig>): number {
   return iosPermissions(config).reduce((mask, name) => mask | (1 << iosPermissionNames.indexOf(name)), 0)
 }
 
+/** Bake gates into restored sources too; existing Xcode projects may have stale build flags. */
+export function renderPermissionSource(source: string, config: Partial<CraftConfig>): string {
+  const enabled = new Set(iosPermissions(config))
+  return source.replace(/#if CRAFT_(?:PERMISSION_([A-Z]+)|APPLE_(MUSIC))\b/g, (_match, permission, music) => {
+    const name = (music ? 'music' : permission.toLowerCase()) as IOSPermission
+    if (!iosPermissionNames.includes(name)) throw new Error(`Unknown Swift permission gate: ${name}`)
+    return `#if ${enabled.has(name) ? 'true' : 'false'}`
+  })
+}
+
 const archives = ['libcraft-ios.a', 'libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a'] as const
 const digest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 
 /** Refuse stale or mismatched archives before replacing a working runtime. */
 export function verifyRuntimeProfile(directory: string, config: Partial<CraftConfig>): void {
+  if (!existsSync(join(directory, 'ios-permissions.json')))
+    throw new Error('Unprofiled Zig runtime: use runtimeSource to build archives for this app')
   const profile = JSON.parse(readFileSync(join(directory, 'ios-permissions.json'), 'utf8'))
   if (profile.version !== 1 || profile.mask !== iosPermissionMask(config))
     throw new Error('Zig runtime permission profile does not match craft.config.json; rebuild it for this app')
+  if (!existsSync(join(directory, archives[0])) || !archives.slice(1).some(name => existsSync(join(directory, name))))
+    throw new Error('Zig runtime must include device and simulator archives')
   for (const name of archives) {
+    if (!existsSync(join(directory, name)) && !profile.sha256?.[name]) continue
     if (!existsSync(join(directory, name)) || profile.sha256?.[name] !== digest(join(directory, name)))
       throw new Error(`Zig runtime archive identity mismatch: ${name}; rebuild it for this app`)
+  }
+}
+
+export function writeInstalledProfile(directory: string, config: Partial<CraftConfig>, source?: string): void {
+  const paths = ['device/libcraft-ios.a', 'simulator/libcraft-ios.a']
+  writeFileSync(join(directory, 'profile.json'), JSON.stringify({ version: 1, mask: iosPermissionMask(config), source,
+    sha256: Object.fromEntries(paths.map(path => [path, digest(join(directory, path))])),
+  }, null, 2))
+}
+
+export function verifyInstalledProfile(directory: string, config: Partial<CraftConfig>): void {
+  if (!existsSync(join(directory, 'profile.json')))
+    throw new Error('Unprofiled Zig runtime: regenerate this project with runtimeSource before omitting permission descriptions')
+  const profile = JSON.parse(readFileSync(join(directory, 'profile.json'), 'utf8'))
+  if (profile.version !== 1 || profile.mask !== iosPermissionMask(config))
+    throw new Error('Installed Zig runtime permission profile is stale; rebuild it for craft.config.json')
+  for (const path of ['device/libcraft-ios.a', 'simulator/libcraft-ios.a']) {
+    if (!existsSync(join(directory, path)) || profile.sha256?.[path] !== digest(join(directory, path)))
+      throw new Error(`Installed Zig runtime identity mismatch: ${path}; rebuild it for this app`)
   }
 }
 

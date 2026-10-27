@@ -384,13 +384,15 @@ the screen locked; a sleep timer then fades it out on the audio clock. Turn it
 on only for an app that plays sound people listen to: App Review checks.
 
 Purpose strings in your own words, by Info.plist key (each replaces Craft's
-generic sentence). Apple Music's implementation and purpose string are included
-only with `enableAppleMusic: true`; a nonblank custom purpose string is still
+generic sentence). Permission-bearing implementations and their purpose strings
+are compiled in only when their corresponding `enable*` flags require them;
+a nonblank custom purpose string is still
 honored even when that feature is disabled. A custom string does not enable the
 implementation. Regenerate the Xcode project after changing build-time feature
-flags. Other linked permission APIs still retain their compatibility strings
-until their implementations are compile-time gated too (tracked in #424), since
-App Store Connect checks the binary:
+flags. Speech also needs the microphone; video recording needs camera,
+microphone and photos; heart-rate uses Bluetooth; background location needs
+location. File selection through the system photo picker does not enable
+full photo-library access. App Store Connect checks the binary, not just config:
 
 ```json
 {
@@ -399,8 +401,6 @@ App Store Connect checks the binary:
   }
 }
 ```
-
-Appearance and navigation:
 
 For an opt-in Zig runtime built specifically for the app, set
 `CRAFT_IOS_RUNTIME_SOURCE` to an explicit Craft Zig source-package directory
@@ -412,8 +412,16 @@ with `runtimeDir`. Ordinary apps still require no Zig runtime or compiler.
 Per-app builds check the compiler version, permission mask, and archive hashes
 before installation. A failed compile leaves the installed runtime in place.
 The source location is retained under `Runtime/`, not bundled as app config.
-Changing permission flags requires rebuilding the runtime and regenerating
-the Xcode project. No compiler, source checkout, or runtime directory is guessed.
+Changing permission flags requires rebuilding the runtime. Builds and shell
+restoration bake permission gates into generated Swift and synchronize managed
+usage descriptions, including in existing Xcode projects. Restoration refuses
+a mismatched runtime instead of removing purpose strings from an unsafe binary.
+Legacy unprofiled archives must be rebuilt through `runtimeSource`; manual
+`runtimeDir` installs require a matching `ios-permissions.json` with SHA-256
+identities for every supplied archive. No compiler, source checkout, or runtime
+directory is guessed. These checks do not replace signed App Store validation.
+
+Appearance and navigation:
 
 ```json
 {
