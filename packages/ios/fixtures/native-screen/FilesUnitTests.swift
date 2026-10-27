@@ -10,6 +10,85 @@ import XCTest
 /// The pickers themselves need a person; what they hand on is tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    func testCancelledImportsDiscardUndeliveredFilesAndTheirDirectories() async throws {
+        // The same completion boundary receives a single photo/video descriptor
+        // or a document-picker array. Exercise cancellation before and after the
+        // result is queued, without pretending to automate the system picker UI.
+        for multiple in [false, true] {
+            for cancelBeforeCompletion in [false, true] {
+                let token = UUID().uuidString
+                let files = try (0..<(multiple ? 2 : 1)).map { index in
+                    let file = try CraftNativeFiles.newFile(named: "import-\(index).txt")
+                    try Data("imported".utf8).write(to: file)
+                    return file
+                }
+                defer { files.forEach { CraftNativeFiles.remove($0.path) } }
+                let descriptors = files.map { CraftNativeFiles.describe($0, type: "text/plain") }
+                let result: Any = multiple ? descriptors as Any : descriptors[0] as Any
+                if cancelBeforeCompletion { CraftNativeActions.cancel(requestToken: token) }
+                CraftNativeActions.completeFile(token, .success(result)) { _ in XCTFail("cancelled import must not reach the screen") }
+                if !cancelBeforeCompletion { CraftNativeActions.cancel(requestToken: token) }
+                let drained = expectation(description: "main delivery queue drained")
+                DispatchQueue.main.async { drained.fulfill() }
+                await fulfillment(of: [drained], timeout: 2)
+                for file in files {
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: file.deletingLastPathComponent().path))
+                }
+            }
+        }
+    }
+
+    func testDeliveredImportRemainsOwnedAndUnrelatedFilesAreNotDiscarded() async throws {
+        let file = try CraftNativeFiles.newFile(named: "delivered.txt")
+        try Data("keep".utf8).write(to: file)
+        defer { CraftNativeFiles.remove(file.path) }
+        let delivered = expectation(description: "import delivered")
+        CraftNativeActions.completeFile(UUID().uuidString, .success(CraftNativeFiles.describe(file, type: "text/plain"))) { result in
+            if case .failure = result { XCTFail("valid import must succeed") }
+            delivered.fulfill()
+        }
+        await fulfillment(of: [delivered], timeout: 2)
+        XCTAssertNotNil(CraftNativeFiles.owned(file.path))
+
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("unowned-\(UUID().uuidString).txt")
+        try Data("do not delete".utf8).write(to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let token = UUID().uuidString
+        CraftNativeActions.cancel(requestToken: token)
+        CraftNativeActions.completeFile(token, .success(["path": outside.path])) { _ in XCTFail("cancelled completion") }
+        let drained = expectation(description: "cancelled delivery drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
+        XCTAssertNotNil(CraftNativeFiles.owned(file.path))
+    }
+
+    func testImportFailureKeepsItsErrorAndCanBeRetried() async throws {
+        let token = UUID().uuidString
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("retry-import-\(UUID().uuidString).txt")
+        defer { try? FileManager.default.removeItem(at: source) }
+        let refused = expectation(description: "read error delivered")
+        CraftNativeActions.completeFile(token, CraftNativeFiles.copyFile(source, limit: 1024)) { result in
+            if case .failure(let error) = result { XCTAssertEqual(error.code, "READ_ERROR") }
+            else { XCTFail("missing source must not succeed") }
+            refused.fulfill()
+        }
+        await fulfillment(of: [refused], timeout: 2)
+        try Data("retry".utf8).write(to: source)
+        let retried = expectation(description: "retry delivered")
+        var copiedPath: String?
+        CraftNativeActions.completeFile(UUID().uuidString, CraftNativeFiles.copyFile(source, limit: 1024)) { result in
+            if case .success(let value) = result { copiedPath = (value as? [String: Any])?["path"] as? String }
+            else { XCTFail("retry must copy the readable source") }
+            retried.fulfill()
+        }
+        await fulfillment(of: [retried], timeout: 2)
+        let path = try XCTUnwrap(copiedPath)
+        defer { CraftNativeFiles.remove(path) }
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), Data("retry".utf8))
+    }
+
     func testNamesCarryNoPath() {
         XCTAssertEqual(CraftNativeFiles.safeName("../../etc/passwd"), "-..-etc-passwd")
         XCTAssertEqual(CraftNativeFiles.safeName(".hidden"), "hidden")

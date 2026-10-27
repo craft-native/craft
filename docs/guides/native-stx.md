@@ -1467,6 +1467,10 @@ after the picker closes cannot publish or leak an app-owned file. Use this for
 GPX, TCX, FIT, PDF, or other documents that are not photos or videos. On iOS,
 failed photo JPEG creation or finalization also removes its staging directory,
 so a rejected image import does not accumulate orphaned temporary files.
+If an iOS file picker, write, or download finishes after its request is
+cancelled (including screen teardown), the delivery boundary removes its
+undelivered app-owned files and their staging directories. Already delivered
+files and the persistent `media.keep` cache are not removed by this cleanup.
 
 `craft.audio` playback is screen-owned on both hosts. Android requests audio
 focus before preparing a player, reports a denied request as `AUDIO_FOCUS_DENIED`,

@@ -268,19 +268,19 @@ enum CraftNativeActions {
             // A person picks, so the bridge never times it out.
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera) { complete(requestToken, $0, completion) }
+                CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "pickVideo"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickVideo(options) { complete(requestToken, $0, completion) }
+                CraftNativeFiles.pickVideo(options) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "pickFile"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickFile(options) { complete(requestToken, $0, completion) }
+                CraftNativeFiles.pickFile(options) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "download"):
@@ -293,7 +293,7 @@ enum CraftNativeActions {
             let data = args.count > 1 ? args[1] : nil
             let options = args.count > 2 ? args[2] as? [String: Any] ?? [:] : [:]
             DispatchQueue.global(qos: .userInitiated).async {
-                complete(requestToken, CraftNativeFiles.write(name: name, data: data, options: options), completion)
+                completeFile(requestToken, CraftNativeFiles.write(name: name, data: data, options: options), completion)
             }
             return
         case ("Files", "remove"):
@@ -861,7 +861,7 @@ enum CraftNativeActions {
                 complete(requestToken, .success(CraftNativeFiles.refusedDownload(at: location, response: http)), completion)
                 return
             }
-            complete(requestToken, CraftNativeFiles.keepDownload(at: location, response: http, name: name), completion)
+            completeFile(requestToken, CraftNativeFiles.keepDownload(at: location, response: http, name: name), completion)
         }
         cancellationLock.lock()
         let alreadyCancelled = cancelledRequests.contains(requestToken)
@@ -949,16 +949,36 @@ enum CraftNativeActions {
         return url
     }
 
-    private static func complete(
+    /// Delivery boundary for newly owned files from pickers, writes and downloads.
+    static func completeFile(
         _ requestToken: String,
         _ result: Result<Any, CraftNativeActionError>,
         _ completion: @escaping (Result<Any, CraftNativeActionError>) -> Void
+    ) {
+        complete(requestToken, result, completion, onCancel: {
+            // A cancelled caller never receives these descriptors and cannot
+            // remove them itself. Only discard newly created, app-owned files;
+            // persistent media-cache results use the ordinary completion path.
+            guard case .success(let value) = result else { return }
+            let files = (value as? [[String: Any]]) ?? (value as? [String: Any]).map { [$0] } ?? []
+            for file in files {
+                if let path = file["path"] as? String { CraftNativeFiles.remove(path) }
+            }
+        })
+    }
+
+    private static func complete(
+        _ requestToken: String,
+        _ result: Result<Any, CraftNativeActionError>,
+        _ completion: @escaping (Result<Any, CraftNativeActionError>) -> Void,
+        onCancel: (() -> Void)? = nil
     ) {
         DispatchQueue.main.async {
             cancellationLock.lock()
             let cancelled = cancelledRequests.remove(requestToken) != nil
             cancellationLock.unlock()
-            if !cancelled { completion(result) }
+            if cancelled { onCancel?() }
+            else { completion(result) }
         }
     }
 
