@@ -127,6 +127,8 @@ final class CraftHealth {
             resumeWorkout(completion: completion)
         case "endWorkout":
             endWorkout(completion: completion)
+        case "discardWorkout":
+            discardWorkout(completion: completion)
         default:
             completion(.failure(CraftHealthError(message: "Unsupported Health method", code: "UNKNOWN_ACTION")))
         }
@@ -925,7 +927,13 @@ final class CraftHealth {
         do {
             let session = try HKWorkoutSession(healthStore: healthStore, configuration: configuration)
             let builder = session.associatedWorkoutBuilder()
-            let delegate = CraftHealthWorkoutDelegate(id: { [weak self] in self?.liveWorkoutID ?? "" }) { [weak self] detail in self?.sendWorkout(detail) }
+            let id = UUID().uuidString.lowercased()
+            let delegate = CraftHealthWorkoutDelegate(id: { id }) { [weak self] detail in
+                onMain {
+                    guard let self, self.liveWorkoutID == id else { return }
+                    self.sendWorkout(detail)
+                }
+            }
             let metricsDelegate = CraftHealthWorkoutBuilderDelegate(owner: self)
             session.delegate = delegate
             builder.delegate = metricsDelegate
@@ -935,15 +943,18 @@ final class CraftHealth {
             liveWorkoutBuilder = builder
             liveWorkoutDelegate = delegate
             liveWorkoutBuilderDelegate = metricsDelegate
-            liveWorkoutID = UUID().uuidString.lowercased()
+            liveWorkoutID = id
             liveWorkoutType = type
             liveWorkoutStart = Date()
-            let id = liveWorkoutID!
             let start = liveWorkoutStart!
             session.startActivity(with: start)
             builder.beginCollection(withStart: start) { [weak self] success, error in
                 DispatchQueue.main.async {
                     guard let self else { return }
+                    guard self.liveWorkoutID == id else {
+                        completion(.failure(CraftHealthError(message: "Live workout was discarded while starting", code: "WORKOUT_CANCELLED")))
+                        return
+                    }
                     guard success else {
                         self.clearLiveWorkout()
                         completion(.failure(CraftHealthError(message: error?.localizedDescription ?? "Live workout could not start")))
@@ -980,16 +991,24 @@ final class CraftHealth {
 
     func endWorkout(completion rawCompletion: @escaping Completion) {
         let completion = completeOnMain(rawCompletion)
+        guard !liveWorkoutEnding else {
+            completion(.failure(CraftHealthError(message: "Live workout is already being saved", code: "WORKOUT_ENDING")))
+            return
+        }
         guard #available(iOS 26.0, *), let session = liveWorkoutSession as? HKWorkoutSession, let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder, let id = liveWorkoutID else {
             completion(.failure(CraftHealthError(message: "No live workout is running", code: "NO_WORKOUT")))
             return
         }
         let end = Date()
+        liveWorkoutEnding = true
         session.end()
         builder.endCollection(withEnd: end) { [weak self] success, error in
             guard let self else { return }
             guard success else {
-                DispatchQueue.main.async { completion(.failure(CraftHealthError(message: error?.localizedDescription ?? "Live workout could not end"))) }
+                DispatchQueue.main.async {
+                    self.liveWorkoutEnding = false
+                    completion(.failure(CraftHealthError(message: error?.localizedDescription ?? "Live workout could not end")))
+                }
                 return
             }
             builder.finishWorkout { [weak self] workout, finishError in
@@ -1011,18 +1030,39 @@ final class CraftHealth {
         }
     }
 
+    /// Stops collection without calling finishWorkout (which saves a workout).
+    /// It does not delete health samples already persisted by HealthKit.
+    func discardWorkout(completion rawCompletion: @escaping Completion) {
+        let completion = completeOnMain(rawCompletion)
+        guard !liveWorkoutEnding else {
+            completion(.failure(CraftHealthError(message: "Live workout is already being saved", code: "WORKOUT_ENDING")))
+            return
+        }
+        guard let id = liveWorkoutID, discardLiveWorkout(expectedID: id) else {
+            completion(.failure(CraftHealthError(message: "No live workout is running", code: "NO_WORKOUT")))
+            return
+        }
+        completion(.success(true))
+    }
+
     /// Only the Live Activity that started this runtime can release it. HQ
     /// persists its own final result, so collecting here must not duplicate it.
     func discardActivityWorkout(expectedID: String) {
-        guard #available(iOS 26.0, *), liveWorkoutID == expectedID,
+        _ = discardLiveWorkout(expectedID: expectedID)
+    }
+
+    private func discardLiveWorkout(expectedID: String) -> Bool {
+        guard #available(iOS 26.0, *), !liveWorkoutEnding, liveWorkoutID == expectedID,
               let session = liveWorkoutSession as? HKWorkoutSession,
-              let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder else { return }
+              let builder = liveWorkoutBuilder as? HKLiveWorkoutBuilder else { return false }
         session.end()
         builder.discardWorkout()
         clearLiveWorkout()
+        return true
     }
 
     private func clearLiveWorkout() {
+        liveWorkoutEnding = false
         liveWorkoutSession = nil
         liveWorkoutBuilder = nil
         liveWorkoutDelegate = nil
@@ -1034,7 +1074,7 @@ final class CraftHealth {
 
     @available(iOS 26.0, *)
     fileprivate func emitLiveWorkoutMetrics(_ builder: HKLiveWorkoutBuilder) {
-        guard let id = liveWorkoutID else { return }
+        guard let id = liveWorkoutID, builder === liveWorkoutBuilder else { return }
         var detail: [String: Any] = ["id": id, "event": "metrics", "date": Date().timeIntervalSince1970 * 1000]
         let bpm = HKUnit.count().unitDivided(by: .minute())
         if let type = HKQuantityType.quantityType(forIdentifier: .heartRate),
@@ -1049,7 +1089,10 @@ final class CraftHealth {
            let value = builder.statistics(for: type)?.sumQuantity()?.doubleValue(for: .meter()), value.isFinite {
             detail["distanceMeters"] = value
         }
-        onMain { [weak self] in self?.sendWorkout(detail) }
+        onMain { [weak self] in
+            guard let self, self.liveWorkoutID == id else { return }
+            self.sendWorkout(detail)
+        }
     }
 
     private static func workoutActivity(_ type: String) -> HKWorkoutActivityType? {
@@ -1090,6 +1133,7 @@ final class CraftHealth {
     // iOS 16.2; concrete HealthKit types are only touched behind the iOS 26
     // availability checks below.
     private var liveWorkoutSession: AnyObject?
+    private var liveWorkoutEnding = false
     private var liveWorkoutBuilder: AnyObject?
     private var liveWorkoutDelegate: AnyObject?
     private var liveWorkoutBuilderDelegate: AnyObject?

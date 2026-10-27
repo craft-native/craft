@@ -3377,6 +3377,12 @@ struct CraftWebView: UIViewRepresentable {
                 } else {
                     rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
                 }
+            case "discardHealthWorkout":
+                if config.enableHealthKit {
+                    CraftHealth.shared.discardWorkout { [weak self] in self?.answer(callbackId, $0) }
+                } else {
+                    rejectCallback(callbackId, error: "HealthKit is disabled", code: "CAPABILITY_DISABLED")
+                }
 
             // MARK: - Live Activities
             case "isLiveActivityAvailable":
@@ -5980,7 +5986,8 @@ struct CraftWebView: UIViewRepresentable {
                     startWorkout: function(options) { return craft._invoke('startHealthWorkout', options || {}); },
                     pauseWorkout: function() { return craft._invoke('pauseHealthWorkout'); },
                     resumeWorkout: function() { return craft._invoke('resumeHealthWorkout'); },
-                    endWorkout: function() { return craft._invoke('endHealthWorkout'); }
+                    endWorkout: function() { return craft._invoke('endHealthWorkout'); },
+                    discardWorkout: function() { return craft._invoke('discardHealthWorkout'); }
                 };
                 // The Music app's song and transport. Nothing is read until
                 // requestAuthorization() has been allowed; observe(true) makes

@@ -1198,6 +1198,16 @@ describe('Craft iOS builder', () => {
     expect(app).toContain("stopHeartRateUpdates: function() { return craft._invoke('stopHealthHeartRateUpdates'); }")
     expect(app).toContain("startWorkout: function(options) { return craft._invoke('startHealthWorkout', options || {}); }")
     expect(app).toContain("endWorkout: function() { return craft._invoke('endHealthWorkout'); }")
+    expect(app).toContain("discardWorkout: function() { return craft._invoke('discardHealthWorkout'); }")
+    expect(app).toMatch(/case "discardHealthWorkout":\n\s+if config\.enableHealthKit \{\n\s+CraftHealth\.shared\.discardWorkout/)
+    expect(health).toContain('case "discardWorkout":\n            discardWorkout(completion: completion)')
+    const discard = health.slice(health.indexOf('private func discardLiveWorkout('), health.indexOf('private func clearLiveWorkout()'))
+    expect(discard).toContain('!liveWorkoutEnding')
+    expect(discard).toContain('liveWorkoutID == expectedID')
+    expect(discard).toContain('session.end()')
+    expect(discard).toContain('builder.discardWorkout()')
+    expect(discard).toContain('clearLiveWorkout()')
+    expect(discard).not.toContain('finishWorkout')
     expect(app).toMatch(/case "startHealthHeartRateUpdates":\n\s+if config\.enableHealthKit \{\n\s+CraftHealth\.shared\.startHeartRateUpdates\(since: body\["since"\] as\? Double\)/)
     expect(app).toMatch(/case "stopHealthHeartRateUpdates":\n\s+if config\.enableHealthKit \{\n\s+CraftHealth\.shared\.stopHeartRateUpdates/)
     // Batches reach the page, and native screens with or without it.
@@ -1251,7 +1261,7 @@ describe('Craft iOS builder', () => {
     // native-screen JavaScript can resume safely after the sheet/query ends.
     expect(health).toContain('private func completeOnMain(_ completion: @escaping Completion) -> Completion')
     expect(health).toContain('DispatchQueue.main.async { completion(result) }')
-    expect(health.match(/let completion = completeOnMain\(rawCompletion\)/g)?.length).toBe(18)
+    expect(health.match(/let completion = completeOnMain\(rawCompletion\)/g)?.length).toBe(19)
   })
 
   it('gates native Apple Wallet passes behind the app config', async () => {

@@ -978,6 +978,19 @@ describe('craft.health heart rate as it arrives', () => {
     answer('endHealthWorkout', { id: 'live-1', workoutId: 'hk-1', endDate: 9000, durationSeconds: 8 })
     expect(await ended).toMatchObject({ workoutId: 'hk-1' })
   })
+
+  it('discards without taking the save path and preserves native refusals', async () => {
+    const { craft, last, answer, refuse } = loadPage()
+    const discarded = craft.health.discardWorkout()
+    expect(last('discardHealthWorkout').action).toBe('discardHealthWorkout')
+    answer('discardHealthWorkout', true)
+    expect(await discarded).toBe(true)
+    for (const code of ['NO_WORKOUT', 'WORKOUT_ENDING', 'CAPABILITY_DISABLED']) {
+      const rejected = craft.health.discardWorkout()
+      refuse('discardHealthWorkout', code, code)
+      await expect(rejected).rejects.toMatchObject({ code })
+    }
+  })
 })
 
 describe('craft.heartRate', () => {

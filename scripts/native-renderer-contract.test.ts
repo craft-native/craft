@@ -439,6 +439,16 @@ describe('native renderer component contract', () => {
     expect(android).toContain('craftNativeEventName(events, "onValueChange", "onChange")')
   })
 
+  it('keeps workout discard separate from saving in the iOS service', () => {
+    expect(iosHealth).toContain('case "discardWorkout":')
+    expect(iosHealth).toContain('func discardWorkout(completion rawCompletion: @escaping Completion)')
+    expect(iosHealth).toContain('code: "WORKOUT_ENDING"')
+    expect(iosHealth).toContain('guard self.liveWorkoutID == id else {')
+    const discard = iosHealth.slice(iosHealth.indexOf('private func discardLiveWorkout('), iosHealth.indexOf('private func clearLiveWorkout()'))
+    expect(discard).toContain('builder.discardWorkout()')
+    expect(discard).not.toContain('finishWorkout')
+  })
+
   it('types the Text press alias exercised by the native fixture', () => {
     const textProps = componentTypes.match(/export interface TextProps extends BaseProps \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(textProps).toContain('onPress?: () => void')
@@ -449,7 +459,7 @@ describe('native renderer component contract', () => {
   it('delivers HealthKit completions on the main queue for native screens', () => {
     expect(iosHealth).toContain('private func completeOnMain(_ completion: @escaping Completion) -> Completion')
     expect(iosHealth).toContain('DispatchQueue.main.async { completion(result) }')
-    expect(iosHealth.match(/let completion = completeOnMain\(rawCompletion\)/g)?.length).toBe(18)
+    expect(iosHealth.match(/let completion = completeOnMain\(rawCompletion\)/g)?.length).toBe(19)
   })
 
   it('types the live HealthKit workout event emitted by the iOS host', () => {
@@ -460,7 +470,7 @@ describe('native renderer component contract', () => {
     expect(iosHealth).toContain('detail["heartRateBpm"] = value')
     expect(iosHealth).toContain('detail["activeEnergyCalories"] = value')
     expect(iosHealth).toContain('detail["distanceMeters"] = value')
-    expect(iosHealth).toContain('onMain { [weak self] in self?.sendWorkout(detail) }')
+    expect(iosHealth).toContain('onMain { [weak self] in\n            guard let self, self.liveWorkoutID == id else { return }\n            self.sendWorkout(detail)')
     expect(iosReadme).toContain('Live workout sessions (iOS 26+, requires enableHealthKit: true)')
     expect(iosReadme).toContain('const live = await health.startWorkout({ type: \'running\', location: \'outdoor\' })')
     expect(iosReadme).toContain('const saved = await health.endWorkout()')
