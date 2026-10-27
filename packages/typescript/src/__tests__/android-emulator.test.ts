@@ -16,7 +16,12 @@ function fixture(hardware: boolean, delayedSettings = false, delayedEvents = fal
   }
   const sdkmanager = program('bin/sdkmanager', 'printf "sdkmanager %s\\n" "$*" >> "$ANDROID_HOME/calls"')
   const avdmanager = program('bin/avdmanager', `printf "avdmanager %s\\n" "$*" >> "$ANDROID_HOME/calls"
-if [ "$1" = create ]; then printf '%s' "$ANDROID_AVD_HOME" > "$ANDROID_HOME/owned"; else touch "$ANDROID_HOME/deleted"; fi`)
+if [ "$1" = create ]; then
+  printf '%s' "$ANDROID_AVD_HOME" > "$ANDROID_HOME/owned"
+  mkdir -p "$ANDROID_AVD_HOME/fixture.avd"
+  printf 'private device' > "$ANDROID_AVD_HOME/fixture.avd/config.ini"
+  printf 'private registry' > "$ANDROID_AVD_HOME/fixture.ini"
+else touch "$ANDROID_HOME/deleted"; fi`)
   program('platform-tools/adb', `printf 'adb %s\\n' "$*" >> "$ANDROID_HOME/calls"
 if [ "$1" = devices ]; then
   printf 'List of devices attached\\n'
@@ -161,7 +166,7 @@ test('an offline guest that never connected still fails its deadline and is disp
     expect(calls).not.toContain('reconnect')
     expect(calls).not.toContain('kill-server')
     expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
-    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(true)
+    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(false)
     const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
     expect(identity.status).toBe('failed')
     expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
@@ -361,11 +366,42 @@ test('the SDK process fixture records hardware mode and reaps only its owned pro
     await session.dispose()
     await session.dispose()
     expect(existsSync(owned)).toBe(false)
-    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(true)
+    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(false)
     expect(existsSync(options.sdkmanager)).toBe(true)
     expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
   }
   finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
+})
+
+test('disposal reaps the process and removes its private registry without consulting a mutable external manager', async () => {
+  const { root, options } = fixture(true)
+  const foreign = join(root, 'existing-user-avds')
+  mkdirSync(foreign)
+  writeFileSync(join(foreign, 'my-phone.ini'), 'user-owned device')
+  options.env = { ANDROID_AVD_HOME: foreign }
+  let session: Awaited<ReturnType<typeof createAndroidEmulator>> | undefined
+  try {
+    session = await createAndroidEmulator(options)
+    const owned = session.env.ANDROID_AVD_HOME!
+    expect(owned).not.toBe(foreign)
+    mkdirSync(join(owned, 'device.avd'))
+    writeFileSync(join(owned, 'device.ini'), 'private registry entry')
+    writeFileSync(join(owned, 'device.avd/config.ini'), 'private device')
+    const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
+    // The device is already owned and booted. Its lifecycle must not depend
+    // on launching the provisioning JVM a second time during disposal.
+    writeFileSync(options.avdmanager, '#!/bin/sh\nprintf "manager unavailable after provisioning\\n" >&2\nexit 1\n', { mode: 0o755 })
+    await session.dispose()
+    await session.dispose()
+    expect(existsSync(owned)).toBe(false)
+    expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
+    expect(readFileSync(join(foreign, 'my-phone.ini'), 'utf8')).toBe('user-owned device')
+    expect(existsSync(options.sdkmanager)).toBe(true)
+  }
+  finally {
+    try { await session?.dispose() }
+    finally { rmSync(root, { recursive: true, force: true }) }
+  }
 })
 
 test('software execution is explicit and cannot be mistaken for hardware acceleration', async () => {
@@ -415,7 +451,8 @@ test('a foreign focused window cannot admit an otherwise ready emulator', async 
     await expect(createAndroidEmulator(options).then(value => { session = value; return value })).rejects.toThrow('did not boot within 5000ms')
     const identity = JSON.parse(readFileSync(join(options.artifactsDirectory, 'android-emulator.json'), 'utf8'))
     expect(identity.status).toBe('failed')
-    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(true)
+    expect(existsSync(identity.avdDirectory)).toBe(false)
+    expect(() => process.kill(identity.emulatorPid, 0)).toThrow()
   }
   finally { await session?.dispose(); rmSync(root, { recursive: true, force: true }) }
 }, 10_000)
@@ -427,7 +464,7 @@ test('an emulator process that exits before boot reports its exit instead of a f
   try {
     await expect(createAndroidEmulator(options)).rejects.toThrow('exited with code 28 before boot')
     expect(readFileSync(join(options.artifactsDirectory, 'emulator.log'), 'utf8')).toContain('Insufficient disk space')
-    expect(existsSync(join(options.sdkRoot, 'deleted'))).toBe(true)
+    expect(existsSync(readFileSync(join(options.sdkRoot, 'owned'), 'utf8'))).toBe(false)
   }
   finally { rmSync(root, { recursive: true, force: true }) }
 })

@@ -77,7 +77,6 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
   const executable = join(sdk, 'emulator/emulator')
   let child: ReturnType<typeof Bun.spawn> | undefined
   let log: number | undefined
-  let created = false
   let sequence = 0
   let disposal: Promise<void> | undefined
   let bootStartedAt = 0
@@ -113,10 +112,12 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
         if (child.exitCode === null) child.kill('SIGKILL')
         await child.exited
       }
-      if (created) await run([options.avdmanager, 'delete', 'avd', '--name', name], undefined, 30_000)
     }
     finally {
       if (log !== undefined) closeSync(log)
+      // Every Android user/AVD registry is inside this private tree. Once
+      // its process is reaped, deleting that tree is the complete teardown;
+      // invoking the provisioning JVM again adds no state to clean up.
       rmSync(owned, { recursive: true, force: true })
     }
   })()
@@ -134,7 +135,6 @@ export async function createAndroidEmulator(options: AndroidEmulatorOptions): Pr
     const devices = (await run([adb, 'devices'], undefined, 10_000)).stdout
     if (devices.split('\n').some(line => line.startsWith(`${serial}\t`))) throw new Error(`${serial} is already in use`)
     await run([options.avdmanager, 'create', 'avd', '--name', name, '--package', options.image, '--device', 'pixel_6'], 'no\n')
-    created = true
     log = openSync(join(artifacts, 'emulator.log'), 'w')
     bootStartedAt = Date.now()
     const hostCpus = cpus()
