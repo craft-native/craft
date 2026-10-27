@@ -384,22 +384,11 @@ jobs:
       - name: First-party Zig dependencies
         uses: ./.github/actions/first-party-zig-deps
 
-      # build-ios-all, not build-ios-simulator: installRuntime() resolves every
-      # SDK in RUNTIME_ARCHIVES before it writes anything and throws when one
-      # has no archive at all, so a zig-out holding only the simulator slices
-      # fails at project generation. It passes locally only because a device
-      # archive is usually already sitting there from an earlier build.
-      #
-      # No -Dmacos-sdk: the iOS steps resolve their SDK through xcrun at
-      # configure time (build.zig's iosSdkPath), and the option is read only by
-      # desktop and host-test artifacts, so passing it was a no-op.
-      - name: Build the Zig iOS runtime
-        working-directory: packages/zig
-        run: zig build build-ios-all -Doptimize=ReleaseSafe
-
+      # The SDK builds all slices with this probe's permission profile and
+      # verifies their identity before installation. Keep the real Zig leg.
       - name: Run mobile E2E on the simulator
         id: harness
-        run: bun scripts/mobile-e2e.ts --platform ios --ios-runtime packages/zig/zig-out/lib
+        run: bun scripts/mobile-e2e.ts --platform ios --ios-runtime-source packages/zig
 
       - name: Collect iOS simulator diagnostics
         id: diagnostics

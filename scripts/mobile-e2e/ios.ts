@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { join } from 'node:path'
 import { bootSimulator, init, pickSimulator } from '../../packages/ios/src/index'
 import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../../packages/ios/scripts/insert-project-targets'
+import { checkPermissionBinary } from '../../packages/ios/scripts/permission-binary'
 import { simulatorPasteboardProblems, deepLinkProblems, deepLinkResults, evaluateRun, hasTerminated, LOCAL_NOTIFICATION_DELAY_MS, localNotificationProblems, NOTIFICATION_TEST_TIMEOUT_MS, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { command, driverPage, waitForFile } from './support'
 
@@ -92,13 +93,15 @@ function pushesAskedFor(output: string): PushStage[] {
 interface Leg {
   name: 'shim' | 'runtime'
   runtimeDir: string | null
+  runtimeSource?: string | null
   requireZigDispatch: boolean
 }
 
-function legs(runtimeDir: string | null): Leg[] {
+export function iosRuntimeLegs(runtimeDir: string | null, runtimeSource?: string | null): Leg[] {
+  if (runtimeDir && runtimeSource) throw new Error('Choose --ios-runtime-source or --ios-runtime, not both')
   return [
     { name: 'shim', runtimeDir: null, requireZigDispatch: false },
-    { name: 'runtime', runtimeDir, requireZigDispatch: true },
+    { name: 'runtime', runtimeDir, runtimeSource, requireZigDispatch: true },
   ]
 }
 
@@ -116,7 +119,8 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
     bundleId: BUNDLE_ID,
     output: project,
     config: CONFIG,
-    runtimeDir: leg.runtimeDir,
+    runtimeDir: leg.runtimeSource ? undefined : leg.runtimeDir,
+    runtimeSource: leg.runtimeSource ?? null,
   })
 
   // The archive is linked through project.yml's {{CRAFT_RUNTIME_SETTINGS}},
@@ -180,6 +184,7 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
   const app = join(derived, 'Build', 'Products', 'Debug-iphonesimulator', `${APP_NAME}.app`)
   if (!existsSync(app))
     throw new Error(`xcodebuild reported success but ${app} is missing`)
+  checkPermissionBinary(app, APP_NAME, CONFIG)
 
   const device = await pickSimulator()
   if (!device)
@@ -417,8 +422,10 @@ async function runLeg(leg: Leg, options: RunnerOptions): Promise<LegOutcome> {
 
 export async function runIos(options: RunnerOptions): Promise<LegOutcome[]> {
   const runtimeDir = options.iosRuntimeDir
-  if (!runtimeDir)
-    throw new Error('no iOS Zig runtime directory; run `zig build build-ios-all` in packages/zig and pass --ios-runtime <dir>')
+  const runtimeSource = options.iosRuntimeSource
+  const selectedLegs = iosRuntimeLegs(runtimeDir, runtimeSource)
+  if (!runtimeDir && !runtimeSource)
+    throw new Error('Pass --ios-runtime-source <Craft Zig source package> to build the runtime for the probe configuration')
 
   // The device archive as well as the simulator ones, because that is what
   // `installRuntime` requires: it resolves every SDK in RUNTIME_ARCHIVES before
@@ -427,20 +434,20 @@ export async function runIos(options: RunnerOptions): Promise<LegOutcome[]> {
   // several minutes later, with a message about a different build step.
   const simulator = ['libcraft-ios-simulator-arm64.a', 'libcraft-ios-simulator-x64.a']
   const missing: string[] = []
-  if (!simulator.some(name => existsSync(join(runtimeDir, name)))) missing.push(...simulator)
-  if (!existsSync(join(runtimeDir, 'libcraft-ios.a'))) missing.push('libcraft-ios.a')
+  if (runtimeDir && !simulator.some(name => existsSync(join(runtimeDir, name)))) missing.push(...simulator)
+  if (runtimeDir && !existsSync(join(runtimeDir, 'libcraft-ios.a'))) missing.push('libcraft-ios.a')
 
   if (missing.length) {
     throw new Error(
       `${runtimeDir} is missing ${missing.join(', ')}. `
-      + 'Run `zig build build-ios-all -Doptimize=ReleaseSafe` in packages/zig first — '
+      + 'Prefer --ios-runtime-source packages/zig to build matching, verified archives for this probe — '
       + 'build-ios-simulator alone is not enough, because the generated project links a device slice too. '
       + 'Skipping the runtime leg instead would leave the Zig bridge untested while the suite still reported green.',
     )
   }
 
   const outcomes: LegOutcome[] = []
-  for (const leg of legs(runtimeDir)) {
+  for (const leg of selectedLegs) {
     try {
       outcomes.push(await runLeg(leg, options))
     }

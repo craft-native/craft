@@ -6,6 +6,7 @@ import { initSimulatorDriver, serializeSimulatorSteps } from '../src/testing'
 import { checkLoadFailureClassifier } from './load-failure'
 import { checkRecoveryBudget } from './recovery-budget'
 import { watchCompanionProblems } from './watch-bundle'
+import { checkPermissionBinary } from './permission-binary'
 import { createTempDir, keepTempDir, removeTempDir } from '../../typescript/src/temp-dir'
 
 interface CompileFixture {
@@ -248,15 +249,8 @@ function buildTarget(output: string, projectName: string, targetName: string, sd
 
 // Check the linked executable, not just a #if in source or a plist snapshot.
 // Both Debug and the shipped Release configuration must exclude the APIs.
-function checkMusicPermissionBinary(output: string, name: string, enabled: boolean, configuration: string): void {
-  const binary = join(output, 'build', `${configuration}-iphoneos`, `${name}.app`, name)
-  const symbols = Bun.spawnSync(['xcrun', 'nm', '-u', binary], { stdout: 'pipe', stderr: 'pipe' })
-  if (symbols.exitCode !== 0) throw new Error(`Unable to inspect ${binary}: ${symbols.stderr.toString()}`)
-  for (const api of ['MPMediaLibrary', 'MPMusicPlayerController']) {
-    const linked = symbols.stdout.toString().includes(`_OBJC_CLASS_$_${api}`)
-    if (linked !== enabled) throw new Error(`${configuration} ${name}: ${api} linked=${linked}, expected ${enabled}`)
-  }
-  console.log(`ok: ${configuration} ${name} music APIs ${enabled ? 'included' : 'excluded'}`)
+function checkPermissions(output: string, fixture: CompileFixture, configuration: string): void {
+  checkPermissionBinary(join(output, 'build', `${configuration}-iphoneos`, `${fixture.name}.app`), fixture.name, fixture.config ?? {})
 }
 
 try {
@@ -315,9 +309,9 @@ try {
       buildTarget(output, fixture.name, fixture.name, 'iphoneos')
 
     if (fixture.name === 'MinimalProbe' || fixture.name === 'CapabilityProbe') {
-      checkMusicPermissionBinary(output, fixture.name, !!fixture.config?.enableAppleMusic, 'Debug')
+      checkPermissions(output, fixture, 'Debug')
       buildTarget(output, fixture.name, fixture.name, 'iphoneos', 'Release')
-      checkMusicPermissionBinary(output, fixture.name, !!fixture.config?.enableAppleMusic, 'Release')
+      checkPermissions(output, fixture, 'Release')
     }
 
     if (fixture.config?.enableLiveActivities)

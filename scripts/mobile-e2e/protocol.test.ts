@@ -3,6 +3,20 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ANDROID_DECLINE_PHRASES, androidDeclines, awaitedNeeds, deepLinkProblems, deepLinkReports, deepLinkResults, DISMISS_SHARE_MENU, elfSectionNames, evaluateRun, hasTerminated, localNotificationProblems, NOTIFICATION_ROUTE, notificationBody, notificationPayload, notificationReceiptProblems, notificationReceiptReport, notificationTapProblems, notificationTapReport, parseDriverOutput, REQUIRED_CASES, requiredCaseProblems, runtimePermissionGranted, shareMenuInFront, simulatorPasteboardProblems, strippedLibraryProblems, ZIG_REFUSED_ACTIONS, ZIG_SERVED_ACTIONS, ZIG_TESTED_ACTIONS, zigDispatchedActions, zigHandBacks, zigRefusals } from './protocol'
 import { LOCAL_NOTIFICATION_DELAY_MS, NOTIFICATION_TEST_TIMEOUT_MS } from './protocol'
+import { iosRuntimeLegs } from './ios'
+
+describe('per-app iOS runtime legs', () => {
+  it('builds the configured runtime without weakening the Zig dispatch assertions', () => {
+    expect(iosRuntimeLegs(null, '/explicit/craft/zig')).toEqual([
+      { name: 'shim', runtimeDir: null, requireZigDispatch: false },
+      { name: 'runtime', runtimeDir: null, runtimeSource: '/explicit/craft/zig', requireZigDispatch: true },
+    ])
+    expect(() => iosRuntimeLegs('/archives', '/source')).toThrow('not both')
+    const workflow = readFileSync(join(import.meta.dir, '../../.github/workflows/mobile-e2e.yml'), 'utf8')
+    expect(workflow).toContain('--ios-runtime-source packages/zig')
+    expect(workflow).not.toContain('--ios-runtime packages/zig/zig-out/lib')
+  })
+})
 
 const ESC = String.fromCharCode(27)
 
