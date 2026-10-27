@@ -1416,6 +1416,19 @@ the finished session should be written as an `ExerciseSessionRecord` with its
 distance and active-energy totals; without Health Connect the native session
 still ends and returns the typed result. Unsupported devices and exercise
 types produce an `error` event rather than silently upgrading the fallback.
+
+On iOS, `health.discardWorkout()` (native protocol: `Health.discardWorkout`)
+ends the current live session without saving a workout. `endWorkout()` still
+ends **and saves** it. Use `health.supports('discardWorkout')` before offering
+discard on older hosts or Android; never fall back to `endWorkout()` when the
+intent is not to save. Discard resolves to `true`, rejects with `NO_WORKOUT`
+when no live session exists, and rejects with `WORKOUT_ENDING` if a save is
+already in progress. It does not delete existing HealthKit samples or promise
+to undo activity-ring contributions. For a mindful session, discard the live
+workout first, then explicitly save the intended `saveMindfulSession` record.
+This option does not change authorization or device requirements for starting
+a live workout or guarantee Apple Watch sample timing.
+
 A native passkey screen requires both `enablePasskeys: true` and at least one
 `webcredentials:<host>` entry in `associatedDomains`; otherwise the host does
 not advertise `passkeys`. `craft.passkeys.isAvailable()` is a configuration

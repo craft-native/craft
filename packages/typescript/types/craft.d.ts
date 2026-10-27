@@ -1618,6 +1618,8 @@ export interface CraftHealth {
   pauseWorkout?(): Promise<boolean>;
   resumeWorkout?(): Promise<boolean>;
   endWorkout?(): Promise<CraftHealthLiveWorkoutResult>;
+  /** iOS: ends without saving a workout; does not delete already-persisted health samples. */
+  discardWorkout?(): Promise<boolean>;
 }
 
 export interface CraftWallet {

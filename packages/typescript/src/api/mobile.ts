@@ -3545,7 +3545,7 @@ export interface HealthLiveWorkoutEvent {
 }
 
 /** The health reads and writes a host may or may not have, depending on the app build it runs in. */
-export type HealthReadMethod = 'getWorkouts' | 'getDailyStatistics' | 'getHeartRateSamples' | 'getSamples' | 'getSleepIntervals' | 'saveData' | 'saveMindfulSession' | 'getMindfulSessions' | 'startHeartRateUpdates' | 'stopHeartRateUpdates' | 'startWorkout' | 'pauseWorkout' | 'resumeWorkout' | 'endWorkout'
+export type HealthReadMethod = 'getWorkouts' | 'getDailyStatistics' | 'getHeartRateSamples' | 'getSamples' | 'getSleepIntervals' | 'saveData' | 'saveMindfulSession' | 'getMindfulSessions' | 'startHeartRateUpdates' | 'stopHeartRateUpdates' | 'startWorkout' | 'pauseWorkout' | 'resumeWorkout' | 'endWorkout' | 'discardWorkout'
 
 /** The samples of one `craftHealthHeartRate` event that look like heart-rate samples. */
 function healthHeartRateSamples(detail: unknown): HealthHeartRateSample[] {
@@ -3685,6 +3685,12 @@ export const health = {
     const craft = getCraftRoot()
     if (!craft?.health?.endWorkout) throw new Error('Live workouts are unavailable')
     return craft.health.endWorkout()
+  },
+  /** iOS: ends the live session without saving a workout. Does not delete existing health samples. */
+  async discardWorkout(): Promise<boolean> {
+    const craft = getCraftRoot()
+    if (!craft?.health?.discardWorkout) throw new Error('Discarding live workouts is unavailable')
+    return Boolean(await craft.health.discardWorkout())
   },
   /** Receives OS workout state transitions; returns the unsubscribe. */
   onWorkout(callback: (event: HealthLiveWorkoutEvent) => void): () => void {
@@ -3955,6 +3961,7 @@ interface CraftMobileBridge {
     pauseWorkout?(): Promise<boolean>
     resumeWorkout?(): Promise<boolean>
     endWorkout?(): Promise<HealthLiveWorkoutResult>
+    discardWorkout?(): Promise<boolean>
   }
   liveActivity?: {
     isAvailable?(): Promise<boolean>

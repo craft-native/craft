@@ -6,6 +6,38 @@ import XCTest
 @testable import NativeRender
 
 @MainActor
+final class NativeHealthDiscardUnitTests: XCTestCase {
+    func testDiscardDispatchRejectsDisabledHealthAndMissingWorkout() async {
+        for enabled in [false, true] {
+            var config = CraftConfig()
+            config.enableHealthKit = enabled
+            let result: Result<Any, CraftNativeActionError> = await withCheckedContinuation { continuation in
+                CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion,
+                    module: "Health", method: "discardWorkout", args: [], config: config) {
+                    XCTAssertTrue(Thread.isMainThread)
+                    continuation.resume(returning: $0)
+                }
+            }
+            guard case .failure(let error) = result else { return XCTFail("discard without a workout must not claim success") }
+            XCTAssertEqual(error.code, enabled ? "NO_WORKOUT" : "CAPABILITY_DISABLED")
+        }
+    }
+
+    func testRepeatedDiscardWithoutWorkoutDoesNotSaveOrInventAResult() {
+        let health = CraftHealth()
+        for _ in 0..<2 {
+            var answered = false
+            health.perform(method: "discardWorkout", args: []) { result in
+                answered = true
+                guard case .failure(let error) = result else { return XCTFail("missing workout must reject") }
+                XCTAssertEqual(error.code, "NO_WORKOUT")
+            }
+            XCTAssertTrue(answered)
+        }
+    }
+}
+
+@MainActor
 final class NativeSolidSwitchUnitTests: XCTestCase {
     private func control(_ view: UIView) -> UIControl? {
         if let value = view as? UIControl { return value }

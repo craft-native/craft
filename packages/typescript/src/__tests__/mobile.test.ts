@@ -598,6 +598,31 @@ describe('health reads', () => {
     })
   })
 
+  it('discards a live workout without falling back to the save method', async () => {
+    let saves = 0
+    let discards = 0
+    await withWindow({ craft: { health: {
+      endWorkout: async () => { saves++; throw new Error('must not save') },
+      discardWorkout: async () => { discards++; return true },
+    } } }, async () => {
+      expect(health.supports('discardWorkout')).toBe(true)
+      expect(await health.discardWorkout()).toBe(true)
+    })
+    expect(discards).toBe(1)
+    expect(saves).toBe(0)
+    for (const window of [undefined, { craft: { health: { endWorkout: async () => { saves++ } } } }]) {
+      await withWindow(window, async () => {
+        expect(health.supports('discardWorkout')).toBe(false)
+        await expect(health.discardWorkout()).rejects.toThrow('unavailable')
+      })
+    }
+    const failure = Object.assign(new Error('Already saving'), { code: 'WORKOUT_ENDING' })
+    await withWindow({ craft: { health: { discardWorkout: async () => { throw failure } } } }, async () => {
+      await expect(health.discardWorkout()).rejects.toBe(failure)
+    })
+    expect(saves).toBe(0)
+  })
+
   it('says an older app cannot, and refuses rather than answering nothing', async () => {
     await withWindow({ craft: { health: {} } }, async () => {
       expect(health.supports('getHeartRateSamples')).toBe(false)
