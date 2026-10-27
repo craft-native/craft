@@ -1033,9 +1033,15 @@ bun scripts/zig.ts --core --versioned build test:webkit-public -Doptimize=Releas
 
 It invokes the installed AppKit status-button and menu-item target/actions and
 checks the actual injected JavaScript listeners in visible, hidden, reloaded,
-and secondary-window cases. It also checks for duplicate delivery. This does
-not automate physical pointer clicks or right-click menu tracking, and it
-does not replace testing the reported application and launch command.
+and secondary-window cases. A loopback HTTP fixture also creates the menu
+through the public `craft.tray.setMenu()` API, opens it with queued AppKit
+right-button events, selects an item through the menu's keyboard tracking loop,
+then sends a left click after the menu closes. Both visible and hidden page
+cases check delivery and reject duplicate callbacks from polling.
+
+These are application-local AppKit events, not physical pointer input. The
+test requires a logged-in macOS GUI session but no Accessibility permission;
+it does not replace testing the reported application and launch command.
 
 ### TypeScript errors
 

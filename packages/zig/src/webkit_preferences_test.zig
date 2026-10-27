@@ -6,6 +6,9 @@ extern "c" fn craft_test_webkit_pixel(view: macos.objc.id, rgba: *[4]f64) c_int;
 extern "c" fn craft_test_tray_window_begin(window: macos.objc.id, view: macos.objc.id, hidden: bool, hide_dock: bool) void;
 extern "c" fn craft_test_tray_window_result() c_int;
 extern "c" fn craft_test_tray_callbacks(view: macos.objc.id, other_view: macos.objc.id, item: macos.objc.id, menu: macos.objc.id) c_int;
+extern "c" fn craft_test_tray_http_start() c_ushort;
+extern "c" fn craft_test_tray_http_stop() void;
+extern "c" fn craft_test_tray_http_callbacks(view: macos.objc.id, item: macos.objc.id) c_int;
 
 fn findWebView(view: macos.objc.id) ?macos.objc.id {
     if (view == null) return null;
@@ -18,13 +21,19 @@ fn findWebView(view: macos.objc.id) ?macos.objc.id {
     return null;
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const pool = macos.msgSend0(macos.msgSend0(macos.getClass("NSAutoreleasePool"), "alloc"), "init");
     defer macos.msgSendVoid0(pool, "drain");
     macos.initAppWithoutLaunching();
     const app = macos.msgSend0(macos.getClass("NSApplication"), "sharedApplication");
     _ = macos.msgSend1(app, "setActivationPolicy:", @as(c_long, 1));
     macos.msgSendVoid0(app, "finishLaunching");
+
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--tray-http")) {
+        try verifyHTTPTrayCallbacks();
+        return;
+    }
 
     try verifyTrayCallbacks();
 
@@ -111,6 +120,33 @@ fn verifyTrayCallbacks() !void {
     const child_view = findWebView(macos.msgSend0(child_window, "contentView")) orelse return error.WebViewNotFound;
     try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_callbacks(webview, child_view, tray.platform_handle, menu));
     std.debug.print("Native tray click and menu callbacks verified: visible, hidden, reloaded, and second-window isolation.\n", .{});
+}
+
+fn verifyHTTPTrayCallbacks() !void {
+    const port = craft_test_tray_http_start();
+    try std.testing.expect(port != 0);
+    defer craft_test_tray_http_stop();
+    var url_buf: [128]u8 = undefined;
+    const url = try std.fmt.bufPrint(&url_buf, "http://127.0.0.1:{d}/tray", .{port});
+    var app = craft.App.init(std.heap.c_allocator);
+    defer app.deinit();
+    app.initPlatformForTray();
+    const tray = try app.createSystemTray("Craft HTTP tray test");
+    // The same URL-window construction path used by `craft URL --system-tray`.
+    const created = try app.createWindowWithURL("HTTP tray regression", 320, 240, url, .{ .system_tray = true });
+    const window: macos.objc.id = @ptrCast(created.native_handle);
+    defer macos.destroyWindow(window);
+    const webview = findWebView(macos.msgSend0(window, "contentView")) orelse return error.WebViewNotFound;
+    macos.showAllWindows();
+    macos.activateWindowedApp();
+    for ([_]bool{ false, true }) |hidden| {
+        if (hidden) {
+            macos.hideWindow(window);
+            try macos.loadURLInWebView(webview, url);
+        }
+        try std.testing.expectEqual(@as(c_int, 1), craft_test_tray_http_callbacks(webview, tray.platform_handle));
+        std.debug.print("HTTP tray public setMenu, right-click menu tracking and left-click callback verified: hidden={any}\n", .{hidden});
+    }
 }
 
 fn verifyTrayWindow(headless: bool, hide_dock: bool, frameless: bool, menubar_only: bool) !void {

@@ -1,5 +1,65 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+// A real loopback origin exercises URL loading and the public page -> native
+// setMenu bridge. No production hooks, native menu construction, or JS event
+// delivery functions are used by this fixture.
+static dispatch_source_t trayHTTPServer;
+
+unsigned short craft_test_tray_http_start(void) {
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0) return 0;
+    struct sockaddr_in address = { .sin_len = sizeof(address), .sin_family = AF_INET,
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK), .sin_port = 0 };
+    socklen_t size = sizeof(address);
+    if (bind(listener, (struct sockaddr *)&address, size) || listen(listener, 8) ||
+        getsockname(listener, (struct sockaddr *)&address, &size)) {
+        close(listener);
+        return 0;
+    }
+    dispatch_queue_t queue = dispatch_queue_create("craft.test.tray.http", DISPATCH_QUEUE_SERIAL);
+    trayHTTPServer = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, listener, 0, queue);
+    dispatch_source_set_event_handler(trayHTTPServer, ^{
+        int client = accept(listener, NULL, NULL);
+        if (client < 0) return;
+        struct timeval timeout = { .tv_sec = 2 };
+        setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        int noSignal = 1;
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, sizeof(noSignal));
+        char request[4096];
+        if (recv(client, request, sizeof(request), 0) > 0) {
+            NSString *page = @"<!doctype html><title>Tray HTTP regression</title><script>"
+                "globalThis.trayClicks=[]; globalThis.trayActions=[];"
+                "craft.tray.onClick(d=>trayClicks.push(d.button));"
+                "craft.tray.onMenuAction(d=>trayActions.push(d.action));"
+                "craft.tray.setMenu([{label:'HTTP Hello',action:'http-hello'}]);"
+                "globalThis.trayHTTPReady=true;</script>Tray HTTP regression";
+            NSData *body = [page dataUsingEncoding:NSUTF8StringEncoding];
+            NSMutableData *response = [[[NSString stringWithFormat:@"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %lu\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", (unsigned long)body.length]
+                dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+            [response appendData:body];
+            NSUInteger sent = 0;
+            while (sent < response.length) {
+                ssize_t count = send(client, (const char *)response.bytes + sent, response.length - sent, 0);
+                if (count <= 0) break;
+                sent += (NSUInteger)count;
+            }
+        }
+        close(client);
+    });
+    dispatch_source_set_cancel_handler(trayHTTPServer, ^{ close(listener); });
+    dispatch_resume(trayHTTPServer);
+    return ntohs(address.sin_port);
+}
+
+void craft_test_tray_http_stop(void) {
+    if (trayHTTPServer) dispatch_source_cancel(trayHTTPServer);
+    trayHTTPServer = nil;
+}
 
 static int trayWindowResult;
 static NSUInteger trayWindowGeneration;
@@ -107,6 +167,86 @@ int craft_test_tray_callbacks(void *viewPointer, void *otherPointer, void *itemP
     if (![trayEvaluate(view, @"trayClicks.length === 1 && trayActions.length === 1") boolValue]) return -4;
     if (other && ![trayEvaluate(other, @"trayClicks.length === 0 && trayActions.length === 0") boolValue]) return -5;
     return 1;
+}
+
+static void postTrayMouse(NSStatusItem *item, BOOL right) {
+    NSPoint point = [item.button convertPoint:NSMakePoint(NSMidX(item.button.bounds), NSMidY(item.button.bounds)) toView:nil];
+    for (NSNumber *type in right ? @[@(NSEventTypeRightMouseDown), @(NSEventTypeRightMouseUp)] :
+                                   @[@(NSEventTypeLeftMouseDown), @(NSEventTypeLeftMouseUp)]) {
+        [NSApp postEvent:[NSEvent mouseEventWithType:type.unsignedIntegerValue location:point modifierFlags:0
+            timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:item.button.window.windowNumber
+            context:nil eventNumber:1 clickCount:1 pressure:1] atStart:NO];
+    }
+}
+
+static void pumpTrayEvent(void) {
+    NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]
+        inMode:NSDefaultRunLoopMode dequeue:YES];
+    if (event) [NSApp sendEvent:event];
+}
+
+int craft_test_tray_http_callbacks(void *viewPointer, void *itemPointer) {
+    WKWebView *view = (__bridge WKWebView *)viewPointer;
+    NSStatusItem *item = (__bridge NSStatusItem *)itemPointer;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:15];
+    while (view.loading && deadline.timeIntervalSinceNow > 0) pumpTrayEvent();
+    if (![trayEvaluate(view, @"location.protocol === 'http:' && globalThis.trayHTTPReady === true") boolValue]) return -10;
+    if (item.menu) return -11;
+    __block NSMenu *trackedMenu = nil;
+    __block BOOL selected = NO;
+    __block BOOL ended = NO;
+    NSNotificationCenter *notifications = NSNotificationCenter.defaultCenter;
+    id opened = [notifications addObserverForName:NSMenuDidBeginTrackingNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+        NSMenu *menu = note.object;
+        if (!menu.numberOfItems || ![[menu itemAtIndex:0].title isEqualToString:@"HTTP Hello"]) return;
+        trackedMenu = menu;
+        // Selection goes through AppKit's tracking loop, not performAction or
+        // the native callback. Keyboard events avoid global pointer injection
+        // and do not require Accessibility permission on CI.
+        NSTimer *select = [NSTimer timerWithTimeInterval:0.15 repeats:NO block:^(NSTimer *timer) {
+            for (NSString *key in @[@"\uF701", @"\r"]) {
+                [NSApp postEvent:[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
+                    timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0 context:nil characters:key
+                    charactersIgnoringModifiers:key isARepeat:NO keyCode:[key isEqualToString:@"\r"] ? 36 : 125] atStart:NO];
+            }
+        }];
+        [[NSRunLoop currentRunLoop] addTimer:select forMode:NSEventTrackingRunLoopMode];
+    }];
+    id action = [notifications addObserverForName:NSMenuDidSendActionNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+        if (note.object == trackedMenu) selected = YES;
+    }];
+    id closed = [notifications addObserverForName:NSMenuDidEndTrackingNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+        if (note.object == trackedMenu) ended = YES;
+    }];
+    // Bound even a broken menu-tracking path; the timer also runs in AppKit's
+    // nested tracking mode, where the outer test deadline cannot run.
+    NSTimer *cancel = [NSTimer timerWithTimeInterval:5 repeats:NO block:^(NSTimer *timer) { [item.menu cancelTracking]; }];
+    [[NSRunLoop currentRunLoop] addTimer:cancel forMode:NSEventTrackingRunLoopMode];
+    postTrayMouse(item, YES);
+    while (!ended && deadline.timeIntervalSinceNow > 0) pumpTrayEvent();
+    [cancel invalidate];
+    [notifications removeObserver:opened];
+    [notifications removeObserver:action];
+    [notifications removeObserver:closed];
+    if (!trackedMenu || !selected || !ended || item.menu) {
+        NSLog(@"Tray tracking failed: menu=%@ selected=%d ended=%d attached=%@", trackedMenu, selected, ended, item.menu);
+        return -12;
+    }
+    postTrayMouse(item, NO); // A closed right-click menu must not swallow this.
+    deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+    BOOL received = NO;
+    while (deadline.timeIntervalSinceNow > 0) {
+        pumpTrayEvent();
+        received = [trayEvaluate(view, @"JSON.stringify(trayClicks)==='[\"left\"]' && JSON.stringify(trayActions)==='[\"http-hello\"]'") boolValue];
+        if (received) break;
+    }
+    if (!received) {
+        NSLog(@"HTTP tray callbacks missing: %@", trayEvaluate(view, @"JSON.stringify({clicks:trayClicks,actions:trayActions})"));
+        return -13;
+    }
+    NSDate *quietUntil = [NSDate dateWithTimeIntervalSinceNow:1.2];
+    while (quietUntil.timeIntervalSinceNow > 0) pumpTrayEvent();
+    return [trayEvaluate(view, @"trayClicks.length===1 && trayActions.length===1") boolValue] ? 1 : -14;
 }
 
 int craft_test_webkit_pixel(void *view, double rgba[4]) {

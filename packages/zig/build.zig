@@ -256,7 +256,14 @@ pub fn build(b: *std.Build) void {
             .flags = &.{ "-fobjc-arc", "-fblocks" },
         });
         linkPlatformLibraries(b, public_webkit_test.root_module, target_os, macos_sdk);
-        public_webkit_step.dependOn(&b.addRunArtifact(public_webkit_test).step);
+        const run_webkit = b.addRunArtifact(public_webkit_test);
+        const run_http_tray = b.addRunArtifact(public_webkit_test);
+        run_http_tray.addArg("--tray-http");
+        // AppKit caches menu-tracking windows and process-wide focus state.
+        // Use a fresh process for HTTP/menu tracking, serialized with the
+        // activation suite so the two GUI tests cannot steal each other's focus.
+        run_http_tray.step.dependOn(&run_webkit.step);
+        public_webkit_step.dependOn(&run_http_tray.step);
     } else {
         public_webkit_step.dependOn(&b.addFail("test:webkit-public requires macOS").step);
     }
