@@ -246,9 +246,11 @@ jobs:
           VERSION="$(bun -p "require('./package.json').version")"
           bun scripts/verify-native-startup.ts packages/zig/zig-out/bin/craft "$VERSION"
 
+      # Hundreds of native test executables compete for the same small runner.
+      # Bound their fanout so the IPC runner stays responsive under compilation.
       - name: Test Zig core
         working-directory: packages/zig
-        run: zig build test
+        run: zig build test -j2
 
       - name: Verify native eval diagnostics through the public CLI
         env:

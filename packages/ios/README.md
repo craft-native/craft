@@ -7,6 +7,22 @@ services as well as new advertisements. A watch connected through another app ca
 therefore appear without changing its system pairing. Discovery still requires
 Bluetooth permission and does not prove that the device accepts the app's protocol.
 
+## Compact tab accessories
+
+Native and hybrid tab bars stay expanded while scrolling. An accessory can use
+`iconOnly: true` for a 48-point trailing button above the tabs:
+
+```ts
+craft.navigation.setOptions({
+  tabAccessory: { path: '/messages', title: 'Messages', symbol: 'message', iconOnly: true, badge: '3' },
+})
+```
+
+The title remains its accessible name, the badge announces the unread count,
+and the screen's bottom safe area reserves room for the button. Set
+`tabAccessory: null` to remove it. Accessories without `iconOnly` keep the
+system's standard presentation.
+
 ## Native celebration
 
 Any native `View` may opt into a finite card entrance, light sweep and confetti
