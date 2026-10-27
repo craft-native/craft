@@ -1,5 +1,19 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.363...v0.0.364)
+
+## 🚀 Features
+
+- **window**: support rounded corners using public AppKit APIs ([24a5925](https://github.com/craft-native/craft/commit/24a5925)) _(by Chris Breuer)_
+
+## 🐛 Bug Fixes
+
+- **window**: activate accessory apps before focusing WebViews ([f0c6950](https://github.com/craft-native/craft/commit/f0c6950)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.362...v0.0.363)
 
 ## 🐛 Bug Fixes
