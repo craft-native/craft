@@ -352,7 +352,7 @@ describe('bridge reply correlation', () => {
   it('puts a distinct id on every message, fire-and-forget included', async () => {
     const h = loadBridge()
     const tags = h.craft.tags.get('/a')
-    h.craft.keychain.set('svc', 'acct', 'pw') // _send, no reply expected
+    h.craft.permissions.openSettings('camera') // _send, no reply expected
     h.craft.window.show?.()
     const autoLaunch = h.craft.autoLaunch.isEnabled()
 
@@ -369,12 +369,12 @@ describe('bridge reply correlation', () => {
     const live = h.craft.tags.get('/a')
     const liveId = h.sent[0].i!
 
-    h.craft.keychain.set('svc', 'acct', 'pw')
+    h.craft.permissions.openSettings('camera')
     const sendId = h.sent[1].i!
     expect(sendId).not.toBe(liveId)
 
     // `_send` registered no pending entry, so there is nobody to reject.
-    h.fail({ action: 'set', code: 'NATIVE_CALL_FAILED', message: 'keychain locked', id: sendId })
+    h.fail({ action: 'openSettings', code: 'NATIVE_CALL_FAILED', message: 'settings unavailable', id: sendId })
     expect(h.errors).toHaveLength(1)
 
     h.reply('get', { tags: ['fine'] }, liveId)
@@ -499,4 +499,22 @@ describe('native background deadlines', () => {
     for (const ms of [-1, NaN, 0.5, 86400001]) await expect(h.craft.timers.sleep(ms)).rejects.toBeInstanceOf(RangeError)
     expect(h.sent.filter(m => m.t === 'timers')).toHaveLength(0)
   })
+})
+
+
+it('awaits native Keychain writes and deletes and propagates storage failures', async () => {
+  const h = loadBridge()
+  let saved = false
+  const write = h.craft.keychain.set('svc', 'acct', 'pw').then(() => { saved = true })
+  await Promise.resolve()
+  expect(saved).toBe(false)
+  h.reply('set', { ok: true }, h.sent[0].i!)
+  await write
+  expect(saved).toBe(true)
+  const remove = h.craft.keychain.delete('svc', 'acct')
+  h.fail({ action: 'delete', code: 'PERMISSION_DENIED', message: 'keychain locked', id: h.sent[1].i! })
+  await expect(remove).rejects.toThrow('keychain locked')
+  const denied = h.craft.keychain.set('svc', 'acct', 'pw')
+  h.fail({ action: 'set', code: 'PERMISSION_DENIED', message: 'access denied', id: h.sent[2].i! })
+  await expect(denied).rejects.toThrow('access denied')
 })

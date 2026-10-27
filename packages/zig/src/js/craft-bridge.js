@@ -1215,14 +1215,14 @@
   // -------------------------------------------------------------------------
   window.craft.keychain = {
     set:    function (service, account, password) {
-      return _send('keychain', 'set', _stringify({ service: String(service), account: String(account), password: String(password) }))
+      return _req('keychain', 'set', _stringify({ service: String(service), account: String(account), password: String(password) }))
     },
     get:    function (service, account) {
       return _req('keychain', 'get', _stringify({ service: String(service), account: String(account) }))
         .then(function (r) { return r && r.value })
     },
     delete: function (service, account) {
-      return _send('keychain', 'delete', _stringify({ service: String(service), account: String(account) }))
+      return _req('keychain', 'delete', _stringify({ service: String(service), account: String(account) }))
     },
     has:    function (service, account) {
       return _req('keychain', 'has', _stringify({ service: String(service), account: String(account) }))

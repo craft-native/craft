@@ -1228,8 +1228,8 @@ test "fire-and-forget messages carry an id too" {
     _ = try fx.ctx.evaluate(WEBVIEW_HOST);
     _ = try fx.ctx.evaluate(BRIDGE);
 
-    _ = try fx.ctx.evaluate("window.craft.keychain.set('svc', 'acct', 'pw');");
-    try testing.expectEqualStrings("keychain", try fx.text("posted[0].t"));
+    _ = try fx.ctx.evaluate("window.craft.permissions.openSettings('camera');");
+    try testing.expectEqualStrings("permissions", try fx.text("posted[0].t"));
     try testing.expectEqualStrings("true", try fx.text("String(typeof posted[0].i === 'number' && posted[0].i > 0)"));
 }
 
