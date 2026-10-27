@@ -222,7 +222,7 @@ internal class CraftNativeCapabilities(
                 "pickVideo" -> pickVideo(requestToken, args, completion)
                 "pickFile" -> pickFile(requestToken, args, completion)
                 "download", "write", "remove" -> networkExecutor.execute {
-                    complete(requestToken, files(requestToken, method, args), completion)
+                    completeFile(requestToken, files(requestToken, method, args), completion)
                 }
                 else -> complete(requestToken, failure("UNKNOWN_ACTION", "Unsupported Files method"), completion)
             }
@@ -492,6 +492,7 @@ internal class CraftNativeCapabilities(
 
     private fun pickVideo(requestToken: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {
         mainHandler.post {
+            if (fileRequestCancelled(requestToken)) return@post
             val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
@@ -518,7 +519,7 @@ internal class CraftNativeCapabilities(
     private fun copyVideo(requestToken: String, uri: Uri, limit: Long): CraftNativeCapabilityResult {
         var target: File? = null
         return try {
-            if (cancelled.contains(requestToken)) throw IllegalStateException("CANCELLED: Video selection was cancelled")
+            if (fileRequestCancelled(requestToken)) throw IllegalStateException("CANCELLED: Video selection was cancelled")
             val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
             } ?: "video.mp4"
@@ -535,7 +536,7 @@ internal class CraftNativeCapabilities(
                     while (true) {
                         val count = source.read(buffer)
                         if (count < 0) break
-                        if (cancelled.contains(requestToken)) throw IllegalStateException("CANCELLED: Video selection was cancelled")
+                        if (fileRequestCancelled(requestToken)) throw IllegalStateException("CANCELLED: Video selection was cancelled")
                         size += count
                         require(size <= limit) { "Choose a video under ${limit / 1024 / 1024}MB." }
                         output.write(buffer, 0, count)
@@ -558,6 +559,7 @@ internal class CraftNativeCapabilities(
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
         mainHandler.post {
+            if (fileRequestCancelled(requestToken)) return@post
             val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
@@ -594,6 +596,7 @@ internal class CraftNativeCapabilities(
 
     private fun pickFile(requestToken: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {
         mainHandler.post {
+            if (fileRequestCancelled(requestToken)) return@post
             val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
@@ -674,7 +677,7 @@ internal class CraftNativeCapabilities(
             networkExecutor.execute {
                 val result = data?.data?.let { copyVideo(pending.requestToken, it, pending.videoLimit) }
                     ?: failure("PICKER_FAILED", "The selected video could not be read")
-                complete(pending.requestToken, result, pending.completion)
+                completeFile(pending.requestToken, result, pending.completion)
             }
             return true
         }
@@ -687,30 +690,28 @@ internal class CraftNativeCapabilities(
                     data?.data?.let { add(it) }
                 }.distinct().take(pending.selectionLimit)
                 val result = copyDocuments(pending.requestToken, uris, pending.fileLimit)
-                complete(pending.requestToken, result, pending.completion)
+                completeFile(pending.requestToken, result, pending.completion)
             }
             return true
         }
         networkExecutor.execute {
-            val descriptor = if (pending.source == "camera") {
-                val bitmap = data?.extras?.get("data") as? Bitmap
-                bitmap?.let { writeImage(it, pending.maxPixels, pending.quality, "photo.jpg", pending.requestToken) }
-            } else {
-                val uri = data?.data
-                uri?.let { copyUri(pending.requestToken, it, pending.maxPixels, pending.quality) }
-            }
-            complete(
-                pending.requestToken,
-                descriptor?.let(::success) ?: if (cancelled.contains(pending.requestToken)) failure("CANCELLED", "Image selection was cancelled")
-                else failure("PICKER_FAILED", "The selected image could not be read"),
-                pending.completion,
-            )
+            val result = runCatching {
+                val descriptor = if (pending.source == "camera") {
+                    val bitmap = data?.extras?.get("data") as? Bitmap
+                    bitmap?.let { writeImage(it, pending.maxPixels, pending.quality, "photo.jpg", pending.requestToken) }
+                } else {
+                    data?.data?.let { copyUri(pending.requestToken, it, pending.maxPixels, pending.quality) }
+                }
+                descriptor?.let(::success) ?: if (fileRequestCancelled(pending.requestToken)) failure("CANCELLED", "Image selection was cancelled")
+                else failure("PICKER_FAILED", "The selected image could not be read")
+            }.getOrElse { failure("READ_ERROR", it.message ?: "The selected image could not be read") }
+            completeFile(pending.requestToken, result, pending.completion)
         }
         return true
     }
 
     private fun copyUri(requestToken: String, uri: Uri, maxPixels: Int, quality: Float): JSONObject? {
-        if (cancelled.contains(requestToken)) return null
+        if (fileRequestCancelled(requestToken)) return null
         val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
             if (it.moveToFirst()) it.getString(0) else null
         } ?: "photo"
@@ -729,7 +730,7 @@ internal class CraftNativeCapabilities(
         val copied = JSONArray()
         return try {
             uris.forEach { copied.put(copyDocument(requestToken, it, limit)) }
-            if (cancelled.contains(requestToken)) throw IllegalStateException("CANCELLED: File selection was cancelled")
+            if (fileRequestCancelled(requestToken)) throw IllegalStateException("CANCELLED: File selection was cancelled")
             success(copied)
         } catch (error: Exception) {
             for (index in 0 until copied.length()) {
@@ -745,6 +746,7 @@ internal class CraftNativeCapabilities(
     private fun copyDocument(requestToken: String, uri: Uri, limit: Long): JSONObject {
         var target: File? = null
         return try {
+            if (fileRequestCancelled(requestToken)) throw IllegalStateException("CANCELLED: File selection was cancelled")
             val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) it.getString(0) else null
             } ?: "file"
@@ -759,7 +761,7 @@ internal class CraftNativeCapabilities(
                     while (true) {
                         val count = source.read(buffer)
                         if (count < 0) break
-                        if (cancelled.contains(requestToken)) throw IllegalStateException("CANCELLED: File selection was cancelled")
+                        if (fileRequestCancelled(requestToken)) throw IllegalStateException("CANCELLED: File selection was cancelled")
                         size += count
                         require(size <= limit) { "FILE_TOO_LARGE: Choose a file under ${limit / 1024 / 1024}MB." }
                         output.write(buffer, 0, count)
@@ -785,7 +787,7 @@ internal class CraftNativeCapabilities(
     }
 
     private fun writeImage(bitmap: Bitmap, maxPixels: Int, quality: Float, name: String, requestToken: String? = null): JSONObject? {
-        if (requestToken != null && cancelled.contains(requestToken)) {
+        if (requestToken != null && fileRequestCancelled(requestToken)) {
             bitmap.recycle()
             return null
         }
@@ -809,7 +811,7 @@ internal class CraftNativeCapabilities(
             file.parentFile?.deleteRecursively()
             return null
         }
-        if (requestToken != null && cancelled.contains(requestToken)) {
+        if (requestToken != null && fileRequestCancelled(requestToken)) {
             file.parentFile?.deleteRecursively()
             return null
         }
@@ -819,7 +821,7 @@ internal class CraftNativeCapabilities(
     private fun store(bytes: ByteArray, name: String, type: String): CraftNativeCapabilityResult {
         val file = File(fileRoot, UUID.randomUUID().toString()).apply { mkdirs() }.resolve(safeFileName(name))
         return runCatching { file.writeBytes(bytes); success(descriptor(file, type)) }
-            .getOrElse { failure("WRITE_ERROR", it.message ?: "File could not be written") }
+            .getOrElse { file.parentFile?.deleteRecursively(); failure("WRITE_ERROR", it.message ?: "File could not be written") }
     }
 
     private fun descriptor(file: File, type: String): JSONObject = JSONObject()
@@ -860,16 +862,36 @@ internal class CraftNativeCapabilities(
     private fun headerValue(value: String): String = value.replace("\r", "").replace("\n", "")
     private fun validURL(raw: String): URL? = runCatching { URL(raw) }.getOrNull()?.takeIf { it.protocol.lowercase() in setOf("http", "https") && it.host.isNotBlank() }
 
+    private fun fileRequestCancelled(requestToken: String): Boolean =
+        closed.get() || cancelled.contains(requestToken) || Thread.currentThread().isInterrupted
+
+    private fun discardFiles(result: CraftNativeCapabilityResult) {
+        if (result.code != null) return
+        val data = result.data
+        val files = if (data is JSONArray) (0 until data.length()).mapNotNull { data.optJSONObject(it) }
+            else listOfNotNull(data as? JSONObject)
+        files.forEach { file ->
+            ownedFile(file.optString("path"))?.parentFile?.deleteRecursively()
+        }
+    }
+
+    private fun completeFile(requestToken: String, result: CraftNativeCapabilityResult, completion: (CraftNativeCapabilityResult) -> Unit) {
+        complete(requestToken, result, completion, discard = { discardFiles(result) })
+    }
+
     private fun complete(
         requestToken: String,
         result: CraftNativeCapabilityResult,
         completion: (CraftNativeCapabilityResult) -> Unit,
+        discard: (() -> Unit)? = null,
     ) {
-        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
-            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
-        } else mainHandler.post {
-            if (!cancelled.remove(requestToken) && !closed.get()) completion(result)
+        val deliver: () -> Unit = {
+            if (cancelled.remove(requestToken) || closed.get()) discard?.invoke()
+            else completion(result)
         }
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            deliver()
+        } else mainHandler.post { deliver() }
     }
 
     private fun storage(method: String, args: JSONArray): CraftNativeCapabilityResult = synchronized(CraftNativeStorage.lock) {

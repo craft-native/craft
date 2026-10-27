@@ -610,6 +610,101 @@ class NativeCapabilitiesTest {
         }
     }
 
+    private fun importContext(): android.content.ContextWrapper {
+        val root = java.io.File(instrumentation.targetContext.cacheDir, "imports-${UUID.randomUUID()}").apply { mkdirs() }
+        return object : android.content.ContextWrapper(instrumentation.targetContext) {
+            override fun getCacheDir() = root
+        }
+    }
+
+    private fun copyDocuments(capabilities: CraftNativeCapabilities, token: String, paths: List<String>, limit: Long = 1024 * 1024): CraftNativeCapabilityResult =
+        CraftNativeCapabilities::class.java.getDeclaredMethod("copyDocuments", String::class.java, List::class.java, Long::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(capabilities, token, paths.map { android.net.Uri.parse("content://dev.craft.navigationtest.imports/$it") }, limit) as CraftNativeCapabilityResult
+
+    @Test
+    fun documentImportsCopyBytesAndRollBackDeniedOrOversizedSelections() {
+        val context = importContext()
+        val capabilities = CraftNativeCapabilities(context, JSONObject())
+        val root = java.io.File(context.cacheDir, "craft-files")
+        try {
+            for (attempt in 1..2) {
+                assertEquals("READ_ERROR", copyDocuments(capabilities, "denied-$attempt", listOf("ok", "denied")).code)
+                assertTrue("a denied selection must roll back earlier copies", root.listFiles().isNullOrEmpty())
+                assertEquals("FILE_TOO_LARGE", copyDocuments(capabilities, "oversize-$attempt", listOf("ok"), 1024).code)
+                assertTrue("oversized imports must remove staging directories", root.listFiles().isNullOrEmpty())
+            }
+            val result = copyDocuments(capabilities, "retry", listOf("ok"))
+            assertNull(result.message, result.code)
+            val descriptor = (result.data as JSONArray).getJSONObject(0)
+            val file = java.io.File(descriptor.getString("path"))
+            assertTrue(NativeImportProvider.bytes.contentEquals(file.readBytes()))
+            assertEquals("application/gpx+xml", descriptor.getString("type"))
+            assertNull(call(capabilities, "Files", "remove", JSONArray().put(file.path)).code)
+            assertFalse(file.exists())
+        } finally {
+            capabilities.close()
+            context.cacheDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cancelledAndClosedDocumentCopiesRemovePartialImports() {
+        for (close in listOf(false, true)) {
+            val context = importContext()
+            val capabilities = CraftNativeCapabilities(context, JSONObject())
+            NativeImportProvider.reset()
+            val done = CountDownLatch(1)
+            var result: CraftNativeCapabilityResult? = null
+            val worker = thread(name = "native-import-copy") {
+                try { result = copyDocuments(capabilities, "blocked", listOf("blocked")) }
+                finally { done.countDown() }
+            }
+            try {
+                assertTrue("provider never began copying", NativeImportProvider.started.await(5, TimeUnit.SECONDS))
+                if (close) capabilities.close() else capabilities.cancel("blocked")
+                NativeImportProvider.release.countDown()
+                assertTrue("copy did not settle", done.await(5, TimeUnit.SECONDS))
+                assertEquals("CANCELLED", result?.code)
+                assertTrue(java.io.File(context.cacheDir, "craft-files").listFiles().isNullOrEmpty())
+            } finally {
+                NativeImportProvider.release.countDown()
+                worker.join(5_000)
+                capabilities.close()
+                context.cacheDir.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
+    fun cancelledAndClosedFileRepliesDiscardUndeliveredOwnedFiles() {
+        for (close in listOf(false, true)) {
+            val context = importContext()
+            val capabilities = CraftNativeCapabilities(context, JSONObject())
+            val root = java.io.File(context.cacheDir, "craft-files")
+            val replies = java.util.concurrent.atomic.AtomicInteger()
+            try {
+                // Hold the delivery queue until the real worker has created its file.
+                instrumentation.runOnMainSync {
+                    capabilities.perform("late-file", 1, "Files", "write", JSONArray().put("late.txt").put("payload")) { replies.incrementAndGet() }
+                    val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+                    while (root.walkTopDown().none { it.isFile } && android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(10)
+                    assertTrue("write worker never created its file", root.walkTopDown().any { it.isFile })
+                    if (close) capabilities.close() else capabilities.cancel("late-file")
+                }
+                val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+                while (!root.listFiles().isNullOrEmpty() && android.os.SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.waitForIdleSync()
+                    android.os.SystemClock.sleep(10)
+                }
+                assertEquals("cancelled replies must not reach a disposed screen", 0, replies.get())
+                assertTrue("undelivered file and staging directory must be deleted", root.listFiles().isNullOrEmpty())
+            } finally {
+                capabilities.close()
+                context.cacheDir.deleteRecursively()
+            }
+        }
+    }
+
     @Test
     fun nativeFilesStayOwnedAndUploadAsMultipart() {
         val server = ServerSocket(0)
