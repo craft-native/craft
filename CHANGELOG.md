@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.372...v0.0.373)
+
+## 🧪 Tests
+
+- **ios**: enforce expanded tabs throughout native scrolling ([32d5d9b](https://github.com/craft-native/craft/commit/32d5d9b)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.371...v0.0.372)
 
 ## 🐛 Bug Fixes
