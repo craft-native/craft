@@ -194,6 +194,8 @@ fn forgetWebMaterial(window: objc.id) void {
 pub const WindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
+    /// Public layer clipping, independent of WebKit background transparency.
+    corner_radius: f64 = 0,
     always_on_top: bool = false,
     resizable: bool = true,
     closable: bool = true,
@@ -1302,6 +1304,10 @@ pub fn createWindowWithStyle(title: []const u8, width: u32, height: u32, html: ?
 
     // Watch for anything that moves the window buttons relative to the page.
     // Benchmark windows inject no Craft JavaScript, so there is nobody to tell.
+    if (style.corner_radius > 0) {
+        makeWindowTranslucent(window);
+        setWebContentCornerRadius(window, style.corner_radius);
+    }
     if (!style.benchmark) observeWindowChrome(window);
 
     // DON'T show window here - it will be shown in runApp() after system tray is created

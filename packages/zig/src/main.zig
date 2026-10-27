@@ -124,6 +124,7 @@ pub const ColorPicker = components.ColorPicker;
 pub const PortableWindowStyle = struct {
     frameless: bool = false,
     transparent: bool = false,
+    corner_radius: f64 = 0,
     always_on_top: bool = false,
     resizable: bool = true,
     closable: bool = true,

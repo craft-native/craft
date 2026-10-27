@@ -15,6 +15,7 @@ pub const WindowOptions = struct {
     y: ?i32 = null,
     frameless: bool = false,
     transparent: bool = false,
+    corner_radius: f64 = 0,
     always_on_top: bool = false,
     resizable: bool = true,
     fullscreen: bool = false,
@@ -191,6 +192,7 @@ const BundleConfig = struct {
     icon: ?[]const u8 = null,
     frameless: ?bool = null,
     transparent: ?bool = null,
+    cornerRadius: ?f64 = null,
     alwaysOnTop: ?bool = null,
     resizable: ?bool = null,
     fullscreen: ?bool = null,
@@ -299,6 +301,7 @@ fn applyScalarConfig(cfg: BundleConfig, options: *WindowOptions) void {
     if (cfg.height) |v| options.height = v;
     if (cfg.frameless) |v| options.frameless = v;
     if (cfg.transparent) |v| options.transparent = v;
+    if (cfg.cornerRadius) |v| options.corner_radius = if (std.math.isFinite(v)) std.math.clamp(v, 0, 128) else 0;
     if (cfg.alwaysOnTop) |v| options.always_on_top = v;
     if (cfg.resizable) |v| options.resizable = v;
     if (cfg.fullscreen) |v| options.fullscreen = v;
@@ -545,6 +548,12 @@ pub fn parseArgs(allocator: std.mem.Allocator, args: []const [:0]const u8) !Wind
             options.y = std.fmt.parseInt(i32, args[i], 10) catch return CliError.InvalidNumber;
         } else if (std.mem.eql(u8, arg, "--frameless")) {
             options.frameless = true;
+        } else if (std.mem.eql(u8, arg, "--corner-radius")) {
+            i += 1;
+            if (i >= args.len) return CliError.MissingValue;
+            const radius = std.fmt.parseFloat(f64, args[i]) catch return CliError.InvalidNumber;
+            if (!std.math.isFinite(radius) or radius < 0 or radius > 128) return CliError.InvalidNumber;
+            options.corner_radius = radius;
         } else if (std.mem.eql(u8, arg, "--transparent")) {
             options.transparent = true;
         } else if (std.mem.eql(u8, arg, "--always-on-top")) {
@@ -969,4 +978,13 @@ test "a manifest can ask for a log file" {
     var options = WindowOptions{};
     applyScalarConfig(parsed.value, &options);
     try std.testing.expect(options.log_json);
+}
+
+test "bundle corner radius is independent of private WebKit transparency" {
+    const parsed = try std.json.parseFromSlice(BundleConfig, std.testing.allocator, "{\"cornerRadius\":12,\"transparent\":false,\"frameless\":true}", .{});
+    defer parsed.deinit();
+    var options = WindowOptions{};
+    applyScalarConfig(parsed.value, &options);
+    try std.testing.expectEqual(@as(f64, 12), options.corner_radius);
+    try std.testing.expect(!options.transparent and options.frameless);
 }

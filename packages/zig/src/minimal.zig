@@ -238,6 +238,7 @@ pub fn main(init: std.process.Init) !void {
             .{
                 .frameless = options.frameless,
                 .transparent = options.transparent,
+                .corner_radius = options.corner_radius,
                 .always_on_top = options.always_on_top,
                 .resizable = options.resizable,
                 .fullscreen = options.fullscreen,
@@ -277,6 +278,7 @@ pub fn main(init: std.process.Init) !void {
             .{
                 .frameless = options.frameless,
                 .transparent = options.transparent,
+                .corner_radius = options.corner_radius,
                 .always_on_top = options.always_on_top,
                 .resizable = options.resizable,
                 .fullscreen = options.fullscreen,
@@ -556,6 +558,7 @@ fn windowStyle(options: cli.WindowOptions, dev_tools: bool) craft.WindowStyle {
     return .{
         .frameless = options.frameless,
         .transparent = options.transparent,
+        .corner_radius = options.corner_radius,
         .always_on_top = options.always_on_top,
         .resizable = options.resizable,
         .fullscreen = options.fullscreen,
