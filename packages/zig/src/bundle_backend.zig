@@ -3,6 +3,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const io_context = @import("io_context.zig");
+const backend_lifecycle = @import("backend_lifecycle.zig");
 
 const PollFd = extern struct { fd: c_int, events: i16, revents: i16 };
 extern "c" fn poll(fds: [*]PollFd, count: c_uint, timeout_ms: c_int) c_int;
@@ -71,6 +72,9 @@ pub const Host = struct {
     pub fn stop(self: *Host) void {
         const io = io_context.get();
         self.input.close(io);
+        // EOF lets the backend flush local state. Bound the grace period so a
+        // broken helper cannot keep the application alive indefinitely.
+        _ = backend_lifecycle.waitForExit(&self.process, io, .fromSeconds(3));
         self.process.kill(io);
         if (self.drainer) |thread| thread.join();
         self.output.close(io);

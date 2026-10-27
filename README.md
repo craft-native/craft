@@ -1006,3 +1006,11 @@ runtime when packaging a prebuilt Craft bundle for the App Store. The SDK
 replaces its main executable with the matching store companion before signing;
 it refuses a missing companion or private platform APIs. All variants are built
 from the tagged source, signed and verified by the release pipeline.
+
+### Bundled backend shutdown
+
+When an application quits, Craft closes the backend's managed lifetime pipe and
+allows up to three seconds for it to exit before forcing termination. STX backend
+entries can export an asynchronous `shutdown()` hook to flush local state within
+their two second deadline. A crashed native host also closes the pipe, so the
+backend cannot continue accumulating app uptime after its parent exits.
