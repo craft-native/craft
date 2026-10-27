@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.365...v0.0.366)
+
+## 🐛 Bug Fixes
+
+- **keychain**: run credential operations off the main thread ([3395ead](https://github.com/craft-native/craft/commit/3395ead)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.364...v0.0.365)
 
 ## 🐛 Bug Fixes
