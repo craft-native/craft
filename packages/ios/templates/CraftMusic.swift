@@ -1,3 +1,4 @@
+#if CRAFT_APPLE_MUSIC
 import AVFoundation
 import Foundation
 import MediaPlayer
@@ -422,3 +423,25 @@ final class CraftFakeMusicPlayer: CraftMusicPlayer {
         DispatchQueue.main.async { self.onChange?() }
     }
 }
+#else
+import Foundation
+
+// Keep the bridge callable without linking the permission-dependent player.
+// Runtime config changes cannot turn an API back on after it was compiled out.
+struct CraftMusicError: Error {
+    let message: String
+    var code: String = "CAPABILITY_DISABLED"
+}
+
+final class CraftMusic {
+    typealias Listener = ([String: Any]) -> Void
+    static let shared = CraftMusic()
+    var authorization: String { "unsupported" }
+    func requestAuthorization(completion: @escaping (String) -> Void) { completion("unsupported") }
+    func snapshot() -> [String: Any] { ["available": false, "authorization": "unsupported"] }
+    func observe(_ listener: Listener?) {}
+    func control(_ command: String, restartAfter: Double?, completion: @escaping (Result<[String: Any], CraftMusicError>) -> Void) {
+        completion(.failure(CraftMusicError(message: "Apple Music was not enabled when this app was built")))
+    }
+}
+#endif

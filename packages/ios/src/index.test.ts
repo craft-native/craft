@@ -748,8 +748,9 @@ describe('Craft iOS builder', () => {
 
   it('explains Apple Music access, in the app\'s own words when it gives them', () => {
     const config = { appName: 'HQ.training', bundleId: 'training.hq.app' }
-    // The shell links MediaPlayer, so the key is always there (ITMS-90683).
-    expect(renderUsageDescriptions(config)).toContain('<key>NSAppleMusicUsageDescription</key>\n    <string>HQ.training asks for your music only in a feature that needs it.</string>')
+    // The media-library implementation is compiled out when disabled (#424).
+    expect(renderUsageDescriptions(config)).not.toContain('NSAppleMusicUsageDescription')
+    expect(renderUsageDescriptions({ ...config, enableAppleMusic: false, usageDescriptions: { NSAppleMusicUsageDescription: '  ' } })).not.toContain('NSAppleMusicUsageDescription')
     expect(renderUsageDescriptions({ ...config, enableAppleMusic: true })).toContain('<string>HQ.training shows and controls the music playing in the Music app.</string>')
     const own = renderUsageDescriptions({
       ...config,
@@ -759,6 +760,27 @@ describe('Craft iOS builder', () => {
     expect(own).toContain('<key>NSAppleMusicUsageDescription</key>\n    <string>Shows the song you&apos;re training to &amp; lets you skip it.</string>')
     // A blank override is no override.
     expect(own).toContain('<string>HQ.training asks for the camera only in a feature that needs it.</string>')
+  })
+
+  it('pairs the Music purpose string with its compiled implementation, including explicit overrides', async () => {
+    for (const enabled of [false, true]) {
+      const output = createTempDir('craft-ios-music-permission-')
+      await init({ runtimeDir: null, name: 'MusicGate', output, config: { enableAppleMusic: enabled } })
+      const settings = readFileSync(join(output, 'project.yml'), 'utf8')
+      const plist = readFileSync(join(output, 'Info.plist'), 'utf8')
+      expect(settings.includes('CRAFT_APPLE_MUSIC')).toBe(enabled)
+      expect(plist.includes('NSAppleMusicUsageDescription')).toBe(enabled)
+      const source = readFileSync(join(output, 'Sources', 'CraftMusic.swift'), 'utf8')
+      expect(source.startsWith('#if CRAFT_APPLE_MUSIC\n')).toBe(true)
+      restoreShell(output)
+      expect(readFileSync(join(output, 'Sources', 'CraftMusic.swift'), 'utf8')).toBe(source)
+    }
+    const config = { appName: 'MusicGate', bundleId: 'dev.craft.musicgate', enableAppleMusic: false,
+      usageDescriptions: { NSAppleMusicUsageDescription: '  A custom player reads my library.  ' } }
+    expect(renderUsageDescriptions(config)).toContain('<string>A custom player reads my library.</string>')
+    // A purpose string is metadata, not permission to compile a feature in.
+    expect(renderFeatureSettings(config)).not.toContain('CRAFT_APPLE_MUSIC')
+    expect(renderFeatureSettings({ enableScheduledWorkouts: true, enableAppleMusic: true })).toContain('CRAFT_SCHEDULED_WORKOUTS CRAFT_APPLE_MUSIC')
   })
 
   it('declares the app-bound domains a service worker needs, with the dev server among them', () => {

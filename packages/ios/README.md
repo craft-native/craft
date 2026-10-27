@@ -384,8 +384,13 @@ the screen locked; a sleep timer then fades it out on the audio clock. Turn it
 on only for an app that plays sound people listen to: App Review checks.
 
 Purpose strings in your own words, by Info.plist key (each replaces Craft's
-generic sentence; the keys for frameworks the shell links are always written,
-since App Store Connect checks the binary):
+generic sentence). Apple Music's implementation and purpose string are included
+only with `enableAppleMusic: true`; a nonblank custom purpose string is still
+honored even when that feature is disabled. A custom string does not enable the
+implementation. Regenerate the Xcode project after changing build-time feature
+flags. Other linked permission APIs still retain their compatibility strings
+until their implementations are compile-time gated too (tracked in #424), since
+App Store Connect checks the binary:
 
 ```json
 {

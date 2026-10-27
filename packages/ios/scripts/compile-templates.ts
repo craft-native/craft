@@ -15,6 +15,7 @@ interface CompileFixture {
 }
 
 const capabilityConfig: Partial<CraftConfig> = {
+  enableAppleMusic: true,
   enableAR: true,
   enableAudioRecording: true,
   enableBackgroundLocation: true,
@@ -232,19 +233,31 @@ async function installEmbeddedWatchApp(output: string, projectName: string, bund
   console.log(`ok: ${projectName}.app installed with its Watch companion`)
 }
 
-function buildTarget(output: string, projectName: string, targetName: string, sdk: string): void {
+function buildTarget(output: string, projectName: string, targetName: string, sdk: string, configuration = 'Debug'): void {
   run([
     'xcodebuild',
     '-quiet',
     '-project', `${projectName}.xcodeproj`,
     '-target', targetName,
-    '-configuration', 'Debug',
+    '-configuration', configuration,
     '-sdk', sdk,
     'CODE_SIGNING_ALLOWED=NO',
     'build',
   ], output, `Compiling ${targetName} against ${sdk}`)
 }
 
+// Check the linked executable, not just a #if in source or a plist snapshot.
+// Both Debug and the shipped Release configuration must exclude the APIs.
+function checkMusicPermissionBinary(output: string, name: string, enabled: boolean, configuration: string): void {
+  const binary = join(output, 'build', `${configuration}-iphoneos`, `${name}.app`, name)
+  const symbols = Bun.spawnSync(['xcrun', 'nm', '-u', binary], { stdout: 'pipe', stderr: 'pipe' })
+  if (symbols.exitCode !== 0) throw new Error(`Unable to inspect ${binary}: ${symbols.stderr.toString()}`)
+  for (const api of ['MPMediaLibrary', 'MPMusicPlayerController']) {
+    const linked = symbols.stdout.toString().includes(`_OBJC_CLASS_$_${api}`)
+    if (linked !== enabled) throw new Error(`${configuration} ${name}: ${api} linked=${linked}, expected ${enabled}`)
+  }
+  console.log(`ok: ${configuration} ${name} music APIs ${enabled ? 'included' : 'excluded'}`)
+}
 
 try {
   // Compile the separate test host too: the application template builds cannot
@@ -300,6 +313,12 @@ try {
     // simulator by installEmbeddedWatchApp instead.
     if (!fixture.config?.enableWatchApp)
       buildTarget(output, fixture.name, fixture.name, 'iphoneos')
+
+    if (fixture.name === 'MinimalProbe' || fixture.name === 'CapabilityProbe') {
+      checkMusicPermissionBinary(output, fixture.name, !!fixture.config?.enableAppleMusic, 'Debug')
+      buildTarget(output, fixture.name, fixture.name, 'iphoneos', 'Release')
+      checkMusicPermissionBinary(output, fixture.name, !!fixture.config?.enableAppleMusic, 'Release')
+    }
 
     if (fixture.config?.enableLiveActivities)
       buildTarget(output, fixture.name, `${fixture.name}LiveActivity`, 'iphoneos')

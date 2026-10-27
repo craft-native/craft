@@ -819,7 +819,7 @@ export function renderAppearance(config: Pick<CraftConfig, 'appearance' | 'darkM
 /**
  * Purpose strings the shell needs whatever the app turns on. CraftApp.swift is
  * one binary that links Speech, AVFoundation, Photos, CoreLocation, Contacts,
- * EventKit, CoreMotion, CoreBluetooth, LocalAuthentication and MediaPlayer, and App Store
+ * EventKit, CoreMotion, CoreBluetooth and LocalAuthentication, and App Store
  * Connect checks the binary, not the config: a build without these keys is
  * refused with ITMS-90683 ("Missing purpose string in Info.plist"). A feature
  * that is off never asks, so the string is never shown; it only has to exist.
@@ -835,7 +835,6 @@ const LINKED_PURPOSES: Record<string, string> = {
   NSBluetoothAlwaysUsageDescription: 'Bluetooth',
   NSMotionUsageDescription: 'motion data',
   NSFaceIDUsageDescription: 'Face ID',
-  NSAppleMusicUsageDescription: 'your music',
 }
 
 export function renderUsageDescriptions(config: CraftConfig): string {
@@ -1029,9 +1028,10 @@ export function renderRuntimeSettings(): string {
  * behind the `CRAFT_SCHEDULED_WORKOUTS` condition, so an app that does not
  * schedule workouts does not link it. `$(inherited)` keeps Debug's `DEBUG`.
  */
-export function renderFeatureSettings(config: Pick<CraftConfig, 'enableScheduledWorkouts'>): string {
+export function renderFeatureSettings(config: Pick<CraftConfig, 'enableScheduledWorkouts' | 'enableAppleMusic'>): string {
   const conditions: string[] = []
   if (config.enableScheduledWorkouts) conditions.push('CRAFT_SCHEDULED_WORKOUTS')
+  if (config.enableAppleMusic) conditions.push('CRAFT_APPLE_MUSIC')
   if (!conditions.length) return ''
   return `      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ${conditions.join(' ')}"`
 }
