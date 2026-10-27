@@ -2146,6 +2146,15 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_step = b.step("test", "Run all unit tests");
+    const backend_lifecycle_tests = b.addTest(.{ .root_module = b.createModule(.{
+        .root_source_file = b.path("src/backend_lifecycle.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    }) });
+    const run_backend_lifecycle_tests = b.addRunArtifact(backend_lifecycle_tests);
+    test_step.dependOn(&run_backend_lifecycle_tests.step);
+    b.step("test:backend-lifecycle", "Verify graceful backend exit and forced termination bounds").dependOn(&run_backend_lifecycle_tests.step);
     // main.zig's public import alone does not make Zig discover these tests.
     // Exercise the same backend as the shipped CLI, including disabled builds.
     const runtime_tests = b.addTest(.{
