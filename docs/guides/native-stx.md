@@ -209,6 +209,15 @@ generated renderers, so a platform can’t silently lose a native primitive.
 `thumbColor`; iOS also honors `ios_backgroundColor` for the off-state track.
 Use `value` for the controlled state. `checked` is a compatibility alias when
 `value` is null, and `value` takes precedence when both are provided.
+On iOS, opt in with `<Switch :ios_solid="true" :value="enabled" @value-change="changed($event)" />`
+to use a solid native `UIControl` instead of UIKit's translucent switch animation.
+The thumb stays opaque during taps and drags; taps settle immediately without
+animation. Colors, disabled state, accessibility activation, keyboard activation,
+RTL layout, and controlled/uncontrolled values remain supported. `thumbColor`
+keeps its RGB color but its alpha is forced to 1. The default is still `UISwitch`;
+Android ignores this iOS-only option. Choose the style when mounting: changing
+`ios_solid` replaces the native control, so supply `value` when changing styles
+to retain state. Ordinary value/color mutations retain the same control.
 `Slider` accepts `minimumTrackTintColor`, `maximumTrackTintColor`, and
 `thumbTintColor` on both hosts, with `step` snapping values before events are
 delivered.

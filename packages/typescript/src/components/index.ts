@@ -913,6 +913,8 @@ export interface SwitchProps extends BaseProps {
   trackColor?: { false?: string; true?: string }
   thumbColor?: string
   ios_backgroundColor?: string
+  /** iOS-only solid UIControl switch: opaque thumb and immediate transitions. Defaults to native UISwitch. */
+  ios_solid?: boolean
 }
 
 export interface CheckboxProps extends BaseProps {

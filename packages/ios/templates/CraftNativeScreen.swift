@@ -5316,6 +5316,115 @@ private final class CraftNativeButton: UIButton {
     }
 }
 
+/// Opt-in solid switch. Draws only public UIControl content; it neither walks
+/// UISwitch's private views nor changes UIKit animations elsewhere in the app.
+final class CraftNativeSolidSwitch: UIControl {
+    private(set) var isOn = false
+    var onColor: UIColor? { didSet { setNeedsDisplay() } }
+    var offColor: UIColor? { didSet { setNeedsDisplay() } }
+    var thumbColor: UIColor? { didSet { setNeedsDisplay() } }
+    private let naturalSize = UISwitch().intrinsicContentSize
+    private var touchOrigin: CGPoint?
+    private var dragPosition: CGFloat?
+    override var intrinsicContentSize: CGSize { naturalSize }
+    override var isEnabled: Bool {
+        didSet {
+            if !isEnabled { cancelTracking(with: nil) }
+            refreshAccessibility()
+            setNeedsDisplay()
+        }
+    }
+    override var canBecomeFirstResponder: Bool { isEnabled }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isOpaque = false
+        contentMode = .redraw
+        isAccessibilityElement = true
+        refreshAccessibility()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setOn(_ value: Bool) {
+        isOn = value
+        refreshAccessibility()
+        setNeedsDisplay()
+    }
+
+    func refreshAccessibility() {
+        accessibilityTraits = .button
+        if #available(iOS 17.0, *) { accessibilityTraits.insert(.toggleButton) }
+        if isOn { accessibilityTraits.insert(.selected) }
+        if !isEnabled { accessibilityTraits.insert(.notEnabled) }
+        accessibilityValue = isOn ? "1" : "0"
+    }
+
+    private var trackRect: CGRect {
+        let size = CGSize(width: min(bounds.width, naturalSize.width), height: min(bounds.height, naturalSize.height))
+        return CGRect(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2, width: size.width, height: size.height)
+    }
+    var thumbRect: CGRect {
+        let track = trackRect.insetBy(dx: 2, dy: 2)
+        let onRight = effectiveUserInterfaceLayoutDirection != .rightToLeft
+        let position = dragPosition ?? ((isOn == onRight) ? 1 : 0)
+        return CGRect(x: track.minX + (track.width - track.height) * position, y: track.minY, width: track.height, height: track.height)
+    }
+    override func draw(_ rect: CGRect) {
+        let track = trackRect
+        guard track.width > 4, track.height > 4 else { return }
+        (isEnabled ? (isOn ? onColor ?? .systemGreen : offColor ?? .systemGray4) : UIColor.systemGray4).setFill()
+        UIBezierPath(roundedRect: track, cornerRadius: track.height / 2).fill()
+        // The solid variant deliberately ignores thumb alpha. No transient
+        // glass, scaling, fade, implicit layer animation or delayed redraw.
+        (thumbColor ?? .white).withAlphaComponent(1).setFill()
+        UIBezierPath(ovalIn: thumbRect).fill()
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        setNeedsDisplay()
+    }
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        guard isEnabled else { return false }
+        touchOrigin = touch.location(in: self)
+        dragPosition = nil
+        return true
+    }
+    func updateDrag(to point: CGPoint) {
+        let track = trackRect.insetBy(dx: 2, dy: 2)
+        dragPosition = min(1, max(0, (point.x - track.minX - track.height / 2) / max(1, track.width - track.height)))
+        setNeedsDisplay()
+    }
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        guard isEnabled, let origin = touchOrigin else { return false }
+        let point = touch.location(in: self)
+        if dragPosition != nil || abs(point.x - origin.x) > 6 { updateDrag(to: point) }
+        return true
+    }
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        defer { touchOrigin = nil; dragPosition = nil; setNeedsDisplay() }
+        guard isEnabled, let touch, touchOrigin != nil,
+              bounds.insetBy(dx: -10, dy: -10).contains(touch.location(in: self)) else { return }
+        let next = dragPosition.map { ($0 >= 0.5) == (effectiveUserInterfaceLayoutDirection != .rightToLeft) } ?? !isOn
+        if next != isOn { setOn(next); sendActions(for: .valueChanged) }
+    }
+    override func cancelTracking(with event: UIEvent?) {
+        touchOrigin = nil
+        dragPosition = nil
+        setNeedsDisplay()
+    }
+    override func accessibilityActivate() -> Bool {
+        guard isEnabled else { return false }
+        setOn(!isOn)
+        sendActions(for: .valueChanged)
+        return true
+    }
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        if isEnabled, presses.contains(where: { $0.key?.keyCode == .keyboardSpacebar || $0.key?.keyCode == .keyboardReturnOrEnter }) {
+            _ = accessibilityActivate()
+        } else { super.pressesEnded(presses, with: event) }
+    }
+}
+
 /// A native checkbox button. UIKit has no checkbox control, so use the system
 /// square/checkmark symbols while keeping the control's title and accessibility
 /// state native and keyboard/touch reachable.
@@ -8263,6 +8372,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func canReuseView(_ node: [String: Any], previous: RenderedNode) -> Bool {
         let type = canonicalType(node["type"] as? String ?? "View")
         guard previous.type == type else { return false }
+        if type == "Switch" {
+            let props = node["props"] as? [String: Any] ?? [:]
+            return (previous.view is CraftNativeSolidSwitch) == (props["ios_solid"] as? Bool == true)
+        }
         if type == "Text" {
             let props = node["props"] as? [String: Any] ?? [:]
             return (previous.view is CraftNativeSelectableTextView) == (props["selectable"] as? Bool == true)
@@ -8614,6 +8727,16 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             pressable.pressBaseOpacity = number(style["opacity"]) ?? 1
             pressable.pressUnderlayColor = type == "TouchableHighlight" && !disabled ? color(props["underlayColor"]) : nil
         case "Switch":
+            if let toggle = result as? CraftNativeSolidSwitch {
+                if let value = props["value"] as? Bool ?? props["checked"] as? Bool { toggle.setOn(value) }
+                toggle.isEnabled = props["disabled"] as? Bool != true
+                let track = props["trackColor"] as? [String: Any]
+                toggle.onColor = track == nil ? color(style["color"]) : color(track?["true"])
+                toggle.offColor = color(props["ios_backgroundColor"]) ?? color(track?["false"])
+                toggle.thumbColor = color(props["thumbColor"])
+                updateHandler(nonEmptyHandler(events["onValueChange"]) ?? nonEmptyHandler(events["onChange"]), for: toggle)
+                break
+            }
             let toggle = result as! UISwitch
             // A supplied value controls the switch; without one, UIKit owns
             // the state and a reconciliation must not erase a user's tap.
@@ -8928,6 +9051,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         case "Modal":
             return CraftNativeModalView()
         case "Switch":
+            if props["ios_solid"] as? Bool == true {
+                let toggle = CraftNativeSolidSwitch()
+                toggle.addTarget(self, action: #selector(solidSwitchChanged(_:)), for: .valueChanged)
+                return toggle
+            }
             let toggle = UISwitch()
             toggle.addTarget(self, action: #selector(switchChanged(_:)), for: .valueChanged)
             return toggle
@@ -10470,6 +10598,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         // Assigning .button changes its legacy AX type into a button while
         // modern XCTest still identifies its UIKit class as a switch.
         if view is UITextView || view is UISwitch { return }
+        if let toggle = view as? CraftNativeSolidSwitch { toggle.refreshAccessibility(); return }
         view.accessibilityTraits = traits
     }
 
@@ -10645,6 +10774,11 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
               let handler = handlers[ObjectIdentifier(sender)] else { return }
         sender.refreshAccessibilityState()
         send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.values[index], "index": index]])
+    }
+
+    @objc private func solidSwitchChanged(_ sender: CraftNativeSolidSwitch) {
+        guard sender.isEnabled, let handler = handlers[ObjectIdentifier(sender)] else { return }
+        send(type: "EVENT", payload: ["handlerName": handler, "nativeEvent": ["value": sender.isOn]])
     }
 
     @objc private func switchChanged(_ sender: UISwitch) {

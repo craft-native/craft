@@ -6,6 +6,107 @@ import XCTest
 @testable import NativeRender
 
 @MainActor
+final class NativeSolidSwitchUnitTests: XCTestCase {
+    private func control(_ view: UIView) -> UIControl? {
+        if let value = view as? UIControl { return value }
+        return view.subviews.compactMap { control($0) }.first
+    }
+
+    func testOptInIsStrictAndStyleChangesPreserveControlledValue() throws {
+        let host = CraftNativeScreenController(config: CraftConfig())
+        host.loadViewIfNeeded()
+        for flag: Any in [false, "true", NSNull()] {
+            host.render(["id": "toggle", "type": "Switch", "props": ["ios_solid": flag, "value": true]])
+            XCTAssertTrue(try XCTUnwrap(control(host.view)) is UISwitch)
+        }
+        host.render(["id": "toggle", "type": "Switch", "props": ["ios_solid": true, "value": true]])
+        let solid = try XCTUnwrap(control(host.view) as? CraftNativeSolidSwitch)
+        XCTAssertTrue(solid.isOn)
+        _ = try host.applyMutation([
+            "version": 1, "batchId": "style", "baseRevision": 0, "revision": 1,
+            "operations": [["op": "updateNode", "id": "toggle", "patch": ["props": ["ios_solid": false]]]],
+        ])
+        let native = try XCTUnwrap(control(host.view) as? UISwitch)
+        XCTAssertTrue(native.isOn)
+        XCTAssertNil(native.thumbTintColor)
+    }
+
+    func testMutationsRetainSolidControlAndAccessibilityHonorsDisabledState() throws {
+        let host = CraftNativeScreenController(config: CraftConfig())
+        host.loadViewIfNeeded()
+        host.render(["id": "toggle", "type": "Switch", "props": ["ios_solid": true, "accessibilityLabel": "Consent"]])
+        let solid = try XCTUnwrap(control(host.view) as? CraftNativeSolidSwitch)
+        XCTAssertTrue(solid.accessibilityActivate())
+        XCTAssertTrue(solid.isOn)
+        XCTAssertEqual(solid.accessibilityValue, "1")
+        var revision = 0
+        func update(_ props: [String: Any]) throws {
+            revision += 1
+            _ = try host.applyMutation([
+                "version": 1, "batchId": "update-\(revision)", "baseRevision": revision - 1, "revision": revision,
+                "operations": [["op": "updateNode", "id": "toggle", "patch": ["props": props]]],
+            ])
+            XCTAssertTrue(control(host.view) === solid)
+        }
+        try update(["thumbColor": "#ffff00"])
+        XCTAssertTrue(solid.isOn, "an uncontrolled reconciliation reset the tap")
+        XCTAssertEqual(solid.thumbColor, .yellow)
+        try update(["value": false, "checked": true, "disabled": true])
+        XCTAssertFalse(solid.isOn, "value must precede checked")
+        XCTAssertFalse(solid.accessibilityActivate())
+        XCTAssertTrue(solid.accessibilityTraits.contains(.notEnabled))
+        try update(["value": NSNull(), "checked": true, "disabled": false, "thumbColor": NSNull()])
+        XCTAssertTrue(solid.isOn)
+        XCTAssertNil(solid.thumbColor)
+        XCTAssertTrue(solid.accessibilityTraits.contains(.selected))
+        XCTAssertEqual(solid.accessibilityLabel, "Consent")
+    }
+
+    func testThumbIsOpaqueThroughoutDragAndCancellingRestoresStateInBothDirections() throws {
+        let solid = CraftNativeSolidSwitch()
+        solid.frame = CGRect(origin: .zero, size: solid.intrinsicContentSize)
+        solid.thumbColor = UIColor.white.withAlphaComponent(0.1)
+        for direction: UISemanticContentAttribute in [.forceLeftToRight, .forceRightToLeft] {
+            solid.semanticContentAttribute = direction
+            for style: UIUserInterfaceStyle in [.light, .dark] {
+                solid.overrideUserInterfaceStyle = style
+                solid.setOn(false)
+                let off = solid.thumbRect
+                solid.setOn(true)
+                let on = solid.thumbRect
+                XCTAssertEqual(on.minX > off.minX, direction == .forceLeftToRight)
+                for step in 0...10 {
+                    solid.updateDrag(to: CGPoint(x: solid.bounds.width * CGFloat(step) / 10, y: solid.bounds.midY))
+                    solid.layer.displayIfNeeded()
+                    let image = UIGraphicsImageRenderer(size: solid.bounds.size).image { context in
+                        solid.layer.render(in: context.cgContext)
+                    }
+                    let cg = try XCTUnwrap(image.cgImage)
+                    var pixel = [UInt8](repeating: 0, count: 4)
+                    try pixel.withUnsafeMutableBytes { bytes in
+                        let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                            bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                        let x = solid.thumbRect.midX * image.scale
+                        let y = solid.thumbRect.midY * image.scale
+                        context.draw(cg, in: CGRect(x: -x, y: -y, width: CGFloat(cg.width), height: CGFloat(cg.height)))
+                    }
+                    XCTAssertEqual(pixel, [255, 255, 255, 255], "thumb disappeared at drag step \(step)")
+                    XCTAssertTrue(solid.layer.animationKeys()?.isEmpty ?? true)
+                }
+                solid.cancelTracking(with: nil)
+                XCTAssertTrue(solid.isOn)
+                XCTAssertEqual(solid.thumbRect, on)
+                solid.updateDrag(to: CGPoint(x: solid.bounds.midX, y: solid.bounds.midY))
+                solid.isEnabled = false
+                XCTAssertEqual(solid.thumbRect, on, "disabling mid-drag must settle the committed value")
+                solid.isEnabled = true
+            }
+        }
+    }
+}
+
+@MainActor
 final class NativeShortcutsUnitTests: XCTestCase {
     private var previous: [UIApplicationShortcutItem]?
 
