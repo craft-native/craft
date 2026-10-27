@@ -558,7 +558,7 @@ describe('Craft Android builder', () => {
       expect(nativeActivity).toContain('info.isSelected')
       expect(nativeActivity).toContain('info.isEnabled = host.isEnabled && !disabled')
       expect(nativeActivity).toContain('info.roleDescription')
-      expect(nativeActivity).toContain('info.hintText = host.tooltipText')
+      expect(nativeActivity).toContain('if (host.tooltipText != null) info.hintText = host.tooltipText')
       expect(nativeActivity).toContain('view.contentDescription = when {')
       expect(nativeActivity).toContain('?: craftNativeOptionalString(props.opt("alt"))?.takeIf { type == "Image" || type == "ImageBackground" }')
       expect(nativeActivity).toContain('else -> null')
