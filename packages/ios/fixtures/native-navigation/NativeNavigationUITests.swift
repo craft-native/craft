@@ -406,7 +406,7 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertFalse(app.webViews.firstMatch.exists)
     }
 
-    func testSystemTabBarMinimizesWithTheNativeScrollView() {
+    func testSystemTabBarStaysExpandedWithTheNativeScrollView() {
         guard #available(iOS 26.0, *) else { return }
         let app = XCUIApplication()
         app.launch()
@@ -414,32 +414,23 @@ final class NativeNavigationUITests: XCTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 15), "the shell must expose a real system tab bar")
         let scroll = app.scrollViews["native-root-scroll"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 10))
-        XCTAssertEqual(bar.buttons.count, 5)
-        let expandedHomeWidth = app.buttons["Home"].firstMatch.frame.width
-        let before = XCTAttachment(screenshot: app.screenshot())
-        before.name = "System tab bar expanded"
-        before.lifetime = .keepAlways
-        add(before)
-        scroll.swipeUp()
-        // UIKit keeps the full-width container (and can retain hidden items
-        // in accessibility queries). Observe the actual hittable compact item.
-        let minimized = NSPredicate { _, _ in
-            app.buttons.matching(NSPredicate(format: "label == %@", "Home")).allElementsBoundByIndex.contains {
-                $0.isHittable && $0.frame.width < expandedHomeWidth - 15
+        let labels = ["Home", "Details", "Third", "Fourth", "Fifth"]
+        XCTAssertEqual(bar.buttons.count, labels.count)
+        let frames = labels.map { bar.buttons[$0].frame }
+        for _ in 0..<3 {
+            scroll.swipeUp()
+            XCTAssertEqual(bar.buttons.count, labels.count)
+            for (index, label) in labels.enumerated() {
+                let button = bar.buttons[label]
+                XCTAssertTrue(button.isHittable, "Every tab remains reachable after native scrolling")
+                XCTAssertEqual(button.frame.width, frames[index].width, accuracy: 1)
+                XCTAssertEqual(button.frame.height, frames[index].height, accuracy: 1)
             }
         }
-        print("Minimized tab hierarchy: \(app.debugDescription)")
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: minimized, object: nil)], timeout: 10), .completed)
-        let compactHome = app.buttons["Home"].firstMatch
-        XCTAssertTrue(compactHome.waitForExistence(timeout: 5))
-        XCTAssertTrue(compactHome.isHittable)
         let after = XCTAttachment(screenshot: app.screenshot())
-        after.name = "System tab bar minimized"
+        after.name = "Five system tabs remain expanded after native scrolling"
         after.lifetime = .keepAlways
         add(after)
-        compactHome.tap()
-        let expanded = NSPredicate { _, _ in bar.buttons.count == 5 }
-        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: expanded, object: nil)], timeout: 10), .completed)
         bar.buttons["Details"].tap()
         XCTAssertTrue(app.staticTexts["details-title"].waitForExistence(timeout: 10))
     }

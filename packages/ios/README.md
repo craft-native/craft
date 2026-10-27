@@ -21,7 +21,7 @@ craft.navigation.setOptions({
 The title remains its accessible name, the badge announces the unread count,
 and the screen's bottom safe area reserves room for the button. Set
 `tabAccessory: null` to remove it. Accessories without `iconOnly` keep the
-system's standard presentation.
+system's standard presentation. Removing an accessory keeps all tabs expanded.
 
 ## Native celebration
 
@@ -1388,7 +1388,6 @@ and detents; Android sizes its native bottom panel to the selected detent
 without an extra dependency. Omitting presentationStyle keeps the existing
 full-screen overlay. A native sheet's close request still belongs to its
 owner, which sets visible to false.
-
 
 ### Controlled native paging and font families
 

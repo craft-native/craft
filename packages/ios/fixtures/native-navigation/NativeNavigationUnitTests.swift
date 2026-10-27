@@ -203,7 +203,7 @@ final class NativeNavigationUnitTests: XCTestCase {
 #if compiler(>=6.2)
     @available(iOS 26.0, *)
     func testSystemTabAccessoryAndMinimizationUseUIKit() async throws {
-        XCTAssertEqual(shell.tabBarMinimizeBehavior, .onScrollDown)
+        XCTAssertEqual(shell.tabBarMinimizeBehavior, .never)
         let home = try XCTUnwrap(stack("/")?.topViewController as? CraftNativeScreenController)
         home.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Controls',symbol:'bolt'}})")
         await displayWait("UIKit bottom accessory installed") { self.shell.bottomAccessory != nil }
