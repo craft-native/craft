@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { gunzipSync } from 'node:zlib'
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { createContext, runInContext } from 'node:vm'
 import { afterAll, describe, expect, it } from 'bun:test'
 import { addSchemeBuildTargets, addSchemeTestTargets, insertProjectTargetsBeforeSchemes } from '../scripts/insert-project-targets'
 import {
@@ -646,17 +647,55 @@ describe('Craft iOS builder', () => {
     expect(source).toContain('guard width > 0, abs(width - reportedViewportWidth) >= 0.5 else { return }')
   })
 
-  it('keeps the shortcuts module present on a native screen, answering unsupported', () => {
-    // Added in 17e09f4d and deleted 28 minutes later by a merge from main
-    // (b1f32471) that nothing caught, because nothing asserted on it. The
-    // module has to exist even though a JavaScriptCore screen cannot register
-    // quick actions: without it `craft.shortcuts` is undefined and STX falls
-    // through to an undefined namespace instead of answering `unsupported`.
+  it('preserves native shortcut requests through the full prelude and bundle namespace replacement', async () => {
     const source = readFileSync(join(import.meta.dir, '..', 'templates', 'CraftNativeScreen.swift'), 'utf8')
-    expect(source).toContain("keep('shortcuts', {")
-    expect(source).toContain('set: function() { return Promise.resolve(false); }')
-    expect(source).toContain('clear: function() { return Promise.resolve(false); }')
-    expect(source).toContain('onShortcut: function() { return function() {}; }')
+    // Execute the actual two template preludes, including any later keep()
+    // registrations. A source-string assertion cannot catch accessor replacement.
+    function prelude(anchor: string): string {
+      const marker = source.indexOf(anchor)
+      expect(marker).toBeGreaterThan(-1)
+      const opening = 'jsContext.evaluateScript("""'
+      const start = source.lastIndexOf(opening, marker) + opening.length
+      const end = source.indexOf('""")', marker)
+      expect(end).toBeGreaterThan(start)
+      return source.slice(start, end)
+    }
+    const requests: Array<{ module: string, method: string, args: unknown[] }> = []
+    const sandbox: {
+      __stxNativeBridge: { capabilities: string[], postMessage: (raw: string) => void }
+      __stxNativeCallback?: (message: unknown) => void
+    } = {
+      __stxNativeBridge: {
+        capabilities: ['shortcuts'],
+        postMessage(raw) {
+          const message = JSON.parse(raw)
+          requests.push({ module: message.payload.module, method: message.payload.method, args: message.payload.args })
+          sandbox.__stxNativeCallback?.({ type: 'API_RESPONSE', payload: {
+            requestId: message.id, data: message.payload.method === 'set' ? { count: 1 } : true,
+          } })
+        },
+      },
+    }
+    const context = createContext(sandbox)
+    runInContext(prelude('var bridge = globalThis.__stxNativeBridge;'), context)
+    const nativeSetter = runInContext('Object.getOwnPropertyDescriptor(craft, "shortcuts").set', context)
+    runInContext(prelude('function keep(name, extras)'), context)
+    // Exercise bootstrap *before* loadBundle's reinstall can hide the regression,
+    // and normal calls after that reinstall too.
+    for (const reinstall of [false, true]) {
+      if (reinstall) runInContext('__craftInstallNativeDialog()', context)
+      for (const replacement of ['{extra:42}', '{extra:42,set:function(){return false},clear:function(){return false}}', 'null', 'undefined']) {
+        runInContext(`craft.shortcuts = ${replacement}`, context)
+        expect(await runInContext('craft.shortcuts.set([{type:"saved",title:"Saved"}])', context)).toEqual({ count: 1 })
+        expect(await runInContext('craft.shortcuts.clear()', context)).toBe(true)
+        expect(runInContext('craft.shortcuts.extra', context)).toBe(42)
+      }
+      if (!reinstall) expect(runInContext('Object.getOwnPropertyDescriptor(craft, "shortcuts").set', context)).toBe(nativeSetter)
+    }
+    expect(requests).toEqual(Array.from({ length: 8 }, () => [
+      { module: 'Shortcuts', method: 'set', args: [[{ type: 'saved', title: 'Saved' }]] },
+      { module: 'Shortcuts', method: 'clear', args: [] },
+    ]).flat())
   })
 
   it('advertises mounted-view focus and measurement in native screens', () => {
