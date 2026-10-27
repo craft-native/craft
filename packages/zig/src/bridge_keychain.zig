@@ -49,6 +49,9 @@ pub const KeychainBridge = struct {
                 error.MissingData => BridgeError.MissingData,
                 error.InvalidJSON => BridgeError.InvalidJSON,
                 error.UnknownAction => BridgeError.UnknownAction,
+                error.NoAccess, error.AuthFailed, error.InteractionNotAllowed => BridgeError.PermissionDenied,
+                error.UserCancelled => BridgeError.Cancelled,
+                error.Unimplemented => BridgeError.PlatformNotSupported,
                 else => BridgeError.NativeCallFailed,
             };
             bridge_error.sendErrorToJS(self.allocator, action, e);
@@ -66,20 +69,20 @@ pub const KeychainBridge = struct {
             const params = try parsePayload(self.allocator, data);
             defer freePayload(self.allocator, params);
             var kc = try self.getKeychain(params.service);
-            const got = kc.getPassword(params.account) catch null;
+            const got = try kc.getPassword(params.account);
             try sendValueResult(self.allocator, "get", got);
             if (got) |v| self.allocator.free(v);
         } else if (std.mem.eql(u8, action, "delete")) {
             const params = try parsePayload(self.allocator, data);
             defer freePayload(self.allocator, params);
             var kc = try self.getKeychain(params.service);
-            kc.deletePassword(params.account) catch {};
+            try kc.deletePassword(params.account);
             bridge_error.sendResultToJS(self.allocator, "delete", "{\"ok\":true}");
         } else if (std.mem.eql(u8, action, "has")) {
             const params = try parsePayload(self.allocator, data);
             defer freePayload(self.allocator, params);
             var kc = try self.getKeychain(params.service);
-            const present = kc.hasPassword(params.account) catch false;
+            const present = try kc.hasPassword(params.account);
             const json = if (present) "{\"value\":true}" else "{\"value\":false}";
             bridge_error.sendResultToJS(self.allocator, "has", json);
         } else {
@@ -157,6 +160,10 @@ fn sendValueResult(allocator: std.mem.Allocator, action: []const u8, value: ?[]c
             '\n' => try buf.appendSlice(allocator, "\\n"),
             '\r' => try buf.appendSlice(allocator, "\\r"),
             '\t' => try buf.appendSlice(allocator, "\\t"),
+            0x00...0x08, 0x0B, 0x0C, 0x0E...0x1F => {
+                var escaped: [6]u8 = undefined;
+                try buf.appendSlice(allocator, try std.fmt.bufPrint(&escaped, "\\u{x:0>4}", .{b}));
+            },
             else => try buf.append(allocator, b),
         }
     }

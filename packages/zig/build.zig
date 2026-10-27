@@ -1156,6 +1156,24 @@ pub fn build(b: *std.Build) void {
     // The host-matching and opt-in rules behind the local development TLS
     // exception. Security-relevant and AppKit-free, so they are tested here
     // rather than only exercised through a window.
+    const keychain_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/apple_keychain.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    keychain_tests.root_module.link_libc = true;
+    if (target_os == .macos) {
+        keychain_tests.root_module.linkFramework("Security", .{});
+        keychain_tests.root_module.linkFramework("CoreFoundation", .{});
+        applySdkPaths(b, keychain_tests.root_module, macos_sdk);
+    }
+    const run_keychain_tests = b.addRunArtifact(keychain_tests);
+    run_keychain_tests.has_side_effects = true;
+    const keychain_step = b.step("test:keychain", "Run keychain contract tests (CRAFT_TEST_KEYCHAIN=1 opts into native storage)");
+    keychain_step.dependOn(&run_keychain_tests.step);
+
     const local_tls_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/local_tls.zig"),
@@ -2237,6 +2255,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_native_sidebar_tests.step);
     test_step.dependOn(&run_space_list_tests.step);
     test_step.dependOn(&run_local_tls_tests.step);
+    test_step.dependOn(&run_keychain_tests.step);
     test_step.dependOn(&run_menu_roles_tests.step);
     test_step.dependOn(&run_menu_keys_tests.step);
     test_step.dependOn(&run_capabilities_tests.step);

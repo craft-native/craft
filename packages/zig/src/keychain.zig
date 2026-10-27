@@ -253,14 +253,13 @@ pub const Keychain = struct {
 
     /// Store a password with custom options
     pub fn setPasswordWithOptions(self: *Self, account: []const u8, password: []const u8, options: KeychainOptions) KeychainError!void {
-        // Try to delete existing item first (update)
+        if (builtin.os.tag == .macos or builtin.target.os.tag == .ios) {
+            return self.setPasswordMacOS(account, password, options);
+        }
         self.deletePassword(account) catch |err| {
             if (err != KeychainError.ItemNotFound) return err;
         };
-
-        if (builtin.os.tag == .macos or builtin.target.os.tag == .ios) {
-            return self.setPasswordMacOS(account, password, options);
-        } else if (builtin.os.tag == .windows) {
+        if (builtin.os.tag == .windows) {
             return self.setPasswordWindows(account, password, options);
         } else if (builtin.os.tag == .linux) {
             return self.setPasswordLinux(account, password, options);
@@ -271,13 +270,7 @@ pub const Keychain = struct {
     }
 
     fn setPasswordMacOS(self: *Self, account: []const u8, password: []const u8, options: KeychainOptions) KeychainError!void {
-        _ = self;
-        _ = account;
-        _ = password;
-        _ = options;
-        // In real implementation, would use Security framework:
-        // SecItemAdd with kSecClassGenericPassword
-        return;
+        return @import("apple_keychain.zig").set(self, account, password, options);
     }
 
     fn setPasswordWindows(self: *Self, account: []const u8, password: []const u8, options: KeychainOptions) KeychainError!void {
@@ -326,10 +319,7 @@ pub const Keychain = struct {
     }
 
     fn getPasswordMacOS(self: *Self, account: []const u8) KeychainError!?[]const u8 {
-        _ = self;
-        _ = account;
-        // In real implementation, would use SecItemCopyMatching
-        return null;
+        return @import("apple_keychain.zig").get(self, account);
     }
 
     fn getPasswordWindows(self: *Self, account: []const u8) KeychainError!?[]const u8 {
@@ -370,9 +360,7 @@ pub const Keychain = struct {
     }
 
     fn deletePasswordMacOS(self: *Self, account: []const u8) KeychainError!void {
-        _ = self;
-        _ = account;
-        // In real implementation, would use SecItemDelete
+        return @import("apple_keychain.zig").delete(self, account);
     }
 
     fn deletePasswordWindows(self: *Self, account: []const u8) KeychainError!void {
