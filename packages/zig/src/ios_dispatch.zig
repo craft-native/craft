@@ -77,10 +77,9 @@ const bridge_mobile_health = if (permission_profile.enabled(.health)) @import("b
     pub const HealthBridge = DisabledBridge;
     pub const capability_actions = [_]capabilities.ActionDecl{};
 };
-const bridge_mobile_speech = if (permission_profile.enabled(.speech) and permission_profile.enabled(.microphone)) @import("bridge_mobile_speech.zig") else struct {
-    pub const SpeechBridge = DisabledBridge;
-    pub const capability_actions = [_]capabilities.ActionDecl{};
-};
+// The permission-free stop remains available when recognition is compiled out.
+// SpeechBridge prunes its start/engine path for those permission profiles.
+const bridge_mobile_speech = @import("bridge_mobile_speech.zig");
 const bridge_mobile_nfc = if (permission_profile.enabled(.nfc)) @import("bridge_mobile_nfc.zig") else struct {
     pub const NfcBridge = DisabledBridge;
     pub const capability_actions = [_]capabilities.ActionDecl{};
@@ -388,7 +387,6 @@ fn compiledBridge(comptime Bridge: type) bool {
     if (Bridge == bridge_mobile_bluetooth.BluetoothBridge) return p.enabled(.bluetooth);
     if (Bridge == bridge_mobile_audiorec.AudioRecordingBridge) return p.enabled(.microphone);
     if (Bridge == bridge_mobile_health.HealthBridge) return p.enabled(.health);
-    if (Bridge == bridge_mobile_speech.SpeechBridge) return p.enabled(.speech) and p.enabled(.microphone);
     if (Bridge == bridge_mobile_nfc.NfcBridge) return p.enabled(.nfc);
     return true;
 }
@@ -991,6 +989,28 @@ test "a host offer for a disabled capability is claimed and refused, not handed 
     // same call a second time — and Swift's own arm for a disabled capability
     // has no `else`, so the page would get one rejection and one silence.
     try testing.expect(craft_ios_handle_action("clipboardRead", "clipboardRead".len, "{}", 2, 3));
+}
+
+test "speech stop is claimed and acknowledged when no recognition is running" {
+    const Capture = struct {
+        count: usize = 0,
+        acknowledged: bool = false,
+
+        fn receive(raw: ?*anyopaque, failed: bool, bytes: [*]const u8, size: usize) callconv(.c) void {
+            const self: *@This() = @ptrCast(@alignCast(raw.?));
+            self.count += 1;
+            self.acknowledged = !failed and std.mem.eql(u8, bytes[0..size], "true");
+        }
+    };
+    const previous = bridge_error.native_reply;
+    defer bridge_error.native_reply = previous;
+    var capture: Capture = .{};
+    bridge_error.native_reply = .{ .context = &capture, .callback = Capture.receive };
+    const action = "stopListening";
+    try testing.expect(craft_ios_handle_action(action, action.len, "{}", 2, 4));
+    try testing.expectEqual(@as(usize, 1), capture.count);
+    try testing.expect(capture.acknowledged);
+    try testing.expect(bridge_error.native_reply == null);
 }
 
 test "a negative request id means no callback is waiting" {

@@ -181,6 +181,8 @@ const objc = objc_runtime.objc;
 const BridgeError = bridge_error.BridgeError;
 const Id = ?*anyopaque;
 const is_darwin = builtin.target.os.tag.isDarwin();
+const permission_profile = @import("ios_permissions.zig");
+const speech_compiled = permission_profile.enabled(.speech) and permission_profile.enabled(.microphone);
 
 pub const A = struct {
     pub const start_listening = "startListening";
@@ -199,8 +201,10 @@ pub const A = struct {
 /// `.live` for both. A refusal here is a specific condition — speech not
 /// configured, authorization declined, no input route — and never the normal
 /// answer, which is what `.unavailable` would claim.
-pub const capability_actions = [_]capabilities.ActionDecl{
+pub const capability_actions = if (speech_compiled) [_]capabilities.ActionDecl{
     .{ .name = A.start_listening, .reply = .result },
+    .{ .name = A.stop_listening, .reply = .result },
+} else [_]capabilities.ActionDecl{
     .{ .name = A.stop_listening, .reply = .result },
 };
 
@@ -224,6 +228,7 @@ pub const SpeechBridge = struct {
     /// only create a way to fail that the spec has not got.
     pub fn handleMessage(self: *Self, action: []const u8, _: []const u8) !void {
         if (std.mem.eql(u8, action, A.start_listening)) {
+            if (comptime !speech_compiled) return BridgeError.UnknownAction;
             startListening();
             bridge_error.sendResultToJS(self.allocator, A.start_listening, "true");
             return;
@@ -685,9 +690,10 @@ fn failStart(err: StartFailure) StartFailure {
 /// disabled can still stop. Which matters: the page's own stop is how a stuck
 /// listening indicator gets cleared.
 fn stopListening() void {
-    if (!is_darwin) {
-        // Nothing to stop, and the page still gets its end. `emit` is a no-op
-        // off Darwin, so this is documentation more than behaviour.
+    if (comptime !speech_compiled or !is_darwin) {
+        // A profile without recognition cannot have an engine to stop. Keep
+        // the ungated stop acknowledgement and end event, without retaining
+        // any Speech or microphone APIs in the archive.
         ios_events.emit(event_end, empty_detail);
         return;
     }
@@ -1188,8 +1194,10 @@ test "the action names match the Swift case labels exactly" {
     try testing.expectEqualStrings("stopListening", A.stop_listening);
 }
 
-test "both actions are declared, and both answer the promise the page awaits" {
-    try testing.expectEqual(@as(usize, 2), capability_actions.len);
+test "speech stop is always declared and recognition is declared only when compiled" {
+    try testing.expectEqual(@as(usize, if (speech_compiled) 2 else 1), capability_actions.len);
+    try testing.expectEqualStrings(A.stop_listening, capability_actions[capability_actions.len - 1].name);
+    if (speech_compiled) try testing.expectEqualStrings(A.start_listening, capability_actions[0].name);
     for (capability_actions) |decl| {
         // The page posts a callbackId for both (#207), so `.none` would be a
         // promise that never settles.

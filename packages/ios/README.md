@@ -418,6 +418,10 @@ full photo-library access. App Store Connect checks the binary, not just config:
 }
 ```
 
+With recognition compiled out, `stopListening` still acknowledges the stop and
+emits `craftSpeechEnd`. The Zig runtime handles that idempotent cleanup without
+linking Speech or microphone APIs; starting recognition remains disabled.
+
 For an opt-in Zig runtime built specifically for the app, set
 `CRAFT_IOS_RUNTIME_SOURCE` to an explicit Craft Zig source-package directory
 (the directory containing `build.zig` and `build.zig.zon`) and `CRAFT_ZIG` to
