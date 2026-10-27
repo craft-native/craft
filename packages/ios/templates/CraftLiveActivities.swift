@@ -106,6 +106,7 @@ enum CraftLiveActivities {
     /// final workout once. Never stop an unrelated HealthKit session.
     @available(iOS 16.2, *)
     @MainActor private static func startWorkout(_ activity: Activity<CraftActivityAttributes>, body: [String: Any], enabled: Bool) {
+        #if CRAFT_PERMISSION_HEALTH
         guard enabled, #available(iOS 26.0, *), let type = body["workoutType"] as? String,
               workoutOwner == nil, startingWorkout == nil,
               HKHealthStore().authorizationStatus(for: .workoutType()) == .sharingAuthorized else { return }
@@ -123,6 +124,7 @@ enum CraftLiveActivities {
                 if activity.content.state.paused == true { CraftHealth.shared.pauseWorkout { _ in } }
             }
         }
+        #endif
     }
 
     @MainActor private static func stopWorkout(_ key: String) {

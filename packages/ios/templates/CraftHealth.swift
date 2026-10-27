@@ -1,3 +1,4 @@
+#if CRAFT_PERMISSION_HEALTH
 import CoreLocation
 import Foundation
 import HealthKit
@@ -1282,3 +1283,74 @@ final class CraftHealth {
     }
     #endif
 }
+#else
+import Foundation
+struct CraftHealthError: Error {
+    let message: String
+    var code: String = "CAPABILITY_DISABLED"
+}
+final class CraftHealth {
+    typealias Completion = (Result<Any, CraftHealthError>) -> Void
+    static let shared = CraftHealth()
+    var pageSink: (([String: Any]) -> Bool)?
+    var workoutSink: (([String: Any]) -> Bool)?
+    func perform(method: String, args: [Any], completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func requestAuthorization(types: [String], readOnly: Bool = false, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getData(type: String, startDate: Double?, endDate: Double?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func saveData(type: String, value: Double, options: [String: Any], completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func saveWorkout(body: [String: Any], completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getWorkouts(startDate: Double?, endDate: Double?, limit: Int?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getDailyStatistics(type: String, startDate: Double?, endDate: Double?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getHeartRateSamples(startDate: Double?, endDate: Double?, limit: Int?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getSamples(type: String, startDate: Double?, endDate: Double?, limit: Int?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getSleepIntervals(startDate: Double?, endDate: Double?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func saveMindfulSession(body: [String: Any], completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func getMindfulSessions(startDate: Double?, endDate: Double?, limit: Int?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func startWorkout(body: [String: Any], completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func pauseWorkout(completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func resumeWorkout(completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func endWorkout(completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func discardWorkout(completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func startHeartRateUpdates(since: Double?, completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func stopHeartRateUpdates(completion rawCompletion: @escaping Completion) {
+        rawCompletion(.failure(CraftHealthError(message: "Health was not enabled when this app was built")))
+    }
+    func discardActivityWorkout(expectedID: String) {}
+}
+#endif

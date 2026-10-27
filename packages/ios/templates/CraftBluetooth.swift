@@ -1,4 +1,6 @@
+#if CRAFT_PERMISSION_BLUETOOTH
 import CoreBluetooth
+#endif
 import Foundation
 
 struct CraftBluetoothError: Error {
@@ -7,6 +9,7 @@ struct CraftBluetoothError: Error {
 }
 
 /// One explicitly chosen GATT channel. Scanning is user initiated; no vendor API.
+#if CRAFT_PERMISSION_BLUETOOTH
 final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     typealias Completion = (Result<Any, CraftBluetoothError>) -> Void
     static let shared = CraftBluetooth()
@@ -327,3 +330,12 @@ final class CraftBluetooth: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         peripheral = nil; writer = nil; notifier = nil; connected = false
     }
 }
+#else
+final class CraftBluetooth {
+    typealias Completion = (Result<Any, CraftBluetoothError>) -> Void
+    static let shared = CraftBluetooth()
+    func perform(method: String, args: [Any], completion: @escaping Completion) {
+        completion(.failure(CraftBluetoothError(message: "Bluetooth was not enabled when this app was built", code: "CAPABILITY_DISABLED")))
+    }
+}
+#endif

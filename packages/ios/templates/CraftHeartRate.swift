@@ -1,4 +1,6 @@
+#if CRAFT_PERMISSION_BLUETOOTH
 import CoreBluetooth
+#endif
 import Foundation
 import UIKit
 
@@ -120,6 +122,7 @@ struct CraftHeartRateMeasurement: Equatable {
 ///
 /// Everything runs on main: the central manager delivers there, and every
 /// caller hops there first.
+#if CRAFT_PERMISSION_BLUETOOTH
 final class CraftHeartRate: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     typealias Completion = (Result<Any, CraftHeartRateError>) -> Void
 
@@ -930,3 +933,13 @@ final class CraftHeartRate: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         }
     }
 }
+#else
+final class CraftHeartRate {
+    typealias Completion = (Result<Any, CraftHeartRateError>) -> Void
+    static let shared = CraftHeartRate()
+    var pageSink: (([String: Any]) -> Bool)?
+    func perform(method: String, args: [Any], completion: @escaping Completion) {
+        completion(.failure(CraftHeartRateError(message: "Bluetooth was not enabled when this app was built", code: "CAPABILITY_DISABLED")))
+    }
+}
+#endif
