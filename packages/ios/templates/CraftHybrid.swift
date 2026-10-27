@@ -1115,6 +1115,8 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private var synchronizingTabs = false
     private var accessoryModel: CraftChrome.Tab?
     private let accessoryButton = UIButton(type: .system)
+    private let accessoryBadge = UILabel()
+    private let accessoryGlass = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
     private static let tabPictures = NSCache<NSURL, UIImage>()
     private var requestedTabPictures = Set<URL>()
     /// The path each native entry opened at.
@@ -1173,7 +1175,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         delegate = self
         if #available(iOS 18.0, *) { mode = .tabBar }
 #if compiler(>=6.2)
-        if #available(iOS 26.0, *) { tabBarMinimizeBehavior = .onScrollDown }
+        if #available(iOS 26.0, *) { tabBarMinimizeBehavior = .never }
 #endif
         accessoryButton.accessibilityIdentifier = "craft-tab-accessory"
         accessoryButton.addTarget(self, action: #selector(openTabAccessory), for: .touchUpInside)
@@ -1327,28 +1329,59 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         if let model {
             var configuration = UIButton.Configuration.plain()
             configuration.image = UIImage(systemName: model.symbol)
-            configuration.title = model.displayTitle
-            configuration.subtitle = model.badge
-            configuration.imagePadding = 8
+            configuration.title = model.iconOnly ? nil : model.displayTitle
+            configuration.subtitle = model.iconOnly ? nil : model.badge
+            configuration.imagePadding = model.iconOnly ? 0 : 8
             accessoryButton.configuration = configuration
             accessoryButton.accessibilityLabel = model.accessibilityLabel ?? model.displayTitle
             accessoryButton.accessibilityValue = model.badge
             accessoryButton.accessibilityTraits = chrome.accessorySelected ? [.button, .selected] : [.button]
         }
 #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), model?.iconOnly != true {
+            if accessoryGlass.superview != nil {
+                accessoryGlass.removeFromSuperview()
+                accessoryBadge.removeFromSuperview()
+                accessoryButton.removeFromSuperview()
+            }
             if (model == nil) != (bottomAccessory == nil) {
                 bottomAccessory = model.map { _ in UITabAccessory(contentView: accessoryButton) }
             }
             accessoryModel = model
+            for nav in stacks.values { nav.additionalSafeAreaInsets.bottom = 0 }
             return
         }
 #endif
         // Older systems have no bottom-accessory container. Keep the action
         // available above the system bar, without recreating the tab control.
-        if model != nil, accessoryButton.superview == nil { view.addSubview(accessoryButton) }
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            bottomAccessory = nil
+            accessoryGlass.effect = UIGlassEffect()
+        }
+#endif
+        if model != nil, accessoryButton.superview !== view {
+            accessoryButton.removeFromSuperview()
+            view.addSubview(accessoryGlass)
+            view.addSubview(accessoryButton)
+            view.addSubview(accessoryBadge)
+        }
         accessoryButton.isHidden = model == nil
-        accessoryButton.backgroundColor = config.resolvedBackgroundColor
+        accessoryGlass.isHidden = model == nil
+        accessoryGlass.isUserInteractionEnabled = false
+        accessoryGlass.layer.cornerRadius = 24
+        accessoryGlass.clipsToBounds = true
+        accessoryButton.backgroundColor = .clear
+        accessoryButton.layer.cornerRadius = 24
+        accessoryBadge.text = model?.badge
+        accessoryBadge.isHidden = model?.badge == nil || model?.iconOnly != true
+        accessoryBadge.font = .systemFont(ofSize: 11, weight: .bold)
+        accessoryBadge.textColor = .white
+        accessoryBadge.backgroundColor = .systemRed
+        accessoryBadge.textAlignment = .center
+        accessoryBadge.layer.cornerRadius = 9
+        accessoryBadge.clipsToBounds = true
+        accessoryBadge.isAccessibilityElement = false
         accessoryModel = model
         for nav in stacks.values { nav.additionalSafeAreaInsets.bottom = safeAreaForTabBar() }
         view.setNeedsLayout()
@@ -1362,7 +1395,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         super.viewDidLayoutSubviews()
         guard hybrid.controller === self else { return }
 #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
+        if #available(iOS 26.0, *), accessoryModel?.iconOnly != true {
             // UIKit already supplies the native safe area. This measurement is
             // only the web CSS contract, not another native bottom inset.
             let top = bottomAccessory.map { $0.contentView.convert($0.contentView.bounds, to: view).minY } ?? tabBar.frame.minY
@@ -1370,8 +1403,15 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             return
         }
 #endif
-        accessoryButton.frame = CGRect(x: 16, y: tabBar.frame.minY - 44, width: max(0, view.bounds.width - 32), height: 44)
-        CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + (accessoryModel == nil ? 0 : 44))
+        let iconOnly = accessoryModel?.iconOnly == true
+        let height: CGFloat = iconOnly ? 48 : 44
+        let width: CGFloat = iconOnly ? 48 : max(0, view.bounds.width - 32)
+        let x = iconOnly ? view.bounds.maxX - view.safeAreaInsets.right - width - 20 : 16
+        accessoryButton.frame = CGRect(x: x, y: tabBar.frame.minY - height - (iconOnly ? 8 : 0), width: width, height: height)
+        accessoryGlass.frame = accessoryButton.frame
+        let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
+        accessoryBadge.frame = CGRect(x: accessoryButton.frame.maxX - badgeWidth + 4, y: accessoryButton.frame.minY - 3, width: badgeWidth, height: 18)
+        CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + (accessoryModel == nil ? 0 : (iconOnly ? 56 : 44)))
     }
 
     private var webAttached = false
@@ -2235,10 +2275,11 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     private func safeAreaForTabBar() -> CGFloat {
         // UIKit supplies the bar (and on iOS 26, its accessory) inset. Only
         // the older-system accessory above that bar needs an extra inset.
+        let chrome = CraftChrome.shared
+        if chrome.tabBarVisible && !chrome.tabs.isEmpty && chrome.tabAccessory?.iconOnly == true { return 56 }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *) { return 0 }
 #endif
-        let chrome = CraftChrome.shared
         return chrome.tabBarVisible && !chrome.tabs.isEmpty && chrome.tabAccessory != nil ? 44 : 0
     }
 

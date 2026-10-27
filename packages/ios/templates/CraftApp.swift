@@ -763,6 +763,8 @@ final class CraftChrome: ObservableObject {
         var displayTitle: String { titleOverride ?? title }
         var accessibilityLabel: String? = nil
         var image: String? = nil
+        /// A compact floating icon, instead of the system full-width accessory shelf.
+        var iconOnly = false
     }
 
     @Published var tabs: [Tab] = []
@@ -897,7 +899,8 @@ final class CraftChrome: ObservableObject {
            let title = item["title"] as? String {
             next = Tab(id: path, title: title, symbol: item["symbol"] as? String ?? "message",
                 badge: (item["badge"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(8)) },
-                accessibilityLabel: item["accessibilityLabel"] as? String)
+                accessibilityLabel: item["accessibilityLabel"] as? String,
+                iconOnly: item["iconOnly"] as? Bool ?? false)
         } else {
             next = nil
         }

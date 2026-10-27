@@ -836,6 +836,34 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(root.routeProps["source"] as? String, "billing")
     }
 
+    func testCompactTabAccessoryKeepsFiveTabsAndAnIconOnlyTrailingButton() async throws {
+        let home = try XCTUnwrap(stack("/"))
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true}})")
+        await displayWait("compact accessory appears") { CraftChrome.shared.tabAccessory?.iconOnly == true }
+        shell.view.layoutIfNeeded()
+        func accessory(_ view: UIView) -> UIButton? {
+            if let button = view as? UIButton, button.accessibilityIdentifier == "craft-tab-accessory" { return button }
+            return view.subviews.compactMap { accessory($0) }.first
+        }
+        let button = try XCTUnwrap(accessory(shell.view))
+        XCTAssertEqual(button.frame.width, 48, accuracy: 0.5)
+        XCTAssertGreaterThan(button.frame.minX, shell.view.bounds.midX)
+        XCTAssertNil(button.configuration?.title)
+        XCTAssertEqual(button.accessibilityLabel, "Messages")
+        XCTAssertEqual(button.accessibilityValue, "3")
+        XCTAssertEqual(shell.viewControllers?.count, 5)
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            XCTAssertNil(shell.bottomAccessory)
+            XCTAssertEqual(shell.tabBarMinimizeBehavior, .never)
+        }
+#endif
+        screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
+        await displayWait("compact accessory clears") { CraftChrome.shared.tabAccessory == nil }
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+    }
+
     func testTabAccessoryRoutePushesAndRestoresTheSelectedNativeStack() async throws {
         shell.open("/linked-details")
         let home = try XCTUnwrap(stack("/"))
