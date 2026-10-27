@@ -110,6 +110,11 @@ const bridge_error = @import("bridge_error.zig");
 const objc_runtime = @import("objc_runtime.zig");
 const ios_async = @import("ios_async.zig");
 const compat_mutex = @import("compat_mutex.zig");
+const permission_profile = @import("ios_permissions.zig");
+
+// Gate individual readers, not this entire module: a location-only runtime
+// still owns checkPermission(location) and openSettings. Disabled readers hand
+// back to the equally gated Swift host without retaining Objective-C API names.
 
 const objc = objc_runtime.objc;
 const is_darwin = builtin.target.os.tag.isDarwin();
@@ -414,6 +419,7 @@ pub const PermissionsBridge = struct {
     /// `acquire` must call `ios_async.abandon(ticket)` on its error path, or
     /// the slot leaks until the pool answers Busy forever.
     fn requestCamera(self: *Self) !void {
+        if (comptime !permission_profile.enabled(.camera)) return bridge_error.BridgeError.UnknownAction;
         if (!is_darwin) return error.UnsupportedPlatform;
 
         const AVCaptureDevice = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
@@ -432,6 +438,7 @@ pub const PermissionsBridge = struct {
     /// the deprecated-but-live API the Swift spec calls; `AVAudioApplication`
     /// is its replacement and would be a divergence, not a port.
     fn requestMicrophone() !void {
+        if (comptime !permission_profile.enabled(.microphone)) return bridge_error.BridgeError.UnknownAction;
         if (!is_darwin) return error.UnsupportedPlatform;
 
         const session = try audioSession();
@@ -602,6 +609,7 @@ const un_options_alert_badge_sound: c_ulong = 7;
 /// is not NSInteger-sized, and a `c_long` cast would read 32 bits of
 /// register garbage above it on a big-endian day; `i32` says what it is.
 fn readLocationStatus() !i32 {
+    if (comptime !permission_profile.enabled(.location)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const CLLocationManager = objc.objc_getClass("CLLocationManager") orelse return error.ClassNotFound;
@@ -614,6 +622,7 @@ fn readLocationStatus() !i32 {
 /// `+[AVCaptureDevice authorizationStatusForMediaType:]` with
 /// `AVMediaTypeVideo`.
 fn readCameraStatus(allocator: std.mem.Allocator) !c_long {
+    if (comptime !permission_profile.enabled(.camera)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const AVCaptureDevice = objc.objc_getClass("AVCaptureDevice") orelse return error.ClassNotFound;
@@ -626,6 +635,7 @@ fn readCameraStatus(allocator: std.mem.Allocator) !c_long {
 
 /// `-[AVAudioSession recordPermission]` on the shared instance.
 fn readMicrophonePermission() !c_ulong {
+    if (comptime !permission_profile.enabled(.microphone)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const session = try audioSession();
@@ -640,6 +650,7 @@ fn readMicrophonePermission() !c_ulong {
 /// which answers `.authorized` for limited access and would erase the
 /// distinction `photosStatusJson` exists to keep.
 fn readPhotosStatus() !c_long {
+    if (comptime !permission_profile.enabled(.photos)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const PHPhotoLibrary = objc.objc_getClass("PHPhotoLibrary") orelse return error.ClassNotFound;
@@ -653,6 +664,7 @@ fn readPhotosStatus() !c_long {
 /// no store instance is needed to *read*, which is what keeps this arm
 /// servable while the request arm is not.
 fn readContactsStatus() !c_long {
+    if (comptime !permission_profile.enabled(.contacts)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const CNContactStore = objc.objc_getClass("CNContactStore") orelse return error.ClassNotFound;
@@ -665,6 +677,7 @@ fn readContactsStatus() !c_long {
 /// `+[EKEventStore authorizationStatusForEntityType:]`, shared by calendar
 /// (event = 0) and reminders (reminder = 1).
 fn readEventKitStatus(entity: c_ulong) !c_long {
+    if (comptime !permission_profile.enabled(.calendar)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const EKEventStore = objc.objc_getClass("EKEventStore") orelse return error.ClassNotFound;
@@ -676,6 +689,7 @@ fn readEventKitStatus(entity: c_ulong) !c_long {
 
 /// `+[CMMotionActivityManager authorizationStatus]`.
 fn readMotionStatus() !c_long {
+    if (comptime !permission_profile.enabled(.motion)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const CMMotionActivityManager = objc.objc_getClass("CMMotionActivityManager") orelse return error.ClassNotFound;
@@ -689,6 +703,7 @@ fn readMotionStatus() !c_long {
 /// is just the property name. Reading it does not start Bluetooth and does
 /// not prompt, unlike instantiating a central manager.
 fn readBluetoothStatus() !c_long {
+    if (comptime !permission_profile.enabled(.bluetooth)) return bridge_error.BridgeError.UnknownAction;
     if (!is_darwin) return error.UnsupportedPlatform;
 
     const CBManager = objc.objc_getClass("CBManager") orelse return error.ClassNotFound;

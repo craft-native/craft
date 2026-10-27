@@ -269,6 +269,7 @@ fn torchModeFor(enabled: bool) c_long {
 /// torch) is `NotFound`, and a refused `lockForConfiguration:` (Swift's
 /// `catch`, rejected with `error.localizedDescription`) is `NativeCallFailed`.
 fn setTorch(allocator: std.mem.Allocator, enabled: bool) !void {
+    if (comptime !@import("ios_permissions.zig").enabled(.camera)) return BridgeError.UnknownAction;
     if (!builtin.target.os.tag.isDarwin()) return error.UnsupportedPlatform;
 
     const AVCaptureDevice = objc.objc_getClass("AVCaptureDevice") orelse {

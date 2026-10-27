@@ -19,10 +19,7 @@ const bridge_mobile_misc = @import("bridge_mobile_misc.zig");
 const bridge_mobile_shortcuts = @import("bridge_mobile_shortcuts.zig");
 const bridge_mobile_securestore = @import("bridge_mobile_securestore.zig");
 const bridge_mobile_biometric = @import("bridge_mobile_biometric.zig");
-const bridge_mobile_permissions = if (permission_profile.mask == permission_profile.all) @import("bridge_mobile_permissions.zig") else struct {
-    pub const PermissionsBridge = DisabledBridge;
-    pub const capability_actions = [_]capabilities.ActionDecl{};
-};
+const bridge_mobile_permissions = @import("bridge_mobile_permissions.zig");
 const bridge_mobile_db = @import("bridge_mobile_db.zig");
 const bridge_mobile_notifcancel = @import("bridge_mobile_notifcancel.zig");
 const bridge_mobile_notifications = @import("bridge_mobile_notifications.zig");
@@ -379,7 +376,6 @@ const mobile_bridges = .{
 fn compiledBridge(comptime Bridge: type) bool {
     if (Bridge == DisabledBridge) return false;
     const p = permission_profile;
-    if (Bridge == bridge_mobile_permissions.PermissionsBridge) return p.mask == p.all;
     if (Bridge == bridge_mobile_location.LocationBridge or Bridge == bridge_mobile_locrecording.LocationRecordingBridge) return p.enabled(.location);
     if (Bridge == bridge_mobile_ar.ARBridge) return p.enabled(.camera);
     if (Bridge == bridge_mobile_motion.MotionBridge) return p.enabled(.motion);

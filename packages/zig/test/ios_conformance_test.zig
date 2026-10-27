@@ -210,7 +210,9 @@ const dispatch_end = "func webView(";
 /// HKSampleQuery in CraftHealth.swift like the other health reads. It went
 /// into Swift first and falls through to the shim, which serves it. Not a
 /// regression: no action left Zig.
-const max_not_yet_migrated: usize = 61;
+/// 62 when dcfa35f8 added discardHealthWorkout, a new Swift-owned non-saving
+/// counterpart to endHealthWorkout. No existing Zig handler was removed.
+const max_not_yet_migrated: usize = 62;
 
 fn dispatcherRegion() []const u8 {
     // CraftApp.swift also contains chrome, console and bridge-relay handlers.
@@ -456,6 +458,7 @@ const deliberate_deferrals = [_]Deferral{
     .{ .action = "pauseHealthWorkout", .reason = "HKWorkoutSession state changes are delivered through the Swift HealthKit delegate" },
     .{ .action = "resumeHealthWorkout", .reason = "HKWorkoutSession state changes are delivered through the Swift HealthKit delegate" },
     .{ .action = "endHealthWorkout", .reason = "HKLiveWorkoutBuilder finalization is Swift-owned and requires its completion lifecycle" },
+    .{ .action = "discardHealthWorkout", .reason = "the non-saving HKLiveWorkoutBuilder discard follows the same Swift-owned workout lifecycle" },
 
     // VisionKit's `DataScannerViewController` is Swift-only: the framework's
     // Objective-C headers carry DocumentCamera and nothing else, and the
