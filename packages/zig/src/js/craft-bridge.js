@@ -226,7 +226,8 @@
       q.push(entry)
       window.__craftBridgeById[id] = entry
 
-      const interactive = t === 'dialog' && ['openFile', 'openFiles', 'openFolder', 'saveFile', 'showAlert', 'showConfirm', 'showPrompt'].indexOf(a) >= 0
+      // Keychain access can wait for a system authentication decision too.
+      const interactive = t === 'keychain' || (t === 'dialog' && ['openFile', 'openFiles', 'openFolder', 'saveFile', 'showAlert', 'showConfirm', 'showPrompt'].indexOf(a) >= 0)
       const timeout = interactive || timeoutMs === 0 ? 0 : (typeof window.__craftBridgeRequestTimeoutMs === 'number')
         ? window.__craftBridgeRequestTimeoutMs
         : (typeof timeoutMs === 'number' ? timeoutMs : DEFAULT_TIMEOUT_MS)

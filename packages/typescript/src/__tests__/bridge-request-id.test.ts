@@ -518,3 +518,21 @@ it('awaits native Keychain writes and deletes and propagates storage failures', 
   h.fail({ action: 'set', code: 'PERMISSION_DENIED', message: 'access denied', id: h.sent[2].i! })
   await expect(denied).rejects.toThrow('access denied')
 })
+
+
+it('keeps Keychain authentication pending until macOS answers without timing out the user', async () => {
+  const h = loadBridge()
+  h.win.__craftBridgeRequestTimeoutMs = 1
+  const read = h.craft.keychain.get('svc', 'acct')
+  const readId = h.sent.at(-1)!.i!
+  const write = h.craft.keychain.set('svc', 'acct', 'pw')
+  const writeId = h.sent.at(-1)!.i!
+  expect(timers.size).toBe(0)
+  await expect(h.craft.tags.get('/a')).rejects.toThrow(/timed out/)
+  expect(h.win.__craftBridgeById[readId]).toBeDefined()
+  h.reply('get', { value: 'saved' }, readId)
+  h.fail({ action: 'set', code: 'CANCELLED', message: 'user cancelled authentication', id: writeId })
+  expect(await read).toBe('saved')
+  await expect(write).rejects.toThrow('user cancelled authentication')
+  expect(Object.keys(h.win.__craftBridgeById)).toHaveLength(0)
+})
