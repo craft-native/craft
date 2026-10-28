@@ -172,6 +172,45 @@ final class NativeAudioUnitTests: XCTestCase {
         }
     }
 
+    func testExplicitResumeCannotBypassAnActiveInterruption() throws {
+        try withSound { service in
+            interrupt(.began)
+            defer { interrupt(.ended) }
+            XCTAssertTrue(service.pause(id: "tone"))
+            XCTAssertFalse(service.resume(id: "tone"), "explicit pause/resume must not bypass the active session interruption")
+            interrupt(.ended, resume: true)
+            XCTAssertTrue(service.resume(id: "tone"), "an explicit pause survives automatic resume permission")
+            XCTAssertFalse(service.resume(id: "tone"))
+        }
+    }
+
+    func testSoundStartedDuringInterruptionWaitsForResumePermission() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        for automaticResume in [false, true] {
+            let service = CraftNativeSounds()
+            defer { service.close(); interrupt(.ended) }
+            interrupt(.began)
+            let ready = expectation(description: "interrupted sound prepared")
+            service.play(id: "late", url: file, options: ["loop": true]) { result in
+                if case .failure(let error) = result { XCTFail(error.message) }
+                ready.fulfill()
+            }
+            await fulfillment(of: [ready], timeout: 5)
+            let handles = try XCTUnwrap(Mirror(reflecting: service).descendant("sounds") as? [String: Any])
+            let handle = try XCTUnwrap(handles["late"])
+            let player = try XCTUnwrap(Mirror(reflecting: handle).descendant("player") as? AVQueuePlayer)
+            XCTAssertEqual(player.rate, 0, "preparing a new sound must not start playback during interruption")
+            interrupt(.ended, resume: automaticResume)
+            if automaticResume {
+                XCTAssertFalse(service.resume(id: "late"), "already resumed with system permission")
+            } else {
+                XCTAssertEqual(player.rate, 0)
+                XCTAssertTrue(service.resume(id: "late"), "a refused automatic resume leaves a resumable paused handle")
+            }
+        }
+    }
+
     private final class VoiceRecorder: CraftVoiceRecorder {
         private let lock = NSLock()
         private var records = 0

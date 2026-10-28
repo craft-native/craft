@@ -1544,7 +1544,11 @@ active through volume changes and fades, restoring the current requested volume
 on focus gain. Explicit `resume()` returns `false` during transient focus loss;
 a user-paused sound remains paused when focus returns. iOS observes
 `AVAudioSession` interruptions and resumes sounds
-only when the system grants the `shouldResume` option. A permanent Android
+automatically only when the system grants the `shouldResume` option. Explicit
+iOS `resume()` returns `false` while the interruption is active, including
+after a user pause. Sounds submitted to that service during the interruption
+may prepare, but do not start playback until it ends. Without `shouldResume`,
+they remain paused and can be resumed explicitly afterward. A permanent Android
 focus loss releases every player and sends each sound's error event; replacement,
 decode failure, cancellation, interruption, and teardown also release their
 player resources.
