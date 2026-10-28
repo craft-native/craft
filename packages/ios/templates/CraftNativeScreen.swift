@@ -15,7 +15,7 @@ import UIKit
 
 private let craftNativeCapabilityTimeoutMilliseconds = 30_000
 
-/// A retained JavaScript context must lose synchronous storage access when
+/// A retained JavaScript context must lose storage and snapshot access when
 /// its screen closes. Only the actual synchronous unmount callback may finish
 /// its cleanup; queued script work runs after that allowance ends.
 private final class CraftNativeStorageLifetime {
@@ -6773,26 +6773,33 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             }
         }
         let snapshotGet: @convention(block) (String) -> String? = { name in
-            CraftSnapshots.read(name)
+            storageLifetime.access(closedValue: nil) { CraftSnapshots.read(name) }
         }
         // JavaScriptCore retains these outer host blocks. A weak capture only
         // on the nested completion still makes the host block retain self,
         // forming controller -> JSContext -> host block -> controller.
         let snapshotSet: @convention(block) (String, JSValue, JSValue) -> Void = { [weak self] name, value, done in
-            CraftSnapshots.write(name, json: value.isNull || value.isUndefined ? nil : value.toString()) { [weak self] ok in
-                CraftNativeScriptThread.run {
-                    // A writer can finish after UIKit has disposed this
-                    // screen. Resolve the pending promise as a cancellation,
-                    // never as a successful write into a dead runtime.
-                    done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+            let json = value.isNull || value.isUndefined ? nil : value.toString()
+            // Refuse before queueing disk work. Rejecting only its completion
+            // still lets a closed screen overwrite another screen's checkpoint.
+            storageLifetime.access(closedValue: ()) {
+                CraftSnapshots.write(name, json: json) { [weak self] ok in
+                    CraftNativeScriptThread.run {
+                        // A writer can finish after UIKit has disposed this
+                        // screen. Resolve the pending promise as a cancellation,
+                        // never as a successful write into a dead runtime.
+                        done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+                    }
                 }
             }
         }
         let snapshotClear: @convention(block) (JSValue, JSValue) -> Void = { [weak self] keep, done in
             let names = (keep.isUndefined || keep.isNull ? [] : (keep.toArray() ?? [])).compactMap { $0 as? String }
-            CraftSnapshots.clear(keeping: Set(names)) { [weak self] ok in
-                CraftNativeScriptThread.run {
-                    done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+            storageLifetime.access(closedValue: ()) {
+                CraftSnapshots.clear(keeping: Set(names)) { [weak self] ok in
+                    CraftNativeScriptThread.run {
+                        done.call(withArguments: [self?.runtimeDisposed != false ? false : ok])
+                    }
                 }
             }
         }

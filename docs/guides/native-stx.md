@@ -1529,6 +1529,13 @@ written, its promise rejects instead of hanging; the host's later worker
 completion cannot publish a second result for that request. iOS also reports a
 failed result when its writer completes after the screen runtime is disposed or
 has already been deallocated.
+On iOS, a retained context cannot start new snapshot reads, writes, deletions,
+or clears after its screen closes: those calls fail with `SCREEN_CLOSED`
+before touching the shared checkpoint cache or disk. The genuine synchronous
+unmount callback retains its storage-cleanup allowance; work queued after it
+does not. Writes already admitted before close may still finish on disk, so a
+rejected completion is not a rollback guarantee. Await the final checkpoint
+before leaving the screen when persistence must be confirmed.
 
 The `media` capability (iOS) keeps video and audio on the phone for offline,
 in Application Support rather than the temporary directory, left out of

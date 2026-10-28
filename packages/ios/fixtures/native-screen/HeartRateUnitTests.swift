@@ -430,6 +430,100 @@ final class CompletedRecordingRecoveryUnitTests: XCTestCase {
 
 @MainActor
 final class PersistentRecordingCheckpointUnitTests: XCTestCase {
+    func testSynchronousUnmountCanStillSubmitItsFinalSnapshot() async throws {
+        let previousMode = CraftNativeScriptThread.isBackground
+        defer { CraftNativeScriptThread.isBackground = previousMode }
+        for background in [false, true] {
+            CraftNativeScriptThread.isBackground = background
+            let name = "unmount-snapshot-" + UUID().uuidString
+            let kept = await withCheckedContinuation { continuation in
+                CraftSnapshots.write(name, json: "{\"generation\":1}") { continuation.resume(returning: $0) }
+            }
+            XCTAssertTrue(kept)
+            let controller = CraftNativeScreenController(config: CraftConfig())
+            controller.loadViewIfNeeded()
+            controller.evaluateScript("""
+                globalThis.unmountSnapshotRead = 0;
+                globalThis.unmountSnapshotResult = 'pending';
+                globalThis.__stxNativeUnmount = function() {
+                    unmountSnapshotRead = craft.snapshots.get('\(name)').generation;
+                    craft.snapshots.set('\(name)', { generation: 2 }).then(
+                        function() { unmountSnapshotResult = 'resolved'; },
+                        function() { unmountSnapshotResult = 'rejected'; });
+                };
+                """)
+            controller.viewDidDisappear(false)
+            let deadline = Date().addingTimeInterval(10)
+            while controller.evaluateScript("unmountSnapshotResult")?.toString() == "pending" && Date() < deadline {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            XCTAssertEqual(controller.evaluateScript("unmountSnapshotRead")?.toInt32(), 1)
+            // Admission during synchronous unmount is preserved; completion
+            // after disposal must still not claim success to the closed screen.
+            XCTAssertEqual(controller.evaluateScript("unmountSnapshotResult")?.toString(), "rejected")
+            XCTAssertEqual(try String(contentsOf: XCTUnwrap(CraftSnapshots.url(for: name)), encoding: .utf8), "{\"generation\":2}")
+            let removed = await withCheckedContinuation { continuation in
+                CraftSnapshots.write(name, json: nil) { continuation.resume(returning: $0) }
+            }
+            XCTAssertTrue(removed)
+            withExtendedLifetime(controller) {}
+            CraftNativeScriptThread.queue.sync {}
+        }
+    }
+
+    func testClosedScreenCannotReadOverwriteDeleteOrClearSnapshots() async throws {
+        let previousMode = CraftNativeScriptThread.isBackground
+        defer { CraftNativeScriptThread.isBackground = previousMode }
+        for background in [false, true] {
+            CraftNativeScriptThread.isBackground = background
+            let prefix = "closed-snapshots-" + UUID().uuidString
+            let names = [prefix + "-write", prefix + "-delete", prefix + "-clear"]
+            let old = "{\"generation\":1}"
+            for name in names {
+                let kept = await withCheckedContinuation { continuation in
+                    CraftSnapshots.write(name, json: old) { continuation.resume(returning: $0) }
+                }
+                XCTAssertTrue(kept)
+            }
+            let controller = CraftNativeScreenController(config: CraftConfig())
+            controller.loadViewIfNeeded()
+            let keep = CraftSnapshots.names().filter { $0 != names[2] }
+            let keepJSON = String(data: try JSONSerialization.data(withJSONObject: keep), encoding: .utf8)!
+            XCTAssertEqual(controller.evaluateScript("craft.snapshots.get('\(names[0])').generation")?.toInt32(), 1)
+            controller.viewDidDisappear(false)
+            controller.evaluateScript("""
+                globalThis.closedSnapshotResults = [];
+                try { craft.snapshots.get('\(names[0])'); closedSnapshotResults.push('read-allowed'); }
+                catch (error) { closedSnapshotResults.push(String(error)); }
+                [craft.snapshots.set('\(names[0])', { generation: 2 }),
+                 craft.snapshots.set('\(names[1])', null),
+                 craft.snapshots.clear(\(keepJSON))].forEach(function(promise) {
+                    promise.then(function() { closedSnapshotResults.push('write-allowed'); },
+                                 function(error) { closedSnapshotResults.push(String(error)); });
+                });
+                """)
+            let deadline = Date().addingTimeInterval(10)
+            while controller.evaluateScript("closedSnapshotResults.length")?.toInt32() != 4 && Date() < deadline {
+                try await Task.sleep(nanoseconds: 10_000_000)
+            }
+            XCTAssertEqual(controller.evaluateScript("closedSnapshotResults.length")?.toInt32(), 4)
+            XCTAssertEqual(controller.evaluateScript("closedSnapshotResults.every(function(value) { return value.includes('SCREEN_CLOSED'); })")?.toBool(), true)
+            // A rejected promise alone is not enough: the old implementation
+            // rejected only after performing the stale writer's mutation.
+            for name in names {
+                XCTAssertEqual(CraftSnapshots.read(name), old, "Closed screen changed cache in background mode \(background)")
+                let url = try XCTUnwrap(CraftSnapshots.url(for: name))
+                XCTAssertEqual(try? String(contentsOf: url, encoding: .utf8), old, "Closed screen changed disk in background mode \(background)")
+                let removed = await withCheckedContinuation { continuation in
+                    CraftSnapshots.write(name, json: nil) { continuation.resume(returning: $0) }
+                }
+                XCTAssertTrue(removed)
+            }
+            withExtendedLifetime(controller) {}
+            CraftNativeScriptThread.queue.sync {}
+        }
+    }
+
     func testSecureUuidUsesTheNativePlatformWithoutJavaScriptEntropy() async throws {
         XCTAssertTrue(CraftNativeActions.capabilities(config: CraftConfig()).contains("crypto"))
         func create() async throws -> String {
