@@ -1411,7 +1411,10 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
         accessoryGlass.frame = accessoryButton.frame
         let badgeWidth = max(18, accessoryBadge.intrinsicContentSize.width + 8)
         accessoryBadge.frame = CGRect(x: accessoryButton.frame.maxX - badgeWidth + 4, y: accessoryButton.frame.minY - 3, width: badgeWidth, height: 18)
-        CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + (accessoryModel == nil ? 0 : (iconOnly ? 56 : 44)))
+        // A compact action floats over the page, not across its whole width.
+        // Only the older-system full-width shelf reserves space in web layout.
+        let accessoryInset: CGFloat = accessoryModel != nil && !iconOnly ? 44 : 0
+        CraftChrome.shared.layoutChanged(tabBar.isHidden ? 0 : max(0, view.bounds.maxY - tabBar.frame.minY) + accessoryInset)
     }
 
     private var webAttached = false
@@ -2273,10 +2276,11 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
     }
 
     private func safeAreaForTabBar() -> CGFloat {
-        // UIKit supplies the bar (and on iOS 26, its accessory) inset. Only
-        // the older-system accessory above that bar needs an extra inset.
+        // UIKit supplies the bar (and on iOS 26, its standard accessory) inset.
+        // Compact actions overlay content; only the older full-width shelf
+        // needs an extra inset.
         let chrome = CraftChrome.shared
-        if chrome.tabBarVisible && !chrome.tabs.isEmpty && chrome.tabAccessory?.iconOnly == true { return 56 }
+        if chrome.tabAccessory?.iconOnly == true { return 0 }
 #if compiler(>=6.2)
         if #available(iOS 26.0, *) { return 0 }
 #endif

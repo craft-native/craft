@@ -978,10 +978,9 @@ animations on Android. iOS 16 shows a static icon; iOS 17 and later use the
 system symbol pulse. Changing the caption does not restart the animation.
 
 Native and hybrid iOS route shells use `UITabBarController`. UIKit owns tab
-selection, badge sizing, accessibility and scroll-edge presentation. On iOS 26,
-the bar minimizes on downward scrolling and the action uses `UITabAccessory`:
-it appears above the expanded bar and moves inline when the system collapses
-the bar. Older iOS versions keep the action above the system tab bar.
+selection, badge sizing, accessibility and scroll-edge presentation. Tabs stay
+expanded while scrolling. On iOS 26, the standard action uses `UITabAccessory`
+above the bar. Older iOS versions keep the action above the system tab bar.
 Titles, selected symbols, icon tints, text icons and account photos remain
 supported. Repeating `iconPulse`/`selectedIconPulse` and custom
 `tabBar.selection` shapes/colors do not override this system control; they
@@ -1007,6 +1006,16 @@ craft.navigation.setOptions({
 // Remove it when the destination is no longer relevant.
 craft.navigation.setOptions({ tabAccessory: null })
 ```
+
+On the iOS native/hybrid route shell, add `iconOnly: true` for a 48-point
+circular trailing action with an overlaid badge. Its title and badge remain
+available to VoiceOver. This compact presentation bypasses `UITabAccessory`,
+including on iOS 26, and floats above the bar without increasing the native
+bottom safe area or the hybrid page's `--craft-tab-bar-height`. Avoid placing
+important controls under its trailing footprint; add local padding if needed.
+Omitting `iconOnly` retains the standard accessory presentation and spacing.
+The `@stacksjs/stx/native` navigation/chrome types carry the same `iconOnly`
+option; no separate compiler or compact-accessory prop is needed.
 
 Paths must begin with one `/` and are handled by the app's native route
 resolver. The button is cleared when a pushed screen goes away, so a

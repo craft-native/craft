@@ -18,8 +18,10 @@ craft.navigation.setOptions({
 })
 ```
 
-The title remains its accessible name, the badge announces the unread count,
-and the screen's bottom safe area reserves room for the button. Set
+The title remains its accessible name and the badge announces the unread count.
+The compact button overlays content: it adds no bottom safe-area inset and no
+extra `--craft-tab-bar-height` reservation in hybrid web pages. Keep important
+controls out of its trailing footprint, or add screen-specific padding if needed. Set
 `tabAccessory: null` to remove it. Accessories without `iconOnly` keep the
 system's standard presentation. Removing an accessory keeps all tabs expanded.
 

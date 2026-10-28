@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 import XCTest
 @testable import NativeNavigation
 
@@ -839,6 +840,8 @@ final class NativeNavigationUnitTests: XCTestCase {
     func testCompactTabAccessoryKeepsFiveTabsAndAnIconOnlyTrailingButton() async throws {
         let home = try XCTUnwrap(stack("/"))
         let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+        shell.view.layoutIfNeeded()
+        let originalSafeArea = screen.view.safeAreaInsets.bottom
         screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true}})")
         await displayWait("compact accessory appears") { CraftChrome.shared.tabAccessory?.iconOnly == true }
         shell.view.layoutIfNeeded()
@@ -850,8 +853,11 @@ final class NativeNavigationUnitTests: XCTestCase {
         XCTAssertEqual(button.frame.width, 48, accuracy: 0.5)
         XCTAssertGreaterThan(button.frame.minX, shell.view.bounds.midX)
         XCTAssertNil(button.configuration?.title)
+        XCTAssertNil(button.configuration?.subtitle)
         XCTAssertEqual(button.accessibilityLabel, "Messages")
         XCTAssertEqual(button.accessibilityValue, "3")
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0, "a floating action must not reserve a full-width shelf")
+        XCTAssertEqual(screen.view.safeAreaInsets.bottom, originalSafeArea, accuracy: 0.5)
         XCTAssertEqual(shell.viewControllers?.count, 5)
 #if compiler(>=6.2)
         if #available(iOS 26.0, *) {
@@ -859,9 +865,63 @@ final class NativeNavigationUnitTests: XCTestCase {
             XCTAssertEqual(shell.tabBarMinimizeBehavior, .never)
         }
 #endif
+        button.sendActions(for: .touchUpInside)
+        await displayWait("compact action opens its destination") {
+            home.transitionCoordinator == nil
+                && (home.topViewController as? CraftNativeScreenController)?.routeParams["path"] as? String == "/capabilities"
+        }
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+        home.popViewController(animated: false)
+        await displayWait("return restores the compact action") { CraftChrome.shared.tabAccessory?.iconOnly == true }
+        XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
         screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
         await displayWait("compact accessory clears") { CraftChrome.shared.tabAccessory == nil }
         XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+    }
+
+    func testCompactAccessoryModeChangesKeepNativeAndWebInsetsAtTheTabBar() async throws {
+        final class PageLoad: NSObject, WKNavigationDelegate {
+            let finished = XCTestExpectation(description: "layout observer page loaded")
+            func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished.fulfill() }
+        }
+        let page = WKWebView()
+        let load = PageLoad()
+        page.navigationDelegate = load
+        page.loadHTMLString("<!doctype html><html><body>Layout observer</body></html>", baseURL: nil)
+        await fulfillment(of: [load.finished], timeout: 10)
+        let previousWebView = CraftChrome.shared.webView
+        CraftChrome.shared.webView = page
+        defer { CraftChrome.shared.webView = previousWebView }
+        let home = try XCTUnwrap(stack("/"))
+        let screen = try XCTUnwrap(home.topViewController as? CraftNativeScreenController)
+
+        // Repeated full-width -> compact -> absent transitions must remove
+        // UIKit's accessory container and any old manually reserved shelf.
+        for _ in 0..<2 {
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3'}})")
+            await displayWait("standard accessory") { CraftChrome.shared.tabAccessory?.iconOnly == false }
+            await renderFrames()
+#if compiler(>=6.2)
+            if #available(iOS 26.0, *) { XCTAssertNotNil(shell.bottomAccessory) }
+            else { XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 44) }
+#else
+            XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 44)
+#endif
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:{path:'/capabilities',title:'Messages',symbol:'message',badge:'3',iconOnly:true}})")
+            await displayWait("floating accessory") { CraftChrome.shared.tabAccessory?.iconOnly == true }
+            await renderFrames()
+            XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+#if compiler(>=6.2)
+            if #available(iOS 26.0, *) { XCTAssertNil(shell.bottomAccessory) }
+#endif
+            let height = try await page.evaluateJavaScript("parseFloat(document.documentElement.style.getPropertyValue('--craft-tab-bar-height'))")
+            let expected = max(0, shell.view.bounds.maxY - shell.tabBar.frame.minY).rounded()
+            XCTAssertEqual(try XCTUnwrap(height as? Double), Double(expected), accuracy: 0.5, "web content must not reserve the floating action's height either")
+            screen.evaluateScript("craft.navigation.setOptions({tabAccessory:null})")
+            await displayWait("accessory removed") { CraftChrome.shared.tabAccessory == nil }
+            await renderFrames()
+            XCTAssertEqual(home.additionalSafeAreaInsets.bottom, 0)
+        }
     }
 
     func testTabAccessoryRoutePushesAndRestoresTheSelectedNativeStack() async throws {
