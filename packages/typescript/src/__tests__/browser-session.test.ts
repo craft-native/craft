@@ -81,6 +81,26 @@ async function withPlatform(run: (platform: Platform, saved: Storage) => Promise
 }
 
 describe('browser host session', () => {
+  it('the public platform saves the captured checkpoint while the simulation keeps mutating', async () => {
+    const locks = heldWebLocks()
+    await withPlatform(async (platform, saved) => {
+      const state = { tick: 25, units: [{ id: 'settler', x: 2 }] }
+      const args: unknown[] = ['checkpoint', state]
+      const write = platform.call('Storage', 'set', args, new AbortController().signal)
+      args[0] = 'other-checkpoint'
+      state.tick = 26
+      state.units[0]!.x = 9
+      try {
+        await locks.requested
+        expect(saved.getItem('fixture:account:guest:storage:checkpoint')).toBeNull()
+      }
+      finally { locks.release() }
+      expect(await write).toBe(true)
+      expect(JSON.parse(saved.getItem('fixture:account:guest:storage:checkpoint')!)).toEqual({ tick: 25, units: [{ id: 'settler', x: 2 }] })
+      expect(saved.getItem('fixture:account:guest:storage:other-checkpoint')).toBeNull()
+    }, { navigator: { language: 'en', userAgent: 'Fixture', locks } })
+  })
+
   it('the Web Locks fixture cancels a queued request without running its callback', async () => {
     const locks = heldWebLocks()
     const controller = new AbortController()
@@ -94,7 +114,7 @@ describe('browser host session', () => {
   })
 
   for (const cancellation of ['caller', 'dispose'] as const) {
-    for (const method of ['get', 'set', 'remove', 'clear'] as const) {
+    for (const method of ['get', 'set', 'setIfAbsent', 'compareAndSet', 'remove', 'clear'] as const) {
       it(`cancels queued Storage.${method} on ${cancellation} cancellation without changing the previous save`, async () => {
         const locks = heldWebLocks()
         await withPlatform(async (platform, saved) => {
@@ -102,7 +122,9 @@ describe('browser host session', () => {
           saved.setItem(address, JSON.stringify({ tick: 24 }))
           const controller = new AbortController()
           let settled = false
-          const args = method === 'clear' ? [] : method === 'set' ? ['checkpoint', { tick: 25 }] : ['checkpoint']
+          const args = method === 'clear' ? []
+            : method === 'compareAndSet' ? ['checkpoint', { tick: 24 }, { tick: 25 }]
+              : method === 'set' || method === 'setIfAbsent' ? ['checkpoint', { tick: 25 }] : ['checkpoint']
           const write = platform.call('Storage', method, args, controller.signal)
             .then(value => ({ value }), error => ({ error }))
             .then(result => { settled = true; return result })

@@ -658,7 +658,15 @@ This lets browser simulations checkpoint on backgrounding with the same contract
 as a native shell. Storage failures must still be handled by the caller.
 
 Await `platform.call('Storage', 'set', [key, value], signal)` before reporting
-a saved checkpoint. `craft.storage.setSync` updates the immediate UI cache and
+a saved checkpoint. The browser captures the key and JSON value when the call
+starts, before waiting for a Web Lock. Later mutations of your simulation state
+or argument array cannot retarget or change that pending save. `setIfAbsent`
+captures its value too; `compareAndSet` captures both the expected and next JSON
+values (including their `toJSON` representation). Invalid JSON input rejects
+without changing the previous checkpoint. Cancellation and account-scope checks
+still run before committing the captured value.
+
+`craft.storage.setSync` updates the immediate UI cache and
 queues its write when Web Locks are available; it cannot acknowledge durability
 or propagate a later quota failure. Background events are an opportunity to
 checkpoint, but browsers can terminate a page before queued work finishes, so

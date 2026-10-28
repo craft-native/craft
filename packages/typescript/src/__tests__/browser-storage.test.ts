@@ -74,6 +74,96 @@ async function atomicFixture() {
 }
 
 describe('browser atomic account checkpoints', () => {
+  it('captures ordinary saves before yielding even without Web Locks', async () => {
+    const { browser } = await fixture()
+    const state = { tick: 25 }
+    const args: unknown[] = ['campaign', state]
+    const checkpoint = browser.call('Storage', 'set', args)
+    state.tick = 26
+    args[0] = 'wrong-key'
+    expect(await checkpoint).toBe(true)
+    expect(await browser.call('Storage', 'get', ['campaign'])).toEqual({ tick: 25 })
+    expect(await browser.call('Storage', 'get', ['wrong-key'])).toBeNull()
+  })
+
+  it('rejects invalid checkpoint JSON without replacing the previous save or poisoning retries', async () => {
+    const { a } = await atomicFixture()
+    await a.call('Storage', 'set', ['campaign', { tick: 25 }])
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    for (const invalid of [undefined, cyclic, 1n]) {
+      for (const method of ['set', 'setIfAbsent', 'compareAndSet']) {
+        const args = method === 'compareAndSet' ? ['campaign', { tick: 25 }, invalid] : ['campaign', invalid]
+        await expect(a.call('Storage', method, args)).rejects.toThrow()
+        expect(await a.call('Storage', 'get', ['campaign'])).toEqual({ tick: 25 })
+      }
+      await expect(a.call('Storage', 'compareAndSet', ['campaign', invalid, { tick: 26 }])).rejects.toThrow()
+    }
+    expect(await a.call('Storage', 'compareAndSet', ['campaign', { tick: 25 }, { tick: 26 }])).toBe(true)
+    expect(await a.call('Storage', 'get', ['campaign'])).toEqual({ tick: 26 })
+  })
+
+  it('rechecks account identity after running a caller-provided serializer', async () => {
+    const { saved, a } = await atomicFixture()
+    await a.call('SecureStorage', 'set', ['auth.token', 'A'])
+    const state = { toJSON: () => { saved.setItem('auth_token', 'B'); return { owner: 'A' } } }
+    await expect(a.call('Storage', 'set', ['campaign', state])).rejects.toMatchObject({ code: 'STORAGE_SCOPE_CHANGED' })
+    expect(saved.getItem('atomic:account:hash-A:storage:campaign')).toBeNull()
+    expect(saved.getItem('atomic:account:hash-B:storage:campaign')).toBeNull()
+    expect(a.scope()).toBe('hash-B')
+  })
+
+  it.each(['set', 'setIfAbsent'])('captures %s checkpoint JSON and its key before waiting for the lock', async (method) => {
+    const { saved, a, lock } = await atomicFixture()
+    let release!: () => void
+    const held = lock('atomic:storage', () => new Promise<void>(resolve => { release = resolve }))
+    await Bun.sleep(0)
+    const state = { tick: 25, army: [{ units: 3 }] }
+    const args: unknown[] = ['campaign', state]
+    const checkpoint = a.call('Storage', method, args)
+    args[0] = 'wrong-key'
+    state.tick = 26
+    state.army[0]!.units = 99
+    args[1] = { tick: 999 }
+    await Bun.sleep(0)
+    expect(saved.getItem('atomic:account:guest:storage:campaign')).toBeNull()
+    release()
+    await held
+    expect(await checkpoint).toBe(true)
+    expect(await a.call('Storage', 'get', ['campaign'])).toEqual({ tick: 25, army: [{ units: 3 }] })
+    expect(await a.call('Storage', 'get', ['wrong-key'])).toBeNull()
+  })
+
+  it('captures the expected and replacement CAS values without observing later caller mutations', async () => {
+    const { a, lock } = await atomicFixture()
+    await a.call('Storage', 'set', ['campaign', { tick: 25 }])
+    let release!: () => void
+    const held = lock('atomic:storage', () => new Promise<void>(resolve => { release = resolve }))
+    await Bun.sleep(0)
+    const expected = { tick: 25 }
+    const next = { tick: 26, units: [3] }
+    const checkpoint = a.call('Storage', 'compareAndSet', ['campaign', expected, next])
+    expected.tick = 100
+    next.tick = 101
+    next.units.push(99)
+    release()
+    await held
+    expect(await checkpoint).toBe(true)
+    expect(await a.call('Storage', 'get', ['campaign'])).toEqual({ tick: 26, units: [3] })
+  })
+
+  it('compares CAS inputs as their captured JSON representation and runs serializers only once', async () => {
+    const { a } = await atomicFixture()
+    await a.call('Storage', 'set', ['campaign', { tick: 25 }])
+    let expectedCalls = 0
+    let nextCalls = 0
+    const expected = { toJSON: () => { expectedCalls++; return { tick: 25 } } }
+    const next = { toJSON: () => { nextCalls++; return { tick: 26 } } }
+    expect(await a.call('Storage', 'compareAndSet', ['campaign', expected, next])).toBe(true)
+    expect([expectedCalls, nextCalls]).toEqual([1, 1])
+    expect(await a.call('Storage', 'get', ['campaign'])).toEqual({ tick: 26 })
+  })
+
   it('acknowledges ordinary checkpoints only after committing and propagates quota errors', async () => {
     const { saved, a, lock } = await atomicFixture()
     let release!: () => void

@@ -158,15 +158,27 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
       signal?.throwIfAborted()
       const captured = capture()
       const wasAvailable = available()
-      await waitForAccount(accountChanged(), signal)
       const name = String(args[0] ?? '')
+      // Match a native bridge's JSON message boundary: capture the save at
+      // invocation, not after account cleanup or another tab's lock releases.
+      // The caller can keep advancing its simulation while this write waits.
+      let json: string | undefined
+      let expected: unknown
+      if (wasAvailable && module === 'Storage') {
+        if (method === 'set' || (method === 'setIfAbsent' && lock)) json = encode(args[1])
+        if (method === 'compareAndSet' && lock) {
+          expected = parse(encode(args[1]))
+          json = encode(args[2])
+        }
+      }
+      await waitForAccount(accountChanged(), signal)
       if (module === 'Storage') {
         if (!wasAvailable) throw scopeChanged()
         return exclusive(() => {
           requireScope(captured)
           const address = `${prefix}account:${captured.scope}:storage:${name}`
           if (method === 'get') return parse(storage.getItem(address))
-          if (method === 'set') { storage.setItem(address, encode(args[1])); return true }
+          if (method === 'set') { storage.setItem(address, json!); return true }
           if (method === 'remove') { storage.removeItem(address); return true }
           if (method === 'keys') return keys(key('storage:')).map(item => item.slice(key('storage:').length))
           if (method === 'clear') { for (const item of keys(key('storage:'))) storage.removeItem(item); return true }
@@ -175,11 +187,11 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
             const raw = storage.getItem(address)
             if (method === 'setIfAbsent') {
               if (raw !== null) return false
-              storage.setItem(address, encode(args[1]))
+              storage.setItem(address, json!)
               return true
             }
-            if (raw === null || !jsonEqual(parse(raw), args[1])) return false
-            storage.setItem(address, encode(args[2]))
+            if (raw === null || !jsonEqual(parse(raw), expected)) return false
+            storage.setItem(address, json!)
             return true
           }
           throw Object.assign(new Error(`Unsupported browser storage operation ${method}`), { code: 'UNSUPPORTED' })
