@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.375...v0.0.376)
+
+## 🐛 Bug Fixes
+
+- **heart-rate**: retain recordings through multi-day ultras ([437dea3](https://github.com/craft-native/craft/commit/437dea3)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.374...v0.0.375)
 
 ## 🐛 Bug Fixes
