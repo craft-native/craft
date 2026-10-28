@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.379...v0.0.380)
+
+## 🐛 Bug Fixes
+
+- **ios**: mirror the native tint setting in Zig config validation ([b8cd402](https://github.com/craft-native/craft/commit/b8cd402)) _(by Chris Breuer)_ ([#341](https://github.com/craft-native/craft/issues/341))
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.378...v0.0.379)
 
 ## 🚀 Features
