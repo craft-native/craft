@@ -1,6 +1,49 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    func testCheckpointBurstBackgroundSaveAndDeletionSurviveProcessRelaunch() {
+        let app = XCUIApplication()
+        func openCheckpoint() {
+            let open = app.buttons["open-checkpoint"]
+            XCTAssertTrue(open.waitForExistence(timeout: 15))
+            open.tap()
+            XCTAssertTrue(app.staticTexts["checkpoint-status"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.webViews.firstMatch.exists)
+        }
+        app.launch()
+        openCheckpoint()
+        let originalSession = app.staticTexts["checkpoint-session"].label
+        XCTAssertFalse(originalSession.isEmpty)
+        app.buttons["checkpoint-reset"].tap()
+        waitForLabel(app.staticTexts["checkpoint-status"], "Checkpoint absent")
+        app.buttons["checkpoint-save"].tap()
+        waitForLabel(app.staticTexts["checkpoint-status"], "Recovered: 32 (burst)")
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        app.activate()
+        waitForLabel(app.staticTexts["checkpoint-status"], "Recovered: 33 (background)")
+        // This kills the app process, not just its screen/JS context. The next
+        // public snapshot read must come from disk, not the shared native cache.
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
+        app.launch()
+        openCheckpoint()
+        XCTAssertNotEqual(app.staticTexts["checkpoint-session"].label, originalSession)
+        waitForLabel(app.staticTexts["checkpoint-status"], "Recovered: 33 (background)")
+        let recovered = XCTAttachment(screenshot: app.screenshot())
+        recovered.name = "Native checkpoint recovered after background save and process relaunch"
+        recovered.lifetime = .keepAlways
+        add(recovered)
+
+        app.buttons["checkpoint-reset"].tap()
+        waitForLabel(app.staticTexts["checkpoint-status"], "Checkpoint absent")
+        app.terminate()
+        app.launch()
+        openCheckpoint()
+        waitForLabel(app.staticTexts["checkpoint-status"], "Checkpoint absent")
+    }
+
     func testSolidSwitchTapsDragsAndControlledEchoAvoidUIKitTracking() {
         let app = XCUIApplication()
         app.launch()

@@ -1276,6 +1276,24 @@ from disk agree. A read before completion can see a pending value and is not
 confirmation that it was persisted. Await `set` before treating a save as
 complete. This is not a guarantee of survival through device power loss.
 
+The maintained iOS recovery fixture queues 32 public `craft.snapshots.set`
+calls, checks their completion order, saves again on the real background
+lifecycle event, then terminates and relaunches the app. It validates the full
+64-KiB payload from a new process and verifies that an acknowledged deletion
+also survives relaunch. Run it on an owned, booted simulator with:
+
+```sh
+CRAFT_NATIVE_RENDER_SIMULATOR=<simulator-uuid> \
+CRAFT_ONLY_TESTING=NativeRenderUITests/NativeRenderUITests/testCheckpointBurstBackgroundSaveAndDeletionSurviveProcessRelaunch \
+CRAFT_NATIVE_RENDER_RESULT=/tmp/checkpoint-recovery.xcresult \
+bun packages/ios/scripts/test-native-render.ts
+```
+
+This checks acknowledged-save recovery and background handling, not forced
+termination at a particular disk-write instruction, OS eviction under memory
+pressure, or device power-loss durability. The native unit suite separately
+exercises concurrent writers, failed-write preservation/retry, and disposal.
+
 ## Capability bridge
 
 The generated iOS and Android hosts advertise a versioned capability bridge on

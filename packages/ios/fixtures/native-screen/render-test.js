@@ -13,6 +13,38 @@
   let solidMode = false
   let solidChanges = 0
   let pageIndex = 0
+  let checkpointMode = false
+  let checkpointBackgroundArmed = false
+  const checkpointName = 'craft-ui-checkpoint-recovery'
+  const checkpointSession = `${Date.now()}-${Math.random()}`
+
+  function checkpointValue(generation, source) {
+    return { generation, source, payload: String(generation % 10).repeat(65536) }
+  }
+
+  function checkpointRead() {
+    const value = craft.snapshots.get(checkpointName)
+    if (value === null) return 'Checkpoint absent'
+    if (!Number.isInteger(value.generation) || value.payload !== checkpointValue(value.generation).payload)
+      return 'Checkpoint corrupt'
+    return `Recovered: ${value.generation} (${value.source})`
+  }
+
+  function checkpointStatus(text) {
+    mutate([{ op: 'updateNode', id: 'checkpoint-status', patch: { children: [text] } }])
+  }
+
+  function renderCheckpoint() {
+    globalThis.craftNativePostMessage(JSON.stringify({
+      id: `render-${++nextMessage}`, type: 'RENDER',
+      payload: { document: { type: 'View', style: { padding: 16 }, children: [
+        { id: 'checkpoint-status', type: 'Text', props: { key: 'checkpoint-status' }, children: [checkpointRead()] },
+        { type: 'Text', props: { key: 'checkpoint-session' }, children: [checkpointSession] },
+        { type: 'Button', props: { key: 'checkpoint-reset' }, events: { onPress: 'resetCheckpoint' }, children: ['Delete checkpoint'] },
+        { type: 'Button', props: { key: 'checkpoint-save' }, events: { onPress: 'saveCheckpoint' }, children: ['Queue 32 saves and arm background save'] },
+      ] } },
+    }))
+  }
 
   function mutate(operations) {
     const baseRevision = revision
@@ -50,6 +82,7 @@
   }
 
   function render() {
+    if (checkpointMode) { renderCheckpoint(); return }
     if (pagerMode) { renderPager(); return }
     if (solidMode) {
       globalThis.craftNativePostMessage(JSON.stringify({
@@ -119,6 +152,7 @@
             { id: 'switch-result', type: 'Text', props: { key: 'switch-result' }, children: [switchResult] },
             { id: 'open-pager', type: 'Button', props: { key: 'open-pager' }, events: { onPress: 'openPager' }, children: ['Open pager'] },
             { type: 'Button', props: { key: 'open-solid' }, events: { onPress: 'openSolid' }, children: ['Solid switch'] },
+            { type: 'Button', props: { key: 'open-checkpoint' }, events: { onPress: 'openCheckpoint' }, children: ['Checkpoint recovery'] },
           ],
         },
       },
@@ -127,7 +161,37 @@
 
   globalThis.__stxNativeBridge.onMessage(function (raw) {
     const message = JSON.parse(raw)
+    if (message.type === 'APP_STATE' && message.payload.state === 'background' && checkpointBackgroundArmed) {
+      checkpointBackgroundArmed = false
+      craft.snapshots.set(checkpointName, checkpointValue(33, 'background')).then(
+        () => checkpointStatus(checkpointRead()),
+        error => checkpointStatus(`Background save failed: ${error}`),
+      )
+    }
     if (message.type !== 'EVENT') return
+    if (message.payload.handlerName === 'openCheckpoint') { checkpointMode = true; render(); return }
+    if (message.payload.handlerName === 'resetCheckpoint') {
+      checkpointBackgroundArmed = false
+      craft.snapshots.set(checkpointName, null).then(
+        () => checkpointStatus(checkpointRead()),
+        error => checkpointStatus(`Delete failed: ${error}`),
+      )
+    }
+    if (message.payload.handlerName === 'saveCheckpoint') {
+      checkpointStatus('Saving checkpoints')
+      const completed = []
+      Promise.all(Array.from({ length: 32 }, (_, index) => {
+        const generation = index + 1
+        return craft.snapshots.set(checkpointName, checkpointValue(generation, 'burst')).then(() => completed.push(generation))
+      })).then(() => {
+        if (!completed.every((generation, index) => generation === index + 1)) {
+          checkpointStatus('Completion order mismatch')
+          return
+        }
+        checkpointBackgroundArmed = true
+        checkpointStatus(checkpointRead())
+      }, error => checkpointStatus(`Save failed: ${error}`))
+    }
     if (message.payload.handlerName === 'openSolid') { solidMode = true; render(); return }
     if (message.payload.handlerName === 'changeSolid') {
       const value = message.payload.nativeEvent.value
