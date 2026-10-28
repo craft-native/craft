@@ -47,6 +47,14 @@ after reveal, disable or quit. A 20-second deadline releases stalled activations
 `expand()` cancels pending work and releases the assertion; `destroy()` also
 removes the control. Process exit releases the OS-owned assertion.
 
+The positional backend, `init({ backend: 'legacy' })`, hides individual icons
+to the left of `›` by reserving native status-bar space. Its `‹` remains the
+reveal control even when the app's own cup or other icons are on the left.
+`busy` remains true until the native layout settles. It measures each button
+within macOS 27's shared status host and tolerates native overflow insertion
+without immediately undoing a successful collapse. It does not activate an
+assessment-mode restriction or require Accessibility authorization.
+
 The default `init()` remains the legacy backend for existing consumers. Select
 native visibility explicitly; do not combine both controllers. Private visibility
 must not be used in App Store submissions. The native tests exercise lifecycle

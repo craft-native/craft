@@ -53,10 +53,11 @@ pub const MenubarCollapseBridge = struct {
             var buf: [384]u8 = undefined;
             const json = std.fmt.bufPrint(
                 &buf,
-                "{{\"backend\":\"legacy\",\"collapsed\":{s},\"initialized\":{s},\"separatorHidden\":{s}}}",
+                "{{\"backend\":\"legacy\",\"collapsed\":{s},\"initialized\":{s},\"busy\":{s},\"separatorHidden\":{s}}}",
                 .{
                     if (menubar_collapse.isCollapsed()) "true" else "false",
                     if (menubar_collapse.isInitialized()) "true" else "false",
+                    if (menubar_collapse.isBusy()) "true" else "false",
                     if (menubar_collapse.isSeparatorHidden()) "true" else "false",
                 },
             ) catch return;

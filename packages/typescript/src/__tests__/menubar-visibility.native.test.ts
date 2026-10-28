@@ -5,6 +5,69 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { macOSRuntimeExecutablePath, packageApp } from '../package'
 
+const standardGroupingTest = process.platform === 'darwin' && process.env.CRAFT_NATIVE_TEST_BIN ? test : test.skip
+
+standardGroupingTest('packaged positional grouping stays collapsed until explicitly revealed', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'craft-positional-group-'))
+  const bundleId = `org.craft-native.positional-group.p${process.pid}.t${Date.now()}`
+  const states: Record<string, any> = {}
+  const script = `(async () => {
+    await craft.tray.setTitle('C');
+    await craft.menubar.init({backend:'legacy'});
+    await craft.timers.sleep(700);
+    await craft.menubar.collapse();
+    await craft.timers.sleep(2500);
+    await fetch('/collapsed',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+    await craft.timers.sleep(2000);
+    await fetch('/held',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+    await craft.menubar.expand();
+    await fetch('/expanded',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+  })().catch(async error => fetch('/error',{method:'POST',body:JSON.stringify({error:String(error)})}));`
+  const server = Bun.serve({ hostname:'127.0.0.1',port:0,async fetch(request) {
+    const stage = new URL(request.url).pathname.slice(1)
+    if (request.method === 'POST') {
+      states[stage] = await request.json()
+      return new Response('ok')
+    }
+    return new Response(`<script>${script}</script>`,{headers:{'content-type':'text/html'}})
+  }})
+  let proc: ReturnType<typeof Bun.spawn> | undefined
+  let stderr: Promise<string> | undefined
+  try {
+    const result = await packageApp({
+      name:'PositionalGroup',version:'1.0.0',bundleId,binaryPath:'/usr/bin/true',outDir:dir,platforms:['macos'],
+      macos:{nativeRuntimePath:process.env.CRAFT_NATIVE_TEST_BIN!,dmg:false,signIdentity:'-'},
+    })
+    assert.equal(result[0].success,true,result[0].error)
+    proc = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--url',server.url.toString()],{
+      env:{...process.env,__CFBundleIdentifier:`${bundleId}.runtime`},stdout:'ignore',stderr:'pipe',
+    })
+    stderr = new Response(proc.stderr).text()
+    const deadline = Date.now()+15000
+    while (!states.expanded && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
+    assert(!states.error,JSON.stringify(states.error))
+    assert.equal(states.collapsed?.backend,'legacy')
+    assert.equal(states.collapsed?.collapsed,true,JSON.stringify(states))
+    assert.equal(states.held?.collapsed,true,'native reflow must not immediately reveal the hidden group')
+    assert.equal(states.expanded?.collapsed,false)
+  }
+  finally {
+    if (proc && proc.exitCode === null) {
+      proc.kill('SIGTERM')
+      await Promise.race([proc.exited,Bun.sleep(500)])
+      if (proc.exitCode === null) proc.kill('SIGKILL')
+      await proc.exited
+    }
+    if (stderr) {
+      const output = await stderr
+      if (!states.expanded && output) console.error(output)
+    }
+    server.stop(true)
+    await rm(dir,{recursive:true,force:true})
+    Bun.spawnSync(['/usr/bin/defaults','delete',`${bundleId}.runtime`],{stdout:'ignore',stderr:'ignore'})
+  }
+}, 25000)
+
 // Opt-in real private-API acceptance on macOS 27 with existing Accessibility
 // authorization. CI's default native tests cover unavailability and cancellation
 // without requesting grants or changing security settings.

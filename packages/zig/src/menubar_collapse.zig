@@ -135,9 +135,8 @@ var is_collapsed: bool = false;
 var separator_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
 
 var saved_tray_menu: objc.id = if (builtin.target.os.tag == .macos) null else null;
-/// The app's own icon. Nothing may be widened to its right, or the collapse
-/// would carry it off the bar along with the icons it is meant to be hiding —
-/// and with it the menu that turns the collapse back off.
+/// The app's own icon supplies the context menu; its position does not define
+/// the group. The arrow remains available to reveal icons on either side of it.
 var tray_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
 var click_target: objc.id = if (builtin.target.os.tag == .macos) null else null;
 var class_registered: bool = false;
@@ -151,7 +150,7 @@ var reflow_started_ns: ?u64 = null;
 const Widening = struct {
     /// Where the marker stood before it started growing.
     origin: f64 = 0,
-    anchor_gap: f64 = 0,
+    trailing_edge: f64 = 0,
     /// What is currently being asked for. Comes down until it is granted.
     ask: f64 = 0,
     /// Cleared once the ask has been granted, or given up on.
@@ -163,10 +162,9 @@ const Widening = struct {
     fn begin(self: *Widening, item: objc.id) void {
         const frame = markerFrame(item) orelse return;
         const origin = frame.origin.x;
-        const tray = markerFrame(tray_item) orelse return;
         self.* = .{
             .origin = origin,
-            .anchor_gap = tray.origin.x - (frame.origin.x + frame.size.width),
+            .trailing_edge = frame.origin.x + frame.size.width,
             .ask = origin + SEPARATOR_LENGTH,
             .settled = false,
             .started_ns = nanoTimestamp(),
@@ -249,11 +247,8 @@ const TARGET_BACKOFF: f64 = 0.75;
 /// back to how it was rather than shuffling icons a few points sideways.
 const MIN_TRAVEL: f64 = 80.0;
 
-/// A plain divider rather than a chevron. macOS draws its own `«` when the bar
-/// runs out of room, which a chevron here would be mistaken for — and the two
-/// mean different things: that one appears on any crowded bar, whether or not
-/// anything is tucked away.
-const MARKER_GLYPH = "|";
+/// Point toward the visible group when expanded; collapse reverses the arrow.
+const MARKER_GLYPH = "›";
 
 // NSText.h uses TARGET_ABI_USES_IOS_VALUES: Apple Silicon macOS uses 2,
 // while Intel macOS uses AppKit's original value 1 for right alignment.
@@ -401,20 +396,8 @@ pub fn collapse() void {
     if (is_collapsed) return;
     if (separator_item == null) return;
 
-    const boundary = markerOriginX(separator_item) orelse return;
-
-    // The `|` marks what gets hidden: everything to its left. If it has been
-    // dragged past the app's own icon then the app's icon is on the wrong side
-    // of that line, and collapsing would take away the very menu that turns the
-    // collapse back off. Leave the bar alone and say so.
-    if (boundary >= trayOriginX()) {
-        log.debug("not collapsing: the marker sits right of the tray icon", .{});
-        notifyJS();
-        return;
-    }
-
-    if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-        std.debug.print("[Menubar] collapsing: boundary={d} tray={d}\n", .{ boundary, trayOriginX() });
+    // The arrow remains the reveal control even if the app's own tray icon
+    // has been arranged on its left. Only the divider defines the group.
     collapse_widening.begin(separator_item);
 
     is_collapsed = true;
@@ -499,6 +482,11 @@ pub fn destroy() void {
 
 pub fn isCollapsed() bool {
     return is_collapsed and (native_visibility or collapse_widening.settled);
+}
+
+pub fn isBusy() bool {
+    if (builtin.target.os.tag == .macos and native_visibility) return visibility.craft_menubar_visibility_busy();
+    return is_collapsed and !collapse_widening.settled;
 }
 
 pub fn isInitialized() bool {
@@ -589,7 +577,7 @@ fn drawMarker(item: objc.id, widened: bool) void {
     const pending = native_visibility and visibility.craft_menubar_visibility_busy();
     const label = if (pending) "Cancel hiding menu bar items" else if (widened) "Show menu bar items" else "Hide menu bar items";
     msgSendVoid1(button, "setAlignment:", NSTextAlignmentRight);
-    msgSendVoid1(button, "setTitle:", createNSString(if (pending) "…" else if (widened) "›" else if (native_visibility) "‹" else if (separator_hidden) "" else MARKER_GLYPH));
+    msgSendVoid1(button, "setTitle:", createNSString(if (pending) "…" else if (widened) "‹" else if (native_visibility) "›" else if (separator_hidden) "" else MARKER_GLYPH));
     msgSendVoid1(button, "setToolTip:", createNSString(label));
     msgSendVoid1(button, "setAccessibilityLabel:", createNSString(label));
     clearHighlight(button);
@@ -600,10 +588,6 @@ fn setMarkerWidth(item: objc.id, width: f64) void {
     if (item == null) return;
     msgSendVoid1(item, "setLength:", width);
     if (item == separator_item) drawMarker(item, width > SEPARATOR_LENGTH);
-}
-
-fn trayOriginX() f64 {
-    return markerOriginX(tray_item) orelse screenWidth();
 }
 
 /// A failed collapse must not reschedule itself forever.
@@ -622,8 +606,7 @@ fn settleCollapse() void {
     }
     if (!was_settled and collapse_widening.settled) {
         const marker = markerFrame(separator_item) orelse return;
-        const tray = markerFrame(tray_item) orelse return;
-        if (layout.anchorDisplaced(collapse_widening.anchor_gap, marker.origin.x, marker.size.width, tray.origin.x)) {
+        if (layout.markerEdgeDisplaced(collapse_widening.trailing_edge, marker.origin.x, marker.size.width)) {
             restoreCompactLayout();
         } else {
             notifyJS();
@@ -637,8 +620,7 @@ fn settleCollapse() void {
 fn restoreOnSystemReflow() void {
     if (!is_collapsed or !collapse_widening.settled) return;
     const marker = markerFrame(separator_item) orelse return;
-    const tray = markerFrame(tray_item) orelse return;
-    if (!layout.anchorDisplaced(collapse_widening.anchor_gap, marker.origin.x, marker.size.width, tray.origin.x)) {
+    if (!layout.markerEdgeDisplaced(collapse_widening.trailing_edge, marker.origin.x, marker.size.width)) {
         reflow_started_ns = null;
         return;
     }
@@ -656,18 +638,22 @@ fn markerFrame(item: objc.id) ?CGRect {
     if (view == null) return null;
     const window = msgSend0(view, "window");
     if (window == null) return null;
-    return msgSendRect(window, "frame");
+    // macOS 27 hosts several status buttons in the same native window. Its
+    // frame cannot locate the divider relative to the app's tray button.
+    const entry = if (comptime builtin.target.cpu.arch == .x86_64)
+        &objc.objc_msgSend_stret
+    else
+        &objc.objc_msgSend;
+    const convert_view = @as(*const fn (objc.id, objc.SEL, CGRect, objc.id) callconv(.c) CGRect, @ptrCast(entry));
+    const convert_screen = @as(*const fn (objc.id, objc.SEL, CGRect) callconv(.c) CGRect, @ptrCast(entry));
+    const bounds = msgSendRect(view, "bounds");
+    const in_window = convert_view(view, objc.sel_registerName("convertRect:toView:"), bounds, null);
+    return convert_screen(window, objc.sel_registerName("convertRectToScreen:"), in_window);
 }
 
 fn markerOriginX(item: objc.id) ?f64 {
     const frame = markerFrame(item) orelse return null;
     return frame.origin.x;
-}
-
-fn screenWidth() f64 {
-    const screen = msgSend0(getClass("NSScreen"), "mainScreen");
-    if (screen == null) return 0;
-    return msgSendRect(screen, "frame").size.width;
 }
 
 /// Take the pressed look back off a status button.
@@ -728,9 +714,10 @@ fn notifyJS() void {
         return;
     }
     var buf: [320]u8 = undefined;
-    const js = std.fmt.bufPrint(&buf, "window.dispatchEvent(new CustomEvent('craft:menubar:stateChange',{{detail:{{backend:'legacy',initialized:{s},collapsed:{s},separatorHidden:{s}}}}}));", .{
+    const js = std.fmt.bufPrint(&buf, "window.dispatchEvent(new CustomEvent('craft:menubar:stateChange',{{detail:{{backend:'legacy',initialized:{s},collapsed:{s},busy:{s},separatorHidden:{s}}}}}));", .{
         if (is_initialized) "true" else "false",
         if (isCollapsed()) "true" else "false",
+        if (isBusy()) "true" else "false",
         if (separator_hidden) "true" else "false",
     }) catch return;
     macos.tryEvalJS(js) catch |err| {
@@ -748,9 +735,11 @@ fn toggleClicked(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
     // keyboard actions have no mouse-up event and retain the normal action.
     if (is_collapsed and sender != null and event != null and msgSendUsize(event, "type") == NSEventTypeLeftMouseUp) {
         const point_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) CGPoint, @ptrCast(&objc.objc_msgSend));
-        const point = point_fn(event, objc.sel_registerName("locationInWindow"));
+        const window_point = point_fn(event, objc.sel_registerName("locationInWindow"));
+        const convert = @as(*const fn (objc.id, objc.SEL, CGPoint, objc.id) callconv(.c) CGPoint, @ptrCast(&objc.objc_msgSend));
+        const point = convert(sender, objc.sel_registerName("convertPoint:fromView:"), window_point, null);
         const bounds = msgSendRect(sender, "bounds");
-        if (point.x < bounds.size.width - SEPARATOR_LENGTH) {
+        if (point.x < bounds.origin.x + bounds.size.width - SEPARATOR_LENGTH) {
             clearHighlight(sender);
             return;
         }
