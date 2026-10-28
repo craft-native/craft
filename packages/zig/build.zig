@@ -2153,7 +2153,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const test_step = b.step("test", "Run all unit tests");
-    const backend_lifecycle_tests = b.addTest(.{ .root_module = b.createModule(.{
+    const backend_lifecycle_tests = b.addTest(.{ .name = "backend-lifecycle-tests", .root_module = b.createModule(.{
         .root_source_file = b.path("src/backend_lifecycle.zig"),
         .target = target,
         .optimize = optimize,
