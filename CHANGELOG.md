@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.377...v0.0.378)
+
+## 🐛 Bug Fixes
+
+- **ios**: stop reserving space for compact tab accessories ([6d6c3dc](https://github.com/craft-native/craft/commit/6d6c3dc)) _(by glennmichael123)_
+- **ios**: reject snapshot access after screen disposal ([47c416c](https://github.com/craft-native/craft/commit/47c416c)) _(by glennmichael123)_
+
+## Contributors
+
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.376...v0.0.377)
 
 ## 🐛 Bug Fixes
