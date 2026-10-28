@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.380...v0.0.381)
+
+## 🐛 Bug Fixes
+
+- **menubar**: keep positional groups collapsed and reverse arrows ([b5235f7](https://github.com/craft-native/craft/commit/b5235f7)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.379...v0.0.380)
 
 ## 🐛 Bug Fixes
