@@ -39,10 +39,11 @@ standardGroupingTest('packaged positional grouping stays collapsed until explici
       macos:{nativeRuntimePath:process.env.CRAFT_NATIVE_TEST_BIN!,dmg:false,signIdentity:'-'},
     })
     assert.equal(result[0].success,true,result[0].error)
-    proc = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--url',server.url.toString()],{
+    const launched = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--url',server.url.toString()],{
       env:{...process.env,__CFBundleIdentifier:`${bundleId}.runtime`},stdout:'ignore',stderr:'pipe',
     })
-    stderr = new Response(proc.stderr).text()
+    proc = launched
+    stderr = new Response(launched.stderr).text()
     const deadline = Date.now()+15000
     while (!states.expanded && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
