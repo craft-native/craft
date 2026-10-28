@@ -5747,7 +5747,7 @@ final class CraftNativeFrameClock: NSObject {
         let timestamp = link.timestamp
         // Keep waiting for a new vsync rather than delivering a duplicate or
         // stale display timestamp after the link is paused and requested again.
-        guard timestamp > lastTimestamp else { return }
+        guard timestamp.isFinite, timestamp > lastTimestamp else { return }
         lastTimestamp = timestamp
         let due = waiting
         waiting.removeAll()
@@ -6023,6 +6023,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// (`requestAnimationFrame`, CraftNativeFrameClock). Main thread only.
     private var frameWanted = false
     private let frameTimeOrigin = CACurrentMediaTime()
+    private var lastFrameTimestamp = -Double.infinity
     /// Vsync is delivered on main but may wait on the script queue. Closing
     /// on main invalidates queued delivery without retaining the controller
     /// or holding a lock while JavaScript calls synchronous UIKit APIs.
@@ -6235,12 +6236,26 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         CraftNativeFrameClock.shared.request(self) { [weak self] timestamp in self?.fireFrame(timestamp: timestamp) }
     }
 
-    private func fireFrame(timestamp displayTimestamp: CFTimeInterval) {
+    // Native display-delivery boundary; internal so the native fixture can
+    // exercise stale startup ticks without depending on simulator timing.
+    func fireFrame(timestamp displayTimestamp: CFTimeInterval) {
         guard frameWanted, !runtimeDisposed else { return }
+        // Another screen's callback can hide this screen after the clock has
+        // captured its batch. Keep the request pending until it is shown.
+        guard isAppScript || reportedVisible != false else { return }
+        let timestamp = (displayTimestamp - frameTimeOrigin) * 1000
+        // A display tick may predate a newly created controller. Clamping
+        // those ticks to zero delivers multiple frames at the same time.
+        // Wait for a valid tick instead, keeping the JS batch cancellable.
+        guard displayTimestamp.isFinite, timestamp.isFinite, timestamp >= 0,
+              timestamp > lastFrameTimestamp else {
+            CraftNativeFrameClock.shared.request(self) { [weak self] timestamp in self?.fireFrame(timestamp: timestamp) }
+            return
+        }
+        lastFrameTimestamp = timestamp
         frameWanted = false
         let context = jsContext
         let route = routeName ?? "screen"
-        let timestamp = max(0, displayTimestamp - frameTimeOrigin) * 1000
         let delivery = frameDelivery
         CraftNativeScriptThread.run(label: "frame \(route)") {
             guard delivery.isOpen else { return }

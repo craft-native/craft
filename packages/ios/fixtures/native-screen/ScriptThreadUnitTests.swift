@@ -131,6 +131,85 @@ final class ScriptThreadUnitTests: XCTestCase {
         }
     }
 
+    func testPreOriginTicksKeepTheRequestPendingInsteadOfDeliveringDuplicateZeroes() throws {
+        CraftNativeScriptThread.isBackground = false
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        defer {
+            controller.viewDidDisappear(false)
+            CraftNativeFrameClock.shared.cancel(controller)
+        }
+        let origin = try XCTUnwrap(Mirror(reflecting: controller).descendant("frameTimeOrigin") as? CFTimeInterval)
+        controller.evaluateScript("""
+            globalThis.__startupFrames = [];
+            requestAnimationFrame(function tick(time) {
+                __startupFrames.push(time);
+                if (__startupFrames.length < 3) requestAnimationFrame(tick);
+            });
+        """)
+        // Consume registration as the real display clock does, then deliver
+        // controlled ticks to the unchanged JavaScript rAF queue. No run-loop
+        // pumping allows an actual vsync to race these boundary assertions.
+        func tick(_ timestamp: CFTimeInterval) {
+            CraftNativeFrameClock.shared.cancel(controller)
+            controller.fireFrame(timestamp: timestamp)
+        }
+        for stale in [origin - 1, origin - 0.5] {
+            tick(stale)
+            XCTAssertEqual(controller.evaluateScript("__startupFrames.length")?.toInt32(), 0)
+            XCTAssertEqual(Mirror(reflecting: controller).descendant("frameWanted") as? Bool, true)
+            XCTAssertGreaterThan(CraftNativeFrameClock.shared.waitingCount, 0, "a rejected tick must rearm delivery")
+        }
+        tick(origin)
+        XCTAssertEqual(controller.evaluateScript("JSON.stringify(__startupFrames)")?.toString(), "[0]")
+        for stale in [origin, origin - 1, .nan, .infinity, -.infinity] {
+            tick(stale)
+            XCTAssertEqual(controller.evaluateScript("__startupFrames.length")?.toInt32(), 1)
+            XCTAssertGreaterThan(CraftNativeFrameClock.shared.waitingCount, 0)
+        }
+        tick(origin + 0.016)
+        tick(origin + 0.032)
+        XCTAssertEqual(controller.evaluateScript("__startupFrames.length")?.toInt32(), 3)
+        XCTAssertEqual(controller.evaluateScript("__startupFrames.every(function(t, i) { return Number.isFinite(t) && t >= 0 && (i === 0 || t > __startupFrames[i - 1]); })")?.toBool(), true)
+        XCTAssertEqual(controller.evaluateScript("__startupFrames[1]")?.toDouble() ?? -1, 16, accuracy: 0.001)
+        XCTAssertEqual(controller.evaluateScript("__startupFrames[2]")?.toDouble() ?? -1, 32, accuracy: 0.001)
+        XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
+    }
+
+    func testRejectedStartupTickPreservesCancellationAndTimeOriginAcrossHideAndShow() throws {
+        CraftNativeScriptThread.isBackground = false
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        defer {
+            controller.viewDidDisappear(false)
+            CraftNativeFrameClock.shared.cancel(controller)
+        }
+        let origin = try XCTUnwrap(Mirror(reflecting: controller).descendant("frameTimeOrigin") as? CFTimeInterval)
+        controller.evaluateScript("""
+            globalThis.__startupHits = [];
+            globalThis.__cancelStartup = requestAnimationFrame(function(time) { __startupHits.push('cancelled'); });
+            requestAnimationFrame(function(time) { __startupHits.push(time); });
+        """)
+        CraftNativeFrameClock.shared.cancel(controller)
+        controller.fireFrame(timestamp: origin - 0.01)
+        controller.evaluateScript("cancelAnimationFrame(__cancelStartup)")
+        controller.screenVisibilityChanged(false)
+        XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
+        // A delivery captured before hiding must not consume the pending batch.
+        controller.fireFrame(timestamp: origin + 1)
+        XCTAssertEqual(controller.evaluateScript("__startupHits.length")?.toInt32(), 0)
+        controller.screenVisibilityChanged(true)
+        XCTAssertGreaterThan(CraftNativeFrameClock.shared.waitingCount, 0)
+        CraftNativeFrameClock.shared.cancel(controller)
+        controller.fireFrame(timestamp: origin + 2)
+        XCTAssertEqual(controller.evaluateScript("JSON.stringify(__startupHits)")?.toString(), "[2000]", "showing must not reset the origin or revive a cancelled callback")
+        controller.evaluateScript("requestAnimationFrame(function() { __startupHits.push('disposed'); });")
+        controller.viewDidDisappear(false)
+        controller.fireFrame(timestamp: origin + 3)
+        XCTAssertEqual(controller.evaluateScript("JSON.stringify(__startupHits)")?.toString(), "[2000]")
+        XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
+    }
+
     func testFrameTimestampsIgnoreJavaScriptClockChangesAcrossHideAndShow() throws {
         for background in [false, true] {
             CraftNativeScriptThread.isBackground = background

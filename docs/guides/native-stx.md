@@ -1191,6 +1191,10 @@ Native iOS `requestAnimationFrame` callbacks receive the display link's
 monotonic timestamp in milliseconds relative to the screen controller's
 creation. The host captures this before queuing background JavaScript work;
 changing `Date.now` or `performance.now` does not change frame timestamps.
+Ticks before the controller's time origin, non-finite values, and duplicate or
+backward times leave the pending callbacks waiting for a valid display tick;
+they are not clamped to zero or replaced with synthetic time increments.
+Accepted timestamps strictly increase between frames (the first can be zero).
 Callbacks in the same frame receive the same timestamp. A frame requested while
 hidden waits until shown, but elapsed time includes that hidden interval: this is not a
 paused simulation clock, and games should apply their own resume/delta policy.

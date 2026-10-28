@@ -250,12 +250,17 @@ final class NativeAudioUnitTests: XCTestCase {
     }
 
     func testInterruptionEndsBetweenScreenServiceLifetimes() throws {
-        var original: CraftNativeSounds? = CraftNativeSounds()
-        weak var released = original
-        autoreleasepool { interrupt(.began) }
         defer { interrupt(.ended) }
-        original?.close()
-        original = nil
+        weak var released: CraftNativeSounds?
+        // As in the new-screen test above, registration can autorelease a
+        // temporary strong reference too. Drain creation as well as delivery
+        // before asserting that the weak session registry released the owner.
+        autoreleasepool {
+            let original = CraftNativeSounds()
+            released = original
+            interrupt(.began)
+            original.close()
+        }
         XCTAssertNil(released)
         interrupt(.ended)
         try withSound { incoming in
