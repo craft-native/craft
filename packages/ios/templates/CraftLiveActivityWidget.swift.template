@@ -63,7 +63,16 @@ struct CraftLiveActivityWidget: Widget {
             } compactTrailing: {
                 timer(context).monospacedDigit().frame(width: 64, alignment: .trailing)
             } minimal: {
-                activityIcon(context)
+                // When another activity (for example Music) shares the island,
+                // the minimal presentation must still carry useful live state.
+                if context.state.remainingSeconds != nil || context.state.timerEndsAt != nil {
+                    timer(context).font(.caption2.monospacedDigit().weight(.semibold))
+                        .frame(width: 48).minimumScaleFactor(0.65)
+                } else if let bpm = context.state.heartRate, bpm > 0 {
+                    Text("\(Int(bpm))").font(.caption.monospacedDigit()).foregroundStyle(.pink)
+                } else {
+                    timer(context).font(.caption2.monospacedDigit()).frame(width: 48)
+                }
             }
             .widgetURL(context.attributes.deepLink.flatMap(URL.init(string:)))
             .keylineTint(tint(context))
@@ -104,6 +113,9 @@ struct CraftLiveActivityWidget: Widget {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
+            // Dynamic Island is black even when the host app uses light mode.
+            // Explicit ink also applies to the ticking Text inside the overlay.
+            .foregroundStyle(.white)
     }
 
     @ViewBuilder

@@ -1569,6 +1569,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(widget).toContain('.widgetURL(')
     expect(widget).toContain('context.state.paused == true')
     expect(widget).toContain('context.state.showsDistance != false')
+    expect(widget).toContain('context.state.remainingSeconds != nil || context.state.timerEndsAt != nil')
+    expect(widget).toContain('timer(context).font(.caption2.monospacedDigit()')
     expect(swift).toContain('endLiveActivity(body: body, callbackId: callbackId)')
     expect(swift).toContain('saveHealthWorkout')
     expect(readFileSync(join(output, 'Sources', 'CraftHealth.swift'), 'utf8')).toContain('HKWorkoutRouteBuilder')
