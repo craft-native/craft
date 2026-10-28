@@ -1533,8 +1533,15 @@ needed; browser-rendered apps continue using their existing web fallbacks.
 
 The `files` capability keeps picked, downloaded, and generated files in an
 app-owned temporary directory that survives Activity recreation; stale entries
-are swept after a day. `craft.files.remove` rejects paths outside that
-directory. When the host advertises `files`, its `FormData`
+are swept after a day. `craft.files.remove` refuses paths outside that
+directory. On iOS, it resolves `true` only when the requested file was actually
+removed; missing, unowned, or permission-denied files resolve `false`. A refused
+deletion can be retried after the underlying restriction is lifted. Cleanup
+removes only that file, preserving siblings and the shared temporary root.
+Removing its empty parent directory is best effort and does not change a
+successful file-removal result. Cancelled-import cleanup uses the same bounded
+removal path; it does not override filesystem permissions or promise cleanup
+when the OS refuses deletion. When the host advertises `files`, its `FormData`
 implementation accepts text fields and those file descriptors;
 `Network.fetch` assembles the multipart body natively, so file bytes do not
 pass through JavaScriptCore as base64. Without that capability, native

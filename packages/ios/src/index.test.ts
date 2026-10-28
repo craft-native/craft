@@ -2407,9 +2407,22 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     const output = createTempDir('craft-ios-native-file-cleanup-')
     await init({ runtimeDir: null, name: 'Gate', bundleId: 'com.example.gate', output, config: { nativeScreens: { '/m/import': 'Import' } } as any })
     const files = readFileSync(join(output, 'Sources', 'CraftNativeFiles.swift'), 'utf8')
-    expect(files).toContain('CGImageDestinationCreateWithURL')
-    expect(files).toContain('CGImageDestinationFinalize(destination) else {')
-    expect(files.match(/removeItem\(at: url\.deletingLastPathComponent\(\)\)/g)?.length).toBe(3)
+    const encoder = files.slice(files.indexOf('static func writeJPEG(_ image: CGImage'), files.indexOf('static func jpegName('))
+    expect(encoder).toContain('CGImageDestinationCreateWithURL')
+    expect(encoder).toContain('CGImageDestinationFinalize(destination) else {')
+    expect(encoder.match(/removeItem\(at: url\.deletingLastPathComponent\(\)\)/g)?.length).toBe(2)
+  })
+
+  it('generates bounded file deletion with truthful failure reporting', async () => {
+    const output = createTempDir('craft-ios-native-file-removal-')
+    await init({ runtimeDir: null, name: 'Gate', bundleId: 'com.example.gate', output, config: { renderer: 'native' } })
+    const files = readFileSync(join(output, 'Sources', 'CraftNativeFiles.swift'), 'utf8')
+    const removal = files.slice(files.indexOf('static func remove(_ path: String)'), files.indexOf('private static func sweepOnce()'))
+    expect(files).toContain('import Darwin')
+    expect(removal).toContain('guard url.path.withCString({ unlink($0) }) == 0 else { return false }')
+    expect(removal).toContain('if parent.path != base.path')
+    expect(removal).toContain('parent.path.withCString { rmdir($0) }')
+    expect(removal).not.toContain('removeItem')
   })
 
   it('runs an all-native app with the shell\'s tabs and paths, an app script and the web view\'s services', async () => {

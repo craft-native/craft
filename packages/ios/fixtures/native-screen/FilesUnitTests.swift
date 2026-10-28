@@ -10,6 +10,135 @@ import XCTest
 /// The pickers themselves need a person; what they hand on is tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    private func removeThroughCapability(_ path: String) async throws -> Bool {
+        let result: Any = try await withCheckedThrowingContinuation { continuation in
+            CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion,
+                module: "Files", method: "remove", args: [path], config: CraftConfig()) { result in
+                switch result {
+                case .success(let value): continuation.resume(returning: value)
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+            }
+        }
+        return try XCTUnwrap(result as? Bool)
+    }
+
+    func testFileRemovalReportsPermissionFailureAndAllowsRetry() async throws {
+        let fm = FileManager.default
+        let file = try CraftNativeFiles.newFile(named: "denied.txt")
+        let folder = file.deletingLastPathComponent()
+        let bytes = Data("keep until deletion succeeds".utf8)
+        try bytes.write(to: file)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? fm.removeItem(at: folder)
+        }
+        // Real filesystem denial, not an injected successful/no-op remover.
+        // The file stays readable, so ownership succeeds before unlink fails.
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        XCTAssertNotNil(CraftNativeFiles.owned(file.path))
+        let denied = try await removeThroughCapability(file.path)
+        XCTAssertFalse(denied, "a refused deletion must not report success")
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        let retried = try await removeThroughCapability(file.path)
+        XCTAssertTrue(retried)
+        XCTAssertFalse(fm.fileExists(atPath: file.path))
+        XCTAssertFalse(fm.fileExists(atPath: folder.path))
+        let repeated = try await removeThroughCapability(file.path)
+        XCTAssertFalse(repeated)
+    }
+
+    func testFileRemovalPreservesSiblingsAndOnlyPrunesAnEmptyParent() async throws {
+        let fm = FileManager.default
+        let file = try CraftNativeFiles.newFile(named: "remove.txt")
+        let folder = file.deletingLastPathComponent()
+        let sibling = folder.appendingPathComponent("keep.txt")
+        defer { try? fm.removeItem(at: folder) }
+        try Data("remove".utf8).write(to: file)
+        try Data("unrelated".utf8).write(to: sibling)
+        let removed = try await removeThroughCapability(file.path)
+        XCTAssertTrue(removed)
+        XCTAssertFalse(fm.fileExists(atPath: file.path))
+        XCTAssertEqual(try Data(contentsOf: sibling), Data("unrelated".utf8))
+        let lastRemoved = try await removeThroughCapability(sibling.path)
+        XCTAssertTrue(lastRemoved)
+        XCTAssertFalse(fm.fileExists(atPath: folder.path))
+    }
+
+    func testFileRemovalNeverDeletesTheSharedRoot() async throws {
+        let fm = FileManager.default
+        let other = try CraftNativeFiles.newFile(named: "other.txt")
+        let direct = CraftNativeFiles.root.appendingPathComponent("direct-\(UUID().uuidString).txt")
+        defer {
+            try? fm.removeItem(at: direct)
+            try? fm.removeItem(at: other.deletingLastPathComponent())
+        }
+        try Data("other import".utf8).write(to: other)
+        try Data("direct file".utf8).write(to: direct)
+        let removed = try await removeThroughCapability(direct.path)
+        XCTAssertTrue(removed)
+        XCTAssertFalse(fm.fileExists(atPath: direct.path))
+        XCTAssertTrue(fm.fileExists(atPath: CraftNativeFiles.root.path))
+        XCTAssertEqual(try Data(contentsOf: other), Data("other import".utf8))
+    }
+
+    func testFileRemovalSucceedsEvenWhenEmptyParentCannotBePruned() async throws {
+        let fm = FileManager.default
+        let outer = try CraftNativeFiles.newFile(named: "unused").deletingLastPathComponent()
+        let inner = outer.appendingPathComponent("nested", isDirectory: true)
+        let file = inner.appendingPathComponent("remove.txt")
+        try fm.createDirectory(at: inner, withIntermediateDirectories: false)
+        try Data("remove".utf8).write(to: file)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: outer.path)
+            try? fm.removeItem(at: outer)
+        }
+        // The writable inner directory permits unlink, but its read-only
+        // parent refuses rmdir. Only the requested file decides the result.
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: outer.path)
+        let removed = try await removeThroughCapability(file.path)
+        XCTAssertTrue(removed)
+        XCTAssertFalse(fm.fileExists(atPath: file.path))
+        XCTAssertTrue(fm.fileExists(atPath: inner.path))
+    }
+
+    func testFileRemovalRefusesASymlinkEscapingTheOwnedRoot() async throws {
+        let fm = FileManager.default
+        let alias = try CraftNativeFiles.newFile(named: "alias.txt")
+        let outside = fm.temporaryDirectory.appendingPathComponent("outside-removal-\(UUID().uuidString).txt")
+        defer {
+            try? fm.removeItem(at: alias.deletingLastPathComponent())
+            try? fm.removeItem(at: outside)
+        }
+        try Data("unowned".utf8).write(to: outside)
+        try fm.createSymbolicLink(at: alias, withDestinationURL: outside)
+        let removed = try await removeThroughCapability(alias.path)
+        XCTAssertFalse(removed)
+        XCTAssertEqual(try Data(contentsOf: outside), Data("unowned".utf8))
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: alias.path), outside.path)
+    }
+
+    func testCancelledImportCleanupPreservesSiblingContent() async throws {
+        let fm = FileManager.default
+        let imported = try CraftNativeFiles.newFile(named: "cancelled.txt")
+        let folder = imported.deletingLastPathComponent()
+        let sibling = folder.appendingPathComponent("keep.txt")
+        defer { try? fm.removeItem(at: folder) }
+        try Data("undelivered".utf8).write(to: imported)
+        try Data("keep".utf8).write(to: sibling)
+        let token = UUID().uuidString
+        CraftNativeActions.cancel(requestToken: token)
+        CraftNativeActions.completeFile(token, .success(CraftNativeFiles.describe(imported, type: "text/plain"))) { _ in
+            XCTFail("cancelled import must not reach the screen")
+        }
+        let drained = expectation(description: "cancelled import cleanup drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 2)
+        XCTAssertFalse(fm.fileExists(atPath: imported.path))
+        XCTAssertEqual(try Data(contentsOf: sibling), Data("keep".utf8))
+    }
+
     func testCancelledImportsDiscardUndeliveredFilesAndTheirDirectories() async throws {
         // The same completion boundary receives a single photo/video descriptor
         // or a document-picker array. Exercise cancellation before and after the

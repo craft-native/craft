@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import ImageIO
 import Network
@@ -74,11 +75,21 @@ enum CraftNativeFiles {
         return info
     }
 
-    /// Forget a file made here. True when there was one.
+    /// Forget only the requested owned file. True only when it was removed;
+    /// pruning its now-empty directory is best effort, not recursive deletion.
     @discardableResult
     static func remove(_ path: String) -> Bool {
         guard let url = owned(path) else { return false }
-        try? FileManager.default.removeItem(at: url.deletingLastPathComponent())
+        // unlink cannot recursively remove a directory if the entry changes
+        // after ownership validation. A denied or already-gone file is false.
+        guard url.path.withCString({ unlink($0) }) == 0 else { return false }
+        let parent = url.deletingLastPathComponent()
+        let base = root.standardizedFileURL.resolvingSymlinksInPath()
+        if parent.path != base.path {
+            // rmdir refuses nonempty directories, even if a sibling appears
+            // concurrently. Never recursively delete an imported file's peers.
+            _ = parent.path.withCString { rmdir($0) }
+        }
         return true
     }
 
