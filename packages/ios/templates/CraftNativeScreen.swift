@@ -4929,7 +4929,7 @@ final class CraftNativeSvgView: UIView {
     private func updateFrames() {
         if isAnimating {
             if animationStart == nil { animationStart = CACurrentMediaTime() }
-            CraftNativeFrameClock.shared.request(self) { [weak self] in self?.nextFrame() }
+            CraftNativeFrameClock.shared.request(self) { [weak self] _ in self?.nextFrame() }
         } else {
             animationStart = nil
             CraftNativeFrameClock.shared.cancel(self)
@@ -4941,7 +4941,7 @@ final class CraftNativeSvgView: UIView {
         // Drawn only while some of it is on screen; a row scrolled away keeps
         // its time and is right when it comes back.
         if let window, window.bounds.intersects(convert(bounds, to: window)) { setNeedsDisplay() }
-        CraftNativeFrameClock.shared.request(self) { [weak self] in self?.nextFrame() }
+        CraftNativeFrameClock.shared.request(self) { [weak self] _ in self?.nextFrame() }
     }
 
     private static func hasAnimation(_ children: [Any]) -> Bool {
@@ -5713,8 +5713,10 @@ extension CAAnimation {
 final class CraftNativeFrameClock: NSObject {
     static let shared = CraftNativeFrameClock()
 
-    private var waiting: [ObjectIdentifier: () -> Void] = [:]
+    private var waiting: [ObjectIdentifier: (CFTimeInterval) -> Void] = [:]
     private var link: CADisplayLink?
+    /// The display's monotonic timestamp, captured before handing off scripts.
+    private var lastTimestamp: CFTimeInterval = 0
 
     /// How many screens wait for the next frame.
     var waitingCount: Int { waiting.count }
@@ -5722,7 +5724,7 @@ final class CraftNativeFrameClock: NSObject {
     var isRunning: Bool { link.map { !$0.isPaused } ?? false }
 
     /// `deliver` on the next frame, once. Asking again before it comes keeps one.
-    func request(_ owner: AnyObject, _ deliver: @escaping () -> Void) {
+    func request(_ owner: AnyObject, _ deliver: @escaping (CFTimeInterval) -> Void) {
         waiting[ObjectIdentifier(owner)] = deliver
         if link == nil {
             let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
@@ -5742,10 +5744,15 @@ final class CraftNativeFrameClock: NSObject {
     }
 
     @objc private func frame(_ link: CADisplayLink) {
+        let timestamp = link.timestamp
+        // Keep waiting for a new vsync rather than delivering a duplicate or
+        // stale display timestamp after the link is paused and requested again.
+        guard timestamp > lastTimestamp else { return }
+        lastTimestamp = timestamp
         let due = waiting
         waiting.removeAll()
         if waiting.isEmpty { link.isPaused = true }
-        due.values.forEach { $0() }
+        due.values.forEach { $0(timestamp) }
     }
 }
 
@@ -6015,6 +6022,17 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// The script asked for an animation frame it has not had yet
     /// (`requestAnimationFrame`, CraftNativeFrameClock). Main thread only.
     private var frameWanted = false
+    private let frameTimeOrigin = CACurrentMediaTime()
+    /// Vsync is delivered on main but may wait on the script queue. Closing
+    /// on main invalidates queued delivery without retaining the controller
+    /// or holding a lock while JavaScript calls synchronous UIKit APIs.
+    private final class FrameDelivery {
+        private let lock = NSLock()
+        private var open = true
+        var isOpen: Bool { lock.withLock { open } }
+        func close() { lock.withLock { open = false } }
+    }
+    private let frameDelivery = FrameDelivery()
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var deepLinkListener: UUID?
     private var keyboardSafeAreaInset: CGFloat = 0
@@ -6214,15 +6232,20 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         guard !runtimeDisposed, !frameWanted else { return }
         frameWanted = true
         guard isAppScript || reportedVisible != false else { return }
-        CraftNativeFrameClock.shared.request(self) { [weak self] in self?.fireFrame() }
+        CraftNativeFrameClock.shared.request(self) { [weak self] timestamp in self?.fireFrame(timestamp: timestamp) }
     }
 
-    private func fireFrame() {
+    private func fireFrame(timestamp displayTimestamp: CFTimeInterval) {
         guard frameWanted, !runtimeDisposed else { return }
         frameWanted = false
         let context = jsContext
         let route = routeName ?? "screen"
-        CraftNativeScriptThread.run(label: "frame \(route)") { context.objectForKeyedSubscript("__craftNativeFireFrame")?.call(withArguments: []) }
+        let timestamp = max(0, displayTimestamp - frameTimeOrigin) * 1000
+        let delivery = frameDelivery
+        CraftNativeScriptThread.run(label: "frame \(route)") {
+            guard delivery.isOpen else { return }
+            context.objectForKeyedSubscript("__craftNativeFireFrame")?.call(withArguments: [timestamp])
+        }
     }
 
     /// The screen came on screen or went off it: a screen pushed over it was
@@ -6247,7 +6270,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 self.hasAppeared = true
             }
         }
-        if visible, frameWanted { CraftNativeFrameClock.shared.request(self) { [weak self] in self?.fireFrame() } }
+        if visible, frameWanted { CraftNativeFrameClock.shared.request(self) { [weak self] timestamp in self?.fireFrame(timestamp: timestamp) } }
         if !visible { CraftNativeFrameClock.shared.cancel(self) }
         guard visible != reportedVisible else { return }
         let first = reportedVisible == nil
@@ -6276,6 +6299,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func disposeRuntime() {
         guard !runtimeDisposed else { return }
         runtimeDisposed = true
+        frameDelivery.close()
         storageLifetime.close()
         pendingCapabilityDeadlines.values.forEach { $0.cancel() }
         pendingCapabilityDeadlines.removeAll()
@@ -6588,28 +6612,28 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if (typeof globalThis.requestAnimationFrame !== 'function') {
                 (function() {
                     var frames = [];
-                    var cancelled = new Set();
+                    var callbacks = new Map();
                     var nextFrame = 0;
                     globalThis.requestAnimationFrame = function(callback) {
                         if (typeof callback !== 'function') return 0;
                         var id = ++nextFrame;
-                        frames.push({ id: id, callback: callback });
+                        callbacks.set(id, callback);
+                        frames.push(id);
                         if (frames.length === 1) craftNativeRequestFrame();
                         return id;
                     };
                     globalThis.cancelAnimationFrame = function(id) {
-                        if (frames.some(function(frame) { return frame.id === id; })) cancelled.add(id);
+                        callbacks.delete(id);
                     };
-                    globalThis.__craftNativeFireFrame = function() {
+                    globalThis.__craftNativeFireFrame = function(now) {
                         var due = frames;
-                        var skip = cancelled;
                         frames = [];
-                        cancelled = new Set();
-                        var now = globalThis.performance && typeof globalThis.performance.now === 'function' ? globalThis.performance.now() : Date.now();
                         var failures = [];
                         for (var i = 0; i < due.length; i++) {
-                            if (skip.has(due[i].id)) continue;
-                            try { due[i].callback(now); } catch (error) { failures.push(error); }
+                            var callback = callbacks.get(due[i]);
+                            callbacks.delete(due[i]);
+                            if (!callback) continue;
+                            try { callback(now); } catch (error) { failures.push(error); }
                         }
                         failures.forEach(function(error) { globalThis.setTimeout(function() { throw error; }, 0); });
                     };

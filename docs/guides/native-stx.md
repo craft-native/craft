@@ -1185,6 +1185,26 @@ This capability is implemented by the iOS native host; it does not claim an
 Android native implementation. Cross-platform callers should check the host's
 advertised capabilities and report unsupported on hosts without `shortcuts`.
 
+### iOS animation frames
+
+Native iOS `requestAnimationFrame` callbacks receive the display link's
+monotonic timestamp in milliseconds relative to the screen controller's
+creation. The host captures this before queuing background JavaScript work;
+changing `Date.now` or `performance.now` does not change frame timestamps.
+Callbacks in the same frame receive the same timestamp. A frame requested while
+hidden waits until shown, but elapsed time includes that hidden interval: this is not a
+paused simulation clock, and games should apply their own resume/delta policy.
+
+`cancelAnimationFrame` also cancels a callback that has already been selected
+for the current frame but has not started yet. Callbacks requested from inside
+a frame run on a subsequent display frame; throwing callbacks do not prevent
+the other callbacks from running. These guarantees apply in both main-thread
+and background-thread script modes.
+
+Closing a screen invalidates display-frame delivery still waiting on its
+background script queue. Delivery already admitted on that queue is not
+preempted; disposal prevents later queued batches from entering the script.
+
 ### The app script (`nativeApp`)
 
 `nativeApp` names a bundle route that has no screen (Stacks names it `__app`).

@@ -2986,10 +2986,10 @@ final class NativeRenderUnitTests: XCTestCase {
 
         controller.evaluateScript("""
             globalThis.__frames = [];
-            (function tick(time) { __frames.push(time); if (__frames.length < 20) requestAnimationFrame(tick); })(0);
+            requestAnimationFrame(function tick(time) { __frames.push(time); if (__frames.length < 20) requestAnimationFrame(tick); });
         """)
         wait("twenty frames") { number("__frames.length") == 20 }
-        XCTAssertEqual(controller.evaluateScript("__frames.every(function(t, i) { return i === 0 || t > __frames[i - 1]; })")?.toBool(), true)
+        XCTAssertEqual(controller.evaluateScript("__frames.every(function(t, i) { return i === 0 || t > __frames[i - 1]; })")?.toBool(), true, controller.evaluateScript("JSON.stringify(__frames)")?.toString() ?? "missing frames")
         wait("the display link to stop") { !CraftNativeFrameClock.shared.isRunning }
         XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
 

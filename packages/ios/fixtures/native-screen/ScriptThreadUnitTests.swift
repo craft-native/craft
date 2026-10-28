@@ -78,10 +78,10 @@ final class ScriptThreadUnitTests: XCTestCase {
 
         controller.evaluateScript("""
             globalThis.__frames = [];
-            (function tick(time) { __frames.push(time); if (__frames.length < 20) requestAnimationFrame(tick); })(0);
+            requestAnimationFrame(function tick(time) { __frames.push(time); if (__frames.length < 20) requestAnimationFrame(tick); });
         """)
         wait("twenty frames") { number("__frames.length") == 20 }
-        XCTAssertEqual(controller.evaluateScript("__frames.every(function(t, i) { return i === 0 || t > __frames[i - 1]; })")?.toBool(), true)
+        XCTAssertEqual(controller.evaluateScript("__frames.every(function(t, i) { return i === 0 || t > __frames[i - 1]; })")?.toBool(), true, controller.evaluateScript("JSON.stringify(__frames)")?.toString() ?? "missing frames")
         wait("the display link to stop") { !CraftNativeFrameClock.shared.isRunning }
         XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
 
@@ -101,6 +101,95 @@ final class ScriptThreadUnitTests: XCTestCase {
         XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
         controller.screenVisibilityChanged(true)
         wait("the frame once shown") { number("__shown") == 1 }
+    }
+
+    func testAnimationFrameCanCancelAnotherCallbackInTheSameBatch() throws {
+        for background in [false, true] {
+            CraftNativeScriptThread.isBackground = background
+            let controller = mounted()
+            until("the first render") { find(UILabel.self, key: "count", below: controller.view) != nil }
+            controller.evaluateScript("""
+                globalThis.__frameOrder = [];
+                globalThis.__frameDone = false;
+                var laterFrame;
+                requestAnimationFrame(function() {
+                    __frameOrder.push('first');
+                    cancelAnimationFrame(laterFrame);
+                    requestAnimationFrame(function() {
+                        __frameOrder.push('next');
+                        __frameDone = true;
+                    });
+                });
+                laterFrame = requestAnimationFrame(function() { __frameOrder.push('cancelled'); });
+            """)
+            until("the following frame") { controller.evaluateScript("__frameDone")?.toBool() == true }
+            XCTAssertEqual(controller.evaluateScript("JSON.stringify(__frameOrder)")?.toString(), "[\"first\",\"next\"]", "same-batch cancellation in mode \(background)")
+            controller.viewDidDisappear(false)
+            CraftNativeScriptThread.queue.sync {}
+            window?.isHidden = true
+            window = nil
+        }
+    }
+
+    func testFrameTimestampsIgnoreJavaScriptClockChangesAcrossHideAndShow() throws {
+        for background in [false, true] {
+            CraftNativeScriptThread.isBackground = background
+            let controller = mounted()
+            until("the first render") { find(UILabel.self, key: "count", below: controller.view) != nil }
+            controller.evaluateScript("""
+                globalThis.__clockSamples = [];
+                globalThis.__fakeClock = 100000;
+                globalThis.performance = { now: function() { return __fakeClock; } };
+                Date.now = function() { return __fakeClock; };
+                requestAnimationFrame(function(time) {
+                    __clockSamples.push(time);
+                    requestAnimationFrame(function(next) { __clockSamples.push(next); });
+                });
+            """)
+            until("initial clock samples") { controller.evaluateScript("__clockSamples.length")?.toInt32() == 2 }
+            controller.screenVisibilityChanged(false)
+            controller.evaluateScript("__fakeClock = -100000; requestAnimationFrame(function(time) { __clockSamples.push(time); });")
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            XCTAssertEqual(controller.evaluateScript("__clockSamples.length")?.toInt32(), 2)
+            controller.screenVisibilityChanged(true)
+            until("resumed clock sample") { controller.evaluateScript("__clockSamples.length")?.toInt32() == 3 }
+            XCTAssertEqual(controller.evaluateScript("__clockSamples.every(function(t, i) { return Number.isFinite(t) && t >= 0 && (i === 0 || t > __clockSamples[i - 1]); })")?.toBool(), true, "native monotonic frame time in mode \(background)")
+            controller.viewDidDisappear(false)
+            CraftNativeScriptThread.queue.sync {}
+            window?.isHidden = true
+            window = nil
+        }
+    }
+
+    func testQueuedDisplayFrameDoesNotRunAfterScreenDisposal() throws {
+        // Drive visibility explicitly, without UIKit's initial appearance
+        // re-showing a window-backed controller while the request is queued.
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        controller.loadViewIfNeeded()
+        until("the first render") { find(UILabel.self, key: "count", below: controller.view) != nil }
+        controller.screenVisibilityChanged(false)
+        controller.evaluateScript("globalThis.__lateFrame = 0; requestAnimationFrame(function() { __lateFrame += 1; });")
+        var requested = false
+        DispatchQueue.main.async { requested = true }
+        until("the hidden request to reach main") { requested }
+        let blocked = DispatchSemaphore(value: 0)
+        let resume = DispatchSemaphore(value: 0)
+        CraftNativeScriptThread.queue.async {
+            blocked.signal()
+            resume.wait()
+        }
+        defer { resume.signal() }
+        XCTAssertEqual(blocked.wait(timeout: .now() + 10), .success)
+        // Main can deliver vsync while the script queue is blocked. Disposal
+        // must invalidate that queued delivery, not merely stop future vsyncs.
+        controller.screenVisibilityChanged(true)
+        XCTAssertGreaterThan(CraftNativeFrameClock.shared.waitingCount, 0)
+        until("vsync queued behind the blocked script") { CraftNativeFrameClock.shared.waitingCount == 0 }
+        controller.viewDidDisappear(false)
+        resume.signal()
+        CraftNativeScriptThread.queue.sync {}
+        XCTAssertEqual(controller.evaluateScript("__lateFrame")?.toInt32(), 0)
+        XCTAssertEqual(CraftNativeFrameClock.shared.waitingCount, 0)
     }
 
     func testTheScriptRunsOffTheMainThreadAndItsRenderLandsOnMain() throws {
