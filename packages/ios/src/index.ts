@@ -121,6 +121,8 @@ export interface CraftConfig {
   /** Runs from the generated project root after `craft ios build` writes it. */
   postGenerate?: CraftPostGenerateHook
   backgroundColor?: string
+  /** Default tint for native controls and selected tabs, as #RRGGBB. */
+  tintColor?: string
   /** The launch and webview background while the phone is in Dark Mode. */
   backgroundColorDark?: string
   /** Edge-swipe back and forward through the page's history, pushState entries included. */
@@ -1595,6 +1597,8 @@ export async function init(options: InitOptions): Promise<void> {
   if (config.renderer !== 'web' && config.renderer !== 'native') {
     throw new Error(`Unknown iOS renderer: ${config.renderer}. Expected web or native.`)
   }
+  if (config.tintColor !== undefined && !/^#[0-9a-f]{6}$/i.test(config.tintColor))
+    throw new Error('iOS tintColor must be a #RRGGBB color')
   const selection = config.tabBar?.selection
   if (selection?.cornerRadius !== undefined && (!Number.isFinite(selection.cornerRadius) || selection.cornerRadius < 0))
     throw new Error('iOS tabBar.selection.cornerRadius must be a finite non-negative number')

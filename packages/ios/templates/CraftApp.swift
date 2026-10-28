@@ -700,6 +700,7 @@ struct CraftApp: App {
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
             }
+                .tint(appState.config.tintColor.flatMap { UIColor(hex: $0) }.map { Color($0) })
                 .preferredColorScheme(appState.appearanceScheme)
                 .environmentObject(appState)
                 .onOpenURL { url in
@@ -1788,6 +1789,8 @@ struct CraftConfig: Codable {
     /// which keep what `darkMode` pinned.
     var appearance: String? = nil
     var backgroundColor: String = "#1a1a2e"
+    /// Default native control and selected-tab tint, independent of page chrome.
+    var tintColor: String? = nil
     /// The background while the phone is in Dark Mode; the light one if unset.
     var backgroundColorDark: String? = nil
     /// Edge-swipe back and forward through the page's history.

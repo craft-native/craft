@@ -212,12 +212,16 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
   it('generates static tab-bar selection appearance and validates its shape', async () => {
     const output = createTempDir('craft-ios-tab-bar-appearance-')
     await init({ name: 'Tab Bar', output, runtimeDir: null, config: {
-      tabBar: { selection: { cornerRadius: 8, color: '#123456' } },
+      tintColor: '#dd0f15', tabBar: { selection: { cornerRadius: 8, color: '#123456' } },
     } })
     const config = JSON.parse(readFileSync(join(output, 'craft.config.json'), 'utf8'))
     const swift = readFileSync(join(output, 'Sources', 'TabBarApp.swift'), 'utf8')
     const hybrid = readFileSync(join(output, 'Sources', 'CraftHybrid.swift'), 'utf8')
     expect(config.tabBar).toEqual({ selection: { cornerRadius: 8, color: '#123456' } })
+    expect(config.tintColor).toBe('#dd0f15')
+    expect(swift).toContain('var tintColor: String? = nil')
+    expect(hybrid).toContain('chrome.tint ?? config.tintColor.flatMap { UIColor(hex: $0) } ?? view.tintColor')
+    await expect(init({ name: 'Invalid Tint', output: join(output, 'invalid-tint'), runtimeDir: null, config: { tintColor: 'red' } })).rejects.toThrow('tintColor must be a #RRGGBB color')
     expect(swift).toContain('private(set) var tabSelectionColor: UIColor?')
     expect(swift).toContain('appearance: CraftConfig.TabBar? = nil')
     expect(swift).toContain('chrome.tabSelectionColor.map { Color($0) }')

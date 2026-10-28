@@ -6089,6 +6089,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         CraftInterfaceStyleController.apply(to: self, config: config)
         navigationItem.title = routeName ?? config.appName
         view.backgroundColor = config.resolvedBackgroundColor
+        if let tint = config.tintColor.flatMap({ UIColor(hex: $0) }) { view.tintColor = tint }
         rootStack.axis = .vertical
         rootStack.alignItems = "stretch"
         rootStack.translatesAutoresizingMaskIntoConstraints = false

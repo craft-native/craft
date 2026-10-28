@@ -1192,6 +1192,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
             }
         }
         view.backgroundColor = config.resolvedBackgroundColor
+        if let tint = config.tintColor.flatMap({ UIColor(hex: $0) }) { view.tintColor = tint }
         parking.frame = view.bounds
         parking.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.insertSubview(parking, at: 0)
@@ -1265,7 +1266,7 @@ final class CraftHybridController: UITabBarController, UITabBarControllerDelegat
                 view.layoutIfNeeded()
             }
         }
-        tabBar.tintColor = chrome.tint ?? view.tintColor
+        tabBar.tintColor = chrome.tint ?? config.tintColor.flatMap { UIColor(hex: $0) } ?? view.tintColor
         let hidden = !chrome.tabBarVisible || chrome.tabs.isEmpty
         if #available(iOS 18.0, *) { setTabBarHidden(hidden, animated: false) }
         else { tabBar.isHidden = hidden }
