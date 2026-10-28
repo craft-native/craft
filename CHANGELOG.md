@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.376...v0.0.377)
+
+## 🐛 Bug Fixes
+
+- honor backend shutdown deadlines on macOS ([3892dc7](https://github.com/craft-native/craft/commit/3892dc7)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.375...v0.0.376)
 
 ## 🐛 Bug Fixes
