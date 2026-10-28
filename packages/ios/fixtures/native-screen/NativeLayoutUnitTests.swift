@@ -1189,4 +1189,181 @@ final class NativeLayoutUnitTests: XCTestCase {
         defer { window.isHidden = true }
         try await assertContentStartsBelowTheBar(controller, navigation)
     }
+
+    private func tabScrollRoot(scrollStyle: [String: Any] = ["flex": 1], scrollProps: [String: Any] = [:], footer: Bool = false) -> [String: Any] {
+        var children: [[String: Any]] = [[
+            "id": "scroll", "type": "ScrollView", "props": scrollProps.merging(["testID": "scroll"]) { $1 },
+            "style": scrollStyle.merging(["backgroundColor": "#ff0000"]) { $1 },
+            "children": [box("rows", style: ["height": 1600]), box("last", style: ["height": 48])],
+        ]]
+        if footer { children.append(box("footer", style: ["height": 60])) }
+        return box("root", style: ["flex": 1], children)
+    }
+
+    private func bottomLayoutScreen(_ root: [String: Any], tabbed: Bool = true) async throws -> (CraftNativeScreenController, UITabBarController, UIWindow) {
+        let controller = CraftNativeScreenController(config: CraftConfig())
+        let navigation = UINavigationController(rootViewController: controller)
+        navigation.setNavigationBarHidden(true, animated: false)
+        let tabs = UITabBarController()
+        navigation.tabBarItem = UITabBarItem(title: "Today", image: UIImage(systemName: "house"), tag: 0)
+        if tabbed { tabs.viewControllers = [navigation] }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = tabbed ? tabs : navigation
+        controller.loadViewIfNeeded()
+        controller.render(root)
+        window.makeKeyAndVisible()
+        await settle(controller)
+        return (controller, tabs, window)
+    }
+
+    private func assertTabbedScrollReachesBottom(_ controller: CraftNativeScreenController) async throws {
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.bounds.maxY, accuracy: 0.5,
+                       "the screen background must continue behind the floating tab bar")
+        XCTAssertGreaterThan(controller.view.safeAreaInsets.bottom, 0)
+        XCTAssertEqual(scroll.contentInset.bottom, 0, accuracy: 0.5, "do not manually add a second bar inset")
+        XCTAssertEqual(scroll.adjustedContentInset.bottom, controller.view.safeAreaInsets.bottom, accuracy: 0.5)
+        XCTAssertTrue(scroll.automaticallyAdjustsScrollIndicatorInsets)
+        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom), animated: false)
+        await settle(controller)
+        XCTAssertEqual(try frame("last", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 1,
+                       "the last row must remain reachable above the bar, not trapped behind it")
+    }
+
+    func testTabbedScrollExtendsBehindTheBarAndInsetsItsLastRowOnce() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        try await assertTabbedScrollReachesBottom(controller)
+        let screenshot = XCTAttachment(image: UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        })
+        screenshot.name = "Tabbed scroll background and reachable last row"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testTabbedScrollTracksLegacyAccessoryInsetsWithoutShrinkingItsViewport() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        // Craft's pre-iOS-26 standard accessory reserves this on the tab's
+        // navigation controller. Compact accessories reserve nothing.
+        controller.navigationController?.additionalSafeAreaInsets.bottom = 44
+        await settle(controller)
+        try await assertTabbedScrollReachesBottom(controller)
+        controller.navigationController?.additionalSafeAreaInsets.bottom = 0
+        await settle(controller)
+        try await assertTabbedScrollReachesBottom(controller)
+    }
+
+    func testTabbedScrollTracksTheSystemAccessoryInset() async throws {
+        let (controller, tabs, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        if #available(iOS 26.0, *) {
+            let button = UIButton(type: .system)
+            button.setTitle("Messages", for: .normal)
+            tabs.bottomAccessory = UITabAccessory(contentView: button)
+            await settle(controller)
+            try await assertTabbedScrollReachesBottom(controller)
+            tabs.bottomAccessory = nil
+            await settle(controller)
+            try await assertTabbedScrollReachesBottom(controller)
+        }
+    }
+
+    func testPlainScrollKeepsTheHomeIndicatorSafeArea() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot(), tabbed: false)
+        defer { window.isHidden = true }
+        XCTAssertGreaterThan(controller.view.safeAreaInsets.bottom, 0)
+        XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+    }
+
+    func testTabbedFlatListExtendsItsViewportAndKeepsTheLastCellReachable() async throws {
+        let rows = (0..<40).map { index in
+            box("row-\(index)", style: ["height": 48], props: ["listRole": "item", "key": "row-\(index)"])
+        }
+        let root = box("root", style: ["flex": 1], [[
+            "id": "list", "type": "FlatList", "props": ["testID": "list"], "style": ["flex": 1], "children": rows,
+        ]])
+        let (controller, _, window) = try await bottomLayoutScreen(root)
+        defer { window.isHidden = true }
+        let list = try XCTUnwrap(find("list", below: controller.view) as? CraftNativeFlatList)
+        XCTAssertEqual(try frame("list", in: controller).maxY, controller.view.bounds.maxY, accuracy: 0.5)
+        XCTAssertEqual(list.adjustedContentInset.bottom, controller.view.safeAreaInsets.bottom, accuracy: 0.5)
+        list.setContentOffset(CGPoint(x: 0, y: list.contentSize.height - list.bounds.height + list.adjustedContentInset.bottom), animated: false)
+        await settle(controller)
+        XCTAssertEqual(try frame("row-39", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 1)
+    }
+
+    func testTabbedScrollDoesNotDoubleTheKeyboardClearance() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        let keyboard = window.convert(CGRect(x: 0, y: window.bounds.maxY - 300, width: window.bounds.width, height: 300), to: nil)
+        NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil, userInfo: [
+            UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: keyboard),
+            UIResponder.keyboardAnimationDurationUserInfoKey: 0,
+        ])
+        await settle(controller)
+        controller.insetScrollViewsForKeyboard()
+        XCTAssertEqual(scroll.adjustedContentInset.bottom, 300, accuracy: 1, "automatic safe area and explicit keyboard overlap must not add up twice")
+        NotificationCenter.default.post(name: UIResponder.keyboardWillHideNotification, object: nil, userInfo: [UIResponder.keyboardAnimationDurationUserInfoKey: 0])
+        await settle(controller)
+        try await assertTabbedScrollReachesBottom(controller)
+    }
+
+    func testAddingAFooterRestoresTheSafeBottomWithoutReplacingTheScroll() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view))
+        try await assertTabbedScrollReachesBottom(controller)
+        controller.render(tabScrollRoot(footer: true))
+        await settle(controller)
+        XCTAssertTrue(find("scroll", below: controller.view) === scroll)
+        XCTAssertEqual(try frame("footer", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+        controller.render(tabScrollRoot())
+        await settle(controller)
+        XCTAssertTrue(find("scroll", below: controller.view) === scroll)
+        try await assertTabbedScrollReachesBottom(controller)
+    }
+
+    func testTabbedNonScrollingAndBoundedScreensKeepTheSafeArea() async throws {
+        for root in [box("root", style: ["flex": 1]), tabScrollRoot(scrollStyle: ["height": 200]),
+                     tabScrollRoot(footer: true), tabScrollRoot(scrollProps: ["scrollEnabled": false]),
+                     tabScrollRoot(scrollProps: ["horizontal": true])] {
+            let (controller, _, window) = try await bottomLayoutScreen(root)
+            XCTAssertEqual(try frame("root", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+            window.isHidden = true
+        }
+    }
+
+    func testHidingAndRestoringTheTabBarReevaluatesTheScrollBottom() async throws {
+        let (controller, tabs, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        try await assertTabbedScrollReachesBottom(controller)
+        tabs.tabBar.isHidden = true
+        await settle(controller)
+        XCTAssertEqual(try frame("scroll", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+        tabs.tabBar.isHidden = false
+        await settle(controller)
+        try await assertTabbedScrollReachesBottom(controller)
+    }
+
+    func testSheetOverTabsKeepsItsOwnHomeIndicatorSafeArea() async throws {
+        let (presenter, _, window) = try await bottomLayoutScreen(tabScrollRoot())
+        defer { window.isHidden = true }
+        let sheet = CraftNativeScreenController(config: CraftConfig())
+        sheet.modalPresentationStyle = .pageSheet
+        sheet.sheetPresentationController?.detents = [.medium()]
+        sheet.loadViewIfNeeded()
+        sheet.render(tabScrollRoot())
+        await withCheckedContinuation { continuation in
+            presenter.present(sheet, animated: false) { continuation.resume() }
+        }
+        await settle(sheet)
+        XCTAssertGreaterThan(sheet.view.safeAreaInsets.bottom, 0)
+        XCTAssertEqual(try frame("scroll", in: sheet).maxY, sheet.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
+        sheet.dismiss(animated: false)
+    }
 }

@@ -6382,6 +6382,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // Containment, bar visibility and accessory insets can change after
+        // rendering. Recheck once the scroll viewport has its actual frame.
+        trackContentScrollView()
         positionModals()
         emitLayoutEvents()
         sendViewportIfChanged()
@@ -7622,10 +7625,29 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let edgeToEdge = scroll != nil && (prefersLargeTitle == true || scroll === leadingScroll?.view)
         let fullEdgeToEdge = rootIsSafeAreaView
         let topEdgeToEdge = fullEdgeToEdge || edgeToEdge
+        // Only a leading vertical scroller that reaches the root's bottom
+        // can paint beneath a visible tab bar. A bounded list, fixed footer,
+        // plain screen or presented sheet must retain its safe-area bottom.
+        // Use UIKit's automatic inset for tab/accessory clearance, rather
+        // than adding a second explicit inset (also owned by keyboard code).
+        var tabbedScroll = false
+        if let scroll, scroll === leadingScroll?.view, scroll.bounds.height > 0,
+           let tabBar = tabBarController?.tabBar, !tabBar.isHidden, tabBar.alpha > 0,
+           let window = view.window, tabBar.window === window,
+           tabBar.convert(tabBar.bounds, to: view).intersects(view.bounds) {
+            let viewport = scroll.convert(scroll.bounds, to: rootStack)
+            tabbedScroll = abs(viewport.maxY - rootStack.bounds.maxY) < 0.5
+        }
+        let bottomEdgeToEdge = fullEdgeToEdge || tabbedScroll
         rootTopToSafeArea?.isActive = !topEdgeToEdge
         rootTopToView?.isActive = topEdgeToEdge
-        rootBottomToSafeArea?.isActive = !fullEdgeToEdge
-        rootBottomToView?.isActive = fullEdgeToEdge
+        if bottomEdgeToEdge {
+            rootBottomToSafeArea?.isActive = false
+            rootBottomToView?.isActive = true
+        } else {
+            rootBottomToView?.isActive = false
+            rootBottomToSafeArea?.isActive = true
+        }
         rootLeadingToSafeArea?.isActive = !fullEdgeToEdge
         rootLeadingToView?.isActive = fullEdgeToEdge
         rootTrailingToSafeArea?.isActive = !fullEdgeToEdge
@@ -7815,6 +7837,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
             if let keyboard = keyboardScreenFrame, let window = scroll.window {
                 let frame = scroll.convert(scroll.bounds, to: window)
                 overlap = max(0, frame.maxY - window.convert(keyboard, from: nil).minY)
+                // An edge-to-edge scroller already receives the keyboard's
+                // safe-area share through UIKit. Add only uncovered overlap.
+                let automaticBottom = max(0, scroll.adjustedContentInset.bottom - scroll.contentInset.bottom)
+                overlap = max(0, overlap - automaticBottom)
             }
             if abs(scroll.contentInset.bottom - overlap) > 0.5 { scroll.contentInset.bottom = overlap }
             if abs(scroll.verticalScrollIndicatorInsets.bottom - overlap) > 0.5 { scroll.verticalScrollIndicatorInsets.bottom = overlap }
