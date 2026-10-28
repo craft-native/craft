@@ -47,11 +47,17 @@ try {
   // A plain UIKit comparison is installed only in this generated test app,
   // never in the shipped template or an application's public bridge.
   copyFileSync(join(fixture, 'SwitchReference.swift'), join(output, 'Sources', 'SwitchReference.swift'))
+  // Interposition lives exclusively in this simulator app. The production
+  // snapshot writer is copied unchanged and still calls Foundation's .atomic.
+  for (const source of ['CheckpointInterruption.swift', 'CheckpointInterruption.c'])
+    copyFileSync(join(fixture, source), join(output, 'Sources', source))
   const appSourcePath = join(output, 'Sources', 'NativeRenderApp.swift')
   const appSource = readFileSync(appSourcePath, 'utf8')
   const sceneAnchor = 'WindowGroup {\n            Group {\n'
   if (!appSource.includes(sceneAnchor)) throw new Error('Native renderer test app scene anchor changed')
-  writeFileSync(appSourcePath, appSource.replace(sceneAnchor, `${sceneAnchor}                if ProcessInfo.processInfo.arguments.contains("--reference-switch") {
+  writeFileSync(appSourcePath, appSource.replace(sceneAnchor, `${sceneAnchor}                if ProcessInfo.processInfo.arguments.contains("--checkpoint-interruption") {
+                    CheckpointInterruption()
+                } else if ProcessInfo.processInfo.arguments.contains("--reference-switch") {
                     SwitchReference()
                 } else
 `))
