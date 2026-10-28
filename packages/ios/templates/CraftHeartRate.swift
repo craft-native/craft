@@ -135,8 +135,8 @@ final class CraftHeartRate: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     static let connectTimeout: TimeInterval = 15
     /// A reading older than this is no longer "now".
     static let staleAfter: TimeInterval = 10
-    /// Fourteen hours of one reading a second: more is not one workout.
-    static let maxRecordedSamples = 50_000
+    /// Seven days at one reading a second, including multi-day ultra events.
+    static let maxRecordedSamples = 604_800
 
     private let clock: () -> Date
     private let recordingDirectory: URL?

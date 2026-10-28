@@ -333,6 +333,38 @@ final class CompletedRecordingRecoveryUnitTests: XCTestCase {
         }
     }
 
+    func testUltraRecordingContinuesAfterRelaunch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let defaults = UserDefaults.standard
+        let previousFake = defaults.object(forKey: "CraftFakeHeartRateMonitor")
+        let previousDevice = defaults.object(forKey: "CraftHeartRate.lastDevice")
+        defaults.set(true, forKey: "CraftFakeHeartRateMonitor")
+        defer {
+            defaults.set(previousFake, forKey: "CraftFakeHeartRateMonitor")
+            defaults.set(previousDevice, forKey: "CraftHeartRate.lastDevice")
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let first = CraftHeartRate(recordingDirectory: directory)
+        let started = try await call(first, "startRecording") as? [String: Any]
+        let id = try XCTUnwrap(started?["id"] as? String)
+        let file = directory.appendingPathComponent("craft-heart-rate-recording.jsonl")
+        try Data(String(repeating: "{\"timestamp\":1000,\"bpm\":140}\n", count: 100_800).utf8).write(to: file)
+        let restored = CraftHeartRate(recordingDirectory: directory)
+        let state = try await call(restored, "getRecordingState", ["expectedId": id]) as? [String: Any]
+        XCTAssertEqual(state?["sampleCount"] as? Int, 100_800)
+        let reading = expectation(description: "a 28-hour ultra continues saving heart rate")
+        reading.assertForOverFulfill = false
+        restored.pageSink = { event in
+            if event["type"] as? String == "reading" { reading.fulfill() }
+            return true
+        }
+        _ = try await call(restored, "connect", ["id": "00000000-0000-4000-8000-00000000180D"])
+        await fulfillment(of: [reading], timeout: 5)
+        let finished = try await call(restored, "stopRecording", ["expectedId": id]) as? [String: Any]
+        XCTAssertGreaterThan((finished?["samples"] as? [[String: Any]])?.count ?? 0, 100_800)
+        _ = try await call(restored, "disconnect", ["forget": true])
+    }
+
     func testCompletedOwnerSurvivesAnotherStartAndRelaunchUntilAcknowledged() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

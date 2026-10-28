@@ -208,8 +208,8 @@ internal class CraftHeartRateRecording(
     private val archiveWriter: (ByteArray, File) -> Unit = ::craftHeartRateWriteAtomically,
 ) {
     companion object {
-        /** Fourteen hours of one reading a second: more is not one workout. */
-        const val MAX_SAMPLES = 50_000
+        /** Seven days at one reading a second, including multi-day ultra events. */
+        const val MAX_SAMPLES = 604_800
         val METHODS = setOf("startRecording", "pauseRecording", "resumeRecording", "stopRecording", "getRecordingState", "readRecording", "acknowledgeRecording")
         private const val KIND = "heart-rate"
     }

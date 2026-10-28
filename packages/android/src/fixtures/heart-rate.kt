@@ -168,6 +168,21 @@ fun decisions() {
     check(craftHeartRateBluetoothName(true, null, "authorized") == "unknown")
 }
 
+fun ultraRecordingContinuesAfterRelaunch() {
+    val dir = directory()
+    try {
+        val first = recorder(dir)
+        val id = map(first.perform("startRecording", emptyMap()))["id"] as String
+        File(dir, "craft-heart-rate-recording.jsonl").writeText("{\"timestamp\":1000,\"bpm\":140}\n".repeat(100_800))
+        val restored = recorder(dir)
+        check(map(restored.perform("getRecordingState", mapOf("expectedId" to id)))["sampleCount"] == 100_800)
+        check(restored.append(mapOf("timestamp" to 100_801_000L, "bpm" to 151))) { "a 28-hour ultra must continue saving heart rate" }
+        val finished = map(restored.perform("stopRecording", mapOf("expectedId" to id)))
+        val samples = list(finished["samples"])
+        check(samples.size == 100_801 && samples.last()["bpm"] == 151L)
+    } finally { dir.deleteRecursively() }
+}
+
 fun startingAgainPreservesTheActiveRecording() {
     val dir = directory()
     val first = recorder(dir)
@@ -303,6 +318,7 @@ fun missingMetadataIsAnError() {
 }
 
 fun main() {
+    ultraRecordingContinuesAfterRelaunch()
     measurements()
     simulatedBeats()
     decisions()
