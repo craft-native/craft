@@ -1268,6 +1268,14 @@ every screen as `SNAPSHOT_CHANGED`. The host functions survive the runtime
 assigning its own `craft.snapshots` object; a key the runtime defines itself
 wins.
 
+On iOS, valid snapshot writes are admitted and queued under one lock, then
+written atomically on a serial queue. Concurrent callers have no promised
+caller-start order; admission order determines disk writes and completion
+delivery. Once all writes settle, the cached value and the value recovered
+from disk agree. A read before completion can see a pending value and is not
+confirmation that it was persisted. Await `set` before treating a save as
+complete. This is not a guarantee of survival through device power loss.
+
 ## Capability bridge
 
 The generated iOS and Android hosts advertise a versioned capability bridge on

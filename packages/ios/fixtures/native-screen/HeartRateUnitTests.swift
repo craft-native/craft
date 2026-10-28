@@ -430,6 +430,40 @@ final class CompletedRecordingRecoveryUnitTests: XCTestCase {
 
 @MainActor
 final class PersistentRecordingCheckpointUnitTests: XCTestCase {
+    func testConcurrentSnapshotWritersAgreeOnCompletedDiskAndCachedValue() async throws {
+        let name = "concurrent-snapshot-" + UUID().uuidString
+        let url = try XCTUnwrap(CraftSnapshots.url(for: name))
+        // Admission and disk-queue submission must share one ordering boundary.
+        // Unique values make a stale final cache observable, unlike repeated
+        // writes of the same checkpoint. Callbacks are delivered on main.
+        for round in 0..<100 {
+            let completed = expectation(description: "all concurrent writes completed")
+            completed.expectedFulfillmentCount = 32
+            var lastCompleted: String?
+            DispatchQueue.global(qos: .userInitiated).async {
+                DispatchQueue.concurrentPerform(iterations: 32) { writer in
+                    let json = "{\"round\":\(round),\"writer\":\(writer)}"
+                    CraftSnapshots.write(name, json: json) { ok in
+                        XCTAssertTrue(Thread.isMainThread)
+                        XCTAssertTrue(ok)
+                        lastCompleted = json
+                        completed.fulfill()
+                    }
+                }
+            }
+            await fulfillment(of: [completed], timeout: 10)
+            let disk = try String(contentsOf: url, encoding: .utf8)
+            let cached = CraftSnapshots.read(name)
+            XCTAssertEqual(disk, lastCompleted, "completion must reflect serialized disk order")
+            XCTAssertEqual(cached, disk, "a fresh process and a warm process must recover the same completed checkpoint, round \(round)")
+            if cached != disk { break }
+        }
+        let removed = await withCheckedContinuation { continuation in
+            CraftSnapshots.write(name, json: nil) { continuation.resume(returning: $0) }
+        }
+        XCTAssertTrue(removed)
+    }
+
     func testSynchronousUnmountCanStillSubmitItsFinalSnapshot() async throws {
         let previousMode = CraftNativeScriptThread.isBackground
         defer { CraftNativeScriptThread.isBackground = previousMode }

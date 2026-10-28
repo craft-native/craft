@@ -1836,7 +1836,9 @@ enum CraftSnapshots {
         revisions[name] = mine
         pending[name] = .some(json)
         cache.removeObject(forKey: name as NSString)
-        lock.unlock()
+        // Admission and queue submission are one ordering boundary. Unlocking
+        // before enqueue lets an older caller overtake a newer revision on disk
+        // while the cache still retains the newer value.
         queue.async {
             var ok = true
             do {
@@ -1863,6 +1865,7 @@ enum CraftSnapshots {
                 completion?(ok)
             }
         }
+        lock.unlock()
     }
 
     /// Every snapshot there is: on disk, and written but not on disk yet.
