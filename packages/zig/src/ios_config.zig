@@ -176,7 +176,7 @@ pub const Flags = std.EnumSet(Feature);
 const string_keys = [_][]const u8{ "appName", "bundleId", "renderer", "backgroundColor" };
 const extra_bool_keys = [_][]const u8{"darkMode"};
 const array_of_string_keys = [_][]const u8{ "associatedDomains", "trustedOrigins" };
-const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
+const optional_string_keys = [_][]const u8{ "appearance", "backgroundColorDark", "tintColor", "devServerURL", "nativeApp", "nativeScriptThread", "sessionTokenKey" };
 const optional_bool_keys = [_][]const u8{ "swipeNavigation", "limitNavigationsToAppBoundDomains", "allowsLinkPreview", "keyboardAccessory", "disableZoom" };
 /// Swift `Double`s with a default. Any JSON number decodes; a string or a
 /// boolean throws.
@@ -792,7 +792,7 @@ test "optional fields are type-checked when present" {
         defer testing.allocator.free(json);
         try testing.expectEqual(std.enums.values(Feature).len, parse(testing.allocator, json).count());
     }
-    inline for (.{ "\"appearance\":7", "\"backgroundColorDark\":false", "\"swipeNavigation\":\"true\"", "\"renderer\":true", "\"disableZoom\":1", "\"allowsLinkPreview\":\"yes\"", "\"nativeScriptThread\":7" }) |bad| {
+    inline for (.{ "\"appearance\":7", "\"backgroundColorDark\":false", "\"tintColor\":7", "\"swipeNavigation\":\"true\"", "\"renderer\":true", "\"disableZoom\":1", "\"allowsLinkPreview\":\"yes\"", "\"nativeScriptThread\":7" }) |bad| {
         const json = try completeConfig(testing.allocator, bad);
         defer testing.allocator.free(json);
         try testing.expectEqual(@as(usize, 0), parse(testing.allocator, json).count());
