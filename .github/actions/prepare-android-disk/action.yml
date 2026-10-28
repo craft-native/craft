@@ -1,0 +1,31 @@
+name: Prepare Android runner disk
+description: Reclaim unused hosted Linux toolchains before installing SDKs and creating stock emulator data partitions.
+
+runs:
+  using: composite
+  steps:
+    - name: Reserve space for stock Android images
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Never remove tools from a developer machine or a persistent runner.
+        if [[ "${GITHUB_ACTIONS:-}" != "true" || "${RUNNER_ENVIRONMENT:-}" != "github-hosted" || "${RUNNER_OS:-}" != "Linux" ]]; then
+          echo "::error::Android disk preparation requires a GitHub-hosted Linux runner"
+          exit 1
+        fi
+        test -d "${RUNNER_TEMP:?}"
+        test -d "${GITHUB_WORKSPACE:?}"
+        df -Pk "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+        # These jobs do not use .NET, Haskell, Swift or CodeQL. Keep Android,
+        # Java, the rest of the tool cache, the checkout and all evidence.
+        sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/swift /opt/hostedtoolcache/CodeQL
+        df -Pk "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
+        # API 35's stock userdata alone needs 12 GiB; reserve headroom for
+        # SDK installation and Gradle before either can consume the disk.
+        for directory in "$RUNNER_TEMP" "$GITHUB_WORKSPACE"; do
+          available=$(df -Pk "$directory" | awk 'NR == 2 {print $4}')
+          if [[ ! "$available" =~ ^[0-9]+$ ]] || [[ "$available" -lt 20971520 ]]; then
+            echo "::error::Android runner needs at least 20 GiB free before SDK setup at $directory (available KiB: $available)"
+            exit 1
+          fi
+        done

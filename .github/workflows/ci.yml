@@ -38,6 +38,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-android-disk
       - name: Enable owned runner access to KVM
         run: |
           mkdir -p artifacts/android-sdk-emulator
@@ -73,6 +74,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
+      - uses: ./.github/actions/prepare-android-disk
       - name: Install the identical managed Android toolchain
         uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
         with:

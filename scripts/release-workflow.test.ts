@@ -23,6 +23,85 @@ const artifactDownload = 'actions/download-artifact@d3f86a106a0bac45b974a628896c
 const needs = (job: Job) => typeof job.needs === 'string' ? [job.needs] : job.needs ?? []
 const steps = (job: Job) => job.steps?.map(step => step.run ?? '').join('\n') ?? ''
 
+const androidDiskAction = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/actions/prepare-android-disk/action.yml'), 'utf8')) as { runs: { steps: Array<{ run: string }> } }
+
+function rehearseAndroidDisk(envOverrides: Record<string, string> = {}) {
+  const dir = createTempDir('craft-android-disk-')
+  const workspace = join(dir, 'workspace with spaces')
+  const runnerTemp = join(dir, 'runner temp')
+  const cleanupLog = join(dir, 'cleanup-args')
+  mkdirSync(workspace)
+  mkdirSync(runnerTemp)
+  // Intercept sudo: tests must never delete the host's real toolchains.
+  writeFileSync(join(dir, 'sudo'), '#!/bin/bash\nprintf "%s\\n" "$@" >> "$CLEANUP_LOG"\nexit "${MOCK_CLEANUP_EXIT:-0}"\n')
+  writeFileSync(join(dir, 'df'), `#!/bin/bash
+if [[ "\${MOCK_DF_EXIT:-0}" != "0" ]]; then exit "$MOCK_DF_EXIT"; fi
+available="$MOCK_TEMP_KIB"
+if [[ "$2" == "$GITHUB_WORKSPACE" ]]; then available="$MOCK_WORKSPACE_KIB"; fi
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/fixture 70000000 1 %s 1%% /fixture\\n' "$available"
+`)
+  chmodSync(join(dir, 'sudo'), 0o755)
+  chmodSync(join(dir, 'df'), 0o755)
+  const result = Bun.spawnSync(['bash', '-c', androidDiskAction.runs.steps[0]!.run], {
+    env: {
+      ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_ACTIONS: 'true',
+      RUNNER_ENVIRONMENT: 'github-hosted', RUNNER_OS: 'Linux', RUNNER_TEMP: runnerTemp,
+      GITHUB_WORKSPACE: workspace, CLEANUP_LOG: cleanupLog,
+      MOCK_TEMP_KIB: '25000000', MOCK_WORKSPACE_KIB: '25000000', ...envOverrides,
+    },
+  })
+  return { result, cleanup: existsSync(cleanupLog) ? readFileSync(cleanupLog, 'utf8').trim().split('\n') : [] }
+}
+
+test('Android disk preparation deletes only the explicit unused hosted toolchains', () => {
+  const { result, cleanup } = rehearseAndroidDisk()
+  expect(result.exitCode).toBe(0)
+  expect(cleanup).toEqual(['rm', '-rf', '--', '/usr/share/dotnet', '/opt/ghc', '/usr/local/.ghcup', '/usr/local/swift', '/opt/hostedtoolcache/CodeQL'])
+})
+
+test.each([
+  { RUNNER_ENVIRONMENT: 'self-hosted' }, { RUNNER_ENVIRONMENT: '' },
+  { RUNNER_OS: 'macOS' }, { GITHUB_ACTIONS: 'false' },
+])('Android disk preparation refuses non-hosted Linux contexts before cleanup: %j', (env) => {
+  const { result, cleanup } = rehearseAndroidDisk(env)
+  expect(result.exitCode).not.toBe(0)
+  expect(cleanup).toEqual([])
+  expect(result.stdout.toString()).toContain('requires a GitHub-hosted Linux runner')
+})
+
+test.each([
+  { MOCK_TEMP_KIB: '20971519' }, { MOCK_WORKSPACE_KIB: '20971519' },
+  { MOCK_TEMP_KIB: 'not-a-number' }, { MOCK_WORKSPACE_KIB: '' },
+])('Android disk preparation rejects insufficient or unreadable capacity on either volume: %j', (env) => {
+  const { result } = rehearseAndroidDisk(env)
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stdout.toString()).toContain('needs at least 20 GiB free')
+})
+
+test('Android disk preparation accepts the exact capacity floor and propagates command failures', () => {
+  expect(rehearseAndroidDisk({ MOCK_TEMP_KIB: '20971520', MOCK_WORKSPACE_KIB: '20971520' }).result.exitCode).toBe(0)
+  expect(rehearseAndroidDisk({ MOCK_CLEANUP_EXIT: '17' }).result.exitCode).toBe(17)
+  const dfFailure = rehearseAndroidDisk({ MOCK_DF_EXIT: '19' })
+  expect(dfFailure.result.exitCode).toBe(19)
+  expect(dfFailure.cleanup).toEqual([])
+})
+
+test('SDK and native Android acceptance reserve disk before installing toolchains', () => {
+  for (const [file, names] of [
+    ['ci.yml', ['android-sdk-emulator', 'android-software-cold-provisioning-diagnostic']],
+    ['mobile-e2e.yml', ['android-navigation']],
+  ] as const) {
+    const workflow = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows', file), 'utf8')) as { jobs: Record<string, Job> }
+    for (const name of names) {
+      const jobSteps = workflow.jobs[name]!.steps!
+      expect(jobSteps[0]!.uses).toBe('actions/checkout@v6')
+      expect(jobSteps[1]!.uses).toBe('./.github/actions/prepare-android-disk')
+      expect(jobSteps[1]!.if).toBeUndefined()
+      expect(jobSteps.filter(step => step.uses === './.github/actions/prepare-android-disk')).toHaveLength(1)
+    }
+  }
+})
+
 test('release rehearsals include the actual host-neutral native CI contract', () => {
   const ci = Bun.YAML.parse(readFileSync(join(import.meta.dir, '../.github/workflows/ci.yml'), 'utf8')) as { jobs: Record<string, Job> }
   const contract = ci.jobs.lint.steps?.find(step => step.name === 'Test host-neutral native renderer contract')?.run
