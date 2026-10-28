@@ -1,5 +1,36 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.378...v0.0.379)
+
+## 🚀 Features
+
+- **ios**: configure native tint independently of page chrome ([cdacea6](https://github.com/craft-native/craft/commit/cdacea6)) _(by Chris Breuer)_ ([#341](https://github.com/craft-native/craft/issues/341))
+
+## 🐛 Bug Fixes
+
+- **ci**: place Android temporary data on checked runner disk ([13b8014](https://github.com/craft-native/craft/commit/13b8014)) _(by glennmichael123)_
+- **browser**: capture checkpoint JSON before queued writes ([ec2f74a](https://github.com/craft-native/craft/commit/ec2f74a)) _(by glennmichael123)_
+- **ci**: reserve disk space for stock Android emulators ([98f5b81](https://github.com/craft-native/craft/commit/98f5b81)) _(by glennmichael123)_
+- **ios**: extend tabbed scroll content behind the tab bar ([30db7c6](https://github.com/craft-native/craft/commit/30db7c6)) _(by glennmichael123)_
+- **ios**: reject stale startup frame timestamps ([ce7c0e2](https://github.com/craft-native/craft/commit/ce7c0e2)) _(by glennmichael123)_
+- **ios**: bound and cancel native file imports ([2a27861](https://github.com/craft-native/craft/commit/2a27861)) _(by glennmichael123)_
+- **ios**: bound file removal and report deletion failures ([98a704c](https://github.com/craft-native/craft/commit/98a704c)) _(by glennmichael123)_ ([#397](https://github.com/craft-native/craft/issues/397))
+- **ios**: preserve native frame timing and cancellation ([5396e66](https://github.com/craft-native/craft/commit/5396e66)) _(by glennmichael123)_
+- **ios**: share sound interruption state across screens ([b77e4a3](https://github.com/craft-native/craft/commit/b77e4a3)) _(by glennmichael123)_
+- **ios**: gate sound playback during active interruptions ([7f452c5](https://github.com/craft-native/craft/commit/7f452c5)) _(by glennmichael123)_
+- **ios**: serialize snapshot admission with disk queue submission ([979b8cd](https://github.com/craft-native/craft/commit/979b8cd)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **ios**: verify interrupted checkpoint recovery ([83ba2fe](https://github.com/craft-native/craft/commit/83ba2fe)) _(by glennmichael123)_
+- **ios**: add atomic checkpoint interruption harness ([13b9f61](https://github.com/craft-native/craft/commit/13b9f61)) _(by glennmichael123)_
+- **ios**: verify checkpoint recovery across app relaunch ([de6a439](https://github.com/craft-native/craft/commit/de6a439)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris Breuer_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.377...v0.0.378)
 
 ## 🐛 Bug Fixes
