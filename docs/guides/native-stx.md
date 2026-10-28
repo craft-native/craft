@@ -1546,8 +1546,11 @@ a user-paused sound remains paused when focus returns. iOS observes
 `AVAudioSession` interruptions and resumes sounds
 automatically only when the system grants the `shouldResume` option. Explicit
 iOS `resume()` returns `false` while the interruption is active, including
-after a user pause. Sounds submitted to that service during the interruption
-may prepare, but do not start playback until it ends. Without `shouldResume`,
+after a user pause. Interruption state is shared across screens: once sound
+services are initialized, observation continues between screen lifetimes without
+retaining those services. Sounds submitted during an observed interruption,
+including from a newly opened screen, may prepare but do not start playback
+until it ends. Without `shouldResume`,
 they remain paused and can be resumed explicitly afterward. A permanent Android
 focus loss releases every player and sends each sound's error event; replacement,
 decode failure, cancellation, interruption, and teardown also release their

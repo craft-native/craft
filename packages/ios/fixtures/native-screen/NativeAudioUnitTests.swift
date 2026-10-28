@@ -211,6 +211,53 @@ final class NativeAudioUnitTests: XCTestCase {
         }
     }
 
+    func testNewScreenInheritsTheActiveSessionInterruption() async throws {
+        let file = try soundFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+        var original: CraftNativeSounds? = CraftNativeSounds()
+        weak var released = original
+        // Drain Foundation's temporary strong snapshot of the weak registry
+        // before checking that the registry itself does not retain a service.
+        autoreleasepool { interrupt(.began) }
+        defer { interrupt(.ended) }
+        original?.close()
+        original = nil
+        XCTAssertNil(released, "session observation must not retain a closed screen's service")
+
+        let incoming = CraftNativeSounds()
+        defer { incoming.close() }
+        let ready = expectation(description: "incoming screen's sound prepared")
+        incoming.play(id: "incoming", url: file, options: ["loop": true]) { result in
+            if case .failure(let error) = result { XCTFail(error.message) }
+            ready.fulfill()
+        }
+        await fulfillment(of: [ready], timeout: 5)
+        let handles = try XCTUnwrap(Mirror(reflecting: incoming).descendant("sounds") as? [String: Any])
+        let handle = try XCTUnwrap(handles["incoming"])
+        let player = try XCTUnwrap(Mirror(reflecting: handle).descendant("player") as? AVQueuePlayer)
+        XCTAssertEqual(player.rate, 0, "a new screen must inherit the app session interruption")
+        XCTAssertTrue(incoming.pause(id: "incoming"))
+        XCTAssertFalse(incoming.resume(id: "incoming"))
+        interrupt(.ended, resume: true)
+        XCTAssertTrue(incoming.resume(id: "incoming"))
+        XCTAssertEqual(player.rate, 1)
+    }
+
+    func testInterruptionEndsBetweenScreenServiceLifetimes() throws {
+        var original: CraftNativeSounds? = CraftNativeSounds()
+        weak var released = original
+        autoreleasepool { interrupt(.began) }
+        defer { interrupt(.ended) }
+        original?.close()
+        original = nil
+        XCTAssertNil(released)
+        interrupt(.ended)
+        try withSound { incoming in
+            XCTAssertTrue(incoming.pause(id: "tone"))
+            XCTAssertTrue(incoming.resume(id: "tone"), "an ended interruption must not leave future screens blocked")
+        }
+    }
+
     private final class VoiceRecorder: CraftVoiceRecorder {
         private let lock = NSLock()
         private var records = 0

@@ -314,34 +314,44 @@ final class CraftNativeSounds {
     private static var category: AVAudioSession.Category = .ambient
 
     private var sounds: [String: Sound] = [:]
-    private var interruptionObserver: NSObjectProtocol?
-    /// Session availability is separate from a handle's explicit pause state.
-    private var sessionInterrupted = false
+    /// AVAudioSession belongs to the app, not to a screen. Observe for the
+    /// process lifetime once sounds are used, including gaps between screens.
+    /// Weak membership must not keep a disposed screen's service alive.
+    private static let services = NSHashTable<CraftNativeSounds>.weakObjects()
+    private static var sessionInterrupted = false
+    private static let interruptionObserver = NotificationCenter.default.addObserver(
+        forName: AVAudioSession.interruptionNotification,
+        object: nil,
+        queue: .main,
+    ) { note in CraftNativeSounds.handleInterruption(note) }
     /// `{ id, event: "ended" | "error", message? }` to the screen's script.
     var emit: (([String: Any]) -> Void)?
 
     init() {
-        interruptionObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification,
-            object: nil,
-            queue: .main,
-        ) { [weak self] note in
-            guard let self else { return }
-            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
-            if type == AVAudioSession.InterruptionType.began.rawValue {
-                self.sessionInterrupted = true
-                self.sounds.values.forEach { sound in
+        _ = Self.interruptionObserver
+        Self.services.add(self)
+    }
+
+    /// Sound services and their playback controls are used on main.
+    private static func handleInterruption(_ note: Notification) {
+        let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+        if type == AVAudioSession.InterruptionType.began.rawValue {
+            sessionInterrupted = true
+            services.allObjects.forEach { service in
+                service.sounds.values.forEach { sound in
                     guard !sound.paused else { return }
                     sound.interrupted = true
                     sound.player.pause()
                 }
-                return
             }
-            guard type == AVAudioSession.InterruptionType.ended.rawValue else { return }
-            self.sessionInterrupted = false
-            let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
-            let shouldResume = options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0
-            self.sounds.values.forEach { sound in
+            return
+        }
+        guard type == AVAudioSession.InterruptionType.ended.rawValue else { return }
+        sessionInterrupted = false
+        let options = (note.userInfo?[AVAudioSessionInterruptionOptionKey] as? NSNumber)?.uintValue ?? 0
+        let shouldResume = options & AVAudioSession.InterruptionOptions.shouldResume.rawValue != 0
+        services.allObjects.forEach { service in
+            service.sounds.values.forEach { sound in
                 guard sound.interrupted else { return }
                 sound.interrupted = false
                 // Without permission to auto-resume, keep a resumable paused
@@ -350,10 +360,6 @@ final class CraftNativeSounds {
                 if shouldResume { sound.player.play() }
             }
         }
-    }
-
-    deinit {
-        if let interruptionObserver { NotificationCenter.default.removeObserver(interruptionObserver) }
     }
 
     /// Starts `url`. `answer` hears once it plays (or could not be loaded).
@@ -368,7 +374,7 @@ final class CraftNativeSounds {
         let item = AVPlayerItem(url: url)
         let player = AVQueuePlayer()
         let sound = Sound(player: player, volume: volume)
-        sound.interrupted = sessionInterrupted
+        sound.interrupted = Self.sessionInterrupted
         sound.pending = answer
         sounds[id] = sound
         let failed: (String) -> Void = { [weak self, weak sound] message in
@@ -402,7 +408,7 @@ final class CraftNativeSounds {
             }
         }
         player.volume = fadeIn > 0 ? 0 : volume
-        if !sessionInterrupted { player.play() }
+        if !Self.sessionInterrupted { player.play() }
         if fadeIn > 0 { ramp(sound, to: volume, over: fadeIn) }
     }
 
@@ -418,7 +424,7 @@ final class CraftNativeSounds {
 
     @discardableResult
     func resume(id: String) -> Bool {
-        guard !sessionInterrupted, let sound = sounds[id], sound.paused else { return false }
+        guard !Self.sessionInterrupted, let sound = sounds[id], sound.paused else { return false }
         sound.paused = false
         sound.interrupted = false
         sound.player.volume = sound.volume
