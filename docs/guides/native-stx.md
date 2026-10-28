@@ -1561,6 +1561,15 @@ after the picker closes cannot publish or leak an app-owned file. Use this for
 GPX, TCX, FIT, PDF, or other documents that are not photos or videos. On iOS,
 failed photo JPEG creation or finalization also removes its staging directory,
 so a rejected image import does not accumulate orphaned temporary files.
+iOS document and video imports copy regular local files in at most 64 KiB
+chunks. Directories, symbolic links, and special files are refused; general
+documents still accept arbitrary content types, while videos retain the
+MP4/M4V/MOV/WebM extension allowlist. The per-file byte limit is enforced on
+bytes read, not just initial metadata, so a growing source cannot exceed it.
+Cancellation (including screen teardown) stops the copy at a chunk boundary,
+cleans partial staging, and rolls back earlier files in a multi-document
+selection. It does not interrupt an in-flight OS read or dismiss the system
+picker/provider UI. Cleanup remains best effort if the filesystem denies deletion.
 If an iOS or Android file picker, write, or download finishes after its request is
 cancelled (including screen teardown), the delivery boundary removes its
 undelivered app-owned files and their staging directories. Already delivered

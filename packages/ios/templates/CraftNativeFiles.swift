@@ -309,7 +309,8 @@ enum CraftNativeFiles {
 
     /// System pickers grant access to just the selected video. Copy it while
     /// the provider's URL is valid; no movie bytes cross JavaScriptCore.
-    static func pickVideo(_ options: [String: Any], done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+    static func pickVideo(_ options: [String: Any], isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        guard !isCancelled() else { done(.failure(importCancelled())); return }
         guard activePicker == nil else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
@@ -324,7 +325,7 @@ enum CraftNativeFiles {
             DispatchQueue.main.async { activePicker = nil; done(result) }
         }
         if options["source"] as? String == "files" {
-            let delegate = VideoDocumentDelegate(limit: limit, done: finish)
+            let delegate = VideoDocumentDelegate(limit: limit, isCancelled: isCancelled, done: finish)
             var types: [UTType] = [.movie]
             if let webm = UTType(filenameExtension: "webm") { types.append(webm) }
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
@@ -340,7 +341,7 @@ enum CraftNativeFiles {
             configuration.filter = .videos
             configuration.selectionLimit = 1
             configuration.preferredAssetRepresentationMode = .current
-            let delegate = VideoLibraryDelegate(limit: limit, done: finish)
+            let delegate = VideoLibraryDelegate(limit: limit, isCancelled: isCancelled, done: finish)
             let picker = PHPickerViewController(configuration: configuration)
             picker.delegate = delegate
             activePicker = delegate
@@ -356,7 +357,8 @@ enum CraftNativeFiles {
     /// Pick one or more documents and copy them into app-owned storage while
     /// the security-scoped URLs are valid. `contentTypes` accepts MIME types,
     /// UTIs, or filename extensions; an empty list means any document.
-    static func pickFile(_ options: [String: Any], done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+    static func pickFile(_ options: [String: Any], isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        guard !isCancelled() else { done(.failure(importCancelled())); return }
         guard activePicker == nil else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
@@ -383,7 +385,7 @@ enum CraftNativeFiles {
         let finish: (Result<Any, CraftNativeActionError>) -> Void = { result in
             DispatchQueue.main.async { activePicker = nil; done(result) }
         }
-        let delegate = FileDocumentDelegate(limit: limit, done: finish)
+        let delegate = FileDocumentDelegate(limit: limit, isCancelled: isCancelled, done: finish)
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.allowsMultipleSelection = selectionLimit > 1
         picker.delegate = delegate
@@ -420,26 +422,96 @@ enum CraftNativeFiles {
 
     /// Copy an arbitrary selected document into Craft's private file area and
     /// return the same descriptor used by downloads, writes, and uploads.
-    static func copyFile(_ source: URL, limit: Int) -> Result<Any, CraftNativeActionError> {
-        do {
-            let values = try source.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
-            let size: Int
-            if let fileSize = values.fileSize {
-                size = fileSize
-            } else {
-                size = ((try? FileManager.default.attributesOfItem(atPath: source.path))?[.size] as? NSNumber)?.intValue ?? 0
+    static func copyFile(_ source: URL, limit: Int, isCancelled: () -> Bool = { false }) -> Result<Any, CraftNativeActionError> {
+        let contentType = (try? source.resourceValues(forKeys: [.contentTypeKey]))?.contentType
+        return copyImport(source, limit: limit, type: mimeType(for: source, contentType: contentType), isCancelled: isCancelled)
+    }
+
+    private static func importCancelled() -> CraftNativeActionError {
+        CraftNativeActionError(code: "CANCELLED", message: "The file import was cancelled")
+    }
+
+    /// Validate the opened file, not just its path metadata. Nonblocking open
+    /// avoids hanging on a FIFO; no-follow refuses symlinks. Metadata is only
+    /// an early rejection: enforce the limit on bytes actually read as well.
+    private static func copyImport(_ source: URL, limit: Int, type: String, isCancelled: () -> Bool) -> Result<Any, CraftNativeActionError> {
+        var destination: URL?
+        var succeeded = false
+        defer {
+            if !succeeded, let destination {
+                _ = destination.path.withCString { unlink($0) }
+                _ = destination.deletingLastPathComponent().path.withCString { rmdir($0) }
             }
-            guard size > 0, size <= limit else {
-                return .failure(CraftNativeActionError(code: "FILE_TOO_LARGE", message: "Choose a nonempty file under \(limit / 1024 / 1024)MB."))
-            }
-            let destination = try newFile(named: source.lastPathComponent)
-            do { try FileManager.default.copyItem(at: source, to: destination) }
-            catch { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()); throw error }
-            let type = mimeType(for: source, contentType: values.contentType)
-            return .success(describe(destination, type: type))
-        } catch {
-            return .failure(CraftNativeActionError(code: "READ_ERROR", message: error.localizedDescription))
         }
+        do {
+            guard !isCancelled() else { throw importCancelled() }
+            guard source.isFileURL else {
+                throw CraftNativeActionError(code: "INVALID_FILE", message: "Choose a regular local file")
+            }
+            let descriptor = source.path.withCString { open($0, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC) }
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            defer { try? input.close() }
+            var metadata = stat()
+            guard fstat(descriptor, &metadata) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            guard metadata.st_mode & S_IFMT == S_IFREG else {
+                throw CraftNativeActionError(code: "INVALID_FILE", message: "Choose a regular file, not a directory or special file")
+            }
+            let oversized = CraftNativeActionError(code: "FILE_TOO_LARGE", message: "Choose a nonempty file no larger than \(limit) bytes.")
+            guard limit > 0, metadata.st_size > 0, metadata.st_size <= limit else { throw oversized }
+            let target = try newFile(named: source.lastPathComponent)
+            destination = target
+            guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+                throw CraftNativeActionError(code: "WRITE_ERROR", message: "The imported file could not be created")
+            }
+            let output = try FileHandle(forWritingTo: target)
+            defer { try? output.close() }
+            var total = 0
+            while true {
+                guard !isCancelled() else { throw importCancelled() }
+                // At the limit, probe one more byte without writing it. This
+                // also avoids overflowing limit + 1 for an Int.max caller.
+                let chunk = try input.read(upToCount: max(1, min(64 * 1024, limit - total))) ?? Data()
+                guard !isCancelled() else { throw importCancelled() }
+                if chunk.isEmpty { break }
+                guard chunk.count <= limit - total else { throw oversized }
+                try output.write(contentsOf: chunk)
+                total += chunk.count
+            }
+            guard total > 0 else { throw oversized }
+            try output.close()
+            guard !isCancelled() else { throw importCancelled() }
+            succeeded = true
+            return .success(describe(target, type: type))
+        } catch {
+            return .failure((error as? CraftNativeActionError) ?? CraftNativeActionError(code: "READ_ERROR", message: error.localizedDescription))
+        }
+    }
+
+    /// All-or-nothing ownership for a multi-document selection. Security scope
+    /// lasts through each copy; cancellation also rolls back earlier results.
+    static func copyFiles(_ sources: [URL], limit: Int, isCancelled: () -> Bool = { false }) -> Result<Any, CraftNativeActionError> {
+        var results: [[String: Any]] = []
+        var succeeded = false
+        defer {
+            if !succeeded { results.compactMap { $0["path"] as? String }.forEach { remove($0) } }
+        }
+        for source in sources {
+            guard !isCancelled() else { return .failure(importCancelled()) }
+            let granted = source.startAccessingSecurityScopedResource()
+            defer { if granted { source.stopAccessingSecurityScopedResource() } }
+            switch copyFile(source, limit: limit, isCancelled: isCancelled) {
+            case .success(let value):
+                guard let info = value as? [String: Any] else {
+                    return .failure(CraftNativeActionError(code: "READ_ERROR", message: "The selected file could not be described"))
+                }
+                results.append(info)
+            case .failure(let error): return .failure(error)
+            }
+        }
+        guard !isCancelled() else { return .failure(importCancelled()) }
+        succeeded = true
+        return .success(results)
     }
 
     private static func mimeType(for source: URL, contentType: UTType?) -> String {
@@ -461,82 +533,60 @@ enum CraftNativeFiles {
 
     private final class FileDocumentDelegate: NSObject, UIDocumentPickerDelegate {
         let limit: Int
+        let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.done = done }
+        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(.success([])) }
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard !urls.isEmpty else { done(.success([])); return }
-            let (limit, done) = (self.limit, self.done)
+            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
             DispatchQueue.global(qos: .userInitiated).async {
-                var results: [[String: Any]] = []
-                for url in urls {
-                    let granted = url.startAccessingSecurityScopedResource()
-                    defer { if granted { url.stopAccessingSecurityScopedResource() } }
-                    switch CraftNativeFiles.copyFile(url, limit: limit) {
-                    case .success(let value):
-                        guard let info = value as? [String: Any] else { done(.failure(CraftNativeActionError(code: "READ_ERROR", message: "The selected file could not be described"))); return }
-                        results.append(info)
-                    case .failure(let error):
-                        results.compactMap { $0["path"] as? String }.forEach { CraftNativeFiles.remove($0) }
-                        done(.failure(error))
-                        return
-                    }
-                }
-                done(.success(results))
+                done(CraftNativeFiles.copyFiles(urls, limit: limit, isCancelled: isCancelled))
             }
         }
     }
 
-    static func copyVideo(_ source: URL, limit: Int) -> Result<Any, CraftNativeActionError> {
+    static func copyVideo(_ source: URL, limit: Int, isCancelled: () -> Bool = { false }) -> Result<Any, CraftNativeActionError> {
         let ext = source.pathExtension.lowercased()
         let types = ["mp4": "video/mp4", "m4v": "video/x-m4v", "mov": "video/quicktime", "webm": "video/webm"]
         guard let type = types[ext] else {
             return .failure(CraftNativeActionError(code: "INVALID_VIDEO", message: "Choose an MP4, MOV or WebM video."))
         }
-        do {
-            let size = ((try FileManager.default.attributesOfItem(atPath: source.path))[.size] as? NSNumber)?.intValue ?? 0
-            guard size > 0, size <= limit else {
-                return .failure(CraftNativeActionError(code: "FILE_TOO_LARGE", message: "Choose a nonempty video under \(limit / 1024 / 1024)MB."))
-            }
-            let destination = try newFile(named: source.lastPathComponent)
-            do { try FileManager.default.copyItem(at: source, to: destination) }
-            catch { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()); throw error }
-            return .success(describe(destination, type: type))
-        } catch {
-            return .failure(CraftNativeActionError(code: "READ_ERROR", message: error.localizedDescription))
-        }
+        return copyImport(source, limit: limit, type: type, isCancelled: isCancelled)
     }
 
     private final class VideoLibraryDelegate: NSObject, PHPickerViewControllerDelegate {
         let limit: Int
+        let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.done = done }
+        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider else { done(.success(NSNull())); return }
-            let (limit, done) = (self.limit, self.done)
+            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
             provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
                 guard let url else {
                     done(.failure(CraftNativeActionError(code: "READ_ERROR", message: error?.localizedDescription ?? "The video could not be read")))
                     return
                 }
-                done(CraftNativeFiles.copyVideo(url, limit: limit))
+                done(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled))
             }
         }
     }
 
     private final class VideoDocumentDelegate: NSObject, UIDocumentPickerDelegate {
         let limit: Int
+        let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.done = done }
+        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(.success(NSNull())) }
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
             guard let url = urls.first else { done(.success(NSNull())); return }
-            let (limit, done) = (self.limit, self.done)
+            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
             DispatchQueue.global(qos: .userInitiated).async {
                 let granted = url.startAccessingSecurityScopedResource()
                 defer { if granted { url.stopAccessingSecurityScopedResource() } }
-                done(CraftNativeFiles.copyVideo(url, limit: limit))
+                done(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled))
             }
         }
     }

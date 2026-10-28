@@ -2597,10 +2597,10 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     for (const call of ['case ("Files", "pickImage"):', 'case ("Files", "pickFile"):', 'case ("Files", "download"):', 'case ("Files", "write"):', 'case ("Files", "remove"):'])
       expect(actions).toContain(call)
     expect(actions).toContain('CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera)')
-    expect(actions).toContain('CraftNativeFiles.pickFile(options)')
+    expect(actions).toContain('CraftNativeFiles.pickFile(options, isCancelled: { isCancelled(requestToken) })')
     // Every operation producing a new owned file uses cancellation cleanup,
     // not just callback suppression. Persistent media keeps its separate path.
-    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera)', 'pickVideo(options)', 'pickFile(options)'])
+    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera)', 'pickVideo(options, isCancelled: { isCancelled(requestToken) })', 'pickFile(options, isCancelled: { isCancelled(requestToken) })'])
       expect(actions).toContain(`CraftNativeFiles.${picker} { completeFile(requestToken, $0, completion) }`)
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.write(name: name, data: data, options: options), completion)')
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.keepDownload(at: location, response: http, name: name), completion)')
@@ -2616,7 +2616,13 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(files).toContain('done(.success(NSNull()))')
     // General documents use the same owned-file contract without the video allowlist.
     expect(files).toContain('UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)')
-    expect(files).toContain('static func copyFile(_ source: URL, limit: Int)')
+    expect(files).toContain('static func copyFile(_ source: URL, limit: Int, isCancelled: () -> Bool = { false })')
+    expect(files).toContain('metadata.st_mode & S_IFMT == S_IFREG')
+    expect(files).toContain('O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC')
+    expect(files).toContain('guard chunk.count <= limit - total else { throw oversized }')
+    expect(files).toContain('CraftNativeFiles.copyFiles(urls, limit: limit, isCancelled: isCancelled)')
+    expect(files.match(/CraftNativeFiles.copyVideo\(url, limit: limit, isCancelled: isCancelled\)/g)).toHaveLength(2)
+    expect(files).not.toContain('FileManager.default.copyItem(at: source, to: destination)')
     expect(files).toContain('UTType(filenameExtension: source.pathExtension)?.preferredMIMEType')
     expect(files).toContain('picker.allowsMultipleSelection = selectionLimit > 1')
     // A form's files are read natively, and only files made here.

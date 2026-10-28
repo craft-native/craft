@@ -278,13 +278,13 @@ enum CraftNativeActions {
         case ("Files", "pickVideo"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickVideo(options) { completeFile(requestToken, $0, completion) }
+                CraftNativeFiles.pickVideo(options, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "pickFile"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickFile(options) { completeFile(requestToken, $0, completion) }
+                CraftNativeFiles.pickFile(options, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "download"):
@@ -698,6 +698,13 @@ enum CraftNativeActions {
             controller.delegate = presenter
             walletPresenters[requestToken] = presenter
         }
+    }
+
+    /// Read without consuming the token: final delivery owns its removal.
+    static func isCancelled(_ requestToken: String) -> Bool {
+        cancellationLock.lock()
+        defer { cancellationLock.unlock() }
+        return cancelledRequests.contains(requestToken)
     }
 
     static func cancel(requestToken: String) {

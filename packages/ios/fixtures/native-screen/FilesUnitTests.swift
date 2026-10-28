@@ -1,3 +1,4 @@
+import Darwin
 import ImageIO
 import UIKit
 import UniformTypeIdentifiers
@@ -10,6 +11,189 @@ import XCTest
 /// The pickers themselves need a person; what they hand on is tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    private func importFolders() throws -> Set<URL> {
+        guard FileManager.default.fileExists(atPath: CraftNativeFiles.root.path) else { return [] }
+        return Set(try FileManager.default.contentsOfDirectory(at: CraftNativeFiles.root, includingPropertiesForKeys: nil))
+    }
+
+    private func stagedImport(_ name: String) -> URL? {
+        (try? importFolders())?.map { $0.appendingPathComponent(name) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func assertImportFailure(_ result: Result<Any, CraftNativeActionError>, _ code: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard case .failure(let error) = result else {
+            return XCTFail("import unexpectedly succeeded", file: file, line: line)
+        }
+        XCTAssertEqual(error.code, code, file: file, line: line)
+    }
+
+    func testImportsRejectDirectoriesFIFOsAndSymlinksWithoutCreatingOwnedFiles() throws {
+        let fm = FileManager.default
+        let source = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: source) }
+        let directory = source.appendingPathComponent("folder.mp4", isDirectory: true)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a video".utf8).write(to: directory.appendingPathComponent("child"))
+        let fifo = source.appendingPathComponent("pipe.mp4")
+        XCTAssertEqual(fifo.path.withCString { mkfifo($0, 0o600) }, 0)
+        let regular = source.appendingPathComponent("regular.mp4")
+        try Data([1, 2, 3]).write(to: regular)
+        let symlink = source.appendingPathComponent("link.mp4")
+        try fm.createSymbolicLink(at: symlink, withDestinationURL: regular)
+        let before = try importFolders()
+        for url in [directory, fifo] {
+            assertImportFailure(CraftNativeFiles.copyFile(url, limit: 1024), "INVALID_FILE")
+            assertImportFailure(CraftNativeFiles.copyVideo(url, limit: 1024), "INVALID_FILE")
+        }
+        assertImportFailure(CraftNativeFiles.copyFile(symlink, limit: 1024), "READ_ERROR")
+        assertImportFailure(CraftNativeFiles.copyVideo(symlink, limit: 1024), "READ_ERROR")
+        XCTAssertEqual(try importFolders(), before)
+        XCTAssertEqual(try Data(contentsOf: regular), Data([1, 2, 3]))
+    }
+
+    func testDocumentAndVideoCopiesAcceptExactLimitAndRejectEmptyOrOversizedFiles() throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: source) }
+        let bytes = Data(repeating: 0x5a, count: 128 * 1024)
+        for video in [false, true] {
+            try bytes.write(to: source)
+            let copy: (Int) -> Result<Any, CraftNativeActionError> = { limit in
+                video ? CraftNativeFiles.copyVideo(source, limit: limit) : CraftNativeFiles.copyFile(source, limit: limit)
+            }
+            let before = try importFolders()
+            let value = try copy(bytes.count).get()
+            let info = try XCTUnwrap(value as? [String: Any])
+            let path = try XCTUnwrap(info["path"] as? String)
+            XCTAssertEqual(info["size"] as? Int, bytes.count)
+            XCTAssertEqual(info["type"] as? String, "video/mp4")
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+            XCTAssertTrue(CraftNativeFiles.remove(path))
+            assertImportFailure(copy(bytes.count - 1), "FILE_TOO_LARGE")
+            assertImportFailure(copy(0), "FILE_TOO_LARGE")
+            try Data().write(to: source)
+            assertImportFailure(copy(bytes.count), "FILE_TOO_LARGE")
+            XCTAssertEqual(try importFolders(), before)
+        }
+        assertImportFailure(CraftNativeFiles.copyVideo(source.deletingPathExtension().appendingPathExtension("txt"), limit: 1024), "INVALID_VIDEO")
+    }
+
+    func testGrowingDocumentAndVideoCannotExceedLimitDuringCopy() throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("growing-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: source) }
+        for video in [false, true] {
+            try Data(repeating: 1, count: 128 * 1024).write(to: source)
+            let before = try importFolders()
+            var grew = false
+            var largestStagedSize = 0
+            // The cancellation predicate runs on the copying thread. Append
+            // real bytes after the first chunk, without sleeps or fake streams.
+            let checkpoint: () -> Bool = {
+                guard let staged = self.stagedImport(source.lastPathComponent) else { return false }
+                let size = ((try? FileManager.default.attributesOfItem(atPath: staged.path))?[.size] as? NSNumber)?.intValue ?? 0
+                largestStagedSize = max(largestStagedSize, size)
+                if size > 0 && !grew {
+                    do {
+                        let writer = try FileHandle(forWritingTo: source)
+                        defer { try? writer.close() }
+                        try writer.seekToEnd()
+                        try writer.write(contentsOf: Data(repeating: 2, count: 128 * 1024))
+                        grew = true
+                    } catch { XCTFail("could not grow source: \(error)") }
+                }
+                return false
+            }
+            let result = video
+                ? CraftNativeFiles.copyVideo(source, limit: 128 * 1024, isCancelled: checkpoint)
+                : CraftNativeFiles.copyFile(source, limit: 128 * 1024, isCancelled: checkpoint)
+            assertImportFailure(result, "FILE_TOO_LARGE")
+            XCTAssertTrue(grew)
+            XCTAssertEqual(largestStagedSize, 128 * 1024)
+            XCTAssertEqual(try importFolders(), before, "partial copy and staging directory must be removed")
+        }
+    }
+
+    func testCancellationStopsPartialDocumentAndVideoCopiesAndAllowsRetry() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("cancel-\(UUID().uuidString).mp4")
+        let bytes = Data(repeating: 7, count: 256 * 1024)
+        try bytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        for video in [false, true] {
+            let before = try importFolders()
+            let token = UUID().uuidString
+            var copiedBeforeCancellation = 0
+            let cancelled: () -> Bool = {
+                if let staged = self.stagedImport(source.lastPathComponent),
+                   let size = (try? FileManager.default.attributesOfItem(atPath: staged.path))?[.size] as? NSNumber,
+                   size.intValue > 0 {
+                    copiedBeforeCancellation = size.intValue
+                    CraftNativeActions.cancel(requestToken: token)
+                }
+                return CraftNativeActions.isCancelled(token)
+            }
+            let result = video
+                ? CraftNativeFiles.copyVideo(source, limit: bytes.count, isCancelled: cancelled)
+                : CraftNativeFiles.copyFile(source, limit: bytes.count, isCancelled: cancelled)
+            assertImportFailure(result, "CANCELLED")
+            XCTAssertEqual(copiedBeforeCancellation, 64 * 1024, "stop after the first bounded chunk")
+            XCTAssertTrue(CraftNativeActions.isCancelled(token), "polling must not consume cancellation")
+            XCTAssertEqual(try importFolders(), before)
+            CraftNativeActions.completeFile(token, result) { _ in XCTFail("cancelled request was delivered") }
+            let drained = expectation(description: "delivery drains cancellation")
+            DispatchQueue.main.async { drained.fulfill() }
+            await fulfillment(of: [drained], timeout: 2)
+            XCTAssertFalse(CraftNativeActions.isCancelled(token))
+            let retried = try CraftNativeFiles.copyVideo(source, limit: bytes.count).get()
+            let path = try XCTUnwrap((retried as? [String: Any])?["path"] as? String)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), bytes)
+            XCTAssertTrue(CraftNativeFiles.remove(path))
+            XCTAssertEqual(try importFolders(), before)
+        }
+    }
+
+    func testPrecancelledImportsDoNotAllocateFilesOrOpenPicker() throws {
+        let source = URL(fileURLWithPath: "/missing.mp4")
+        let before = try importFolders()
+        for _ in 0..<3 {
+            assertImportFailure(CraftNativeFiles.copyFile(source, limit: 1, isCancelled: { true }), "CANCELLED")
+            assertImportFailure(CraftNativeFiles.copyVideo(source, limit: 1, isCancelled: { true }), "CANCELLED")
+            var completions = 0
+            CraftNativeFiles.pickFile([:], isCancelled: { true }) { self.assertImportFailure($0, "CANCELLED"); completions += 1 }
+            CraftNativeFiles.pickVideo([:], isCancelled: { true }) { self.assertImportFailure($0, "CANCELLED"); completions += 1 }
+            XCTAssertEqual(completions, 2)
+        }
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testMultiFileSelectionRollsBackEarlierFilesOnCancellationOrReadFailure() throws {
+        let fm = FileManager.default
+        let source = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: source, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: source) }
+        let first = source.appendingPathComponent("first-\(UUID().uuidString).txt")
+        let second = source.appendingPathComponent("second-\(UUID().uuidString).txt")
+        try Data([1]).write(to: first)
+        try Data(repeating: 2, count: 256 * 1024).write(to: second)
+        let before = try importFolders()
+        var sawFirstAndPartialSecond = false
+        let result = CraftNativeFiles.copyFiles([first, second], limit: 256 * 1024, isCancelled: {
+            guard self.stagedImport(first.lastPathComponent) != nil,
+                  let partial = self.stagedImport(second.lastPathComponent),
+                  let size = (try? fm.attributesOfItem(atPath: partial.path))?[.size] as? NSNumber,
+                  size.intValue > 0 else { return false }
+            sawFirstAndPartialSecond = true
+            return true
+        })
+        assertImportFailure(result, "CANCELLED")
+        XCTAssertTrue(sawFirstAndPartialSecond)
+        XCTAssertEqual(try importFolders(), before)
+        try fm.removeItem(at: second)
+        assertImportFailure(CraftNativeFiles.copyFiles([first, second], limit: 256 * 1024), "READ_ERROR")
+        XCTAssertEqual(try importFolders(), before)
+        XCTAssertEqual(try Data(contentsOf: first), Data([1]))
+    }
+
     private func removeThroughCapability(_ path: String) async throws -> Bool {
         let result: Any = try await withCheckedThrowingContinuation { continuation in
             CraftNativeActions.perform(requestToken: UUID().uuidString, version: craftNativeCapabilityProtocolVersion,
