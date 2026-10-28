@@ -102,6 +102,15 @@ finally {
 }
 ```
 
+The helper creates its owned device data under `temporaryDirectory`, or
+`os.tmpdir()` when omitted. The stock SDK verifier also installs its disposable
+SDK there. Provision enough space on that filesystem, not just the checkout:
+`/tmp` can have a separate, smaller capacity. Craft's hosted Linux disk action
+checks the runner volume and exports a dedicated `TMPDIR` beneath `RUNNER_TEMP`
+for later steps. It leaves the stock image and userdata partition size unchanged.
+Outside that workflow, select a sufficiently sized `temporaryDirectory` or set
+`TMPDIR` before starting the process.
+
 `hardware` requires a successful emulator acceleration probe. `software` uses
 the Android emulator's explicit `-accel off` mode on x86_64 hosts. Android
 [documents that CPU emulation mode as unsupported](https://developer.android.com/studio/run/emulator-commandline#startup-options);

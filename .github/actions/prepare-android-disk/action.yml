@@ -15,6 +15,7 @@ runs:
         fi
         test -d "${RUNNER_TEMP:?}"
         test -d "${GITHUB_WORKSPACE:?}"
+        test -n "${GITHUB_ENV:?}"
         df -Pk "$RUNNER_TEMP" "$GITHUB_WORKSPACE"
         # These jobs do not use .NET, Haskell, Swift or CodeQL. Keep Android,
         # Java, the rest of the tool cache, the checkout and all evidence.
@@ -29,3 +30,9 @@ runs:
             exit 1
           fi
         done
+        # /tmp can be a separate, much smaller filesystem. Node/Bun use it
+        # unless TMPDIR is set, so checking the workspace alone is not enough.
+        # Both the SDK verifier and the native runner use os.tmpdir() for AVDs.
+        android_tmp=$(mktemp -d "$RUNNER_TEMP/craft-android-tmp.XXXXXX")
+        df -Pk "$android_tmp"
+        printf 'TMPDIR=%s\n' "$android_tmp" >> "$GITHUB_ENV"

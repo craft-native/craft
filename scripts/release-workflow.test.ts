@@ -30,6 +30,7 @@ function rehearseAndroidDisk(envOverrides: Record<string, string> = {}) {
   const workspace = join(dir, 'workspace with spaces')
   const runnerTemp = join(dir, 'runner temp')
   const cleanupLog = join(dir, 'cleanup-args')
+  const environmentFile = join(dir, 'github-env')
   mkdirSync(workspace)
   mkdirSync(runnerTemp)
   // Intercept sudo: tests must never delete the host's real toolchains.
@@ -46,12 +47,33 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\\n/dev/fixture
     env: {
       ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_ACTIONS: 'true',
       RUNNER_ENVIRONMENT: 'github-hosted', RUNNER_OS: 'Linux', RUNNER_TEMP: runnerTemp,
-      GITHUB_WORKSPACE: workspace, CLEANUP_LOG: cleanupLog,
+      GITHUB_WORKSPACE: workspace, GITHUB_ENV: environmentFile, CLEANUP_LOG: cleanupLog,
       MOCK_TEMP_KIB: '25000000', MOCK_WORKSPACE_KIB: '25000000', ...envOverrides,
     },
   })
-  return { result, cleanup: existsSync(cleanupLog) ? readFileSync(cleanupLog, 'utf8').trim().split('\n') : [] }
+  return { result, runnerTemp, environment: existsSync(environmentFile) ? readFileSync(environmentFile, 'utf8') : '', cleanup: existsSync(cleanupLog) ? readFileSync(cleanupLog, 'utf8').trim().split('\n') : [] }
 }
+
+test('Android disk preparation routes Bun temporary data onto the checked runner volume', () => {
+  const { result, runnerTemp, environment } = rehearseAndroidDisk({ TMPDIR: '/tmp' })
+  expect(result.exitCode).toBe(0)
+  const temporary = /^TMPDIR=(.+)$/m.exec(environment)?.[1]
+  expect(temporary).toBeDefined()
+  expect(temporary!.startsWith(`${runnerTemp}/craft-android-tmp.`)).toBe(true)
+  expect(existsSync(temporary!)).toBe(true)
+  const child = Bun.spawnSync([process.execPath, '-e', 'const { tmpdir } = require("node:os"); const { mkdtempSync } = require("node:fs"); console.log(mkdtempSync(require("node:path").join(tmpdir(), "craft-device-")))'], {
+    env: { ...process.env, TMPDIR: temporary! },
+  })
+  expect(child.exitCode).toBe(0)
+  expect(child.stdout.toString().trim().startsWith(`${temporary}/craft-device-`)).toBe(true)
+})
+
+test('Android disk preparation refuses a missing environment destination before deleting tools', () => {
+  const { result, cleanup, environment } = rehearseAndroidDisk({ GITHUB_ENV: '' })
+  expect(result.exitCode).not.toBe(0)
+  expect(cleanup).toEqual([])
+  expect(environment).toBe('')
+})
 
 test('Android disk preparation deletes only the explicit unused hosted toolchains', () => {
   const { result, cleanup } = rehearseAndroidDisk()
@@ -63,9 +85,10 @@ test.each([
   { RUNNER_ENVIRONMENT: 'self-hosted' }, { RUNNER_ENVIRONMENT: '' },
   { RUNNER_OS: 'macOS' }, { GITHUB_ACTIONS: 'false' },
 ])('Android disk preparation refuses non-hosted Linux contexts before cleanup: %j', (env) => {
-  const { result, cleanup } = rehearseAndroidDisk(env)
+  const { result, cleanup, environment } = rehearseAndroidDisk(env)
   expect(result.exitCode).not.toBe(0)
   expect(cleanup).toEqual([])
+  expect(environment).toBe('')
   expect(result.stdout.toString()).toContain('requires a GitHub-hosted Linux runner')
 })
 
@@ -73,9 +96,10 @@ test.each([
   { MOCK_TEMP_KIB: '20971519' }, { MOCK_WORKSPACE_KIB: '20971519' },
   { MOCK_TEMP_KIB: 'not-a-number' }, { MOCK_WORKSPACE_KIB: '' },
 ])('Android disk preparation rejects insufficient or unreadable capacity on either volume: %j', (env) => {
-  const { result } = rehearseAndroidDisk(env)
+  const { result, environment } = rehearseAndroidDisk(env)
   expect(result.exitCode).not.toBe(0)
   expect(result.stdout.toString()).toContain('needs at least 20 GiB free')
+  expect(environment).toBe('')
 })
 
 test('Android disk preparation accepts the exact capacity floor and propagates command failures', () => {
