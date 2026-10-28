@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.381...v0.0.382)
+
+## 🧪 Tests
+
+- **menubar**: preserve piped subprocess types in native fixture ([f574921](https://github.com/craft-native/craft/commit/f574921)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.380...v0.0.381)
 
 ## 🐛 Bug Fixes
