@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.374...v0.0.375)
+
+## 🐛 Bug Fixes
+
+- **ios**: keep countdown visible in every Live Activity presentation ([bac8d53](https://github.com/craft-native/craft/commit/bac8d53)) _(by Chris Breuer)_
+
+## Contributors
+
+- _Chris Breuer_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.373...v0.0.374)
 
 ## 🐛 Bug Fixes
