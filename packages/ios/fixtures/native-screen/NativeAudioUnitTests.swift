@@ -214,15 +214,21 @@ final class NativeAudioUnitTests: XCTestCase {
     func testNewScreenInheritsTheActiveSessionInterruption() async throws {
         let file = try soundFile()
         defer { try? FileManager.default.removeItem(at: file) }
-        var original: CraftNativeSounds? = CraftNativeSounds()
-        weak var released = original
-        // Drain Foundation's temporary strong snapshot of the weak registry
-        // before checking that the registry itself does not retain a service.
-        autoreleasepool { interrupt(.began) }
         defer { interrupt(.ended) }
-        original?.close()
-        original = nil
-        XCTAssertNil(released, "session observation must not retain a closed screen's service")
+        // Scope registration as well as notification delivery: Foundation can
+        // autorelease bridging temporaries during either operation. An inner
+        // pool around only post() cannot drain registration's outer-pool retain.
+        // Check after every pool drains, without a timing-dependent sleep.
+        for _ in 0..<16 {
+            weak var released: CraftNativeSounds?
+            autoreleasepool {
+                let original = CraftNativeSounds()
+                released = original
+                interrupt(.began)
+                original.close()
+            }
+            XCTAssertNil(released, "session observation must not retain a closed screen's service")
+        }
 
         let incoming = CraftNativeSounds()
         defer { incoming.close() }

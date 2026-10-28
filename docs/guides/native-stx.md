@@ -1309,10 +1309,20 @@ CRAFT_NATIVE_RENDER_RESULT=/tmp/checkpoint-recovery.xcresult \
 bun packages/ios/scripts/test-native-render.ts
 ```
 
-This checks acknowledged-save recovery and background handling, not forced
-termination at a particular disk-write instruction, OS eviction under memory
-pressure, or device power-loss durability. The native unit suite separately
-exercises concurrent writers, failed-write preservation/retry, and disposal.
+That test checks acknowledged-save recovery and background handling. A separate
+simulator test, `testCheckpointInterruptedBeforeAtomicReplacementPreservesPreviousAndCanRetry`
+in the same UI test class, interposes Foundation's actual file replacement in
+the generated test app only. It pauses the snapshot worker before rename,
+validates the complete staged 256-KiB payload and unchanged previous checkpoint,
+then terminates the app while the write is still in flight. A new process must
+recover the previous complete value; a subsequent save must also survive another
+relaunch. The production writer is unchanged, and neither the interposer nor its
+control screen is included in shipped hosts. A missing interception fails the
+test rather than silently substituting an acknowledged-save relaunch.
+
+These fixtures do not establish OS eviction under memory pressure or device
+power-loss durability. The native unit suite separately exercises concurrent
+writers, failed-write preservation/retry, and disposal.
 
 ## Capability bridge
 

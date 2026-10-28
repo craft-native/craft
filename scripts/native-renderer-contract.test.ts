@@ -106,6 +106,18 @@ const COMPONENTS: Array<[string, string, string]> = [
 ]
 
 describe('native renderer component contract', () => {
+  it('runs checkpoint interruption coverage without adding fault hooks to shipped hosts', () => {
+    const runner = readFileSync(join(root, 'packages/ios/scripts/test-native-render.ts'), 'utf8')
+    expect(runner).toContain("['CheckpointInterruption.swift', 'CheckpointInterruption.c']")
+    expect(runner).toContain("join(output, 'UITests', 'NativeRenderUITests.swift')")
+    expect(mobileE2EWorkflow).toContain('bun packages/ios/scripts/test-native-render.ts')
+    expect(iosNativeScreenUITests).toContain('func testCheckpointInterruptedBeforeAtomicReplacementPreservesPreviousAndCanRetry()')
+    expect(iosActions).toContain('try Data(json.utf8).write(to: url, options: [.atomic])')
+    expect(iosActions).not.toContain('craft_checkpoint_')
+    expect(ios).not.toContain('CheckpointInterruption')
+    expect(guide).toContain('neither the interposer nor its')
+  })
+
   it('documents the macOS WebView pointer-lock limitation and fallback', () => {
     expect(macosReadme).toContain('does not support `Element.requestPointerLock()`')
     expect(macosReadme).toContain('public `WKUIDelegate` has no pointer-lock permission callback')
@@ -3460,7 +3472,7 @@ describe('native renderer component contract', () => {
 
   it('plays SMIL path keyframes on native SVG on both hosts, only while shown', () => {
     expect(ios).toContain('static func keyframe(_ props: [String: Any], at elapsed: CFTimeInterval) -> [Any]?')
-    expect(ios).toContain('CraftNativeFrameClock.shared.request(self) { [weak self] in self?.nextFrame() }')
+    expect(ios).toContain('CraftNativeFrameClock.shared.request(self) { [weak self] _ in self?.nextFrame() }')
     expect(ios).toContain('!UIAccessibility.isReduceMotionEnabled')
     expect(android).toContain('fun keyframe(props: JSONObject, elapsed: Double): List<Float>?')
     expect(android).toContain('android.view.Choreographer.getInstance().postFrameCallback(frameCallback)')

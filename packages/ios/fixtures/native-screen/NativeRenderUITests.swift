@@ -1,6 +1,40 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    func testCheckpointInterruptedBeforeAtomicReplacementPreservesPreviousAndCanRetry() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--checkpoint-interruption"]
+        app.launch()
+        let status = app.staticTexts["interrupted-checkpoint-status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 15))
+        let session = app.staticTexts["interrupted-checkpoint-session"].label
+        app.buttons["checkpoint-seed"].tap()
+        waitForLabel(status, "Recovered complete checkpoint 1")
+        app.buttons["checkpoint-interrupt"].tap()
+        // This label is emitted only from the intercepted real rename, after
+        // validating the full staged payload and unchanged destination bytes.
+        waitForLabel(status, "Staged 2; disk still 1; replacement blocked")
+        let staged = XCTAttachment(screenshot: app.screenshot())
+        staged.name = "Foundation replacement blocked with complete staged checkpoint and intact previous value"
+        staged.lifetime = .keepAlways
+        add(staged)
+        app.terminate()
+        XCTAssertTrue(app.wait(for: .notRunning, timeout: 5))
+        app.launch()
+        waitForLabel(status, "Recovered complete checkpoint 1")
+        XCTAssertNotEqual(app.staticTexts["interrupted-checkpoint-session"].label, session)
+        app.buttons["checkpoint-retry"].tap()
+        waitForLabel(status, "Recovered complete checkpoint 3")
+        app.terminate()
+        app.launch()
+        waitForLabel(status, "Recovered complete checkpoint 3")
+        let recovered = XCTAttachment(screenshot: app.screenshot())
+        recovered.name = "Checkpoint retry recovered in another process after interrupted atomic replacement"
+        recovered.lifetime = .keepAlways
+        add(recovered)
+    }
+
     func testCheckpointBurstBackgroundSaveAndDeletionSurviveProcessRelaunch() {
         let app = XCUIApplication()
         func openCheckpoint() {
