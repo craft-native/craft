@@ -7,8 +7,9 @@ pub const SpacerPlan = struct { count: usize, width: f64 };
 /// One long item is refused on the smaller display before it can hide icons
 /// on a larger one. Individually modest items can overflow independently while
 /// their combined reservation clears the prefix on every connected display.
-pub fn planSpacers(shortest_width: f64, longest_width: f64) ?SpacerPlan {
+pub fn planSpacers(shortest_width: f64, longest_width: f64, modern_overflow: bool) ?SpacerPlan {
     if (!std.math.isFinite(shortest_width) or !std.math.isFinite(longest_width) or shortest_width <= 0 or longest_width < shortest_width) return null;
+    if (!modern_overflow) return .{ .count = 1, .width = longest_width };
     const width = shortest_width * 0.4;
     const count = @ceil(longest_width / width);
     if (count > MAX_SPACERS) return null;
@@ -16,15 +17,21 @@ pub fn planSpacers(shortest_width: f64, longest_width: f64) ?SpacerPlan {
 }
 
 test "spacer slices cover differently sized displays without one oversized item" {
-    const single = planSpacers(1512, 1512).?;
-    const dual = planSpacers(1512, 2560).?;
+    const single = planSpacers(1512, 1512, true).?;
+    const dual = planSpacers(1512, 2560, true).?;
     try std.testing.expectEqual(@as(usize, 3), single.count);
     try std.testing.expectEqual(@as(usize, 5), dual.count);
     try std.testing.expect(dual.width < 1512.0 / 2);
     try std.testing.expect(@as(f64, @floatFromInt(dual.count)) * dual.width >= 2560);
-    try std.testing.expect(planSpacers(0, 2560) == null);
-    try std.testing.expect(planSpacers(1512, std.math.nan(f64)) == null);
-    try std.testing.expect(planSpacers(1512, 100_000) == null);
+    try std.testing.expect(planSpacers(0, 2560, true) == null);
+    try std.testing.expect(planSpacers(1512, std.math.nan(f64), true) == null);
+    try std.testing.expect(planSpacers(1512, 100_000, true) == null);
+}
+
+test "classic status bars retain one measured spacer" {
+    const plan = planSpacers(800, 2560, false).?;
+    try std.testing.expectEqual(@as(usize, 1), plan.count);
+    try std.testing.expectEqual(@as(f64, 2560), plan.width);
 }
 
 /// macOS inserts up to 16 pt of status-item padding. A spacer may reserve

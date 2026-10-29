@@ -51,16 +51,19 @@ The positional backend, `init({ backend: 'legacy' })`, hides individual icons
 to the left of `›` by reserving native status-bar space. Its `‹` remains the
 reveal control even when the app's own cup or other icons are on the left.
 `busy` remains true until the native layout settles. The arrow stays at 20 points.
-A chain of blank status items immediately to its left reserves the hidden space;
+On macOS 27, a chain of blank status items immediately to its left reserves the hidden space;
 each item stays below half the narrowest display's width, while their combined
 reservation covers the widest connected display. This avoids a single long
 spacer being refused on a MacBook before it can hide icons on an external display.
+Older status bars retain a single spacer whose width is reduced until the system
+accepts it without displacing the compact reveal control.
 
 Native saved positions can be clamped, so each spacer stays compact while its
 requested position is adjusted. Craft verifies the complete adjacent chain
 before widening any item. Unsafe placement restores the visible group. Later
-clicks reuse the same native items, shrinking them to zero on reveal instead of
-removing them and losing their order. Disabling grouping removes the complete
+clicks reuse the same native objects. While revealed, macOS 27 hides the blank
+items so even their native padding stops occupying the bar; older status bars
+keep their width at zero. Disabling grouping removes the complete
 chain and the arrow. The verified compact layout anchors widening, so delayed
 layout updates after reveal do not undo the next collapse.
 

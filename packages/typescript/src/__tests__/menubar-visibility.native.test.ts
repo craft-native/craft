@@ -35,6 +35,18 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     }
     await craft.menubar.destroy();
     await fetch('/destroyed',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+    await craft.menubar.init({backend:'legacy'});
+    await craft.timers.sleep(700);
+    await craft.menubar.collapse();
+    let restarted=await craft.menubar.getState();
+    for (let attempt=0;restarted.busy && attempt<80;attempt++) {
+      await craft.timers.sleep(100);
+      restarted=await craft.menubar.getState();
+    }
+    await fetch('/reinitialized',{method:'POST',body:JSON.stringify(restarted)});
+    await craft.menubar.expand();
+    await craft.menubar.destroy();
+    await fetch('/cleaned',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
   })().catch(async error => fetch('/error',{method:'POST',body:JSON.stringify({error:String(error)})}));`
   const server = Bun.serve({ hostname:'127.0.0.1',port:0,async fetch(request) {
     const stage = new URL(request.url).pathname.slice(1)
@@ -63,7 +75,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     proc = launched
     stderr = new Response(launched.stderr).text()
     const deadline = Date.now()+45000
-    while (!states.destroyed && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
+    while (!states.cleaned && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
     assert.equal(states.cancelled?.collapsed,false)
     assert.equal(states.cancelled?.busy,false)
@@ -82,6 +94,11 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     assert.equal(states.destroyed?.collapsed,false)
     assert.equal(states.destroyed?.busy,false)
     assert.equal(states.destroyed?.markerWidth,0)
+    assert.equal(states.reinitialized?.collapsed,true,JSON.stringify(states.reinitialized))
+    assert.equal(states.reinitialized?.busy,false)
+    assert.equal(states.reinitialized?.markerWidth,20)
+    assert.equal(states.cleaned?.initialized,false)
+    assert.equal(states.cleaned?.markerWidth,0)
     passed = true
   }
   finally {
