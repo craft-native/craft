@@ -7,6 +7,24 @@ import PhotosUI
 import XCTest
 @testable import NativeRender
 
+// The simulator has no camera. Inject only the UIKit presentation boundary;
+// keep the production delegate, request cancellation, JPEG encoder and disk IO.
+private final class CameraPresentationHost: UIViewController {
+    var picker: UIViewController?
+    override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) {
+        picker = viewControllerToPresent
+        completion?()
+    }
+}
+
+private final class CameraPickerProbe: UIImagePickerController {
+    var dismissals = 0
+    override func dismiss(animated flag: Bool, completion: (() -> Void)? = nil) {
+        dismissals += 1
+        completion?()
+    }
+}
+
 /// Retains a callback after Progress.cancel, like a slow external provider.
 private final class DelayedMediaProvider: NSItemProvider {
     let transfer = Progress(totalUnitCount: 1)
@@ -24,6 +42,138 @@ private final class DelayedMediaProvider: NSItemProvider {
 /// and the disk work after a provider answers are tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    private func capturedImage() -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: 160, height: 80)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 160, height: 80))
+        }
+    }
+
+    func testCameraRequestCancellationDismissesReleasesBusySlotAndCannotCancelRetry() async throws {
+        let previous = try XCTUnwrap(CraftPresenter.keyWindow())
+        let window = UIWindow(windowScene: try XCTUnwrap(previous.windowScene))
+        let presenter = CameraPresentationHost()
+        window.rootViewController = presenter
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous.makeKeyAndVisible() }
+        XCTAssertTrue(CraftPresenter.topViewController() === presenter)
+        let before = try importFolders()
+        let token = UUID().uuidString
+        let cancelled = expectation(description: "camera cancellation drained")
+        let picker = CameraPickerProbe()
+        CraftNativeFiles.presentCamera(picker, maxPixels: 64, quality: 0.8, requestToken: token,
+            isCancelled: { CraftNativeActions.isCancelled(token) }) { result in
+            CraftNativeActions.completeFile(token, result) { _ in XCTFail("disposed request received a result") }
+            DispatchQueue.main.async { cancelled.fulfill() }
+        }
+        let delegate = try XCTUnwrap(picker.delegate as? CraftNativeFiles.CameraDelegate)
+        XCTAssertTrue(presenter.picker === picker)
+        var busy = false
+        CraftNativeFiles.pickImage([:], cameraEnabled: false) {
+            self.assertImportFailure($0, "BUSY"); busy = true
+        }
+        XCTAssertTrue(busy)
+        // The same entry point used by API_CANCEL and screen disposal.
+        CraftNativeActions.cancel(requestToken: token)
+        await fulfillment(of: [cancelled], timeout: 5)
+        XCTAssertGreaterThan(picker.dismissals, 0)
+        XCTAssertFalse(CraftNativeActions.isCancelled(token))
+        var released = false
+        CraftNativeFiles.pickImage(["source": "invalid"], cameraEnabled: false) {
+            self.assertImportFailure($0, "INVALID_ARGUMENT"); released = true
+        }
+        XCTAssertTrue(released, "public admission must no longer report BUSY")
+        delegate.imagePickerController(picker, didFinishPickingMediaWithInfo: [.originalImage: capturedImage()])
+        XCTAssertEqual(try importFolders(), before)
+
+        let retry = CameraPickerProbe()
+        let retryDone = expectation(description: "retry settled")
+        CraftNativeFiles.presentCamera(retry, maxPixels: 64, quality: 0.8, requestToken: UUID().uuidString, isCancelled: { false }) { result in
+            guard case .success(let value) = result else { return XCTFail("retry user cancellation must resolve") }
+            XCTAssertTrue(value is NSNull)
+            retryDone.fulfill()
+        }
+        let retryDelegate = try XCTUnwrap(retry.delegate as? CraftNativeFiles.CameraDelegate)
+        CraftNativeFiles.cancelPicker(requestToken: token)
+        let drained = expectation(description: "stale cancellation drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 5)
+        XCTAssertEqual(retry.dismissals, 0)
+        retryDelegate.imagePickerControllerDidCancel(retry)
+        await fulfillment(of: [retryDone], timeout: 5)
+        presenter.picker = nil
+    }
+
+    func testCameraUserCancellationIgnoresDuplicateAndLateCaptureCallbacks() async throws {
+        let before = try importFolders()
+        let completed = expectation(description: "user cancellation")
+        var answers = 0
+        let delegate = CraftNativeFiles.CameraDelegate(maxPixels: 64, quality: 0.8, requestToken: nil, isCancelled: { false }) { result in
+            answers += 1
+            guard case .success(let value) = result else { return XCTFail("user cancel must resolve") }
+            XCTAssertTrue(value is NSNull)
+            completed.fulfill()
+        }
+        let picker = CameraPickerProbe()
+        delegate.controller = picker
+        delegate.imagePickerControllerDidCancel(picker)
+        delegate.imagePickerControllerDidCancel(picker)
+        delegate.imagePickerController(picker, didFinishPickingMediaWithInfo: [.originalImage: capturedImage()])
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(answers, 1)
+        XCTAssertGreaterThan(picker.dismissals, 0)
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testCameraCaptureCancellationBeforeDeliveryRemovesEncodedJPEG() async throws {
+        let before = try importFolders()
+        let token = UUID().uuidString
+        let completed = expectation(description: "encoded camera file cleanup")
+        let delegate = CraftNativeFiles.CameraDelegate(maxPixels: 64, quality: 0.8, requestToken: token,
+            isCancelled: { CraftNativeActions.isCancelled(token) }) { result in
+            CraftNativeActions.completeFile(token, result) { _ in XCTFail("cancelled capture delivered") }
+            DispatchQueue.main.async { completed.fulfill() }
+        }
+        let picker = CameraPickerProbe()
+        delegate.controller = picker
+        delegate.imagePickerController(picker, didFinishPickingMediaWithInfo: [.originalImage: capturedImage()])
+        XCTAssertEqual(try importFolders().count, before.count + 1, "real JPEG must exist before cancellation")
+        CraftNativeActions.cancel(requestToken: token)
+        delegate.cancel()
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertEqual(try importFolders(), before)
+        XCTAssertFalse(CraftNativeActions.isCancelled(token))
+    }
+
+    func testCameraDecodeFailureAndSuccessfulCaptureSettleOnce() async throws {
+        let before = try importFolders()
+        for valid in [false, true] {
+            let completed = expectation(description: "camera result")
+            var answers = 0
+            let delegate = CraftNativeFiles.CameraDelegate(maxPixels: 64, quality: 0.8, requestToken: nil, isCancelled: { false }) { result in
+                answers += 1
+                defer { completed.fulfill() }
+                if !valid { self.assertImportFailure(result, "DECODE_ERROR"); return }
+                guard case .success(let value) = result, let file = value as? [String: Any], let path = file["path"] as? String else {
+                    return XCTFail("capture failed: \(result)")
+                }
+                XCTAssertEqual(file["type"] as? String, "image/jpeg")
+                XCTAssertEqual(file["width"] as? Int, 64)
+                XCTAssertEqual(file["height"] as? Int, 32)
+                XCTAssertNotNil(UIImage(contentsOfFile: path))
+                XCTAssertTrue(CraftNativeFiles.remove(path))
+            }
+            let picker = CameraPickerProbe()
+            let info: [UIImagePickerController.InfoKey: Any] = valid ? [.originalImage: capturedImage()] : [:]
+            delegate.imagePickerController(picker, didFinishPickingMediaWithInfo: info)
+            delegate.imagePickerController(picker, didFinishPickingMediaWithInfo: info)
+            delegate.imagePickerControllerDidCancel(picker)
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertEqual(answers, 1)
+            XCTAssertEqual(try importFolders(), before)
+        }
+    }
+
     func testLibraryProviderReadFailureThenSuccessfulPhotoAndVideoImport() async throws {
         let before = try importFolders()
         for video in [false, true] {

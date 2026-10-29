@@ -2625,7 +2625,9 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(files).toContain('kCGImageSourceThumbnailMaxPixelSize: maxPixels')
     expect(files).toContain('CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil)')
     expect(files).toContain('picker.sourceType = .camera')
-    expect(files).toContain('done(.success(NSNull()))')
+    expect(files).toContain('finish(.success(NSNull()))')
+    expect(files).toContain('presentCamera(picker, maxPixels: maxPixels, quality: quality, requestToken: requestToken, isCancelled: isCancelled, done: done)')
+    expect(files).toContain('if let picker = activePicker as? CameraDelegate, picker.requestToken == requestToken')
     // General documents use the same owned-file contract without the video allowlist.
     expect(files).toContain('UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)')
     expect(files).toContain('static func copyFile(_ source: URL, limit: Int, isCancelled: () -> Bool = { false })')

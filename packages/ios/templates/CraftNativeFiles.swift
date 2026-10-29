@@ -137,13 +137,6 @@ enum CraftNativeFiles {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
             return
         }
-        let finish: (Result<Any, CraftNativeActionError>) -> Void = { result in
-            DispatchQueue.main.async {
-                activePicker = nil
-                done(result)
-            }
-        }
-
         if source == "camera" {
             #if CRAFT_PERMISSION_CAMERA
             guard cameraEnabled else {
@@ -154,15 +147,9 @@ enum CraftNativeFiles {
                 done(.failure(CraftNativeActionError(code: "UNAVAILABLE", message: "This device has no camera")))
                 return
             }
-            let delegate = CameraDelegate(maxPixels: maxPixels, quality: quality, done: finish)
             let picker = UIImagePickerController()
             picker.sourceType = .camera
-            picker.delegate = delegate
-            activePicker = delegate
-            if !CraftPresenter.present(picker, from: nil) {
-                activePicker = nil
-                done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the camera")))
-            }
+            presentCamera(picker, maxPixels: maxPixels, quality: quality, requestToken: requestToken, isCancelled: isCancelled, done: done)
             #else
             done(.failure(CraftNativeActionError(code: "CAPABILITY_DISABLED", message: "The camera was not enabled when this app was built")))
             #endif
@@ -333,21 +320,70 @@ enum CraftNativeFiles {
     }
 
     #if CRAFT_PERMISSION_CAMERA
-    private final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    /// The caller checks camera permission configuration and device availability
+    /// before constructing a camera picker. Keep presentation ownership here so
+    /// failure and cancellation use the same exactly-once settlement path.
+    static func presentCamera(_ picker: UIImagePickerController, maxPixels: Int, quality: Double, requestToken: String?, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        let delegate = CameraDelegate(maxPixels: maxPixels, quality: quality, requestToken: requestToken, isCancelled: isCancelled, done: done)
+        picker.delegate = delegate
+        delegate.controller = picker
+        activePicker = delegate
+        if !CraftPresenter.present(picker, from: nil) {
+            delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the camera")))
+        }
+    }
+
+    final class CameraDelegate: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let maxPixels: Int
         let quality: Double
+        let requestToken: String?
+        let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
+        weak var controller: UIImagePickerController?
+        private var answered = false
+        private var finished = false
+        private var cancelled = false
 
-        init(maxPixels: Int, quality: Double, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        init(maxPixels: Int, quality: Double, requestToken: String?, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
             self.maxPixels = maxPixels
             self.quality = quality
+            self.requestToken = requestToken
+            self.isCancelled = isCancelled
             self.done = done
         }
 
+        func cancel() {
+            guard !finished else { return }
+            cancelled = true
+            answered = true
+            controller?.dismiss(animated: false)
+            finish(.failure(importCancelled()))
+        }
+
+        func finish(_ result: Result<Any, CraftNativeActionError>) {
+            DispatchQueue.main.async {
+                let cancelled = self.cancelled || self.isCancelled()
+                if self.finished || cancelled {
+                    if case .success(let value) = result,
+                       let file = value as? [String: Any], let path = file["path"] as? String {
+                        CraftNativeFiles.remove(path)
+                    }
+                }
+                guard !self.finished else { return }
+                self.finished = true
+                self.controller?.dismiss(animated: false)
+                if activePicker === self { activePicker = nil }
+                self.done(cancelled ? .failure(importCancelled()) : result)
+            }
+        }
+
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            guard !answered else { return }
+            answered = true
+            guard !cancelled, !isCancelled() else { finish(.failure(importCancelled())); return }
             picker.dismiss(animated: true)
             guard let image = info[.originalImage] as? UIImage else {
-                done(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "The photo could not be read")))
+                finish(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "The photo could not be read")))
                 return
             }
             // Drawn at the size wanted, which also turns it upright.
@@ -359,17 +395,18 @@ enum CraftNativeFiles {
             format.opaque = true
             let drawn = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
             guard let cgImage = drawn.cgImage else {
-                done(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "The photo could not be read")))
+                finish(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "The photo could not be read")))
                 return
             }
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyyMMdd_HHmmss"
-            done(CraftNativeFiles.writeJPEG(cgImage, quality: quality, name: "IMG_\(formatter.string(from: Date())).jpg"))
+            finish(CraftNativeFiles.writeJPEG(cgImage, quality: quality, name: "IMG_\(formatter.string(from: Date())).jpg"))
         }
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
-            done(.success(NSNull()))
+            guard !answered else { return }
+            answered = true
+            finish(.success(NSNull()))
         }
     }
 
@@ -599,6 +636,12 @@ enum CraftNativeFiles {
     /// A stale request must never dismiss a newer request's picker.
     static func cancelPicker(requestToken: String) {
         DispatchQueue.main.async {
+            #if CRAFT_PERMISSION_CAMERA
+            if let picker = activePicker as? CameraDelegate, picker.requestToken == requestToken {
+                picker.cancel()
+                return
+            }
+            #endif
             if let picker = activePicker as? LibraryDelegate, picker.requestToken == requestToken {
                 picker.cancel()
                 return
