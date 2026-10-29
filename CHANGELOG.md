@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.384...v0.0.385)
+
+## 🐛 Bug Fixes
+
+- **menubar**: restore spacing across reveal and classic status bars ([cc36675](https://github.com/craft-native/craft/commit/cc36675)) _(by Chris)_
+- **menubar**: preserve the reveal control across displays ([31e10c3](https://github.com/craft-native/craft/commit/31e10c3)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.383...v0.0.384)
 
 ## 🐛 Bug Fixes
