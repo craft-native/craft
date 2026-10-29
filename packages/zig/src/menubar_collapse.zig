@@ -424,7 +424,7 @@ pub fn collapse() void {
     const now = nanoTimestamp() orelse return;
     reorder_pending = false;
     reorder_released_ns = null;
-    const reuse_layout = validated_layout and spacer_count == plan.count and spacer_width == plan.width and
+    const reuse_layout = plan.count > 1 and validated_layout and spacer_count == plan.count and spacer_width == plan.width and
         @abs(marker.origin.x + marker.size.width - control_anchor_edge) <= 1;
     validated_layout = false;
     spacer_count = plan.count;
