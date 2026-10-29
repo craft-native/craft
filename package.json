@@ -37,6 +37,7 @@
     "verify:docs": "bun scripts/verify-doc-links.ts",
     "test": "bun scripts/zig.ts --core build test",
     "test:sdk": "cd packages/typescript && bun test",
+    "test:browser-checkpoints": "bun test ./scripts/browser-checkpoints.test.ts",
     "test:window-routing": "bun test packages/typescript/src/__tests__/window-routing.test.ts --rerun-each=100 --randomize --seed=254",
     "test:native-lifecycle": "bun scripts/native-lifecycle.ts",
     "test:mobile-e2e:ios": "bun scripts/mobile-e2e.ts --platform ios --ios-runtime-source packages/zig",
@@ -70,7 +71,8 @@
     "@stacksjs/bunpress": "^0.2.13",
     "@stacksjs/env": "^0.72.50",
     "better-dx": "^0.2.38",
-    "buddy-bot": "^0.9.17"
+    "buddy-bot": "^0.9.17",
+    "playwright": "1.64.1"
   },
   "git-hooks": {
     "pre-commit": {

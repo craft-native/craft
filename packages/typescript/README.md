@@ -679,6 +679,27 @@ or propagate a later quota failure. Background events are an opportunity to
 checkpoint, but browsers can terminate a page before queued work finishes, so
 also save periodically during play.
 
+Real-browser checkpoint acceptance runs separately from the SDK's in-memory
+unit fixtures:
+
+```sh
+bunx --no-install playwright install chromium firefox
+bun run test:browser-checkpoints
+CRAFT_TEST_BROWSER=firefox bun run test:browser-checkpoints
+```
+
+The suite bundles the maintained `createBrowserPlatform` source, serves it on
+loopback, and uses fresh, owned persistent profiles with real localStorage and
+Web Locks. It verifies acknowledged saves across reload and a graceful browser
+restart, competing-tab create/CAS winners and retry loops, queued-write input
+capture, reload/abort/disposal before commit, and actual quota rejection with
+recovery. It never opens or modifies your personal browser profile. CI runs both
+engines and retains browser versions, the bundle SHA-256, results and traces.
+Set `CRAFT_BROWSER_ARTIFACTS` to retain these in a chosen directory; locally the
+default is a printed temporary path. Profiles are removed after each test.
+This proves the tested browser boundaries, not sudden process termination,
+power-loss durability, storage eviction, WebKit behavior or Android acceptance.
+
 Browser audio assigns one owner per sound ID. A newer play or stop invalidates
 pending media resolution for that ID; stopping all sounds, changing accounts,
 aborting a call or disposing the host also releases active audio. Superseded

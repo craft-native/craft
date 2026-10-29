@@ -29,6 +29,35 @@ defaults:
     shell: bash
 
 jobs:
+  browser-checkpoints:
+    if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    env:
+      CRAFT_TEST_BROWSER: ${{ matrix.browser }}
+      CRAFT_BROWSER_ARTIFACTS: artifacts/browser-checkpoints/${{ matrix.browser }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.3'
+      - run: bun install --frozen-lockfile
+      - name: Install the locked browser and system dependencies
+        run: bunx --no-install playwright install --with-deps ${{ matrix.browser }}
+      - name: Test real browser reload and competing-tab checkpoints
+        run: bun test ./scripts/browser-checkpoints.test.ts
+      - name: Retain browser identity, bundle hash, results and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-checkpoints-${{ matrix.browser }}
+          path: artifacts/browser-checkpoints/${{ matrix.browser }}
+          if-no-files-found: error
+
   android-sdk-emulator:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
     name: Android SDK emulator
@@ -834,7 +863,7 @@ jobs:
 
   publish-commit:
     if: ${{ inputs.software_cold_provisioning_diagnostic != true }}
-    needs: [android-sdk-emulator, zig-core, windows-multi-window, windows-native-vulkan, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
+    needs: [browser-checkpoints, android-sdk-emulator, zig-core, windows-multi-window, windows-native-vulkan, typescript-sdk, ios-builder, ios-native-templates, android-builder, create-craft, ts-maps, lint, integration]
     runs-on: ubuntu-latest
 
     steps:
