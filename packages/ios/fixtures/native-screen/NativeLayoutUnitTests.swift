@@ -1430,4 +1430,114 @@ final class NativeLayoutUnitTests: XCTestCase {
         XCTAssertEqual(try frame("scroll", in: sheet).maxY, sheet.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 0.5)
         sheet.dismiss(animated: false)
     }
+    private func stripedTabRoot(_ scrollID: String = "scroll") -> [String: Any] {
+        let rows = (0..<30).map { index in
+            box("stripe-\(index)", style: ["height": 120, "backgroundColor": index % 2 == 0 ? "#ff0000" : "#0000ff"])
+        }
+        let scroll: [String: Any] = ["id": scrollID, "type": "ScrollView", "props": ["testID": scrollID], "style": ["flex": 1], "children": rows]
+        return box("root", style: ["flex": 1, "backgroundColor": "#f2f2f7"], [
+            box("empty"), box("wrapper", style: ["flex": 1], [scroll, box("empty-tail")]),
+        ])
+    }
+
+    private func assertContentVisibleAtEveryWindowRow(_ window: UIWindow) throws {
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Live stripes behind unchanged floating chrome"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var visibleRows = [Bool](repeating: false, count: cgImage.height)
+        // Inspect the content outside the floating groups, including the
+        // first and final display rows. A solid-colour scroll background
+        // would mask the defect: the edge wash adopts that same colour.
+        for x in [6, cgImage.width - 7] {
+            let strip = try XCTUnwrap(cgImage.cropping(to: CGRect(x: x, y: 0, width: 1, height: cgImage.height)))
+            var pixels = [UInt8](repeating: 0, count: cgImage.height * 4)
+            try pixels.withUnsafeMutableBytes { bytes in
+                let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: cgImage.height,
+                                                    bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(strip, in: CGRect(x: 0, y: 0, width: 1, height: cgImage.height))
+            }
+            for y in 0..<cgImage.height {
+                let rgb = pixels[(y * 4)..<(y * 4 + 3)].map(Int.init)
+                visibleRows[y] = visibleRows[y] || (rgb.max()! - rgb.min()! > 80)
+            }
+        }
+        let obscured = visibleRows.indices.filter { !visibleRows[$0] }
+        XCTAssertTrue(obscured.isEmpty, "Full-width backdrop hides \(obscured.count) content rows; first=\(String(describing: obscured.first)), last=\(String(describing: obscured.last))")
+    }
+
+    func testFloatingChromeDoesNotWashOutLiveContentOrMoveWhenSolidIsToggled() async throws {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            let animations = UIView.areAnimationsEnabled
+            UIView.setAnimationsEnabled(false)
+            defer { UIView.setAnimationsEnabled(animations) }
+            for largeTitle in [true, false] {
+                let (controller, tabs, window) = try await bottomLayoutScreen(stripedTabRoot())
+                defer { window.isHidden = true }
+                controller.evaluateScript("craft.navigation.setOptions({ title: 'Today', largeTitle: \(largeTitle), rightButtons: [{ id: 'plus', symbol: 'plus', variant: 'account', accessibilityLabel: 'Add' }] })")
+                await settle(controller)
+                let current = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+                current.setContentOffset(CGPoint(x: 0, y: 300), animated: false)
+                await settle(controller)
+                let navigation = try XCTUnwrap(controller.navigationController)
+                let button = try XCTUnwrap(controller.navigationItem.rightBarButtonItems?.first?.customView)
+                let barFrame = navigation.navigationBar.frame
+                let tabFrame = tabs.tabBar.frame
+                let buttonFrame = button.convert(button.bounds, to: window)
+                let viewport = current.convert(current.bounds, to: window)
+                let inset = current.adjustedContentInset
+                XCTAssertTrue(current.topEdgeEffect.isHidden)
+                XCTAssertTrue(current.bottomEdgeEffect.isHidden)
+                XCTAssertNil(controller.navigationItem.standardAppearance, "the default keeps UIKit's appearance; only the scroll-edge wash is hidden")
+                try assertContentVisibleAtEveryWindowRow(window)
+
+                controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: true, backgroundColor: '#f2f2f7' })")
+                await settle(controller)
+                XCTAssertFalse(current.topEdgeEffect.isHidden, "an explicit solid-bar request remains supported")
+                XCTAssertTrue(current.bottomEdgeEffect.isHidden)
+                XCTAssertNotNil(controller.navigationItem.standardAppearance)
+                controller.evaluateScript("craft.navigation.setOptions({ navigationBarSolid: false })")
+                await settle(controller)
+                XCTAssertTrue(current.topEdgeEffect.isHidden)
+                XCTAssertEqual(navigation.navigationBar.frame, barFrame)
+                XCTAssertEqual(tabs.tabBar.frame, tabFrame)
+                XCTAssertEqual(button.convert(button.bounds, to: window), buttonFrame)
+                XCTAssertEqual(current.convert(current.bounds, to: window), viewport)
+                XCTAssertEqual(current.adjustedContentInset, inset)
+                try assertContentVisibleAtEveryWindowRow(window)
+            }
+        }
+        #endif
+    }
+
+    func testFloatingScrollEdgeEffectsResetWhenTheTabBarOrPrimaryScrollerChanges() async throws {
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            let (controller, tabs, window) = try await bottomLayoutScreen(stripedTabRoot())
+            defer { window.isHidden = true }
+            controller.evaluateScript("craft.navigation.setOptions({ title: 'Today', largeTitle: true })")
+            await settle(controller)
+            let original = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+            XCTAssertTrue(original.topEdgeEffect.isHidden)
+            XCTAssertTrue(original.bottomEdgeEffect.isHidden)
+            tabs.tabBar.isHidden = true
+            await settle(controller)
+            XCTAssertFalse(original.bottomEdgeEffect.isHidden)
+            tabs.tabBar.isHidden = false
+            controller.render(stripedTabRoot("replacement"))
+            await settle(controller)
+            let replacement = try XCTUnwrap(find("replacement", below: controller.view) as? UIScrollView)
+            XCTAssertFalse(original.topEdgeEffect.isHidden)
+            XCTAssertFalse(original.bottomEdgeEffect.isHidden)
+            XCTAssertTrue(replacement.topEdgeEffect.isHidden)
+            XCTAssertTrue(replacement.bottomEdgeEffect.isHidden)
+        }
+        #endif
+    }
 }

@@ -1073,6 +1073,15 @@ clearance already supplied by UIKit. Plain screens, sheets, bounded
 scrollers and screens with a fixed footer keep their safe-area bottom; an
 explicit root `SafeAreaView` retains its existing edge handling.
 
+On iOS 26, content extending beneath the navigation bar or floating tab bar
+remains visible behind and beyond the floating button groups. Craft hides the
+primary scroller's full-width scroll-edge wash at those edges; the buttons and
+tab pill retain their own material, size and position. This also works with
+nested wrappers and empty leading placeholders. An explicit
+`navigationBarSolid: true` still requests an opaque navigation region;
+`navigationBarSolid: false` returns to visible content beneath it. These
+settings do not remove safe-area clearance or change the chrome's layout.
+
 ## An all-native iOS app: paths, tabs and an app script
 
 On its own, `renderer: "native"` is one screen and the stack it pushes. Add

@@ -7367,6 +7367,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         if options.keys.contains("backgroundColor") || options.keys.contains("navigationBarSolid") {
             applyNavigationBarAppearance()
+            trackContentScrollView()
         }
         // Asked for after the bar was hidden for a bare root screen.
         if navigationBarHidden == nil, wantsNavigationBar, navigationController?.topViewController === self,
@@ -7589,6 +7590,10 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     /// title collapses as it scrolls, and the bar's background follows it.
     private func trackContentScrollView() {
         guard let renderedRoot else { return }
+        // UIKit can resize the root before nested flex wrappers lay out.
+        // Resolve their frames before checking empty siblings or edges so
+        // old child frames cannot toggle the root constraints each pass.
+        rootStack.layoutIfNeeded()
         func find(_ node: RenderedNode) -> UIScrollView? {
             // Modal content belongs to a separate presentation. Hidden
             // branches must not steal tracking from the visible screen.
@@ -7609,7 +7614,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
                 return list.isScrollEnabled && (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal ? node : nil
             }
             guard paddingInsets(node.style).top == 0,
-                  let first = node.children.first(where: { $0.type != "Modal" && !$0.view.isHidden }) else { return nil }
+                  let first = node.children.first(where: { $0.type != "Modal" && !$0.view.isHidden && $0.view.bounds.height > 0 }) else { return nil }
             return leading(first)
         }
         let scroll = find(renderedRoot)
@@ -7642,10 +7647,6 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
            let tabBar = tabBarController?.tabBar, !tabBar.isHidden, tabBar.alpha > 0,
            let window = view.window, tabBar.window === window,
            tabBar.convert(tabBar.bounds, to: view).intersects(view.bounds) {
-            // UIKit can resize rootStack before its nested flex wrappers
-            // have laid out. Comparing their old viewport to the new root
-            // would toggle the bottom constraints on every layout pass.
-            rootStack.layoutIfNeeded()
             let viewport = scroll.convert(scroll.bounds, to: rootStack)
             tabbedScroll = abs(viewport.maxY - rootStack.bounds.maxY) < 0.5
         }
@@ -7664,11 +7665,27 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         rootTrailingToSafeArea?.isActive = !fullEdgeToEdge
         rootTrailingToView?.isActive = fullEdgeToEdge
         scroll?.contentInsetAdjustmentBehavior = (edgeToEdge || tabbedScroll) ? .automatic : .never
-        guard scroll !== trackedScrollView else { return }
-        trackedScrollView = scroll
-        // The same primary vertical scroller drives the navigation bar and
-        // the system tab bar's scroll-edge/minimization behavior.
-        setContentScrollView(scroll, for: [.top, .bottom])
+        if scroll !== trackedScrollView {
+            #if compiler(>=6.2)
+            if #available(iOS 26.0, *) {
+                trackedScrollView?.topEdgeEffect.isHidden = false
+                trackedScrollView?.bottomEdgeEffect.isHidden = false
+            }
+            #endif
+            trackedScrollView = scroll
+            // Keep UIKit's title collapse, tab selection and minimization
+            // tracking; only the full-width edge backdrop changes below.
+            setContentScrollView(scroll, for: [.top, .bottom])
+        }
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            // Floating button groups carry their own material. UIKit's
+            // separate scroll-edge wash would cover the content behind
+            // and beyond them even with a transparent bar appearance.
+            scroll?.topEdgeEffect.isHidden = topEdgeToEdge && !navigationBarSolid
+            scroll?.bottomEdgeEffect.isHidden = tabbedScroll
+        }
+        #endif
     }
 
     private func observeNativeEvents() {
