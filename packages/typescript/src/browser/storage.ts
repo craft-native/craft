@@ -54,7 +54,16 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
   const sessionTokenKey = options.sessionTokenKey || 'auth.token'
   const prefix = `${namespace}:`
   const lock = options.lock === null ? undefined : options.lock ?? (typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function'
-    ? <T>(name: string, operation: () => T | Promise<T>, settings?: { signal?: AbortSignal }) => navigator.locks.request(name, settings ?? {}, operation)
+    ? <T>(name: string, operation: () => T | Promise<T>, settings?: { signal?: AbortSignal }) => navigator.locks.request(name, settings ?? {}, async () => {
+        try { return await operation() }
+        finally {
+          // Firefox publishes localStorage snapshots at the end of a task.
+          // Keep ownership through that boundary before another tab can read.
+          // An async callback also delivers storage exceptions as rejections,
+          // instead of reporting a synchronous Web Lock callback exception.
+          await new Promise<void>(resolve => setTimeout(resolve, 0))
+        }
+      })
     : undefined)
   const exclusive = <T>(operation: () => T | Promise<T>, signal?: AbortSignal): Promise<T> => {
     const guarded = (): T | Promise<T> => { signal?.throwIfAborted(); return operation() }

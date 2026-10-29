@@ -74,6 +74,41 @@ async function atomicFixture() {
 }
 
 describe('browser atomic account checkpoints', () => {
+  it.each([false, true])('retains the native lock through storage publication and rejects errors asynchronously (quota: %s)', async (quota) => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+    const saved = storage()
+    let published = false
+    let releasedAfterPublication = false
+    let synchronousThrows = 0
+    const original = saved.setItem
+    saved.setItem = (key, value) => {
+      setTimeout(() => { published = true }, 0)
+      if (quota) throw new DOMException('Full', 'QuotaExceededError')
+      original(key, value)
+    }
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { locks: {
+      request: (name: string, settings: unknown, callback: () => unknown) => {
+        expect(name).toBe('native-lock:storage')
+        try {
+          return Promise.resolve(callback()).finally(() => { releasedAfterPublication = published })
+        }
+        catch (error) { synchronousThrows++; return Promise.reject(error) }
+      },
+    } } })
+    try {
+      const browser = await createBrowserStorage({ storage: saved, namespace: 'native-lock', tokenKey: 'token', hash: async value => value, changed: () => {} })
+      const write = browser.call('Storage', 'set', ['campaign', { tick: 25 }])
+      if (quota) await expect(write).rejects.toMatchObject({ name: 'QuotaExceededError' })
+      else expect(await write).toBe(true)
+      expect(synchronousThrows).toBe(0)
+      expect(releasedAfterPublication).toBe(true)
+    }
+    finally {
+      if (previous) Object.defineProperty(globalThis, 'navigator', previous)
+      else Reflect.deleteProperty(globalThis, 'navigator')
+    }
+  })
+
   it('captures ordinary saves before yielding even without Web Locks', async () => {
     const { browser } = await fixture()
     const state = { tick: 25 }

@@ -666,6 +666,13 @@ values (including their `toJSON` representation). Invalid JSON input rejects
 without changing the previous checkpoint. Cancellation and account-scope checks
 still run before committing the captured value.
 
+The browser keeps its Web Lock until the next task after the operation, so
+localStorage implementations that publish task-local snapshots (Firefox) make
+the write visible before a competing tab acquires the lock. Storage exceptions
+reject the call rather than escaping a synchronous Web Lock callback. All
+competing writers must use Craft's locking API; direct localStorage writes or
+other code that ignores this lock are not covered by the atomic contract.
+
 `craft.storage.setSync` updates the immediate UI cache and
 queues its write when Web Locks are available; it cannot acknowledge durability
 or propagate a later quota failure. Background events are an opportunity to
