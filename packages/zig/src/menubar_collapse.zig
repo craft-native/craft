@@ -134,6 +134,9 @@ var separator_item: objc.id = if (builtin.target.os.tag == .macos) null else nul
 var spacer_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
 var placement_started_ns: ?u64 = null;
 var control_anchor_edge: f64 = 0;
+var spacer_placement: layout.SpacerPlacement = .{ .high = 0, .position = 0 };
+var cached_spacer_position: ?f64 = null;
+var cached_control_edge: f64 = 0;
 
 var saved_tray_menu: objc.id = if (builtin.target.os.tag == .macos) null else null;
 /// The app's own icon supplies the context menu; its position does not define
@@ -146,12 +149,11 @@ var native_timer: objc.id = null;
 var separator_hidden: bool = false;
 var reflow_started_ns: ?u64 = null;
 
-/// A marker being widened, and the bookkeeping needed to find out how far it
+/// A spacer being widened, and the bookkeeping needed to find out how far it
 /// was allowed to go.
 const Widening = struct {
     /// Where the marker stood before it started growing.
     origin: f64 = 0,
-    trailing_edge: f64 = 0,
     /// What is currently being asked for. Comes down until it is granted.
     ask: f64 = 0,
     /// Cleared once the ask has been granted, or given up on.
@@ -160,17 +162,19 @@ const Widening = struct {
 
     /// Ask for the whole distance to the front of the bar. Whether that is
     /// allowed is not knowable up front, so `settle` finds out.
-    fn begin(self: *Widening, item: objc.id) void {
-        const frame = markerFrame(item) orelse return;
+    fn begin(self: *Widening, item: objc.id) bool {
+        const frame = markerFrame(item) orelse return false;
+        const screen = markerScreenFrame(item) orelse return false;
+        const started = nanoTimestamp() orelse return false;
         const origin = frame.origin.x;
         self.* = .{
             .origin = origin,
-            .trailing_edge = frame.origin.x + frame.size.width,
-            .ask = origin + SEPARATOR_LENGTH,
+            .ask = origin - screen.origin.x + SEPARATOR_LENGTH,
             .settled = false,
-            .started_ns = nanoTimestamp(),
+            .started_ns = started,
         };
         setMarkerWidth(item, self.ask);
+        return true;
     }
 
     /// Read back what the system actually did, and come down if it refused.
@@ -338,8 +342,10 @@ pub fn init() void {
     }
     separator_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
     _ = msgSend0(separator_item, "retain");
+    msgSendVoid1(separator_item, "setVisible:", @as(c_int, 0));
     msgSendVoid1(separator_item, "setAutosaveName:", createNSString(MARKER_AUTOSAVE_NAME));
     msgSendVoid1(separator_item, "setLength:", SEPARATOR_LENGTH);
+    msgSendVoid1(separator_item, "setVisible:", @as(c_int, 1));
     drawMarker(separator_item, false);
     routeClicks(msgSend0(separator_item, "button"));
 
@@ -405,7 +411,14 @@ pub fn collapse() void {
     // has been arranged on its left. Only the divider defines the group.
     const marker = markerFrame(separator_item) orelse return;
     control_anchor_edge = marker.origin.x + marker.size.width;
-    if (!createSpacer()) return;
+    const screen = markerScreenFrame(separator_item) orelse return;
+    const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
+    const saved = msgSend1(defaults, "objectForKey:", createNSString("NSStatusItem Preferred Position craft_menubar_marker"));
+    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
+    const preferred = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
+    const initial = if (cached_spacer_position != null and @abs(cached_control_edge - control_anchor_edge) < 1) cached_spacer_position.? else preferred + 1;
+    spacer_placement = layout.SpacerPlacement.init(initial, screen.size.width);
+    if (!createSpacer(spacer_placement.position)) return;
     collapse_widening.settled = false;
     placement_started_ns = nanoTimestamp();
     drawMarker(separator_item, true);
@@ -613,20 +626,18 @@ fn removeSpacer() void {
     spacer_item = null;
 }
 
-fn createSpacer() bool {
+fn createSpacer(position: f64) bool {
     removeSpacer();
     const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
-    const marker_key = createNSString("NSStatusItem Preferred Position craft_menubar_marker");
-    const saved = msgSend1(defaults, "objectForKey:", marker_key);
-    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
-    const position: f64 = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
     const set_double = @as(*const fn (objc.id, objc.SEL, f64, objc.id) callconv(.c) void, @ptrCast(&objc.objc_msgSend));
-    set_double(defaults, objc.sel_registerName("setDouble:forKey:"), position + 0.001, createNSString("NSStatusItem Preferred Position craft_menubar_spacer"));
+    set_double(defaults, objc.sel_registerName("setDouble:forKey:"), position, createNSString("NSStatusItem Preferred Position craft_menubar_spacer"));
     spacer_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
     if (spacer_item == null) return false;
     _ = msgSend0(spacer_item, "retain");
+    msgSendVoid1(spacer_item, "setVisible:", @as(c_int, 0));
     msgSendVoid1(spacer_item, "setAutosaveName:", createNSString("craft_menubar_spacer"));
     msgSendVoid1(spacer_item, "setLength:", SEPARATOR_LENGTH);
+    msgSendVoid1(spacer_item, "setVisible:", @as(c_int, 1));
     return true;
 }
 
@@ -649,12 +660,26 @@ fn settleCollapse() void {
             restoreCompactLayout();
             return;
         };
-        placement_started_ns = null;
-        if (!layout.spacerPrecedesControl(marker.origin.x, spacer.origin.x, spacer.size.width)) {
-            restoreCompactLayout();
-            return;
+        switch (spacer_placement.observe(marker.origin.x, spacer.origin.x, spacer.size.width)) {
+            .ready => {
+                placement_started_ns = null;
+                cached_spacer_position = spacer_placement.position;
+                cached_control_edge = control_anchor_edge;
+            },
+            .retry => |position| {
+                if (!createSpacer(position)) {
+                    restoreCompactLayout();
+                    return;
+                }
+                placement_started_ns = now;
+                return;
+            },
+            .failed => {
+                restoreCompactLayout();
+                return;
+            },
         }
-        collapse_widening.begin(spacer_item);
+        if (!collapse_widening.begin(spacer_item)) restoreCompactLayout();
         return;
     }
     const was_settled = collapse_widening.settled;
@@ -689,6 +714,17 @@ fn restoreOnSystemReflow() void {
         return;
     };
     if (now - start >= 200 * std.time.ns_per_ms) restoreCompactLayout();
+}
+
+fn markerScreenFrame(item: objc.id) ?CGRect {
+    if (item == null) return null;
+    const button = msgSend0(item, "button");
+    if (button == null) return null;
+    const window = msgSend0(button, "window");
+    if (window == null) return null;
+    const screen = msgSend0(window, "screen");
+    if (screen == null) return null;
+    return msgSendRect(screen, "frame");
 }
 
 fn markerFrame(item: objc.id) ?CGRect {

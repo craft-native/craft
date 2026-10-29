@@ -15,10 +15,14 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     await craft.tray.setTitle('C');
     await craft.menubar.init({backend:'legacy'});
     await craft.timers.sleep(700);
+    await craft.menubar.collapse();
+    await craft.menubar.expand();
+    await craft.timers.sleep(500);
+    await fetch('/cancelled',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
     for (let cycle=0;cycle<2;cycle++) {
       await craft.menubar.collapse();
       let settled=await craft.menubar.getState();
-      for (let attempt=0;settled.busy && attempt<40;attempt++) {
+      for (let attempt=0;settled.busy && attempt<80;attempt++) {
         await craft.timers.sleep(100);
         settled=await craft.menubar.getState();
       }
@@ -51,9 +55,12 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     })
     proc = launched
     stderr = new Response(launched.stderr).text()
-    const deadline = Date.now()+20000
+    const deadline = Date.now()+30000
     while (!states.expanded1 && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
+    assert.equal(states.cancelled?.collapsed,false)
+    assert.equal(states.cancelled?.busy,false)
+    assert.equal(states.cancelled?.markerWidth,20)
     for (let cycle=0;cycle<2;cycle++) {
       assert.equal(states[`collapsed${cycle}`]?.backend,'legacy')
       assert.equal(states[`collapsed${cycle}`]?.collapsed,true,JSON.stringify(states))
@@ -80,7 +87,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     await rm(dir,{recursive:true,force:true})
     Bun.spawnSync(['/usr/bin/defaults','delete',`${bundleId}.runtime`],{stdout:'ignore',stderr:'ignore'})
   }
-}, 25000)
+}, 35000)
 
 // Opt-in real private-API acceptance on macOS 27 with existing Accessibility
 // authorization. CI's default native tests cover unavailability and cancellation
