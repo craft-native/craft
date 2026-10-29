@@ -28,6 +28,17 @@ To select a case, use the full XCTest target/class/method identifier, for exampl
 The runner checks the result bundle and rejects zero tests or skipped cases,
 including Xcode's successful exit for an unmatched selection.
 
+Picker interruption tests first assert that the actual document/photo/video
+picker is visible. XCTest then backgrounds the app, whose fixture receives the
+public `APP_STATE` event and sends `API_CANCEL` or `NAVIGATE_REPLACE` once. On
+return, the test verifies dismissal, callback counts and a working retry. This
+handshake replaces an eight-second timer that could close the picker before a
+loaded CI accessibility server observed it. No cancellation implementation is
+injected into the native host, and the existing dismissal deadlines remain.
+For document cancellation the observed element is the Files navigation bar;
+the Cancel action can remain an accessibility placeholder during cold startup.
+The subsequent user-cancel retry still requires and taps the real Cancel button.
+
 `HeartRateUnitTests.swift` decodes Heart Rate Measurement (0x2A37) payloads (uint8 and uint16 rates, sensor contact, energy, RR intervals, truncated payloads), checks that the simulator's stand-in strap gives RR intervals that vary with the breath and agree with its rate, and checks that the `HeartRate` module answers only in an app built with `enableHeartRate`.
 
 `FilesUnitTests.swift` covers `craft.files`' disk side: file names with no path in them, only files made in tmp/craft-files counted as the app's own, a photo written as an upright JPEG no larger than asked, a FormData sent as multipart with its file's bytes (and an arbitrary path refused), a download kept under the server's name or, refused, answered with its status and body, and what a screen made written as text or base64 bytes.

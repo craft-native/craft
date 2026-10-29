@@ -17,6 +17,7 @@
   let pickerMode = globalThis.__stxNativeRoute === 'picker-retry'
   let pickerAnswers = 0
   let pickerRequest = ''
+  let pickerInterruption = null
   let checkpointBackgroundArmed = false
   const checkpointName = 'craft-ui-checkpoint-recovery'
   const checkpointSession = `${Date.now()}-${Math.random()}`
@@ -178,7 +179,13 @@
 
   globalThis.__stxNativeBridge.onMessage(function (raw) {
     const message = JSON.parse(raw)
+    if (message.type === 'APP_STATE' && message.payload.state === 'background' && pickerInterruption) {
+      const interrupt = pickerInterruption
+      pickerInterruption = null
+      interrupt()
+    }
     if (['API_RESPONSE', 'API_ERROR'].includes(message.type) && message.payload.requestId === pickerRequest) {
+      pickerInterruption = null
       pickerAnswers += 1
       const result = message.type === 'API_ERROR' ? message.payload.code : JSON.stringify(message.payload.data)
       mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Answer ${pickerAnswers}: ${result}`] } }])
@@ -193,6 +200,7 @@
     if (message.type !== 'EVENT') return
     if (message.payload.handlerName === 'openPicker') { pickerMode = true; render(); return }
     if (message.payload.handlerName.startsWith('pick-')) {
+      pickerInterruption = null
       const mode = message.payload.handlerName.slice(5)
       pickerRequest = `picker-request-${++nextMessage}`
       const requestId = pickerRequest
@@ -202,15 +210,16 @@
         payload: { version: 1, module: 'Files', method: mode.includes('photo') ? 'pickImage' : mode.includes('video') ? 'pickVideo' : 'pickFile', args: [{ source: library ? 'library' : 'files' }], untimed: true },
       }))
       if (mode.endsWith('abort') || mode.endsWith('replace')) {
-        // Exercise the real bridge while the system UI is on top. The replace
-        // path disposes this runtime; no fixture-only native cancellation hook.
-        setTimeout(() => {
+        // XCTest first observes the real picker, then backgrounds the app.
+        // A wall-clock timer can dismiss it before a busy accessibility server
+        // takes its first snapshot. Use the public lifecycle/bridge boundary.
+        pickerInterruption = () => {
           globalThis.craftNativePostMessage(JSON.stringify(mode.endsWith('replace')
             ? { type: 'NAVIGATE_REPLACE', payload: { screen: 'picker-retry' } }
             : { type: 'API_CANCEL', payload: { requestId } }))
           if (mode.endsWith('abort'))
             mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Aborted; answers ${pickerAnswers}`] } }])
-        }, 8000)
+        }
       }
       return
     }

@@ -1,6 +1,15 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    private func backgroundAfterObservingPicker(_ app: XCUIApplication) {
+        // The fixture arms API_CANCEL or NAVIGATE_REPLACE for APP_STATE.
+        // The caller must first establish that the real system picker exists.
+        // Do not race that observation against an autonomous JS timer.
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        app.activate()
+    }
+
     func testLibraryPickerUserCancelAndRetryPhotoAndVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -30,6 +39,7 @@ final class NativeRenderUITests: XCTestCase {
             screenshot.name = "System media picker before \(mode)"
             screenshot.lifetime = .keepAlways
             add(screenshot)
+            backgroundAfterObservingPicker(app)
             XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
             waitForLabel(app.staticTexts["picker-status"], mode == "photo-abort" ? "Aborted; answers 0" : "Picker ready")
             if mode == "library-video-replace" { XCTAssertNotEqual(app.staticTexts["picker-session"].label, session) }
@@ -64,11 +74,16 @@ final class NativeRenderUITests: XCTestCase {
         app.launch()
         app.buttons["open-picker"].tap()
         app.buttons["picker-abort"].tap()
-        let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
+        // During cold Files startup, Cancel can still be a placeholder rather
+        // than an accessible button. Programmatic cancellation needs the real
+        // presented controller, not that unrelated action's loading state.
+        let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        backgroundAfterObservingPicker(app)
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Aborted; answers 0")
         app.buttons["picker-file"].tap()
+        let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
         cancel.tap()
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
@@ -81,12 +96,14 @@ final class NativeRenderUITests: XCTestCase {
         app.buttons["open-picker"].tap()
         let session = app.staticTexts["picker-session"].label
         app.buttons["picker-replace"].tap()
-        let cancel = app.buttons["Cancel"].firstMatch
-        XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
+        let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        backgroundAfterObservingPicker(app)
+        XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Picker ready")
         XCTAssertNotEqual(app.staticTexts["picker-session"].label, session)
         app.buttons["picker-file"].tap()
+        let cancel = app.buttons["Cancel"].firstMatch
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
         cancel.tap()
         waitForLabel(app.staticTexts["picker-status"], "Answer 1: []")
