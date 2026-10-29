@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.388...v0.0.389)
+
+## 🧪 Tests
+
+- **ios**: verify layout after committed screen rendering ([9d7cbb6](https://github.com/craft-native/craft/commit/9d7cbb6)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.387...v0.0.388)
 
 ## 🐛 Bug Fixes
