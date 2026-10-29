@@ -2607,11 +2607,11 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(actions).toContain('if config.enableCamera { values.append("camera") }')
     for (const call of ['case ("Files", "pickImage"):', 'case ("Files", "pickFile"):', 'case ("Files", "download"):', 'case ("Files", "write"):', 'case ("Files", "remove"):'])
       expect(actions).toContain(call)
-    expect(actions).toContain('CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera)')
+    expect(actions).toContain('CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })')
     expect(actions).toContain('CraftNativeFiles.pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })')
     // Every operation producing a new owned file uses cancellation cleanup,
     // not just callback suppression. Persistent media keeps its separate path.
-    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera)', 'pickVideo(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })', 'pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })'])
+    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })', 'pickVideo(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })', 'pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })'])
       expect(actions).toContain(`CraftNativeFiles.${picker} { completeFile(requestToken, $0, completion) }`)
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.write(name: name, data: data, options: options), completion)')
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.keepDownload(at: location, response: http, name: name), completion)')
@@ -2633,7 +2633,8 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     expect(files).toContain('O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC')
     expect(files).toContain('guard chunk.count <= limit - total else { throw oversized }')
     expect(files).toContain('CraftNativeFiles.copyFiles(urls, limit: limit, isCancelled: isCancelled)')
-    expect(files.match(/CraftNativeFiles.copyVideo\(url, limit: limit, isCancelled: isCancelled\)/g)).toHaveLength(2)
+    expect(files).toContain('CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled)')
+    expect(files).toContain('CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: self.cancellationRequested)')
     expect(files).not.toContain('FileManager.default.copyItem(at: source, to: destination)')
     expect(files).toContain('UTType(filenameExtension: source.pathExtension)?.preferredMIMEType')
     expect(files).toContain('picker.allowsMultipleSelection = selectionLimit > 1')

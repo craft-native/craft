@@ -121,7 +121,8 @@ enum CraftNativeFiles {
     /// larger than `maxPixels` on its longest side, upright, with no metadata
     /// (no location) left in it. Answers the file, or null when the person
     /// closed the picker. Main thread.
-    static func pickImage(_ options: [String: Any], cameraEnabled: Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+    static func pickImage(_ options: [String: Any], cameraEnabled: Bool, requestToken: String? = nil, isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        guard !isCancelled() else { done(.failure(importCancelled())); return }
         let maxPixels = craftNativeNumber(options["maxPixels"])
             .map { $0.doubleValue }
             .flatMap { value in
@@ -177,13 +178,13 @@ enum CraftNativeFiles {
         configuration.selectionLimit = 1
         // The file as it is (HEIC stays HEIC): it is decoded once, below, at the size wanted.
         configuration.preferredAssetRepresentationMode = .current
-        let delegate = LibraryDelegate(maxPixels: maxPixels, quality: quality, done: finish)
+        let delegate = LibraryDelegate(maxPixels: maxPixels, quality: quality, requestToken: requestToken, isCancelled: isCancelled, done: done)
         let picker = PHPickerViewController(configuration: configuration)
         picker.delegate = delegate
+        delegate.controller = picker
         activePicker = delegate
         if !CraftPresenter.present(picker, from: nil) {
-            activePicker = nil
-            done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the photo picker")))
+            delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the photo picker")))
         }
     }
 
@@ -228,36 +229,105 @@ enum CraftNativeFiles {
         return "\(base).jpg"
     }
 
-    private final class LibraryDelegate: NSObject, PHPickerViewControllerDelegate {
+    final class LibraryDelegate: NSObject, PHPickerViewControllerDelegate {
         let maxPixels: Int
         let quality: Double
+        let videoLimit: Int?
+        let requestToken: String?
+        let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
+        weak var controller: PHPickerViewController?
+        private let stateLock = NSLock()
+        private var cancelled = false
+        private var answered = false
+        private var finished = false
+        private var progress: Progress?
 
-        init(maxPixels: Int, quality: Double, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+        init(maxPixels: Int = defaultMaxPixels, quality: Double = defaultQuality, videoLimit: Int? = nil, requestToken: String?, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
             self.maxPixels = maxPixels
             self.quality = quality
+            self.videoLimit = videoLimit
+            self.requestToken = requestToken
+            self.isCancelled = isCancelled
             self.done = done
         }
 
+        private func cancellationRequested() -> Bool {
+            stateLock.lock()
+            let value = cancelled
+            stateLock.unlock()
+            return value || isCancelled()
+        }
+
+        func cancel() {
+            guard !finished else { return }
+            stateLock.lock()
+            cancelled = true
+            stateLock.unlock()
+            answered = true
+            progress?.cancel()
+            controller?.dismiss(animated: false)
+            // A provider may ignore Progress.cancel or never answer. Release
+            // the UI now, retaining our own cancellation flag after the bridge
+            // drains its token so a late callback cannot resurrect the import.
+            finish(.failure(importCancelled()))
+        }
+
+        func finish(_ result: Result<Any, CraftNativeActionError>) {
+            DispatchQueue.main.async {
+                let cancelled = self.cancellationRequested()
+                if self.finished || cancelled {
+                    if case .success(let value) = result,
+                       let file = value as? [String: Any], let path = file["path"] as? String {
+                        CraftNativeFiles.remove(path)
+                    }
+                }
+                guard !self.finished else { return }
+                self.finished = true
+                self.progress = nil
+                self.controller?.dismiss(animated: false)
+                if activePicker === self { activePicker = nil }
+                self.done(cancelled ? .failure(importCancelled()) : result)
+            }
+        }
+
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            guard !answered else { return }
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider else {
-                done(.success(NSNull()))
+                answered = true
+                finish(.success(NSNull()))
                 return
             }
-            guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
-                done(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "That is not a photo")))
+            load(provider)
+        }
+
+        func load(_ provider: NSItemProvider) {
+            guard !answered else { return }
+            answered = true
+            guard !cancellationRequested() else { finish(.failure(importCancelled())); return }
+            let type = videoLimit == nil ? UTType.image.identifier : UTType.movie.identifier
+            guard provider.hasItemConformingToTypeIdentifier(type) else {
+                finish(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: "The selected media has an unsupported type")))
                 return
             }
             let name = CraftNativeFiles.jpegName(provider.suggestedName)
-            let (maxPixels, quality, done) = (self.maxPixels, self.quality, self.done)
             // The file is only there for the length of this callback.
-            provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, error in
-                guard let url, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-                    done(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: error?.localizedDescription ?? "The photo could not be read")))
+            progress = provider.loadFileRepresentation(forTypeIdentifier: type) { url, error in
+                guard !self.cancellationRequested() else { self.finish(.failure(importCancelled())); return }
+                if let limit = self.videoLimit {
+                    guard let url else {
+                        self.finish(.failure(CraftNativeActionError(code: "READ_ERROR", message: error?.localizedDescription ?? "The video could not be read")))
+                        return
+                    }
+                    self.finish(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: self.cancellationRequested))
                     return
                 }
-                done(CraftNativeFiles.writeJPEG(from: source, maxPixels: maxPixels, quality: quality, name: name))
+                guard let url, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                    self.finish(.failure(CraftNativeActionError(code: "DECODE_ERROR", message: error?.localizedDescription ?? "The photo could not be read")))
+                    return
+                }
+                self.finish(CraftNativeFiles.writeJPEG(from: source, maxPixels: self.maxPixels, quality: self.quality, name: name))
             }
         }
     }
@@ -321,9 +391,6 @@ enum CraftNativeFiles {
                 guard value.isFinite else { return nil }
                 return Int(max(1, min(Double(512 * 1024 * 1024), value)))
             } ?? 512 * 1024 * 1024
-        let finish: (Result<Any, CraftNativeActionError>) -> Void = { result in
-            DispatchQueue.main.async { activePicker = nil; done(result) }
-        }
         if options["source"] as? String == "files" {
             let delegate = DocumentDelegate(limit: limit, video: true, requestToken: requestToken, isCancelled: isCancelled, done: done)
             var types: [UTType] = [.movie]
@@ -341,13 +408,13 @@ enum CraftNativeFiles {
             configuration.filter = .videos
             configuration.selectionLimit = 1
             configuration.preferredAssetRepresentationMode = .current
-            let delegate = VideoLibraryDelegate(limit: limit, isCancelled: isCancelled, done: finish)
+            let delegate = LibraryDelegate(videoLimit: limit, requestToken: requestToken, isCancelled: isCancelled, done: done)
             let picker = PHPickerViewController(configuration: configuration)
             picker.delegate = delegate
+            delegate.controller = picker
             activePicker = delegate
             if !CraftPresenter.present(picker, from: nil) {
-                activePicker = nil
-                done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
+                delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
             }
         }
     }
@@ -528,10 +595,14 @@ enum CraftNativeFiles {
         }
     }
 
-    /// Cancellation may arrive from screen disposal while the system picker is
-    /// still open. Keep ownership until dismissal (or an in-flight copy) ends.
+    /// Screen disposal can cancel a request while its system picker is open.
+    /// A stale request must never dismiss a newer request's picker.
     static func cancelPicker(requestToken: String) {
         DispatchQueue.main.async {
+            if let picker = activePicker as? LibraryDelegate, picker.requestToken == requestToken {
+                picker.cancel()
+                return
+            }
             guard let picker = activePicker as? DocumentDelegate,
                   picker.requestToken == requestToken else { return }
             picker.cancel()
@@ -608,25 +679,6 @@ enum CraftNativeFiles {
             return .failure(CraftNativeActionError(code: "INVALID_VIDEO", message: "Choose an MP4, MOV or WebM video."))
         }
         return copyImport(source, limit: limit, type: type, isCancelled: isCancelled)
-    }
-
-    private final class VideoLibraryDelegate: NSObject, PHPickerViewControllerDelegate {
-        let limit: Int
-        let isCancelled: () -> Bool
-        let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
-        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-            picker.dismiss(animated: true)
-            guard let provider = results.first?.itemProvider else { done(.success(NSNull())); return }
-            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
-            provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, error in
-                guard let url else {
-                    done(.failure(CraftNativeActionError(code: "READ_ERROR", message: error?.localizedDescription ?? "The video could not be read")))
-                    return
-                }
-                done(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled))
-            }
-        }
     }
 
     // MARK: Sending files

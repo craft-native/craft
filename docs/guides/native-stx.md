@@ -1581,8 +1581,14 @@ MP4/M4V/MOV/WebM extension allowlist. The per-file byte limit is enforced on
 bytes read, not just initial metadata, so a growing source cannot exceed it.
 Cancellation (including screen teardown) stops the copy at a chunk boundary,
 cleans partial staging, and rolls back earlier files in a multi-document
-selection. It does not interrupt an in-flight OS read or dismiss the system
-picker/provider UI. Cleanup remains best effort if the filesystem denies deletion.
+selection. Cancelling a request or disposing its screen dismisses an open iOS
+document or photo/video library picker and releases its busy slot. Library
+providers receive cancellation through their `Progress`; if a provider ignores
+it, a late result cannot reach the disposed screen and any newly owned file is
+removed. User dismissal still resolves `[]` for documents and `null` for media.
+Cancellation does not interrupt an in-flight OS read or ImageIO conversion.
+Request cancellation does not yet dismiss the camera capture UI. Cleanup
+remains best effort if the filesystem denies deletion.
 If an iOS or Android file picker, write, or download finishes after its request is
 cancelled (including screen teardown), the delivery boundary removes its
 undelivered app-owned files and their staging directories. Already delivered

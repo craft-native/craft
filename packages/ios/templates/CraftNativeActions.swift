@@ -272,7 +272,7 @@ enum CraftNativeActions {
             // A person picks, so the bridge never times it out.
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera) { completeFile(requestToken, $0, completion) }
+                CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera, requestToken: requestToken, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "pickVideo"):
