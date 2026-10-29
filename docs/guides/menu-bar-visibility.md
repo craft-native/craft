@@ -52,8 +52,13 @@ to the left of `›` by reserving native status-bar space. Its `‹` remains the
 reveal control even when the app's own cup or other icons are on the left.
 `busy` remains true until the native layout settles. It measures each button
 within macOS 27's shared status host and tolerates native overflow insertion
-without immediately undoing a successful collapse. It does not activate an
-assessment-mode restriction or require Accessibility authorization.
+without immediately undoing a successful collapse. The arrow stays at 20 points;
+a separate blank status item immediately to its left reserves space. Only that
+spacer widens, so the reveal button does not become a wide item that macOS can
+move into native overflow. Unsafe spacer placement restores the visible group.
+Packaged agents use the `CraftRuntime` executable name so macOS honors their
+saved positions. Rebuild the bundle with the matching SDK when upgrading this
+backend. It does not activate an assessment-mode restriction or require Accessibility authorization.
 
 The default `init()` remains the legacy backend for existing consumers. Select
 native visibility explicitly; do not combine both controllers. Private visibility

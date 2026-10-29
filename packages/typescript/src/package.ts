@@ -1050,9 +1050,13 @@ function copyMacOSAppBundle(source: string, destination: string): { success: boo
 /**
  * Helper: Create macOS app bundle
  */
-/** The native GUI agent's location, shared with desktop launchers. */
+/**
+ * The native GUI agent's location, shared with desktop launchers. Keep the
+ * agent executable distinct from the CLI: macOS 27 restores status-item
+ * positions differently for an agent named `craft`.
+ */
 export function macOSRuntimeExecutablePath(appBundlePath: string): string {
-  return join(appBundlePath, 'Contents', 'Helpers', 'CraftRuntime.app', 'Contents', 'MacOS', 'craft')
+  return join(appBundlePath, 'Contents', 'Helpers', 'CraftRuntime.app', 'Contents', 'MacOS', 'CraftRuntime')
 }
 
 function createMacOSAppBundle(opts: MacOSBundleMetadata & {
@@ -1114,7 +1118,7 @@ function createMacOSAppBundle(opts: MacOSBundleMetadata & {
       }
       // Keep permission prompts recognizable as the enclosing application.
       writeFileSync(join(helperContents, 'Info.plist'), macOSInfoPlist({
-        name, executableName: 'craft', version: opts.version,
+        name, executableName: 'CraftRuntime', version: opts.version,
         bundleId: `${opts.bundleId}.runtime`, buildNumber: opts.buildNumber,
         minimumSystemVersion: opts.minimumSystemVersion, menuBarOnly: true,
         iconName: iconPath ? 'icon' : undefined,
