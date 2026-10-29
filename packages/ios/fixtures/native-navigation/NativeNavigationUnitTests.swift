@@ -888,7 +888,9 @@ final class NativeNavigationUnitTests: XCTestCase {
         let load = PageLoad()
         page.navigationDelegate = load
         page.loadHTMLString("<!doctype html><html><body>Layout observer</body></html>", baseURL: nil)
-        await fulfillment(of: [load.finished], timeout: 10)
+        // A cold simulator can take over 30 seconds to launch WebContent and
+        // its GPU process. Keep readiness separate from the inset assertions.
+        await fulfillment(of: [load.finished], timeout: 60)
         let previousWebView = CraftChrome.shared.webView
         CraftChrome.shared.webView = page
         defer { CraftChrome.shared.webView = previousWebView }
