@@ -22,6 +22,180 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class NativeCapabilitiesTest {
+    private class PickerHostProbe : CraftNativePickerHost {
+        val launched = mutableListOf<Int>()
+        val dismissed = mutableListOf<Int>()
+        var refuseLaunch = false
+        override fun launch(intent: Intent, requestCode: Int) {
+            check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            launched.add(requestCode)
+            if (refuseLaunch) throw android.content.ActivityNotFoundException("fixture launch refused")
+        }
+        override fun dismiss(requestCode: Int) {
+            check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
+            dismissed.add(requestCode)
+        }
+    }
+
+    @Test
+    fun pickerCodesRestoreWithoutRewindingOrWrappingIntoStaleResults() {
+        val codes = CraftNativePickerCodes()
+        val first = codes.allocate()!!
+        val saved = codes.snapshot()
+        val recreated = CraftNativePickerCodes()
+        recreated.restore(saved)
+        assertTrue(recreated.allocate()!! > first)
+        recreated.restore(first)
+        assertTrue(recreated.allocate()!! > saved)
+        val exhausted = CraftNativePickerCodes(0xffff)
+        assertEquals(0xffff, exhausted.allocate())
+        assertNull("exhaustion must not reuse a result identity", exhausted.allocate())
+    }
+
+    @Test
+    fun cancellationBeforeQueuedPickerLaunchDoesNotOpenUiOrRetainToken() {
+        val context = importContext()
+        val host = PickerHostProbe()
+        val capabilities = CraftNativeCapabilities(context, JSONObject(), host)
+        try {
+            for (method in listOf("pickFile", "pickImage", "pickVideo")) {
+                instrumentation.runOnMainSync {
+                    capabilities.perform(method, 1, "Files", method, JSONArray()) { throw AssertionError("cancelled admission replied") }
+                    capabilities.cancel(method)
+                }
+                instrumentation.waitForIdleSync()
+            }
+            assertTrue(host.launched.isEmpty())
+            assertTrue(host.dismissed.isEmpty())
+            val cancelled = CraftNativeCapabilities::class.java.getDeclaredField("cancelled").apply { isAccessible = true }.get(capabilities) as Set<*>
+            assertTrue("pre-launch cancellation tokens leaked", cancelled.isEmpty())
+        } finally { capabilities.close(); instrumentation.waitForIdleSync(); context.cacheDir.deleteRecursively() }
+    }
+
+    @Test
+    fun cancelledPickerResultsCannotCompleteRetryOrReadOldFiles() {
+        for (method in listOf("pickFile", "pickImage", "pickVideo")) {
+            val context = importContext()
+            val host = PickerHostProbe()
+            val capabilities = CraftNativeCapabilities(context, JSONObject(), host)
+            val replies = java.util.concurrent.atomic.AtomicInteger()
+            try {
+                capabilities.perform("old", 1, "Files", method, JSONArray()) { replies.incrementAndGet() }
+                instrumentation.waitForIdleSync()
+                val old = host.launched.single()
+                capabilities.cancel("old") // off-main caller, as with script teardown
+                instrumentation.waitForIdleSync()
+                assertEquals(listOf(old), host.dismissed)
+                val done = CountDownLatch(1)
+                var result: CraftNativeCapabilityResult? = null
+                capabilities.perform("retry", 1, "Files", method, JSONArray()) { result = it; done.countDown() }
+                instrumentation.waitForIdleSync()
+                val retry = host.launched.last()
+                assertTrue(old != retry)
+                instrumentation.runOnMainSync {
+                    // A denied URI would fail immediately if the stale result
+                    // were accidentally assigned to the new request.
+                    val oldData = Intent().setData(android.net.Uri.parse("content://dev.craft.navigationtest.imports/denied"))
+                    assertTrue(capabilities.onActivityResult(old, android.app.Activity.RESULT_OK, oldData))
+                    assertTrue(capabilities.onActivityResult(old, android.app.Activity.RESULT_CANCELED, null))
+                    assertFalse(capabilities.onActivityResult(8411, android.app.Activity.RESULT_CANCELED, null))
+                }
+                instrumentation.waitForIdleSync()
+                assertEquals(0, replies.get())
+                assertEquals(1L, done.count)
+                assertTrue(java.io.File(context.cacheDir, "craft-files").listFiles().isNullOrEmpty())
+                instrumentation.runOnMainSync {
+                    capabilities.onActivityResult(retry, android.app.Activity.RESULT_CANCELED, null)
+                    capabilities.onActivityResult(retry, android.app.Activity.RESULT_OK, Intent())
+                }
+                assertTrue(done.await(5, TimeUnit.SECONDS))
+                assertNull(result?.code)
+                if (method == "pickFile") assertEquals(0, (result?.data as JSONArray).length())
+                else assertEquals(JSONObject.NULL, result?.data)
+            } finally { capabilities.close(); instrumentation.waitForIdleSync(); context.cacheDir.deleteRecursively() }
+        }
+    }
+
+    @Test
+    fun closedPickerAndLaunchFailureDoNotStealNewHostResults() {
+        val context = importContext()
+        val host = PickerHostProbe()
+        val old = CraftNativeCapabilities(context, JSONObject(), host)
+        val next = CraftNativeCapabilities(context, JSONObject(), host)
+        try {
+            old.perform("closed", 1, "Files", "pickFile", JSONArray()) { throw AssertionError("closed picker replied") }
+            instrumentation.waitForIdleSync()
+            val oldCode = host.launched.single()
+            val saved = android.os.Bundle()
+            old.savePickerState(saved)
+            old.close()
+            next.restorePickerState(saved)
+            instrumentation.waitForIdleSync()
+            assertEquals(listOf(oldCode), host.dismissed)
+            host.refuseLaunch = true
+            assertEquals("PICKER_UNAVAILABLE", call(next, "Files", "pickFile").code)
+            val failedCode = host.launched.last()
+            host.refuseLaunch = false
+            val done = CountDownLatch(1)
+            var result: CraftNativeCapabilityResult? = null
+            next.perform("current", 1, "Files", "pickFile", JSONArray()) { result = it; done.countDown() }
+            instrumentation.waitForIdleSync()
+            val current = host.launched.last()
+            assertTrue(current > failedCode && failedCode > oldCode)
+            instrumentation.runOnMainSync {
+                val data = Intent().setData(android.net.Uri.parse("content://dev.craft.navigationtest.imports/ok"))
+                old.onActivityResult(oldCode, android.app.Activity.RESULT_OK, data)
+                next.onActivityResult(oldCode, android.app.Activity.RESULT_OK, data)
+                next.onActivityResult(failedCode, android.app.Activity.RESULT_OK, data)
+                assertEquals(1L, done.count)
+                next.onActivityResult(current, android.app.Activity.RESULT_OK, data)
+            }
+            assertTrue(done.await(5, TimeUnit.SECONDS))
+            assertNull(result?.code)
+            val file = (result?.data as JSONArray).getJSONObject(0).getString("path")
+            assertTrue(NativeImportProvider.bytes.contentEquals(java.io.File(file).readBytes()))
+            assertNull(call(next, "Files", "remove", JSONArray().put(file)).code)
+        } finally { old.close(); next.close(); instrumentation.waitForIdleSync(); context.cacheDir.deleteRecursively() }
+    }
+
+    @Test
+    fun systemDocumentPickerDismissesOnCancellationAndCanRetry() {
+        val activity = instrumentation.startActivitySync(Intent(instrumentation.targetContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        val capabilities = MainActivity::class.java.getDeclaredField("capabilities").apply { isAccessible = true }.get(activity) as CraftNativeCapabilities
+        // AOSP and Google API 34/35 images use these DocumentsUI packages.
+        // Inspect the visible UI, not package queries filtered by app visibility.
+        val pickerPackages = setOf("com.android.documentsui", "com.google.android.documentsui")
+        fun awaitPackage(expected: Set<String>) {
+            val deadline = android.os.SystemClock.uptimeMillis() + 10_000
+            while (instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() !in expected && android.os.SystemClock.uptimeMillis() < deadline)
+                android.os.SystemClock.sleep(100)
+            assertTrue("expected visible package in $expected", instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString() in expected)
+        }
+        val token = "system-picker-${UUID.randomUUID()}"
+        val replies = java.util.concurrent.atomic.AtomicInteger()
+        try {
+            capabilities.perform(token, 1, "Files", "pickFile", JSONArray()) { replies.incrementAndGet() }
+            awaitPackage(pickerPackages)
+            capabilities.cancel(token)
+            awaitPackage(setOf(activity.packageName))
+            assertEquals(0, replies.get())
+            val done = CountDownLatch(1)
+            var result: CraftNativeCapabilityResult? = null
+            capabilities.perform("retry-$token", 1, "Files", "pickFile", JSONArray()) { result = it; done.countDown() }
+            awaitPackage(pickerPackages)
+            assertTrue(instrumentation.uiAutomation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            assertTrue(done.await(10, TimeUnit.SECONDS))
+            assertNull(result?.code)
+            assertEquals(0, (result?.data as JSONArray).length())
+            awaitPackage(setOf(activity.packageName))
+        } finally {
+            capabilities.cancel(token)
+            capabilities.cancel("retry-$token")
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test
     fun networkStatusIsAvailableWithoutAWebViewAndClosesCleanly() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext

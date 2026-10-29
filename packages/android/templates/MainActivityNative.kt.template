@@ -4425,6 +4425,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         capabilities = CraftNativeCapabilities(this, config)
+        capabilities.restorePickerState(savedInstanceState)
         routes = CraftNativeRoutes(config)
         stores = CraftNativeStores.get(this, config)
         services = CraftNativeServices(this, config) { this }
@@ -5233,6 +5234,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        if (::capabilities.isInitialized) capabilities.savePickerState(outState)
         outState.putString("craft.initialDeepLink", initialDeepLink?.toString())
         outState.putBoolean("craft.initialDeepLinkClaimed", initialDeepLinkClaimed)
         outState.putBoolean("craft.deliveredInitialDeepLink", deliveredInitialDeepLink)

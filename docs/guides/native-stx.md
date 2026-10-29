@@ -1574,6 +1574,14 @@ after the picker closes cannot publish or leak an app-owned file. Use this for
 GPX, TCX, FIT, PDF, or other documents that are not photos or videos. On iOS,
 failed photo JPEG creation or finalization also removes its staging directory,
 so a rejected image import does not accumulate orphaned temporary files.
+Android picker launches use distinct result codes, preserved across Activity
+recreation. Cancellation and host teardown finish only the matching external
+picker and release its slot; late or duplicate results cannot complete a newer
+request or start importing its files. User cancellation resolves `[]` for
+documents and `null` for images/videos. The reserved 16-bit code range is never
+reused within a process/restored Activity session; exhaustion returns
+`PICKER_UNAVAILABLE` instead of risking a stale-result collision. Instrumented
+tests cover request matching and the system document picker's cancel/retry flow.
 iOS document and video imports copy regular local files in at most 64 KiB
 chunks. Directories, symbolic links, and special files are refused; general
 documents still accept arbitrary content types, while videos retain the

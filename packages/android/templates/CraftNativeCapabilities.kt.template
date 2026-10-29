@@ -46,7 +46,9 @@ import kotlin.math.roundToInt
 
 private const val CRAFT_NATIVE_FETCH_MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 private const val CRAFT_NATIVE_FETCH_TIMEOUT_MS = 30_000
-private const val CRAFT_NATIVE_FILE_PICK_REQUEST = 4101
+private const val CRAFT_NATIVE_FILE_PICK_FIRST = 0x4000
+private const val CRAFT_NATIVE_FILE_PICK_LAST = 0xffff
+private const val CRAFT_NATIVE_FILE_PICK_STATE = "craft.filePicker.nextCode"
 private const val CRAFT_NATIVE_NOTIFICATION_PERMISSION_REQUEST = 4102
 private const val CRAFT_NATIVE_FILE_DEFAULT_MAX_PIXELS = 2048
 private const val CRAFT_NATIVE_FILE_LARGEST_MAX_PIXELS = 8192
@@ -61,11 +63,41 @@ internal data class CraftNativeCapabilityResult(
     val message: String? = null,
 )
 
+/** Never recycle a code while an old Activity result could still arrive. */
+internal class CraftNativePickerCodes(private var next: Int = CRAFT_NATIVE_FILE_PICK_FIRST) {
+    @Synchronized fun allocate(): Int? = if (next <= CRAFT_NATIVE_FILE_PICK_LAST) next++ else null
+    @Synchronized fun snapshot(): Int = next
+    @Synchronized fun restore(value: Int) {
+        next = maxOf(next, value.coerceIn(CRAFT_NATIVE_FILE_PICK_FIRST, CRAFT_NATIVE_FILE_PICK_LAST + 1))
+    }
+}
+
+/** Injectable platform boundary; result matching and file IO stay in the host. */
+internal interface CraftNativePickerHost {
+    fun launch(intent: Intent, requestCode: Int)
+    fun dismiss(requestCode: Int)
+}
+
 /** Process-wide persistence and OS services shared by every native route. */
 internal class CraftNativeCapabilities(
     private val context: Context,
     private val config: JSONObject,
+    private val pickerHost: CraftNativePickerHost? = (context as? MainActivity)?.let { host ->
+        object : CraftNativePickerHost {
+            override fun launch(intent: Intent, requestCode: Int) { host.startActivityForResult(intent, requestCode) }
+            override fun dismiss(requestCode: Int) { host.finishActivity(requestCode) }
+        }
+    },
 ) {
+    companion object {
+        private val pickerCodes = CraftNativePickerCodes()
+    }
+
+    fun savePickerState(state: android.os.Bundle) { state.putInt(CRAFT_NATIVE_FILE_PICK_STATE, pickerCodes.snapshot()) }
+    fun restorePickerState(state: android.os.Bundle?) {
+        pickerCodes.restore(state?.getInt(CRAFT_NATIVE_FILE_PICK_STATE, CRAFT_NATIVE_FILE_PICK_FIRST) ?: CRAFT_NATIVE_FILE_PICK_FIRST)
+    }
+
     /** The screen's activity; null in a background refresh, where nothing can be shown. */
     private val activity: MainActivity? get() = context as? MainActivity
     private val bluetooth by lazy { CraftBluetooth(context) }
@@ -114,6 +146,7 @@ internal class CraftNativeCapabilities(
         val videoLimit: Long = 0,
         val selectionLimit: Int = 1,
         val fileLimit: Long = 0,
+        val requestCode: Int = -1,
     )
 
     private val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -234,7 +267,12 @@ internal class CraftNativeCapabilities(
     fun cancel(requestToken: String) {
         cancelled.add(requestToken)
         fetchConnections.remove(requestToken)?.disconnect()
-        if (pendingFilePick?.requestToken == requestToken) pendingFilePick = null
+        onMain {
+            if (pendingFilePick?.requestToken == requestToken) {
+                dismissFilePick()
+                cancelled.remove(requestToken)
+            }
+        }
         biometricPrompts.remove(requestToken)?.cancelAuthentication()
     }
 
@@ -247,11 +285,39 @@ internal class CraftNativeCapabilities(
         networkExecutor.shutdownNow()
         fetchConnections.values.forEach(HttpURLConnection::disconnect)
         fetchConnections.clear()
-        pendingFilePick = null
+        onMain { dismissFilePick() }
         database?.close()
         database = null
         biometricPrompts.values.forEach { it.cancelAuthentication() }
         biometricPrompts.clear()
+    }
+
+    private fun onMain(work: () -> Unit) {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) work()
+        else mainHandler.post { work() }
+    }
+
+    private fun dismissFilePick() {
+        val pending = pendingFilePick ?: return
+        pendingFilePick = null
+        // Clear ownership first: finishActivity may immediately return a result.
+        runCatching { pickerHost?.dismiss(pending.requestCode) }
+    }
+
+    private fun launchFilePick(host: CraftNativePickerHost, intent: Intent, pending: PendingFilePick) {
+        val code = pickerCodes.allocate()
+        if (code == null) {
+            complete(pending.requestToken, failure("PICKER_UNAVAILABLE", "Picker request codes exhausted; start a new Activity session"), pending.completion)
+            return
+        }
+        pendingFilePick = pending.copy(requestCode = code)
+        try { host.launch(intent, code) }
+        catch (error: Exception) {
+            if (pendingFilePick?.requestCode == code) {
+                pendingFilePick = null
+                complete(pending.requestToken, failure("PICKER_UNAVAILABLE", error.message ?: "Picker could not be opened"), pending.completion)
+            }
+        }
     }
 
     /** The same bounded text-only fetch contract as the maintained iOS host. */
@@ -492,26 +558,22 @@ internal class CraftNativeCapabilities(
 
     private fun pickVideo(requestToken: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {
         mainHandler.post {
-            if (fileRequestCancelled(requestToken)) return@post
-            val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
+            if (fileRequestCancelled(requestToken)) { cancelled.remove(requestToken); return@post }
+            val host = pickerHost ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
                 return@post
             }
             val options = args.optJSONObject(0) ?: JSONObject()
             val limit = options.optLong("maxBytes", 512L * 1024 * 1024).coerceIn(1, 512L * 1024 * 1024)
-            pendingFilePick = PendingFilePick(requestToken, "video", 0, 1f, completion, limit)
+            val pending = PendingFilePick(requestToken, "video", 0, 1f, completion, limit)
             val photos = options.optString("source", "library") != "files" && Build.VERSION.SDK_INT >= 33
             val intent = Intent(if (photos) MediaStore.ACTION_PICK_IMAGES else Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "video/*"
                 if (!photos) addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            try { host.startActivityForResult(intent, CRAFT_NATIVE_FILE_PICK_REQUEST) }
-            catch (error: Exception) {
-                pendingFilePick = null
-                complete(requestToken, failure("PICKER_UNAVAILABLE", error.message ?: "Video picker could not be opened"), completion)
-            }
+            launchFilePick(host, intent, pending)
         }
     }
 
@@ -559,8 +621,8 @@ internal class CraftNativeCapabilities(
         completion: (CraftNativeCapabilityResult) -> Unit,
     ) {
         mainHandler.post {
-            if (fileRequestCancelled(requestToken)) return@post
-            val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
+            if (fileRequestCancelled(requestToken)) { cancelled.remove(requestToken); return@post }
+            val host = pickerHost ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
                 return@post
@@ -579,25 +641,20 @@ internal class CraftNativeCapabilities(
                 complete(requestToken, failure("CAPABILITY_DISABLED", "Camera is disabled"), completion)
                 return@post
             }
-            pendingFilePick = PendingFilePick(requestToken, source, maxPixels, quality, completion)
+            val pending = PendingFilePick(requestToken, source, maxPixels, quality, completion)
             val intent = if (source == "camera") Intent(MediaStore.ACTION_IMAGE_CAPTURE)
             else Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE)
                 type = "image/*"
             }
-            try {
-                host.startActivityForResult(intent, CRAFT_NATIVE_FILE_PICK_REQUEST)
-            } catch (error: Exception) {
-                pendingFilePick = null
-                complete(requestToken, failure("PICKER_UNAVAILABLE", error.message ?: "Image picker could not be opened"), completion)
-            }
+            launchFilePick(host, intent, pending)
         }
     }
 
     private fun pickFile(requestToken: String, args: JSONArray, completion: (CraftNativeCapabilityResult) -> Unit) {
         mainHandler.post {
-            if (fileRequestCancelled(requestToken)) return@post
-            val host = activity ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
+            if (fileRequestCancelled(requestToken)) { cancelled.remove(requestToken); return@post }
+            val host = pickerHost ?: return@post complete(requestToken, failure("NEEDS_ACTIVITY", "No screen is showing to pick from"), completion)
             if (pendingFilePick != null) {
                 complete(requestToken, failure("BUSY", "Another file picker is already open"), completion)
                 return@post
@@ -610,7 +667,7 @@ internal class CraftNativeCapabilities(
             }
             val selections = options.optInt("maxSelections", 1).coerceIn(1, 20)
             val limit = options.optLong("maxBytes", 512L * 1024 * 1024).coerceIn(1, 512L * 1024 * 1024)
-            pendingFilePick = PendingFilePick(
+            val pending = PendingFilePick(
                 requestToken,
                 "file",
                 0,
@@ -626,11 +683,7 @@ internal class CraftNativeCapabilities(
                 putExtra(Intent.EXTRA_ALLOW_MULTIPLE, selections > 1)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            try { host.startActivityForResult(intent, CRAFT_NATIVE_FILE_PICK_REQUEST) }
-            catch (error: Exception) {
-                pendingFilePick = null
-                complete(requestToken, failure("PICKER_UNAVAILABLE", error.message ?: "File picker could not be opened"), completion)
-            }
+            launchFilePick(host, intent, pending)
         }
     }
 
@@ -666,36 +719,39 @@ internal class CraftNativeCapabilities(
     }
 
     fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode != CRAFT_NATIVE_FILE_PICK_REQUEST) return false
+        if (requestCode !in CRAFT_NATIVE_FILE_PICK_FIRST..CRAFT_NATIVE_FILE_PICK_LAST) return false
         val pending = pendingFilePick ?: return true
+        if (pending.requestCode != requestCode) return true
         pendingFilePick = null
+        if (fileRequestCancelled(pending.requestToken)) {
+            cancelled.remove(pending.requestToken)
+            return true
+        }
         if (resultCode != android.app.Activity.RESULT_OK) {
-            complete(pending.requestToken, success(JSONObject.NULL), pending.completion)
+            complete(pending.requestToken, success(if (pending.source == "file") JSONArray() else JSONObject.NULL), pending.completion)
             return true
         }
         if (pending.source == "video") {
-            networkExecutor.execute {
-                val result = data?.data?.let { copyVideo(pending.requestToken, it, pending.videoLimit) }
+            importPickedFile(pending) {
+                data?.data?.let { copyVideo(pending.requestToken, it, pending.videoLimit) }
                     ?: failure("PICKER_FAILED", "The selected video could not be read")
-                completeFile(pending.requestToken, result, pending.completion)
             }
             return true
         }
         if (pending.source == "file") {
-            networkExecutor.execute {
+            importPickedFile(pending) {
                 val uris = buildList {
                     data?.clipData?.let { clips ->
                         for (index in 0 until clips.itemCount) add(clips.getItemAt(index).uri)
                     }
                     data?.data?.let { add(it) }
                 }.distinct().take(pending.selectionLimit)
-                val result = copyDocuments(pending.requestToken, uris, pending.fileLimit)
-                completeFile(pending.requestToken, result, pending.completion)
+                copyDocuments(pending.requestToken, uris, pending.fileLimit)
             }
             return true
         }
-        networkExecutor.execute {
-            val result = runCatching {
+        importPickedFile(pending) {
+            runCatching {
                 val descriptor = if (pending.source == "camera") {
                     val bitmap = data?.extras?.get("data") as? Bitmap
                     bitmap?.let { writeImage(it, pending.maxPixels, pending.quality, "photo.jpg", pending.requestToken) }
@@ -705,9 +761,21 @@ internal class CraftNativeCapabilities(
                 descriptor?.let(::success) ?: if (fileRequestCancelled(pending.requestToken)) failure("CANCELLED", "Image selection was cancelled")
                 else failure("PICKER_FAILED", "The selected image could not be read")
             }.getOrElse { failure("READ_ERROR", it.message ?: "The selected image could not be read") }
-            completeFile(pending.requestToken, result, pending.completion)
         }
         return true
+    }
+
+    private fun importPickedFile(pending: PendingFilePick, work: () -> CraftNativeCapabilityResult) {
+        try {
+            networkExecutor.execute {
+                val result = if (fileRequestCancelled(pending.requestToken)) failure("CANCELLED", "File selection was cancelled") else work()
+                completeFile(pending.requestToken, result, pending.completion)
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // close() can shut down the executor between result matching and
+            // submission. Its closed flag suppresses this abandoned reply.
+            complete(pending.requestToken, failure("CANCELLED", "File import host is closed"), pending.completion)
+        }
     }
 
     private fun copyUri(requestToken: String, uri: Uri, maxPixels: Int, quality: Float): JSONObject? {
