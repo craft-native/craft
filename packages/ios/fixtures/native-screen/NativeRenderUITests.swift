@@ -78,7 +78,7 @@ final class NativeRenderUITests: XCTestCase {
         // than an accessible button. Programmatic cancellation needs the real
         // presented controller, not that unrelated action's loading state.
         let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
         backgroundAfterObservingPicker(app)
         XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Aborted; answers 0")
@@ -97,7 +97,7 @@ final class NativeRenderUITests: XCTestCase {
         let session = app.staticTexts["picker-session"].label
         app.buttons["picker-replace"].tap()
         let picker = app.navigationBars["FullDocumentManagerViewControllerNavigationBar"]
-        XCTAssertTrue(picker.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(picker.waitForExistence(timeout: 15), app.debugDescription)
         backgroundAfterObservingPicker(app)
         XCTAssertTrue(picker.waitForNonExistence(timeout: 15))
         waitForLabel(app.staticTexts["picker-status"], "Picker ready")

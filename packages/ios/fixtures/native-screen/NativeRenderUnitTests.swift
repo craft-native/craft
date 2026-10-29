@@ -1398,17 +1398,22 @@ final class NativeRenderUnitTests: XCTestCase {
     func testReparentedInputKeepsNativeIdentityAndSelection() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         controller.render([
             "id": "root-node", "type": "View", "children": [
                 ["id": "source-node", "type": "ScrollView", "style": ["height": 80], "children": [
                     ["id": "popup-node", "type": "View", "props": ["testID": "popup"], "style": ["height": 160], "children": [
                         ["id": "popup-field", "type": "TextInput", "props": ["testID": "popup-field"], "children": []],
                     ]],
+                    // Keep a scrollable extent after the popup moves away.
+                    ["id": "remaining-content", "type": "View", "style": ["height": 320], "children": []],
                 ]],
                 ["id": "destination-node", "type": "View", "props": ["testID": "destination"], "children": []],
             ],
         ])
         let scroll = try XCTUnwrap(find(UIScrollView.self, key: "source-node", below: controller.view))
+        controller.view.layoutIfNeeded()
+        XCTAssertGreaterThanOrEqual(scroll.contentSize.height - scroll.bounds.height, 40)
         scroll.contentOffset = CGPoint(x: 0, y: 40)
         let field = try XCTUnwrap(find(UITextField.self, key: "popup-field", below: controller.view))
         field.text = "draft"
@@ -1425,6 +1430,7 @@ final class NativeRenderUnitTests: XCTestCase {
         XCTAssertEqual(retained.text, "draft")
         let selection = try XCTUnwrap(retained.selectedTextRange)
         XCTAssertEqual(retained.offset(from: retained.beginningOfDocument, to: selection.start), 3)
+        XCTAssertGreaterThanOrEqual(scroll.contentSize.height - scroll.bounds.height, 40)
         XCTAssertEqual(scroll.contentOffset.y, 40)
         let destination = try XCTUnwrap(find(UIView.self, key: "destination", below: controller.view))
         XCTAssertTrue(try XCTUnwrap(find(UIView.self, key: "popup", below: controller.view)).superview === destination)
@@ -3504,15 +3510,25 @@ final class NativeRenderUnitTests: XCTestCase {
     func testScreenNumericStylesRejectBooleanNumbers() throws {
         let controller = CraftNativeScreenController(config: CraftConfig())
         controller.loadViewIfNeeded()
-        controller.render(document([node(
-            "View",
-            key: "boolean-style",
-            style: ["width": true, "height": false, "borderWidth": true, "opacity": false]
-        )]))
+        controller.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        func content(_ key: String, style: [String: Any] = [:]) -> [String: Any] {
+            ["type": "View", "props": ["key": key], "style": style,
+             "children": [node("Text", key: "\(key)-text", text: "Numeric style validation", style: ["fontSize": 20])]]
+        }
+        controller.render(document([
+            content("baseline-style"),
+            content("boolean-style", style: ["width": true, "height": false, "borderWidth": true, "opacity": false]),
+        ]))
+        controller.view.layoutIfNeeded()
 
+        let baseline = try XCTUnwrap(find(UIView.self, key: "baseline-style", below: controller.view))
         let view = try XCTUnwrap(find(UIView.self, key: "boolean-style", below: controller.view))
-        XCTAssertFalse(view.constraints.contains { $0.isActive && $0.firstAttribute == .width }, "Boolean width was treated as numeric")
-        XCTAssertFalse(view.constraints.contains { $0.isActive && $0.firstAttribute == .height }, "Boolean height was treated as numeric")
+        // UIKit can install its own size constraints during layout. Compare the
+        // rendered result to absent styles instead of rejecting those constraints.
+        XCTAssertGreaterThan(baseline.bounds.width, 1)
+        XCTAssertGreaterThan(baseline.bounds.height, 1)
+        XCTAssertEqual(view.bounds.width, baseline.bounds.width, accuracy: 0.001, "Boolean width was treated as numeric")
+        XCTAssertEqual(view.bounds.height, baseline.bounds.height, accuracy: 0.001, "Boolean height was treated as numeric")
         XCTAssertEqual(view.layer.borderWidth, 0, "Boolean border width was treated as numeric")
         XCTAssertEqual(view.alpha, 1, accuracy: 0.001, "Boolean opacity changed the native view")
     }
