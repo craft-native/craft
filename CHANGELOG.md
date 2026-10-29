@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.386...v0.0.387)
+
+## 🐛 Bug Fixes
+
+- **menubar**: distinguish Command-clicks from native reordering ([67242a9](https://github.com/craft-native/craft/commit/67242a9)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.385...v0.0.386)
 
 ## 🐛 Bug Fixes
