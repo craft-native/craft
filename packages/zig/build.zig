@@ -3296,6 +3296,10 @@ fn linkMenuBarVisibility(b: *std.Build, module: *std.Build.Module) void {
         .flags = flags,
     });
     module.addCSourceFile(.{
+        .file = b.path("src/menubar_preferences.m"),
+        .flags = flags,
+    });
+    module.addCSourceFile(.{
         .file = b.path("src/webkit_preferences.m"),
         .flags = flags,
     });

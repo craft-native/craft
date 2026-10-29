@@ -53,13 +53,15 @@ pub const MenubarCollapseBridge = struct {
             var buf: [384]u8 = undefined;
             const json = std.fmt.bufPrint(
                 &buf,
-                "{{\"backend\":\"legacy\",\"collapsed\":{s},\"initialized\":{s},\"busy\":{s},\"separatorHidden\":{s},\"markerWidth\":{d}}}",
+                "{{\"backend\":\"legacy\",\"collapsed\":{s},\"initialized\":{s},\"busy\":{s},\"separatorHidden\":{s},\"markerWidth\":{d},\"layoutPosition\":{d},\"layoutAuthorized\":{s}}}",
                 .{
                     if (menubar_collapse.isCollapsed()) "true" else "false",
                     if (menubar_collapse.isInitialized()) "true" else "false",
                     if (menubar_collapse.isBusy()) "true" else "false",
                     if (menubar_collapse.isSeparatorHidden()) "true" else "false",
                     menubar_collapse.markerWidth(),
+                    menubar_collapse.layoutPosition() orelse -1,
+                    if (menubar_collapse.layoutAuthorized()) "true" else "false",
                 },
             ) catch return;
             @import("bridge_error.zig").sendResultToJS(self.allocator, "getState", json);

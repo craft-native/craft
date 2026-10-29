@@ -177,3 +177,27 @@ test "native overflow insertion does not undo a correctly hidden left group" {
     try std.testing.expect(!markerEdgeDisplaced(1039, 543, 440));
     try std.testing.expect(markerEdgeDisplaced(1039, 219, 440));
 }
+
+/// Native preferred positions are Float32. Keep every spacer strictly inside
+/// the same neighboring slot after conversion, including tightly spaced layouts.
+pub fn spacerPosition(control: f64, limit: f64, index: usize, count: usize) ?f64 {
+    if (!std.math.isFinite(control) or !std.math.isFinite(limit) or control < 0 or limit <= control or count == 0 or count > MAX_SPACERS or index >= count) return null;
+    const step = (limit - control) / @as(f64, @floatFromInt(count + 1));
+    const result: f32 = @floatCast(control + step * @as(f64, @floatFromInt(index + 1)));
+    const previous: f32 = @floatCast(control + step * @as(f64, @floatFromInt(index)));
+    if (!std.math.isFinite(result) or result <= control or result >= limit or result <= previous) return null;
+    return result;
+}
+
+test "spacers fit between the boundary and its neighbor without crossing either" {
+    var previous: f64 = 354;
+    for (0..MAX_SPACERS) |index| {
+        const position = spacerPosition(354, 354.1, index, MAX_SPACERS).?;
+        try std.testing.expect(position > previous and position < 354.1);
+        previous = position;
+    }
+    try std.testing.expect(spacerPosition(354, 354.000001, 0, 3) == null);
+    try std.testing.expect(spacerPosition(354, 354, 0, 3) == null);
+    try std.testing.expect(spacerPosition(354, std.math.nan(f64), 0, 3) == null);
+    try std.testing.expect(spacerPosition(354, 355, 3, 3) == null);
+}

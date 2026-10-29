@@ -144,6 +144,8 @@ var validated_layout: bool = false;
 var reorder_pending: bool = false;
 var reorder_released_ns: ?u64 = null;
 var reorder_drag: layout.DragTracker = .{};
+var layout_access_url: objc.id = null;
+var cached_layout_owner: objc.id = null;
 var spacer_placement: layout.SpacerPlacement = .{ .high = 0, .position = 0 };
 var placement_reuses_spacer: bool = false;
 var widening_started_ns: ?u64 = null;
@@ -394,8 +396,171 @@ pub fn nativeVisibilityState() ?[]const u8 {
 }
 
 pub fn requestPermission() void {
-    if (builtin.target.os.tag == .macos and native_visibility)
+    if (builtin.target.os.tag != .macos) return;
+    if (native_visibility) {
         visibility.craft_menubar_visibility_request_permission();
+        return;
+    }
+    if (layoutAvailable()) requestLayoutAccess();
+}
+
+const layout_preferences = struct {
+    extern fn craft_menubar_layout_available() bool;
+    extern fn craft_menubar_copy_layout_positions() objc.id;
+    extern fn craft_menubar_request_layout_access(selected: *const fn (objc.id) callconv(.c) void) void;
+};
+
+fn layoutAvailable() bool {
+    if (builtin.target.os.tag != .macos) return false;
+    return layout_preferences.craft_menubar_layout_available();
+}
+
+const LAYOUT_BOOKMARK_KEY = "craft_menubar_layout_readonly_bookmark";
+const LAYOUT_FILE = "Library/Group Containers/com.apple.MenuBar/Library/Preferences/com.apple.MenuBar.plist";
+
+fn layoutFileURL() objc.id {
+    const home = msgSend0(msgSend0(getClass("NSFileManager"), "defaultManager"), "homeDirectoryForCurrentUser");
+    const component = createNSString(LAYOUT_FILE);
+    defer _ = msgSend0(component, "release");
+    return msgSend1(home, "URLByAppendingPathComponent:", component);
+}
+
+fn isLayoutURL(url: objc.id) bool {
+    if (url == null) return false;
+    const equal = @as(*const fn (objc.id, objc.SEL, objc.id) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
+    return equal(msgSend0(url, "path"), objc.sel_registerName("isEqualToString:"), msgSend0(layoutFileURL(), "path"));
+}
+
+fn restoreLayoutAccess(data: objc.id) bool {
+    if (data == null) return false;
+    const resolve = @as(*const fn (objc.id, objc.SEL, objc.id, c_ulong, objc.id, ?*bool, ?*objc.id) callconv(.c) objc.id, @ptrCast(&objc.objc_msgSend));
+    var stale = false;
+    const url = resolve(getClass("NSURL"), objc.sel_registerName("URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:"), data, (1 << 10) | (1 << 8), null, &stale, null);
+    if (!isLayoutURL(url)) return false;
+    if (layout_access_url != null) {
+        _ = msgSend0(layout_access_url, "stopAccessingSecurityScopedResource");
+        _ = msgSend0(layout_access_url, "release");
+    }
+    layout_access_url = msgSend0(url, "retain");
+    _ = msgSend0(layout_access_url, "startAccessingSecurityScopedResource");
+    return msgSend1(getClass("NSData"), "dataWithContentsOfURL:", layout_access_url) != null;
+}
+
+fn requestLayoutAccess() void {
+    if (ensureLayoutAccess()) return;
+    layout_preferences.craft_menubar_request_layout_access(layoutAccessSelected);
+}
+
+fn layoutAccessSelected(selected: objc.id) callconv(.c) void {
+    if (!isLayoutURL(selected)) return;
+    const bookmark = @as(*const fn (objc.id, objc.SEL, c_ulong, objc.id, objc.id, ?*objc.id) callconv(.c) objc.id, @ptrCast(&objc.objc_msgSend));
+    // Resolve only a read-only bookmark; never retain the chooser's broader URL.
+    const data = bookmark(selected, objc.sel_registerName("bookmarkDataWithOptions:includingResourceValuesForKeys:relativeToURL:error:"), (1 << 11) | (1 << 12), null, null, null);
+    if (restoreLayoutAccess(data)) {
+        const key = createNSString(LAYOUT_BOOKMARK_KEY);
+        defer _ = msgSend0(key, "release");
+        msgSendVoid2(msgSend0(getClass("NSUserDefaults"), "standardUserDefaults"), "setObject:forKey:", data, key);
+    }
+}
+
+fn isObjectKind(value: objc.id, class_name: [*:0]const u8) bool {
+    if (value == null) return false;
+    const call = @as(*const fn (objc.id, objc.SEL, objc.id) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
+    return call(value, objc.sel_registerName("isKindOfClass:"), getClass(class_name));
+}
+
+fn ensureLayoutAccess() bool {
+    if (!layoutAvailable()) return false;
+    if (layout_access_url == null) {
+        const bookmark_key = createNSString(LAYOUT_BOOKMARK_KEY);
+        defer _ = msgSend0(bookmark_key, "release");
+        const saved = msgSend1(msgSend0(getClass("NSUserDefaults"), "standardUserDefaults"), "objectForKey:", bookmark_key);
+        if (!restoreLayoutAccess(saved)) return false;
+    }
+    // Use the current path under the held scope; preferences are atomically replaced.
+    return msgSend1(getClass("NSData"), "dataWithContentsOfURL:", layoutFileURL()) != null;
+}
+
+fn layoutPositions() objc.id {
+    if (!ensureLayoutAccess()) return null;
+    const positions = layout_preferences.craft_menubar_copy_layout_positions() orelse return null;
+    return msgSend0(positions, "autorelease");
+}
+
+const code_identity = struct {
+    extern "Security" fn SecCodeCopySelf(flags: u32, code: *objc.id) c_int;
+    extern "Security" fn SecCodeCopySigningInformation(code: objc.id, flags: u32, info: *objc.id) c_int;
+    extern "Security" var kSecCodeInfoFlags: objc.id;
+    extern "Security" var kSecCodeInfoIdentifier: objc.id;
+    extern "CoreFoundation" fn CFRelease(value: objc.id) void;
+};
+
+fn layoutOwner() objc.id {
+    if (cached_layout_owner != null) return cached_layout_owner;
+    var code: objc.id = null;
+    if (code_identity.SecCodeCopySelf(0, &code) == 0 and code != null) {
+        defer code_identity.CFRelease(code);
+        var info: objc.id = null;
+        if (code_identity.SecCodeCopySigningInformation(code, 0, &info) == 0 and info != null) {
+            defer code_identity.CFRelease(info);
+            const flags = msgSend1(info, "objectForKey:", code_identity.kSecCodeInfoFlags);
+            // MenuBarAgent namespaces ad-hoc/unbundled clients by executable
+            // name; trusted application clients use their signing identifier.
+            if (flags != null and msgSendUsize(flags, "unsignedIntegerValue") & 2 == 0) {
+                const identifier = msgSend1(info, "objectForKey:", code_identity.kSecCodeInfoIdentifier);
+                if (isObjectKind(identifier, "NSString")) cached_layout_owner = msgSend0(identifier, "retain");
+            }
+        }
+    }
+    if (cached_layout_owner == null) {
+        const arguments = msgSend0(msgSend0(getClass("NSProcessInfo"), "processInfo"), "arguments");
+        const executable = msgSend1(arguments, "objectAtIndex:", @as(usize, 0));
+        cached_layout_owner = msgSend0(msgSend0(executable, "lastPathComponent"), "retain");
+    }
+    return cached_layout_owner;
+}
+
+const ControlSlot = struct { position: f64, limit: f64 };
+
+fn controlSlot() ?ControlSlot {
+    const positions = layoutPositions() orelse return null;
+    const owner = layoutOwner();
+    const bytes = msgSend0(owner, "UTF8String") orelse return null;
+    var buffer: [512]u8 = undefined;
+    const key = std.fmt.bufPrint(&buffer, "status:{s}::{s}", .{ std.mem.span(@as([*:0]const u8, @ptrCast(bytes))), MARKER_AUTOSAVE_NAME }) catch return null;
+    const native_key = createNSString(key);
+    defer _ = msgSend0(native_key, "release");
+    const value = msgSend1(positions, "objectForKey:", native_key);
+    if (!isObjectKind(value, "NSNumber")) return null;
+    const number = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
+    const position = number(value, objc.sel_registerName("doubleValue"));
+    if (!std.math.isFinite(position) or position < 0) return null;
+    var limit = position + 32;
+    const keys = msgSend0(positions, "allKeys");
+    for (0..msgSendUsize(keys, "count")) |index| {
+        const candidate_key = msgSend1(keys, "objectAtIndex:", index);
+        if (msgSend0(candidate_key, "UTF8String")) |candidate_bytes| {
+            const candidate_name = std.mem.span(@as([*:0]const u8, @ptrCast(candidate_bytes)));
+            // Retired internal identities must not shrink the next available slot.
+            if (std.mem.indexOf(u8, candidate_name, "::craft_menubar_spacer_") != null) continue;
+        }
+        const candidate = msgSend1(positions, "objectForKey:", candidate_key);
+        if (!isObjectKind(candidate, "NSNumber")) continue;
+        const next = number(candidate, objc.sel_registerName("doubleValue"));
+        if (std.math.isFinite(next) and next > position) limit = @min(limit, next);
+    }
+    return .{ .position = position, .limit = limit };
+}
+
+pub fn layoutAuthorized() bool {
+    if (builtin.target.os.tag != .macos) return false;
+    return ensureLayoutAccess();
+}
+
+pub fn layoutPosition() ?f64 {
+    if (builtin.target.os.tag != .macos) return null;
+    const slot = controlSlot() orelse return null;
+    return slot.position;
 }
 
 fn visibilityChanged() callconv(.c) void {
@@ -424,6 +589,8 @@ pub fn collapse() void {
     const screen = markerScreenFrame(separator_item) orelse return;
     const plan = planSpacers() orelse return;
     const now = nanoTimestamp() orelse return;
+    beginLayoutUpdates();
+    defer endLayoutUpdates();
     reorder_pending = false;
     reorder_released_ns = null;
     const reuse_layout = plan.count > 1 and validated_layout and spacer_count == plan.count and spacer_width == plan.width and
@@ -447,6 +614,12 @@ pub fn collapse() void {
     auto_collapse_timer_active = false;
     if (reuse_layout) {
         if (!beginWidening(now)) {
+            restoreCompactLayout();
+            return;
+        }
+    } else if (if (spacer_count > 1) controlSlot() else null) |slot| {
+        control_anchor_edge = marker.origin.x + marker.size.width;
+        if (!placeModernSpacers(now, slot)) {
             restoreCompactLayout();
             return;
         }
@@ -478,6 +651,8 @@ pub fn expand() void {
     if (!is_collapsed) return;
     if (separator_item == null) return;
 
+    beginLayoutUpdates();
+    defer endLayoutUpdates();
     // Keep its native identity and ordering. Removing and recreating the
     // spacer makes macOS intermittently insert it on the control's right.
     if (!collapse_settled) validated_layout = false;
@@ -518,6 +693,15 @@ pub fn toggle() void {
 pub fn cleanup() void {
     if (builtin.target.os.tag == .macos and native_visibility) visibility.craft_menubar_visibility_cleanup();
     if (is_collapsed) expand();
+    if (builtin.target.os.tag == .macos and cached_layout_owner != null) {
+        _ = msgSend0(cached_layout_owner, "release");
+        cached_layout_owner = null;
+    }
+    if (builtin.target.os.tag == .macos and layout_access_url != null) {
+        _ = msgSend0(layout_access_url, "stopAccessingSecurityScopedResource");
+        _ = msgSend0(layout_access_url, "release");
+        layout_access_url = null;
+    }
     if (builtin.target.os.tag == .macos) for (0..layout.MAX_SPACERS) |index| {
         removeSpacer(index);
     };
@@ -714,6 +898,18 @@ fn setMarkerWidth(item: objc.id, width: f64) void {
     msgSendVoid1(item, "setLength:", width);
 }
 
+fn beginLayoutUpdates() void {
+    const animation = getClass("NSAnimationContext");
+    _ = msgSend0(animation, "beginGrouping");
+    const context = msgSend0(animation, "currentContext");
+    msgSendVoid1(context, "setDuration:", @as(f64, 0));
+    msgSendVoid1(context, "setAllowsImplicitAnimation:", @as(c_int, 0));
+}
+
+fn endLayoutUpdates() void {
+    _ = msgSend0(getClass("NSAnimationContext"), "endGrouping");
+}
+
 fn usesModernOverflow() bool {
     const Version = extern struct { major: isize, minor: isize, patch: isize };
     const test_version = @as(*const fn (objc.id, objc.SEL, Version) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
@@ -721,6 +917,7 @@ fn usesModernOverflow() bool {
 }
 
 fn planSpacers() ?layout.SpacerPlan {
+    const modern = usesModernOverflow();
     const screens = msgSend0(getClass("NSScreen"), "screens");
     const count = msgSendUsize(screens, "count");
     if (count == 0) return null;
@@ -733,7 +930,7 @@ fn planSpacers() ?layout.SpacerPlan {
         shortest = @min(shortest, width);
         longest = @max(longest, width);
     }
-    return layout.planSpacers(shortest, longest, usesModernOverflow());
+    return layout.planSpacers(shortest, longest, modern);
 }
 
 fn revealSpacers() void {
@@ -795,6 +992,10 @@ fn writeNamedSpacerPosition(name: objc.id, position: f64) bool {
 }
 
 fn createSpacer(index: usize, position: f64) bool {
+    return createSpacerWithWidth(index, position, SEPARATOR_LENGTH);
+}
+
+fn createSpacerWithWidth(index: usize, position: f64, width: f64) bool {
     removeSpacer(index);
     // Native overflow can remember a retired item's placement independently
     // of its preferred position. A replacement needs a fresh internal identity;
@@ -813,9 +1014,23 @@ fn createSpacer(index: usize, position: f64) bool {
     _ = msgSend0(item, "retain");
     msgSendVoid1(item, "setVisible:", @as(c_int, 0));
     msgSendVoid1(item, "setAutosaveName:", name);
-    msgSendVoid1(item, "setLength:", SEPARATOR_LENGTH);
+    msgSendVoid1(item, "setLength:", width);
     msgSendVoid1(item, "setVisible:", @as(c_int, 1));
     spacer_positions[index] = position;
+    return true;
+}
+
+fn placeModernSpacers(now: u64, slot: ControlSlot) bool {
+    // Reordering invalidates the old positions. Give each replacement its
+    // final width and a fresh identity beside the live boundary in one
+    // run-loop turn, rather than visibly probing compact items one by one.
+    for (0..spacer_count) |index| {
+        const position = layout.spacerPosition(slot.position, slot.limit, index, spacer_count) orelse return false;
+        if (!createSpacerWithWidth(index, position, spacer_width)) return false;
+    }
+    placement_started_ns = null;
+    placement_deadline_ns = null;
+    widening_started_ns = now;
     return true;
 }
 
@@ -1116,6 +1331,13 @@ fn toggleClicked(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
     toggle_debounce_active = true;
     toggle_debounce_ns = nanoTimestamp();
 
+    if (!native_visibility and !is_collapsed and layoutAvailable() and !layoutAuthorized()) {
+        requestLayoutAccess();
+        if (!layoutAuthorized()) {
+            clearHighlight(sender);
+            return;
+        }
+    }
     toggle();
     clearHighlight(sender);
 }
