@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.383...v0.0.384)
+
+## 🐛 Bug Fixes
+
+- **menubar**: retain the native spacer between toggles ([f1fd2ef](https://github.com/craft-native/craft/commit/f1fd2ef)) _(by Chris)_
+- **menubar**: anchor repeated collapse to the settled layout ([9b5223f](https://github.com/craft-native/craft/commit/9b5223f)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.382...v0.0.383)
 
 ## 🐛 Bug Fixes
