@@ -1,5 +1,33 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.387...v0.0.388)
+
+## 🐛 Bug Fixes
+
+- **macos**: place menu bar spacers beside the live boundary ([7916757](https://github.com/craft-native/craft/commit/7916757)) _(by Chris)_
+- **ios**: reveal content behind floating chrome edge effects ([c649fef](https://github.com/craft-native/craft/commit/c649fef)) _(by glennmichael123)_
+- **ios**: extend nested tab scrollers to the display bottom ([05986c5](https://github.com/craft-native/craft/commit/05986c5)) _(by glennmichael123)_
+- **browser**: commit checkpoints through IndexedDB transactions ([b9770ee](https://github.com/craft-native/craft/commit/b9770ee)) _(by glennmichael123)_
+- **android**: isolate cancelled picker requests from late results ([62bc177](https://github.com/craft-native/craft/commit/62bc177)) _(by glennmichael123)_
+- **ios**: cancel camera capture requests and clean up late results ([c909293](https://github.com/craft-native/craft/commit/c909293)) _(by glennmichael123)_
+- **ios**: cancel library pickers and discard late imports ([7d40451](https://github.com/craft-native/craft/commit/7d40451)) _(by glennmichael123)_
+- **ios**: dismiss document pickers on request cancellation ([3078fa8](https://github.com/craft-native/craft/commit/3078fa8)) _(by glennmichael123)_
+- **browser**: retain checkpoint locks through storage publication ([35714ce](https://github.com/craft-native/craft/commit/35714ce)) _(by glennmichael123)_
+
+## 🧪 Tests
+
+- **menubar**: verify stable transitions after command drag ([f018512](https://github.com/craft-native/craft/commit/f018512)) _(by Chris)_
+- **ios**: synchronize picker cancellation with observed lifecycle ([b49aa1e](https://github.com/craft-native/craft/commit/b49aa1e)) _(by glennmichael123)_
+- **mobile**: fix Swift fixture compilation and retain inset failures ([f4ac4fa](https://github.com/craft-native/craft/commit/f4ac4fa)) _(by glennmichael123)_
+- **ios**: cover library picker cancellation and provider cleanup ([aef58d9](https://github.com/craft-native/craft/commit/aef58d9)) _(by glennmichael123)_
+- **ios**: exercise document picker cancellation and retry ([d62660f](https://github.com/craft-native/craft/commit/d62660f)) _(by glennmichael123)_
+- **browser**: verify checkpoint recovery and competing tabs ([d929f2a](https://github.com/craft-native/craft/commit/d929f2a)) _(by glennmichael123)_
+
+## Contributors
+
+- _Chris_
+- _glennmichael123_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.386...v0.0.387)
 
 ## 🐛 Bug Fixes
