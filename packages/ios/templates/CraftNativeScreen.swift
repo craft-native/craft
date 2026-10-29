@@ -7590,6 +7590,9 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
     private func trackContentScrollView() {
         guard let renderedRoot else { return }
         func find(_ node: RenderedNode) -> UIScrollView? {
+            // Modal content belongs to a separate presentation. Hidden
+            // branches must not steal tracking from the visible screen.
+            guard node.type != "Modal", !node.view.isHidden else { return nil }
             if let scroll = node.view as? CraftNativeScrollView, scroll.isVertical, scroll.isScrollEnabled { return scroll }
             if let list = node.view as? CraftNativeFlatList, list.isScrollEnabled,
                (list.collectionViewLayout as? UICollectionViewFlowLayout)?.scrollDirection != .horizontal { return list }
@@ -7611,7 +7614,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         }
         let scroll = find(renderedRoot)
         let leadingScroll = leading(renderedRoot)
-        // Only the screen's leading scroller draws beneath floating chrome.
+        // The leading scroller may overflow beneath navigation chrome.
         // A bounded list inside a form must clip its rows to its viewport.
         if let leadingScroll, leadingScroll.style["overflow"] as? String != "hidden" {
             leadingScroll.view.clipsToBounds = false
@@ -7626,16 +7629,23 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         let edgeToEdge = scroll != nil && (prefersLargeTitle == true || scroll === leadingScroll?.view)
         let fullEdgeToEdge = rootIsSafeAreaView
         let topEdgeToEdge = fullEdgeToEdge || edgeToEdge
-        // Only a leading vertical scroller that reaches the root's bottom
-        // can paint beneath a visible tab bar. A bounded list, fixed footer,
-        // plain screen or presented sheet must retain its safe-area bottom.
+        // Bottom clearance does not depend on the leading-scroll rule for
+        // navigation titles. Follow the visible scroller through wrappers,
+        // even after a header or empty sibling. Its laid-out viewport must
+        // reach the root's bottom; zero-size/hidden siblings do not shorten
+        // it. A bounded list, fixed footer, plain screen or presented sheet
+        // must retain its safe-area bottom.
         // Use UIKit's automatic inset for tab/accessory clearance, rather
         // than adding a second explicit inset (also owned by keyboard code).
         var tabbedScroll = false
-        if let scroll, scroll === leadingScroll?.view, scroll.bounds.height > 0,
+        if let scroll, scroll.bounds.height > 0,
            let tabBar = tabBarController?.tabBar, !tabBar.isHidden, tabBar.alpha > 0,
            let window = view.window, tabBar.window === window,
            tabBar.convert(tabBar.bounds, to: view).intersects(view.bounds) {
+            // UIKit can resize rootStack before its nested flex wrappers
+            // have laid out. Comparing their old viewport to the new root
+            // would toggle the bottom constraints on every layout pass.
+            rootStack.layoutIfNeeded()
             let viewport = scroll.convert(scroll.bounds, to: rootStack)
             tabbedScroll = abs(viewport.maxY - rootStack.bounds.maxY) < 0.5
         }
@@ -7653,7 +7663,7 @@ final class CraftNativeScreenController: UIViewController, UIScrollViewDelegate,
         rootLeadingToView?.isActive = fullEdgeToEdge
         rootTrailingToSafeArea?.isActive = !fullEdgeToEdge
         rootTrailingToView?.isActive = fullEdgeToEdge
-        scroll?.contentInsetAdjustmentBehavior = edgeToEdge ? .automatic : .never
+        scroll?.contentInsetAdjustmentBehavior = (edgeToEdge || tabbedScroll) ? .automatic : .never
         guard scroll !== trackedScrollView else { return }
         trackedScrollView = scroll
         // The same primary vertical scroller drives the navigation bar and

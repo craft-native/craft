@@ -1059,9 +1059,13 @@ backgroundColor: '#000000' })`; `backgroundColor: null` gives the app's colour
 back. A screen whose first view is its `ScrollView` runs edge to edge under the
 bar, as a large-title screen does: its content scrolls up under the bar
 behind iOS's scroll edge effect, and on down under the floating tab bar.
-On iOS, a leading vertical `ScrollView` or `FlatList` that fills the screen's
-bottom extends its viewport behind a visible tab bar. UIKit adds the bar and
-standard accessory clearance to the adjusted content/scroll-indicator insets
+On iOS, the first visible, enabled vertical `ScrollView` or `FlatList` that
+fills the screen's bottom extends its viewport behind a visible tab bar. It
+can sit inside positioning/screen wrappers or below a fixed header. Empty or
+hidden siblings do not prevent bottom clearance, and scrollers inside modals
+are excluded. Navigation-title tracking keeps its separate leading-scroll
+rules. UIKit adds the bar and standard accessory clearance to the adjusted
+content/scroll-indicator insets
 once, so the background reaches the bottom while the last row can scroll clear
 of the bar. Do not add the tab bar's height again in `contentContainerStyle`.
 This updates when the bar or accessory changes; keyboard overlap excludes any

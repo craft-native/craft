@@ -1244,6 +1244,70 @@ final class NativeLayoutUnitTests: XCTestCase {
         add(screenshot)
     }
 
+    private func nestedTabScrollRoot(header: Bool = false) -> [String: Any] {
+        let scroll = (tabScrollRoot()["children"] as! [[String: Any]])[0]
+        let hiddenScroll: [String: Any] = ["id": "hidden-scroll", "type": "ScrollView", "style": ["flex": 1]]
+        let modal: [String: Any] = ["id": "modal", "type": "Modal", "props": ["visible": false], "children": [hiddenScroll]]
+        var children = [box("empty-leading"), modal]
+        if header { children.append(box("header", style: ["height": 48])) }
+        children.append(box("screen-wrapper", style: ["flex": 1], [scroll, box("empty-notice"), modal.merging(["id": "trailing-modal", "children": []]) { $1 }]))
+        children.append(box("hidden-notice", style: ["height": 80, "display": "none"]))
+        return box("root", style: ["flex": 1], [box("positioning-wrapper", style: ["flex": 1, "position": "relative"], children)])
+    }
+
+    func testNestedTabbedScrollIgnoresEmptySiblingsAndHiddenModalScrollers() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(nestedTabScrollRoot())
+        defer { window.isHidden = true }
+        try await assertTabbedScrollReachesBottom(controller)
+        let scroll = try XCTUnwrap(find("scroll", below: controller.view) as? UIScrollView)
+        XCTAssertEqual(scroll.contentInsetAdjustmentBehavior, .automatic)
+        // Sample actual drawn pixels below the floating bar, not just an
+        // extended root frame with a clipped or undersized scroll viewport.
+        let image = UIGraphicsImageRenderer(bounds: controller.view.bounds).image { _ in
+            controller.view.drawHierarchy(in: controller.view.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Nested tab scroll reaches the display bottom"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let cgImage = try XCTUnwrap(image.cgImage)
+        for x in [2, cgImage.width - 3] {
+            let sample = try XCTUnwrap(cgImage.cropping(to: CGRect(x: x, y: cgImage.height - 6, width: 1, height: 1)))
+            var pixel = [UInt8](repeating: 0, count: 4)
+            let context = try XCTUnwrap(CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8,
+                                                bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(sample, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            XCTAssertGreaterThan(pixel[0], 240, "the red scroll background must reach both bottom corners")
+            XCTAssertLessThan(pixel[1], 10, "the app's grey background must not form a bottom strip")
+            XCTAssertLessThan(pixel[2], 10)
+        }
+    }
+
+    func testNestedTabbedScrollBelowAFixedHeaderUsesAutomaticBottomClearance() async throws {
+        let (controller, _, window) = try await bottomLayoutScreen(nestedTabScrollRoot(header: true))
+        defer { window.isHidden = true }
+        try await assertTabbedScrollReachesBottom(controller)
+        XCTAssertEqual(try frame("header", in: controller).minY, controller.view.safeAreaLayoutGuide.layoutFrame.minY, accuracy: 0.5)
+        XCTAssertEqual(try frame("scroll", in: controller).minY, try frame("header", in: controller).maxY, accuracy: 0.5)
+    }
+
+    func testNestedTabbedFlatListAfterAnEmptySiblingReachesTheBottom() async throws {
+        let rows = (0..<40).map { index in
+            box("row-\(index)", style: ["height": 48], props: ["listRole": "item", "key": "row-\(index)"])
+        }
+        let list: [String: Any] = ["id": "list", "type": "FlatList", "props": ["testID": "list"], "style": ["flex": 1], "children": rows]
+        let root = box("root", style: ["flex": 1], [box("empty-leading"), box("wrapper", style: ["flex": 1], [list, box("empty-trailing")])])
+        let (controller, _, window) = try await bottomLayoutScreen(root)
+        defer { window.isHidden = true }
+        let view = try XCTUnwrap(find("list", below: controller.view) as? CraftNativeFlatList)
+        XCTAssertEqual(try frame("list", in: controller).maxY, controller.view.bounds.maxY, accuracy: 0.5)
+        XCTAssertEqual(view.adjustedContentInset.bottom, controller.view.safeAreaInsets.bottom, accuracy: 0.5)
+        view.setContentOffset(CGPoint(x: 0, y: view.contentSize.height - view.bounds.height + view.adjustedContentInset.bottom), animated: false)
+        await settle(controller)
+        XCTAssertEqual(try frame("row-39", in: controller).maxY, controller.view.safeAreaLayoutGuide.layoutFrame.maxY, accuracy: 1)
+    }
+
     func testTabbedScrollTracksLegacyAccessoryInsetsWithoutShrinkingItsViewport() async throws {
         let (controller, _, window) = try await bottomLayoutScreen(tabScrollRoot())
         defer { window.isHidden = true }
