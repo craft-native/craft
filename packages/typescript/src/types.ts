@@ -2650,5 +2650,9 @@ export interface MenubarState {
   hiddenSystemItemCount?: number
   preserveSystemItems?: boolean
   markerWidth?: number
+  /** Read-only access to the macOS 27 menu bar arrangement. */
+  layoutAuthorized?: boolean
+  /** Saved native control position, or -1 before an arrangement is available. */
+  layoutPosition?: number
   error?: 'unavailable' | 'permissionRequired' | 'layoutUnavailable' | 'emptyGroup' | 'visibilityMismatch' | 'activationFailed' | 'activationTimeout' | null
 }

@@ -58,13 +58,24 @@ spacer being refused on a MacBook before it can hide icons on an external displa
 Older status bars retain a single spacer whose width is reduced until the system
 accepts it without displacing the compact reveal control.
 
-Native saved positions can be clamped, so each spacer stays compact while its
-requested position is adjusted. On macOS 27, Craft verifies one spacer beside
-the arrow at a time and hides it before positioning the next. This keeps a
-compact chain from overflowing beside a notch after the arrow is moved left.
-Only then does Craft restore the complete wide reservation. Unsafe placement
-restores the visible group. Later clicks reuse the verified layout immediately
-until native reordering or changed display geometry requires calibration.
+In direct macOS 27 runtimes, clicking the arrow can request read-only access to the menu bar
+arrangement file. Craft stores that grant as a read-only security-scoped bookmark;
+it never writes the system's arrangement file. Consumers can also offer
+`requestPermission()` and observe `layoutAuthorized` in the legacy state.
+`layoutPosition` reports the control's saved position, or `-1` when unavailable.
+
+With access, Craft queries the live preferences cache for the arrow's current
+native position after reordering; the saved file can lag a completed drag.
+Craft then places the spacer chain beside it in one layout update. Each spacer fits between
+the control and its next saved neighbor, including Float32 rounding. Retired
+internal spacer identities do not narrow that slot. Signed application identifiers
+and development executable names use the same namespaces as macOS.
+This avoids visibly probing positions after each Command-drag.
+
+Public-only runtimes and cases without a live arrangement retain compact placement.
+Compact placement still verifies clamped
+requests before widening; unsafe placement restores the visible group. Later
+clicks reuse the verified layout until reordering or display changes invalidate it.
 Replacement spacers receive fresh internal saved identities so macOS cannot park
 them in an obsolete overflow slot. Their preference keys are removed on disposal;
 the user's arrow retains its stable saved identity.
@@ -78,7 +89,7 @@ The compact arrow uses its own stable saved identity rather than inheriting the
 retired widening separator's native overflow placement. That migration places
 it in a visible native slot; subsequent native Command-drags persist normally.
 This backend does not activate an assessment-mode restriction or require
-Accessibility authorization.
+Accessibility authorization. Older macOS versions do not need layout-file access.
 
 Command-drag uses the standard native status button. Craft leaves its geometry
 alone while the mouse is held. Reordering a collapsed group reveals it after
@@ -109,12 +120,19 @@ the following on a Mac where the automation process already has Accessibility
 and input-event permission:
 
 ```sh
-CRAFT_NATIVE_TEST_BIN="$PWD/packages/zig/zig-out/bin/craft" CRAFT_MENUBAR_DRAG_E2E=1 bun test packages/typescript/src/__tests__/menubar-drag.native.test.ts
+CRAFT_NATIVE_TEST_BIN="$PWD/packages/zig/zig-out/bin/craft" CRAFT_MENUBAR_DRAG_E2E=1 CRAFT_MENUBAR_LAYOUT_PERMISSION=1 bun test packages/typescript/src/__tests__/menubar-drag.native.test.ts
 ```
 
 This packages an isolated native app and compiles a temporary input driver. It
 moves the arrow to either side of a test icon, checks that right-side items stay
 visible and left-side items disappear, reveals them again, and exercises cached
 toggles and dragging while collapsed. Controls are found by their owning process,
-not by a chevron shared with the system overflow UI. The test never requests or
-grants permissions and cleans up its app and preference profile.
+not by a chevron shared with the system overflow UI. It cleans up its app and preference profile. Direct macOS 27 runtimes need the
+permission-enabled mode to wait for an explicit file grant before clicking.
+
+On macOS 27, the optional `CRAFT_MENUBAR_LAYOUT_PERMISSION=1` mode waits for the
+read-only layout-file chooser before sending native input. Approve only the
+menu bar arrangement file shown by the chooser. The fixture uses a separate
+preference profile and executable identity. It samples physical hit-testing
+through each transition: the arrow and right-side target must stay visible and
+fixed, while a left-side target disappears once and can be revealed again.
