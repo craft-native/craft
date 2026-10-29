@@ -59,9 +59,16 @@ Older status bars retain a single spacer whose width is reduced until the system
 accepts it without displacing the compact reveal control.
 
 Native saved positions can be clamped, so each spacer stays compact while its
-requested position is adjusted. Craft verifies the complete adjacent chain
-before widening any item. Unsafe placement restores the visible group. Later
-clicks reuse the same native objects. While revealed, macOS 27 hides the blank
+requested position is adjusted. On macOS 27, Craft verifies one spacer beside
+the arrow at a time and hides it before positioning the next. This keeps a
+compact chain from overflowing beside a notch after the arrow is moved left.
+Only then does Craft restore the complete wide reservation. Unsafe placement
+restores the visible group. Later clicks reuse the verified layout immediately
+until native reordering or changed display geometry requires calibration.
+Replacement spacers receive fresh internal saved identities so macOS cannot park
+them in an obsolete overflow slot. Their preference keys are removed on disposal;
+the user's arrow retains its stable saved identity.
+While revealed, macOS 27 hides the blank
 items so even their native padding stops occupying the bar; older status bars
 keep their width at zero. Disabling grouping removes the complete
 chain and the arrow. The verified compact layout anchors widening, so delayed
@@ -72,6 +79,11 @@ retired widening separator's native overflow placement. That migration places
 it in a visible native slot; subsequent native Command-drags persist normally.
 This backend does not activate an assessment-mode restriction or require
 Accessibility authorization.
+
+Command-drag uses the standard native status button. Craft leaves its geometry
+alone while the mouse is held. Reordering a collapsed group reveals it after
+the drop; clicking `›` then hides the icons to the left of the new boundary.
+Command-clicks and the mouse-up that finishes a drag do not toggle the group.
 
 The default `init()` remains the legacy backend for existing consumers. Select
 native visibility explicitly; do not combine both controllers. Private visibility
@@ -89,3 +101,18 @@ This creates isolated signed controller/target app bundles, creates a real targe
 status item, waits for the real macOS activation reply, then checks
 reveal and destroy. The test never requests a permission grant. Test apps and
 their assertions are released in cleanup; ordinary CI skips this opt-in case.
+
+To verify positional reordering with real Command-drags and mouse clicks, run
+the following on a Mac where the automation process already has Accessibility
+and input-event permission:
+
+```sh
+CRAFT_NATIVE_TEST_BIN="$PWD/packages/zig/zig-out/bin/craft" CRAFT_MENUBAR_DRAG_E2E=1 bun test packages/typescript/src/__tests__/menubar-drag.native.test.ts
+```
+
+This packages an isolated native app and compiles a temporary input driver. It
+moves the arrow to either side of a test icon, checks that right-side items stay
+visible and left-side items disappear, reveals them again, and exercises cached
+toggles and dragging while collapsed. Controls are found by their owning process,
+not by a chevron shared with the system overflow UI. The test never requests or
+grants permissions and cleans up its app and preference profile.
