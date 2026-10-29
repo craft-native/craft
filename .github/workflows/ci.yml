@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox]
+        browser: [chromium, firefox, webkit]
     env:
       CRAFT_TEST_BROWSER: ${{ matrix.browser }}
       CRAFT_BROWSER_ARTIFACTS: artifacts/browser-checkpoints/${{ matrix.browser }}

@@ -666,12 +666,21 @@ values (including their `toJSON` representation). Invalid JSON input rejects
 without changing the previous checkpoint. Cancellation and account-scope checks
 still run before committing the captured value.
 
-The browser keeps its Web Lock until the next task after the operation, so
-localStorage implementations that publish task-local snapshots (Firefox) make
-the write visible before a competing tab acquires the lock. Storage exceptions
-reject the call rather than escaping a synchronous Web Lock callback. All
-competing writers must use Craft's locking API; direct localStorage writes or
-other code that ignores this lock are not covered by the atomic contract.
+Browser checkpoint calls use IndexedDB read/write transactions and acknowledge
+only transaction completion. Web Locks alone cannot make localStorage caches
+coherent across tabs (observed in WebKit). Web Locks still serialize admission
+and support queued cancellation; atomic capabilities require both APIs. Storage
+exceptions reject the call. Cancelling an active transaction aborts it; an
+already completed transaction cannot be undone.
+
+Existing account-scoped Storage values are migrated once, before the first
+transactional operation. localStorage remains a synchronous UI mirror and keeps
+its quota checks, but the committed database is authoritative after migration.
+A failed transaction attempts to restore the previous mirror; the next
+successful checkpoint call repairs it from the database. Direct localStorage
+edits and older Craft tabs cannot update the new checkpoint database: reload
+all tabs when upgrading. Snapshots, credentials and unrelated app keys are not
+migrated. This does not change browser security or promise power-loss durability.
 
 `craft.storage.setSync` updates the immediate UI cache and
 queues its write when Web Locks are available; it cannot acknowledge durability
@@ -683,22 +692,26 @@ Real-browser checkpoint acceptance runs separately from the SDK's in-memory
 unit fixtures:
 
 ```sh
-bunx --no-install playwright install chromium firefox
+bunx --no-install playwright install chromium firefox webkit
 bun run test:browser-checkpoints
 CRAFT_TEST_BROWSER=firefox bun run test:browser-checkpoints
+CRAFT_TEST_BROWSER=webkit bun run test:browser-checkpoints
 ```
 
 The suite bundles the maintained `createBrowserPlatform` source, serves it on
-loopback, and uses fresh, owned persistent profiles with real localStorage and
-Web Locks. It verifies acknowledged saves across reload and a graceful browser
+loopback, and uses fresh, owned persistent profiles with real IndexedDB,
+localStorage and Web Locks. It verifies acknowledged saves across reload and a graceful browser
 restart, competing-tab create/CAS winners and retry loops, queued-write input
 capture, reload/abort/disposal before commit, and actual quota rejection with
-recovery. It never opens or modifies your personal browser profile. CI runs both
-engines and retains browser versions, the bundle SHA-256, results and traces.
+recovery, legacy migration, stale-cache recovery and account cleanup. Fault
+injection aborts real transactions after put succeeds to verify rollback and
+cancellation before commit. It never opens or modifies your personal browser
+profile. CI runs all three engines and retains browser versions, the bundle
+SHA-256, results and traces.
 Set `CRAFT_BROWSER_ARTIFACTS` to retain these in a chosen directory; locally the
 default is a printed temporary path. Profiles are removed after each test.
 This proves the tested browser boundaries, not sudden process termination,
-power-loss durability, storage eviction, WebKit behavior or Android acceptance.
+power-loss durability, storage eviction, shipping Safari/iOS versions or Android acceptance.
 
 Browser audio assigns one owner per sound ID. A newer play or stop invalidates
 pending media resolution for that ID; stopping all sounds, changing accounts,

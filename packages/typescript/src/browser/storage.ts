@@ -1,3 +1,5 @@
+import { createCheckpointStore } from './checkpoints'
+
 export interface BrowserStorageOptions {
   storage: Storage
   namespace: string
@@ -70,6 +72,13 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
     signal?.throwIfAborted()
     return lock ? lock(`${namespace}:storage`, guarded, { signal }) : Promise.resolve().then(guarded)
   }
+  // Custom storage/lock adapters own their coherence contract. Real browser
+  // checkpoints require transactional persistence as well as admission locks.
+  const checkpoints = options.lock === undefined && lock && typeof indexedDB !== 'undefined'
+    ? createCheckpointStore(storage, namespace) : null
+  const atomicStorage = !!lock && (!!checkpoints || typeof options.lock === 'function')
+  const checkpoint = <T>(operation: (store: Storage) => T, signal?: AbortSignal): Promise<T> => checkpoints
+    ? checkpoints(operation, signal) : Promise.resolve().then(() => { signal?.throwIfAborted(); return operation(storage) })
   const scopeChanged = (): Error => Object.assign(new Error('The storage account changed'), { code: 'STORAGE_SCOPE_CHANGED' })
   const pending = new Map<string, { json: string | null }>()
   let token = storage.getItem(tokenKey)
@@ -81,7 +90,7 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
   const available = (): boolean => !transitioning && storage.getItem(tokenKey) === token
   const key = (name: string): string => `${prefix}account:${scope}:${name}`
   const snapshotKey = (name: string): string => name === 'app' ? `${prefix}app` : key(`snapshot:${name}`)
-  const keys = (base: string): string[] => Array.from({ length: storage.length }, (_, index) => storage.key(index)).filter((value): value is string => value !== null && value.startsWith(base))
+  const keys = (base: string, source: Storage = storage): string[] => Array.from({ length: source.length }, (_, index) => source.key(index)).filter((value): value is string => value !== null && value.startsWith(base))
   const parse = (value: string | null): unknown => {
     if (value === null) return null
     try { return JSON.parse(value) }
@@ -107,11 +116,11 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
     const captured = capture()
     const address = key(`storage:${name}`)
     const json = value === null || value === undefined ? null : encode(value)
-    const write = (): void => { if (json === null) storage.removeItem(address); else storage.setItem(address, json) }
-    if (!lock) { write(); return }
+    const write = (source: Storage): void => { if (json === null) source.removeItem(address); else source.setItem(address, json) }
+    if (!lock) { write(storage); return }
     const entry = { json }
     pending.set(address, entry)
-    void exclusive(() => { requireScope(captured); write() })
+    void exclusive(() => checkpoint(source => { requireScope(captured); write(source) }))
       .catch(error => { if (error.code !== 'STORAGE_SCOPE_CHANGED') console.error('Browser storage write failed', error) })
       .finally(() => { if (pending.get(address) === entry) pending.delete(address) })
   }
@@ -126,7 +135,8 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
     token = next
     pending.clear()
     transition = (async () => {
-      await exclusive(() => {
+      await exclusive(async () => {
+        if (checkpoints) await checkpoint(source => { for (const name of keys(`${prefix}account:${previous}:`, source)) source.removeItem(name) })
         for (const name of keys(`${prefix}account:${previous}:`)) storage.removeItem(name)
         for (const name of options.accountKeys ?? []) { if (name !== tokenKey) storage.removeItem(name) }
       })
@@ -145,7 +155,7 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
   }
   const secureKey = (name: string): string => name === sessionTokenKey ? tokenKey : key(`credential:${name}`)
   return {
-    atomicStorage: lock !== undefined,
+    atomicStorage,
     scope: () => scope,
     accountChanged,
     craft: {
@@ -174,8 +184,8 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
       let json: string | undefined
       let expected: unknown
       if (wasAvailable && module === 'Storage') {
-        if (method === 'set' || (method === 'setIfAbsent' && lock)) json = encode(args[1])
-        if (method === 'compareAndSet' && lock) {
+        if (method === 'set' || (method === 'setIfAbsent' && atomicStorage)) json = encode(args[1])
+        if (method === 'compareAndSet' && atomicStorage) {
           expected = parse(encode(args[1]))
           json = encode(args[2])
         }
@@ -183,28 +193,28 @@ export async function createBrowserStorage(options: BrowserStorageOptions): Prom
       await waitForAccount(accountChanged(), signal)
       if (module === 'Storage') {
         if (!wasAvailable) throw scopeChanged()
-        return exclusive(() => {
+        return exclusive(() => checkpoint(source => {
           requireScope(captured)
           const address = `${prefix}account:${captured.scope}:storage:${name}`
-          if (method === 'get') return parse(storage.getItem(address))
-          if (method === 'set') { storage.setItem(address, json!); return true }
-          if (method === 'remove') { storage.removeItem(address); return true }
-          if (method === 'keys') return keys(key('storage:')).map(item => item.slice(key('storage:').length))
-          if (method === 'clear') { for (const item of keys(key('storage:'))) storage.removeItem(item); return true }
+          if (method === 'get') return parse(source.getItem(address))
+          if (method === 'set') { source.setItem(address, json!); return true }
+          if (method === 'remove') { source.removeItem(address); return true }
+          if (method === 'keys') return keys(key('storage:'), source).map(item => item.slice(key('storage:').length))
+          if (method === 'clear') { for (const item of keys(key('storage:'), source)) source.removeItem(item); return true }
           if (method === 'compareAndSet' || method === 'setIfAbsent') {
-            if (!lock) throw Object.assign(new Error('Atomic browser storage requires Web Locks'), { code: method === 'setIfAbsent' ? 'STORAGE_SET_IF_ABSENT_UNSUPPORTED' : 'STORAGE_COMPARE_AND_SET_UNSUPPORTED' })
-            const raw = storage.getItem(address)
+            if (!atomicStorage) throw Object.assign(new Error('Atomic browser storage requires transactional persistence and Web Locks'), { code: method === 'setIfAbsent' ? 'STORAGE_SET_IF_ABSENT_UNSUPPORTED' : 'STORAGE_COMPARE_AND_SET_UNSUPPORTED' })
+            const raw = source.getItem(address)
             if (method === 'setIfAbsent') {
               if (raw !== null) return false
-              storage.setItem(address, json!)
+              source.setItem(address, json!)
               return true
             }
             if (raw === null || !jsonEqual(parse(raw), expected)) return false
-            storage.setItem(address, json!)
+            source.setItem(address, json!)
             return true
           }
           throw Object.assign(new Error(`Unsupported browser storage operation ${method}`), { code: 'UNSUPPORTED' })
-        }, signal)
+        }, signal), signal)
       }
       if (module === 'SecureStorage') {
         if (!wasAvailable) throw scopeChanged()

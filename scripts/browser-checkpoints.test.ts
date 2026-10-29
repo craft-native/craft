@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { chromium, firefox, type BrowserContext, type Page } from 'playwright'
+import { chromium, firefox, webkit, type BrowserContext, type Page } from 'playwright'
 import type { BrowserPlatform } from '../packages/typescript/src/browser'
 
 // These globals belong only to the disposable test page, not the SDK.
@@ -17,8 +17,8 @@ declare global {
 }
 
 const engine = process.env.CRAFT_TEST_BROWSER ?? 'chromium'
-if (engine !== 'chromium' && engine !== 'firefox') throw new Error(`Unsupported checkpoint browser: ${engine}`)
-const browserType = engine === 'chromium' ? chromium : firefox
+if (engine !== 'chromium' && engine !== 'firefox' && engine !== 'webkit') throw new Error(`Unsupported checkpoint browser: ${engine}`)
+const browserType = { chromium, firefox, webkit }[engine]
 const artifacts = process.env.CRAFT_BROWSER_ARTIFACTS
   ? resolve(process.env.CRAFT_BROWSER_ARTIFACTS)
   : mkdtempSync(join(tmpdir(), 'craft-browser-checkpoints-'))
@@ -234,4 +234,99 @@ scenario('real-quota-failure-preserves-checkpoint-and-allows-retry', async (cont
   expect(await call(page, 'compareAndSet', ['campaign', { generation: 1 }, { generation: 2 }])).toBe(true)
   await reload(page)
   expect(await call(page, 'get', ['campaign'])).toEqual({ generation: 2 })
+})
+
+scenario('legacy-migration-and-stale-cache-cannot-resurrect-deleted-checkpoints', async (context, restart) => {
+  const page = await context.newPage()
+  await page.goto(server.url.href)
+  await page.evaluate(() => {
+    localStorage.setItem('checkpoint-test:account:guest:storage:campaign', JSON.stringify({ generation: 1 }))
+    localStorage.setItem('checkpoint-test:account:guest:snapshot:screen', 'keep screen snapshot')
+    localStorage.setItem('checkpoint-test:account:guest:credential:name:storage:secret', 'keep credential')
+    localStorage.setItem('other-app', 'keep other app')
+  })
+  await initialize(page)
+  expect(await call(page, 'get', ['campaign'])).toEqual({ generation: 1 })
+  expect(await call(page, 'compareAndSet', ['campaign', { generation: 1 }, { generation: 2 }])).toBe(true)
+  await page.evaluate(() => localStorage.setItem('checkpoint-test:account:guest:storage:campaign', JSON.stringify({ generation: 1 })))
+  await reload(page)
+  expect(await call(page, 'get', ['campaign'])).toEqual({ generation: 2 })
+  expect(await call(page, 'clear', [])).toBe(true)
+  await page.evaluate(() => localStorage.setItem('checkpoint-test:account:guest:storage:campaign', JSON.stringify({ generation: 1 })))
+  const restored = await open(await restart())
+  expect(await call(restored, 'get', ['campaign'])).toBeNull()
+  expect(await call(restored, 'keys', [])).toEqual([])
+  expect(await restored.evaluate(() => [localStorage.getItem('checkpoint-test:account:guest:snapshot:screen'), localStorage.getItem('other-app'), localStorage.getItem('checkpoint-test:account:guest:credential:name:storage:secret')]))
+    .toEqual(['keep screen snapshot', 'keep other app', 'keep credential'])
+})
+
+for (const interruption of ['transaction-abort', 'caller-abort', 'dispose'] as const) {
+  scenario(`uncommitted-write-${interruption}-rolls-back-checkpoint-and-cache`, async (context) => {
+    const page = await open(context)
+    await call(page, 'set', ['campaign', { generation: 1 }])
+    const result = await page.evaluate(async (mode) => {
+      const original = IDBObjectStore.prototype.put
+      const controller = new AbortController()
+      IDBObjectStore.prototype.put = function (value, key) {
+        const request = original.call(this, value, key!)
+        // Abort a real transaction after put succeeds but before commit. A
+        // request's success must never be mistaken for checkpoint completion.
+        if (this.name === 'checkpoints') request.addEventListener('success', () => {
+          if (mode === 'transaction-abort') this.transaction.abort()
+          else if (mode === 'caller-abort') controller.abort()
+          else window.platform.dispose()
+        }, { once: true })
+        return request
+      }
+      try {
+        await window.platform.call('Storage', 'set', ['campaign', { generation: 2 }], controller.signal)
+        return { error: 'unexpected-success', mirror: localStorage.getItem('checkpoint-test:account:guest:storage:campaign') }
+      }
+      catch (error) { return { error: (error as Error).name, mirror: localStorage.getItem('checkpoint-test:account:guest:storage:campaign') } }
+      finally { IDBObjectStore.prototype.put = original }
+    }, interruption)
+    expect(result).toEqual({ error: 'AbortError', mirror: JSON.stringify({ generation: 1 }) })
+    await reload(page)
+    expect(await call(page, 'get', ['campaign'])).toEqual({ generation: 1 })
+    expect(await call(page, 'compareAndSet', ['campaign', { generation: 1 }, { generation: 3 }])).toBe(true)
+  })
+}
+
+scenario('account-transition-removes-committed-checkpoints-and-sync-writes-share-transactions', async (context) => {
+  const page = await open(context)
+  await call(page, 'set', ['campaign', { generation: 1 }])
+  await page.evaluate(() => {
+    const storage = window.platform.craft.storage as { setSync(key: string, value: unknown): void }
+    storage.setSync('campaign', { generation: 2 })
+  })
+  expect(await call(page, 'get', ['campaign'])).toEqual({ generation: 2 })
+  await page.evaluate(() => window.platform.call('SecureStorage', 'set', ['auth.token', 'account-a'], new AbortController().signal))
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
+  await call(page, 'set', ['campaign', { owner: 'a' }])
+  await page.evaluate(() => window.platform.call('SecureStorage', 'remove', ['auth.token'], new AbortController().signal))
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
+  await page.evaluate(() => window.platform.call('SecureStorage', 'set', ['auth.token', 'account-a'], new AbortController().signal))
+  await reload(page)
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
+})
+
+scenario('missing-transactional-storage-does-not-advertise-atomic-writes', async (context) => {
+  const page = await context.newPage()
+  await page.goto(server.url.href)
+  const result = await page.evaluate(async () => {
+    Object.defineProperty(window, 'indexedDB', { configurable: true, value: undefined })
+    const entry = '/platform.js'
+    const { createBrowserPlatform } = await import(entry)
+    window.platform = await createBrowserPlatform({ namespace: 'checkpoint-test' })
+    const errors: string[] = []
+    for (const method of ['setIfAbsent', 'compareAndSet']) {
+      try { await window.platform.call('Storage', method, ['campaign', null, 1], new AbortController().signal) }
+      catch (error) { errors.push((error as { code: string }).code) }
+    }
+    return { capabilities: window.platform.capabilities, errors }
+  })
+  expect(result.capabilities).not.toContain('storageCompareAndSet')
+  expect(result.capabilities).not.toContain('storageSetIfAbsent')
+  expect(result.errors).toEqual(['STORAGE_SET_IF_ABSENT_UNSUPPORTED', 'STORAGE_COMPARE_AND_SET_UNSUPPORTED'])
+  expect(await call(page, 'get', ['campaign'])).toBeNull()
 })
