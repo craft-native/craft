@@ -1,5 +1,18 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.382...v0.0.383)
+
+## 🐛 Bug Fixes
+
+- **menubar**: verify spacer placement before hiding the group ([2d3cfe4](https://github.com/craft-native/craft/commit/2d3cfe4)) _(by Chris)_
+- **packaging**: retain the stable native agent executable path ([a2aa1bb](https://github.com/craft-native/craft/commit/a2aa1bb)) _(by Chris)_
+- **packaging**: give the native GUI agent a distinct executable ([3adc56a](https://github.com/craft-native/craft/commit/3adc56a)) _(by Chris)_
+- **menubar**: keep the reveal arrow separate from reserved space ([26c685b](https://github.com/craft-native/craft/commit/26c685b)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.381...v0.0.382)
 
 ## 🧪 Tests
