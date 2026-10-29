@@ -33,6 +33,8 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
       await fetch('/expanded'+cycle,{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
       await craft.timers.sleep(100);
     }
+    await craft.menubar.destroy();
+    await fetch('/destroyed',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
   })().catch(async error => fetch('/error',{method:'POST',body:JSON.stringify({error:String(error)})}));`
   const server = Bun.serve({ hostname:'127.0.0.1',port:0,async fetch(request) {
     const stage = new URL(request.url).pathname.slice(1)
@@ -57,7 +59,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     proc = launched
     stderr = new Response(launched.stderr).text()
     const deadline = Date.now()+45000
-    while (!states.expanded3 && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
+    while (!states.destroyed && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
     assert.equal(states.cancelled?.collapsed,false)
     assert.equal(states.cancelled?.busy,false)
@@ -72,6 +74,10 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
       assert.equal(states[`held${cycle}`]?.collapsed,true,'a collapse must retain a visible trailing reveal indicator')
       assert.equal(states[`expanded${cycle}`]?.collapsed,false)
     }
+    assert.equal(states.destroyed?.initialized,false)
+    assert.equal(states.destroyed?.collapsed,false)
+    assert.equal(states.destroyed?.busy,false)
+    assert.equal(states.destroyed?.markerWidth,0)
     passed = true
   }
   finally {

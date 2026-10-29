@@ -58,7 +58,8 @@ spacer widens, so the reveal button does not become a wide item that macOS can
 move into native overflow. Unsafe spacer placement restores the visible group.
 Native saved positions can be clamped, so the spacer stays compact while its
 requested position is adjusted until it is directly left of the arrow. Later
-clicks reuse the successful placement. The verified compact layout anchors
+clicks reuse the same native spacer, shrinking it to zero on reveal instead of
+removing it and losing its order. Disabling grouping removes both items. The verified compact layout anchors
 widening, so delayed layout updates after reveal do not undo the next collapse.
 It does not activate an assessment-mode restriction or require Accessibility authorization.
 

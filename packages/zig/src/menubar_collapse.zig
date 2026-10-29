@@ -137,6 +137,8 @@ var control_anchor_edge: f64 = 0;
 var spacer_placement: layout.SpacerPlacement = .{ .high = 0, .position = 0 };
 var cached_spacer_position: ?f64 = null;
 var cached_control_edge: f64 = 0;
+var spacer_position: f64 = 0;
+var placement_reuses_spacer: bool = false;
 
 var saved_tray_menu: objc.id = if (builtin.target.os.tag == .macos) null else null;
 /// The app's own icon supplies the context menu; its position does not define
@@ -417,8 +419,11 @@ pub fn collapse() void {
     const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
     const preferred = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
     const initial = if (cached_spacer_position != null and @abs(cached_control_edge - control_anchor_edge) < 1) cached_spacer_position.? else preferred + 1;
-    spacer_placement = layout.SpacerPlacement.init(initial, screen.size.width);
-    if (!createSpacer(spacer_placement.position)) return;
+    placement_reuses_spacer = spacer_item != null;
+    spacer_placement = layout.SpacerPlacement.init(if (placement_reuses_spacer) spacer_position else initial, screen.size.width);
+    if (placement_reuses_spacer) {
+        setMarkerWidth(spacer_item, SEPARATOR_LENGTH);
+    } else if (!createSpacer(spacer_placement.position)) return;
     collapse_widening.settled = false;
     placement_started_ns = nanoTimestamp();
     drawMarker(separator_item, true);
@@ -446,11 +451,13 @@ pub fn expand() void {
     if (!is_collapsed) return;
     if (separator_item == null) return;
 
-    // Release the blank spacer, bringing icons on its left back into view.
+    // Keep its native identity and ordering. Removing and recreating the
+    // spacer makes macOS intermittently insert it on the control's right.
     collapse_widening.reset();
     reflow_started_ns = null;
     placement_started_ns = null;
-    removeSpacer();
+    placement_reuses_spacer = false;
+    setMarkerWidth(spacer_item, 0);
     drawMarker(separator_item, false);
 
     is_collapsed = false;
@@ -480,6 +487,7 @@ pub fn toggle() void {
 pub fn cleanup() void {
     if (builtin.target.os.tag == .macos and native_visibility) visibility.craft_menubar_visibility_cleanup();
     if (is_collapsed) expand();
+    if (builtin.target.os.tag == .macos) removeSpacer();
     if (builtin.target.os.tag == .macos and native_timer != null) {
         _ = msgSend0(native_timer, "invalidate");
         native_timer = null;
@@ -638,6 +646,7 @@ fn createSpacer(position: f64) bool {
     msgSendVoid1(spacer_item, "setAutosaveName:", createNSString("craft_menubar_spacer"));
     msgSendVoid1(spacer_item, "setLength:", SEPARATOR_LENGTH);
     msgSendVoid1(spacer_item, "setVisible:", @as(c_int, 1));
+    spacer_position = position;
     return true;
 }
 
@@ -660,6 +669,18 @@ fn settleCollapse() void {
             restoreCompactLayout();
             return;
         };
+        // A Cmd-drag can move the boundary while revealed. Reposition only
+        // when the retained spacer is no longer beside it.
+        if (placement_reuses_spacer and !layout.spacerPrecedesControl(marker.origin.x, spacer.origin.x, spacer.size.width)) {
+            placement_reuses_spacer = false;
+            if (!createSpacer(spacer_placement.position)) {
+                restoreCompactLayout();
+                return;
+            }
+            placement_started_ns = now;
+            return;
+        }
+        placement_reuses_spacer = false;
         switch (spacer_placement.observe(marker.origin.x, spacer.origin.x, spacer.size.width)) {
             .ready => {
                 // Removing and reinserting native items can finish reflowing
