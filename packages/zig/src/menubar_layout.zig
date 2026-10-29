@@ -1,6 +1,22 @@
 //! Geometry policy independent of AppKit, including secondary-display origins.
 const std = @import("std");
 
+/// macOS inserts up to 16 pt of status-item padding. A spacer may reserve
+/// space only when immediately to the left of the compact reveal control.
+pub fn spacerPrecedesControl(control_x: f64, spacer_x: f64, spacer_width: f64) bool {
+    if (!std.math.isFinite(control_x) or !std.math.isFinite(spacer_x) or !std.math.isFinite(spacer_width) or spacer_width <= 0) return false;
+    const gap = control_x - spacer_x - spacer_width;
+    return gap >= -1 and gap <= 20;
+}
+
+test "only a spacer immediately left of the control can hide a group" {
+    try std.testing.expect(spacerPrecedesControl(1285, 1249, 20));
+    try std.testing.expect(spacerPrecedesControl(-400, -436, 20));
+    try std.testing.expect(!spacerPrecedesControl(1285, 1285, 20));
+    try std.testing.expect(!spacerPrecedesControl(1285, 1213, 20));
+    try std.testing.expect(!spacerPrecedesControl(1285, std.math.nan(f64), 20));
+}
+
 /// Growing toward the left must leave the divider's trailing edge in place.
 /// The app's tray can be on either side, so it cannot anchor the hidden group.
 pub fn markerEdgeDisplaced(expected_edge: f64, marker_x: f64, marker_width: f64) bool {

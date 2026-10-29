@@ -7,7 +7,7 @@ import { macOSRuntimeExecutablePath, packageApp } from '../package'
 
 const standardGroupingTest = process.platform === 'darwin' && process.env.CRAFT_NATIVE_TEST_BIN ? test : test.skip
 
-standardGroupingTest('packaged positional grouping stays collapsed until explicitly revealed', async () => {
+standardGroupingTest('packaged positional grouping keeps its reveal indicator visible across repeated collapse', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'craft-positional-group-'))
   const bundleId = `org.craft-native.positional-group.p${process.pid}.t${Date.now()}`
   const states: Record<string, any> = {}
@@ -15,13 +15,20 @@ standardGroupingTest('packaged positional grouping stays collapsed until explici
     await craft.tray.setTitle('C');
     await craft.menubar.init({backend:'legacy'});
     await craft.timers.sleep(700);
-    await craft.menubar.collapse();
-    await craft.timers.sleep(2500);
-    await fetch('/collapsed',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
-    await craft.timers.sleep(2000);
-    await fetch('/held',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
-    await craft.menubar.expand();
-    await fetch('/expanded',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+    for (let cycle=0;cycle<2;cycle++) {
+      await craft.menubar.collapse();
+      let settled=await craft.menubar.getState();
+      for (let attempt=0;settled.busy && attempt<40;attempt++) {
+        await craft.timers.sleep(100);
+        settled=await craft.menubar.getState();
+      }
+      await fetch('/collapsed'+cycle,{method:'POST',body:JSON.stringify(settled)});
+      await craft.timers.sleep(1000);
+      await fetch('/held'+cycle,{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+      await craft.menubar.expand();
+      await fetch('/expanded'+cycle,{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
+      await craft.timers.sleep(500);
+    }
   })().catch(async error => fetch('/error',{method:'POST',body:JSON.stringify({error:String(error)})}));`
   const server = Bun.serve({ hostname:'127.0.0.1',port:0,async fetch(request) {
     const stage = new URL(request.url).pathname.slice(1)
@@ -44,13 +51,19 @@ standardGroupingTest('packaged positional grouping stays collapsed until explici
     })
     proc = launched
     stderr = new Response(launched.stderr).text()
-    const deadline = Date.now()+15000
-    while (!states.expanded && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
+    const deadline = Date.now()+20000
+    while (!states.expanded1 && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
-    assert.equal(states.collapsed?.backend,'legacy')
-    assert.equal(states.collapsed?.collapsed,true,JSON.stringify(states))
-    assert.equal(states.held?.collapsed,true,'native reflow must not immediately reveal the hidden group')
-    assert.equal(states.expanded?.collapsed,false)
+    for (let cycle=0;cycle<2;cycle++) {
+      assert.equal(states[`collapsed${cycle}`]?.backend,'legacy')
+      assert.equal(states[`collapsed${cycle}`]?.collapsed,true,JSON.stringify(states))
+      assert.equal(states[`collapsed${cycle}`]?.busy,false)
+      assert.equal(states[`collapsed${cycle}`]?.markerWidth,20,'the reveal control must never widen with the spacer')
+      assert.equal(states[`held${cycle}`]?.markerWidth,20)
+      assert.equal(states[`expanded${cycle}`]?.markerWidth,20)
+      assert.equal(states[`held${cycle}`]?.collapsed,true,'a collapse must retain a visible trailing reveal indicator')
+      assert.equal(states[`expanded${cycle}`]?.collapsed,false)
+    }
   }
   finally {
     if (proc && proc.exitCode === null) {
@@ -61,7 +74,7 @@ standardGroupingTest('packaged positional grouping stays collapsed until explici
     }
     if (stderr) {
       const output = await stderr
-      if (!states.expanded && output) console.error(output)
+      if (!states.expanded1 && output) console.error(output)
     }
     server.stop(true)
     await rm(dir,{recursive:true,force:true})

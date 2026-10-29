@@ -1,8 +1,7 @@
-//! Opt-in native menu-bar grouping. A divider grows to tuck items to its left
-//! away. Its native button draws its reveal affordance at the trailing edge.
-//! Empty space does not toggle the group. AppKit owns Cmd-drag routing.
-//! If the system reflows the divider into its overflow, restore its compact
-//! width so opening native overflow cannot expose a blank slab over app menus.
+//! Opt-in native menu-bar grouping. A compact arrow defines the boundary.
+//! A separate blank item immediately to its left reserves the hidden space,
+//! so the reveal control never grows into the system overflow itself.
+//! AppKit owns Cmd-drag routing; unsafe placement restores the visible group.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -130,9 +129,11 @@ var early_initialized: bool = false;
 var is_initialized: bool = false;
 var is_collapsed: bool = false;
 
-/// The `|`: the boundary the user arranges icons around, and the item that
-/// widens to carry everything behind it off the bar.
+/// The compact arrow that the user arranges icons around.
 var separator_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
+var spacer_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
+var placement_started_ns: ?u64 = null;
+var control_anchor_edge: f64 = 0;
 
 var saved_tray_menu: objc.id = if (builtin.target.os.tag == .macos) null else null;
 /// The app's own icon supplies the context menu; its position does not define
@@ -250,10 +251,6 @@ const MIN_TRAVEL: f64 = 80.0;
 /// Point toward the visible group when expanded; collapse reverses the arrow.
 const MARKER_GLYPH = "›";
 
-// NSText.h uses TARGET_ABI_USES_IOS_VALUES: Apple Silicon macOS uses 2,
-// while Intel macOS uses AppKit's original value 1 for right alignment.
-const NSTextAlignmentRight: usize = if (builtin.target.cpu.arch == .x86_64) 1 else 2;
-
 /// NSEvent types and masks. A status button reports left clicks only unless it
 /// is told otherwise, so a right click would never reach `toggleClicked:`.
 const NSEventTypeLeftMouseUp: usize = 2;
@@ -314,7 +311,7 @@ pub fn earlyInit() void {
         std.debug.print("[Menubar] earlyInit done\n", .{});
 }
 
-/// Called after tray is created. Creates the separator (the width-changer).
+/// Called after tray is created. Creates the compact boundary control.
 pub fn init() void {
     if (builtin.target.os.tag != .macos) return;
     if (is_initialized) return;
@@ -331,10 +328,18 @@ pub fn init() void {
         }
     }
 
-    // The system drops each new status item to the left of the ones already
-    separator_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", SEPARATOR_LENGTH);
+    // Configure the saved position before exposing the item to native layout.
+    // Creating it at its final width first makes macOS ignore the autosave key.
+    const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
+    const key = createNSString("NSStatusItem Preferred Position craft_menubar_marker");
+    if (msgSend1(defaults, "objectForKey:", key) == null) {
+        const set_double = @as(*const fn (objc.id, objc.SEL, f64, objc.id) callconv(.c) void, @ptrCast(&objc.objc_msgSend));
+        set_double(defaults, objc.sel_registerName("setDouble:forKey:"), 1, key);
+    }
+    separator_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
     _ = msgSend0(separator_item, "retain");
     msgSendVoid1(separator_item, "setAutosaveName:", createNSString(MARKER_AUTOSAVE_NAME));
+    msgSendVoid1(separator_item, "setLength:", SEPARATOR_LENGTH);
     drawMarker(separator_item, false);
     routeClicks(msgSend0(separator_item, "button"));
 
@@ -398,7 +403,12 @@ pub fn collapse() void {
 
     // The arrow remains the reveal control even if the app's own tray icon
     // has been arranged on its left. Only the divider defines the group.
-    collapse_widening.begin(separator_item);
+    const marker = markerFrame(separator_item) orelse return;
+    control_anchor_edge = marker.origin.x + marker.size.width;
+    if (!createSpacer()) return;
+    collapse_widening.settled = false;
+    placement_started_ns = nanoTimestamp();
+    drawMarker(separator_item, true);
 
     is_collapsed = true;
     auto_collapse_timer_active = false;
@@ -423,10 +433,12 @@ pub fn expand() void {
     if (!is_collapsed) return;
     if (separator_item == null) return;
 
-    // Shrink the marker back, which brings the hidden icons along with it.
+    // Release the blank spacer, bringing icons on its left back into view.
     collapse_widening.reset();
     reflow_started_ns = null;
-    setMarkerWidth(separator_item, SEPARATOR_LENGTH);
+    placement_started_ns = null;
+    removeSpacer();
+    drawMarker(separator_item, false);
 
     is_collapsed = false;
     last_expand_ns = nanoTimestamp();
@@ -487,6 +499,12 @@ pub fn isCollapsed() bool {
 pub fn isBusy() bool {
     if (builtin.target.os.tag == .macos and native_visibility) return visibility.craft_menubar_visibility_busy();
     return is_collapsed and !collapse_widening.settled;
+}
+
+pub fn markerWidth() f64 {
+    if (builtin.target.os.tag != .macos) return 0;
+    const frame = markerFrame(separator_item) orelse return 0;
+    return frame.size.width;
 }
 
 pub fn isInitialized() bool {
@@ -568,15 +586,13 @@ fn routeClicks(button: objc.id) void {
     msgSendVoid1(button, "sendActionOn:", NSEventMaskLeftMouseUp | NSEventMaskRightMouseUp);
 }
 
-/// Keep the affordance beside the visible icons, rather than centering it in
-/// the reserved space. Use the system status button for native drag and AX.
+/// The control stays compact; the separate spacer carries no content or action.
 fn drawMarker(item: objc.id, widened: bool) void {
     if (item == null) return;
     const button = msgSend0(item, "button");
     if (button == null) return;
     const pending = native_visibility and visibility.craft_menubar_visibility_busy();
     const label = if (pending) "Cancel hiding menu bar items" else if (widened) "Show menu bar items" else "Hide menu bar items";
-    msgSendVoid1(button, "setAlignment:", NSTextAlignmentRight);
     msgSendVoid1(button, "setTitle:", createNSString(if (pending) "…" else if (widened) "‹" else if (native_visibility) "›" else if (separator_hidden) "" else MARKER_GLYPH));
     msgSendVoid1(button, "setToolTip:", createNSString(label));
     msgSendVoid1(button, "setAccessibilityLabel:", createNSString(label));
@@ -587,7 +603,31 @@ fn drawMarker(item: objc.id, widened: bool) void {
 fn setMarkerWidth(item: objc.id, width: f64) void {
     if (item == null) return;
     msgSendVoid1(item, "setLength:", width);
-    if (item == separator_item) drawMarker(item, width > SEPARATOR_LENGTH);
+    if (item == spacer_item) drawMarker(separator_item, width > SEPARATOR_LENGTH);
+}
+
+fn removeSpacer() void {
+    if (spacer_item == null) return;
+    msgSendVoid1(getSystemStatusBar(), "removeStatusItem:", spacer_item);
+    _ = msgSend0(spacer_item, "release");
+    spacer_item = null;
+}
+
+fn createSpacer() bool {
+    removeSpacer();
+    const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
+    const marker_key = createNSString("NSStatusItem Preferred Position craft_menubar_marker");
+    const saved = msgSend1(defaults, "objectForKey:", marker_key);
+    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
+    const position: f64 = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
+    const set_double = @as(*const fn (objc.id, objc.SEL, f64, objc.id) callconv(.c) void, @ptrCast(&objc.objc_msgSend));
+    set_double(defaults, objc.sel_registerName("setDouble:forKey:"), position + 0.001, createNSString("NSStatusItem Preferred Position craft_menubar_spacer"));
+    spacer_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
+    if (spacer_item == null) return false;
+    _ = msgSend0(spacer_item, "retain");
+    msgSendVoid1(spacer_item, "setAutosaveName:", createNSString("craft_menubar_spacer"));
+    msgSendVoid1(spacer_item, "setLength:", SEPARATOR_LENGTH);
+    return true;
 }
 
 /// A failed collapse must not reschedule itself forever.
@@ -598,15 +638,34 @@ fn restoreCompactLayout() void {
 
 fn settleCollapse() void {
     if (!is_collapsed) return;
+    if (placement_started_ns) |started| {
+        const now = nanoTimestamp() orelse return;
+        if (now - started < SETTLE_GRACE_NS) return;
+        const marker = markerFrame(separator_item) orelse {
+            restoreCompactLayout();
+            return;
+        };
+        const spacer = markerFrame(spacer_item) orelse {
+            restoreCompactLayout();
+            return;
+        };
+        placement_started_ns = null;
+        if (!layout.spacerPrecedesControl(marker.origin.x, spacer.origin.x, spacer.size.width)) {
+            restoreCompactLayout();
+            return;
+        }
+        collapse_widening.begin(spacer_item);
+        return;
+    }
     const was_settled = collapse_widening.settled;
-    if (!collapse_widening.settle(separator_item)) {
+    if (!collapse_widening.settle(spacer_item)) {
         log.debug("menu bar collapse: no room to tuck anything away — restoring", .{});
         restoreCompactLayout();
         return;
     }
     if (!was_settled and collapse_widening.settled) {
         const marker = markerFrame(separator_item) orelse return;
-        if (layout.markerEdgeDisplaced(collapse_widening.trailing_edge, marker.origin.x, marker.size.width)) {
+        if (layout.markerEdgeDisplaced(control_anchor_edge, marker.origin.x, marker.size.width)) {
             restoreCompactLayout();
         } else {
             notifyJS();
@@ -620,7 +679,7 @@ fn settleCollapse() void {
 fn restoreOnSystemReflow() void {
     if (!is_collapsed or !collapse_widening.settled) return;
     const marker = markerFrame(separator_item) orelse return;
-    if (!layout.markerEdgeDisplaced(collapse_widening.trailing_edge, marker.origin.x, marker.size.width)) {
+    if (!layout.markerEdgeDisplaced(control_anchor_edge, marker.origin.x, marker.size.width)) {
         reflow_started_ns = null;
         return;
     }
@@ -714,11 +773,12 @@ fn notifyJS() void {
         return;
     }
     var buf: [320]u8 = undefined;
-    const js = std.fmt.bufPrint(&buf, "window.dispatchEvent(new CustomEvent('craft:menubar:stateChange',{{detail:{{backend:'legacy',initialized:{s},collapsed:{s},busy:{s},separatorHidden:{s}}}}}));", .{
+    const js = std.fmt.bufPrint(&buf, "window.dispatchEvent(new CustomEvent('craft:menubar:stateChange',{{detail:{{backend:'legacy',initialized:{s},collapsed:{s},busy:{s},separatorHidden:{s},markerWidth:{d}}}}}));", .{
         if (is_initialized) "true" else "false",
         if (isCollapsed()) "true" else "false",
         if (isBusy()) "true" else "false",
         if (separator_hidden) "true" else "false",
+        markerWidth(),
     }) catch return;
     macos.tryEvalJS(js) catch |err| {
         std.log.debug("JS eval failed for menubar collapse state callback: {}", .{err});
@@ -731,19 +791,6 @@ fn toggleClicked(_: objc.id, _: objc.SEL, sender: objc.id) callconv(.c) void {
 
     const NSApp = msgSend0(getClass("NSApplication"), "sharedApplication");
     const event = msgSend0(NSApp, "currentEvent");
-    // Mouse clicks only toggle at the trailing affordance. Accessibility and
-    // keyboard actions have no mouse-up event and retain the normal action.
-    if (is_collapsed and sender != null and event != null and msgSendUsize(event, "type") == NSEventTypeLeftMouseUp) {
-        const point_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) CGPoint, @ptrCast(&objc.objc_msgSend));
-        const window_point = point_fn(event, objc.sel_registerName("locationInWindow"));
-        const convert = @as(*const fn (objc.id, objc.SEL, CGPoint, objc.id) callconv(.c) CGPoint, @ptrCast(&objc.objc_msgSend));
-        const point = convert(sender, objc.sel_registerName("convertPoint:fromView:"), window_point, null);
-        const bounds = msgSendRect(sender, "bounds");
-        if (point.x < bounds.origin.x + bounds.size.width - SEPARATOR_LENGTH) {
-            clearHighlight(sender);
-            return;
-        }
-    }
     if (wantsMenu(event)) {
         if (sender != null) showTrayMenu(sender);
         clearHighlight(sender);
