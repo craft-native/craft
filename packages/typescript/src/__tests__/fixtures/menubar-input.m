@@ -128,14 +128,29 @@ int main(int argc, char **argv) {
         if ([operation isEqualToString:@"drag"] && argc == 5) {
             if (!CGPreflightPostEventAccess()) return 3;
             drag(center, CGPointMake(atof(argv[4]), center.y));
-        } else if ([operation isEqualToString:@"click"]) {
+        } else if ([operation isEqualToString:@"click"] || [operation isEqualToString:@"command-click"]) {
             if (!CGPreflightPostEventAccess()) return 3;
+            BOOL command = [operation isEqualToString:@"command-click"];
+            CGEventFlags flags = command ? kCGEventFlagMaskCommand : 0;
             CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-            mouse(source, kCGEventMouseMoved, center, 0);
+            if (command) {
+                CGEventRef down = CGEventCreateKeyboardEvent(source, 55, true);
+                CGEventSetFlags(down, flags);
+                CGEventPost(kCGHIDEventTap, down);
+                CFRelease(down);
+                usleep(150000);
+            }
+            mouse(source, kCGEventMouseMoved, center, flags);
             usleep(100000);
-            mouse(source, kCGEventLeftMouseDown, center, 0);
-            usleep(100000);
-            mouse(source, kCGEventLeftMouseUp, center, 0);
+            mouse(source, kCGEventLeftMouseDown, center, flags);
+            usleep(command ? 300000 : 100000);
+            mouse(source, kCGEventLeftMouseUp, center, flags);
+            if (command) {
+                CGEventRef up = CGEventCreateKeyboardEvent(source, 55, false);
+                CGEventSetFlags(up, 0);
+                CGEventPost(kCGHIDEventTap, up);
+                CFRelease(up);
+            }
             CFRelease(source);
         } else if (![operation isEqualToString:@"inspect"]) {
             CFRelease(element);

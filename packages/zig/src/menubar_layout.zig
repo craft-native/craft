@@ -4,6 +4,52 @@ const std = @import("std");
 pub const MAX_SPACERS = 16;
 pub const SpacerPlan = struct { count: usize, width: f64 };
 
+/// A Command-click is not a reorder. Only track a left-button gesture that
+/// starts in the menu bar and actually moves; unrelated window gestures must
+/// never reveal a collapsed group or invalidate its cached layout.
+pub const DragTracker = struct {
+    pressed: bool = false,
+    armed: bool = false,
+    origin_x: f64 = 0,
+    origin_y: f64 = 0,
+
+    pub fn update(self: *DragTracker, left_down: bool, command: bool, in_menu_bar: bool, x: f64, y: f64) bool {
+        if (!left_down) {
+            self.* = .{};
+            return false;
+        }
+        if (!self.pressed) {
+            self.pressed = true;
+            self.armed = command and in_menu_bar and std.math.isFinite(x) and std.math.isFinite(y);
+            self.origin_x = x;
+            self.origin_y = y;
+        }
+        if (!command or !std.math.isFinite(x) or !std.math.isFinite(y)) self.armed = false;
+        return self.armed and (@abs(x - self.origin_x) > 3 or @abs(y - self.origin_y) > 3);
+    }
+};
+
+test "Command-clicks and unrelated window drags do not reorder the menu bar" {
+    var drag: DragTracker = .{};
+    try std.testing.expect(!drag.update(true, true, true, 900, 970));
+    try std.testing.expect(!drag.update(true, true, true, 902, 970));
+    try std.testing.expect(!drag.update(false, true, true, 902, 970));
+    try std.testing.expect(!drag.update(true, true, false, 900, 500));
+    try std.testing.expect(!drag.update(true, true, false, 1000, 500));
+    try std.testing.expect(!drag.update(true, true, true, 1000, 970));
+    try std.testing.expect(!drag.update(false, false, false, 1000, 970));
+}
+
+test "a menu bar drag moves before it is considered a reorder" {
+    var drag: DragTracker = .{};
+    try std.testing.expect(!drag.update(true, true, true, 900, 970));
+    try std.testing.expect(drag.update(true, true, true, 904, 970));
+    try std.testing.expect(drag.update(true, true, true, 1000, 970));
+    try std.testing.expect(!drag.update(false, false, false, 1000, 970));
+    try std.testing.expect(!drag.update(true, false, true, 1000, 970));
+    try std.testing.expect(!drag.update(true, true, true, 1020, 970));
+}
+
 /// One long item is refused on the smaller display before it can hide icons
 /// on a larger one. Individually modest items can overflow independently while
 /// their combined reservation clears the prefix on every connected display.

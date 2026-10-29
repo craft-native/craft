@@ -143,6 +143,7 @@ var control_anchor_edge: f64 = 0;
 var validated_layout: bool = false;
 var reorder_pending: bool = false;
 var reorder_released_ns: ?u64 = null;
+var reorder_drag: layout.DragTracker = .{};
 var spacer_placement: layout.SpacerPlacement = .{ .high = 0, .position = 0 };
 var placement_reuses_spacer: bool = false;
 var widening_started_ns: ?u64 = null;
@@ -367,6 +368,7 @@ pub fn init() void {
     validated_layout = false;
     reorder_pending = false;
     reorder_released_ns = null;
+    reorder_drag = .{};
 
     if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
         std.debug.print("[Menubar] Ready — separator created\n", .{});
@@ -578,8 +580,15 @@ fn collapseTimer(_: objc.id, _: objc.SEL, _: objc.id) callconv(.c) void {
 }
 
 pub fn checkAutoCollapse() void {
-    if (builtin.target.os.tag == .macos and msgSendUsize(getClass("NSEvent"), "pressedMouseButtons") != 0) {
-        if (msgSendUsize(getClass("NSEvent"), "modifierFlags") & NSEventModifierFlagCommand != 0) {
+    if (builtin.target.os.tag != .macos) return;
+    const buttons = msgSendUsize(getClass("NSEvent"), "pressedMouseButtons");
+    if (buttons != 0) {
+        const left_down = buttons & 1 != 0;
+        const command = msgSendUsize(getClass("NSEvent"), "modifierFlags") & NSEventModifierFlagCommand != 0;
+        const point_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) CGPoint, @ptrCast(&objc.objc_msgSend));
+        const point = point_fn(getClass("NSEvent"), objc.sel_registerName("mouseLocation"));
+        const in_menu_bar = left_down and command and !reorder_drag.pressed and mouseInMenuBar(point);
+        if (reorder_drag.update(left_down, command, in_menu_bar, point.x, point.y)) {
             validated_layout = false;
             reorder_pending = true;
             reorder_released_ns = null;
@@ -587,6 +596,7 @@ pub fn checkAutoCollapse() void {
         // Native reordering must finish before geometry or visibility changes.
         return;
     }
+    _ = reorder_drag.update(false, false, false, 0, 0);
     if (reorder_pending) {
         const now = nanoTimestamp() orelse return;
         const released = reorder_released_ns orelse {
@@ -629,6 +639,30 @@ pub fn checkAutoCollapse() void {
         if (builtin.target.os.tag == .macos and msgSendUsize(getClass("NSEvent"), "pressedMouseButtons") != 0) return;
         collapse();
     }
+}
+
+fn mouseInMenuBar(point: CGPoint) bool {
+    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
+    const thickness = double_fn(getSystemStatusBar(), objc.sel_registerName("thickness"));
+    const responds = @as(*const fn (objc.id, objc.SEL, objc.SEL) callconv(.c) bool, @ptrCast(&objc.objc_msgSend));
+    const screens = msgSend0(getClass("NSScreen"), "screens");
+    for (0..msgSendUsize(screens, "count")) |index| {
+        const screen = msgSend1(screens, "objectAtIndex:", index);
+        const frame = msgSendRect(screen, "frame");
+        const visible = msgSendRect(screen, "visibleFrame");
+        const top = frame.origin.y + frame.size.height;
+        var height = @max(thickness, top - visible.origin.y - visible.size.height);
+        // Notched and automatically hidden bars can be taller than the
+        // status item's content area. This public rectangle describes the
+        // extra top region without observing other apps' accessibility trees.
+        const auxiliary = objc.sel_registerName("auxiliaryTopRightArea");
+        if (responds(screen, objc.sel_registerName("respondsToSelector:"), auxiliary)) {
+            height = @max(height, msgSendRect(screen, "auxiliaryTopRightArea").size.height);
+        }
+        if (point.x >= frame.origin.x and point.x <= frame.origin.x + frame.size.width and
+            point.y >= top - height and point.y <= top) return true;
+    }
+    return false;
 }
 
 // ============================================================================

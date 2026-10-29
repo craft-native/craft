@@ -98,6 +98,10 @@ dragTest('Command-drag preserves the visible boundary and hides only its left si
     stderr = new Response(launched.stderr).text()
     await until(() => state?.initialized === true && !state.busy, 'the packaged native group must initialize')
     await click(true)
+    await run([input, 'command-click', String(child.pid), 'arrow'])
+    await Bun.sleep(500)
+    assert.equal(state?.collapsed, true, 'a stationary Command-click must not reveal the collapsed group')
+    assert.equal((await control()).description, 'Show menu bar items')
     await click(false)
 
     // Move the actual native control towards the notch with the test icon on

@@ -84,6 +84,8 @@ Command-drag uses the standard native status button. Craft leaves its geometry
 alone while the mouse is held. Reordering a collapsed group reveals it after
 the drop; clicking `›` then hides the icons to the left of the new boundary.
 Command-clicks and the mouse-up that finishes a drag do not toggle the group.
+Only a gesture that starts in the menu bar and moves counts as reordering;
+Command-clicks and drags in other windows leave a collapsed group unchanged.
 
 The default `init()` remains the legacy backend for existing consumers. Select
 native visibility explicitly; do not combine both controllers. Private visibility
