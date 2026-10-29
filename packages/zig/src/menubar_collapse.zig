@@ -662,9 +662,14 @@ fn settleCollapse() void {
         };
         switch (spacer_placement.observe(marker.origin.x, spacer.origin.x, spacer.size.width)) {
             .ready => {
+                // Removing and reinserting native items can finish reflowing
+                // after reveal. Anchor the confirmed compact layout, not the
+                // earlier frame captured when the click arrived.
+                control_anchor_edge = marker.origin.x + marker.size.width;
                 placement_started_ns = null;
                 cached_spacer_position = spacer_placement.position;
                 cached_control_edge = control_anchor_edge;
+                log.debug("menu bar spacer placed at {d}; control edge {d}", .{ spacer_placement.position, control_anchor_edge });
             },
             .retry => |position| {
                 if (!createSpacer(position)) {
@@ -675,6 +680,7 @@ fn settleCollapse() void {
                 return;
             },
             .failed => {
+                log.debug("menu bar spacer placement exhausted at {d}; control {d}, spacer {d}", .{ spacer_placement.position, marker.origin.x, spacer.origin.x });
                 restoreCompactLayout();
                 return;
             },
@@ -691,6 +697,7 @@ fn settleCollapse() void {
     if (!was_settled and collapse_widening.settled) {
         const marker = markerFrame(separator_item) orelse return;
         if (layout.markerEdgeDisplaced(control_anchor_edge, marker.origin.x, marker.size.width)) {
+            log.debug("menu bar control moved while widening: expected edge {d}, actual {d}", .{ control_anchor_edge, marker.origin.x + marker.size.width });
             restoreCompactLayout();
         } else {
             notifyJS();
@@ -713,7 +720,10 @@ fn restoreOnSystemReflow() void {
         reflow_started_ns = now;
         return;
     };
-    if (now - start >= 200 * std.time.ns_per_ms) restoreCompactLayout();
+    if (now - start >= 200 * std.time.ns_per_ms) {
+        log.debug("menu bar control reflowed: expected edge {d}, actual {d}", .{ control_anchor_edge, marker.origin.x + marker.size.width });
+        restoreCompactLayout();
+    }
 }
 
 fn markerScreenFrame(item: objc.id) ?CGRect {

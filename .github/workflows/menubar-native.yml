@@ -1,0 +1,53 @@
+name: Native menu bar grouping
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - packages/zig/src/menubar_collapse.zig
+      - packages/zig/src/menubar_layout.zig
+      - packages/zig/src/bridge_menubar.zig
+      - packages/typescript/src/__tests__/menubar-visibility.native.test.ts
+      - .github/workflows/menubar-native.yml
+  pull_request:
+    paths:
+      - packages/zig/src/menubar_collapse.zig
+      - packages/zig/src/menubar_layout.zig
+      - packages/zig/src/bridge_menubar.zig
+      - packages/typescript/src/__tests__/menubar-visibility.native.test.ts
+      - .github/workflows/menubar-native.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: menubar-native-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  grouping:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install the pinned toolchain
+        uses: pantry-pm/pantry/packages/action@3de609e1a7e305393b3d94e2848d859b39c5b5de # v0.11.120
+        with:
+          version: '0.11.120'
+      - name: Cache Zig artifacts
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/zig
+            packages/zig/.zig-cache
+          key: ${{ runner.os }}-zig-master-${{ hashFiles('packages/zig/build.zig') }}
+          restore-keys: |
+            ${{ runner.os }}-zig-master-
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - uses: ./.github/actions/first-party-zig-deps
+      - name: Build the production runtime
+        run: bun run build:core
+      - name: Verify packaged cancellation and repeated hide/reveal
+        run: CRAFT_NATIVE_TEST_BIN="$PWD/packages/zig/zig-out/bin/craft" bun test packages/typescript/src/__tests__/menubar-visibility.native.test.ts

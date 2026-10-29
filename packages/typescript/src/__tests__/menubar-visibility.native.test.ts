@@ -19,7 +19,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     await craft.menubar.expand();
     await craft.timers.sleep(500);
     await fetch('/cancelled',{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
-    for (let cycle=0;cycle<2;cycle++) {
+    for (let cycle=0;cycle<4;cycle++) {
       await craft.menubar.collapse();
       let settled=await craft.menubar.getState();
       for (let attempt=0;settled.busy && attempt<80;attempt++) {
@@ -31,7 +31,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
       await fetch('/held'+cycle,{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
       await craft.menubar.expand();
       await fetch('/expanded'+cycle,{method:'POST',body:JSON.stringify(await craft.menubar.getState())});
-      await craft.timers.sleep(500);
+      await craft.timers.sleep(100);
     }
   })().catch(async error => fetch('/error',{method:'POST',body:JSON.stringify({error:String(error)})}));`
   const server = Bun.serve({ hostname:'127.0.0.1',port:0,async fetch(request) {
@@ -44,24 +44,25 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
   }})
   let proc: ReturnType<typeof Bun.spawn> | undefined
   let stderr: Promise<string> | undefined
+  let passed = false
   try {
     const result = await packageApp({
       name:'PositionalGroup',version:'1.0.0',bundleId,binaryPath:'/usr/bin/true',outDir:dir,platforms:['macos'],
       macos:{nativeRuntimePath:process.env.CRAFT_NATIVE_TEST_BIN!,dmg:false,signIdentity:'-'},
     })
     assert.equal(result[0].success,true,result[0].error)
-    const launched = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--url',server.url.toString()],{
+    const launched = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--log-level','debug','--url',server.url.toString()],{
       env:{...process.env,__CFBundleIdentifier:`${bundleId}.runtime`},stdout:'ignore',stderr:'pipe',
     })
     proc = launched
     stderr = new Response(launched.stderr).text()
-    const deadline = Date.now()+30000
-    while (!states.expanded1 && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
+    const deadline = Date.now()+45000
+    while (!states.expanded3 && !states.error && proc.exitCode === null && Date.now()<deadline) await Bun.sleep(50)
     assert(!states.error,JSON.stringify(states.error))
     assert.equal(states.cancelled?.collapsed,false)
     assert.equal(states.cancelled?.busy,false)
     assert.equal(states.cancelled?.markerWidth,20)
-    for (let cycle=0;cycle<2;cycle++) {
+    for (let cycle=0;cycle<4;cycle++) {
       assert.equal(states[`collapsed${cycle}`]?.backend,'legacy')
       assert.equal(states[`collapsed${cycle}`]?.collapsed,true,JSON.stringify(states))
       assert.equal(states[`collapsed${cycle}`]?.busy,false)
@@ -71,6 +72,7 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
       assert.equal(states[`held${cycle}`]?.collapsed,true,'a collapse must retain a visible trailing reveal indicator')
       assert.equal(states[`expanded${cycle}`]?.collapsed,false)
     }
+    passed = true
   }
   finally {
     if (proc && proc.exitCode === null) {
@@ -81,13 +83,13 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
     }
     if (stderr) {
       const output = await stderr
-      if (!states.expanded1 && output) console.error(output)
+      if (!passed && output) console.error(output)
     }
     server.stop(true)
     await rm(dir,{recursive:true,force:true})
     Bun.spawnSync(['/usr/bin/defaults','delete',`${bundleId}.runtime`],{stdout:'ignore',stderr:'ignore'})
   }
-}, 35000)
+}, 50000)
 
 // Opt-in real private-API acceptance on macOS 27 with existing Accessibility
 // authorization. CI's default native tests cover unavailability and cancellation
