@@ -1,5 +1,16 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.385...v0.0.386)
+
+## 🐛 Bug Fixes
+
+- **menubar**: retain the classic spacer settling delay ([2ac91eb](https://github.com/craft-native/craft/commit/2ac91eb)) _(by Chris)_
+- **menubar**: preserve grouping after native reordering ([e12956f](https://github.com/craft-native/craft/commit/e12956f)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.384...v0.0.385)
 
 ## 🐛 Bug Fixes
