@@ -1,5 +1,15 @@
 # Changelog
 
+[Compare changes](https://github.com/craft-native/craft/compare/v0.0.389...v0.0.390)
+
+## 🧪 Tests
+
+- **ios**: allow cold WebKit startup before inset assertions ([7721eab](https://github.com/craft-native/craft/commit/7721eab)) _(by Chris)_
+
+## Contributors
+
+- _Chris_
+
 [Compare changes](https://github.com/craft-native/craft/compare/v0.0.388...v0.0.389)
 
 ## 🧪 Tests
