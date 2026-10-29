@@ -50,18 +50,25 @@ removes the control. Process exit releases the OS-owned assertion.
 The positional backend, `init({ backend: 'legacy' })`, hides individual icons
 to the left of `›` by reserving native status-bar space. Its `‹` remains the
 reveal control even when the app's own cup or other icons are on the left.
-`busy` remains true until the native layout settles. It measures each button
-within macOS 27's shared status host and tolerates native overflow insertion
-without immediately undoing a successful collapse. The arrow stays at 20 points;
-a separate blank status item immediately to its left reserves space. Only that
-spacer widens, so the reveal button does not become a wide item that macOS can
-move into native overflow. Unsafe spacer placement restores the visible group.
-Native saved positions can be clamped, so the spacer stays compact while its
-requested position is adjusted until it is directly left of the arrow. Later
-clicks reuse the same native spacer, shrinking it to zero on reveal instead of
-removing it and losing its order. Disabling grouping removes both items. The verified compact layout anchors
-widening, so delayed layout updates after reveal do not undo the next collapse.
-It does not activate an assessment-mode restriction or require Accessibility authorization.
+`busy` remains true until the native layout settles. The arrow stays at 20 points.
+A chain of blank status items immediately to its left reserves the hidden space;
+each item stays below half the narrowest display's width, while their combined
+reservation covers the widest connected display. This avoids a single long
+spacer being refused on a MacBook before it can hide icons on an external display.
+
+Native saved positions can be clamped, so each spacer stays compact while its
+requested position is adjusted. Craft verifies the complete adjacent chain
+before widening any item. Unsafe placement restores the visible group. Later
+clicks reuse the same native items, shrinking them to zero on reveal instead of
+removing them and losing their order. Disabling grouping removes the complete
+chain and the arrow. The verified compact layout anchors widening, so delayed
+layout updates after reveal do not undo the next collapse.
+
+The compact arrow uses its own stable saved identity rather than inheriting the
+retired widening separator's native overflow placement. That migration places
+it in a visible native slot; subsequent native Command-drags persist normally.
+This backend does not activate an assessment-mode restriction or require
+Accessibility authorization.
 
 The default `init()` remains the legacy backend for existing consumers. Select
 native visibility explicitly; do not combine both controllers. Private visibility

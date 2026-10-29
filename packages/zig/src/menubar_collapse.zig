@@ -1,6 +1,6 @@
 //! Opt-in native menu-bar grouping. A compact arrow defines the boundary.
-//! A separate blank item immediately to its left reserves the hidden space,
-//! so the reveal control never grows into the system overflow itself.
+//! A chain of modest blank items to its left reserves the hidden space on
+//! differently sized displays, without growing the arrow into system overflow.
 //! AppKit owns Cmd-drag routing; unsafe placement restores the visible group.
 
 const std = @import("std");
@@ -131,14 +131,19 @@ var is_collapsed: bool = false;
 
 /// The compact arrow that the user arranges icons around.
 var separator_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
-var spacer_item: objc.id = if (builtin.target.os.tag == .macos) null else null;
+var spacer_items: [layout.MAX_SPACERS]objc.id = @splat(null);
+var spacer_positions: [layout.MAX_SPACERS]f64 = @splat(0);
+var spacer_count: usize = 0;
+var spacer_width: f64 = 0;
+var placement_index: usize = 0;
+var placement_display_width: f64 = 0;
 var placement_started_ns: ?u64 = null;
+var placement_deadline_ns: ?u64 = null;
 var control_anchor_edge: f64 = 0;
 var spacer_placement: layout.SpacerPlacement = .{ .high = 0, .position = 0 };
-var cached_spacer_position: ?f64 = null;
-var cached_control_edge: f64 = 0;
-var spacer_position: f64 = 0;
 var placement_reuses_spacer: bool = false;
+var widening_started_ns: ?u64 = null;
+var collapse_settled: bool = true;
 
 var saved_tray_menu: objc.id = if (builtin.target.os.tag == .macos) null else null;
 /// The app's own icon supplies the context menu; its position does not define
@@ -151,78 +156,6 @@ var native_timer: objc.id = null;
 var separator_hidden: bool = false;
 var reflow_started_ns: ?u64 = null;
 
-/// A spacer being widened, and the bookkeeping needed to find out how far it
-/// was allowed to go.
-const Widening = struct {
-    /// Where the marker stood before it started growing.
-    origin: f64 = 0,
-    /// What is currently being asked for. Comes down until it is granted.
-    ask: f64 = 0,
-    /// Cleared once the ask has been granted, or given up on.
-    settled: bool = true,
-    started_ns: ?u64 = null,
-
-    /// Ask for the whole distance to the front of the bar. Whether that is
-    /// allowed is not knowable up front, so `settle` finds out.
-    fn begin(self: *Widening, item: objc.id) bool {
-        const frame = markerFrame(item) orelse return false;
-        const screen = markerScreenFrame(item) orelse return false;
-        const started = nanoTimestamp() orelse return false;
-        const origin = frame.origin.x;
-        self.* = .{
-            .origin = origin,
-            .ask = origin - screen.origin.x + SEPARATOR_LENGTH,
-            .settled = false,
-            .started_ns = started,
-        };
-        setMarkerWidth(item, self.ask);
-        return true;
-    }
-
-    /// Read back what the system actually did, and come down if it refused.
-    /// Returns false once nothing worth doing is left to try.
-    fn settle(self: *Widening, item: objc.id) bool {
-        if (self.settled) return true;
-
-        const started = self.started_ns orelse return true;
-        const now = nanoTimestamp() orelse return true;
-        if (now - started < SETTLE_GRACE_NS) return true;
-
-        const moved = self.origin - (markerOriginX(item) orelse self.origin);
-        if (moved >= self.ask * ACCEPTED_FRACTION) {
-            self.settled = true;
-            if (comptime std.ascii.eqlIgnoreCase(@tagName(builtin.mode), "debug"))
-                std.debug.print("[Menubar] Settled — moved {d}pt of {d}pt\n", .{ moved, self.ask });
-            return true;
-        }
-
-        // Refused. An item only grows into whatever stretch of bar is actually
-        // free, so an ask longer than that is turned down flat rather than
-        // trimmed — and asking for less is the only way to find out how much
-        // there is.
-        //
-        // Coming down is not a compromise. The free stretch is precisely the
-        // gap the hidden icons have to cross, since they sit immediately to the
-        // right of it, so the largest ask the system grants is also exactly the
-        // one that clears them off.
-        self.ask *= TARGET_BACKOFF;
-        if (self.ask < MIN_TRAVEL) {
-            self.settled = true;
-            return false;
-        }
-
-        self.started_ns = now;
-        setMarkerWidth(item, self.ask);
-        return true;
-    }
-
-    fn reset(self: *Widening) void {
-        self.* = .{};
-    }
-};
-
-var collapse_widening: Widening = .{};
-
 var auto_collapse_delay: u32 = 0;
 var auto_collapse_timer_active: bool = false;
 var last_expand_ns: ?u64 = null;
@@ -234,9 +167,10 @@ const DEBOUNCE_INTERVAL_NS: u64 = 300_000_000;
 
 const SEPARATOR_LENGTH: f64 = 20.0; // matches Hidden's btnHiddenLength
 
-/// Positions are remembered under these names, so they have to stay stable
-/// across releases or everyone's arrangement resets.
-const MARKER_AUTOSAVE_NAME = "craft_menubar_marker";
+/// The compact control gets a new identity: macOS can retain the old widening
+/// separator's overflow placement independently of its saved position. Keep
+/// this identity stable after that one-time migration.
+const MARKER_AUTOSAVE_NAME = "craft_menubar_control";
 
 /// How long to let the system get round to applying the widths before reading
 /// back what it did. This is a duration rather than a number of checks because
@@ -244,15 +178,6 @@ const MARKER_AUTOSAVE_NAME = "craft_menubar_marker";
 /// second — counting them would give up in a few milliseconds, long before any
 /// relayout could have happened.
 const SETTLE_GRACE_NS: u64 = 400 * std.time.ns_per_ms;
-
-/// How much of the requested distance has to materialise for the widths to
-/// count as accepted, and how much to come down by when they were not.
-const ACCEPTED_FRACTION: f64 = 0.9;
-const TARGET_BACKOFF: f64 = 0.75;
-
-/// Below this there is not enough room to tuck anything away, so the bar goes
-/// back to how it was rather than shuffling icons a few points sideways.
-const MIN_TRAVEL: f64 = 80.0;
 
 /// Point toward the visible group when expanded; collapse reverses the arrow.
 const MARKER_GLYPH = "›";
@@ -337,7 +262,7 @@ pub fn init() void {
     // Configure the saved position before exposing the item to native layout.
     // Creating it at its final width first makes macOS ignore the autosave key.
     const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
-    const key = createNSString("NSStatusItem Preferred Position craft_menubar_marker");
+    const key = createNSString("NSStatusItem Preferred Position craft_menubar_control");
     if (msgSend1(defaults, "objectForKey:", key) == null) {
         const set_double = @as(*const fn (objc.id, objc.SEL, f64, objc.id) callconv(.c) void, @ptrCast(&objc.objc_msgSend));
         set_double(defaults, objc.sel_registerName("setDouble:forKey:"), 1, key);
@@ -412,20 +337,23 @@ pub fn collapse() void {
     // The arrow remains the reveal control even if the app's own tray icon
     // has been arranged on its left. Only the divider defines the group.
     const marker = markerFrame(separator_item) orelse return;
-    control_anchor_edge = marker.origin.x + marker.size.width;
     const screen = markerScreenFrame(separator_item) orelse return;
-    const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
-    const saved = msgSend1(defaults, "objectForKey:", createNSString("NSStatusItem Preferred Position craft_menubar_marker"));
-    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
-    const preferred = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
-    const initial = if (cached_spacer_position != null and @abs(cached_control_edge - control_anchor_edge) < 1) cached_spacer_position.? else preferred + 1;
-    placement_reuses_spacer = spacer_item != null;
-    spacer_placement = layout.SpacerPlacement.init(if (placement_reuses_spacer) spacer_position else initial, screen.size.width);
-    if (placement_reuses_spacer) {
-        setMarkerWidth(spacer_item, SEPARATOR_LENGTH);
-    } else if (!createSpacer(spacer_placement.position)) return;
-    collapse_widening.settled = false;
-    placement_started_ns = nanoTimestamp();
+    const plan = planSpacers() orelse return;
+    const now = nanoTimestamp() orelse return;
+    control_anchor_edge = marker.origin.x + marker.size.width;
+    spacer_count = plan.count;
+    spacer_width = plan.width;
+    placement_display_width = screen.size.width;
+    for (0..layout.MAX_SPACERS) |index| {
+        if (index < spacer_count) setMarkerWidth(spacer_items[index], SEPARATOR_LENGTH) else removeSpacer(index);
+    }
+    if (!beginSpacerPlacement(0, now)) {
+        for (spacer_items) |item| setMarkerWidth(item, 0);
+        return;
+    }
+    placement_deadline_ns = now;
+    collapse_settled = false;
+    widening_started_ns = null;
     drawMarker(separator_item, true);
 
     is_collapsed = true;
@@ -453,11 +381,13 @@ pub fn expand() void {
 
     // Keep its native identity and ordering. Removing and recreating the
     // spacer makes macOS intermittently insert it on the control's right.
-    collapse_widening.reset();
+    collapse_settled = true;
+    widening_started_ns = null;
+    placement_deadline_ns = null;
     reflow_started_ns = null;
     placement_started_ns = null;
     placement_reuses_spacer = false;
-    setMarkerWidth(spacer_item, 0);
+    for (spacer_items) |item| setMarkerWidth(item, 0);
     drawMarker(separator_item, false);
 
     is_collapsed = false;
@@ -487,7 +417,9 @@ pub fn toggle() void {
 pub fn cleanup() void {
     if (builtin.target.os.tag == .macos and native_visibility) visibility.craft_menubar_visibility_cleanup();
     if (is_collapsed) expand();
-    if (builtin.target.os.tag == .macos) removeSpacer();
+    if (builtin.target.os.tag == .macos) for (0..layout.MAX_SPACERS) |index| {
+        removeSpacer(index);
+    };
     if (builtin.target.os.tag == .macos and native_timer != null) {
         _ = msgSend0(native_timer, "invalidate");
         native_timer = null;
@@ -514,12 +446,12 @@ pub fn destroy() void {
 }
 
 pub fn isCollapsed() bool {
-    return is_collapsed and (native_visibility or collapse_widening.settled);
+    return is_collapsed and (native_visibility or collapse_settled);
 }
 
 pub fn isBusy() bool {
     if (builtin.target.os.tag == .macos and native_visibility) return visibility.craft_menubar_visibility_busy();
-    return is_collapsed and !collapse_widening.settled;
+    return is_collapsed and !collapse_settled;
 }
 
 pub fn markerWidth() f64 {
@@ -624,29 +556,67 @@ fn drawMarker(item: objc.id, widened: bool) void {
 fn setMarkerWidth(item: objc.id, width: f64) void {
     if (item == null) return;
     msgSendVoid1(item, "setLength:", width);
-    if (item == spacer_item) drawMarker(separator_item, width > SEPARATOR_LENGTH);
 }
 
-fn removeSpacer() void {
-    if (spacer_item == null) return;
-    msgSendVoid1(getSystemStatusBar(), "removeStatusItem:", spacer_item);
-    _ = msgSend0(spacer_item, "release");
-    spacer_item = null;
+fn planSpacers() ?layout.SpacerPlan {
+    const screens = msgSend0(getClass("NSScreen"), "screens");
+    const count = msgSendUsize(screens, "count");
+    if (count == 0) return null;
+    var shortest: f64 = std.math.inf(f64);
+    var longest: f64 = 0;
+    for (0..count) |index| {
+        const screen = msgSend1(screens, "objectAtIndex:", index);
+        const width = msgSendRect(screen, "frame").size.width;
+        if (!std.math.isFinite(width) or width <= 0) return null;
+        shortest = @min(shortest, width);
+        longest = @max(longest, width);
+    }
+    return layout.planSpacers(shortest, longest);
 }
 
-fn createSpacer(position: f64) bool {
-    removeSpacer();
+fn removeSpacer(index: usize) void {
+    const item = spacer_items[index] orelse return;
+    msgSendVoid1(getSystemStatusBar(), "removeStatusItem:", item);
+    _ = msgSend0(item, "release");
+    spacer_items[index] = null;
+}
+
+fn createSpacer(index: usize, position: f64) bool {
+    removeSpacer(index);
+    var name_buffer: [64]u8 = undefined;
+    const name = std.fmt.bufPrint(&name_buffer, "craft_menubar_spacer_{d}", .{index}) catch return false;
+    var key_buffer: [128]u8 = undefined;
+    const key = std.fmt.bufPrint(&key_buffer, "NSStatusItem Preferred Position {s}", .{name}) catch return false;
     const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
     const set_double = @as(*const fn (objc.id, objc.SEL, f64, objc.id) callconv(.c) void, @ptrCast(&objc.objc_msgSend));
-    set_double(defaults, objc.sel_registerName("setDouble:forKey:"), position, createNSString("NSStatusItem Preferred Position craft_menubar_spacer"));
-    spacer_item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
-    if (spacer_item == null) return false;
-    _ = msgSend0(spacer_item, "retain");
-    msgSendVoid1(spacer_item, "setVisible:", @as(c_int, 0));
-    msgSendVoid1(spacer_item, "setAutosaveName:", createNSString("craft_menubar_spacer"));
-    msgSendVoid1(spacer_item, "setLength:", SEPARATOR_LENGTH);
-    msgSendVoid1(spacer_item, "setVisible:", @as(c_int, 1));
-    spacer_position = position;
+    set_double(defaults, objc.sel_registerName("setDouble:forKey:"), position, createNSString(key));
+    const item = msgSend1(getSystemStatusBar(), "statusItemWithLength:", @as(f64, 0));
+    if (item == null) return false;
+    spacer_items[index] = item;
+    _ = msgSend0(item, "retain");
+    msgSendVoid1(item, "setVisible:", @as(c_int, 0));
+    msgSendVoid1(item, "setAutosaveName:", createNSString(name));
+    msgSendVoid1(item, "setLength:", SEPARATOR_LENGTH);
+    msgSendVoid1(item, "setVisible:", @as(c_int, 1));
+    spacer_positions[index] = position;
+    return true;
+}
+
+fn spacerAnchor(index: usize) objc.id {
+    return if (index == 0) separator_item else spacer_items[index - 1];
+}
+
+fn beginSpacerPlacement(index: usize, now: u64) bool {
+    placement_index = index;
+    const defaults = msgSend0(getClass("NSUserDefaults"), "standardUserDefaults");
+    const saved = msgSend1(defaults, "objectForKey:", createNSString("NSStatusItem Preferred Position craft_menubar_control"));
+    const double_fn = @as(*const fn (objc.id, objc.SEL) callconv(.c) f64, @ptrCast(&objc.objc_msgSend));
+    const preferred = if (saved != null) double_fn(saved, objc.sel_registerName("doubleValue")) else 1;
+    const initial = if (index == 0) preferred + 1 else spacer_positions[index - 1] + 1;
+    placement_reuses_spacer = spacer_items[index] != null;
+    spacer_placement = layout.SpacerPlacement.init(if (placement_reuses_spacer) spacer_positions[index] else initial, placement_display_width);
+    if (!placement_reuses_spacer and !createSpacer(index, spacer_placement.position)) return false;
+    placement_started_ns = now;
     return true;
 }
 
@@ -660,20 +630,26 @@ fn settleCollapse() void {
     if (!is_collapsed) return;
     if (placement_started_ns) |started| {
         const now = nanoTimestamp() orelse return;
+        if (placement_deadline_ns) |begin| {
+            if (now - begin > 8 * std.time.ns_per_s) {
+                restoreCompactLayout();
+                return;
+            }
+        }
         if (now - started < SETTLE_GRACE_NS) return;
-        const marker = markerFrame(separator_item) orelse {
+        const anchor = markerFrame(spacerAnchor(placement_index)) orelse {
             restoreCompactLayout();
             return;
         };
-        const spacer = markerFrame(spacer_item) orelse {
+        const spacer = markerFrame(spacer_items[placement_index]) orelse {
             restoreCompactLayout();
             return;
         };
         // A Cmd-drag can move the boundary while revealed. Reposition only
-        // when the retained spacer is no longer beside it.
-        if (placement_reuses_spacer and !layout.spacerPrecedesControl(marker.origin.x, spacer.origin.x, spacer.size.width)) {
+        // when a retained spacer is no longer beside the preceding control.
+        if (placement_reuses_spacer and !layout.spacerPrecedesControl(anchor.origin.x, spacer.origin.x, spacer.size.width)) {
             placement_reuses_spacer = false;
-            if (!createSpacer(spacer_placement.position)) {
+            if (!createSpacer(placement_index, spacer_placement.position)) {
                 restoreCompactLayout();
                 return;
             }
@@ -681,19 +657,16 @@ fn settleCollapse() void {
             return;
         }
         placement_reuses_spacer = false;
-        switch (spacer_placement.observe(marker.origin.x, spacer.origin.x, spacer.size.width)) {
+        switch (spacer_placement.observe(anchor.origin.x, spacer.origin.x, spacer.size.width)) {
             .ready => {
-                // Removing and reinserting native items can finish reflowing
-                // after reveal. Anchor the confirmed compact layout, not the
-                // earlier frame captured when the click arrived.
-                control_anchor_edge = marker.origin.x + marker.size.width;
-                placement_started_ns = null;
-                cached_spacer_position = spacer_placement.position;
-                cached_control_edge = control_anchor_edge;
-                log.debug("menu bar spacer placed at {d}; control edge {d}", .{ spacer_placement.position, control_anchor_edge });
+                log.debug("menu bar spacer {d} placed at {d}", .{ placement_index, spacer_placement.position });
+                if (placement_index + 1 < spacer_count) {
+                    if (!beginSpacerPlacement(placement_index + 1, now)) restoreCompactLayout();
+                    return;
+                }
             },
             .retry => |position| {
-                if (!createSpacer(position)) {
+                if (!createSpacer(placement_index, position)) {
                     restoreCompactLayout();
                     return;
                 }
@@ -701,28 +674,54 @@ fn settleCollapse() void {
                 return;
             },
             .failed => {
-                log.debug("menu bar spacer placement exhausted at {d}; control {d}, spacer {d}", .{ spacer_placement.position, marker.origin.x, spacer.origin.x });
+                log.debug("menu bar spacer {d} placement exhausted at {d}; anchor {d}, spacer {d}", .{ placement_index, spacer_placement.position, anchor.origin.x, spacer.origin.x });
                 restoreCompactLayout();
                 return;
             },
         }
-        if (!collapse_widening.begin(spacer_item)) restoreCompactLayout();
+        // Validate the complete compact chain before reserving any space. No
+        // spacer may land to the right of the arrow or straddle an app icon.
+        for (0..spacer_count) |index| {
+            const previous = markerFrame(spacerAnchor(index)) orelse {
+                restoreCompactLayout();
+                return;
+            };
+            const item = markerFrame(spacer_items[index]) orelse {
+                restoreCompactLayout();
+                return;
+            };
+            if (!layout.spacerPrecedesControl(previous.origin.x, item.origin.x, item.size.width)) {
+                restoreCompactLayout();
+                return;
+            }
+        }
+        const marker = markerFrame(separator_item) orelse {
+            restoreCompactLayout();
+            return;
+        };
+        control_anchor_edge = marker.origin.x + marker.size.width;
+        placement_started_ns = null;
+        placement_deadline_ns = null;
+        for (spacer_items[0..spacer_count]) |item| setMarkerWidth(item, spacer_width);
+        widening_started_ns = now;
         return;
     }
-    const was_settled = collapse_widening.settled;
-    if (!collapse_widening.settle(spacer_item)) {
-        log.debug("menu bar collapse: no room to tuck anything away — restoring", .{});
-        restoreCompactLayout();
-        return;
-    }
-    if (!was_settled and collapse_widening.settled) {
-        const marker = markerFrame(separator_item) orelse return;
+    if (widening_started_ns) |started| {
+        const now = nanoTimestamp() orelse return;
+        if (now - started < SETTLE_GRACE_NS) return;
+        const marker = markerFrame(separator_item) orelse {
+            restoreCompactLayout();
+            return;
+        };
         if (layout.markerEdgeDisplaced(control_anchor_edge, marker.origin.x, marker.size.width)) {
             log.debug("menu bar control moved while widening: expected edge {d}, actual {d}", .{ control_anchor_edge, marker.origin.x + marker.size.width });
             restoreCompactLayout();
-        } else {
-            notifyJS();
+            return;
         }
+        widening_started_ns = null;
+        collapse_settled = true;
+        drawMarker(separator_item, true);
+        notifyJS();
     }
 }
 
@@ -730,7 +729,7 @@ fn settleCollapse() void {
 /// Leave native overflow tracking to AppKit and release the reserved space.
 /// A short grace period ignores intermediate frames during native relayout.
 fn restoreOnSystemReflow() void {
-    if (!is_collapsed or !collapse_widening.settled) return;
+    if (!is_collapsed or !collapse_settled) return;
     const marker = markerFrame(separator_item) orelse return;
     if (!layout.markerEdgeDisplaced(control_anchor_edge, marker.origin.x, marker.size.width)) {
         reflow_started_ns = null;

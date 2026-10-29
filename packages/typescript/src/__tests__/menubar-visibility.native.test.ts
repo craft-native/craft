@@ -53,6 +53,10 @@ standardGroupingTest('packaged positional grouping keeps its reveal indicator vi
       macos:{nativeRuntimePath:process.env.CRAFT_NATIVE_TEST_BIN!,dmg:false,signIdentity:'-'},
     })
     assert.equal(result[0].success,true,result[0].error)
+    // An existing widening separator may be parked in native overflow. The
+    // new compact control must not inherit that retired placement identity.
+    const seeded = Bun.spawnSync(['/usr/bin/defaults','write',`${bundleId}.runtime`,'NSStatusItem Preferred Position craft_menubar_marker','-float','100000'])
+    assert.equal(seeded.exitCode,0)
     const launched = Bun.spawn([macOSRuntimeExecutablePath(result[0].outputPath!),'--headless','--system-tray','--log-level','debug','--url',server.url.toString()],{
       env:{...process.env,__CFBundleIdentifier:`${bundleId}.runtime`},stdout:'ignore',stderr:'pipe',
     })

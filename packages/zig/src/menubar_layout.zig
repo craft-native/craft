@@ -1,6 +1,32 @@
 //! Geometry policy independent of AppKit, including secondary-display origins.
 const std = @import("std");
 
+pub const MAX_SPACERS = 16;
+pub const SpacerPlan = struct { count: usize, width: f64 };
+
+/// One long item is refused on the smaller display before it can hide icons
+/// on a larger one. Individually modest items can overflow independently while
+/// their combined reservation clears the prefix on every connected display.
+pub fn planSpacers(shortest_width: f64, longest_width: f64) ?SpacerPlan {
+    if (!std.math.isFinite(shortest_width) or !std.math.isFinite(longest_width) or shortest_width <= 0 or longest_width < shortest_width) return null;
+    const width = shortest_width * 0.4;
+    const count = @ceil(longest_width / width);
+    if (count > MAX_SPACERS) return null;
+    return .{ .count = @intFromFloat(count), .width = width };
+}
+
+test "spacer slices cover differently sized displays without one oversized item" {
+    const single = planSpacers(1512, 1512).?;
+    const dual = planSpacers(1512, 2560).?;
+    try std.testing.expectEqual(@as(usize, 3), single.count);
+    try std.testing.expectEqual(@as(usize, 5), dual.count);
+    try std.testing.expect(dual.width < 1512.0 / 2);
+    try std.testing.expect(@as(f64, @floatFromInt(dual.count)) * dual.width >= 2560);
+    try std.testing.expect(planSpacers(0, 2560) == null);
+    try std.testing.expect(planSpacers(1512, std.math.nan(f64)) == null);
+    try std.testing.expect(planSpacers(1512, 100_000) == null);
+}
+
 /// macOS inserts up to 16 pt of status-item padding. A spacer may reserve
 /// space only when immediately to the left of the compact reveal control.
 pub fn spacerPrecedesControl(control_x: f64, spacer_x: f64, spacer_width: f64) bool {
