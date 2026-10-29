@@ -91,7 +91,7 @@
         payload: { document: { type: 'View', style: { padding: 16 }, children: [
           { id: 'picker-status', type: 'Text', props: { key: 'picker-status' }, children: ['Picker ready'] },
           { type: 'Text', props: { key: 'picker-session' }, children: [checkpointSession] },
-          ...['file', 'video', 'abort', 'replace'].map(mode => ({
+          ...['file', 'video', 'abort', 'replace', 'photo', 'library-video', 'photo-abort', 'library-video-replace'].map(mode => ({
             type: 'Button', props: { key: `picker-${mode}` }, events: { onPress: `pick-${mode}` }, children: [`Pick ${mode}`],
           })),
         ] } },
@@ -196,18 +196,19 @@
       const mode = message.payload.handlerName.slice(5)
       pickerRequest = `picker-request-${++nextMessage}`
       const requestId = pickerRequest
+      const library = mode.includes('photo') || mode.includes('library-video')
       globalThis.craftNativePostMessage(JSON.stringify({
         id: requestId, type: 'API_REQUEST',
-        payload: { version: 1, module: 'Files', method: mode === 'video' ? 'pickVideo' : 'pickFile', args: [{ source: 'files' }], untimed: true },
+        payload: { version: 1, module: 'Files', method: mode.includes('photo') ? 'pickImage' : mode.includes('video') ? 'pickVideo' : 'pickFile', args: [{ source: library ? 'library' : 'files' }], untimed: true },
       }))
-      if (mode === 'abort' || mode === 'replace') {
+      if (mode.endsWith('abort') || mode.endsWith('replace')) {
         // Exercise the real bridge while the system UI is on top. The replace
         // path disposes this runtime; no fixture-only native cancellation hook.
         setTimeout(() => {
-          globalThis.craftNativePostMessage(JSON.stringify(mode === 'replace'
+          globalThis.craftNativePostMessage(JSON.stringify(mode.endsWith('replace')
             ? { type: 'NAVIGATE_REPLACE', payload: { screen: 'picker-retry' } }
             : { type: 'API_CANCEL', payload: { requestId } }))
-          if (mode === 'abort')
+          if (mode.endsWith('abort'))
             mutate([{ op: 'updateNode', id: 'picker-status', patch: { children: [`Aborted; answers ${pickerAnswers}`] } }])
         }, 8000)
       }

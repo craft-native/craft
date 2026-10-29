@@ -3,8 +3,20 @@ import ImageIO
 import UIKit
 import UniformTypeIdentifiers
 import Network
+import PhotosUI
 import XCTest
 @testable import NativeRender
+
+/// Retains a callback after Progress.cancel, like a slow external provider.
+private final class DelayedMediaProvider: NSItemProvider {
+    let transfer = Progress(totalUnitCount: 1)
+    var reply: ((URL?, Error?) -> Void)?
+    override func hasItemConformingToTypeIdentifier(_ typeIdentifier: String) -> Bool { true }
+    override func loadFileRepresentation(forTypeIdentifier typeIdentifier: String, completionHandler: @escaping @Sendable (URL?, Error?) -> Void) -> Progress {
+        reply = completionHandler
+        return transfer
+    }
+}
 
 /// craft.files' disk side: the files it makes, the JPEG a picked photo becomes,
 /// the multipart body a screen's FormData is sent as, and a refused download.
@@ -12,6 +24,123 @@ import XCTest
 /// and the disk work after a provider answers are tested here.
 @MainActor
 final class FilesUnitTests: XCTestCase {
+    func testLibraryProviderReadFailureThenSuccessfulPhotoAndVideoImport() async throws {
+        let before = try importFolders()
+        for video in [false, true] {
+            let failed = expectation(description: "provider refused read")
+            let refused = CraftNativeFiles.LibraryDelegate(videoLimit: video ? 1024 : nil, requestToken: nil, isCancelled: { false }) {
+                self.assertImportFailure($0, video ? "READ_ERROR" : "DECODE_ERROR")
+                failed.fulfill()
+            }
+            let denied = DelayedMediaProvider()
+            refused.load(denied)
+            denied.reply?(nil, NSError(domain: NSCocoaErrorDomain, code: NSFileReadNoPermissionError))
+            await fulfillment(of: [failed], timeout: 5)
+
+            let source = FileManager.default.temporaryDirectory.appendingPathComponent("retry-\(UUID().uuidString).\(video ? "mp4" : "png")")
+            let bytes = video ? Data([1, 2, 3]) : UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).pngData { context in
+                UIColor.red.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+            }
+            try bytes.write(to: source)
+            defer { try? FileManager.default.removeItem(at: source) }
+            let imported = expectation(description: "real item provider read")
+            let retry = CraftNativeFiles.LibraryDelegate(videoLimit: video ? 1024 : nil, requestToken: nil, isCancelled: { false }) { result in
+                defer { imported.fulfill() }
+                guard case .success(let value) = result, let file = value as? [String: Any], let path = file["path"] as? String else {
+                    return XCTFail("provider import failed: \(result)")
+                }
+                XCTAssertNotNil(CraftNativeFiles.owned(path))
+                XCTAssertEqual(file["type"] as? String, video ? "video/mp4" : "image/jpeg")
+                if video { XCTAssertEqual(try? Data(contentsOf: URL(fileURLWithPath: path)), bytes) }
+                XCTAssertTrue(CraftNativeFiles.remove(path))
+            }
+            retry.load(try XCTUnwrap(NSItemProvider(contentsOf: source)))
+            await fulfillment(of: [imported], timeout: 10)
+        }
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testLibraryProviderCancellationSettlesWithoutWaitingAndIgnoresLateAnswer() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("provider-\(UUID().uuidString).mp4")
+        try Data("provider bytes".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let before = try importFolders()
+        for video in [false, true] {
+            let token = UUID().uuidString
+            let completed = expectation(description: "cancel without provider reply")
+            var answers = 0
+            let delegate = CraftNativeFiles.LibraryDelegate(videoLimit: video ? 1024 : nil, requestToken: token,
+                isCancelled: { CraftNativeActions.isCancelled(token) }) { result in
+                answers += 1
+                CraftNativeActions.completeFile(token, result) { _ in XCTFail("cancelled media delivered") }
+                DispatchQueue.main.async { completed.fulfill() }
+            }
+            let provider = DelayedMediaProvider()
+            delegate.load(provider)
+            XCTAssertNotNil(provider.reply)
+            CraftNativeActions.cancel(requestToken: token)
+            delegate.cancel()
+            await fulfillment(of: [completed], timeout: 5)
+            XCTAssertTrue(provider.transfer.isCancelled)
+            XCTAssertFalse(CraftNativeActions.isCancelled(token))
+            // Deliberately ignore Progress cancellation, as an external provider
+            // can. The delegate must retain cancellation after token removal.
+            provider.reply?(source, nil)
+            let drained = expectation(description: "late callback drained")
+            DispatchQueue.main.async { drained.fulfill() }
+            await fulfillment(of: [drained], timeout: 5)
+            XCTAssertEqual(answers, 1)
+            XCTAssertEqual(try importFolders(), before)
+        }
+    }
+
+    func testLibraryCancellationCleansAlreadyProducedFileAfterTokenWasDrained() async throws {
+        let before = try importFolders()
+        let completed = expectation(description: "cancellation delivered")
+        var answers = 0
+        let delegate = CraftNativeFiles.LibraryDelegate(requestToken: nil, isCancelled: { false }) { result in
+            answers += 1
+            self.assertImportFailure(result, "CANCELLED")
+            completed.fulfill()
+        }
+        delegate.cancel()
+        await fulfillment(of: [completed], timeout: 5)
+        let file = try CraftNativeFiles.newFile(named: "late.jpg")
+        try Data([1, 2, 3]).write(to: file)
+        delegate.finish(.success(CraftNativeFiles.describe(file, type: "image/jpeg")))
+        let drained = expectation(description: "late JPEG cleanup")
+        DispatchQueue.main.async { drained.fulfill() }
+        await fulfillment(of: [drained], timeout: 5)
+        XCTAssertEqual(answers, 1)
+        XCTAssertEqual(try importFolders(), before)
+    }
+
+    func testLibraryUserCancellationSettlesOnceAndPrecancelledImageDoesNotPresent() async {
+        let completed = expectation(description: "user cancel")
+        var answers = 0
+        let delegate = CraftNativeFiles.LibraryDelegate(requestToken: nil, isCancelled: { false }) { result in
+            answers += 1
+            guard case .success(let value) = result else { return XCTFail("user cancel must resolve") }
+            XCTAssertTrue(value is NSNull)
+            completed.fulfill()
+        }
+        let picker = PHPickerViewController(configuration: PHPickerConfiguration())
+        delegate.picker(picker, didFinishPicking: [])
+        delegate.picker(picker, didFinishPicking: [])
+        let provider = DelayedMediaProvider()
+        delegate.load(provider)
+        await fulfillment(of: [completed], timeout: 5)
+        XCTAssertNil(provider.reply)
+        XCTAssertEqual(answers, 1)
+        var rejected = false
+        CraftNativeFiles.pickImage([:], cameraEnabled: false, isCancelled: { true }) {
+            self.assertImportFailure($0, "CANCELLED")
+            rejected = true
+        }
+        XCTAssertTrue(rejected)
+    }
+
     func testDocumentPickerCancellationIgnoresLateSelectionAndDuplicateCallbacks() async throws {
         let source = FileManager.default.temporaryDirectory.appendingPathComponent("late-\(UUID().uuidString).mp4")
         try Data("late provider bytes".utf8).write(to: source)

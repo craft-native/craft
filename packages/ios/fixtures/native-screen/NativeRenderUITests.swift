@@ -1,6 +1,46 @@
 import XCTest
 
 final class NativeRenderUITests: XCTestCase {
+    func testLibraryPickerUserCancelAndRetryPhotoAndVideo() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
+        app.buttons["open-picker"].tap()
+        for (index, mode) in ["photo", "library-video", "photo"].enumerated() {
+            app.buttons["picker-\(mode)"].tap()
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 15), app.debugDescription)
+            XCTAssertEqual(app.webViews.count, 0)
+            cancel.tap()
+            waitForLabel(app.staticTexts["picker-status"], "Answer \(index + 1): null")
+        }
+    }
+
+    func testLibraryPickerAbortAndScreenDisposalReleaseBusySlot() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        for mode in ["photo-abort", "library-video-replace"] {
+            app.launch()
+            app.buttons["open-picker"].tap()
+            let session = app.staticTexts["picker-session"].label
+            app.buttons["picker-\(mode)"].tap()
+            let cancel = app.buttons["Cancel"].firstMatch
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5), app.debugDescription)
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "System media picker before \(mode)"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
+            waitForLabel(app.staticTexts["picker-status"], mode == "photo-abort" ? "Aborted; answers 0" : "Picker ready")
+            if mode == "library-video-replace" { XCTAssertNotEqual(app.staticTexts["picker-session"].label, session) }
+            app.buttons["picker-photo"].tap()
+            XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+            cancel.tap()
+            waitForLabel(app.staticTexts["picker-status"], "Answer 1: null")
+            app.terminate()
+        }
+    }
+
     func testDocumentPickerUserCancelSettlesOnceAndCanRetryFileAndVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
