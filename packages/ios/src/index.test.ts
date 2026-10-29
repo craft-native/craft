@@ -2608,14 +2608,15 @@ writeFileSync(join(dir, 'ios-permissions.json'), JSON.stringify({ version: 1, ma
     for (const call of ['case ("Files", "pickImage"):', 'case ("Files", "pickFile"):', 'case ("Files", "download"):', 'case ("Files", "write"):', 'case ("Files", "remove"):'])
       expect(actions).toContain(call)
     expect(actions).toContain('CraftNativeFiles.pickImage(options, cameraEnabled: config.enableCamera)')
-    expect(actions).toContain('CraftNativeFiles.pickFile(options, isCancelled: { isCancelled(requestToken) })')
+    expect(actions).toContain('CraftNativeFiles.pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })')
     // Every operation producing a new owned file uses cancellation cleanup,
     // not just callback suppression. Persistent media keeps its separate path.
-    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera)', 'pickVideo(options, isCancelled: { isCancelled(requestToken) })', 'pickFile(options, isCancelled: { isCancelled(requestToken) })'])
+    for (const picker of ['pickImage(options, cameraEnabled: config.enableCamera)', 'pickVideo(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })', 'pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) })'])
       expect(actions).toContain(`CraftNativeFiles.${picker} { completeFile(requestToken, $0, completion) }`)
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.write(name: name, data: data, options: options), completion)')
     expect(actions).toContain('completeFile(requestToken, CraftNativeFiles.keepDownload(at: location, response: http, name: name), completion)')
     expect(actions).toContain('if cancelled { onCancel?() }')
+    expect(actions).toContain('CraftNativeFiles.cancelPicker(requestToken: requestToken)')
     expect(actions).toContain('if let path = file["path"] as? String { CraftNativeFiles.remove(path) }')
     // The library picker, decoded once at the size wanted, upright, as JPEG.
     expect(files).toContain('let picker = PHPickerViewController(configuration: configuration)')

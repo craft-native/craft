@@ -309,7 +309,7 @@ enum CraftNativeFiles {
 
     /// System pickers grant access to just the selected video. Copy it while
     /// the provider's URL is valid; no movie bytes cross JavaScriptCore.
-    static func pickVideo(_ options: [String: Any], isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+    static func pickVideo(_ options: [String: Any], requestToken: String? = nil, isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
         guard !isCancelled() else { done(.failure(importCancelled())); return }
         guard activePicker == nil else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
@@ -325,16 +325,16 @@ enum CraftNativeFiles {
             DispatchQueue.main.async { activePicker = nil; done(result) }
         }
         if options["source"] as? String == "files" {
-            let delegate = VideoDocumentDelegate(limit: limit, isCancelled: isCancelled, done: finish)
+            let delegate = DocumentDelegate(limit: limit, video: true, requestToken: requestToken, isCancelled: isCancelled, done: done)
             var types: [UTType] = [.movie]
             if let webm = UTType(filenameExtension: "webm") { types.append(webm) }
             let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
             picker.allowsMultipleSelection = false
             picker.delegate = delegate
+            delegate.controller = picker
             activePicker = delegate
             if !CraftPresenter.present(picker, from: nil) {
-                activePicker = nil
-                done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
+                delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the video picker")))
             }
         } else {
             var configuration = PHPickerConfiguration()
@@ -357,7 +357,7 @@ enum CraftNativeFiles {
     /// Pick one or more documents and copy them into app-owned storage while
     /// the security-scoped URLs are valid. `contentTypes` accepts MIME types,
     /// UTIs, or filename extensions; an empty list means any document.
-    static func pickFile(_ options: [String: Any], isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+    static func pickFile(_ options: [String: Any], requestToken: String? = nil, isCancelled: @escaping () -> Bool = { false }, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
         guard !isCancelled() else { done(.failure(importCancelled())); return }
         guard activePicker == nil else {
             done(.failure(CraftNativeActionError(code: "BUSY", message: "A picker is already open")))
@@ -382,17 +382,14 @@ enum CraftNativeFiles {
             done(.failure(CraftNativeActionError(code: "INVALID_ARGUMENT", message: "files.pickFile contentTypes are invalid")))
             return
         }
-        let finish: (Result<Any, CraftNativeActionError>) -> Void = { result in
-            DispatchQueue.main.async { activePicker = nil; done(result) }
-        }
-        let delegate = FileDocumentDelegate(limit: limit, isCancelled: isCancelled, done: finish)
+        let delegate = DocumentDelegate(limit: limit, video: false, requestToken: requestToken, isCancelled: isCancelled, done: done)
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: types, asCopy: true)
         picker.allowsMultipleSelection = selectionLimit > 1
         picker.delegate = delegate
+        delegate.controller = picker
         activePicker = delegate
         if !CraftPresenter.present(picker, from: nil) {
-            activePicker = nil
-            done(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the file picker")))
+            delegate.finish(.failure(CraftNativeActionError(code: "PICKER_ERROR", message: "Unable to present the file picker")))
         }
     }
 
@@ -531,17 +528,75 @@ enum CraftNativeFiles {
         }
     }
 
-    private final class FileDocumentDelegate: NSObject, UIDocumentPickerDelegate {
+    /// Cancellation may arrive from screen disposal while the system picker is
+    /// still open. Keep ownership until dismissal (or an in-flight copy) ends.
+    static func cancelPicker(requestToken: String) {
+        DispatchQueue.main.async {
+            guard let picker = activePicker as? DocumentDelegate,
+                  picker.requestToken == requestToken else { return }
+            picker.cancel()
+        }
+    }
+
+    final class DocumentDelegate: NSObject, UIDocumentPickerDelegate {
         let limit: Int
+        let video: Bool
+        let requestToken: String?
         let isCancelled: () -> Bool
         let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(.success([])) }
+        weak var controller: UIDocumentPickerViewController?
+        private var answered = false
+        private var finished = false
+        private var importing = false
+
+        init(limit: Int, video: Bool, requestToken: String?, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) {
+            self.limit = limit; self.video = video; self.requestToken = requestToken
+            self.isCancelled = isCancelled; self.done = done
+        }
+
+        func cancel() {
+            guard !finished else { return }
+            answered = true
+            controller?.dismiss(animated: false)
+            // Do not drain the cancellation token while a worker still polls
+            // it: that would let the remainder of a cancelled copy succeed.
+            if !importing { finish(.failure(importCancelled())) }
+        }
+
+        func finish(_ result: Result<Any, CraftNativeActionError>) {
+            DispatchQueue.main.async {
+                guard !self.finished else { return }
+                self.finished = true
+                self.controller?.dismiss(animated: false)
+                if activePicker === self { activePicker = nil }
+                self.done(result)
+            }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            guard !answered else { return }
+            answered = true
+            finish(.success(video ? NSNull() : []))
+        }
+
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard !urls.isEmpty else { done(.success([])); return }
-            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
+            guard !answered else { return }
+            answered = true
+            guard !isCancelled() else { finish(.failure(importCancelled())); return }
+            guard !urls.isEmpty else { finish(.success(video ? NSNull() : [])); return }
+            importing = true
+            let (limit, isCancelled, video) = (self.limit, self.isCancelled, self.video)
             DispatchQueue.global(qos: .userInitiated).async {
-                done(CraftNativeFiles.copyFiles(urls, limit: limit, isCancelled: isCancelled))
+                let result: Result<Any, CraftNativeActionError>
+                if video {
+                    let url = urls[0]
+                    let granted = url.startAccessingSecurityScopedResource()
+                    defer { if granted { url.stopAccessingSecurityScopedResource() } }
+                    result = CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled)
+                } else {
+                    result = CraftNativeFiles.copyFiles(urls, limit: limit, isCancelled: isCancelled)
+                }
+                self.finish(result)
             }
         }
     }
@@ -569,23 +624,6 @@ enum CraftNativeFiles {
                     done(.failure(CraftNativeActionError(code: "READ_ERROR", message: error?.localizedDescription ?? "The video could not be read")))
                     return
                 }
-                done(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled))
-            }
-        }
-    }
-
-    private final class VideoDocumentDelegate: NSObject, UIDocumentPickerDelegate {
-        let limit: Int
-        let isCancelled: () -> Bool
-        let done: (Result<Any, CraftNativeActionError>) -> Void
-        init(limit: Int, isCancelled: @escaping () -> Bool, done: @escaping (Result<Any, CraftNativeActionError>) -> Void) { self.limit = limit; self.isCancelled = isCancelled; self.done = done }
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { done(.success(NSNull())) }
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let url = urls.first else { done(.success(NSNull())); return }
-            let (limit, isCancelled, done) = (self.limit, self.isCancelled, self.done)
-            DispatchQueue.global(qos: .userInitiated).async {
-                let granted = url.startAccessingSecurityScopedResource()
-                defer { if granted { url.stopAccessingSecurityScopedResource() } }
                 done(CraftNativeFiles.copyVideo(url, limit: limit, isCancelled: isCancelled))
             }
         }

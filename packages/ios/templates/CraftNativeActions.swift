@@ -278,13 +278,13 @@ enum CraftNativeActions {
         case ("Files", "pickVideo"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickVideo(options, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
+                CraftNativeFiles.pickVideo(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "pickFile"):
             let options = args.first as? [String: Any] ?? [:]
             DispatchQueue.main.async {
-                CraftNativeFiles.pickFile(options, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
+                CraftNativeFiles.pickFile(options, requestToken: requestToken, isCancelled: { isCancelled(requestToken) }) { completeFile(requestToken, $0, completion) }
             }
             return
         case ("Files", "download"):
@@ -719,6 +719,7 @@ enum CraftNativeActions {
         context?.invalidate()
         #endif
         task?.cancel()
+        CraftNativeFiles.cancelPicker(requestToken: requestToken)
         CraftNativePasskeys.shared.cancel(requestToken: requestToken)
     }
 
